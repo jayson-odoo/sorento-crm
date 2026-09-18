@@ -19,10 +19,13 @@ sheet row as its Was; its Now stays the book's.**
   `previous_delivery_date` becomes 2026-06-01, `delivery_date` and `qty` are both
   untouched, its note gains `"Was 182 on 2026-06-01"`; the CANCELLED row is untouched; the
   outcome reports `DELIVERY_DATE_UPDATED`; `preview`'s forecast equals what `apply` wrote.
-* **AC-26** Given a live row with shape C's own shape (no Was, on the line's own date) but
-  NO cancelled sibling anywhere on the mirror - a plain board row - when the sheet is
-  uploaded, then it is skipped `ALREADY_RAISED`, `rows_delivery_date_updated == 0`, and the
-  row is untouched.
+* **AC-26** (rewritten, review round 2) Given a live row with shape C's own shape (no Was,
+  on the line's own date) paired with a cancelled row that LOOKS exactly like a migrated
+  sibling - same quantity as the sheet, same `"Superseded by revision N"` note - but carries
+  NO `import_job_rows` entry (never raised by an upload), when the sheet is uploaded, then
+  it is skipped `ALREADY_RAISED`, `rows_delivery_date_updated == 0`, and the row is
+  untouched. A cancelled row's own note or quantity is never enough on its own - only
+  `import_job_rows` recording it as a row THIS FEATURE created makes it a genuine sibling.
 * **AC-27** Given a cancelled migrated sibling whose OWN `qty` AND `previous_qty` both
   differ from the sheet's quantity, when the sheet is uploaded, then the live row is
   skipped `ALREADY_RAISED`, `rows_delivery_date_updated == 0`, and untouched.
@@ -50,6 +53,29 @@ Three more from the round 7 review, each its own red:
   adopted live row is never a stamped (migrated) row, so it never re-enters shape A's or
   shape B's own pool on a later run either, on top of shape C's own precondition no longer
   holding.
+
+Five more from the round 7 review ROUND 2 (19 Sep 2026, Opus reviewer, head d5187594a),
+each its own red:
+
+* **Note tail preserved.** The anchored replace from the round 7 review must preserve prose
+  on BOTH sides of the fragment - not merely append correctly, but never truncate anything
+  AFTER the old fragment either (a live row's note that also carries a linkage probe's own
+  tail keeps it byte for byte).
+* **Sibling identity is `import_job_rows`, not note or quantity.** A cancelled row that
+  LOOKS exactly like a migrated sibling (same quantity as the sheet, same `"Superseded by
+  revision N"` note) but carries no `import_job_rows` entry recording it as a row this
+  feature created is never treated as one - AC-26, rewritten.
+* **Pairing is by the sibling's own quantity, not position.** The earlier "sibling identity,
+  not position" red above is strengthened to assert WHICH live row received WHICH Was (not
+  merely that both sheet rows resolved): the live row paired to a matched sibling is the one
+  whose OWN `qty` equals the sibling's OWN `qty`, run 10/10 for determinism.
+* **Claim-once, three independent reds.** (a) two sheet rows sharing one sibling and one
+  live row - only the first adopts; (b) a sheet row shape A already repaired is never also
+  handed to shape C; (c) two tests, each isolating ONE of the two pool `.remove()` calls (a
+  combined "one sibling, one live row" test cannot catch both independently, since the
+  sibling lookup gates the live lookup).
+* **Equal-quantity coincidence is not a reason to skip.** A live row whose OWN `qty` happens
+  to equal the sheet's own quantity still adopts the Was when the date differs.
 
 Never touched by any of the above: the CANCELLED sibling (read-only, always), the live
 row's `qty`/`delivery_date`/`ack_state`, links.

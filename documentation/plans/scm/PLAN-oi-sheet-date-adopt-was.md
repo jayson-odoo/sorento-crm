@@ -6,6 +6,58 @@ rows.md` (#1011, MERGED). Lane worktree `sorento_crm-oi-sheet-date`, branch
 
 UAC: `oi-sheet-date-adopt-was-acceptance-criteria.md`.
 
+## Review round 2 (19 Sep 2026, Opus reviewer, head d5187594a)
+
+Four findings against round 7's own shape C, closed in this same lane, no re-scope of the
+rule itself:
+
+* **BLOCKER, anchored note edit actually drops the tail.** The `apply()` write used
+  `existing_note.find("Was ")` plus `existing_note[:was_at].rstrip("; ")` to rebuild the
+  prefix - which discards EVERYTHING after the old fragment. A live row whose note also
+  carried a linkage probe's own tail (`"; Linked to 202603-S0109 (...); auto: autocount
+  linkage"`) lost it. Fixed with `re.search(r"Was \S+ on \d{4}-\d{2}-\d{2}", note)` and an
+  in-place splice (`note[:start] + fragment + note[end:]`) - append only when no fragment
+  exists at all.
+  `test_shape_c_note_edit_is_anchored_replacing_not_appending` now puts prose on BOTH sides
+  of the fragment and pins the tail byte for byte.
+* **S1, sibling identity was note/quantity alone.** Any CANCELLED row on the mirror whose
+  `qty` or `previous_qty` happened to equal the sheet's quantity counted as the migrated
+  sibling, so a cancelled BOARD row (never raised by an upload) could false-positive. Fixed
+  by narrowing the sibling pool to rows `import_job_rows` itself records as CREATED by this
+  feature (`entity_type = 'order_inquiry_row' AND outcome = 'created' AND entity_id =
+  str(row.id)`) - the durable record `ImportOutcome.success(...)` already writes for every
+  row it raises, and the ONLY identity a superseded row's overwritten note can no longer
+  provide. One extra query per upload over the cancelled candidate ids on the SAME round
+  trip (never per-row), skipped when there are no cancelled candidates at all. **No index
+  exists on `import_job_rows (entity_type, entity_id)`** - confirmed against the schema
+  (`ix_import_job_rows_import_job_id`, `_job_code`, `_job_outcome`, `_job_row`,
+  `_created_at`, none of them cover `entity_type`/`entity_id`). Not added in this lane
+  (small fix track, no migrations); a follow-up if a full-book re-upload's cancelled-row
+  count makes this scan measurably slow. AC-26 rewritten (`_cancelled_board_row`, a
+  look-alike cancelled row never registered in `import_job_rows`) so it tests the identity
+  gate itself rather than a quantity mismatch (AC-27's own case).
+* **S2, live-row pairing was a coin flip.** `_resolve_shape_c_repairs` picked the live row
+  by `unclaimed_live` LIST POSITION (`next(c for c in unclaimed_live if item matches)`), and
+  `created_at` ties inside one transaction left the `id` tiebreak effectively random.
+  Fixed: paired by the MATCHED sibling's own `qty` first (prod's own shape - sibling `qty`
+  220, live `qty` 220), falling back to item-only only when nothing carries that quantity.
+  `test_shape_c_pairs_by_sibling_identity_not_file_position` rewritten to assert WHICH live
+  row gets WHICH Was (not merely that both resolve), run 10/10 locally.
+* **S3, claim-once had three surviving mutants.** All three were already correct in code
+  (the `already_claimed` skip and both pool `.remove()` calls), but nothing pinned them.
+  Five new regression tests close the gap: `test_shape_c_claims_each_pool_at_most_once` (two
+  sheet rows, one sibling, one live row - only the first adopts),
+  `test_shape_c_never_reclaims_a_row_shape_a_already_repaired` (a sheet row shape A already
+  repaired is never also handed to shape C),
+  `test_shape_c_claims_the_live_pool_at_most_once` and
+  `test_shape_c_claims_the_sibling_pool_at_most_once` (each isolates ONE of the two
+  `.remove()` calls - a single "two rows, one sibling, one live row" test cannot catch both
+  independently, since the sibling lookup gates the live lookup and masks a dropped
+  `unclaimed_live.remove`).
+* **NIT.** `test_shape_c_adopts_even_when_the_lives_own_qty_equals_the_sheet_qty` states the
+  existing (correct) rule explicitly: a live row whose OWN `qty` happens to equal the
+  sheet's quantity still adopts the Was when the date differs.
+
 ## What was measured (round 7, revised after a prod `SELECT`)
 
 The first cut of this plan (round 6) guessed the shape from the symptom alone: a migrated
@@ -96,7 +148,11 @@ existing per-mirror query now also fetches CANCELLED rows (needed for shape C's 
 lookup, since their note can never be trusted) and the `state`/`note` columns needed to
 classify everything in Python, in place of the SQL-side `state != CANCELLED` / `note LIKE
 stamp%` filters the earlier rounds used - both of those filters would have wrongly excluded
-rows shape C now legitimately needs.
+rows shape C now legitimately needs. **Review round 2 (S1) added a genuine second query**:
+one `import_job_rows` lookup over the cancelled candidate ids collected in the first query,
+run once per upload (not per mirror, not per row), skipped entirely when a run raises no
+cancelled candidates at all. No index covers `import_job_rows (entity_type, entity_id)` -
+noted as a follow-up, not built here (small fix track, no migrations in this lane).
 
 **No frontend change.**
 
@@ -108,7 +164,21 @@ rows shape C now legitimately needs.
   `state`/`note` columns, classification rewritten so shape A's and shape C's live pools
   are mutually exclusive and shape A's `changed_at IS NULL` guard is explicit again;
   `apply()`'s already-raised branch's shape-C write path rewritten (anchored note
-  replace-or-append, new message).
+  replace-or-append, new message). Review round 2: `_resolve_delivery_date_repairs` narrows
+  the cancelled candidate pool to rows `import_job_rows` records as CREATED (S1);
+  `_resolve_shape_c_repairs` pairs the live row by the matched sibling's own `qty` first
+  (S2); the note splice in `apply()` uses a regex anchor and preserves the tail (BLOCKER).
+* `tests/test_oi_sheet_date_follow_sheet.py` - review round 2: `_register_migrated` +
+  `_cancelled_board_row` helpers; `_cancelled_sibling` now registers itself in
+  `import_job_rows`; AC-26 rewritten around a look-alike unregistered cancelled row;
+  `test_shape_c_pairs_by_sibling_identity_not_file_position` asserts which live row got
+  which Was; `test_shape_c_note_edit_is_anchored_replacing_not_appending` extended with
+  prose on both sides of the fragment; five new tests
+  (`test_shape_c_claims_each_pool_at_most_once`,
+  `test_shape_c_never_reclaims_a_row_shape_a_already_repaired`,
+  `test_shape_c_claims_the_live_pool_at_most_once`,
+  `test_shape_c_claims_the_sibling_pool_at_most_once`,
+  `test_shape_c_adopts_even_when_the_lives_own_qty_equals_the_sheet_qty`).
 * `tests/test_oi_sheet_date_follow_sheet.py` - the round-6 `_restated_row` helper and its
   AC-25 to AC-29 deleted entirely (the shape never occurs); `_cancelled_sibling` +
   `_live_row` helpers (new); AC-25 to AC-29 rewritten for the real shape; three more reds

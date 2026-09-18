@@ -688,10 +688,20 @@ def _resolve_shape_c_repairs(
     mirror whose OWN quantity - its `qty` (never settled before being superseded) OR its
     `previous_qty` (settled once, then superseded) - equals the sheet row's own quantity:
     that identity is what says "this sheet row is about the SAME instruction that migrated
-    row was." The live row adopted is whichever unclaimed live candidate shares the
-    sibling's item code - NEVER by file position (round 7 review): two live rows and two
-    cancelled siblings of the same item are paired by which sibling's own quantity the
-    sheet row's own quantity matches, not by which pair happens to line up positionally.
+    row was." Only a sibling `import_job_rows` itself records as a row this feature CREATED
+    (`entity_type="order_inquiry_row"`, `outcome="created"`, `entity_id` = the row's own id -
+    the same durable record `outcome.success(...)` writes for every row it raises) ever
+    counts as a migrated sibling (S1, round 7 review round 2): the cancel path overwrites the
+    note, so a plain cancelled BOARD row can otherwise coincidentally share a quantity with a
+    sheet row and be mistaken for one.
+
+    The live row adopted is the unclaimed live candidate whose OWN `qty` equals the
+    sibling's own `qty` (S2, round 7 review round 2) - prod's own shape (sibling `qty` 220,
+    live `qty` 220) - falling back to the first unclaimed candidate sharing the sibling's
+    item code only when no quantity match exists. NEVER by file position (round 7 review):
+    two live rows and two cancelled siblings of the same item are paired by which sibling's
+    own quantity the sheet row's own quantity matches, not by which pair happens to line up
+    positionally.
 
     Claim-once on BOTH pools - "one live row per cancelled migrated sibling" - so a second
     live row cannot ride on a sibling a first live row already used, and a second sibling
@@ -727,9 +737,22 @@ def _resolve_shape_c_repairs(
         )
         if sibling is None:
             continue
+        # S2, round 7 review round 2: paired by the sibling's OWN qty first (prod's own
+        # shape - sibling `qty` 220, live `qty` 220), never by list/creation position - a
+        # bare item-code match alone is a coin flip whenever more than one live candidate
+        # shares the item. Falls back to item-only only when nothing carries that quantity.
+        sibling_qty = _dec(sibling.qty)
         live = next(
-            (c for c in unclaimed_live if c.item_code == row.item_code), None
+            (
+                c for c in unclaimed_live
+                if c.item_code == row.item_code and _dec(c.qty) == sibling_qty
+            ),
+            None,
         )
+        if live is None:
+            live = next(
+                (c for c in unclaimed_live if c.item_code == row.item_code), None
+            )
         if live is None:
             continue
         unclaimed_siblings.remove(sibling)
@@ -835,13 +858,14 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     shape_a_by_mirror: Dict[str, List[Any]] = {}
     shape_b_by_mirror: Dict[str, List[Any]] = {}
     shape_c_live_by_mirror: Dict[str, List[Any]] = {}
-    cancelled_by_mirror: Dict[str, List[Any]] = {}
+    cancelled_candidates: List[Any] = []
     for candidate in rows:
         mirror_id = str(candidate.so_line_id)
         if candidate.state == INQUIRY_CANCELLED:
             # Shape C's sibling pool: identified by QUANTITY alone at resolution time,
-            # never by note (round 7) - collected here unconditionally.
-            cancelled_by_mirror.setdefault(mirror_id, []).append(candidate)
+            # never by note (round 7) - collected here unconditionally; narrowed to
+            # genuinely MIGRATED rows below (S1, round 7 review round 2).
+            cancelled_candidates.append(candidate)
             continue
         # S8, done here rather than in SQL (S13): a required_date of `None` matches
         # nothing - a migrated row's `delivery_date` is never `None` - so a line with no
@@ -874,6 +898,35 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
                 shape_c_live_by_mirror.setdefault(mirror_id, []).append(candidate)
         elif stamped and candidate.previous_delivery_date == required:
             shape_b_by_mirror.setdefault(mirror_id, []).append(candidate)
+
+    # S1, round 7 review round 2: a cancelled row's own note can never be trusted once
+    # superseded (the cancel path overwrites it to "Superseded by revision N"), so a plain
+    # cancelled BOARD row can otherwise coincidentally share a quantity with a sheet row
+    # and be mistaken for a migrated sibling. `import_job_rows` is the durable record of
+    # every row THIS FEATURE ever created (`outcome.success(..., entity_type=
+    # "order_inquiry_row", entity_id=entry.id)`, `oc.OUTCOME_CREATED`) - a cancelled row
+    # only qualifies as a sibling when its OWN id is recorded there. One extra query over
+    # the cancelled candidate ids on this same round trip, never per-row; skipped
+    # entirely when there is nothing to narrow.
+    cancelled_by_mirror: Dict[str, List[Any]] = {}
+    if cancelled_candidates:
+        from app.models.job import ImportJobRow
+
+        candidate_ids = [str(c.id) for c in cancelled_candidates]
+        migrated_ids = {
+            entity_id
+            for (entity_id,) in db.query(ImportJobRow.entity_id)
+            .filter(
+                ImportJobRow.entity_type == "order_inquiry_row",
+                ImportJobRow.outcome == oc.OUTCOME_CREATED,
+                ImportJobRow.entity_id.in_(candidate_ids),
+            )
+            .all()
+        }
+        for candidate in cancelled_candidates:
+            if str(candidate.id) not in migrated_ids:
+                continue
+            cancelled_by_mirror.setdefault(str(candidate.so_line_id), []).append(candidate)
 
     dated_rows_by_mirror: Dict[str, List[Tuple[int, Any]]] = {}
     for index, match in enumerate(plan.matches):
@@ -2146,19 +2199,26 @@ def apply(
                     fragment = f"Was {qty_str} on {row.delivery_date.isoformat()}"
                     migrated.previous_qty = _dec(row.qty)
                     migrated.previous_delivery_date = row.delivery_date
-                    # Anchored (round 7 review): replace an EXISTING "Was ... on ..."
-                    # fragment rather than appending a second one, on the rare row that
-                    # already carries one from something else; append only when there
-                    # is none.
+                    # Anchored (round 7 review, tightened round 7 review round 2 -
+                    # BLOCKER): a plain `find("Was ")` + `existing_note[:was_at]` prefix
+                    # rebuild drops EVERYTHING after the old fragment, which loses real
+                    # prose a live row can carry beside it (a probe's own linkage note,
+                    # "; Linked to ... ; auto: autocount linkage"). Matched by REGEX and
+                    # spliced IN PLACE instead, so the tail survives byte for byte;
+                    # appended only when the row carries no fragment to anchor onto at
+                    # all.
                     existing_note = migrated.note or ""
-                    was_at = existing_note.find("Was ")
-                    if was_at == -1:
+                    anchor = re.search(r"Was \S+ on \d{4}-\d{2}-\d{2}", existing_note)
+                    if anchor is None:
                         migrated.note = (
                             f"{existing_note}; {fragment}" if existing_note else fragment
                         )
                     else:
-                        prefix = existing_note[:was_at].rstrip("; ")
-                        migrated.note = f"{prefix}; {fragment}" if prefix else fragment
+                        migrated.note = (
+                            existing_note[: anchor.start()]
+                            + fragment
+                            + existing_note[anchor.end():]
+                        )
                     outcome.updated(
                         row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
                         identity=identity, value=row.so_number,
