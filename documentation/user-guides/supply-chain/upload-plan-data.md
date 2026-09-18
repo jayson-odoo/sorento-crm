@@ -181,6 +181,11 @@ Nothing needs deciding on either row - the old one is just kept for the record, 
 reads as a plain buy. See [Sales order changes after planning](sales-order-changes.md) for how
 this comes about on the Fulfilment Planning board.
 
+A row **Included with** another item (a "supplied with" companion, like a seat cover that ships
+inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i) lists each of
+those items' own change instead - hover it for one line per item, e.g. "with SRTWCX8605-S-RL-PJ:
+Was 182 on 01/06/2026, now 280 on 01/03/2027".
+
 ### When a link moves on its own
 
 After AutoCount re-keys a PO line or an SPO line to a different sales order and the book is

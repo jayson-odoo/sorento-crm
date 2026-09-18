@@ -613,6 +613,101 @@ describe('the qty cell: one line, an info icon only when there is something to s
   });
 });
 
+describe('a bundled row with no Was of its own reads each hosts change (PLAN-oi-bundled-row-host-change.md)', () => {
+  it('shows the (i) and lists each hosts own change, lines exact', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-bundled-hosts',
+        qty: '2',
+        ack_state: 'acknowledged',
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCX8605-S-RL-PJ',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+          {
+            item_code: 'SRTWCY8605-PJ',
+            qty: '50',
+            delivery_date: '2026-05-01',
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+          {
+            item_code: 'SRTWCZ',
+            qty: null,
+            delivery_date: null,
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+        ],
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-bundled-hosts');
+    expect(within(row).getByText('2')).toBeInTheDocument();
+    expect(
+      within(row).getByTestId('qty-annotation-trigger-row-bundled-hosts'),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByText(
+        'with SRTWCX8605-S-RL-PJ: Was 182 on 01/06/2026, now 280 on 01/03/2027',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByText('with SRTWCY8605-PJ: 50 on 01/05/2026, no change'),
+    ).toBeInTheDocument();
+    expect(within(row).getByText('with SRTWCZ: no open row')).toBeInTheDocument();
+  });
+
+  it('shows no icon on a row that carries no bundled_host_changes and nothing else to say', () => {
+    renderQtyCell([
+      worklistRow({ id: 'row-plain-not-bundled', qty: '9', ack_state: 'acknowledged' }),
+    ]);
+    expect(
+      screen.queryByTestId('qty-annotation-trigger-row-plain-not-bundled'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('SHOULD (review round 1, 19 Sep 2026): a row that is ALSO rejected keeps the rejection dialog, never the bundled tooltip', () => {
+    // Precedence: `hostLines` must be computed only when nothing else already claims
+    // the icon - a mutant that computes it unconditionally would render the tooltip's
+    // own lines even on a rejected row, which the negative assertion below catches.
+    renderQtyCell([
+      worklistRow({
+        id: 'row-rejected-and-bundled',
+        qty: '2',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey Ang',
+        rejected_reason: 'No supplier until November',
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCX8605-S-RL-PJ',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+        ],
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-rejected-and-bundled');
+    const trigger = within(row).getByTestId(
+      'qty-annotation-trigger-row-rejected-and-bundled',
+    );
+    // The rejection's own warning colour - the bundled branch's icon is always muted.
+    expect(trigger.className).toContain('color-warning-accent');
+    expect(within(row).queryByText(/with SRTWCX8605-S-RL-PJ/)).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-and-bundled');
+    expect(
+      within(dialog).getByText('Joey Ang: No supplier until November'),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)', () => {
   it('D1: fully bundled, host on a PO reads "Included with <host> · <host coverage>"', () => {
     renderRows([

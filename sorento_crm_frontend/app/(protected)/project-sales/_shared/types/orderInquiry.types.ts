@@ -70,6 +70,21 @@ export interface OrderInquiryBundledWith {
   anchor_headline: string | null;
 }
 
+/**
+ * One HOST's own change (`PLAN-oi-bundled-row-host-change.md`), read from that host's
+ * own live row at display time - a bundled companion has no sheet row, no PO and no Was
+ * of its own, so the (i) reads each host's instead. `qty`/`delivery_date`/`previous_qty`/
+ * `previous_delivery_date` are all null when the host has no open row on the same order
+ * inquiry header.
+ */
+export interface OrderInquiryBundledHostChange {
+  item_code: string;
+  qty: string | null;
+  delivery_date: string | null;
+  previous_qty: string | null;
+  previous_delivery_date: string | null;
+}
+
 /** One PRIOR raise of the same SO line under the same inquiry
  * (PLAN-oi-worklist-split-customer-project.md, Slice 2) - the Raised at cell's own
  * tooltip. */
@@ -393,6 +408,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   bundled_qty?: string;
   bundled_with?: OrderInquiryBundledWith | null;
+  /**
+   * PLAN-oi-bundled-row-host-change.md. One entry per host item code, in rule order,
+   * for a bundled row - null on a non-bundled row. The companion has no Was of its own
+   * (no sheet row, no PO), so the (i) reads each host's OWN change instead.
+   */
+  bundled_host_changes?: OrderInquiryBundledHostChange[] | null;
   /** The document CS cited on an order back. Named on the row so the walk can honour it. */
   cited_document?: string | null;
   /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */

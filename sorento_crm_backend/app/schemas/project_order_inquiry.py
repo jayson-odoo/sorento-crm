@@ -49,6 +49,20 @@ class OrderInquiryBundledWithOut(BaseModel):
     anchor_headline: Optional[str] = None
 
 
+class OrderInquiryBundledHostChangeOut(BaseModel):
+    """PLAN-oi-bundled-row-host-change.md. One HOST's own change, read from that host's
+    own live row at display time - never written onto the companion row itself (owner
+    ruling: "it comes with the X and Y, so it should follow them, to have the same
+    delay"). `qty`/`delivery_date`/`previous_qty`/`previous_delivery_date` are all null
+    when the host has no live row of its own on the same order inquiry header."""
+
+    item_code: str
+    qty: Optional[str] = None
+    delivery_date: Optional[date] = None
+    previous_qty: Optional[str] = None
+    previous_delivery_date: Optional[date] = None
+
+
 class OrderInquiryLinkOut(BaseModel):
     """One placement on an order inquiry row (`projects.order_inquiry_links`, AC-I5).
 
@@ -363,6 +377,11 @@ class OrderInquiryWorklistRow(BaseModel):
     #: (`test_order_inquiry_bundles.py::test_d7`).
     bundled_qty: str = "0"
     bundled_with: Optional[OrderInquiryBundledWithOut] = None
+    #: PLAN-oi-bundled-row-host-change.md. One entry per host item code, in rule order,
+    #: read from each host's own live row - null on a non-bundled row. Declared here for
+    #: the same reason `bundled_with` is (`response_model` drops what it is not told
+    #: about, `test_order_inquiry_worklist.py`).
+    bundled_host_changes: Optional[List[OrderInquiryBundledHostChangeOut]] = None
 
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with
     #: it: `awaiting`, `acknowledged`, `changed` or `rejected`. Every one of the columns

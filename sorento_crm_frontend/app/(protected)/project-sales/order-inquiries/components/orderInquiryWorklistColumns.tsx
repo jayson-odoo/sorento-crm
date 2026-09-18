@@ -19,7 +19,12 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ackStateOf, movedNoteOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
+import {
+  ackStateOf,
+  bundledHostChangeLines,
+  movedNoteOf,
+  previousValueOf,
+} from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -506,6 +511,13 @@ function BundledDocumentsButton({
  * entirely (AC-RL-46) reads as a one-word muted pill instead - `used` or `note` - never an
  * icon (17 Sep ruling: words, never icons, for every mark this list carries). Both open the
  * SAME dialog this icon does; only the trigger's own shape differs.
+ *
+ * A BUNDLED row (`PLAN-oi-bundled-row-host-change.md`) carries none of the above - a
+ * companion has no sheet row, no PO and no Was of its own - so its icon opens a TOOLTIP
+ * instead of the dialog, one line per host, read straight off `bundled_host_changes`
+ * (owner ruling: "it comes with the X and Y, so it should follow them, to have the same
+ * delay"). Only when nothing else already claims the icon: a row that is ALSO rejected or
+ * changed shows that dialog first, exactly as today.
  */
 function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
   const [open, setOpen] = React.useState(false);
@@ -521,7 +533,34 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
   // trigger ever shows. Never checked on a `redirected_to_pool` row: that row's own note
   // reads differently and is handled by the branch above.
   const moved = !redirected ? movedNoteOf(row) : null;
-  if (!rejected && !changed && !redirected && !moved) return null;
+  const hostLines =
+    !rejected && !changed && !redirected && !moved ? bundledHostChangeLines(row) : null;
+  if (!rejected && !changed && !redirected && !moved && !hostLines) return null;
+
+  if (hostLines) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            data-testid={`qty-annotation-trigger-${row.id}`}
+            aria-label={`Show what ${row.item_code ?? row.so_number ?? 'this row'} rides with`}
+            className="size-5 shrink-0 text-muted-foreground"
+          >
+            <Info className="size-3.5" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs break-words">
+          {hostLines.map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
 
   const openDialog = (event: React.MouseEvent) => {
     event.stopPropagation();
