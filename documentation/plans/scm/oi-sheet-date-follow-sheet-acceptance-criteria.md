@@ -78,13 +78,19 @@ planning change raised beside it, carrying the Was/Now pair (`previous_qty` /
 
 ## AC-14 to AC-16: fix round 2 (19 Sep 2026, Opus review round 2)
 
-* **AC-14a (B3)** Given AC-4's shape PLUS an UNRELATED, already-PLACED sibling on the
-  SAME mirror carrying its OWN Was/Now (`previous_qty` 25, `previous_delivery_date`
-  2026-05-01) and its own `"AutoCount moved PO-1 to SO-9 on 2026-05-01; Was 25 on
-  2026-05-01"` note, when the repair runs, then the unrelated sibling's
-  `previous_delivery_date` and `note` are BYTE FOR BYTE untouched - a repair matches a
-  sibling only on the EXACT `(previous_delivery_date, previous_qty)` pairing the redirected
-  rows produced, never "any sibling on this mirror".
+* **AC-14a (B3, extended S12)** Given AC-4's shape PLUS FOUR siblings on the SAME mirror:
+  the MATCH itself, whose own note ALSO carries an `"AutoCount moved ... on <old_earliest>"`
+  provenance line at the SAME date the repair moves; a sibling sharing only the MATCH's
+  `previous_qty` (a different `previous_delivery_date`); a sibling sharing only the MATCH's
+  `previous_delivery_date` (a different `previous_qty`); and an UNRELATED, already-PLACED
+  sibling with its own Was/Now (`previous_qty` 25, `previous_delivery_date` 2026-05-01) and
+  its own `"AutoCount moved PO-1 to SO-9 on 2026-05-01; Was 25 on 2026-05-01"` note - when
+  the repair runs, then ONLY the match's `previous_delivery_date` and the "Was ... on"
+  fragment of its note move; the AutoCount provenance line on the match's OWN note and
+  every one of the other three siblings' `previous_delivery_date` / `note` are BYTE FOR
+  BYTE untouched. A repair matches a sibling only on the EXACT `(previous_delivery_date,
+  previous_qty)` pairing the redirected rows produced, never "any sibling on this mirror",
+  and the note edit is anchored to the "Was ... on" fragment alone.
 * **AC-14b (B3)** Given AC-4's shape PLUS a second, NON-redirected migrated row on the same
   mirror dated EARLIER than the redirected row's own date, when the repair runs, then the
   sibling's `previous_delivery_date` recomputes from the redirected row alone - the earlier,
@@ -93,7 +99,9 @@ planning change raised beside it, carrying the Was/Now pair (`previous_qty` /
   `delivery_date` already differs from its core line's `required_date` - not 7.4's own
   mistake), when any later sheet, however dated, is re-uploaded naming its line, then it is
   skipped `ALREADY_RAISED`, `rows_delivery_date_updated == 0`, and the row's date is
-  untouched.
+  untouched. The equality itself moved from a SQL clause to a Python comparison in fix
+  round 3 (S13, performance); the criterion is unchanged - a red under "drop the equality"
+  either way.
 * **AC-16 (S9, DB)** Given two migrated rows on one line, same item and quantity, whose
   `created_at` is set OPPOSITE to their insertion order, when a sheet row whose date
   matches neither is uploaded, then the row with the EARLIER `created_at` is the one

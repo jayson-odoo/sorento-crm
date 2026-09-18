@@ -598,8 +598,8 @@ def _resolve_line_repairs(
 
 
 def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
-    """B1/S1/S3/S8/S10, 19 Sep 2026: decide, ONCE and read-only, which already-raised sheet
-    rows would repair which migrated row - so `preview` can forecast
+    """B1/S1/S3/S8/S10/S13, 19 Sep 2026: decide, ONCE and read-only, which already-raised
+    sheet rows would repair which migrated row - so `preview` can forecast
     `rows_delivery_date_updated` and `apply` writes exactly what was forecast, never
     recomputing the decision.
 
@@ -616,17 +616,19 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     `delivery_date` still equals its CORE LINE's `required_date` - that is exactly what 7.4
     wrote and nothing else does. A row that already carries a date the line does not (a
     sheet date raised under this fix, or one a person edited) is never rewritten by a later
-    sheet: the sheet is a migration, not a second opinion. One `OR`-of-per-line equality
-    clause, not a Python filter, so it stays in the same query (S10).
+    sheet: the sheet is a migration, not a second opinion. Compared in PYTHON against
+    `required_date_by_mirror`, not one `OR`-of-per-line-equality clause in SQL (S13, 19 Sep
+    2026 perf round): `delivery_date` is not indexed, so at prod scale (11,500 already-raised
+    mirrors on a full book re-upload) that clause is an 1.1 MB statement forcing a Seq Scan
+    (measured 753 ms) where `so_line_id.in_(mirror_ids)` alone still uses the index.
 
     Repairs are resolved per LINE (`_resolve_line_repairs`), never per row, and grouped by
     MIRROR so every already-raised line's migrated siblings are loaded in ONE query (S3),
-    selecting only the columns the resolver reads (S10) rather than hydrating full rows -
-    233 migrated rows shared a `(mirror, item, qty)` group on the 15 Sep prod copy alone,
-    and a book re-upload can touch all of `scm.order_inquiry_row`'s ~11.8k migrated rows.
+    selecting only the columns the resolver (and the S8 comparison) read (S10) rather than
+    hydrating full rows - 233 migrated rows shared a `(mirror, item, qty)` group on the 15
+    Sep prod copy alone, and a book re-upload can touch all of `scm.order_inquiry_row`'s
+    ~11.8k migrated rows.
     """
-    from sqlalchemy import and_, or_
-
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
     # Every already-raised line's mirror id and its own required_date (S8), keyed by
@@ -641,12 +643,8 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
             continue
         required_date_by_mirror.setdefault(mirror_id, match.core_line.required_date)
 
-    per_line = [
-        and_(OrderInquiryRow.so_line_id == mirror_id, OrderInquiryRow.delivery_date == required)
-        for mirror_id, required in required_date_by_mirror.items()
-        if required is not None
-    ]
-    if not per_line:
+    mirror_ids = list(required_date_by_mirror)
+    if not mirror_ids:
         return
 
     rows = (
@@ -659,7 +657,7 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
             OrderInquiryRow.delivery_date,
         )
         .filter(
-            or_(*per_line),
+            OrderInquiryRow.so_line_id.in_(mirror_ids),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
             OrderInquiryRow.previous_qty.is_(None),
             OrderInquiryRow.previous_delivery_date.is_(None),
@@ -671,7 +669,14 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     )
     migrated_by_mirror: Dict[str, List[Any]] = {}
     for candidate in rows:
-        migrated_by_mirror.setdefault(str(candidate.so_line_id), []).append(candidate)
+        mirror_id = str(candidate.so_line_id)
+        # S8, done here rather than in SQL (S13): a required_date of `None` matches
+        # nothing - a migrated row's `delivery_date` is never `None` - so a line with no
+        # required date of its own is correctly never a repair candidate.
+        required = required_date_by_mirror.get(mirror_id)
+        if required is None or candidate.delivery_date != required:
+            continue
+        migrated_by_mirror.setdefault(mirror_id, []).append(candidate)
 
     dated_rows_by_mirror: Dict[str, List[Tuple[int, Any]]] = {}
     for index, match in enumerate(plan.matches):
@@ -746,6 +751,9 @@ def _resync_sibling_was_now(
         return
 
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+    # Private on purpose (N7, 19 Sep 2026): the note prose must match the writer's own
+    # formatting byte for byte ("182", never "182.0000"), so its own `_qty_str` is reused
+    # rather than a second copy that could drift from it.
     from app.services.project_order_inquiry_service import _qty_str
 
     siblings = (
@@ -1845,6 +1853,16 @@ def apply(
     #: looked like before this run touched it, never against its own already-mutated state.
     before_repair: Dict[str, Tuple[Optional[date], Optional[Decimal]]] = {}
 
+    # N8, 19 Sep 2026: one query for every row this run will repair, not one `db.get` per
+    # row inside the loop below.
+    from app.models.project_so import OrderInquiryRow
+
+    repair_ids = [m.repair_row_id for m in plan.matches if m.repair_row_id]
+    repaired_rows = {
+        str(r.id): r
+        for r in db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(repair_ids)).all()
+    } if repair_ids else {}
+
     for index, match in enumerate(plan.matches):
         row = match.row
         identity = _identity(row)
@@ -1872,9 +1890,7 @@ def apply(
             # `_plan` (S1) - this only writes it, so `preview`'s forecast and what `apply`
             # actually does cannot drift apart.
             if match.repair_row_id is not None:
-                from app.models.project_so import OrderInquiryRow
-
-                migrated = db.get(OrderInquiryRow, match.repair_row_id)
+                migrated = repaired_rows[match.repair_row_id]
                 mirror_id = str(migrated.so_line_id)
                 if mirror_id not in repaired_mirrors:
                     # The FIRST repair on this mirror this run - snapshot before anything

@@ -34,6 +34,13 @@ against the database). AC-8 was rewritten to the 7.4-legacy shape (two migrated 
 sharing the LINE's date, not two sheet-dated rows) since S8 confines a repair to exactly
 that fingerprint.
 
+Fix round 3 (19 Sep 2026, Opus review round 3, READY) closed three fixture-guard mutants on
+AC-14a (S12: a matched sibling whose OWN note also carries an "AutoCount moved ... on
+<date>" line at the date the repair moves; a near-miss sibling sharing only the matched
+sibling's quantity; a near-miss sibling sharing only its date) and moved S8's equality out
+of SQL into a plain Python comparison for performance (S13) with no change to the
+criterion AC-15 pins.
+
 Postgres only (`tests/_pg_fixture.py`, via `world()`). The world, sheet and apply builders
 are IMPORTED from `tests/test_project_order_inquiry_import_migration.py` and
 `tests/test_oi_sheet_pairing_repair.py` rather than copied, so the three files cannot
@@ -613,16 +620,32 @@ def test_ac_13_two_released_rows_recompute_the_siblings_was_now():
 
 
 def test_ac_14a_an_unrelated_siblings_was_now_is_byte_for_byte_untouched():
-    """AC-14a (B3, 19 Sep 2026). An unrelated PLACED sibling on the SAME mirror, with its
-    own Was/Now from a different event entirely and an "AutoCount moved ... on <date>"
-    provenance line `orderInquiryAck.ts` reads by prefix, must be untouched byte for byte
-    by a repair on this mirror - the match is on the EXACT (`previous_delivery_date`,
-    `previous_qty`) pairing the redirected rows produced, not "any sibling on this mirror".
+    """AC-14a (B3, 19 Sep 2026). Four siblings on one mirror, one of them the MATCH:
+
+    * `matched` carries the EXACT `(previous_delivery_date, previous_qty)` the redirected
+      row produced, AND its own "AutoCount moved ... on <old_date>" provenance line at the
+      SAME date the repair moves - the anchor must touch only the "Was ... on" fragment,
+      never the provenance line, even though both contain the identical date text (S12a).
+    * `same_qty_diff_date` shares the matched sibling's `previous_qty` (182) but a
+      DIFFERENT `previous_delivery_date` - untouched (S12b).
+    * `same_date_diff_qty` shares the matched sibling's `previous_delivery_date` but a
+      DIFFERENT `previous_qty` - untouched (S12c).
+    * `unrelated`, an already-PLACED sibling with an entirely different pairing and its own
+      "AutoCount moved ... on <date>" line, untouched byte for byte.
+
+    The match is on the EXACT pairing the redirected rows produced, never "any sibling on
+    this mirror".
     """
     old_date = date(2027, 3, 1)
     sheet_date = date(2026, 9, 1)
     unrelated_date = date(2026, 5, 1)
     unrelated_note = f"AutoCount moved PO-1 to SO-9 on {unrelated_date.isoformat()}; Was 25 on {unrelated_date.isoformat()}"
+    matched_note = (
+        f"AutoCount moved PO-2 to SO-10 on {old_date.isoformat()}; "
+        f"Was 182 on {old_date.isoformat()}"
+    )
+    same_qty_diff_date_note = "Was 182 on 2026-04-01"
+    same_date_diff_qty_note = f"Was 50 on {old_date.isoformat()}"
     with world() as w:
         order = w.order()
         line = w.line(order, qty_ordered="400", required_date=old_date)
@@ -636,6 +659,20 @@ def test_ac_14a_an_unrelated_siblings_was_now_is_byte_for_byte_untouched():
         mirror = w.mirror_of(line)
         w.db.flush()
 
+        matched = _fresh_row(
+            w, mirror, qty="220", delivery_date=date(2027, 6, 1),
+            previous_qty="182", previous_delivery_date=old_date, note=matched_note,
+        )
+        same_qty_diff_date = _fresh_row(
+            w, mirror, qty="30", delivery_date=date(2026, 7, 1),
+            previous_qty="182", previous_delivery_date=date(2026, 4, 1),
+            note=same_qty_diff_date_note,
+        )
+        same_date_diff_qty = _fresh_row(
+            w, mirror, qty="40", delivery_date=date(2026, 8, 1),
+            previous_qty="50", previous_delivery_date=old_date,
+            note=same_date_diff_qty_note,
+        )
         unrelated = _fresh_row(
             w, mirror, qty="25", delivery_date=date(2026, 6, 1),
             previous_qty="25", previous_delivery_date=unrelated_date,
@@ -652,6 +689,26 @@ def test_ac_14a_an_unrelated_siblings_was_now_is_byte_for_byte_untouched():
         result = _apply(w, data, file_name="2026-09 corrected.xlsx")
 
         assert result["rows_delivery_date_updated"] == 1, result
+
+        w.db.refresh(matched)
+        assert matched.previous_delivery_date == sheet_date
+        assert matched.note == (
+            f"AutoCount moved PO-2 to SO-10 on {old_date.isoformat()}; "
+            f"Was 182 on {sheet_date.isoformat()}"
+        ), "the AutoCount provenance line must survive verbatim; only the Was fragment moves"
+
+        w.db.refresh(same_qty_diff_date)
+        assert same_qty_diff_date.previous_delivery_date == date(2026, 4, 1), (
+            "a sibling sharing only the quantity was rewritten"
+        )
+        assert same_qty_diff_date.note == same_qty_diff_date_note
+
+        w.db.refresh(same_date_diff_qty)
+        assert same_date_diff_qty.previous_delivery_date == old_date, (
+            "a sibling sharing only the date was rewritten"
+        )
+        assert same_date_diff_qty.note == same_date_diff_qty_note
+
         w.db.refresh(unrelated)
         assert unrelated.previous_delivery_date == unrelated_date, (
             "an unrelated sibling's Was/Now was rewritten by a repair on the same mirror"

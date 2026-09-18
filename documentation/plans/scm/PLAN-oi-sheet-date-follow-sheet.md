@@ -1,6 +1,6 @@
 # PLAN: order inquiry sheet - follow the sheet's own delivery date
 
-Status: Track: small fix - in review. Reverses section 7.4 of
+Status: Track: small fix - ready for PR review. Reverses section 7.4 of
 `PLAN-scm-oi-sheet-pairing-repair.md`. Lane worktree `sorento_crm-oi-sheet-date`, branch
 `fix/oi-sheet-date-follow-sheet`, PR #1004. DB `sorento_oisd_ci` (its own; `sorento_oibf_ci`
 belongs to the #1003 lane and was not touched again after the first round's mistake).
@@ -200,17 +200,51 @@ of `scm.order_inquiry_row`'s roughly 11.8k migrated rows.
 
 **N6 - no frontend change this round** (the 8-tile grid from fix round 1 stands).
 
+## Fix round 3, 19 Sep 2026 (Opus review round 3, READY - last small round)
+
+**S13 - the S8 clause moved out of SQL.** The `OR`-of-per-line-equality clause from S10
+built one `and_(so_line_id ==, delivery_date ==)` per already-raised MIRROR; at prod scale
+(11,500 already-raised mirrors on a full book re-upload) that is a roughly 1.1 MB SQL
+statement, and `delivery_date` carries no index, so Postgres fell back to a Seq Scan
+(measured 753 ms) instead of the index scan `so_line_id.in_(mirror_ids)` alone gets. Fixed:
+the WHERE keeps only `so_line_id.in_(mirror_ids)` (indexed) plus the B2/stamp filters; the
+S8 equality against `required_date_by_mirror` moved to a plain Python comparison over the
+already-projected `delivery_date` column (already in the `with_entities` list, and the map
+was already built) while grouping the rows into `migrated_by_mirror`. One query, same
+result, the index intact. `test_ac_15_...` still red under "drop the equality" - it is now
+a Python `if`, not a SQL clause, but the same behaviour it guards.
+
+**S12 - three fixture-guard mutants closed.** `test_ac_14a_...` now seeds FOUR siblings
+on one mirror instead of one: the MATCHED sibling's own note carries an "AutoCount moved
+... on <old_earliest>" provenance line at the SAME date the repair moves, so the anchored
+edit's own precision is asserted (the provenance line survives verbatim; only the "Was ...
+on" fragment moves) rather than merely assumed; a sibling sharing the matched sibling's
+`previous_qty` but a DIFFERENT `previous_delivery_date` is asserted untouched; a sibling
+sharing the matched sibling's `previous_delivery_date` but a DIFFERENT `previous_qty` is
+asserted untouched too - closing three mutants that survived the round 2 test as written
+(each near-miss on only one of the two fields, rather than both).
+
+**N7 - a comment, not a mechanism.** The `_qty_str` import in `_resync_sibling_was_now`
+now says why the private name is deliberate: the note prose has to match the writer's own
+formatting byte for byte, so reusing it is what keeps the two paths from drifting.
+
+**N8 - one query, not one `db.get` per repaired row.** `apply()` now gathers every
+`match.repair_row_id` before the loop and loads them in a single
+`filter(OrderInquiryRow.id.in_(...))`, keyed by id in a dict the loop reads from - five
+lines, replacing the per-row `db.get` the loop used to make.
+
 ## Files touched
 
 * `app/services/project_order_inquiry_import_service.py` - the delivery-date assignment;
   `_already_raised` (now also returns the mirror map), `_resolve_line_repairs`,
-  `_resolve_delivery_date_repairs` (S8/S10 query), `_redirected_earliest_and_qty`,
-  `_resync_sibling_was_now` (B3 rewrite); the apply-loop branch (`before_repair` snapshot);
-  the `_result` / `validate` summary line. `_mirror_of` and the first round's
-  `_repair_migrated_date` are gone, superseded by the above.
+  `_resolve_delivery_date_repairs` (S8 as a Python comparison per S13, S10's other three
+  filters + column projection still in SQL), `_redirected_earliest_and_qty`,
+  `_resync_sibling_was_now` (B3 rewrite, N7 comment); the apply-loop branch (`before_repair`
+  snapshot, N8's bulk preload); the `_result` / `validate` summary line. `_mirror_of` and
+  the first round's `_repair_migrated_date` are gone, superseded by the above.
 * `app/services/import_outcome_codes.py` - `DELIVERY_DATE_UPDATED` code + label.
-* `tests/test_oi_sheet_date_follow_sheet.py` (new, round 1; extended round 2) - AC-1 to
-  AC-16, plus two DB-free unit tests for `_resolve_line_repairs`.
+* `tests/test_oi_sheet_date_follow_sheet.py` (new, round 1; extended rounds 2 and 3) - AC-1
+  to AC-16, plus two DB-free unit tests for `_resolve_line_repairs`.
 * `tests/test_oi_sheet_pairing_repair.py` - `test_ac_r_37_...` rewritten for the reversed
   rule.
 * `tests/test_project_order_inquiry_import_migration.py` - `RESULT_KEYS` gains
