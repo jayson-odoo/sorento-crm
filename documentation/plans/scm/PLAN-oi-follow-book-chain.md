@@ -1,6 +1,6 @@
 # PLAN - Order inquiry rows follow the AutoCount book, through the PO to SPO chain
 
-Status: DRAFT 18 Sep 2026. Awaiting owner grill on D1 to D4 below. No code written.
+Status: DRAFT 18 Sep 2026. D1 and D2 RULED by the owner on the review page 18 Sep ("we must follow autocount link always"). D3 and D4 awaiting his answer. No code written.
 UAC: `oi-follow-book-chain-acceptance-criteria.md`. Branch `lane/oi-follow-book-chain`.
 Domain: SCM, order inquiries. Owner ruling 18 Sep 2026: "doesn't matter it is closed or not,
 if autocount has that linking, we must use and follow that."
@@ -47,13 +47,13 @@ lands in this gap.
 
 ## 3. Decisions for the owner (each with a recommendation)
 
-**D1. A real link, or a read-only "AutoCount says" display?** Recommend a REAL link, written
+**D1. A real link, or a read-only "AutoCount says" display?** RULED 18 Sep: real link. Recommended a REAL link, written
 by the one link writer (`_write_link`), `auto = true`, trigger `autocount_ingest`, which is
 what the sheet importer has written 6,000 times. A display-only fact would be a second
 meaning in the same two columns, and the Buy card and stock debt would still count the row as
 unbought.
 
-**D2. Which document carries the link when the PO line became a shipping order?** Recommend
+**D2. Which document carries the link when the PO line became a shipping order?** RULED 18 Sep: shipping order first, PO line for the remainder. Recommended
 the shipping order line, with the PO shown beside it "via SPO" (the worklist already does
 this). The PO line takes only what did not ship. This is the importer's rule and the owner's
 14 Sep ruling on double counting.
@@ -66,10 +66,11 @@ redirected row holding a received document. The alternative, leaving the holder 
 row unlinked, keeps the screen disagreeing with AutoCount, which is what the ruling forbids.
 
 **D4. AC-RL-43 (16 Sep): a book MOVE skips a fully received document.** Today's ruling reads
-as lifting it. Recommend lifting it for a closed PO line that still has an open shipping order
-behind it (goods not landed, the owner's case), and KEEPING it where the goods have landed,
-because moving a landed link rewrites what a row was told it bought a year ago
-(`oi-replan-received-links` journey, step 4). First links to a landed document are still
+as lifting it, and the owner's page note ("we must follow autocount link always") moves the
+recommendation to lifting it FULLY: a move follows whether or not the goods have landed, the
+old row gets a note. The narrower option (lift only while goods have not landed) keeps a
+landed row's history untouched (`oi-replan-received-links` journey, step 4) at the cost of
+the screen disagreeing with AutoCount. Owner to pick. First links to a landed document are still
 written (AC-FB-3): that is history being recorded, not rewritten.
 
 ## 4. Design
