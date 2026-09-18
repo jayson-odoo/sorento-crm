@@ -106,6 +106,25 @@ def test_board_and_supply_carry_buy_origin():
     from app.schemas.project_board import BoardContribution
     from app.schemas.project_supply import SupplyLine
 
+    # PLAN-local-buy-routing-toggle.md (18 Sep 2026): this file's own dicts are
+    # hand-built and never read the setting, but the flag is set ON here anyway so
+    # this pin stays explicitly scoped to the ON behaviour like every other test below.
+    # The Core `.update({SystemSetting.local_buy_routing_enabled: True})` (rather than a
+    # plain `row.local_buy_routing_enabled = True` attribute set) is deliberate: a bare
+    # instance attribute for a column the model does not yet declare is silently accepted
+    # by plain Python and never reaches SQLAlchemy at all, which would leave this red for
+    # no reason once the column lands. Referencing the class attribute fails loudly
+    # (AttributeError) while it is still missing.
+    with blank_session() as db:
+        from app.models.user import SystemSetting
+
+        row = SystemSetting(id=_u())
+        db.add(row)
+        db.flush()
+        db.query(SystemSetting).filter(SystemSetting.id == row.id).update(
+            {SystemSetting.local_buy_routing_enabled: True}
+        )
+
     assert "buy_origin" in BoardContribution.model_fields
     assert "buy_origin" in SupplyLine.model_fields
 
@@ -476,6 +495,23 @@ def test_scm_demand_sees_no_local_buy():
     with pg_session() as db:
         company_id, owner, project, product = _world(db)
         from tests.scm.test_project_supply_service_ladder import _group_sites
+
+        # PLAN-local-buy-routing-toggle.md (18 Sep 2026): this test's `buy_lines` origin
+        # is still hand-built, not resolved, but the flag is set ON here so the pin stays
+        # explicitly scoped to the ON behaviour rather than relying on the (off) default.
+        # See `test_board_and_supply_carry_buy_origin` above for why this is a Core
+        # `.update({SystemSetting.local_buy_routing_enabled: ...})` rather than a plain
+        # attribute set: the latter is a silent no-op while the column does not exist.
+        from app.models.user import SystemSetting
+
+        setting_row = db.query(SystemSetting).first()
+        if setting_row is None:
+            setting_row = SystemSetting(id=str(uuid.uuid4()))
+            db.add(setting_row)
+            db.flush()
+        db.query(SystemSetting).filter(SystemSetting.id == setting_row.id).update(
+            {SystemSetting.local_buy_routing_enabled: True}
+        )
 
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]

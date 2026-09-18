@@ -1004,6 +1004,14 @@ describe('FulfilmentBoardListView: the Local pill', () => {
     await screen.findByText('SO397450');
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
   });
+
+  it('shows no Local pill when buy_origin is undefined (PLAN-local-buy-routing-toggle.md: the setting off, `dict.get` answers None/undefined for every Buy)', async () => {
+    const noOrigin = contribution({ key: 'so-1:line-10', buy_origin: undefined });
+    renderView({ contributions: [noOrigin] });
+
+    await screen.findByText('SO397450');
+    expect(screen.queryByText('Local')).not.toBeInTheDocument();
+  });
 });
 
 /**
