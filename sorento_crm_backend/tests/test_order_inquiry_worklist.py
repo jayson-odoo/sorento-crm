@@ -2335,3 +2335,83 @@ def test_a_hosts_delay_row_never_answers_for_its_own_live_order_row_regardless_o
     ).json()
     sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
     assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]
+
+
+def test_a_hosts_own_oldest_live_order_row_wins_over_a_newer_one_regardless_of_sort(api):
+    """Review round 1 follow up (19 Sep 2026). A host carries TWO live ORDER rows on
+    the same item code - the OLDER one (by created_at) is the one whose figures answer
+    for the host, never the newer one, and the answer is IDENTICAL under the default
+    sort and under sort=item_code and dir=desc.
+
+    The older row is constructed SECOND in code, and both rows carry explicit
+    created_at values (created_at defaults to the transaction's own now(), tied across
+    every row one test writes) and explicit ids, deliberately ordered so a mutant that
+    picks the first candidate encountered in page order (candidates[0]) rather than the
+    OLDEST one picks the newer row every run, under both sorts, rather than by an id
+    or page order coin flip.
+    """
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x])
+
+    # Constructed FIRST in code, but the NEWER row by created_at - an earlier delivery
+    # date puts it FIRST under the default sort, and its own id sorts first under the
+    # item_code tie break too, so candidates[0] would pick this one under both sorts.
+    newer_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000001",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("150"),
+        delivery_date=date(2026, 5, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        created_at=datetime(2026, 9, 10, 0, 0, 0),
+    )
+    # Constructed SECOND in code, but the OLDER row by created_at - the one that must
+    # win.
+    older_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000002",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("300"),
+        delivery_date=date(2027, 4, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        created_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db.add_all([newer_row, older_row])
+    db.flush()
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=older_row.id,
+    )
+    db.commit()
+
+    expected = [
+        {
+            "item_code": host_x.product_code,
+            "qty": "300",
+            "delivery_date": "2027-04-01",
+            "previous_qty": None,
+            "previous_delivery_date": None,
+        }
+    ]
+
+    default_body = client.get(LIST, params={"limit": 100}).json()
+    default_row = next(r for r in default_body["data"] if r["id"] == companion_row.id)
+    assert default_row["bundled_host_changes"] == expected, default_row["bundled_host_changes"]
+
+    sorted_body = client.get(
+        LIST, params={"limit": 100, "sort": "item_code", "dir": "desc"}
+    ).json()
+    sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
+    assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]
