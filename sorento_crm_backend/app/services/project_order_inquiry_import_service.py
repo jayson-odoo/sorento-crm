@@ -192,11 +192,14 @@ class _Match:
     #: repairing, whether because it is not already-raised, it states no date, or every
     #: candidate is already on the sheet's date.
     repair_row_id: Optional[str] = None
-    #: Which repair `repair_row_id` needs (round 5, 19 Sep 2026, prod feedback after #1004
-    #: deployed): `"A"` writes the row's own `delivery_date` (untouched since migration);
-    #: `"B"` writes `previous_delivery_date` instead - a row a planning change already
-    #: restated IN PLACE, whose Now (`qty`/`delivery_date`) is correct but still carries
-    #: 7.4's mistake on its Was side. `None` when `repair_row_id` is `None`.
+    #: Which repair `repair_row_id` needs (round 5/6, 19 Sep 2026, prod feedback after
+    #: #1004/#1011 deployed): `"A"` writes the row's own `delivery_date` (untouched since
+    #: migration); `"B"` writes `previous_delivery_date` instead - a row a planning change
+    #: already restated IN PLACE, whose Now (`qty`/`delivery_date`) is correct but still
+    #: carries 7.4's mistake on its Was side; `"C"` writes BOTH `previous_qty` and
+    #: `previous_delivery_date` - a row a board Confirm restated IN PLACE before either was
+    #: ever recorded, adopting the sheet row as the Was the settle never wrote. `None` when
+    #: `repair_row_id` is `None`.
     repair_shape: Optional[str] = None
 
     @property
@@ -662,6 +665,102 @@ def _resolve_shape_b_repairs(
     return repairs
 
 
+def _resolve_shape_c_repairs(
+    dated_rows: Sequence[Tuple[int, Any]],
+    already_claimed: set,
+    live_candidates: Sequence[Any],
+    cancelled_siblings: Sequence[Any],
+) -> Dict[int, str]:
+    """Shape C, round 7 (19 Sep 2026, owner go) - revised after a prod `SELECT` showed the
+    round 6 premise (stamp + `changed_at` + no Was, on ONE row) never actually occurs.
+
+    The real shape, SO314593's CB2806A-DIY / SRTWB245: a reconfirm CANCELLED a migrated
+    row that had ALREADY been settled in place once (qty 220, `previous_qty` 182,
+    `previous_delivery_date` 2027-03-01 - its OWN Was, from that earlier settle) and its
+    note overwritten to `"Superseded by revision N"` (`_settle_row_in_place`'s cancel path
+    replaces the note outright - the migration stamp is GONE, so a cancelled sibling can
+    never be found by it), then RAISED A FRESH LIVE ROW in its place (qty 220,
+    `delivery_date` the line's own `required_date`, no Was at all, no stamp - board-raised,
+    not migrated). The sheet's 182 @ 1.6.2026 is the Was the live row never got, because it
+    REPLACES a migrated row rather than being one.
+
+    A sheet row is paired to a LIVE row through a CANCELLED, migrated SIBLING on the SAME
+    mirror whose OWN quantity - its `qty` (never settled before being superseded) OR its
+    `previous_qty` (settled once, then superseded) - equals the sheet row's own quantity:
+    that identity is what says "this sheet row is about the SAME instruction that migrated
+    row was." Only a sibling `import_job_rows` itself records as a row this feature CREATED
+    (`entity_type="order_inquiry_row"`, `outcome="created"`, `entity_id` = the row's own id -
+    the same durable record `outcome.success(...)` writes for every row it raises) ever
+    counts as a migrated sibling (S1, round 7 review round 2): the cancel path overwrites the
+    note, so a plain cancelled BOARD row can otherwise coincidentally share a quantity with a
+    sheet row and be mistaken for one.
+
+    The live row adopted is the unclaimed live candidate whose OWN `qty` equals the
+    sibling's own `qty` (S2, round 7 review round 2) - prod's own shape (sibling `qty` 220,
+    live `qty` 220) - falling back to the first unclaimed candidate sharing the sibling's
+    item code only when no quantity match exists. NEVER by file position (round 7 review):
+    two live rows and two cancelled siblings of the same item are paired by which sibling's
+    own quantity the sheet row's own quantity matches, not by which pair happens to line up
+    positionally.
+
+    Claim-once on BOTH pools - "one live row per cancelled migrated sibling" - so a second
+    live row cannot ride on a sibling a first live row already used, and a second sibling
+    carrying the same quantity is what a second live row needs. Only for sheet rows shapes
+    A and B leave unclaimed (`already_claimed` is their combined claim set) - "exact match,
+    shape A, shape B, shape C" is the full priority order.
+
+    No pass-1 no-op: `previous_qty IS NULL` can never already equal the sheet's own
+    (non-`NULL`) quantity, so idempotency comes from the eligibility precondition itself -
+    once this writes `previous_qty`/`previous_delivery_date`, the row no longer carries
+    `previous_qty IS NULL` and drops out of the candidate pool on the next run entirely.
+    """
+    unclaimed_live = list(live_candidates)
+    unclaimed_siblings = list(cancelled_siblings)
+    repairs: Dict[int, str] = {}
+    for index, row in dated_rows:
+        if index in already_claimed:
+            continue
+        qty = _dec(row.qty)
+        sibling = next(
+            (
+                candidate for candidate in unclaimed_siblings
+                if candidate.item_code == row.item_code
+                and (
+                    _dec(candidate.qty) == qty
+                    or (
+                        candidate.previous_qty is not None
+                        and _dec(candidate.previous_qty) == qty
+                    )
+                )
+            ),
+            None,
+        )
+        if sibling is None:
+            continue
+        # S2, round 7 review round 2: paired by the sibling's OWN qty first (prod's own
+        # shape - sibling `qty` 220, live `qty` 220), never by list/creation position - a
+        # bare item-code match alone is a coin flip whenever more than one live candidate
+        # shares the item. Falls back to item-only only when nothing carries that quantity.
+        sibling_qty = _dec(sibling.qty)
+        live = next(
+            (
+                c for c in unclaimed_live
+                if c.item_code == row.item_code and _dec(c.qty) == sibling_qty
+            ),
+            None,
+        )
+        if live is None:
+            live = next(
+                (c for c in unclaimed_live if c.item_code == row.item_code), None
+            )
+        if live is None:
+            continue
+        unclaimed_siblings.remove(sibling)
+        unclaimed_live.remove(live)
+        repairs[index] = str(live.id)
+    return repairs
+
+
 def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     """B1/S1/S3/S8/S10/S13, 19 Sep 2026: decide, ONCE and read-only, which already-raised
     sheet rows would repair which migrated row - so `preview` can forecast
@@ -695,16 +794,26 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     `previous_delivery_date` and the note's own "Was ... on" fragment - the row's Now,
     `changed_at` and `ack_state` are all untouched).
 
-    Repairs are resolved per LINE, never per row, both shapes together in
-    `_resolve_line_repairs` (A) then `_resolve_shape_b_repairs` (B, only for sheet rows A
-    left unclaimed), and grouped by MIRROR so every already-raised line's migrated rows -
-    both shapes - are loaded in ONE query (S3), selecting only the columns either resolver
-    (or the S8-style comparison) reads (S10) rather than hydrating full rows - 233 migrated
-    rows shared a `(mirror, item, qty)` group on the 15 Sep prod copy alone, and a book
-    re-upload can touch all of `scm.order_inquiry_row`'s ~11.8k migrated rows.
-    """
-    from sqlalchemy import and_, or_
+    **Shape C, round 7 (19 Sep 2026, owner go)** - revised after a prod `SELECT` showed
+    round 6's premise (one row: stamp + `changed_at` + no Was) never actually occurs. The
+    real shape, SO314593's CB2806A-DIY / SRTWB245: a reconfirm CANCELLED a migrated row
+    that had already been settled once (so it carries ITS OWN Was, from that settle, and
+    its note is overwritten to `"Superseded by revision N"` - the stamp is gone, so this
+    row can never be found by it) and RAISED A FRESH LIVE ROW in its place (no Was at all,
+    no stamp, `delivery_date` the line's own `required_date`). The sheet row is the Was the
+    live row never got, because it replaces a migrated row rather than being one.
+    `_resolve_shape_c_repairs` pairs a sheet row to the live row through a CANCELLED
+    sibling on the same mirror whose OWN `qty` or `previous_qty` equals the sheet's
+    quantity - never by file position. Written `apply()`-side onto the LIVE row only; the
+    cancelled sibling is read, never touched.
 
+    Repairs are resolved per LINE, never per row, all three shapes together in
+    `_resolve_line_repairs` (A) then `_resolve_shape_b_repairs` (B) then
+    `_resolve_shape_c_repairs` (C, only for sheet rows A and B leave unclaimed), and
+    grouped by MIRROR so every already-raised line's rows this needs - live AND cancelled -
+    are loaded in ONE query (S3), selecting only the columns either resolver (or the
+    S8-style comparison) reads (S10) rather than hydrating full rows.
+    """
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
     # Every already-raised line's mirror id and its own required_date (S8), keyed by
@@ -723,9 +832,11 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     if not mirror_ids:
         return
 
-    # ONE query for both shapes: shape A's fingerprint is on `previous_qty` /
-    # `previous_delivery_date` being NULL, shape B's is on them being SET - the two are
-    # mutually exclusive by construction, so no row can ever answer to both.
+    # ONE query for every row a repair on these mirrors could need - LIVE candidates for
+    # shapes A/B/C, and CANCELLED ones for shape C's sibling lookup (round 7, S3): the
+    # state filter that used to exclude cancelled rows entirely is gone, since shape C's
+    # own sibling is always one, and its note can never be trusted (the cancel path
+    # overwrites it to "Superseded by revision N").
     rows = (
         db.query(OrderInquiryRow)
         .with_entities(
@@ -736,41 +847,86 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
             OrderInquiryRow.delivery_date,
             OrderInquiryRow.previous_qty,
             OrderInquiryRow.previous_delivery_date,
+            OrderInquiryRow.changed_at,
+            OrderInquiryRow.note,
+            OrderInquiryRow.state,
         )
-        .filter(
-            OrderInquiryRow.so_line_id.in_(mirror_ids),
-            OrderInquiryRow.state != INQUIRY_CANCELLED,
-            OrderInquiryRow.note.like(f"{_MIGRATION_STAMP}%"),
-            or_(
-                and_(
-                    OrderInquiryRow.previous_qty.is_(None),
-                    OrderInquiryRow.previous_delivery_date.is_(None),
-                    OrderInquiryRow.changed_at.is_(None),
-                ),
-                and_(
-                    OrderInquiryRow.previous_qty.isnot(None),
-                    OrderInquiryRow.previous_delivery_date.isnot(None),
-                ),
-            ),
-        )
+        .filter(OrderInquiryRow.so_line_id.in_(mirror_ids))
         .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
         .all()
     )
     shape_a_by_mirror: Dict[str, List[Any]] = {}
     shape_b_by_mirror: Dict[str, List[Any]] = {}
+    shape_c_live_by_mirror: Dict[str, List[Any]] = {}
+    cancelled_candidates: List[Any] = []
     for candidate in rows:
         mirror_id = str(candidate.so_line_id)
+        if candidate.state == INQUIRY_CANCELLED:
+            # Shape C's sibling pool: identified by QUANTITY alone at resolution time,
+            # never by note (round 7) - collected here unconditionally; narrowed to
+            # genuinely MIGRATED rows below (S1, round 7 review round 2).
+            cancelled_candidates.append(candidate)
+            continue
         # S8, done here rather than in SQL (S13): a required_date of `None` matches
         # nothing - a migrated row's `delivery_date` is never `None` - so a line with no
-        # required date of its own is correctly never a repair candidate, either shape.
+        # required date of its own is correctly never a repair candidate, any shape.
         required = required_date_by_mirror.get(mirror_id)
         if required is None:
             continue
+        stamped = (candidate.note or "").startswith(_MIGRATION_STAMP)
         if candidate.previous_qty is None:
-            if candidate.delivery_date == required:
+            if candidate.delivery_date != required:
+                continue
+            # Shape A (B2, unchanged since #1004): stamped, and ALL THREE markers NULL
+            # (`previous_qty` already is, here) - no planning change has restated this
+            # row at all, on either pair of columns. Checked in PYTHON, not SQL, for the
+            # same un-indexed-column reason S13 moved `delivery_date` out.
+            if (
+                stamped
+                and candidate.previous_delivery_date is None
+                and candidate.changed_at is None
+            ):
                 shape_a_by_mirror.setdefault(mirror_id, []).append(candidate)
-        elif candidate.previous_delivery_date == required:
+            else:
+                # Shape C's live-row pool: everything else with no Was - ANY origin, no
+                # stamp required, and mutually EXCLUSIVE with shape A's own pool (a row
+                # genuinely eligible for shape A must never also be independently
+                # available to shape C, or the two resolvers could both claim it - the
+                # prod live row itself carries `changed_at` set from the reconfirm that
+                # raised it, which is exactly why this cannot require `changed_at IS
+                # NULL` the way shape A does).
+                shape_c_live_by_mirror.setdefault(mirror_id, []).append(candidate)
+        elif stamped and candidate.previous_delivery_date == required:
             shape_b_by_mirror.setdefault(mirror_id, []).append(candidate)
+
+    # S1, round 7 review round 2: a cancelled row's own note can never be trusted once
+    # superseded (the cancel path overwrites it to "Superseded by revision N"), so a plain
+    # cancelled BOARD row can otherwise coincidentally share a quantity with a sheet row
+    # and be mistaken for a migrated sibling. `import_job_rows` is the durable record of
+    # every row THIS FEATURE ever created (`outcome.success(..., entity_type=
+    # "order_inquiry_row", entity_id=entry.id)`, `oc.OUTCOME_CREATED`) - a cancelled row
+    # only qualifies as a sibling when its OWN id is recorded there. One extra query over
+    # the cancelled candidate ids on this same round trip, never per-row; skipped
+    # entirely when there is nothing to narrow.
+    cancelled_by_mirror: Dict[str, List[Any]] = {}
+    if cancelled_candidates:
+        from app.models.job import ImportJobRow
+
+        candidate_ids = [str(c.id) for c in cancelled_candidates]
+        migrated_ids = {
+            entity_id
+            for (entity_id,) in db.query(ImportJobRow.entity_id)
+            .filter(
+                ImportJobRow.entity_type == "order_inquiry_row",
+                ImportJobRow.outcome == oc.OUTCOME_CREATED,
+                ImportJobRow.entity_id.in_(candidate_ids),
+            )
+            .all()
+        }
+        for candidate in cancelled_candidates:
+            if str(candidate.id) not in migrated_ids:
+                continue
+            cancelled_by_mirror.setdefault(str(candidate.so_line_id), []).append(candidate)
 
     dated_rows_by_mirror: Dict[str, List[Tuple[int, Any]]] = {}
     for index, match in enumerate(plan.matches):
@@ -799,6 +955,17 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
         for index, migrated_id in repairs_b.items():
             plan.matches[index].repair_row_id = migrated_id
             plan.matches[index].repair_shape = "B"
+
+        claimed_ab = exact_matched_a | set(repairs_a) | set(repairs_b)
+        repairs_c = _resolve_shape_c_repairs(
+            dated_rows,
+            claimed_ab,
+            shape_c_live_by_mirror.get(mirror_id, []),
+            cancelled_by_mirror.get(mirror_id, []),
+        )
+        for index, migrated_id in repairs_c.items():
+            plan.matches[index].repair_row_id = migrated_id
+            plan.matches[index].repair_shape = "C"
 
 
 def _redirected_earliest_and_qty(
@@ -2017,6 +2184,47 @@ def apply(
                                      identity=identity, value=row.so_number,
                                      entity_type="order_inquiry_row", entity_id=migrated.id,
                                      message="Was date corrected to the sheet's own")
+                    continue
+                if match.repair_shape == "C":
+                    # Shape C, round 7 (19 Sep 2026, owner go): the LIVE row that
+                    # replaced a migrated row a reconfirm cancelled -
+                    # `_resolve_shape_c_repairs` already found the cancelled sibling
+                    # that identifies this sheet row; only the LIVE row is written here,
+                    # the cancelled sibling is read-only. Now (`qty`/`delivery_date`),
+                    # `state` and `ack_state` are all untouched; no sibling resync
+                    # (there is no `redirected_to_pool` row behind this shape).
+                    from app.services.project_order_inquiry_service import _qty_str
+
+                    qty_str = _qty_str(_dec(row.qty))
+                    fragment = f"Was {qty_str} on {row.delivery_date.isoformat()}"
+                    migrated.previous_qty = _dec(row.qty)
+                    migrated.previous_delivery_date = row.delivery_date
+                    # Anchored (round 7 review, tightened round 7 review round 2 -
+                    # BLOCKER): a plain `find("Was ")` + `existing_note[:was_at]` prefix
+                    # rebuild drops EVERYTHING after the old fragment, which loses real
+                    # prose a live row can carry beside it (a probe's own linkage note,
+                    # "; Linked to ... ; auto: autocount linkage"). Matched by REGEX and
+                    # spliced IN PLACE instead, so the tail survives byte for byte;
+                    # appended only when the row carries no fragment to anchor onto at
+                    # all.
+                    existing_note = migrated.note or ""
+                    anchor = re.search(r"Was \S+ on \d{4}-\d{2}-\d{2}", existing_note)
+                    if anchor is None:
+                        migrated.note = (
+                            f"{existing_note}; {fragment}" if existing_note else fragment
+                        )
+                    else:
+                        migrated.note = (
+                            existing_note[: anchor.start()]
+                            + fragment
+                            + existing_note[anchor.end():]
+                        )
+                    outcome.updated(
+                        row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
+                        identity=identity, value=row.so_number,
+                        entity_type="order_inquiry_row", entity_id=migrated.id,
+                        message="Was adopted from the sheet (migrated row superseded)",
+                    )
                     continue
                 mirror_id = str(migrated.so_line_id)
                 if mirror_id not in repaired_mirrors:
