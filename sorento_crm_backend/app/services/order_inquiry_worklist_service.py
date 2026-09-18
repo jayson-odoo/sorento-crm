@@ -36,7 +36,8 @@ from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, case, cast, func, or_, select
+from sqlalchemy import Date, String, case, cast, func, or_, select, text
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
 from app.models.base import get_company_scope
@@ -86,6 +87,7 @@ from app.services.project_order_inquiry_service import (
     arrives_outside_window,
     derived_spo_open_clauses,
     project_customer_label,
+    project_title_with_note,
 )
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
@@ -138,6 +140,8 @@ SORTABLE_FIELDS = frozenset(
         "qty",
         "delivery_date",
         "project_customer",
+        "customer_name",
+        "project_title",
         "supplier",
         "po_number",
         "state",
@@ -494,6 +498,70 @@ _RAISED_BY_ID = func.coalesce(
     SOSupplyDecision.confirmed_by, OrderInquiryRow.acknowledged_by, OrderInquiry.raised_by
 )
 _RAISED_BY_NAME = User.name
+
+# `raise_history` (PLAN-oi-worklist-split-customer-project.md, Slice 2, owner 18 Sep): on
+# a re-confirm the carry site cancels the old row and raises a fresh one under the SAME
+# `order_inquiry_id` (`project_order_inquiry_service._write`, "the inquiry is deliberately
+# reused") - so Raised at jumps to the re-confirm time and the row that actually carries
+# the FIRST raise is the one this call just cancelled. ONLY a CANCELLED predecessor is
+# history (Opus review round 1, B1): an OPEN sibling row on the same SO line is a second
+# LIVE instruction, not a superseded one, and reading it as history marked 168 live
+# duplicates as "previously raised" against 1 genuine supersede on a look at prod data.
+# So this is the cancelled carry-predecessor today, and whatever IT in turn cancelled
+# before that - never an open row. Each entry's raiser reads the same rule `_RAISED_BY_ID`
+# reads for the row itself, aliased so it is answered per HISTORICAL row rather than the
+# page row.
+_RAISE_HISTORY_ROW = aliased(OrderInquiryRow)
+_RAISE_HISTORY_INQUIRY = aliased(OrderInquiry)
+_RAISE_HISTORY_DECISION = aliased(SOSupplyDecision)
+_RAISE_HISTORY_USER = aliased(User)
+_RAISE_HISTORY_RAISED_BY_ID = func.coalesce(
+    _RAISE_HISTORY_DECISION.confirmed_by,
+    _RAISE_HISTORY_ROW.acknowledged_by,
+    _RAISE_HISTORY_INQUIRY.raised_by,
+)
+# One correlated `json_agg` per page row (never N+1): a row with no SO line (`so_line_id`
+# IS NULL) matches nothing on either side of that equality - not even another null, SQL's
+# usual rule - so it answers `[]` for free, with no separate branch needed.
+_RAISE_HISTORY = (
+    select(
+        func.coalesce(
+            func.json_agg(
+                aggregate_order_by(
+                    func.json_build_object(
+                        "raised_at",
+                        _RAISE_HISTORY_ROW.created_at,
+                        "raised_by_name",
+                        _RAISE_HISTORY_USER.name,
+                    ),
+                    _RAISE_HISTORY_ROW.created_at.desc(),
+                )
+            ),
+            text("'[]'::json"),
+        )
+    )
+    .select_from(_RAISE_HISTORY_ROW)
+    .join(
+        _RAISE_HISTORY_INQUIRY,
+        _RAISE_HISTORY_INQUIRY.id == _RAISE_HISTORY_ROW.order_inquiry_id,
+    )
+    .outerjoin(
+        _RAISE_HISTORY_DECISION,
+        _RAISE_HISTORY_DECISION.id == _RAISE_HISTORY_ROW.supply_decision_id,
+    )
+    .outerjoin(
+        _RAISE_HISTORY_USER, _RAISE_HISTORY_USER.id == _RAISE_HISTORY_RAISED_BY_ID
+    )
+    .where(
+        _RAISE_HISTORY_ROW.order_inquiry_id == OrderInquiryRow.order_inquiry_id,
+        _RAISE_HISTORY_ROW.so_line_id == OrderInquiryRow.so_line_id,
+        _RAISE_HISTORY_ROW.created_at < OrderInquiryRow.created_at,
+        _RAISE_HISTORY_ROW.state == INQUIRY_CANCELLED,
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_RAISE_HISTORY_COLUMN = _RAISE_HISTORY.label("raise_history")
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
 # row, or the confirmed allocation's warehouse for a plan/confirmed row
@@ -520,6 +588,8 @@ _SORT_EXPRESSIONS = {
     "qty": OrderInquiryRow.qty,
     "delivery_date": OrderInquiryRow.delivery_date,
     "project_customer": _PROJECT_CUSTOMER,
+    "customer_name": _CUSTOMER_NAME,
+    "project_title": Project.title,
     "supplier": Supplier.supplier_name,
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
@@ -593,6 +663,18 @@ _COLUMNS = (
     OrderInquiryRow.redirected_to_pool.label("redirected_to_pool"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
+    # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
+    # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
+    # label outright (S2, review round 1) - the export runs this `json_agg` for every row
+    # of the whole unpaged set otherwise, a cost nobody behind that column asked for.
+    _RAISE_HISTORY_COLUMN,
+)
+# The export's own column set (S2, review round 1): everything `_COLUMNS` selects EXCEPT
+# `raise_history` - `_write_sheet` never reads that key, so the export ran a `json_agg`
+# per row of the whole unpaged set for nothing. Identity comparison (`is not`), not `!=`:
+# a `Label` has no meaningful equality of its own to compare by value.
+_EXPORT_COLUMNS = tuple(
+    column for column in _COLUMNS if column is not _RAISE_HISTORY_COLUMN
 )
 
 
@@ -1680,6 +1762,13 @@ class OrderInquiryWorklistService:
             "project_customer": project_customer_label(
                 row.customer_name, row.project_title, row.is_pre_order
             ),
+            # PLAN-oi-worklist-split-customer-project.md: the two columns Customer and
+            # Project print from now on, `project_customer` staying on the row for the
+            # Excel export and search that still read it. Project carries the PRE-ORDER
+            # note the combined label appends, so a pre-order row still reads as one
+            # once the two are apart.
+            "customer_name": row.customer_name,
+            "project_title": project_title_with_note(row.project_title, row.is_pre_order),
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
             # D8: a bundled row with no document of its own names its anchor instead of
@@ -1742,6 +1831,13 @@ class OrderInquiryWorklistService:
             "redirected_to_pool": bool(row.redirected_to_pool),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
+            # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at cell's
+            # own tooltip - the CANCELLED predecessor(s) of this row on the same SO line,
+            # newest first. `[]` on a row with no SO line, or nothing prior. `getattr`,
+            # not `row.raise_history`: `_all_rows` (the export) selects `_EXPORT_COLUMNS`,
+            # which drops this column outright, so the export's own `row` namedtuple
+            # never carries the attribute at all.
+            "raise_history": getattr(row, "raise_history", None) or [],
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
@@ -2593,10 +2689,15 @@ class OrderInquiryWorklistService:
         return filename, buffer.getvalue()
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
-        """The same set the list serves, unpaged, in the workbook's own order."""
+        """The same set the list serves, unpaged, in the workbook's own order.
+
+        `_EXPORT_COLUMNS`, not `_COLUMNS` (S2, review round 1): the sheet never prints
+        `raise_history`, so there is no reason to run that `json_agg` for the whole
+        unpaged set here.
+        """
         rows = (
             self._base(**filters)
-            .with_entities(*_COLUMNS)
+            .with_entities(*_EXPORT_COLUMNS)
             .order_by(
                 OrderInquiryRow.delivery_date.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),

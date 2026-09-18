@@ -19,6 +19,7 @@ import type {
   OrderInquiryWorklistParams,
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
+  UnacknowledgeResult,
   UnplaceAllPreview,
   UnplaceAllRequest,
   UnplaceAllResult,
@@ -307,6 +308,25 @@ export async function acknowledgeOrderInquiryRowsByFilter(
 }
 
 /**
+ * Unconfirm (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026) - the Actions menu's own
+ * reverse of `acknowledgeOrderInquiryRows`, for a row taken on by mistake or a reconfirm
+ * CS has not actually made yet. Reversible (a plain Confirm undoes it), so there is no
+ * `filter` variant and no confirmation dialog on the button that calls this.
+ */
+export async function unacknowledgeOrderInquiryRows(
+  rowIds: string[],
+): Promise<UnacknowledgeResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/unacknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to unconfirm those rows'));
+  return response.json();
+}
+
+/**
  * Purchasing refuses one row, with a reason (AC-H5). The row leaves netting and its
  * sales-order line goes back to the board undecided carrying the refusal.
  */
@@ -448,9 +468,9 @@ export async function unplaceAllOrderInquiryRows(
  *        code/name.
  *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
  *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
- *        delivery_date, project_customer, supplier, po_number, state, raised_at,
- *        raised_by_name - and an unknown value is a 422, never a silent fall back to
- *        the default.
+ *        delivery_date, project_customer, customer_name, project_title, supplier,
+ *        po_number, state, raised_at, raised_by_name - and an unknown value is a 422,
+ *        never a silent fall back to the default.
  *
  *   GET  {BASE}/order-inquiries/summary
  *        the same filters, no paging
