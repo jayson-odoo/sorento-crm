@@ -80,6 +80,13 @@ export interface SystemSetting {
    */
   planGrain?: 'product' | 'location';
 
+  /**
+   * Local-supplier Buy routing (PLAN-local-buy-routing-toggle.md), off by default.
+   * Off means the whole local rule does not run: no pill, every Buy reaches Order
+   * Inquiries and counts toward reorder demand.
+   */
+  localBuyRoutingEnabled?: boolean;
+
   /** System default approver for procurement "Send for approval" (skips chooser when set). */
   purchaseRequestDefaultApproverUserId?: string | null;
   purchaseRequestDefaultApproverName?: string | null;

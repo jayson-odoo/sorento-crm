@@ -599,6 +599,7 @@ class FulfilmentBoardService:
         day_window_start: Optional[date] = None,
         preview_policy: Optional[str] = None,
         exclude_covered_line_ids: Optional[Sequence[str]] = None,
+        actor_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The board for one selection of sales orders.
 
@@ -606,6 +607,11 @@ class FulfilmentBoardService:
         reproducible, and it is echoed back in the response for the same reason: a board that
         quietly disagreed with itself between two reads would be disagreeing about which of the
         planner's commitments are already late.
+
+        `actor_user_id` is the requester, threaded through only for `board_undo_map`'s
+        own admin gate (AC-R2-30, S5): a journal-less order's `undo` reads
+        `mode="reconstructed"` for a superadmin/admin requester and `None` for every
+        other role, same as an order with no active decision at all.
 
         `exclude_covered_line_ids` (PROJECT line ids) previews the ladder for a line an ACTIVE
         decision currently covers, as if that one line's hold did not exist: its own reserve is
@@ -618,7 +624,7 @@ class FulfilmentBoardService:
             str(i) for i in (exclude_covered_line_ids or [])
         }
         self._locations_by_row = {}
-        self._buy_origin: Dict[str, str] = {}
+        self._buy_origin: Dict[str, Optional[str]] = {}
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
@@ -688,7 +694,7 @@ class FulfilmentBoardService:
         # off the mirror the heal just completed, not a stale one.
         from app.services.project_supply_undo_service import board_undo_map
 
-        undo_by_so = board_undo_map(self.db, adopted_by_so)
+        undo_by_so = board_undo_map(self.db, adopted_by_so, actor_user_id=actor_user_id)
         rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never

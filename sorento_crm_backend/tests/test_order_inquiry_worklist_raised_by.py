@@ -536,21 +536,44 @@ def test_a_reconfirm_by_somebody_else_leaves_the_earlier_rows_attributed_to_who_
     response = client.get(LIST, params={"query": inquiry.inquiry_no})
     assert response.status_code == 200, response.text
     by_item = {row["item_code"]: row for row in response.json()["data"]}
-    # A's row still says A, however many times somebody else has confirmed since.
-    assert by_item[seeded["cindy_product"].product_code]["raised_by_name"] == (
-        seeded["cindy"].name
-    )
-    # B's revision raised B's row.
+    # B's revision raised B's row, and it is still open (`raised`) - visible by default.
     assert by_item[second_product.product_code]["raised_by_name"] == seeded["johnson"].name
 
+    # A's line was NOT named in revision 2, so _retire_uncovered_rows superseded A's own
+    # row (a line the new revision does not cover, unrelated to this test's own point) -
+    # a fact of this fixture, not of raised_by. R2 (`PLAN-oi-worklist-one-header.md`, 17
+    # Sep) hides a cancelled row from the default list, so reading A's row back now
+    # needs `state=cancelled`; its own raised_by still says A regardless of how many
+    # times somebody else has confirmed since.
+    cancelled_response = client.get(
+        LIST, params={"query": inquiry.inquiry_no, "state": "cancelled"}
+    )
+    assert cancelled_response.status_code == 200, cancelled_response.text
+    cancelled_by_item = {
+        row["item_code"]: row for row in cancelled_response.json()["data"]
+    }
+    assert cancelled_by_item[seeded["cindy_product"].product_code]["raised_by_name"] == (
+        seeded["cindy"].name
+    )
 
-def test_the_filter_follows_the_row_rather_than_the_re_stamped_header(api):
-    """The same split, through the filter: asking for A's rows returns the row A raised,
-    not everything on an inquiry whose header B has since re-stamped."""
+
+def test_a_restated_unchanged_line_keeps_its_row_and_follows_the_new_confirmer(api):
+    """AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2, captain ruling 18 Sep) replaces
+    the cancel-and-re-raise mechanic this test used to pin. Revision 2 NAMES A's own
+    line again, at the SAME qty and date the row already carries (a plain `raised`
+    ORDER row, no links, no redirect, same verb) - the widened settle-in-place gate
+    now keeps that row AS IS: same row id, state stays `raised`, only its `supply_
+    decision_id` moves to revision 2. Nothing is cancelled and nothing fresh is
+    raised, so `raised_by` (`coalesce(decision.confirmed_by, row.acknowledged_by,
+    inquiry.raised_by)`) now reads revision 2's OWN confirmer for this exact row -
+    Johnson, not Cindy - and Cindy's own name finds nothing at all, in any state:
+    there is no historical, cancelled row left naming her the way there used to be.
+    """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     client, db, company_id, seeded = api
     order = seeded["cindy_order"]
+    original_row_id = seeded["cindy_row"].id
     service = ProjectOrderInquiryService(db)
     revision_two = _decision(
         db,
@@ -567,6 +590,10 @@ def test_the_filter_follows_the_row_rather_than_the_re_stamped_header(api):
         [
             {
                 "line": seeded["cindy_line"],
+                # The SAME qty and date the row already carries - AC-R2-10's own shape
+                # (a restated UNCHANGED line). A changed need is a different AC
+                # (AC-R2-11), pinned in test_order_inquiry_handover_automation.py, not
+                # this file.
                 "buy_qty": Decimal("932"),
                 "item_code": seeded["cindy_product"].product_code,
                 "required_date": date(2026, 3, 2),
@@ -577,11 +604,37 @@ def test_the_filter_follows_the_row_rather_than_the_re_stamped_header(api):
     )
     db.commit()
 
-    response = client.get(LIST, params={"raised_by": seeded["cindy"].id})
+    db.expire_all()
+    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == original_row_id).one()
+    assert row.state == INQUIRY_RAISED, (
+        "AC-R2-10: a restated unchanged line is settled in place, never cancelled"
+    )
+    assert row.supply_decision_id == revision_two.id, (
+        "the row's own supply_decision_id must move to the new revision"
+    )
 
-    assert response.status_code == 200, response.text
-    ids = {row["id"] for row in response.json()["data"]}
-    assert seeded["cindy_row"].id in ids
+    johnson_response = client.get(LIST, params={"raised_by": seeded["johnson"].id})
+    assert johnson_response.status_code == 200, johnson_response.text
+    johnson_by_id = {r["id"]: r for r in johnson_response.json()["data"]}
+    assert original_row_id in johnson_by_id, (
+        "the row now follows revision 2's own confirmer, Johnson"
+    )
+    assert johnson_by_id[original_row_id]["raised_by_name"] == seeded["johnson"].name
+
+    cindy_response = client.get(LIST, params={"raised_by": seeded["cindy"].id})
+    assert cindy_response.status_code == 200, cindy_response.text
+    assert cindy_response.json()["data"] == [], (
+        "Cindy's own name must find nothing - the row she raised now follows Johnson"
+    )
+
+    cindy_cancelled_response = client.get(
+        LIST, params={"raised_by": seeded["cindy"].id, "state": "cancelled"}
+    )
+    assert cindy_cancelled_response.status_code == 200, cindy_cancelled_response.text
+    assert cindy_cancelled_response.json()["data"] == [], (
+        "AC-R2-10: nothing was cancelled, so there is no historical row left naming "
+        "Cindy either"
+    )
 
 
 # ------------------------------------------- rows raised off an amendment, not a revision

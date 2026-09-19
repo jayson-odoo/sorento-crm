@@ -45,6 +45,11 @@ const VERDICT_PILL: Record<string, string> = {
   // Outlined rather than filled: it is in the DATABASE, not a verdict given on this board,
   // and a solid green beside a solid green approval said the two were the same thing.
   confirmed: 'border border-emerald-400 text-emerald-700',
+  // PLAN-board-change-proposed-pill (owner ruling 18 Sep 2026): the board's OWN pre-mark,
+  // nothing written yet. Outlined amber - the change-hazard family the rest of the board
+  // already uses (see `stale` below) - never the solid green `saved` wears, which read as an
+  // autosave over a line the book had just moved (SO421287 line 15, 18 Sep 2026).
+  change_proposed: 'border border-amber-400 text-amber-800',
   // S4/AC-4.4: the line was saved against a suggestion the engine no longer makes. Amber,
   // the same warning tone the rest of the board uses for "look at this before you trust it".
   stale: 'bg-amber-100 text-amber-800',
@@ -63,7 +68,26 @@ const VERDICT_LABEL: Record<string, string> = {
   confirmed: 'Confirmed',
   stale: 'Suggestion changed',
   cancelled: 'Cancelled',
+  change_proposed: 'Change proposed',
 };
+
+/**
+ * A pre-mark and NOTHING ELSE: seeded into the session draft by the board's own pre-mark
+ * effect (`preMarkedKeys`, `FulfilmentBoardPanel`), with no server-saved draft behind it yet.
+ *
+ * `decision.preMarked` alone is not enough - once the server-saved draft arrives
+ * (`contribution.draft`), the line genuinely has been saved (by this pre-mark's own eventual
+ * Confirm write, or by another planner in the meantime) and reads "Saved" like any other, even
+ * though the session's own draft entry has not been replaced. Exported so the Verdict column
+ * (`FulfilmentBoardListView`) and its grid equivalent (`BoardCellBreakdownDialog`) withhold the
+ * Undo arrow off the SAME rule the pill reads - there is nothing here yet to undo.
+ */
+export function isPreMarkOnly(
+  contribution: Pick<BoardContribution, 'draft'>,
+  decision: BoardDecision | null,
+): boolean {
+  return Boolean(decision?.preMarked) && !contribution.draft;
+}
 
 export function BoardDecisionPill({
   contribution,
@@ -112,6 +136,11 @@ export function BoardDecisionPill({
     verdict = 'rejected';
   } else if (stale) {
     verdict = 'stale';
+  } else if (isPreMarkOnly(contribution, decision)) {
+    // PLAN-board-change-proposed-pill: sits with `saved` in the resolution order (it IS a
+    // session draft, just not yet a written one) - `rejected` and `stale` both still win over
+    // it for the same reason they win over `saved`.
+    verdict = 'change_proposed';
   } else if (draftSource) {
     verdict = 'saved';
   } else {

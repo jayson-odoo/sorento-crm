@@ -419,10 +419,12 @@ export interface SupplyLine {
   /**
    * Whether the product's supplier sits in the home country (S3,
    * `PLAN-local-supplier-oi-routing.md`). A `local` Buy raises no Order Inquiry row on
-   * confirm - the sheet marks it with a `Local` pill and nothing else changes. Absent on a
-   * server that has not wired origin resolution yet.
+   * confirm - the sheet marks it with a `Local` pill and nothing else changes. `null`
+   * while `local_buy_routing_enabled` (System Settings) is off, the shipped default
+   * (`PLAN-local-buy-routing-toggle.md`) - every Buy then reaches Order Inquiries and
+   * no pill renders. Absent on a server that has not wired origin resolution yet.
    */
-  buy_origin?: 'local' | 'overseas';
+  buy_origin?: 'local' | 'overseas' | null;
   required_date?: string | null;
   /**
    * Warehouse CODE of the line's fulfilment location, read off the CORE sales-order line's
@@ -1348,10 +1350,12 @@ export interface BoardContribution {
    * Whether the product's supplier sits in the home country (S3,
    * `PLAN-local-supplier-oi-routing.md`), computed once per product for the whole board. A
    * `local` Buy raises no Order Inquiry row on confirm; the List view and the ladder options
-   * table mark it with a `Local` pill. Absent on a server that has not wired origin
-   * resolution yet.
+   * table mark it with a `Local` pill. `null` while `local_buy_routing_enabled` (System
+   * Settings) is off, the shipped default (`PLAN-local-buy-routing-toggle.md`) - every Buy
+   * then reaches Order Inquiries and no pill renders. Absent on a server that has not wired
+   * origin resolution yet.
    */
-  buy_origin?: 'local' | 'overseas';
+  buy_origin?: 'local' | 'overseas' | null;
 }
 
 /** What the engine suggested for one line, in the same shape a source is stated in. */
@@ -1740,8 +1744,12 @@ export interface BoardAxisRow {
  * own journal stopped writing. Null when nothing blocks it. `linked`, not `manual_link` (review
  * round): the `auto` flag on the link is irrelevant - an AutoCount pairing purchasing's own
  * upload placed is purchasing's work as much as a hand click.
+ *
+ * `changed` (`PLAN-scm-oi-handover-r2-undo.md`, S4, AC-R2-24): a row the journal covers now
+ * holds a value another writer wrote after the confirm - undo would overwrite that write, so
+ * the park refuses instead of silently discarding it.
  */
-export type BoardUndoRefusal = 'linked' | 'actioned' | null;
+export type BoardUndoRefusal = 'linked' | 'actioned' | 'changed' | null;
 
 /**
  * What the board knows about undoing an order's newest confirm (`undo_0001`, S1, #978): the
@@ -1758,6 +1766,13 @@ export interface BoardUndo {
   /** Addressing only, never rendered: the pending action's payload, so a Confirm
    * written during the countdown is detected server-side (AC-UC-28). */
   decision_id: string;
+  /**
+   * `journal` replays the order's own journalled revision the normal way. `reconstructed`
+   * (`PLAN-scm-oi-handover-r2-undo.md`, S5, AC-R2-30) is a best-effort undo of a decision
+   * confirmed before the journal existed - the board only sets this for an admin/superadmin
+   * requester; every other role gets `undo: null` for that order and never sees the entry.
+   */
+  mode: 'journal' | 'reconstructed';
 }
 
 /** One selected order's standing, which is what makes the partial-decision reality visible. */
@@ -1983,6 +1998,18 @@ export interface BoardDecision {
    * stores it beside `amend_reason` and counts it in the result.
    */
   suspected_system_issue?: boolean;
+  /**
+   * Seeded by the board's OWN pre-mark effect (`preMarkedKeys`, `FulfilmentBoardPanel`), never
+   * chosen by a person and never posted to the server - "Nothing is written here" until Confirm
+   * or an explicit Save/Amend/Reject replaces this whole entry with one a person actually gave
+   * (`decide()` always writes a fresh object, so an act on a pre-mark drops the flag on its own).
+   *
+   * PLAN-board-change-proposed-pill (owner ruling 18 Sep 2026): distinguishes the pill's
+   * "Change proposed" from "Saved" - a pre-mark with no server-saved `contribution.draft` yet is
+   * not an autosave, and the Verdict column reads it to withhold the Undo arrow too (nothing has
+   * actually been saved here to undo).
+   */
+  preMarked?: boolean;
 }
 
 /**

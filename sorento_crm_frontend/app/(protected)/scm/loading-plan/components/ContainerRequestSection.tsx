@@ -265,6 +265,7 @@ function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
     project: l.project_title,
     agent: l.agent_label,
     price: l.unit_price,
+    open_qty: l.open_qty,
     qty: l.qty,
     required_date: l.required_date,
     channel: l.demand_class === 'project' ? 'project' : 'retail',

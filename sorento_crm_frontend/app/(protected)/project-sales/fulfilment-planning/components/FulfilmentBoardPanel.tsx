@@ -125,7 +125,14 @@ export function boardViewFrom(value: string | null): BoardView {
 const UNDO_REFUSAL_TITLES: Record<string, string> = {
   linked: 'Purchasing linked a PO line',
   actioned: 'Purchasing marked a row actioned',
+  changed: 'A row changed since this confirm',
 };
+
+/** The second line a RECONSTRUCTED entry states, unrefused, so the admin who presses it knows
+ * what a best-effort undo of a journal-less revision does not bring back (AC-R2-F02,
+ * `PLAN-scm-oi-handover-r2-undo.md` S5). A refused entry shows its refusal reason instead -
+ * there is room for one second line, and the refusal is the more urgent of the two. */
+const RECONSTRUCTED_UNDO_NOTE = 'Saved drafts and row notes are not restored';
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
@@ -505,7 +512,12 @@ export function FulfilmentBoardPanel({
       preMarkedBatchIds.current.add(batchId);
       setDraft((current) => {
         const next = { ...current };
-        for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
+        // `preMarked: true` (PLAN-board-change-proposed-pill, owner ruling 18 Sep 2026): what
+        // tells the pill and the Verdict column this entry is the board's OWN pre-mark, not a
+        // decision anybody has actually saved - `decide()` always writes a fresh object over
+        // this key, so the flag drops itself the moment a person acts on the line.
+        for (const key of keys)
+          if (!next[key]) next[key] = { verdict: 'approved', preMarked: true };
         return next;
       });
     }
@@ -872,6 +884,10 @@ export function FulfilmentBoardPanel({
     orderId: string;
     soNumber: string;
     decisionId: string;
+    /** Carried into the payload (S5, AC-R2-34): the server 409s a `mode` that does not match
+     * the decision's own journal state, so a stale gear entry can never replay the wrong
+     * path. */
+    mode: 'journal' | 'reconstructed';
   } | null>(null);
   const undoAction = useDeferredAction({
     actionKey: 'project_sales_order.undo_confirm',
@@ -881,7 +897,9 @@ export function FulfilmentBoardPanel({
     subject: undoTarget?.soNumber ?? '',
     surface: 'inline',
     successMessage: `${undoTarget?.soNumber ?? 'Order'} confirm undone`,
-    payload: undoTarget ? { decision_id: undoTarget.decisionId } : undefined,
+    payload: undoTarget
+      ? { decision_id: undoTarget.decisionId, mode: undoTarget.mode }
+      : undefined,
     invalidateKeys: [[PLANNING_BOARD_KEY]],
   });
   React.useEffect(() => {
@@ -1476,7 +1494,15 @@ export function FulfilmentBoardPanel({
                 <Settings className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            {/* Bounded so a long undo label (AC-R2-F06: ", reconstructed" plus its own
+                second line) truncates INSIDE the menu instead of growing the menu wider
+                than a 375px viewport - `DropdownMenuContent` carries no width cap of its
+                own (only `min-w-[8rem]`), so an unbounded flex item would otherwise just
+                grow to fit its untruncated text. `sm:max-w-md` (review round 1, S7), not
+                `sm:max-w-80`: the reconstructed label plus its own "Saved drafts and row
+                notes are not restored" second line needs more room at 1280 than the
+                narrower cap left, and was itself getting truncated. */}
+            <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)] sm:max-w-md">
               {/* Every decision taken on this board since it was opened, or since the
                   last confirm, goes back to the suggestion - on the SERVER too (S4): each
                   key is deleted through `decide(key, null)`, or the next board read would
@@ -1499,12 +1525,27 @@ export function FulfilmentBoardPanel({
                 <>
                   <DropdownMenuSeparator />
                   {undoableOrders.map((order) => {
-                    const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})`;
+                    const mode = order.undo?.mode ?? 'journal';
+                    // AC-R2-F02: a reconstructed entry names itself so the admin knows,
+                    // before pressing, that this is a best-effort undo rather than a
+                    // journal replay.
+                    const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})${
+                      mode === 'reconstructed' ? ', reconstructed' : ''
+                    }`;
                     const reason = UNDO_REFUSAL_TITLES[order.undo?.refusal ?? ''];
+                    // A refusal is the more urgent of the two possible second lines
+                    // (AC-R2-F03); unrefused, a reconstructed entry states what it will
+                    // not bring back (AC-R2-F02).
+                    const secondLine =
+                      reason ?? (mode === 'reconstructed' ? RECONSTRUCTED_UNDO_NOTE : null);
                     const disabled = Boolean(order.undo?.refusal);
                     return (
                       <DropdownMenuItem
                         key={order.sales_order_id}
+                        // `min-w-0`: a flex item's default `min-width: auto` would let its
+                        // content dictate the item's width and defeat the `truncate` below,
+                        // so the menu would grow past the viewport instead (AC-R2-F06).
+                        className="min-w-0"
                         disabled={disabled}
                         onSelect={
                           disabled
@@ -1514,24 +1555,31 @@ export function FulfilmentBoardPanel({
                                   orderId: order.project_sales_order_id as string,
                                   soNumber: order.so_number,
                                   decisionId: order.undo?.decision_id as string,
+                                  mode,
                                 })
                         }
                       >
                         <Undo2 className="size-4" aria-hidden />
                         {/* Exactly one `title` owner in this item, the label span - a
                             disabled item's own `title` never renders (AC-UC-03), so the
-                            reason is plain visible text underneath instead. */}
+                            reason is plain visible text underneath instead. `min-w-0` on
+                            both this wrapper and the DropdownMenuContent's own width cap
+                            keep a long label truncating INSIDE the menu rather than
+                            forcing it wider than the viewport (AC-R2-F06). */}
                         <span className="flex min-w-0 flex-col">
                           <span className="truncate" title={label}>
                             {label}
                           </span>
-                          {reason ? (
+                          {secondLine ? (
                             // `text-foreground/70`, not `text-muted-foreground`
                             // (review round follow-up): the disabled item's own
                             // reduced opacity stacks with a muted foreground and
                             // drops this line below the contrast floor.
-                            <span className="truncate text-xs text-foreground/70">
-                              {reason}
+                            <span
+                              className="truncate text-xs text-foreground/70"
+                              title={secondLine}
+                            >
+                              {secondLine}
                             </span>
                           ) : null}
                         </span>
@@ -1787,6 +1835,11 @@ export function FulfilmentBoardPanel({
                 // beside the title, drives Grid and List alike - the panel's own search
                 // box is gone, so there is no second box to disagree with this one.
                 externalSearch={productSearch}
+                // `visibleListContributions` also narrows by `kindFilter` (above), which
+                // is not part of `externalSearch` - so the reset key carries both, or
+                // toggling a kind card while on page 3 would leave the list showing
+                // whatever landed there instead of the top of the narrowed set.
+                pageResetKey={`${productSearch}|${kindFilter ?? ''}`}
               />
             ) : (
               <>

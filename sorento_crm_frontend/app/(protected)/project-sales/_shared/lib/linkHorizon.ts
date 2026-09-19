@@ -214,16 +214,29 @@ export function linkOutcomeText(result: AutoPlaceResult): string {
   );
 }
 
-/** The same, for the Acknowledge press, which reports what it took on first. */
+/**
+ * The same, for the Confirm press (PLAN-oi-confirm-per-so, AC-CF-10: "Confirmed N rows" -
+ * R7 renamed Acknowledge to Confirm everywhere visible; this is the last spot that still
+ * said the old word), which reports what it took on first.
+ *
+ * `skipped` (AC-CF-8, review round: was on the wire but never shown) is a rejected or
+ * cancelled row the press matched and left alone - appended to whatever the rest of the
+ * sentence already says, never silently dropped from the toast the way it was never
+ * silently dropped from the response body.
+ */
 export function acknowledgeOutcomeText(result: AcknowledgeResult): string {
-  const rows = `${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'} acknowledged`;
+  const rows = `Confirmed ${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'}`;
   const after = result.after_horizon ?? 0;
+  let text: string;
   if (after > 0) {
-    return `${rows}, ${result.linked_rows} linked, ${afterPhrase(after, result.link_up_to)}`;
+    text = `${rows}, ${result.linked_rows} linked, ${afterPhrase(after, result.link_up_to)}`;
+  } else if (result.linked_rows === 0) {
+    text = rows;
+  } else {
+    text =
+      `${rows}, ${result.linked_rows} linked across ` +
+      `${result.links} document line${result.links === 1 ? '' : 's'}`;
   }
-  if (result.linked_rows === 0) return rows;
-  return (
-    `${rows}, ${result.linked_rows} linked across ` +
-    `${result.links} document line${result.links === 1 ? '' : 's'}`
-  );
+  const skipped = result.skipped ?? 0;
+  return skipped > 0 ? `${text}, ${skipped} skipped` : text;
 }

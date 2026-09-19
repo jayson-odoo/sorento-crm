@@ -294,6 +294,43 @@ describe('SupplierCodesTab - Needs a decision', () => {
     expect(screen.getAllByText(/400/).length).toBeGreaterThanOrEqual(1);
   });
 
+  // AC-F6 (owner feedback round 5): "Supplier says" leads with the sheet's own 型号 -
+  // `model_no` - which for a bare model is not the same text as the (possibly composed)
+  // `item_code`.
+  it('AC-F6: leads Supplier says with model_no when it differs from the composed code', () => {
+    state.rows = [
+      row({
+        item_code: 'SRTWC8613-150',
+        model_no: '8613',
+        product_name: '连体马桶',
+        brand: 'SORENTO',
+        spec: '150mm',
+      }),
+    ];
+    renderTab();
+
+    expect(screen.getByText('8613 · 连体马桶 · SORENTO · 150mm')).toBeInTheDocument();
+  });
+
+  // Letter-led rows (and anything else with no separate 型号) must not repeat the code
+  // back at itself - `SRTWC8357-RL · 盆 · S` would say nothing a person does not already
+  // see in the Code column.
+  it("AC-F6: omits model_no from Supplier says when it equals the row's own code", () => {
+    state.rows = [
+      row({
+        item_code: 'SRTWC8357-RL',
+        model_no: 'SRTWC8357-RL',
+        product_name: '盆',
+        brand: 'S',
+        spec: null,
+      }),
+    ];
+    renderTab();
+
+    expect(screen.getByText('盆 · S')).toBeInTheDocument();
+    expect(screen.queryByText(/SRTWC8357-RL ·/)).not.toBeInTheDocument();
+  });
+
   it('says every code binds when the queue is empty (AC-B4)', () => {
     state.rows = [];
     renderTab();
@@ -535,5 +572,19 @@ describe('SupplierCodesTab - Remembered', () => {
       actionKey: 'supplier_code_alias.forget',
       entityType: 'supplier_code_alias',
     });
+  });
+});
+
+// S4 (`PLAN-stock-list-bare-model-codes.md`) - the word list is edited on the Import field
+// aliases page, never here; this tab only links out to it, pinned to the word doc type.
+describe('SupplierCodesTab - Stock list words link (AC-F5)', () => {
+  it('renders a link to the import field aliases page, pinned to the word doc type', () => {
+    renderTab();
+
+    const link = screen.getByRole('link', { name: /stock list words/i });
+    expect(link).toHaveAttribute(
+      'href',
+      '/system-management/import-field-aliases?doc_type=supplier_inventory_word',
+    );
   });
 });

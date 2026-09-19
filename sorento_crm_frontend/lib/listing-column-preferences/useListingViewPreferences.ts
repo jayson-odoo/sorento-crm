@@ -123,7 +123,7 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
    */
   const persistedFingerprintRef = useRef<string | null>(null);
 
-  const { data: saved } = useQuery({
+  const { data: saved, isError: loadFailed } = useQuery({
     queryKey: [CONFIG_QUERY_KEY_PREFIX, key],
     queryFn: () => getUserListColumnConfig(key),
     enabled: Boolean(key),
@@ -139,13 +139,18 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
     setFiltersState(next);
   }, []);
 
-  // Apply the stored view once, on first resolve.
+  // Apply the stored view once, on first resolve. A FAILED read (`retry: 0`, so one
+  // network blip is enough) must resolve this exactly like "nothing stored" rather than
+  // never resolve at all - `saved` stays `undefined` forever on an error, and gating on
+  // it alone left `isLoading` (and so `applied`) stuck `true` for the rest of the
+  // session, wedging every data query this hook gates open on `!isViewPrefsLoading`
+  // (review round, no reproduction filed - read here first).
   useEffect(() => {
     if (!key) return;
-    if (!saved) return;
+    if (!saved && !loadFailed) return;
     if (appliedRef.current) return;
 
-    const payload = saved.config as UserListColumnConfigPayload | null;
+    const payload = saved ? (saved.config as UserListColumnConfigPayload | null) : null;
 
     const storedSorting = payload ? parseStoredSorting(payload.sorting) : null;
     const nextSorting = storedSorting ?? defaultSortingRef.current;
@@ -167,7 +172,7 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
     persistedFingerprintRef.current = viewFingerprintOf(nextSorting, storedFilters);
     appliedRef.current = true;
     setApplied(true);
-  }, [key, saved, filtersVersion]);
+  }, [key, saved, loadFailed, filtersVersion]);
 
   const viewFingerprint = useMemo(
     () => viewFingerprintOf(sorting, filters),
@@ -201,9 +206,18 @@ export function useListingViewPreferences<TFilters extends Record<string, unknow
     }, debounceMs),
   );
 
+  // Gated on the `applied` STATE, never on `appliedRef`: the ref flips inside the apply
+  // effect above, in THIS same effect pass, so a ref guard lets this run once more in the
+  // commit whose rendered `sorting`/`filters` are still the PRE-apply defaults - and
+  // schedule a debounced write of them. It is normally invisible (the applied values land
+  // a render later and the debounce collapses onto them), but not when the page is left
+  // inside the 800ms window: nothing cancels a pending write, so the defaults fire and
+  // erase the stored view (measured on Order Inquiries, AC-CF-18). The state is set in the
+  // same batch as the applied values, so `applied === true` guarantees the render this
+  // reads is the post-apply one.
   useEffect(() => {
     if (!key) return;
-    if (!appliedRef.current) return;
+    if (!applied) return;
 
     const sortingPayload = toSortEntries(sorting);
 

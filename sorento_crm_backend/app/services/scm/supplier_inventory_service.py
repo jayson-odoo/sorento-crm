@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.scm import SupplierInventory
+from app.services.scm.supplier_code_composer import WordList
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
 from app.services.scm.supplier_scope import (
     supplier_check as _supplier_check,
@@ -55,8 +56,11 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _parse(db: Session, data: bytes) -> InventoryReadResult:
-    return read_workbook(data, db=db)
+def _parse(db: Session, data: bytes, supplier_id: Optional[str] = None) -> InventoryReadResult:
+    """The read, with the CHOSEN supplier's own word list (D1-D6): a bare 型号 composes
+    through it, a letter-led one never consults it at all (D1/D2's regression guard)."""
+    words = WordList.for_supplier(db, supplier_id) if supplier_id else None
+    return read_workbook(data, db=db, words=words)
 
 
 def _products_by_code(
@@ -171,7 +175,7 @@ def preview(
     before the plan it will apply into exists, so there is nothing of that plan's own to
     count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
     """
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
     held_scope = db.query(SupplierInventory).filter(
         SupplierInventory.supplier_id == supplier_id
@@ -192,6 +196,7 @@ def preview(
         "sample": [
             {
                 "item_code": r.item_code,
+                "model_no": r.model_no,
                 "product_name": r.product_name,
                 "qty_packed": r.qty_packed,
                 "qty_unfinished": r.qty_unfinished,
@@ -205,7 +210,7 @@ def preview(
 
 def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
     """The Test verdict: the same read `apply` performs, with nothing written."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id)
     if not parsed.ok:
         missing = ", ".join(parsed.missing_columns)
         reason = (
@@ -282,7 +287,7 @@ def apply(
     read straight off the screen by a buyer. Without the label the ladder fell back to the
     id and the Remembered table printed a UUID at her.
     """
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id)
     if not parsed.ok:
         return {
             "readable": False,
@@ -328,13 +333,16 @@ def apply(
                 "brand": None,
                 "spec": None,
                 "remark": None,
+                "model_no": None,
             },
         )
         cur["qty_packed"] += r.qty_packed
         cur["qty_unfinished"] += r.qty_unfinished
         if cur["cbm_per_unit"] is None and r.cbm_per_unit is not None:
             cur["cbm_per_unit"] = r.cbm_per_unit
-        for f in ("product_name", "brand", "spec", "remark"):
+        # First row wins, same as product_name/brand/spec/remark below - the family's own
+        # 型号 (owner feedback round 5), not the composed `item_code` it merged on.
+        for f in ("product_name", "brand", "spec", "remark", "model_no"):
             if cur[f] is None:
                 cur[f] = getattr(r, f)
 
@@ -345,6 +353,7 @@ def apply(
                 id=_uuid(),
                 supplier_id=supplier_id,
                 item_code=code,
+                model_no=v["model_no"],
                 product_id=(known.get(code) or {}).get("product_id"),
                 product_set_id=(known.get(code) or {}).get("product_set_id"),
                 qty_packed=v["qty_packed"],
@@ -495,6 +504,7 @@ def snapshot(db: Session, *, supplier_id: str) -> dict:
         "rows": [
             {
                 "item_code": r.item_code,
+                "model_no": r.model_no,
                 "product_id": str(r.product_id) if r.product_id else None,
                 "product_name": r.product_name,
                 "qty_packed": float(r.qty_packed or 0),

@@ -66,6 +66,23 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   }),
 }));
 
+// PLAN-oi-confirm-per-so S6: the remembered sort/filters read this service under
+// `useListingViewPreferences`. Stubbed to resolve fast with nothing stored, so the
+// gated list/summary/matrix fetches unblock on the next tick rather than hanging on a
+// real network call under jsdom (the same stub `SalesOrdersList.filters.test.tsx` and
+// `StockInquiriesList.viewMemory.test.tsx` already use for the same hook).
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async () => ({
+    listing_key: 'projects.projects.view::order-inquiry-worklist',
+    config: null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (listingKey: string, payload: unknown) => ({
+    listing_key: listingKey,
+    config: payload,
+  })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
+
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
 const downloadOrderInquiryWorklistXlsx = vi.fn();
@@ -296,15 +313,19 @@ describe('OrderInquiriesClient: reading the page', () => {
       .map((cell) => cell.textContent ?? '');
     const order = [
       // The Excel's own column order (Phase 2 round 2): SO date through PO/SPO reads
-      // the way the purchasing team already reads their sheet - Order inquiry (a
-      // number the sheet never carried) moves to the end, beside the rest of the
-      // system's own columns rather than in front of Item code.
+      // the way the purchasing team already reads their sheet. Order inquiry is NOT in
+      // this list any more (R5/AC-OH-01, one-header lane): it is hidden by default, so
+      // it renders no `columnheader` cell at all until a reader ticks it back on -
+      // asserted separately below, via the Columns menu.
       'SO date',
       'S/O no',
       'Item code',
       'Qty',
       'Delivery date',
-      'Project / customer',
+      // Split into two columns, same position, where "Project / customer" used to be
+      // (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep).
+      'Customer',
+      'Project',
       'Supplier',
       // Two columns since 14 Sep, side by side, where "Outstanding PO/SPO" used to be
       // (AC-R-31). The id behind the first is still `po_number`, so a saved layout keeps
@@ -313,7 +334,6 @@ describe('OrderInquiriesClient: reading the page', () => {
       'SPO',
       'Agent',
       'Location',
-      'Order inquiry',
       'Taken by PO/SPO',
       'Remaining',
       'Instruction',
@@ -334,6 +354,17 @@ describe('OrderInquiriesClient: reading the page', () => {
     // AC-1.5) - there is no manual confirm left to report on.
     expect(headers.some((text) => /^actions$/i.test(text))).toBe(false);
     expect(headers.some((text) => text === 'Confirmed')).toBe(false);
+
+    // R5/AC-OH-01: Order inquiry is offered in the Columns menu, unticked - present, not
+    // removed, so a reader who wants the number back can tick it on.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^columns$/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const orderInquiryToggle = await screen.findByRole('menuitemcheckbox', {
+      name: 'Order inquiry',
+    });
+    expect(orderInquiryToggle).toHaveAttribute('aria-checked', 'false');
   });
 
   it('says nothing has been raised yet, and offers the screen that raises it', async () => {
@@ -419,17 +450,23 @@ describe('OrderInquiriesClient: reading the page', () => {
   });
 });
 
-describe('AC-1.5/G5: no default ack filter', () => {
-  it('opens on every row, off no `?ack=` at all, and shows no active-filter chip', async () => {
+describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default view again', () => {
+  it('opens on To confirm off no `?ack=` at all, and shows the chip (G4/G5 reversed)', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ ack: undefined }),
+        expect.objectContaining({ ack: 'to_confirm' }),
       ),
     );
-    expect(screen.queryByText(/^Confirmed:/)).not.toBeInTheDocument();
+    // The chip names the option alone (review round fix): "To confirm", never
+    // "Confirmed: To confirm" - the filter's own name IS the sentence, and prefixing
+    // the word "Confirmed" read as the row's ack STATE regardless of which option was
+    // actually chosen. Selected by the chip's own Clear button
+    // (`aria-label={Clear filter: ${label}}`, `data-grid-list-toolbar.tsx`) rather
+    // than `getByTitle`, which also matches the "To confirm" stat tile beside it.
+    expect(screen.getByLabelText('Clear filter: To confirm')).toBeInTheDocument();
   });
 
   it('a URL naming an explicit ?ack= still narrows the list and shows its chip', async () => {
@@ -442,14 +479,23 @@ describe('AC-1.5/G5: no default ack filter', () => {
         expect.objectContaining({ ack: 'rejected' }),
       ),
     );
-    expect(screen.getByText('Confirmed: Rejected')).toBeInTheDocument();
+    expect(screen.getByLabelText('Clear filter: Rejected')).toBeInTheDocument();
   });
 
-  it('the Confirmed filter no longer offers To confirm (S3, review of PR #471)', async () => {
-    // A row is born acknowledged now (G4) and a settle auto-acknowledges again, so
-    // nothing purchasing still has to answer sits in `awaiting` any more - the FE stops
-    // offering the option even though the backend still accepts an old bookmark's
-    // `?ack=to_confirm` for compatibility.
+  it('?ack=all shows every row and hides the chip', async () => {
+    currentSearchParams = new URLSearchParams('ack=all');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ ack: undefined }),
+      ),
+    );
+    expect(screen.queryByLabelText(/^Clear filter:/)).not.toBeInTheDocument();
+  });
+
+  it('the Confirmed filter offers To confirm, Confirmed, Changed, Rejected, All (AC-CF-13)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
@@ -457,6 +503,7 @@ describe('AC-1.5/G5: no default ack filter', () => {
         acknowledged: 1,
         changed: 1,
         rejected: 0,
+        to_confirm: 1,
       },
     });
     renderClient();
@@ -466,9 +513,11 @@ describe('AC-1.5/G5: no default ack filter', () => {
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     expect([...select.options].map((option) => option.textContent)).toEqual([
       'Any',
+      'To confirm (1)',
       'Confirmed (1)',
       'Changed (1)',
       'Rejected (0)',
+      'All',
     ]);
   });
 });
@@ -493,17 +542,23 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(screen.queryByRole('menuitem', { name: /^Acknowledge/ })).toBeNull();
   });
 
-  it('Start is a single Upload purchase orders press, no Confirm and no history upload', async () => {
-    // S1 (AC-1.5): a row is born acknowledged, so there is no second press left for
-    // Start to hold - it is one button, not a dropdown.
+  it('the primary press is Confirm (N); Upload purchase orders moved into Actions', async () => {
+    // PLAN-oi-confirm-per-so, AC-CF-5: a row is born `awaiting` again, so the primary
+    // press is Confirm - Upload purchase orders is still purchasing's, just no longer
+    // the one thing this toolbar does, and moves into the Actions menu.
     renderClient();
     await screen.findByText('SO385126');
 
     expect(
-      screen.getByRole('button', { name: 'Upload purchase orders' }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /Confirm selected/ })).toBeNull();
+      screen.queryByRole('button', { name: 'Upload purchase orders' }),
+    ).toBeNull();
+    expect(screen.getByRole('button', { name: 'Confirm (0)' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /history/i })).toBeNull();
+
+    openActionsMenu();
+    expect(
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+    ).toBeInTheDocument();
   });
 
   it('AC-T5: Choose document (1) is enabled ONLY with exactly one row ticked', async () => {
@@ -833,7 +888,7 @@ describe('AC-D9: Auto link all - the date lives in the dialog now', () => {
   });
 });
 
-describe('AC-H13: the uploaded book, offered from the Start button', () => {
+describe('AC-H13: the uploaded book, offered from Upload purchase orders (now in Actions)', () => {
   it('offers nothing while the worker is still reading the book', async () => {
     uploadSessions = [
       { session_id: 'job-1', import_job_id: 'job-1', status: 'processing' },
@@ -841,8 +896,11 @@ describe('AC-H13: the uploaded book, offered from the Start button', () => {
     renderClient();
     await screen.findByText('SO385126');
 
+    // PLAN-oi-confirm-per-so: Upload purchase orders moved off the primary slot into
+    // the Actions menu, since Confirm is the primary press now.
+    openActionsMenu();
     fireEvent.click(
-      screen.getByRole('button', { name: 'Upload purchase orders' }),
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
@@ -863,8 +921,9 @@ describe('AC-H13: the uploaded book, offered from the Start button', () => {
     renderClient();
     await screen.findByText('SO385126');
 
+    openActionsMenu();
     fireEvent.click(
-      screen.getByRole('button', { name: 'Upload purchase orders' }),
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
@@ -1079,5 +1138,139 @@ describe('AC-F1: the five S1 filters travel in the URL', () => {
       'Every agent',
     )) as HTMLSelectElement;
     expect(select.value).toBe('agent-1');
+  });
+});
+
+describe('AC-OH-70: the Filters popover scrolls (`oi-worklist-one-header-acceptance-criteria.md` S7)', () => {
+  /**
+   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` is a plain
+   * `<div className="space-y-3">` with no height bound at all, so this fails on a null
+   * scroll-container ancestor until the coder wraps it (or the `DropdownMenuContent` it
+   * renders into) with `overflow-y-auto` + a `max-h-` class - "a class on the content",
+   * per the plan, since the shared `data-grid-list-toolbar.tsx` primitive has no
+   * max-height prop of its own.
+   *
+   * Selector asserted on: the nearest ancestor of the "Confirmed" label (the popover's
+   * OWN last field, AC-OH-70's own wording) whose class list contains
+   * `overflow-y-auto`, found via `closest('[class*="overflow-y-auto"]')` - and that
+   * same element's className also matching `/max-h-/`. Reported to the captain as the
+   * exact contract this test pins; the coder may add the classes to a new wrapper div
+   * or to an existing one, as long as some ancestor between "Confirmed" and the popover
+   * carries both.
+   */
+  it('bounds the Filters content to the viewport and scrolls it, so Confirmed is reachable', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    // "Confirmed" also names the toolbar's own active-filter chip once one is set
+    // (`activeSummary`, e.g. "Confirmed: Rejected") - the popover's own FIELD label is
+    // the plain `<label>` element among the matches.
+    const confirmedLabel = (await screen.findAllByText('Confirmed')).find(
+      (node) => node.tagName === 'LABEL',
+    );
+    expect(confirmedLabel).toBeDefined();
+
+    const scrollContainer = confirmedLabel!.closest('[class*="overflow-y-auto"]');
+    expect(scrollContainer).not.toBeNull();
+    expect(scrollContainer?.className ?? '').toMatch(/max-h-/);
+  });
+});
+
+describe('AC-OH-61: a State filter in the Filters popover (`oi-worklist-one-header-acceptance-criteria.md` R2/S5)', () => {
+  /**
+   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` has no State field at
+   * all - the backend already accepts `state=` and returns `by_state` on the summary
+   * (AC-OH-51/52; `OrderInquiryWorklistSummary.by_state` is already typed), the frontend
+   * never wires either. This fails until the coder adds, in `filtersContent`, a
+   * `<Label>State</Label>` next to a clearable `SearchableSelect` (placeholder
+   * "Every state", so `getByLabelText('Every state')` resolves it - same convention as
+   * "Every location"/"Every agent"/"Every month"), options built from
+   * `summary.data?.by_state` (`raised`/`partly_linked`/`actioned`/`cancelled`/`placed` -
+   * `total` is a count, not a filterable state, and must not appear as an option),
+   * labelled with the SAME words `OrderInquiryStatePill`'s own `STATE_LABEL` map already
+   * uses elsewhere (`_shared/components/OrderInquiryVerbPill.tsx`: Raised / Partly linked
+   * / Actioned / Cancelled / Linked for `placed`), each suffixed `(${count})` the same way
+   * Location/Agent/Confirmed already are, and a `state` entry threaded into both the
+   * `filters` memo (so it reaches `listOrderInquiryWorklist`) and the URL-sync effect
+   * (alongside `location`/`agent`/`so_month`/...), cleared meaning the param is dropped.
+   *
+   * Selectors asserted on: the `<label>` element reading exactly "State" (found the same
+   * way the AC-OH-70 block above disambiguates "Confirmed" the label from "Confirmed" the
+   * chip text - `tagName === 'LABEL'`); the `<select aria-label="Every state">` the
+   * `SearchableSelect` mock renders for it; and `listOrderInquiryWorklist`'s own call
+   * arguments for the `state` key. The coder may name the internal state variable and its
+   * setter anything - only the label text, the placeholder, the option labels/counts and
+   * the `state` key in the worklist call are pinned.
+   */
+  it('renders a State label and a select offering every by_state key with its existing label and count', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    const stateLabel = (await screen.findAllByText('State')).find(
+      (node) => node.tagName === 'LABEL',
+    );
+    expect(stateLabel).toBeDefined();
+
+    const select = (await screen.findByLabelText(
+      'Every state',
+    )) as HTMLSelectElement;
+    const optionTexts = Array.from(select.options).map(
+      (option) => option.textContent,
+    );
+    expect(optionTexts).toEqual(
+      expect.arrayContaining([
+        'Raised (2)',
+        'Partly linked (2)',
+        'Actioned (1)',
+        'Cancelled (1)',
+        'Linked (1)',
+      ]),
+    );
+    // `total` is a count, not a state a row can be filtered to.
+    expect(optionTexts.some((text) => /total/i.test(text ?? ''))).toBe(false);
+  });
+
+  it('choosing Cancelled sends state=cancelled to the worklist call', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    const select = await screen.findByLabelText('Every state');
+    fireEvent.change(select, { target: { value: 'cancelled' } });
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'cancelled' }),
+      ),
+    );
+  });
+
+  it('a URL carrying state=cancelled seeds the select, and clearing it drops state from the worklist call', async () => {
+    currentSearchParams = new URLSearchParams('state=cancelled');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'cancelled' }),
+      ),
+    );
+
+    openFilters();
+    const select = (await screen.findByLabelText(
+      'Every state',
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('cancelled');
+
+    fireEvent.change(select, { target: { value: '' } });
+
+    await waitFor(() => {
+      const last = listOrderInquiryWorklist.mock.calls.at(-1)?.[0] as
+        | Record<string, unknown>
+        | undefined;
+      expect(last?.state).toBeUndefined();
+    });
   });
 });

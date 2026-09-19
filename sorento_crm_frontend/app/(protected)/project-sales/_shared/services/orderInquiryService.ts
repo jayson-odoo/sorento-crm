@@ -10,7 +10,7 @@ import type {
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
   OrderInquiryBulkRejectResult,
-  OrderInquiryPoCandidate,
+  OrderInquiryPoCandidatesResponse,
   OrderInquiryPoDetail,
   OrderInquiryRow,
   OrderInquirySpoDetail,
@@ -19,6 +19,7 @@ import type {
   OrderInquiryWorklistParams,
   OrderInquiryWorklistRow,
   OrderInquiryWorklistSummary,
+  UnacknowledgeResult,
   UnplaceAllPreview,
   UnplaceAllRequest,
   UnplaceAllResult,
@@ -119,12 +120,16 @@ export async function markOrderInquiryRows(
  * `place-on-po` is the link endpoint and `unplace` is the unlink one.
  *
  *   GET  {BASE}/order-inquiry-rows/{rowId}/po-candidates
- *        -> OrderInquiryPoCandidate[], in the walk's own order: the cited document first,
- *        then SPO allocations before PO lines on an ORDER BACK row, then location tier
- *        (Q5), then the PO's issue date, then the line's expected date, then the document
- *        number (Q7). Every candidate carries BOTH dates and its tier; location never
- *        filters a candidate out. `default_take` is the cascade's own preview of what it
- *        would take off that line. 409 when the row is not linkable.
+ *        -> OrderInquiryPoCandidatesResponse { candidates, still_to_link }, the candidate
+ *        list in the walk's own order: the cited document first, then SPO allocations
+ *        before PO lines on an ORDER BACK row, then location tier (Q5), then the PO's
+ *        issue date, then the line's expected date, then the document number (Q7). Every
+ *        candidate carries BOTH dates and its tier; location never filters a candidate
+ *        out. `default_take` is the cascade's own preview of what it would take off that
+ *        line. A line this row already holds a link on appears too (S8), even at
+ *        `remaining: "0"` - `current_take` names what this row already has there.
+ *        `still_to_link` is the header line's own number: `qty - linked`. 409 when the
+ *        row is cancelled.
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { po_line_id }
  *        -> OrderInquiryRowOut. One PO line, the single-target shape.
@@ -169,7 +174,7 @@ export async function markOrderInquiryRows(
 
 export async function getOrderInquiryPoCandidates(
   rowId: string,
-): Promise<OrderInquiryPoCandidate[]> {
+): Promise<OrderInquiryPoCandidatesResponse> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/po-candidates`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load candidate lines'));
@@ -193,17 +198,28 @@ export async function placeOrderInquiryRowOnPo(
 
 /**
  * Link a row across one or more document lines - PO lines, or SPO allocations on an
- * ORDER BACK row - in one call. The row keeps its full quantity and gains one link per
- * allocation, so the response is that same row.
+ * ORDER BACK row - in one call. SET semantics (S8, AC-CF-25): the submitted allocations
+ * ARE the row's link set afterwards - a line the row held before that is missing from
+ * this call is retired, a resubmitted line is adjusted to the new qty, and a new line is
+ * linked. The row keeps its full quantity, so the response is that same row.
+ *
+ * `offeredLineIds` (S8 review round, 17 Sep): the candidate ids the CALLER actually
+ * rendered before this press. Scopes the retire step to what the caller saw - a line
+ * the row holds that is missing from both `allocations` and this list was never shown
+ * to it, and survives rather than being read as a deliberate drop. Omitted, the
+ * server keeps retiring every line `allocations` left out, unchanged.
  */
 export async function placeOrderInquiryRowOnPoAllocations(
   rowId: string,
   allocations: OrderInquiryPoAllocation[],
+  offeredLineIds?: string[],
 ): Promise<OrderInquiryRow> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/place-on-po`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ allocations }),
+    body: JSON.stringify(
+      offeredLineIds ? { allocations, offered_line_ids: offeredLineIds } : { allocations },
+    ),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to link this row to a document'));
@@ -267,6 +283,46 @@ export async function acknowledgeOrderInquiryRows(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to acknowledge those rows'));
+  return response.json();
+}
+
+/**
+ * Confirm "Select all N matching" (PLAN-oi-confirm-per-so, AC-CF-7/8): the SAME endpoint
+ * as `acknowledgeOrderInquiryRows`, `filter` in place of `row_ids` - the list's own
+ * worklist parameters, minus `page/limit/sort/dir`, so the server resolves the scope
+ * itself rather than trusting a client-built id list that may span more pages than were
+ * ever loaded. `row_ids` and `filter` are mutually exclusive on the wire.
+ */
+export async function acknowledgeOrderInquiryRowsByFilter(
+  filter: OrderInquiryWorklistParams,
+  horizon?: LinkHorizonRequest,
+): Promise<AcknowledgeResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/acknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filter, ...(horizon ?? {}) }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to confirm those rows'));
+  return response.json();
+}
+
+/**
+ * Unconfirm (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026) - the Actions menu's own
+ * reverse of `acknowledgeOrderInquiryRows`, for a row taken on by mistake or a reconfirm
+ * CS has not actually made yet. Reversible (a plain Confirm undoes it), so there is no
+ * `filter` variant and no confirmation dialog on the button that calls this.
+ */
+export async function unacknowledgeOrderInquiryRows(
+  rowIds: string[],
+): Promise<UnacknowledgeResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/unacknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to unconfirm those rows'));
   return response.json();
 }
 
@@ -412,9 +468,9 @@ export async function unplaceAllOrderInquiryRows(
  *        code/name.
  *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
  *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
- *        delivery_date, project_customer, supplier, po_number, state, raised_at,
- *        raised_by_name - and an unknown value is a 422, never a silent fall back to
- *        the default.
+ *        delivery_date, project_customer, customer_name, project_title, supplier,
+ *        po_number, state, raised_at, raised_by_name - and an unknown value is a 422,
+ *        never a silent fall back to the default.
  *
  *   GET  {BASE}/order-inquiries/summary
  *        the same filters, no paging

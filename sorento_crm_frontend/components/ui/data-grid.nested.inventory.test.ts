@@ -79,6 +79,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'app/(protected)/system-management/health/components/HealthDashboard.tsx',
     'IntegrationFailuresList - a <ul> of links, no grid',
   ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx',
+    'CandidateExpandPanel - a definition-list of fields plus a hand-rolled <table> of other rows already linked on the line, no grid',
+  ],
   // The primitives themselves: the prop declaration, the renderer, and the
   // wrapper that forwards `expanded`. Not nesting sites.
   ['components/ui/data-grid.tsx', 'declares the ColumnMeta field'],
@@ -137,7 +141,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1191',
+    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1196',
     'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}',
   ],
   [
@@ -166,6 +170,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   ],
   [
     'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:414',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:343',
+    "S8's candidate DataGrid, in a dialog opened as a sibling of the worklist. Already scrollerMaxHeight={false}",
+  ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:349',
     'The DataGridTable of the same grid, not a second one',
   ],
 ]);

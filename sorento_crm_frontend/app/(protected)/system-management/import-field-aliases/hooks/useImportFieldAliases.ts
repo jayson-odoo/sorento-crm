@@ -29,8 +29,12 @@ export function useImportFieldAliasFields(docType: ImportFieldAliasDocType) {
 export function useCreateImportFieldAlias(docType: ImportFieldAliasDocType) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { field: string; alias: string; locale?: string | null }) =>
-      createImportFieldAlias({ doc_type: docType, ...data }),
+    mutationFn: (data: {
+      field: string;
+      alias: string;
+      locale?: string | null;
+      supplier_id?: string | null;
+    }) => createImportFieldAlias({ doc_type: docType, ...data }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'list', docType] });
     },

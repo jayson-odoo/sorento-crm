@@ -94,6 +94,7 @@ function renderDialog(over: Partial<ContainerRequestRow> = {}, askQty = 2426) {
           demand_class: 'project',
           order_date: '2026-05-01',
           required_date: '2026-08-19',
+          open_qty: 120,
           qty: 120,
         },
       ]}

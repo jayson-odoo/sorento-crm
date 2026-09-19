@@ -188,6 +188,30 @@ def test_ac_m_5_empty_members_are_dropped(template):
         ), result["line_not_found"]
 
 
+def test_repeated_member_in_one_cell_dedupes_to_one_row():
+    """R5 follow-up (19 Sep 2026, `PLAN-oi-sheet-line-pick-month-po.md`): a `+` cell naming
+    the SAME code twice (`X + X`) is one statement, not two members. Before the dedup, both
+    members shared `row.sheet` and every `_restates` term, and R5 (a restatement is only
+    ever across tabs) read the cell's own two members as two separate instructions inside
+    the one tab that stated the item only once - raising the same line twice from a single
+    cell."""
+    with world() as w:
+        order = w.order()
+        product, line = _line_for(w, order, qty_ordered="50")
+        cell = f"{product.product_code} + {product.product_code}"
+        data = sheet([
+            (order.so_number, cell, 25, D_OCT, w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        rows = w.rows()
+        assert len(rows) == 1, [str(r.qty) for r in rows]
+        assert str(rows[0].so_line_id) == str(w.mirror_of(line).id)
+        assert Decimal(str(rows[0].qty)) == Decimal("25")
+
+
 @pytest.mark.parametrize("template", ["{a} & {b}", "{a} / {b}", "{a} C/W {b}"])
 def test_ac_m_6_other_separators_never_split(template):
     """AC-M-6. Expected to PASS already (regression guard): only `+` splits a cell. `&`,

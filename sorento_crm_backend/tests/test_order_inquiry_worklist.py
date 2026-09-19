@@ -44,6 +44,7 @@ from app.models.project_so import (
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
+    IV_DELAY,
     IV_ORDER,
     SO_STATUS_DRAFT,
     OrderInquiry,
@@ -720,6 +721,48 @@ def test_the_supplier_and_po_are_the_ones_the_row_actually_links_to(api):
     assert [row["id"] for row in filtered["data"]] == [seeded["adopted_row"].id]
 
 
+def test_supplier_reads_off_an_spo_only_links_own_supplier(api):
+    """AC-FB-52 (measured on the prod copy: 5,156 SPO-only rows show "Not linked"
+    under Supplier): a row whose ONLY link is an SPO allocation with no `po_line_id`
+    at all (a genuine book-chain SPO, never resolved back to a source PO line) must
+    still serialise top-level `supplier` off THAT allocation's own `supplier_id` -
+    not blank. `_SPO_LINKED_PO_ID` requires `SPOAllocation.po_line_id` to be set, so
+    `_PLACED_PO_ID` (the coalesce every one of its three legs reads) comes back NULL
+    for this row and the Supplier outerjoin (keyed off `PurchaseOrder.supplier_id`,
+    never `SPOAllocation.supplier_id` directly) never even considers it. A row with
+    a PO link is unchanged (the test above)."""
+    client, db, company_id, seeded = api
+    line = _line_on_authored_order(db, company_id, seeded, qty="12", day=9)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO ONLY SUPPLIER",
+    )
+    db.add(supplier)
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}",
+        spo_line_number=1, product_id=line.product_id, allocated_quantity=12,
+        quantity_received=0, line_status="open", supplier_id=supplier.id,
+        po_line_id=None,
+    )
+    db.add(allocation)
+    db.flush()
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    row = _row(
+        db, company_id, inquiry, so_line_id=line.id, qty="12", state="placed",
+    )
+    db.add(OrderInquiryLink(
+        id=_uid(), company_id=company_id, row_id=row.id,
+        spo_allocation_id=allocation.id, document=allocation.spo_number,
+        qty=Decimal("12"),
+    ))
+    db.commit()
+
+    body = client.get(LIST).json()
+    listed = next(r for r in body["data"] if r["id"] == row.id)
+    assert listed["supplier"] == supplier.supplier_name, listed
+
+
 # ------------------------------------------------------------------- location
 
 
@@ -849,6 +892,245 @@ def test_the_order_is_total_so_paging_neither_repeats_nor_drops_a_row(api):
 
     seen = [row["id"] for row in first["data"]] + [row["id"] for row in second["data"]]
     assert len(seen) == len(set(seen)) == 3
+
+
+# ------------------------------------------------ SPO / Agent / Instruction sort keys
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_sorting_by_the_three_worklist_columns_that_draw_a_sort_arrow_is_accepted(
+    api, direction
+):
+    """AC-1: SPO, Agent and Instruction are sortable columns on the worklist (they draw
+    a sort arrow in `orderInquiryWorklistColumns.tsx`), so `sort` must accept the same
+    ids those columns are keyed by - `spo_number`, `agent_code`, `verb` - in both
+    directions. One fixture per direction rather than per id x direction (review round
+    1): the same six checks, a third of the setup cost."""
+    client, _db, _company_id, _seeded = api
+
+    for field in ("spo_number", "agent_code", "verb"):
+        response = client.get(LIST, params={"sort": field, "dir": direction})
+        assert response.status_code == 200, f"{field} {direction}: {response.text}"
+
+
+def test_spo_sort_orders_by_the_rows_own_link_then_by_spo_ref_blanks_last(api):
+    """AC-2: the SPO column prints the row's own first linked SPO number ahead of a bare
+    `spo_ref`, so the sort reads in the same order - own link, earliest `linked_at`,
+    then `spo_ref` for a row with no link at all, and a row with neither trails last in
+    BOTH directions (the generic `.nulls_last()` every sort field already gets)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} SPO sort WH",
+    )
+    db.add(warehouse)
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(),
+        company_id=company_id,
+        spo_number="ZZT-SPO-SORT-0100",
+        product_id=_product(db, f"ZZT-P-{_uid()[:6]}", f"{MARKER} spo sort product").id,
+        warehouse_id=warehouse.id,
+        allocated_quantity=Decimal("10"),
+    )
+    db.add(allocation)
+    db.flush()
+
+    linked_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=11)
+    linked_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=linked_line.id,
+        item_code=f"{MARKER}-SPOSORT-LINKED",
+        qty="10",
+        state="partly_linked",
+        delivery_date=date(2026, 4, 11),
+    )
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=company_id,
+            row_id=linked_row.id,
+            spo_allocation_id=allocation.id,
+            document=allocation.spo_number,
+            qty=Decimal("10"),
+        )
+    )
+
+    ref_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=12)
+    ref_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=ref_line.id,
+        item_code=f"{MARKER}-SPOSORT-REF",
+        qty="10",
+        delivery_date=date(2026, 4, 12),
+        spo_ref="ZZT-SPO-SORT-0200",
+    )
+
+    blank_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=13)
+    blank_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=blank_line.id,
+        item_code=f"{MARKER}-SPOSORT-BLANK",
+        qty="10",
+        delivery_date=date(2026, 4, 13),
+    )
+    db.commit()
+
+    ascending = client.get(
+        LIST, params={"sort": "spo_number", "dir": "asc", "query": "SPOSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in ascending] == [
+        linked_row.id,
+        ref_row.id,
+        blank_row.id,
+    ]
+
+    descending = client.get(
+        LIST, params={"sort": "spo_number", "dir": "desc", "query": "SPOSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in descending] == [
+        ref_row.id,
+        linked_row.id,
+        blank_row.id,
+    ]
+
+
+def test_agent_code_sort_matches_agent_sort_and_is_not_secretly_item_code(api):
+    """Kill test (review round 1): a `sort=agent_code` that quietly pointed at
+    `item_code` would still return 200 and would still print SOMETHING, so the AC-1
+    "not a 422" check alone cannot catch it. Two rows with DIFFERENT agents, sorted
+    ascending, must print their agent codes non-decreasing - and `agent_code` is the
+    SAME underlying expression (`SalesAgent.sales_agent`) `agent` already sorts by, so
+    the two must return the identical row sequence."""
+    client, db, company_id, seeded = api
+    customer = seeded["customer"]
+
+    def _row_with_agent(agent_code: str, suffix: str, day: int) -> OrderInquiryRow:
+        core = SalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            so_number=f"ZZTSO{_uid()[:8]}",
+            customer_id=customer.id,
+            order_date=date(2026, 5, day),
+        )
+        agent = SalesAgent(
+            id=_uid(),
+            company_id=company_id,
+            sales_agent=agent_code,
+            person_label=f"{MARKER} {agent_code}",
+        )
+        db.add_all([core, agent])
+        db.flush()
+        core.sales_agent_id = agent.id
+        db.add(core)
+        project_order = ProjectSalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            project_id=None,
+            so_id=core.id,
+            provisional_ref=core.so_number,
+            autocount_doc_no=core.so_number,
+            status="adopted",
+        )
+        db.add(project_order)
+        db.flush()
+        product = _product(db, f"ZZT-AGSORT-{_uid()[:6]}", f"{MARKER} agent sort product")
+        line = ProjectSalesOrderLine(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=project_order.id,
+            line_no=1,
+            product_id=product.id,
+            description=f"{MARKER} agent sort",
+            qty=Decimal("5"),
+            uom="UNIT",
+            unit_price=Decimal("10.00"),
+            amount=Decimal("50.00"),
+            delivery_date=date(2026, 5, day),
+        )
+        db.add(line)
+        db.flush()
+        inquiry = _inquiry_for(db, company_id, project_order)
+        return _row(
+            db,
+            company_id,
+            inquiry,
+            so_line_id=line.id,
+            item_code=f"{MARKER}-AGENTSORT-{suffix}",
+            qty="5",
+            delivery_date=date(2026, 5, day),
+        )
+
+    # `item_code` is deliberately the OPPOSITE order of `agent_code` here (row_a's
+    # item_code sorts last, row_b's sorts first): a sort key that quietly pointed at
+    # `item_code` would print `[row_b, row_a]`, not `[row_a, row_b]` - the two orders
+    # can only agree below if the key actually reads the agent.
+    row_a = _row_with_agent("ZZT-AGENT-A", "ZLAST", 1)
+    row_b = _row_with_agent("ZZT-AGENT-B", "AFIRST", 2)
+    db.commit()
+
+    by_agent_code = client.get(
+        LIST, params={"sort": "agent_code", "dir": "asc", "query": "AGENTSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in by_agent_code] == [row_a.id, row_b.id]
+    codes = [row["agent_code"] for row in by_agent_code if row["agent_code"] is not None]
+    assert codes == sorted(codes)
+
+    by_agent = client.get(
+        LIST, params={"sort": "agent", "dir": "asc", "query": "AGENTSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in by_agent] == [row["id"] for row in by_agent_code]
+
+
+def test_verb_sort_is_non_decreasing_across_two_distinct_verbs(api):
+    """Kill test (review round 1): the same "not a 422" gap as `agent_code` above, for
+    `verb`. Two rows with different verbs (`DELAY` sorts before `ORDER`), sorted
+    ascending, must print in that order. `item_code` is deliberately the OPPOSITE order
+    (the `DELAY` row's item_code sorts last, the `ORDER` row's sorts first) - a sort key
+    that quietly pointed at `item_code` would print the pair reversed."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    delay_line = _line_on_authored_order(db, company_id, seeded, qty="5", day=21)
+    delay_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=delay_line.id,
+        item_code=f"{MARKER}-VERBSORT-ZLATE",
+        qty="5",
+        verb=IV_DELAY,
+        delivery_date=date(2026, 4, 21),
+    )
+    order_line = _line_on_authored_order(db, company_id, seeded, qty="5", day=22)
+    order_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=order_line.id,
+        item_code=f"{MARKER}-VERBSORT-AFIRST",
+        qty="5",
+        verb=IV_ORDER,
+        delivery_date=date(2026, 4, 22),
+    )
+    db.commit()
+
+    ascending = client.get(
+        LIST, params={"sort": "verb", "dir": "asc", "query": "VERBSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in ascending] == [delay_row.id, order_row.id]
+    verbs = [row["verb"] for row in ascending]
+    assert verbs == sorted(verbs)
 
 
 # ------------------------------------------------------------------- summary
@@ -1812,3 +2094,366 @@ def test_another_companys_rows_are_not_on_this_companys_list(api):
 
     assert all(row["item_code"] != "ZZT-OTHER-ITEM" for row in body["data"])
     assert body["pagination"]["total"] == 3
+
+
+# ------------------------------------------------------- bundled_host_changes
+
+
+def _companion_rule(db, company_id, companion, hosts, *, supplier_id=None, ratio="1"):
+    """One active companion rule, hosts in the order they must read back in
+    (`PLAN-oi-bundled-row-host-change.md`: the (i) lists each host in RULE order).
+    """
+    from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+
+    rule = ProductCompanionRule(
+        id=_uid(),
+        company_id=company_id,
+        companion_product_id=companion.id,
+        supplier_id=supplier_id,
+        ratio=Decimal(ratio),
+        is_active=True,
+    )
+    db.add(rule)
+    db.flush()
+    for host in hosts:
+        db.add(ProductCompanionRuleHost(rule_id=rule.id, host_product_id=host.id))
+    db.flush()
+    return rule
+
+
+def test_a_bundled_row_lists_each_hosts_own_change_in_rule_order(api):
+    """A bundled row's (i) reads each HOST's own change, not the companion's own row
+    (the companion has none of its own: no sheet row, no PO, no Was). Host X carries a
+    Was (`previous_qty` 182, `previous_delivery_date` 2026-06-01, `qty` 280 @
+    2027-03-01); host Y has never changed. Both entries come back, in rule order,
+    values exact."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="280",
+        delivery_date=date(2027, 3, 1),
+        previous_qty=Decimal("182"),
+        previous_delivery_date=date(2026, 6, 1),
+    )
+    host_y_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="50",
+        delivery_date=date(2026, 5, 1),
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="2",
+        bundled_qty=Decimal("2"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"] == [
+        {
+            "item_code": host_x.product_code,
+            "qty": "280",
+            "delivery_date": "2027-03-01",
+            "previous_qty": "182",
+            "previous_delivery_date": "2026-06-01",
+        },
+        {
+            "item_code": host_y.product_code,
+            "qty": "50",
+            "delivery_date": "2026-05-01",
+            "previous_qty": None,
+            "previous_delivery_date": None,
+        },
+    ], row["bundled_host_changes"]
+    assert host_y_row.id  # host Y's row exists; only its VALUES are read, not its id
+
+
+def test_a_non_bundled_row_carries_no_host_changes(api):
+    """A row nobody's rule ever bundled reads `bundled_host_changes` null - never an
+    empty list, never a key error."""
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == seeded["authored_row"].id)
+
+    assert row["bundled_host_changes"] is None
+
+
+def test_a_host_with_no_row_at_all_still_gets_a_null_entry(api):
+    """A rule's second host has never had a row raised for it at all - the entry for
+    that host's item code still comes back, with every row field null (never a
+    shortened list)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y (never raised)")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="10",
+        delivery_date=date(2026, 4, 1),
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"][1] == {
+        "item_code": host_y.product_code,
+        "qty": None,
+        "delivery_date": None,
+        "previous_qty": None,
+        "previous_delivery_date": None,
+    }, row["bundled_host_changes"]
+
+
+def test_a_hosts_cancelled_and_redirected_rows_are_excluded(api):
+    """A host's own CANCELLED row and a REDIRECTED (back to the pool) row are both
+    excluded from `bundled_host_changes` - only a LIVE row of the host's own item code
+    counts, so a superseded or pooled row never reports as that host's current change."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y (no live row)")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="10",
+        delivery_date=date(2026, 4, 1),
+    )
+    # Host Y carries only a cancelled row and a redirected one - never a live row.
+    _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="5",
+        delivery_date=date(2026, 4, 5),
+        state="cancelled",
+    )
+    _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="7",
+        delivery_date=date(2026, 4, 7),
+        redirected_to_pool=True,
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"][0]["item_code"] == host_x.product_code
+    assert row["bundled_host_changes"][1] == {
+        "item_code": host_y.product_code,
+        "qty": None,
+        "delivery_date": None,
+        "previous_qty": None,
+        "previous_delivery_date": None,
+    }, row["bundled_host_changes"]
+
+
+def test_a_hosts_delay_row_never_answers_for_its_own_live_order_row_regardless_of_sort(api):
+    """BLOCKER (review round 1, 19 Sep 2026). A host carries its own live ORDER row
+    (280 @ 2027-03-01, Was 182 @ 2026-06-01) AND a DELAY exception row on the SAME
+    item code (7 @ 2028-01-01, no Was) - the DELAY row must never answer for the
+    host's own change, and the answer must be IDENTICAL under the default sort and
+    under a sort that ties the two rows on their own sort column (`item_code`, same
+    on both) and so falls through to the id tie-break - deliberately id-ordered here
+    (the DELAY row's own id sorts FIRST) so a page-position bug fails this test on
+    every run rather than by an id coin flip.
+    """
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x])
+
+    # Explicit ids, deliberately in the WRONG order for a page-position bug to read
+    # correctly by luck: the DELAY row's id sorts before the ORDER row's under the
+    # `id.asc()` tie-break `list_rows` always appends, whatever column is sorted by.
+    delay_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000001",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("7"),
+        delivery_date=date(2028, 1, 1),
+        verb=IV_DELAY,
+        state=INQUIRY_RAISED,
+    )
+    host_order_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000002",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("280"),
+        delivery_date=date(2027, 3, 1),
+        previous_qty=Decimal("182"),
+        previous_delivery_date=date(2026, 6, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+    )
+    db.add_all([delay_row, host_order_row])
+    db.flush()
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_order_row.id,
+    )
+    db.commit()
+
+    expected = [
+        {
+            "item_code": host_x.product_code,
+            "qty": "280",
+            "delivery_date": "2027-03-01",
+            "previous_qty": "182",
+            "previous_delivery_date": "2026-06-01",
+        }
+    ]
+
+    default_body = client.get(LIST, params={"limit": 100}).json()
+    default_row = next(r for r in default_body["data"] if r["id"] == companion_row.id)
+    assert default_row["bundled_host_changes"] == expected, default_row["bundled_host_changes"]
+
+    # Ties the two host rows on the sort column itself (both carry `item_code ==
+    # host_x.product_code`), so the page's own order for THIS pair falls straight
+    # through to the id tie-break - exactly the shape the live report showed
+    # (`sort=item_code&dir=desc`).
+    sorted_body = client.get(
+        LIST, params={"limit": 100, "sort": "item_code", "dir": "desc"}
+    ).json()
+    sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
+    assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]
+
+
+def test_a_hosts_own_oldest_live_order_row_wins_over_a_newer_one_regardless_of_sort(api):
+    """Review round 1 follow up (19 Sep 2026). A host carries TWO live ORDER rows on
+    the same item code - the OLDER one (by created_at) is the one whose figures answer
+    for the host, never the newer one, and the answer is IDENTICAL under the default
+    sort and under sort=item_code and dir=desc.
+
+    The older row is constructed SECOND in code, and both rows carry explicit
+    created_at values (created_at defaults to the transaction's own now(), tied across
+    every row one test writes) and explicit ids, deliberately ordered so a mutant that
+    picks the first candidate encountered in page order (candidates[0]) rather than the
+    OLDEST one picks the newer row every run, under both sorts, rather than by an id
+    or page order coin flip.
+    """
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x])
+
+    # Constructed FIRST in code, but the NEWER row by created_at - an earlier delivery
+    # date puts it FIRST under the default sort, and its own id sorts first under the
+    # item_code tie break too, so candidates[0] would pick this one under both sorts.
+    newer_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000001",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("150"),
+        delivery_date=date(2026, 5, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        created_at=datetime(2026, 9, 10, 0, 0, 0),
+    )
+    # Constructed SECOND in code, but the OLDER row by created_at - the one that must
+    # win.
+    older_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000002",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("300"),
+        delivery_date=date(2027, 4, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        created_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db.add_all([newer_row, older_row])
+    db.flush()
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=older_row.id,
+    )
+    db.commit()
+
+    expected = [
+        {
+            "item_code": host_x.product_code,
+            "qty": "300",
+            "delivery_date": "2027-04-01",
+            "previous_qty": None,
+            "previous_delivery_date": None,
+        }
+    ]
+
+    default_body = client.get(LIST, params={"limit": 100}).json()
+    default_row = next(r for r in default_body["data"] if r["id"] == companion_row.id)
+    assert default_row["bundled_host_changes"] == expected, default_row["bundled_host_changes"]
+
+    sorted_body = client.get(
+        LIST, params={"limit": 100, "sort": "item_code", "dir": "desc"}
+    ).json()
+    sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
+    assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]

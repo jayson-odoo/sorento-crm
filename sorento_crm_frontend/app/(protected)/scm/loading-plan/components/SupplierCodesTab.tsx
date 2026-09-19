@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Languages } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -66,9 +67,14 @@ function matchedToLabel(alias: SupplierCodeAlias): string {
   return EM_DASH;
 }
 
-/** What the queue row says in words, which is what a search over it reads. */
+/** What the queue row says in words, which is what a search over it reads. Leads with the
+ *  supplier's own \u578b\u53f7 (owner feedback round 5) - `item_code` can be OUR composed guess for
+ *  a bare model, and "Supplier says" has to say what the sheet actually printed. Omitted
+ *  when it is identical to the row's own code (a letter-led model, or a proforma line,
+ *  which names no separate \u578b\u53f7 at all) - repeating the code back at itself says nothing. */
 function saysText(row: UnmatchedSupplierCode): string {
-  return [row.product_name, row.brand, row.spec].filter(Boolean).join(' \u00b7 ');
+  const modelNo = row.model_no && row.model_no !== row.item_code ? row.model_no : null;
+  return [modelNo, row.product_name, row.brand, row.spec].filter(Boolean).join(' \u00b7 ');
 }
 
 /** Whitespace-split, lower-cased, empties dropped - every token has to hit something. */
@@ -491,14 +497,25 @@ export function SupplierCodesTab({
         </p>
         {/* One box over both tables (S1): the queue and the memory answer the same question
             about the same code, and two boxes would be two places to type it. */}
-        <ListSearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search code or supplier description"
-          aria-label="Search supplier codes"
-          className="w-full md:w-72"
-          data-testid="supplier-codes-search"
-        />
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <ListSearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search code or supplier description"
+            aria-label="Search supplier codes"
+            className="w-full md:w-72"
+            data-testid="supplier-codes-search"
+          />
+          {/* S4 (`PLAN-stock-list-bare-model-codes.md`) - the word list itself is edited on
+              the Import field aliases page, not here; this is a link out, pinned to the
+              word doc type so the tab it opens on is the one this button names. */}
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/system-management/import-field-aliases?doc_type=supplier_inventory_word">
+              <Languages className="size-4" />
+              Stock list words
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <Card>

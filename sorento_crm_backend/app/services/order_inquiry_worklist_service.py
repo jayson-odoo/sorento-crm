@@ -31,12 +31,13 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, case, cast, func, or_, select
+from sqlalchemy import Date, String, case, cast, func, or_, select, text
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
 from app.models.base import get_company_scope
@@ -83,8 +84,10 @@ from app.services.product_companion_service import (
 )
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
+    arrives_outside_window,
     derived_spo_open_clauses,
     project_customer_label,
+    project_title_with_note,
 )
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
@@ -137,6 +140,8 @@ SORTABLE_FIELDS = frozenset(
         "qty",
         "delivery_date",
         "project_customer",
+        "customer_name",
+        "project_title",
         "supplier",
         "po_number",
         "state",
@@ -144,6 +149,13 @@ SORTABLE_FIELDS = frozenset(
         "raised_by_name",
         "location",
         "agent",
+        # The three columns the worklist grid draws a sort arrow on under a DIFFERENT
+        # id than an existing key, or under no key at all (18 Sep 2026 bug report): the
+        # FE sends its own column id verbatim as `sort`, so the id is what has to be
+        # accepted, not a renaming of it.
+        "spo_number",
+        "agent_code",
+        "verb",
     }
 )
 
@@ -249,6 +261,55 @@ _SPO_REF_PLACED_PO_ID = (
 _PLACED_PO_ID = func.coalesce(
     _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
 )
+# AC-FB-52: the row's OWN first SPO link's own `supplier_id` - a genuine book-chain SPO
+# allocation the ESB raised straight off the shipping-order feed (`follow_book_for_rows`,
+# S1-S3) never resolves back to a `po_line_id` at all, so `_PLACED_PO_ID` (and through it
+# the Supplier join below) comes back NULL for it even though the allocation states its
+# own supplier - measured at 5,156 such rows on the prod copy, every one reading "Not
+# linked" under Supplier. Same "first link, ordered by when it was made" rule as
+# `_SPO_LINKED_PO_ID` above, read directly off the allocation rather than through a
+# purchase order line that, for this shape, does not exist.
+_SPO_LINKED_SUPPLIER_ID = (
+    select(SPOAllocation.supplier_id)
+    .select_from(OrderInquiryLink)
+    .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        SPOAllocation.supplier_id.isnot(None),
+    )
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+
+# The row's OWN first linked SPO number - a REAL link only
+# (`OrderInquiryLink.spo_allocation_id`), ordered the same way every other "first link"
+# reader here is: earliest `linked_at` then `id`. The sort key for `spo_number` (18 Sep
+# 2026 bug report).
+#
+# This does NOT match what the SPO cell itself prints (measured against a prod copy, 18
+# Sep 2026: 33 rows differ one way, 10 the other). The cell also shows a SYNTHETIC
+# `derived: true` entry - a PO link whose PO carries its own open SPO allocation for the
+# same product, marked "via PO" (`OrderInquiryLinkOut.derived`, S5/R-E) - which this key
+# ignores, and the cell never reads a bare `spo_ref` at all, which this key falls back to
+# when the row has no own link. Both are ACCEPTED, KNOWN differences, not a bug to fix
+# here: folding the derived leg in would sort the row by a placement never actually made
+# ON it (`_SPO_LINKED_PO_ID`'s sibling reasoning), and dropping the `spo_ref` fallback
+# would sort a row raised before links existed as blank. The rule is "own SPO link
+# first, then `spo_ref`, blanks last" - stated on its own terms, not as a match to the
+# cell.
+_OWN_LINKED_SPO_NUMBER = (
+    select(SPOAllocation.spo_number)
+    .select_from(OrderInquiryLink)
+    .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+    .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_SPO_SORT_KEY = func.coalesce(_OWN_LINKED_SPO_NUMBER, OrderInquiryRow.spo_ref)
 
 #: Does this row hold a link of each kind? The "Linked" filter's own predicates (AC-I5),
 #: stated once so the filter and the column cannot disagree about what "linked to a PO"
@@ -435,15 +496,93 @@ _RAISED_DAY = cast(
 # `supply_decision_id` -> `so_supply_decisions.confirmed_by`, the same person the header
 # stamps at that moment (PLAN section 3.H).
 #
-# An amendment-born row (`ProjectOrderInquiryService._write`) carries NO decision at all -
-# it is raised off the amendment, not off a supply revision - so it falls back to its
-# header's `raised_by`, which for that inquiry is the person who published the amendment
-# and is never re-stamped (an amendment raises its OWN inquiry).
+# S2 (AC-OH-20..23, `PLAN-oi-worklist-one-header.md`): a row with no decision at all is
+# NOT necessarily the header's own answer either. Every row born since G4 is born
+# acknowledged by its raiser - a confirm's own raise, `_write`'s amendment path, the
+# importer's migration - so `OrderInquiryRow.acknowledged_by` is that row's own person,
+# read before the header falls back to whoever last re-stamped it. Only a row with
+# NEITHER a decision NOR an acknowledger (there is none once G4 shipped, but the column
+# is nullable) reaches the header's `raised_by`.
+#
+# Accepted edge case (Opus review round 1): `acknowledge_rows` stamps `acknowledged_by`
+# with the ACKNOWLEDGER, not the raiser, on a row it finds still `awaiting` -
+# reachable today only by a pre-G4 row nobody has taken on yet (there is no FE press
+# onto that route any more). Once acknowledged, this column reads as "raised by" the
+# person who took it on rather than whoever actually raised it. Narrow and one-way
+# (a born-acknowledged row never reaches that branch), so left as a known quirk of the
+# handful of legacy rows still in that state rather than a reason to add a second
+# column to tell the two apart.
 #
 # The id never leaves the service: a screen printing a UUID at a buyer is a screen they
 # cannot use, so the filter takes an id and every read gives a name.
-_RAISED_BY_ID = func.coalesce(SOSupplyDecision.confirmed_by, OrderInquiry.raised_by)
+_RAISED_BY_ID = func.coalesce(
+    SOSupplyDecision.confirmed_by, OrderInquiryRow.acknowledged_by, OrderInquiry.raised_by
+)
 _RAISED_BY_NAME = User.name
+
+# `raise_history` (PLAN-oi-worklist-split-customer-project.md, Slice 2, owner 18 Sep): on
+# a re-confirm the carry site cancels the old row and raises a fresh one under the SAME
+# `order_inquiry_id` (`project_order_inquiry_service._write`, "the inquiry is deliberately
+# reused") - so Raised at jumps to the re-confirm time and the row that actually carries
+# the FIRST raise is the one this call just cancelled. ONLY a CANCELLED predecessor is
+# history (Opus review round 1, B1): an OPEN sibling row on the same SO line is a second
+# LIVE instruction, not a superseded one, and reading it as history marked 168 live
+# duplicates as "previously raised" against 1 genuine supersede on a look at prod data.
+# So this is the cancelled carry-predecessor today, and whatever IT in turn cancelled
+# before that - never an open row. Each entry's raiser reads the same rule `_RAISED_BY_ID`
+# reads for the row itself, aliased so it is answered per HISTORICAL row rather than the
+# page row.
+_RAISE_HISTORY_ROW = aliased(OrderInquiryRow)
+_RAISE_HISTORY_INQUIRY = aliased(OrderInquiry)
+_RAISE_HISTORY_DECISION = aliased(SOSupplyDecision)
+_RAISE_HISTORY_USER = aliased(User)
+_RAISE_HISTORY_RAISED_BY_ID = func.coalesce(
+    _RAISE_HISTORY_DECISION.confirmed_by,
+    _RAISE_HISTORY_ROW.acknowledged_by,
+    _RAISE_HISTORY_INQUIRY.raised_by,
+)
+# One correlated `json_agg` per page row (never N+1): a row with no SO line (`so_line_id`
+# IS NULL) matches nothing on either side of that equality - not even another null, SQL's
+# usual rule - so it answers `[]` for free, with no separate branch needed.
+_RAISE_HISTORY = (
+    select(
+        func.coalesce(
+            func.json_agg(
+                aggregate_order_by(
+                    func.json_build_object(
+                        "raised_at",
+                        _RAISE_HISTORY_ROW.created_at,
+                        "raised_by_name",
+                        _RAISE_HISTORY_USER.name,
+                    ),
+                    _RAISE_HISTORY_ROW.created_at.desc(),
+                )
+            ),
+            text("'[]'::json"),
+        )
+    )
+    .select_from(_RAISE_HISTORY_ROW)
+    .join(
+        _RAISE_HISTORY_INQUIRY,
+        _RAISE_HISTORY_INQUIRY.id == _RAISE_HISTORY_ROW.order_inquiry_id,
+    )
+    .outerjoin(
+        _RAISE_HISTORY_DECISION,
+        _RAISE_HISTORY_DECISION.id == _RAISE_HISTORY_ROW.supply_decision_id,
+    )
+    .outerjoin(
+        _RAISE_HISTORY_USER, _RAISE_HISTORY_USER.id == _RAISE_HISTORY_RAISED_BY_ID
+    )
+    .where(
+        _RAISE_HISTORY_ROW.order_inquiry_id == OrderInquiryRow.order_inquiry_id,
+        _RAISE_HISTORY_ROW.so_line_id == OrderInquiryRow.so_line_id,
+        _RAISE_HISTORY_ROW.created_at < OrderInquiryRow.created_at,
+        _RAISE_HISTORY_ROW.state == INQUIRY_CANCELLED,
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_RAISE_HISTORY_COLUMN = _RAISE_HISTORY.label("raise_history")
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
 # row, or the confirmed allocation's warehouse for a plan/confirmed row
@@ -470,6 +609,8 @@ _SORT_EXPRESSIONS = {
     "qty": OrderInquiryRow.qty,
     "delivery_date": OrderInquiryRow.delivery_date,
     "project_customer": _PROJECT_CUSTOMER,
+    "customer_name": _CUSTOMER_NAME,
+    "project_title": Project.title,
     "supplier": Supplier.supplier_name,
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
@@ -477,6 +618,11 @@ _SORT_EXPRESSIONS = {
     "raised_by_name": _RAISED_BY_NAME,
     "location": _LOCATION,
     "agent": SalesAgent.sales_agent,
+    # The FE column ids these three sort as - `agent_code` reads the same column
+    # `agent` already does, `verb` and `spo_number` are new (18 Sep 2026 bug report).
+    "agent_code": SalesAgent.sales_agent,
+    "verb": OrderInquiryRow.verb,
+    "spo_number": _SPO_SORT_KEY,
 }
 
 _COLUMNS = (
@@ -485,6 +631,9 @@ _COLUMNS = (
     # second opinion about which inquiry a row belongs to. The S/O no cannot stand in for
     # it: an amendment raises a SECOND inquiry on the same sales order.
     OrderInquiry.inquiry_no.label("inquiry_no"),
+    # PLAN-oi-bundled-row-host-change.md: the key `_host_changes_for_rows` groups a
+    # bundled row's HOST rows by, on the SAME order inquiry header.
+    OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
     OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
     OrderInquiryRow.qty.label("qty"),
@@ -493,6 +642,11 @@ _COLUMNS = (
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
     OrderInquiryRow.cited_document.label("cited_document"),
+    # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the last of the three fields
+    # `ProjectOrderInquiryService._cited_documents` reads, so `_attach_link_
+    # suggestions` can call that SAME reader on the row it already holds rather than
+    # re-deriving what "cited" means a second time.
+    OrderInquiryRow.spo_ref.label("spo_ref"),
     # PLAN-scm-supplied-with-companions.md S5.
     OrderInquiryRow.bundled_qty.label("bundled_qty"),
     OrderInquiryRow.bundled_with_row_id.label("bundled_with_row_id"),
@@ -533,6 +687,18 @@ _COLUMNS = (
     OrderInquiryRow.redirected_to_pool.label("redirected_to_pool"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
+    # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
+    # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
+    # label outright (S2, review round 1) - the export runs this `json_agg` for every row
+    # of the whole unpaged set otherwise, a cost nobody behind that column asked for.
+    _RAISE_HISTORY_COLUMN,
+)
+# The export's own column set (S2, review round 1): everything `_COLUMNS` selects EXCEPT
+# `raise_history` - `_write_sheet` never reads that key, so the export ran a `json_agg`
+# per row of the whole unpaged set for nothing. Identity comparison (`is not`), not `!=`:
+# a `Label` has no meaningful equality of its own to compare by value.
+_EXPORT_COLUMNS = tuple(
+    column for column in _COLUMNS if column is not _RAISE_HISTORY_COLUMN
 )
 
 
@@ -772,6 +938,11 @@ class OrderInquiryWorklistService:
         # the key it groups on) rather than by whatever label happened to be printed.
         axis: Optional[str] = None,
         axis_key: Optional[str] = None,
+        # S5/AC-OH-52: the ONE caller that must see a `cancelled` row even with no
+        # explicit `state` - the State facet's own count, so the filter can offer
+        # "Cancelled (n)" to ask for it. Never set by a route param; `summary()`'s
+        # `by_state` grouping is the only caller that passes it.
+        include_cancelled: bool = False,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -828,7 +999,17 @@ class OrderInquiryWorklistService:
             )
             .outerjoin(Customer, Customer.id == _CUSTOMER_ID)
             .outerjoin(PurchaseOrder, PurchaseOrder.id == _PLACED_PO_ID)
-            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            # AC-FB-52: the purchase order's own supplier first, the row's first SPO
+            # link's own supplier when there is no purchase order to read one off -
+            # the SAME fallback shape `_PLACED_PO_ID` itself is built from. The
+            # Supplier filter and sort read `Supplier.id`/`Supplier.supplier_name`
+            # off this ONE join, so both keep working unchanged.
+            .outerjoin(
+                Supplier,
+                Supplier.id == func.coalesce(
+                    PurchaseOrder.supplier_id, _SPO_LINKED_SUPPLIER_ID
+                ),
+            )
         )
         if delivery_month:
             first, following = _month_bounds(delivery_month)
@@ -840,6 +1021,11 @@ class OrderInquiryWorklistService:
             base = base.filter(_RAISED_DAY == _as_day(raised_date))
         if state:
             base = base.filter(OrderInquiryRow.state == state)
+        elif not include_cancelled:
+            # S5/AC-OH-50..51 (R2): a `cancelled` row is a revision that called the line
+            # off - not owed, and not a row purchasing needs to see unless the State
+            # filter specifically asks for it.
+            base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
         if project_id:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
         if supplier_id:
@@ -923,20 +1109,21 @@ class OrderInquiryWorklistService:
                     code="invalid_ack_filter",
                 )
             if ack == ACK_TO_CONFIRM:
-                # The page's own former default (R3, retired by S1 - kept as a legal
-                # value for an old bookmark, never offered by the FE any more): awaiting
-                # AND changed, which is one question - "what has purchasing not answered
-                # yet" - asked of two stored states.
+                # The page's own default again (R3, `PLAN-oi-confirm-per-so.md` S3 -
+                # reversing G4/S1's retirement of it): awaiting AND changed, which is one
+                # question - "what has purchasing not confirmed yet" - asked of two
+                # stored states.
                 base = base.filter(
                     OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES)
                 )
-            elif ack == ACK_CHANGED:
-                # `changed_at IS NOT NULL`, not the literal `ack_state` (S3, review of
-                # PR #471): a settle auto-acknowledges the instant it stamps `changed_at`
-                # (G4), so a row is never LEFT reading `ack_state='changed'` the way one
-                # was before S1 - the Was/Now cell renders off the same column.
-                base = base.filter(OrderInquiryRow.changed_at.isnot(None))
             else:
+                # The literal `ack_state`, including `changed`: `_handshake_for_raise`
+                # and `_settle_row_in_place` (`PLAN-oi-confirm-per-so.md` S1) stamp
+                # `changed` and leave it there until purchasing genuinely re-confirms -
+                # there is no auto re-ack any more to make `changed_at IS NOT NULL` a
+                # truer read than the column itself, and a row later re-acknowledged
+                # keeps its old `changed_at` (history) while reading `acknowledged`
+                # again, which `changed_at IS NOT NULL` would have miscounted.
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
         # the Excel parity batch adds to the Filters popover.
@@ -1066,6 +1253,44 @@ class OrderInquiryWorklistService:
                 )
         return base
 
+    def acknowledge_scope(self, **filters) -> Tuple[List[str], int]:
+        """Every row `filter` matches, split into what a Confirm press may actually take
+        on and what it must leave alone (AC-CF-8b, S2 `PLAN-oi-confirm-per-so.md`).
+
+        Built off the SAME `_base` the list route reads, so "Select all N matching"
+        always confirms exactly the scope the worklist itself is filtered to, never a
+        client-rebuilt copy of it. Eligible is `ack_state` awaiting or changed and
+        `state` not cancelled - the same gate `acknowledge_rows` already enforces one row
+        at a time; everything else the filter matched (rejected, already acknowledged)
+        is reported back as `skipped`, never silently dropped and never silently taken
+        on.
+
+        #992 (one-header-per-SO) taught `_base` to hide a `cancelled` row from every
+        filter that does not explicitly ask `state=cancelled` (S5/AC-OH-50..51) -
+        because THIS reads `_base` too, a query that used to match a cancelled row no
+        longer does, so that row is absent from `matched` entirely rather than present
+        and then subtracted into `skipped`. That is the honest rule (review round,
+        S8): `skipped` counts what the filter actually surfaced and a row's own state
+        then refused, never a row the filter never showed the buyer - the dialog's
+        "Skipped N" and the toast have to agree with what was on screen. A filter that
+        DOES ask for `state=cancelled` still counts a cancelled row as skipped, same
+        as any other ineligible state the filter surfaced.
+        """
+        matched = [str(row_id) for (row_id,) in self._base(**filters).all()]
+        if not matched:
+            return [], 0
+        eligible = (
+            self.db.query(OrderInquiryRow.id)
+            .filter(
+                OrderInquiryRow.id.in_(matched),
+                OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .all()
+        )
+        eligible_ids = [str(row_id) for (row_id,) in eligible]
+        return eligible_ids, len(matched) - len(eligible_ids)
+
     def list_rows(
         self,
         *,
@@ -1125,6 +1350,7 @@ class OrderInquiryWorklistService:
         self._attach_link_suggestions(rows, links, product_by_row)
         bundle_map = self._bundle_map_for_rows(rows)
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
+        host_changes_by_row_id = self._host_changes_for_rows(rows, bundle_map)
         return {
             "data": [
                 self._serialize(
@@ -1135,6 +1361,7 @@ class OrderInquiryWorklistService:
                     links,
                     bundle_map,
                     anchor_headline_by_id,
+                    host_changes_by_row_id,
                 )
                 for row in rows
             ],
@@ -1182,14 +1409,36 @@ class OrderInquiryWorklistService:
         open need (never a row on the SAME SO line), delivery date ascending then open
         need descending - the first candidate is the suggested target (ruling 17 Sep:
         list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
-        on a received link or one still inside the window.
+        on a received link, one still inside the window, or one of the two S3
+        exemptions below.
 
-        ONE grouped query for the whole page's candidates (AC-RL-23), never one per
-        link: every triggered link's product is collected first, and `_repoint_
-        candidates_by_product` answers all of them together.
+        S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
+        automatic pass was TOLD to honour regardless of the window earns no pill
+        either - a link THIS row's own SO claims live, or one whose document the row
+        cites (`ProjectOrderInquiryService._cited_documents`, the same reader the walk
+        uses). Flagging what the pass was just instructed to keep is the same noise the
+        owner complained about ("kinda redundant"), one door over; it holds for a
+        HAND-placed link exactly as for an automatic one (AC-EA-14/15) - the exemption
+        is the evidence, not who pressed the button.
+
+        Review round 2 (F1): "claims live" is read through the WALK's own claim reader
+        (`ProjectOrderInquiryService._prime_claims` / `_dedication_for_target`), not a
+        second predicate - a first cut here filtered `scm.order_link_claim.resolved_at
+        IS NOT NULL`, which is neither necessary (the walk links an unresolved but live
+        claim regardless, AC-EA-17) nor sufficient (the walk refuses a RESOLVED claim
+        whose sales-order line has since SETTLED, AC-EA-16 - `resolved_at` says the
+        pairing was found, not that the order still wants it). One reader, never a
+        second spelling of "this row's own SO claims it".
+
+        ONE grouped query for the whole page's candidates (AC-RL-23), and ONE priming
+        read for the page's triggered claims (S3/F1, `_prime_claims`) - never one per
+        link: every triggered link's product, and every triggered link's target, is
+        collected first.
         """
         delivery_by_row = {row.id: row.delivery_date for row in rows}
         so_line_by_row = {row.id: row.so_line_id for row in rows}
+        so_number_by_row = {row.id: row.so_number for row in rows}
+        row_by_id = {row.id: row for row in rows}
         product_ids = {pid for pid in product_by_row.values() if pid}
         lead_times = (
             ProjectSupplyService(self.db).lead_times(product_ids) if product_ids else {}
@@ -1209,10 +1458,32 @@ class OrderInquiryWorklistService:
                 lead_days = lead_times.get(product_id)
                 if lead_days is None:
                     lead_days = DEFAULT_LEAD_TIME_DAYS
-                if expected_date > delivery_date - timedelta(days=lead_days):
+                if not arrives_outside_window(expected_date, delivery_date, lead_days):
                     continue
                 triggered.append((row_id, link, product_id))
 
+        if not triggered:
+            return
+
+        target_ids = {
+            link.get("po_line_id") or link.get("spo_allocation_id")
+            for _row_id, link, _product_id in triggered
+            if link.get("po_line_id") or link.get("spo_allocation_id")
+        }
+        inquiry_service = ProjectOrderInquiryService(self.db)
+        # F1: the walk's OWN claim cache, primed for the page's triggered targets - not
+        # a second query with a second predicate.
+        inquiry_service._prime_claims(list(target_ids))
+        triggered = [
+            (row_id, link, product_id)
+            for row_id, link, product_id in triggered
+            if not self._exempt_from_window(
+                link,
+                row=row_by_id.get(row_id),
+                own_so_number=so_number_by_row.get(row_id),
+                inquiry_service=inquiry_service,
+            )
+        ]
         if not triggered:
             return
         candidates_by_product = self._repoint_candidates_by_product(
@@ -1245,6 +1516,46 @@ class OrderInquiryWorklistService:
                 }
             else:
                 link["suggestion"] = {"kind": "unlink"}
+
+    @staticmethod
+    def _exempt_from_window(
+        link: Dict[str, Any],
+        *,
+        row: Optional[Any],
+        own_so_number: Optional[str],
+        inquiry_service: ProjectOrderInquiryService,
+    ) -> bool:
+        """S3's two exemptions - the SAME two `auto_place_for_products` reads (S2): a
+        target THIS row's own SO still claims LIVE, or a document the row cites. Either
+        is a person's or the book's word, and the window does not overrule it, on the
+        pass or on the pill.
+
+        F1 (review round 2): "claims live" is `_dedication_for_target`'s own `own_claim`
+        element (index 2 of its `(reserved, dedicated_to, own_claim)` return) - the
+        SAME reader `_candidates_for_row` builds `own_so_claim` from. That is a claim
+        whose SO LINE still has outstanding, never `resolved_at`: a claim written before
+        the purchase side is named is unresolved and still live (AC-EA-17); a resolved
+        claim whose sales order has since settled is no longer live (AC-EA-16). Caller
+        must have already primed `inquiry_service._prime_claims` for `target_id`, or
+        this falls back to priming it alone (`_claims_of`'s own guard).
+        """
+        target_id = link.get("po_line_id") or link.get("spo_allocation_id")
+        if target_id and own_so_number is not None:
+            _reserved, _dedicated_to, own_claim = inquiry_service._dedication_for_target(
+                target_id, own_so_number
+            )
+            if own_claim:
+                return True
+        document = str(link.get("document") or "").strip().upper()
+        if row is not None and document:
+            # F4: `row` is the worklist's OWN `_COLUMNS` tuple, not an
+            # `OrderInquiryRow` ORM instance - `_cited_documents` may read only the
+            # three fields `_COLUMNS` carries for it (`cited_document`, `note`,
+            # `spo_ref`). A fourth field added to that reader with no matching column
+            # here fails loudly (`AttributeError`), not silently; AC-EA-15 is the test
+            # that goes red first.
+            return document in inquiry_service._cited_documents(row)
+        return False
 
     def _repoint_candidates_by_product(
         self, product_ids: set
@@ -1424,6 +1735,133 @@ class OrderInquiryWorklistService:
             )
         return merged
 
+    def _host_changes_for_rows(
+        self, rows, bundle_map: Dict[str, List[str]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """`bundled_host_changes` (`PLAN-oi-bundled-row-host-change.md`): for a bundled
+        row, one entry per host item code, IN RULE ORDER, read from that HOST's own
+        LIVE row on the SAME order inquiry header - never written onto the companion
+        row itself (owner ruling, 19 Sep 2026: "it comes with the X and Y, so it should
+        follow them, to have the same delay"). A host with no live row still gets an
+        entry, with every row field null, so the (i) always names every host the rule
+        requires.
+
+        A host's own LIVE row (review round 1 BLOCKER, 19 Sep 2026): state not
+        cancelled, `redirected_to_pool` false, AND `verb` in `(IV_ORDER, IV_ORDER_BACK)`
+        - the SAME set `_settle_row_in_place` treats as a line's real instruction,
+        never an ADVANCE/DELAY exception row that happens to share the host's item
+        code and would otherwise read as the host's own change. When a host carries
+        MORE than one live ORDER row, the OLDEST wins (`created_at`, then `id`) - and
+        that choice is made the SAME WAY whichever page the row happened to load on:
+        the in-page pass collects every page candidate for a key and picks the oldest
+        exactly as the fallback query's own `ORDER BY` does, so `sort=item_code&dir=
+        desc` (or any other sort) can never answer differently from the default.
+
+        Built from rows already on THIS page where possible; the rest costs ONE extra
+        query for the whole page (never per row), keyed by `(order_inquiry_id,
+        item_code)`.
+        """
+        hosts_by_row: Dict[str, Tuple[str, List[str]]] = {}
+        wanted: set = set()
+        for row in rows:
+            if not row.bundled_with_row_id:
+                continue
+            codes = resolve_bundled_item_codes(
+                bundle_map or {},
+                companion_item_code=row.item_code,
+                anchor_item_code=row.bundled_with_item_code,
+            )
+            if not codes:
+                continue
+            hosts_by_row[row.id] = (row.order_inquiry_id, codes)
+            for code in codes:
+                wanted.add((row.order_inquiry_id, code))
+        if not hosts_by_row:
+            return {}
+
+        def _live_host_row(candidate) -> bool:
+            return (
+                candidate.state != INQUIRY_CANCELLED
+                and not candidate.redirected_to_pool
+                and candidate.verb in (IV_ORDER, IV_ORDER_BACK)
+            )
+
+        def _created_key(candidate) -> Tuple[Any, str]:
+            return (candidate.raised_at, candidate.id)
+
+        # Every page candidate per key, not just the first ENCOUNTERED - `rows` is in
+        # the page's own sort order (whatever column the caller sorted by), so "first
+        # in the list" used to answer a different host row depending on the sort.
+        page_candidates: Dict[Tuple[str, str], List[Any]] = {}
+        for row in rows:
+            key = (row.order_inquiry_id, row.item_code)
+            if key in wanted and _live_host_row(row):
+                page_candidates.setdefault(key, []).append(row)
+
+        values_by_key: Dict[Tuple[str, str], Any] = {
+            key: min(candidates, key=_created_key)
+            for key, candidates in page_candidates.items()
+        }
+
+        missing = wanted - set(values_by_key)
+        if missing:
+            inquiry_ids = {key[0] for key in missing}
+            item_codes = {key[1] for key in missing}
+            extra_rows = (
+                self.db.query(
+                    OrderInquiryRow.id,
+                    OrderInquiryRow.order_inquiry_id,
+                    OrderInquiryRow.item_code,
+                    OrderInquiryRow.qty,
+                    OrderInquiryRow.delivery_date,
+                    OrderInquiryRow.previous_qty,
+                    OrderInquiryRow.previous_delivery_date,
+                    OrderInquiryRow.created_at,
+                )
+                .filter(
+                    OrderInquiryRow.order_inquiry_id.in_(inquiry_ids),
+                    OrderInquiryRow.item_code.in_(item_codes),
+                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                    OrderInquiryRow.redirected_to_pool.is_(False),
+                    OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+                )
+                .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+                .all()
+            )
+            for candidate in extra_rows:
+                key = (candidate.order_inquiry_id, candidate.item_code)
+                if key in missing and key not in values_by_key:
+                    values_by_key[key] = candidate
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for row_id, (order_inquiry_id, codes) in hosts_by_row.items():
+            entries = []
+            for code in codes:
+                source = values_by_key.get((order_inquiry_id, code))
+                entries.append(
+                    {
+                        "item_code": code,
+                        "qty": (
+                            _qty_str(_dec(source.qty)) if source is not None else None
+                        ),
+                        "delivery_date": (
+                            source.delivery_date if source is not None else None
+                        ),
+                        "previous_qty": (
+                            _qty_str(_dec(source.previous_qty))
+                            if source is not None and source.previous_qty is not None
+                            else None
+                        ),
+                        "previous_delivery_date": (
+                            source.previous_delivery_date
+                            if source is not None
+                            else None
+                        ),
+                    }
+                )
+            result[row_id] = entries
+        return result
+
     def _anchor_headline_by_id(
         self, rows, links: Dict[str, List[Dict[str, Any]]]
     ) -> Dict[str, str]:
@@ -1471,6 +1909,7 @@ class OrderInquiryWorklistService:
         links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         bundle_map: Optional[Dict[str, List[str]]] = None,
         anchor_headline_by_id: Optional[Dict[str, str]] = None,
+        host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -1487,6 +1926,13 @@ class OrderInquiryWorklistService:
             "project_customer": project_customer_label(
                 row.customer_name, row.project_title, row.is_pre_order
             ),
+            # PLAN-oi-worklist-split-customer-project.md: the two columns Customer and
+            # Project print from now on, `project_customer` staying on the row for the
+            # Excel export and search that still read it. Project carries the PRE-ORDER
+            # note the combined label appends, so a pre-order row still reads as one
+            # once the two are apart.
+            "customer_name": row.customer_name,
+            "project_title": project_title_with_note(row.project_title, row.is_pre_order),
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
             # D8: a bundled row with no document of its own names its anchor instead of
@@ -1523,6 +1969,14 @@ class OrderInquiryWorklistService:
                 if row.bundled_with_row_id
                 else None
             ),
+            # PLAN-oi-bundled-row-host-change.md: each HOST's own change, read from the
+            # host rows at display time - null on a non-bundled row, never an empty
+            # list. `response_model` drops what it is not told about.
+            "bundled_host_changes": (
+                (host_changes_by_row_id or {}).get(row.id)
+                if row.bundled_with_row_id
+                else None
+            ),
             "has_link_candidate": (
                 ProjectOrderInquiryService.has_link_candidate(
                     row.verb, product_by_row.get(row.id), link_candidates
@@ -1549,6 +2003,13 @@ class OrderInquiryWorklistService:
             "redirected_to_pool": bool(row.redirected_to_pool),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
+            # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at cell's
+            # own tooltip - the CANCELLED predecessor(s) of this row on the same SO line,
+            # newest first. `[]` on a row with no SO line, or nothing prior. `getattr`,
+            # not `row.raise_history`: `_all_rows` (the export) selects `_EXPORT_COLUMNS`,
+            # which drops this column outright, so the export's own `row` namedtuple
+            # never carries the attribute at all.
+            "raise_history": getattr(row, "raise_history", None) or [],
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
@@ -1867,6 +2328,18 @@ class OrderInquiryWorklistService:
             by_state[state] = int(count)
             total_rows += int(count)
             total_qty += _dec(qty)
+        # S5/AC-OH-52: `visible` above already hides `cancelled` by default (AC-OH-50), so
+        # `by_state["cancelled"]` would otherwise read 0 the moment the State filter most
+        # needs to offer its real count. The State facet is the one reader that must see
+        # it regardless - a second grouped count, `total_rows`/`total_qty` untouched.
+        cancelled_count = (
+            self._base(**filters, include_cancelled=True)
+            .filter(OrderInquiryRow.state == INQUIRY_CANCELLED)
+            .with_entities(func.count(OrderInquiryRow.id))
+            .scalar()
+            or 0
+        )
+        by_state[INQUIRY_CANCELLED] = int(cancelled_count)
         by_state["total"] = total_rows
 
         return {
@@ -1914,17 +2387,12 @@ class OrderInquiryWorklistService:
         for state, count in rows:
             if state in counts:
                 counts[state] = int(count)
-        # `changed_at IS NOT NULL`, not the grouped `ack_state` above (S3, review of PR
-        # #471): a settle auto-acknowledges the instant it stamps `changed_at` (G4), so
-        # the group-by never finds a row still reading `ack_state='changed'` - the facet
-        # has to agree with the filter and the cell, both of which read this column.
-        counts[ACK_CHANGED] = int(
-            self._base(**filters)
-            .filter(OrderInquiryRow.changed_at.isnot(None))
-            .with_entities(func.count(OrderInquiryRow.id))
-            .scalar()
-            or 0
-        )
+        # The grouped `ack_state` above is trusted for `changed` too now
+        # (`PLAN-oi-confirm-per-so.md` S1): there is no auto re-ack left to leave a row
+        # reading `changed_at IS NOT NULL` while its `ack_state` says something else, and
+        # reading `changed_at` here would OVER-count a row genuinely re-acknowledged
+        # since (its `changed_at` stays as history; the facet, the filter and the cell
+        # all have to agree, and the filter and the cell both read `ack_state`).
         # The default view's own count (R3), summed from the two states rather than
         # queried again: a second query could disagree with the chip beside it.
         counts[ACK_TO_CONFIRM] = sum(
@@ -1946,21 +2414,57 @@ class OrderInquiryWorklistService:
         reason it exists: a cell and the card above it are two GROUP BYs over the same
         per-row arithmetic rather than two copies of the formula, so the Schedule view
         cannot answer differently from the strip over it (AC-X6).
+
+        S8 (AC-OH-80..81, measured on `sorento_ai_automation_0915_1900`): `_kinds`, which
+        reads this over the WHOLE matching row set unpaginated, was the page's slowest
+        request by a wide margin (~1.2s of summary()'s ~1.5s). `EXPLAIN ANALYZE` on the
+        old shape showed why - `_purchased_qty()` called `_incoming_qty()` fresh inside
+        its own formula, so the correlated subqueries under `_incoming_qty` (SPO-linked,
+        PO-linked, the derived-cover EXISTS+scalar-subquery) were embedded TWICE in the
+        generated SQL, and `_UNLINKED_QTY` added a third, separate `_linked_qty()`
+        correlated subquery on top - up to nine correlated-subquery evaluations per row.
+        Fixed at this one seam, not by touching `_incoming_qty`/`_purchased_qty`
+        themselves (S4's `kind=po` filter still calls `_purchased_qty()` alone, over a
+        WHERE clause rather than a company-wide aggregate, where the duplication never
+        showed up): an INNER subquery computes each correlated piece exactly ONCE per
+        row, and the three stage columns are then plain arithmetic over those already-
+        materialized inner columns.
         """
-        return (
+        inner = (
             self._base(**filters)
             .with_entities(
                 OrderInquiryRow.id.label("row_id"),
                 OrderInquiryRow.qty.label("qty"),
-                self._incoming_qty().label("incoming"),
-                self._purchased_qty().label("purchased"),
-                _UNLINKED_QTY.label("buy"),
+                OrderInquiryRow.bundled_qty.label("bundled_qty"),
+                _SPO_LINKED_QTY.label("spo_linked"),
+                _PO_LINKED_QTY.label("po_linked"),
+                self._derived_cover_qty().label("derived_cover"),
+                _linked_qty().label("linked_any"),
+                _CAPPED_QTY.label("capped_qty"),
                 *extra_columns,
             )
             .filter(*extra_filters)
             .order_by(None)
-            .subquery()
+            .cte("order_inquiry_stage_rows")
+            .prefix_with("MATERIALIZED")
         )
+        capped_derived_cover = func.least(inner.c.po_linked, inner.c.derived_cover)
+        incoming = func.least(inner.c.qty, inner.c.spo_linked + capped_derived_cover)
+        purchased = func.least(
+            inner.c.qty - incoming,
+            func.greatest(0, inner.c.po_linked - capped_derived_cover),
+        )
+        buy = func.greatest(
+            inner.c.capped_qty - inner.c.linked_any - inner.c.bundled_qty, 0
+        )
+        return select(
+            inner.c.row_id,
+            inner.c.qty,
+            incoming.label("incoming"),
+            purchased.label("purchased"),
+            buy.label("buy"),
+            *[getattr(inner.c, column.name) for column in extra_columns],
+        ).subquery()
 
     def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:
         """Quantity per STAGE over every matching row (AC-I11, S5/R-F): incoming (on an
@@ -2357,10 +2861,15 @@ class OrderInquiryWorklistService:
         return filename, buffer.getvalue()
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
-        """The same set the list serves, unpaged, in the workbook's own order."""
+        """The same set the list serves, unpaged, in the workbook's own order.
+
+        `_EXPORT_COLUMNS`, not `_COLUMNS` (S2, review round 1): the sheet never prints
+        `raise_history`, so there is no reason to run that `json_agg` for the whole
+        unpaged set here.
+        """
         rows = (
             self._base(**filters)
-            .with_entities(*_COLUMNS)
+            .with_entities(*_EXPORT_COLUMNS)
             .order_by(
                 OrderInquiryRow.delivery_date.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),

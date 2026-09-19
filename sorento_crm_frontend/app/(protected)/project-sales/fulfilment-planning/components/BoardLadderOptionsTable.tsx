@@ -46,11 +46,12 @@ export function BoardLadderOptionsTable({
   contributionKey: string;
   /**
    * S3 (`PLAN-local-supplier-oi-routing.md`): a `local` Buy raises no Order Inquiry on
-   * confirm, marked with a `Local` pill beside the Buy row's label. Overseas, or absent,
-   * carries no pill - only the list view and the decision panel pass this; the per-order
-   * sheet and the trail popover pass nothing (no pill there).
+   * confirm, marked with a `Local` pill beside the Buy row's label. Overseas, null (the
+   * shipped default while `local_buy_routing_enabled` is off, `PLAN-local-buy-routing-
+   * toggle.md`), or absent all carry no pill - only the list view and the decision panel
+   * pass this; the per-order sheet and the trail popover pass nothing (no pill there).
    */
-  buyOrigin?: 'local' | 'overseas';
+  buyOrigin?: 'local' | 'overseas' | null;
 }) {
   if (options.length === 0) return null;
   return (

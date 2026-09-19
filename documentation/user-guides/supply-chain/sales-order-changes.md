@@ -89,7 +89,10 @@ Carrying out a suggestion writes to the **Order Inquiries** page:
   The row is greyed, its quantity and its documents are left exactly as they were, and its Qty
   cell carries the word **used** - click it to read which document, when it was received, and
   where the goods landed. A fresh row is raised for the full new quantity, with no documents; it
-  is what shows in the **Buy** card and what purchasing actually buys against. Stock debt for the
+  is what shows in the **Buy** card and what purchasing actually buys against. Its own (i) shows
+  Was/Now against the quantity and date it replaces, and its Instruction (i) names the document
+  that was received and when - so a line the confirm restates this way never also raises a
+  separate delay row; only a line the confirm leaves in place still gets one. Stock debt for the
   line is counted against the new row, not the old one.
 
 ## Removing a line, or setting its quantity to 0

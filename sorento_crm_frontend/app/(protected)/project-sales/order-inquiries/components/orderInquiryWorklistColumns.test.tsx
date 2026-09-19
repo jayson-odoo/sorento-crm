@@ -613,6 +613,101 @@ describe('the qty cell: one line, an info icon only when there is something to s
   });
 });
 
+describe('a bundled row with no Was of its own reads each hosts change (PLAN-oi-bundled-row-host-change.md)', () => {
+  it('shows the (i) and lists each hosts own change, lines exact', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-bundled-hosts',
+        qty: '2',
+        ack_state: 'acknowledged',
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCX8605-S-RL-PJ',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+          {
+            item_code: 'SRTWCY8605-PJ',
+            qty: '50',
+            delivery_date: '2026-05-01',
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+          {
+            item_code: 'SRTWCZ',
+            qty: null,
+            delivery_date: null,
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+        ],
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-bundled-hosts');
+    expect(within(row).getByText('2')).toBeInTheDocument();
+    expect(
+      within(row).getByTestId('qty-annotation-trigger-row-bundled-hosts'),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByText(
+        'with SRTWCX8605-S-RL-PJ: Was 182 on 01/06/2026, now 280 on 01/03/2027',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByText('with SRTWCY8605-PJ: 50 on 01/05/2026, no change'),
+    ).toBeInTheDocument();
+    expect(within(row).getByText('with SRTWCZ: no open row')).toBeInTheDocument();
+  });
+
+  it('shows no icon on a row that carries no bundled_host_changes and nothing else to say', () => {
+    renderQtyCell([
+      worklistRow({ id: 'row-plain-not-bundled', qty: '9', ack_state: 'acknowledged' }),
+    ]);
+    expect(
+      screen.queryByTestId('qty-annotation-trigger-row-plain-not-bundled'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('SHOULD (review round 1, 19 Sep 2026): a row that is ALSO rejected keeps the rejection dialog, never the bundled tooltip', () => {
+    // Precedence: `hostLines` must be computed only when nothing else already claims
+    // the icon - a mutant that computes it unconditionally would render the tooltip's
+    // own lines even on a rejected row, which the negative assertion below catches.
+    renderQtyCell([
+      worklistRow({
+        id: 'row-rejected-and-bundled',
+        qty: '2',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey Ang',
+        rejected_reason: 'No supplier until November',
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCX8605-S-RL-PJ',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+        ],
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-rejected-and-bundled');
+    const trigger = within(row).getByTestId(
+      'qty-annotation-trigger-row-rejected-and-bundled',
+    );
+    // The rejection's own warning colour - the bundled branch's icon is always muted.
+    expect(trigger.className).toContain('color-warning-accent');
+    expect(within(row).queryByText(/with SRTWCX8605-S-RL-PJ/)).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-and-bundled');
+    expect(
+      within(dialog).getByText('Joey Ang: No supplier until November'),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)', () => {
   it('D1: fully bundled, host on a PO reads "Included with <host> · <host coverage>"', () => {
     renderRows([
@@ -1464,5 +1559,99 @@ describe('AC-RL-04 amended (17 Sep review round): a redirected row is visually m
     const dialog = screen.getByTestId('qty-annotation-row-moved-heading');
     expect(within(dialog).getByText('Moved by AutoCount')).toBeInTheDocument();
     expect(dialog.textContent ?? '').not.toMatch(/\bRedirected\b/);
+  });
+});
+
+describe('Customer and Project print as two columns (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026)', () => {
+  it('no column with id or accessorKey "project_customer" is on the list any more', () => {
+    const allColumns = columnDefs();
+    const ids = allColumns.map((column) => {
+      const withKeys = column as ColumnDef<OrderInquiryWorklistRow> & {
+        id?: string;
+        accessorKey?: string;
+      };
+      return withKeys.id ?? withKeys.accessorKey;
+    });
+    expect(ids).not.toContain('project_customer');
+    expect(ids).toContain('customer_name');
+    expect(ids).toContain('project_title');
+  });
+
+  it('a long customer name truncates with a title tooltip', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-customer-long',
+          customer_name: 'EXACO ENGINEERING AND CONSTRUCTION SDN BHD',
+        }),
+      ],
+      'customer_name',
+    );
+    const cell = screen.getByText('EXACO ENGINEERING AND CONSTRUCTION SDN BHD');
+    expect(cell.className).toContain('truncate');
+    expect(cell.getAttribute('title')).toBe('EXACO ENGINEERING AND CONSTRUCTION SDN BHD');
+  });
+
+  it('a row with no customer party attached prints the empty state, not a blank cell', () => {
+    renderRows([worklistRow({ id: 'row-customer-none', customer_name: null })], 'customer_name');
+    expect(screen.getByText('Not attributed')).toBeInTheDocument();
+  });
+
+  it('a pre-order project title carries its PRE-ORDER note, truncated with a title tooltip', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-project-preorder',
+          project_title: 'Bandar Puteri Phase 2 / PRE-ORDER',
+        }),
+      ],
+      'project_title',
+    );
+    const cell = screen.getByText('Bandar Puteri Phase 2 / PRE-ORDER');
+    expect(cell.className).toContain('truncate');
+    expect(cell.getAttribute('title')).toBe('Bandar Puteri Phase 2 / PRE-ORDER');
+  });
+
+  it('an adopted row with no project prints "No project", not a blank cell', () => {
+    renderRows([worklistRow({ id: 'row-project-none', project_title: null })], 'project_title');
+    expect(screen.getByText('No project')).toBeInTheDocument();
+  });
+});
+
+describe('the Raised at cell carries its own history in a tooltip (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026)', () => {
+  it('a row with a prior raise shows the info icon, with "Previously raised" and one line per entry', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-raised-history',
+          raised_at: '2026-08-15T10:00:00',
+          raise_history: [
+            { raised_at: '2026-08-01T09:15:00', raised_by_name: 'ZZT Farah' },
+          ],
+        }),
+      ],
+      'raised_at',
+    );
+
+    const row = screen.getByTestId('row-row-raised-history');
+    expect(within(row).getByLabelText('Previously raised')).toBeInTheDocument();
+    expect(within(row).getByText('Previously raised')).toBeInTheDocument();
+    expect(within(row).getByText(/ZZT Farah/)).toBeInTheDocument();
+  });
+
+  it('a row with no history shows no info icon', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-raised-no-history',
+          raised_at: '2026-08-15T10:00:00',
+          raise_history: [],
+        }),
+      ],
+      'raised_at',
+    );
+
+    const row = screen.getByTestId('row-row-raised-no-history');
+    expect(within(row).queryByLabelText('Previously raised')).not.toBeInTheDocument();
   });
 });

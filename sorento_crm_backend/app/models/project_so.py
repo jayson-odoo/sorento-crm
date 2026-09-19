@@ -1261,7 +1261,15 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     #: unjournalled - minted outside the two board confirm routes (`uncover_lines`, a
     #: pre-lane revision) - and therefore not undoable. `app.services.
     #: project_supply_undo_service.UndoJournal` writes it; nothing else does.
-    undo_journal = Column(JSONB, nullable=True)
+    #:
+    #: `none_as_null=True` (hotfix, undo_0003): without it, SQLAlchemy's JSON type
+    #: serialises a Python `None` VALUE as the JSON literal `null`, not a SQL NULL -
+    #: the column itself is never NULL, it holds a JSON scalar - and
+    #: `_journalled_decision_clause`'s `isnot(None)` guard does not see that, so
+    #: Postgres's `jsonb_array_length` throws on it. With `none_as_null=True`, writing
+    #: Python `None` through this type (ORM or Core `.values(undo_journal=None)`)
+    #: always produces a real SQL NULL.
+    undo_journal = Column(JSONB(none_as_null=True), nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 

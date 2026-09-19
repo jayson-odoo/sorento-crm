@@ -5,6 +5,7 @@ import { toast } from '@/lib/toast';
 import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
 import {
   acknowledgeOrderInquiryRows,
+  acknowledgeOrderInquiryRowsByFilter,
   autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
@@ -22,6 +23,7 @@ import {
   rejectOrderInquiryRows,
   placeOrderInquiryRowOnPo,
   placeOrderInquiryRowOnPoAllocations,
+  unacknowledgeOrderInquiryRows,
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
@@ -270,16 +272,21 @@ export function useOrderInquiryPlacementMutations() {
 
   /**
    * The cascade shape: one or more `{po_line_id | spo_allocation_id, qty}` lines in one
-   * call. The row keeps its full quantity and gains one link per allocation (AC-I6).
+   * call. SET semantics (S8, AC-CF-25): the submission becomes the row's whole link
+   * set - a line the row held that is missing from it is retired (unless
+   * `offeredLineIds` says the caller never saw it), a resubmitted line is adjusted, and
+   * a new line is linked.
    */
   const placeAllocations = useMutation({
     mutationFn: ({
       rowId,
       allocations,
+      offeredLineIds,
     }: {
       rowId: string;
       allocations: OrderInquiryPoAllocation[];
-    }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations),
+      offeredLineIds?: string[];
+    }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations, offeredLineIds),
     onSuccess: () => {
       invalidateAfterPlacement();
       toast.success('Linked');
@@ -409,8 +416,23 @@ export function useOrderInquiryHandshake() {
     // every ticked row is taken on, and one due after that date is left Not linked and
     // reported back as "N after <date>". `linkHorizonRequest` builds it, so this press and
     // the other three say the same thing about the same date (S1).
-    mutationFn: ({ rowIds, horizon }: { rowIds: string[]; horizon?: LinkHorizonRequest }) =>
-      acknowledgeOrderInquiryRows(rowIds, horizon),
+    //
+    // `filter` is the worklist's own "Select all N matching" (PLAN-oi-confirm-per-so,
+    // AC-CF-7): the CURRENT worklist scope rather than a client-built id list, for a
+    // selection that spans more pages than were ever loaded. Mutually exclusive with
+    // `rowIds` on the wire - the caller sends exactly one.
+    mutationFn: ({
+      rowIds,
+      filter,
+      horizon,
+    }: {
+      rowIds?: string[];
+      filter?: OrderInquiryWorklistParams;
+      horizon?: LinkHorizonRequest;
+    }) =>
+      filter
+        ? acknowledgeOrderInquiryRowsByFilter(filter, horizon)
+        : acknowledgeOrderInquiryRows(rowIds ?? [], horizon),
     onSuccess: (result) => {
       invalidate();
       toast.success(acknowledgeOutcomeText(result));
@@ -458,5 +480,25 @@ export function useOrderInquiryHandshake() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { acknowledge, reject, rejectRows, linkNow };
+  // PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026: reversible (a plain Confirm undoes
+  // it), so it invalidates the same families Confirm does and asks for no confirmation
+  // dialog of its own.
+  const unacknowledge = useMutation({
+    mutationFn: (rowIds: string[]) => unacknowledgeOrderInquiryRows(rowIds),
+    onSuccess: (result) => {
+      invalidate();
+      const rows = `${result.updated} row${result.updated === 1 ? '' : 's'}`;
+      // N4 (review round 1): the same warn/success split `rejectRows` above uses for a
+      // partial outcome - a batch that skipped something is not silently the same as
+      // one that did not.
+      if (result.skipped > 0) {
+        toast.warning(`${rows} back to To confirm, ${result.skipped} skipped`);
+      } else {
+        toast.success(`${rows} back to To confirm`);
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { acknowledge, reject, rejectRows, linkNow, unacknowledge };
 }

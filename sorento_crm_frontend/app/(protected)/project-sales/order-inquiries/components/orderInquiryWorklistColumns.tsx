@@ -19,7 +19,12 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ackStateOf, movedNoteOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
+import {
+  ackStateOf,
+  bundledHostChangeLines,
+  movedNoteOf,
+  previousValueOf,
+} from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -37,6 +42,13 @@ import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDial
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
 }
+
+/**
+ * S6 (AC-OH-01): columns hidden on first load, before a saved column preference (if any)
+ * applies and wins. The order inquiry number stays on the header, the email and the URL -
+ * purchasing does not need it as a worklist column any more.
+ */
+export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
 
 /**
  * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
@@ -499,6 +511,13 @@ function BundledDocumentsButton({
  * entirely (AC-RL-46) reads as a one-word muted pill instead - `used` or `note` - never an
  * icon (17 Sep ruling: words, never icons, for every mark this list carries). Both open the
  * SAME dialog this icon does; only the trigger's own shape differs.
+ *
+ * A BUNDLED row (`PLAN-oi-bundled-row-host-change.md`) carries none of the above - a
+ * companion has no sheet row, no PO and no Was of its own - so its icon opens a TOOLTIP
+ * instead of the dialog, one line per host, read straight off `bundled_host_changes`
+ * (owner ruling: "it comes with the X and Y, so it should follow them, to have the same
+ * delay"). Only when nothing else already claims the icon: a row that is ALSO rejected or
+ * changed shows that dialog first, exactly as today.
  */
 function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
   const [open, setOpen] = React.useState(false);
@@ -514,7 +533,34 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
   // trigger ever shows. Never checked on a `redirected_to_pool` row: that row's own note
   // reads differently and is handled by the branch above.
   const moved = !redirected ? movedNoteOf(row) : null;
-  if (!rejected && !changed && !redirected && !moved) return null;
+  const hostLines =
+    !rejected && !changed && !redirected && !moved ? bundledHostChangeLines(row) : null;
+  if (!rejected && !changed && !redirected && !moved && !hostLines) return null;
+
+  if (hostLines) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            data-testid={`qty-annotation-trigger-${row.id}`}
+            aria-label={`Show what ${row.item_code ?? row.so_number ?? 'this row'} rides with`}
+            className="size-5 shrink-0 text-muted-foreground"
+          >
+            <Info className="size-3.5" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs break-words">
+          {hostLines.map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
 
   const openDialog = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -709,22 +755,35 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
-        accessorKey: 'project_customer',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Project / customer" column={column} />
-        ),
-        size: 260,
-        meta: {
-          headerTitle: 'Project / customer',
-          skeleton: <Skeleton className="h-4 w-40" />,
-        },
+        // PLAN-oi-worklist-split-customer-project.md (owner, 18 Sep: "here need to
+        // split the customer and project out"): Customer and Project, two columns
+        // where the combined `project_customer` used to print. `project_customer`
+        // itself stays on the row for the Excel export and the search box, unchanged.
+        accessorKey: 'customer_name',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        size: 150,
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) =>
-          row.original.project_customer ? (
-            <span className="block truncate" title={row.original.project_customer}>
-              {row.original.project_customer}
+          row.original.customer_name ? (
+            <span className="block truncate" title={row.original.customer_name}>
+              {row.original.customer_name}
             </span>
           ) : (
             <Muted>Not attributed</Muted>
+          ),
+      },
+      {
+        accessorKey: 'project_title',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        size: 180,
+        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-32" /> },
+        cell: ({ row }) =>
+          row.original.project_title ? (
+            <span className="block truncate" title={row.original.project_title}>
+              {row.original.project_title}
+            </span>
+          ) : (
+            <Muted>No project</Muted>
           ),
       },
       {
@@ -1011,16 +1070,51 @@ export function useOrderInquiryWorklistColumns({
         // naive UTC stamp.
         accessorKey: 'raised_at',
         header: ({ column }) => <DataGridColumnHeader title="Raised at" column={column} />,
-        size: 170,
+        // 190, not 170 (N6, review round 1): the date/time plus the new info icon no
+        // longer fit the old width without crowding the icon against the next column.
+        size: 190,
         meta: { headerTitle: 'Raised at', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) =>
-          row.original.raised_at ? (
-            <span className="whitespace-nowrap">
+        // PLAN-oi-worklist-split-customer-project.md: a re-confirm cancels a carried line's row
+        // and raises a fresh one, so this cell's own date moves on - the info icon is
+        // where the earlier raise(s) still show, same Info + Tooltip pattern as the
+        // Instruction column's "why this instruction" above.
+        cell: ({ row }) => {
+          const history = row.original.raise_history ?? [];
+          return row.original.raised_at ? (
+            <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
               {formatDateTimeInMalaysia(row.original.raised_at)}
+              {history.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      mode="icon"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Previously raised"
+                      className="size-5 shrink-0 text-muted-foreground"
+                    >
+                      <Info className="size-3.5" aria-hidden />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs break-words">
+                    <p className="font-medium">Previously raised</p>
+                    {history.map((entry, index) => (
+                      <p key={`${entry.raised_at}-${index}`}>
+                        {entry.raised_at
+                          ? formatDateTimeInMalaysia(entry.raised_at)
+                          : 'Unknown'}
+                        {entry.raised_by_name ? ` · ${entry.raised_by_name}` : ''}
+                      </p>
+                    ))}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </span>
           ) : (
             <Muted>Unknown</Muted>
-          ),
+          );
+        },
       },
       // No Confirmed column (S1, AC-1.5): there is no manual confirm left to report on,
       // and the two facts that column existed to carry - a rejection and a settle-in-place

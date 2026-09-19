@@ -13,7 +13,22 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.services.uuid_path_param import UUID_PATTERN
+
+#: The longest free-text search string the worklist routes accept
+#: (`api/v1/projects/order_inquiries.py` imports this rather than retyping it, so the
+#: list route and `AcknowledgeFilter` below share one cap).
+WORKLIST_QUERY_MAX_LENGTH = 200
+#: The same cap on every other free-text filter (location, PO number, SPO number, a
+#: matrix cell's key). They reach an `ilike` or an equality over a joined query, and a
+#: megabyte of "x" is not a search anybody typed.
+WORKLIST_FILTER_MAX_LENGTH = 200
+
+#: The closed state set the worklist list route accepts on `state` - shared so
+#: `AcknowledgeFilter.state` cannot name a value the list route itself would refuse.
+WorklistState = Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]
 
 
 class OrderInquiryBundledWithOut(BaseModel):
@@ -32,6 +47,20 @@ class OrderInquiryBundledWithOut(BaseModel):
     #: anchor has no links of its own (nothing placed for it yet); the reader's own
     #: "Not found (new order)" fallback covers that case.
     anchor_headline: Optional[str] = None
+
+
+class OrderInquiryBundledHostChangeOut(BaseModel):
+    """PLAN-oi-bundled-row-host-change.md. One HOST's own change, read from that host's
+    own live row at display time - never written onto the companion row itself (owner
+    ruling: "it comes with the X and Y, so it should follow them, to have the same
+    delay"). `qty`/`delivery_date`/`previous_qty`/`previous_delivery_date` are all null
+    when the host has no live row of its own on the same order inquiry header."""
+
+    item_code: str
+    qty: Optional[str] = None
+    delivery_date: Optional[date] = None
+    previous_qty: Optional[str] = None
+    previous_delivery_date: Optional[date] = None
 
 
 class OrderInquiryLinkOut(BaseModel):
@@ -234,6 +263,16 @@ class OrderInquirySummary(BaseModel):
     cancelled: int = 0
 
 
+class OrderInquiryRaiseHistoryEntry(BaseModel):
+    """One PRIOR raise of the same SO line under the same inquiry
+    (PLAN-oi-worklist-split-customer-project.md) - the Raised at cell's own tooltip. A re-confirm
+    cancels the old row and raises a fresh one, so this is where the first raise's own
+    time and raiser still live once `raised_at` has moved on to the latest one."""
+
+    raised_at: Optional[datetime] = None
+    raised_by_name: Optional[str] = None
+
+
 class OrderInquiryWorklistRow(BaseModel):
     """One instruction on purchasing's own list, in the spreadsheet's columns.
 
@@ -257,6 +296,12 @@ class OrderInquiryWorklistRow(BaseModel):
     qty: str
     delivery_date: Optional[date] = None
     project_customer: Optional[str] = None
+    # PLAN-oi-worklist-split-customer-project.md: `project_customer` above stays for the
+    # export and search; the worklist screen itself prints these two split out into a
+    # Customer column and a Project column, in that position. `project_title` carries the
+    # PRE-ORDER note `project_customer` does, so a pre-order row still reads as one.
+    customer_name: Optional[str] = None
+    project_title: Optional[str] = None
     # Blank until the row traces to a placed purchase order. Never a guess at who would
     # supply it: purchasing reads a filled cell as a statement that an order exists.
     supplier: Optional[str] = None
@@ -303,6 +348,11 @@ class OrderInquiryWorklistRow(BaseModel):
     # Never the id either - the column is printed as it comes. Null when nobody was
     # recorded, or the user has since been removed.
     raised_by_name: Optional[str] = None
+    # The Raised at cell's own tooltip (PLAN-oi-worklist-split-customer-project.md,
+    # Slice 2): the CANCELLED predecessors on the same SO line, newest first - an open
+    # sibling row is a second live instruction, not history (review round 1, blocker
+    # B1). `[]` on a row with no SO line, or nothing prior. Never on the Excel export.
+    raise_history: List[OrderInquiryRaiseHistoryEntry] = []
     verb: str
     note: Optional[str] = None
 
@@ -327,6 +377,11 @@ class OrderInquiryWorklistRow(BaseModel):
     #: (`test_order_inquiry_bundles.py::test_d7`).
     bundled_qty: str = "0"
     bundled_with: Optional[OrderInquiryBundledWithOut] = None
+    #: PLAN-oi-bundled-row-host-change.md. One entry per host item code, in rule order,
+    #: read from each host's own live row - null on a non-bundled row. Declared here for
+    #: the same reason `bundled_with` is (`response_model` drops what it is not told
+    #: about, `test_order_inquiry_worklist.py`).
+    bundled_host_changes: Optional[List[OrderInquiryBundledHostChangeOut]] = None
 
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with
     #: it: `awaiting`, `acknowledged`, `changed` or `rejected`. Every one of the columns
@@ -486,14 +541,69 @@ class OrderInquiryWorklistSummary(BaseModel):
     link_up_to_default: Optional[date] = None
 
 
-class AcknowledgeRowsRequest(BaseModel):
-    """Purchasing takes on one row or a batch of them (AC-H2).
+class AcknowledgeFilter(BaseModel):
+    """The SAME shape `GET /order-inquiries` filters on, minus paging and sort (AC-CF-8,
+    S2 `PLAN-oi-confirm-per-so.md`, `oi-confirm-per-so-contract.md`): "Select all N
+    matching" resolves against exactly the scope the worklist itself is filtered to,
+    never a client-rebuilt copy of it. Every field is optional; an absent one means "not
+    filtered on that axis", exactly as the list reads it. `query`/`location`/
+    `po_number`/`spo_number` carry the SAME length caps the list route's own `Query(...,
+    max_length=...)` declarations do, and `state` the same closed set - a bad `ack`/
+    `linked`/`kind` (open strings here, same as the list route's own free-standing
+    validation) is still refused by `OrderInquiryWorklistService._base`, which is where
+    the list route's own values are validated too; the length/state checks below just
+    move that refusal to the schema, before any SQL, for the fields the list route
+    itself pins at the route layer rather than in `_base`.
 
-    Ids only: what an acknowledgement means is fixed - the rows become purchasing's work
-    and the cascade runs for exactly them - so there is nothing else to say about it.
+    `project_id`/`supplier_id`/`agent` are pattern-pinned the same way the list route's
+    own `axis_key` query param is (`pattern=UUID_PATTERN`, AC-CF-8d): a JSON body field
+    is a request the caller composed, not a path segment, so a malformed one reads as
+    422 (bad input) here rather than the 404 ("missing resource") `validate_uuid_path`
+    answers for a path param - the route ALSO runs the shared UUID guard those routes
+    use (`_validate_worklist_filter_uuids`), so a value that somehow slipped past this
+    pattern is still refused before it reaches SQL.
     """
 
-    row_ids: List[str] = Field(..., min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+    query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    state: Optional[WorklistState] = None
+    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    raised_by: Optional[str] = None
+    linked: Optional[str] = None
+    kind: Optional[str] = None
+    ack: Optional[str] = None
+    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    so_month: Optional[str] = None
+    po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    delivery_from: Optional[str] = None
+    delivery_to: Optional[str] = None
+    axis: Optional[str] = None
+    axis_key: Optional[str] = Field(None, pattern=UUID_PATTERN)
+
+
+class AcknowledgeRowsRequest(BaseModel):
+    """Purchasing takes on one row, a batch of them, or every row a `filter` matches
+    (AC-H2, AC-CF-8 `PLAN-oi-confirm-per-so.md` S2).
+
+    Exactly one of `row_ids` / `filter` is named - both, or neither, is refused
+    (AC-CF-8c). What an acknowledgement means is fixed either way: the rows become
+    purchasing's work and the cascade runs for exactly them.
+    """
+
+    #: Capped at 500 (security review round 1) - the same guard rail a hand-typed batch
+    #: id list gets everywhere else on this route module, so a caller cannot force one
+    #: request to walk an unbounded id list.
+    row_ids: Optional[List[str]] = Field(None, min_length=1, max_length=500)
+    #: "Select all N matching" (S2): resolved server-side against the SAME filters the
+    #: worklist's own list/summary read, so the scope is never a stale or hand-rebuilt
+    #: copy of what the buyer is looking at.
+    filter: Optional[AcknowledgeFilter] = None
     #: The LINK HORIZON (`PLAN-scm-oi-handshake.md` section 11): rows due AFTER this date
     #: are still TAKEN ON, but they are left Not linked, so a 2030 order stops eating a
     #: purchase order a nearer one needed. Omitted means the reorder plan's own horizon,
@@ -505,6 +615,14 @@ class AcknowledgeRowsRequest(BaseModel):
     #: own; `"date"` requires `link_up_to`. OMITTED is inferred - the date when one is
     #: given, the plan when it is not - so every existing caller means what it always did.
     link_horizon: Optional[Literal["date", "plan", "none"]] = None
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "AcknowledgeRowsRequest":
+        if bool(self.row_ids) == bool(self.filter):
+            raise ValueError(
+                "Name row_ids or filter - never both, and never neither (AC-CF-8c)."
+            )
+        return self
 
 
 class AcknowledgeResult(BaseModel):
@@ -527,6 +645,39 @@ class AcknowledgeResult(BaseModel):
     #: WHETHER a horizon was in force, so a null `link_up_to` is never read two ways: `"none"`
     #: is "nothing was held back for a date", `"date"` names the one above (S1).
     link_horizon: Literal["date", "none"] = "none"
+    #: Rows the `filter` matched but left untouched - rejected, already acknowledged, or
+    #: cancelled (AC-CF-8, S2 `PLAN-oi-confirm-per-so.md`). Always 0 on a `row_ids` press,
+    #: which still refuses such a row outright rather than quietly skipping it.
+    skipped: int = 0
+
+
+class UnacknowledgeRowsRequest(BaseModel):
+    """Purchasing takes a row back off its own plate
+    (PLAN-oi-worklist-split-customer-project.md, Slice 3, owner 18 Sep 2026) - the
+    reverse of Confirm, for a row taken on by mistake or a reconfirm that has not
+    actually happened yet.
+
+    `row_ids` only - no `filter` branch: Unconfirm always names exactly what the buyer
+    ticked, never "everything matching a scope" the way "Select all N matching" does for
+    Confirm.
+    """
+
+    #: At least one, capped at 500 (security review round 1) - the Actions menu names
+    #: exactly what is ticked, so an unbounded list here could only be a hand-built
+    #: request, never the UI's own.
+    row_ids: List[str] = Field(..., min_length=1, max_length=500)
+
+
+class UnacknowledgeResult(BaseModel):
+    """What one Unconfirm press did. No cascade runs, so there is nothing here like
+    `AcknowledgeResult`'s linking figures - just how many rows actually moved and how
+    many the press left alone."""
+
+    #: Rows that were `acknowledged`/`changed` and are now back to `awaiting`.
+    updated: int = 0
+    #: Rows named that were already `awaiting`, `rejected`, cancelled, or outside this
+    #: company's scope - never an error, always just left untouched (S1).
+    skipped: int = 0
 
 
 class RejectRowRequest(BaseModel):
@@ -668,6 +819,28 @@ class OrderInquiryPoCandidate(BaseModel):
     # SO has claimed it, not even this row's own - the dialog greys it "Unattributed -
     # link manually". Always `False` for a pool-destination line (AC-6.10).
     unattributed: bool = False
+    # S8 (AC-CF-24): what THIS row already takes off this line, "0" when it holds none.
+    # `remaining` above is already credited back to include it, so re-placing the same
+    # take never reads as "over the line's remaining".
+    current_take: str = "0"
+    # S8 review round (17 Sep): `False` only on a FORCED entry - a line this row already
+    # holds a link on that is closed, or on a PO no longer active/partial. Every ordinary
+    # candidate the walk offers is `True`.
+    line_open: bool = True
+
+
+class OrderInquiryPoCandidatesResponse(BaseModel):
+    """The Link dialog's own GET (S8): the candidate list, plus the header line the
+    dialog reads - "N still to link of Q" - computed the same way `covers` is, so the
+    two can never disagree.
+    """
+
+    candidates: List[OrderInquiryPoCandidate] = []
+    still_to_link: str
+    # S8 review round (17 Sep): `row.qty - row.bundled_qty`, the SAME ceiling
+    # `_place_on_po_set` enforces server-side - never the row's bare `qty`, which a
+    # bundled row's dialog used to check the submitted total against instead.
+    linkable_qty: str
 
 
 class PlaceOnPoAllocation(BaseModel):
@@ -702,6 +875,12 @@ class PlaceOnPoRequest(BaseModel):
             "Link across one or more lines: {po_line_id | spo_allocation_id, qty}."
         ),
     )
+    # S8 review round (17 Sep): the candidate ids the Link dialog actually rendered
+    # before this press. With `allocations` present this scopes SET semantics' retire
+    # step - a line the row holds that is missing from BOTH `allocations` and this list
+    # was never shown to the caller and survives; omitted entirely, every caller before
+    # this round keeps retiring whatever `allocations` left out, unchanged.
+    offered_line_ids: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def _names_something_to_place(self) -> "PlaceOnPoRequest":

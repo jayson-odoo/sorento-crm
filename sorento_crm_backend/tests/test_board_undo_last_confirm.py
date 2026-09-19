@@ -500,12 +500,16 @@ def test_undo_of_a_batch_confirm_returns_the_batch_to_pending_and_leaves_the_boo
 # --------------------------------------------------------------------------- AC-UC-22
 
 
-def test_after_an_undo_the_reinstated_revision_is_not_undoable(api):
+def test_undo_keeps_reinstated_journal(api):
+    """AC-R2-21 (`PLAN-scm-oi-handover-r2-undo.md` S4, rewrite of the old R3 "one
+    revision back, once" expectation): the reinstated decision's own journal is KEPT,
+    not cleared - so it is itself undoable in turn (AC-R2-22), and the board names it
+    with `mode = "journal"`."""
     fixture = _confirm_linked_world(api, second_buy_qty="15")
     db = fixture["db"]
     order = fixture["order"]
 
-    from app.services.project_supply_undo_service import undo_last_confirm
+    from app.services.project_supply_undo_service import board_undo_map, undo_last_confirm
 
     undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
 
@@ -514,12 +518,18 @@ def test_after_an_undo_the_reinstated_revision_is_not_undoable(api):
         SOSupplyDecision.id == fixture["decision1"].id
     ).one()
     assert reinstated.state == "active"
-    assert reinstated.undo_journal is None, "R3: one revision back, once"
+    assert reinstated.undo_journal, (
+        "AC-R2-21: the reinstated revision must keep its own journal, not have it cleared"
+    )
 
-    with pytest.raises(AppException) as exc_info:
-        undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "no_journal"
+    # AC-R2-27: the board's own `undo` for this order now names rev1 with mode=journal.
+    undo_map = board_undo_map(db, {order.so_id: order.id})
+    entry = undo_map.get(order.so_id)
+    assert entry is not None, "AC-R2-27/21: the reinstated revision must itself be undoable"
+    assert entry["revision_no"] == 1
+    assert entry.get("mode") == "journal", (
+        f"AC-R2-27: board_undo_map's own dict must carry mode='journal', got {entry}"
+    )
 
 
 # --------------------------------------------------------------------------- AC-UC-23/24/25 (review round: refusal rebuilt on the journal insert set, not raw timestamps)
@@ -712,11 +722,22 @@ def test_the_confirms_own_step3_borrow_link_does_not_refuse(api):
 # --------------------------------------------------------------------------- AC-UC-26
 
 
-def test_a_revision_without_a_journal_refuses(api):
+def test_journalless_decision_refuses_non_admin_offers_reconstructed_to_admin(api):
+    """AC-R2-30/35 (`PLAN-scm-oi-handover-r2-undo.md` S5, rewrite of the old plain
+    "refuses" expectation): a journal-less decision still refuses `undo_last_confirm`
+    itself (nothing to replay), but the BOARD offers a best-effort `reconstructed` undo
+    for it - visible ONLY to an admin/superadmin requester. A non-admin gets `undo:
+    null` for that order, same as no active decision at all."""
     client, world = api
     db = world.db
-    order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
+    # `so_id=core_so.id` (review round, captain's diagnosis): the old pre-lane test
+    # this rewrites never called the board route, so it never needed the mirror
+    # wired to its core order. Now that this test ALSO reads `GET .../board` by
+    # `core_so.so_number`, an unwired order is never found as an adopted mirror at
+    # all - `undo` reads None for every actor, and the non-admin half only "passes"
+    # because there is nothing there to see, not because the admin gate held.
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
@@ -738,6 +759,39 @@ def test_a_revision_without_a_journal_refuses(api):
         undo_last_confirm(db, order, actor_user_id=world.eling)
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "no_journal"
+
+    # Non-admin: the board never offers a reconstructed undo for this order.
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    order_standing = next(
+        o for o in response.json()["orders"] if o["so_number"] == core_so.so_number
+    )
+    assert order_standing["undo"] is None, (
+        "AC-R2-30: a non-admin must not see a reconstructed undo entry"
+    )
+
+    # Admin: the board offers it, named mode="reconstructed".
+    from app.services.user_service import UserPermissionService
+
+    original_role_slugs = UserPermissionService.get_user_role_slugs
+    UserPermissionService.get_user_role_slugs = lambda self, uid: {"admin"}
+    try:
+        response = client.get(
+            f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+        )
+    finally:
+        UserPermissionService.get_user_role_slugs = original_role_slugs
+    assert response.status_code == 200, response.text
+    order_standing = next(
+        o for o in response.json()["orders"] if o["so_number"] == core_so.so_number
+    )
+    assert order_standing["undo"] is not None, (
+        "AC-R2-30: an admin must see the reconstructed undo entry"
+    )
+    assert order_standing["undo"]["mode"] == "reconstructed"
+    assert order_standing["undo"]["revision_no"] == 1
 
 
 # --------------------------------------------------------------------------- AC-UC-27
@@ -1669,3 +1723,182 @@ def test_parking_an_undo_that_would_be_refused_answers_409_at_park_time(api):
         .count()
         == 0
     ), "no pending row was parked for a refusal caught at park time"
+
+
+# =============================================================================== #
+# `PLAN-scm-oi-handover-r2-undo.md` S4 - depth-N undo, post-image `changed` guard  #
+# =============================================================================== #
+
+
+def test_undo_twice_then_refuses(api):
+    """AC-R2-22: two journaled revisions undo cleanly back to nothing (the second
+    undo replays rev1's OWN journal, which R2-21 keeps alive), and a third undo then
+    refuses `no_journal` - there is nothing left to replay."""
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    order = fixture["order"]
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    first_undo = undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    assert first_undo["revision_no"] == 2
+
+    second_undo = undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    assert second_undo["revision_no"] == 1
+
+    db.expire_all()
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == "active",
+        )
+        .first()
+    )
+    assert active is None, "AC-R2-22: after two undos the order has no active decision"
+
+    with pytest.raises(AppException) as exc_info:
+        undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "no_journal"
+
+
+def test_changed_row_refuses_at_park_and_execute(api):
+    """AC-R2-24: a journalled row whose CURRENT value differs from its own journal
+    entry's `new` (another writer touched it after the confirm) refuses BOTH at park
+    time (409, code "changed") and at undo's own execute time - the replay never runs.
+    The baseline (nothing mutated) does not refuse."""
+    from sqlalchemy import text as sa_text
+
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    client = fixture["client"]
+    db = fixture["db"]
+    order = fixture["order"]
+    row = fixture["row"]
+    decision2 = fixture["decision2"]
+
+    from app.services.project_supply_undo_service import refusal_for_order, undo_last_confirm
+
+    # Baseline: nothing has touched the row since the confirm - no `changed` refusal.
+    assert refusal_for_order(db, order.id) != "changed", (
+        "setup: the unmutated row must not refuse before the write below"
+    )
+
+    # Another writer changes the SAME journalled column the second confirm's own
+    # settle-in-place wrote (`order_inquiry_rows.qty`), bypassing the ORM so it is
+    # genuinely "since the confirm", not part of this journal. UNQUALIFIED table
+    # name (review round, captain's diagnosis): `blank_session()` routes raw SQL
+    # through `search_path`, never `schema_translate_map` - a schema-qualified
+    # `projects.order_inquiry_rows` resolves against the REAL `projects` schema
+    # outside the scratch one, so the UPDATE lands on zero rows there and this
+    # test's own mutation never happens.
+    db.execute(
+        sa_text("UPDATE order_inquiry_rows SET qty = :qty WHERE id = :id"),
+        {"qty": Decimal("999"), "id": str(row.id)},
+    )
+    db.commit()
+
+    refusal = refusal_for_order(db, order.id)
+    assert refusal == "changed", f"AC-R2-24: expected 'changed', got {refusal!r}"
+
+    park = client.post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": "project_sales_order.undo_confirm",
+            "entity_type": "project_sales_order",
+            "entity_id": str(order.id),
+            "payload": {"decision_id": str(decision2.id), "mode": "journal"},
+        },
+    )
+    assert park.status_code == 409, park.text
+    assert park.json().get("code") == "changed"
+
+    before = _snapshot(db)
+    with pytest.raises(AppException) as exc_info:
+        undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "changed"
+    assert _snapshot(db) == before, "a refused undo must replay nothing"
+
+
+def test_legacy_entry_without_new_is_skipped(api):
+    """AC-R2-25: a legacy journal entry (written before this lane, so it carries no
+    `new` key at all) is exempt from the `changed` check - undo proceeds even though
+    the row's live value no longer matches what the entry's `old` recorded."""
+    from sqlalchemy import text as sa_text
+
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    order = fixture["order"]
+    row = fixture["row"]
+    decision2 = fixture["decision2"]
+
+    db.expire_all()
+    decision2 = db.query(SOSupplyDecision).filter(SOSupplyDecision.id == decision2.id).one()
+    journal = decision2.undo_journal
+    assert journal, "setup: the second confirm must carry its own journal"
+    stripped = [{k: v for k, v in entry.items() if k != "new"} for entry in journal]
+
+    table = SOSupplyDecision.__table__
+    db.execute(table.update().where(table.c.id == decision2.id).values(undo_journal=stripped))
+    # Another writer touches the SAME journalled column - if the changed check were
+    # NOT skipped for a `new`-less entry, this alone would refuse. UNQUALIFIED table
+    # name, same routing fix as `test_changed_row_refuses_at_park_and_execute` above.
+    db.execute(
+        sa_text("UPDATE order_inquiry_rows SET qty = :qty WHERE id = :id"),
+        {"qty": Decimal("999"), "id": str(row.id)},
+    )
+    db.commit()
+
+    from app.services.project_supply_undo_service import refusal_for_order, undo_last_confirm
+
+    assert refusal_for_order(db, order.id) != "changed", (
+        "AC-R2-25: a legacy entry with no `new` must be exempt from the changed check"
+    )
+
+    result = undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    assert result["revision_no"] == 2
+
+
+def test_second_undo_passes_changed_check(api):
+    """AC-R2-26: after undoing rev2 (which restores rev1's own post-image on the
+    touched row from rev2's journal), undoing rev1 in turn must NOT refuse `changed` -
+    rev2's own `old` values are rev1's `new` values by construction, so the two agree."""
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    order = fixture["order"]
+
+    from app.services.project_supply_undo_service import refusal_for_order, undo_last_confirm
+
+    undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    db.expire_all()
+
+    refusal = refusal_for_order(db, order.id)
+    assert refusal != "changed", (
+        f"AC-R2-26: the reinstated revision's own changed check must pass, got {refusal!r}"
+    )
+
+    result = undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
+    assert result["revision_no"] == 1
+
+
+def test_board_undo_carries_mode_and_changed():
+    """AC-R2-27: `BoardUndo` gains `mode` (always present once `undo` is present) and
+    `refusal` accepts the new `"changed"` member. Pinned at the schema directly - the
+    board READ itself deliberately does NOT compute `changed` (S4's own note: that runs
+    at park/execute time only); `board_undo_map`'s own `mode` key is exercised by
+    `test_undo_keeps_reinstated_journal` and `test_journalless_decision_refuses_non_
+    admin_offers_reconstructed_to_admin` above."""
+    from app.schemas.project_board import BoardUndo
+
+    undo = BoardUndo(revision_no=1, refusal="changed", decision_id="dec-1", mode="journal")
+    assert undo.mode == "journal", "AC-R2-27: BoardUndo must carry `mode`"
+    assert undo.refusal == "changed", (
+        "AC-R2-27: `refusal` must accept the new 'changed' member"
+    )
+
+    reconstructed = BoardUndo(
+        revision_no=2, refusal=None, decision_id="dec-2", mode="reconstructed"
+    )
+    assert reconstructed.mode == "reconstructed"
+

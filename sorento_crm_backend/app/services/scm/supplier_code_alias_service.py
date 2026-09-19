@@ -595,9 +595,15 @@ def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
 
 def _stock_queue_row(row: SupplierInventory) -> dict:
     """One queue line off a stock row. The supplier's own words travel with the code, because
-    that is what the person matching it recognises."""
+    that is what the person matching it recognises.
+
+    `model_no` (owner feedback round 5): the 型号 exactly as the sheet printed it, which for
+    a bare model is not `item_code` - that may be our own composed guess. "Supplier says"
+    has to lead with what the supplier actually wrote.
+    """
     return {
         "item_code": row.item_code,
+        "model_no": row.model_no,
         "product_name": row.product_name,
         "brand": row.brand,
         "spec": row.spec,
@@ -663,6 +669,9 @@ def _unmatched_rows(
             code,
             {
                 "item_code": code,
+                # A proforma line names no separate 型号 - `item_code` IS what the supplier
+                # wrote here (no bare-model composition happens on this document at all).
+                "model_no": None,
                 "product_name": line.description,
                 "brand": None,
                 "spec": None,

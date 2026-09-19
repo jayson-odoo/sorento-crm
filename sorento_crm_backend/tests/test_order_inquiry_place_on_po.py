@@ -33,7 +33,9 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.inventory import Warehouse
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
@@ -327,7 +329,7 @@ def test_candidates_are_soonest_expected_date_first_with_the_earliest_covering_r
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert [c["po_line_id"] for c in body] == [early_short.id, late_covers.id]
     assert body[0]["covers"] is False
     assert body[0]["recommended"] is False
@@ -353,7 +355,7 @@ def test_candidates_are_netted_by_what_other_placed_rows_already_tagged(api):
     response = client.get(f"{BASE}/order-inquiry-rows/{row_b.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert body[0]["already_tagged"] == "20"
     assert body[0]["remaining"] == "30"
     assert body[0]["covers"] is True
@@ -388,7 +390,7 @@ def test_candidates_claims_array_names_every_other_row_tagged_with_price(api):
     response = client.get(f"{BASE}/order-inquiry-rows/{row_c.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    candidate = next(c for c in response.json() if c["po_line_id"] == line.id)
+    candidate = next(c for c in response.json()["candidates"] if c["po_line_id"] == line.id)
     assert candidate["already_tagged"] == "35"
     assert candidate["unit_cost"] == "12.75"
     assert candidate["currency"] == "MYR"
@@ -413,7 +415,7 @@ def test_candidates_unit_cost_and_currency_are_blank_when_the_line_carries_none(
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    candidate = response.json()[0]
+    candidate = response.json()["candidates"][0]
     assert candidate["unit_cost"] is None
     assert candidate["currency"] is None
     assert candidate["claims"] == []
@@ -432,10 +434,26 @@ def test_candidates_409_for_a_verb_that_is_not_placeable(api):
     assert response.json()["code"] == "order_inquiry_not_placeable_verb"
 
 
-def test_candidates_409_for_a_row_that_is_not_raised(api):
+def test_candidates_200_for_an_actioned_row_s8_widened_the_state_gate(api):
+    """S8 (AC-CF-23): "Choose document" is a one-press re-link, so a row already
+    ACTIONED - the old refusal this test used to pin - is offered candidates too, same
+    as PLACED. Only CANCELLED is refused now (the next test)."""
     client, db, world, _user_id = api
     row = _row(
         db, world["company_id"], world["inquiry"], verb=IV_ORDER, state=INQUIRY_ACTIONED,
+        qty="10", item_code=world["product"].product_code,
+    )
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["still_to_link"] == "10"
+
+
+def test_candidates_409_for_a_cancelled_row(api):
+    client, db, world, _user_id = api
+    row = _row(
+        db, world["company_id"], world["inquiry"], verb=IV_ORDER, state=INQUIRY_CANCELLED,
         qty="10", item_code=world["product"].product_code,
     )
 
@@ -562,7 +580,12 @@ def test_two_rows_tagging_the_same_line_cannot_exceed_its_balance(api):
     assert exact.json()["state"] == INQUIRY_PLACED
 
 
-def test_a_placed_row_cannot_be_placed_again(api):
+def test_a_fully_placed_row_has_nothing_left_for_the_single_line_form_to_add(api):
+    """S8 (AC-CF-23) widened `_assert_linkable`'s state gate to every state but
+    CANCELLED, so a second `place-on-po` on a PLACED row is no longer refused by the
+    state gate itself - but the single `po_line_id` form KEEPS its old ADD meaning (the
+    row's whole UNLINKED remainder), and that remainder is 0 once the row is fully
+    placed, so there is nothing to name."""
     client, db, world, _user_id = api
     line = _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="50",
@@ -580,8 +603,8 @@ def test_a_placed_row_cannot_be_placed_again(api):
     again = client.post(
         f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": other_line.id}
     )
-    assert again.status_code == 409
-    assert again.json()["code"] == "order_inquiry_not_raised"
+    assert again.status_code == 422
+    assert again.json()["code"] == "order_inquiry_no_allocations"
 
 
 def test_a_reader_cannot_place_a_row(reader_api):
@@ -904,7 +927,7 @@ def test_candidates_are_ordered_by_document_sequence_when_expected_dates_tie(api
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert [c["po_line_id"] for c in body] == [line_a.id, line_b.id]
     # The cascade preview (`default_take`) walks the SAME order: the earlier document
     # takes its whole balance first, the later one takes only what is left.
@@ -924,7 +947,7 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
 
     candidates = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
     assert candidates.status_code == 200, candidates.text
-    assert candidates.json() == []
+    assert candidates.json()["candidates"] == []
 
     listing = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert listing.status_code == 200, listing.text
@@ -1121,16 +1144,20 @@ def test_a_reader_cannot_trigger_auto_place(reader_api):
     assert response.status_code == 403
 
 
-def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
-    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026), and once
-    more by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4, 1 Sep 2026).
+def test_a_decision_confirm_raises_the_buy_row_awaiting_with_a_firm_link():
+    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026), once
+    more by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4, 1 Sep 2026), and once more
+    by `PLAN-oi-confirm-per-so.md` S1 (17 Sep 2026), which reverses G4 back out.
 
     G2's original trigger linked at the decision confirm; the handshake took it away
     because a buyer found their own documents dealt out to instructions they had never
     read; R6 restored the pass and answered that objection with what the link MEANT THEN -
-    a DRAFT, on a row still `awaiting`. S1 removes the manual confirm the draft was
-    waiting on entirely: the row comes out ACKNOWLEDGED, and the link the raise found is
-    firm from the moment it is written.
+    a DRAFT, on a row still `awaiting`. G4/S1 (1 Sep) removed the manual confirm the draft
+    was waiting on entirely, born ACKNOWLEDGED; `PLAN-oi-confirm-per-so.md` S1 puts the
+    manual Confirm press back - the row is born `awaiting` again, with null stamps, and it
+    is purchasing's own Confirm that takes it on. What R6 answered survives unchanged
+    either way: the LINK the raise found is firm from the moment it is written, whatever
+    the row's own ack_state - linking has never waited for confirm (AC-CF-4).
     """
     from app.models.base import company_scope
     from app.services.project_service import register_project
@@ -1145,11 +1172,12 @@ def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
         )
         product = _confirm_product(db)
         warehouse = _confirm_warehouse(db, f"ZZT-CF-{_uid()[:4]}")
-        # H: what this test is actually proving - born acknowledged, firm from the moment
-        # the auto-cascade writes it - needs the cascade to WRITE something. A candidate is
-        # only ever auto-taken from a genuine POOL now (AC-H1/AC-H2), so `warehouse` has to
-        # be one, or the cascade would find its one candidate uncascadable and this test
-        # would be proving AC-H1 instead of G4/S1 (AC-H1 already has its own coverage in
+        # H: what this test is actually proving - the link is firm, written by the
+        # auto-cascade the instant the row is raised - needs the cascade to WRITE
+        # something. A candidate is only ever auto-taken from a genuine POOL now
+        # (AC-H1/AC-H2), so `warehouse` has to be one, or the cascade would find its
+        # one candidate uncascadable and this test would be proving AC-H1 instead of
+        # the birth state and the link timing (AC-H1 already has its own coverage in
         # `test_order_inquiry_links.py`).
         _confirm_warehouse(db, f"ZZT-CF-SIB-{_uid()[:4]}", pool_warehouse_id=warehouse.id)
         core_so = _confirm_core_so(db, company_id)
@@ -1183,7 +1211,9 @@ def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
             .first()
         )
         assert row is not None
-        assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged (S1)"
+        assert row.ack_state == ACK_AWAITING, "born awaiting again (PLAN-oi-confirm-per-so S1)"
+        assert row.acknowledged_by is None
+        assert row.acknowledged_at is None
         assert row.state == INQUIRY_PLACED, "the 30-line covers the whole 20"
         assert str(row.po_line_id) == str(po_line.id), "the link names the open line"
 
@@ -1351,9 +1381,13 @@ def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delive
     weighting `document_age` alone must still hand it the only PO quantity there is."""
     client, db, world, user_id = api
     _policy(db, {"document_age": 1.0}, {"project": 1.0})
+    # AC-EA-3: 2026-09-01 sat inside `older`'s 90-day lead-time window (delivery
+    # 2026-12-01, edge 2026-09-02) and would be removed as a candidate before the
+    # ranking under test ever ran. Moved a couple of days later so the line stays a
+    # candidate for BOTH rows and document_age still decides between them.
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
-        qty_ordered="10", expected_date=date(2026, 9, 1),
+        qty_ordered="10", expected_date=date(2026, 9, 3),
     )
     older = _competing_row(
         db, world["company_id"], world["project"],
@@ -1390,9 +1424,12 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
     the SOONER delivery date wins even though its own document is the newer one."""
     client, db, world, user_id = api
     _policy(db, {"need_by_date": 1.0}, {"project": 1.0})
+    # AC-EA-3: same edge as the document_age test above - `older`'s 90-day window edge
+    # is 2026-09-02, so the line's promise has to land after it or the cascade drops it
+    # as a candidate before need_by_date gets to decide anything.
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
-        qty_ordered="10", expected_date=date(2026, 9, 1),
+        qty_ordered="10", expected_date=date(2026, 9, 3),
     )
     older = _competing_row(
         db, world["company_id"], world["project"],
@@ -1441,9 +1478,12 @@ def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_produ
     _policy(db, {"document_age": 0.6, "need_by_date": 0.4}, {"project": 1.0})
 
     def _arena(product):
+        # AC-EA-3: same edge as the document_age test above - `older_doc`'s 90-day
+        # window edge is 2026-09-02, so the line's promise has to land after it or the
+        # cascade drops it as a candidate before document_age gets to decide anything.
         line = _po_line(
             db, world["company_id"], world["po"], product, world["warehouse"],
-            qty_ordered="10", expected_date=date(2026, 9, 1),
+            qty_ordered="10", expected_date=date(2026, 9, 3),
         )
         # Wins on document_age (the older document) - loses on need_by_date (the later
         # delivery). Scoped 1-vs-1, `document_age`'s heavier weight (0.6 > 0.4) decides.

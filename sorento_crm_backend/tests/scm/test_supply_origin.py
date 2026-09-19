@@ -67,6 +67,16 @@ def test_origin_chain(db, chain):
     * link to a supplier with no country -> overseas
     """
     from app.services.scm.supply_origin import buy_origin_by_product
+    from app.models.user import SystemSetting
+
+    # PLAN-local-buy-routing-toggle.md: the resolver now reads the setting first, off
+    # by default, so it must be ON here for this file's ON-behaviour pins to hold.
+    row = db.query(SystemSetting).first() or SystemSetting(id=_u())
+    db.add(row)
+    db.flush()
+    db.query(SystemSetting).filter(SystemSetting.id == row.id).update(
+        {SystemSetting.local_buy_routing_enabled: True}
+    )
 
     f = chain
     my = _country(db, "MY", "Malaysia")
@@ -104,6 +114,16 @@ def test_primary_link_beats_newer_po(db, chain):
     """A product whose primary link is Malaysian but whose NEWEST PO is Chinese still
     resolves local - the primary link wins (plan decision 3 / AC-2.13)."""
     from app.services.scm.supply_origin import buy_origin_by_product
+    from app.models.user import SystemSetting
+
+    # PLAN-local-buy-routing-toggle.md: the resolver now reads the setting first, off
+    # by default, so it must be ON here for this file's ON-behaviour pins to hold.
+    row = db.query(SystemSetting).first() or SystemSetting(id=_u())
+    db.add(row)
+    db.flush()
+    db.query(SystemSetting).filter(SystemSetting.id == row.id).update(
+        {SystemSetting.local_buy_routing_enabled: True}
+    )
 
     f = chain
     my = _country(db, "MY", "Malaysia")

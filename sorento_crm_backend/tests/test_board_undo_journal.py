@@ -684,13 +684,12 @@ def test_the_journal_refuses_a_composite_primary_key_table(api):
 # --------------------------------------------------------------------------- review round: attaching a journal clears the superseded one (contract H)
 
 
-def test_attaching_a_journal_clears_the_superseded_decisions_journal(api):
-    """Contract H (review round): confirming a NEW revision nulls the SUPERSEDED
-    decision's own `undo_journal` immediately, at confirm time - not only when it is
-    later reinstated by an undo (R3/AC-UC-22 is the separate, undo-side guarantee). A
-    superseded revision's journal replaying against a book state revision 2 has
-    already changed underneath it is not a journal anybody may ever safely replay.
-    """
+def test_attach_keeps_superseded_journal(api):
+    """AC-R2-20 (`PLAN-scm-oi-handover-r2-undo.md` S4, rewrite of the old Contract H
+    "clears" expectation - depth-N undo needs EVERY revision's own journal to survive
+    for life, so a second undo can replay revision 1 the same way the first replayed
+    revision 2). Confirming a NEW revision must LEAVE the superseded decision's own
+    `undo_journal` exactly as it was, not null it."""
     client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
@@ -711,6 +710,7 @@ def test_attaching_a_journal_clears_the_superseded_decisions_journal(api):
     )
     assert decision1.undo_journal, "revision 1 must carry its own journal once confirmed"
     decision1_id = decision1.id
+    decision1_journal_len = len(decision1.undo_journal)
 
     second = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -728,8 +728,13 @@ def test_attaching_a_journal_clears_the_superseded_decisions_journal(api):
         )
         .one()
     )
-    assert decision1.undo_journal is None, (
-        "the superseded decision's journal is cleared at confirm time, not only on undo"
+    assert decision1.undo_journal, (
+        "AC-R2-20: the superseded decision's own journal must be KEPT at confirm time, "
+        "not cleared - a later undo of revision 2 has to be able to replay revision 1's "
+        "own journal in turn"
+    )
+    assert len(decision1.undo_journal) == decision1_journal_len, (
+        "the kept journal must be exactly what revision 1's own confirm wrote"
     )
     assert decision2.undo_journal, "the new active decision carries its own journal"
 
@@ -796,4 +801,43 @@ def test_a_refused_confirm_leaves_no_journal_and_no_flush_error(api):
     assert remaining[0].id == winner.id
     assert remaining[0].undo_journal is None, (
         "the loser never got far enough to attach a journal to anything"
+    )
+
+
+# --------------------------------------------------------------------------- AC-R2-23 (S4)
+
+
+def test_update_entry_carries_new(api):
+    """AC-R2-23 (`PLAN-scm-oi-handover-r2-undo.md` S4): an `update` journal entry also
+    records `new` - the values written for the SAME keys as `old` - so a later `changed`
+    check (AC-R2-24) can compare a journalled row's CURRENT value against what this
+    confirm's own write actually left there, not merely what it found."""
+    from app.services.project_supply_undo_service import UndoJournal, _table_name
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+    before_qty = str(line.qty)
+
+    with UndoJournal(db) as journal:
+        line.qty = Decimal("25")
+        db.flush()
+
+    table = _table_name(line)
+    entries = [
+        e for e in journal.entries
+        if e["op"] == "update" and e["table"] == table and e["pk"] == str(line.id)
+    ]
+    assert entries, f"expected an update entry for the line, got {journal.entries}"
+    entry = entries[0]
+    assert entry["old"].get("qty") == before_qty
+    assert entry.get("new") is not None, (
+        f"AC-R2-23: an update entry must carry `new`, got {entry}"
+    )
+    assert entry["new"].get("qty") == "25", (
+        f"AC-R2-23: `new` must hold the values actually written, got {entry['new']}"
     )

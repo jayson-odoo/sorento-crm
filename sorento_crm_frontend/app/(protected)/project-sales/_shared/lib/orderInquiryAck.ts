@@ -5,9 +5,11 @@
  * the column, the filter and the bulk bar cannot come to disagree about what "Changed"
  * means. Nothing here explains the feature - the words are the answer, not a lesson.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type {
   OrderInquiryAckFields,
   OrderInquiryAckState,
+  OrderInquiryBundledHostChange,
 } from '../types/orderInquiry.types';
 
 export const ACK_STATES: OrderInquiryAckState[] = [
@@ -37,16 +39,20 @@ export const ACK_LABELS: Record<OrderInquiryAckState, string> = {
 export const ACK_ANY = 'all';
 
 /**
- * What the Confirmed filter offers, in the order purchasing reads them (S3, review of
- * PR #471). No "To confirm" any more: a row is born acknowledged and a settle
- * auto-acknowledges again (G4), so nothing sits in `awaiting` (bar a pre-migration or
- * otherwise legacy row) for that option to mean anything about - the filter still
- * selects a genuinely rejected or changed row, which is what purchasing still looks up.
+ * What the Confirmed filter offers, in the order purchasing reads them (PLAN-oi-confirm-
+ * per-so, R3: G4/G5 reversed). A row is born `awaiting` again - the handshake is back on -
+ * so "To confirm" is purchasing's own work queue and the page's own default (`ack`
+ * absent), with an explicit "All" beside it for "show me everything regardless of where
+ * it stands". `to_confirm` is not a stored `ack_state` (it is `awaiting` OR `changed`
+ * together) - the backend has read it since the handshake plan and this is the first
+ * time the FE offers it again.
  */
 export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'to_confirm', label: 'To confirm' },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
   { value: 'changed', label: ACK_LABELS.changed },
   { value: 'rejected', label: ACK_LABELS.rejected },
+  { value: ACK_ANY, label: 'All' },
 ];
 
 export function ackStateOf(row: OrderInquiryAckFields): OrderInquiryAckState {
@@ -108,4 +114,40 @@ export function movedNoteOf(row: { note?: string | null }): string | null {
   return note.includes('AutoCount moved') || note.includes('AutoCount removed')
     ? note
     : null;
+}
+
+/**
+ * The (i) for a BUNDLED row (`PLAN-oi-bundled-row-host-change.md`). A companion has no
+ * sheet row of its own, no PO of its own and no Was of its own - owner ruling, 19 Sep
+ * 2026: "it comes with the X and Y, so it should follow them, to have the same delay" -
+ * so its own (i) reads each HOST's own change instead, one line per host, in the order
+ * `bundled_host_changes` already carries (rule order, resolved server-side). Nothing is
+ * written to the companion row itself; this only reads what the server already sent.
+ *
+ * Three shapes, per host:
+ *   - a host with a Was of its own: "with X: Was 182 on 01/06/2026, now 280 on 01/03/2027"
+ *   - a host with a live row but no Was: "with X: 280 on 01/03/2027, no change"
+ *   - a host with no live row at all: "with X: no open row"
+ *
+ * `null` on a row that carries no `bundled_host_changes` at all - not a bundled row, or
+ * one whose rule resolved to nothing.
+ */
+export function bundledHostChangeLines(row: {
+  bundled_host_changes?: OrderInquiryBundledHostChange[] | null;
+}): string[] | null {
+  const entries = row.bundled_host_changes;
+  if (!entries || entries.length === 0) return null;
+  return entries.map((entry) => bundledHostChangeLine(entry));
+}
+
+function bundledHostChangeLine(entry: OrderInquiryBundledHostChange): string {
+  if (!entry.qty || !entry.delivery_date) {
+    return `with ${entry.item_code}: no open row`;
+  }
+  const now = `${entry.qty} on ${formatDateInMalaysia(entry.delivery_date)}`;
+  if (entry.previous_qty && entry.previous_delivery_date) {
+    const was = `${entry.previous_qty} on ${formatDateInMalaysia(entry.previous_delivery_date)}`;
+    return `with ${entry.item_code}: Was ${was}, now ${now}`;
+  }
+  return `with ${entry.item_code}: ${now}, no change`;
 }

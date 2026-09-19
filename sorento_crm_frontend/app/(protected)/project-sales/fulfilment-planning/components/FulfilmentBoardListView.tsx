@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
-import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { BoardChangeTable } from './BoardChangeTable';
@@ -59,6 +59,7 @@ export function FulfilmentBoardListView({
   onDecideMany,
   annotations,
   externalSearch,
+  pageResetKey,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -82,6 +83,14 @@ export function FulfilmentBoardListView({
    * any more, so there is no second box to type into.
    */
   externalSearch?: string;
+  /**
+   * Resets `PanelDataGrid`'s page on a change - `externalSearch` on its own, unless the
+   * caller narrows `contributions` by something else too (`FulfilmentBoardPanel`'s kind
+   * filter, on top of its own search): that caller passes its OWN composite key instead,
+   * since a `contributions` array that changed only because of THAT filter would otherwise
+   * leave the reader on whatever page 3 now shows instead of the top of the new list.
+   */
+  pageResetKey?: string;
 }) {
   /**
    * Which rows are open - the same STATE the cell breakdown keeps, and the same panel inside
@@ -482,7 +491,9 @@ export function FulfilmentBoardListView({
         cell: ({ row }) => {
           const contribution = row.original;
           const key = contribution.key;
-          const drafted = Boolean(draft[key]);
+          // No Undo on a bare pre-mark (PLAN-board-change-proposed-pill): nothing has actually
+          // been saved here yet, only the board's own suggestion.
+          const drafted = Boolean(draft[key]) && !isPreMarkOnly(contribution, draft[key] ?? null);
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
@@ -535,6 +546,7 @@ export function FulfilmentBoardListView({
       columns={columns}
       rows={filteredContributions}
       getRowId={(row) => row.key}
+      pageResetKey={pageResetKey ?? externalSearch}
       listingKey="projects.projects.view::project-fulfilment-board-list-v1"
       emptyTitle="Nothing is outstanding on this board"
       rowSelection={rowSelection}
