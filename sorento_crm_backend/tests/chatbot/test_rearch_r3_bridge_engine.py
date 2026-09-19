@@ -46,6 +46,7 @@ import pytest
 from app.services.chatbot import copy as copy_mod
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.business import answer as answer_mod
+from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.tail import outcome as outcome_mod
 from app.services.chatbot.tail import reply_ladder
@@ -173,7 +174,17 @@ class TestPromotionAskMultiSelect:
     generic single-position handling already works for it), so answering '1' with
     one already runs one promotion fetch. 'one-and-two' and 'all' are genuinely
     RED: only one promotion call fires regardless of how many positions/broaden_axis
-    named multiple tiers."""
+    named multiple tiers.
+
+    Captain ruling 20 Sep 2026: the ASK turn's own `captured1` is not empty -
+    `TestPromotionAskUsesProductionCopy`'s own green test in this same file asserts
+    the ask's reply is stamped "has promotion"/"no promotion" per entitled tier, and
+    that stamp can only come from `lanes/business/__init__.py`'s own tier_ask arm
+    running one MCP probe (`fetch_mod.TIER_PROBE_TOOL`) per entitled tier, each
+    scoped to that tier's own access level (`fetch_mod.tier_probe_plan`'s
+    `probe_access_levels`). So the ask turn's own captured calls are asserted to be
+    ONLY those per-tier probe calls - never zero, never anything else - and the
+    ANSWER turn still fetches per chosen tier as before."""
 
     @pytest.mark.parametrize(
         "answer_text,answer_overrides,expected_tier_count",
@@ -200,9 +211,26 @@ class TestPromotionAskMultiSelect:
             resolve_services=resolve_services,
             mcp_response={"has_result": False, "items": []},
         )
-        assert captured1 == [], (
-            "the tier ask itself must fire no tool call - a fetch happens only once "
-            f"a tier is chosen: {captured1}"
+        # The ask turn's own captured calls must be ONLY the per-tier promotion
+        # probe - one call per entitled tier ("Sorento Dealer", "Sorento Office"),
+        # each scoped to that tier's own access level - never zero (the stamps in
+        # TestPromotionAskUsesProductionCopy's own green test could not exist
+        # without them) and never anything else (no order/outstanding/other tool).
+        assert len(captured1) == 2, (
+            f"the tier ask must fire exactly one promotion probe per entitled tier "
+            f"(2 entitled tiers here): {captured1}"
+        )
+        for name, args in captured1:
+            assert name == fetch_mod.TIER_PROBE_TOOL, (
+                f"the ask turn's only tool calls must be the per-tier promotion probe "
+                f"({fetch_mod.TIER_PROBE_TOOL!r}), got {name!r}: {captured1}"
+            )
+        probed_access_levels = sorted(
+            tuple(args.get("access_levels") or []) for _name, args in captured1
+        )
+        assert probed_access_levels == [("Sorento Dealer",), ("Sorento Office",)], (
+            "each per-tier probe call must be scoped to exactly that tier's own "
+            f"access level: {captured1}"
         )
         answer_qf = _parser_output(
             domain_hint=None,
