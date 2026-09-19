@@ -51,6 +51,8 @@ from typing import Any, Dict, List, Optional, Sequence
 # Allow `from app.*` imports when invoked from the backend directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import func
+
 from app.models.base import company_scope, set_company_scope
 from app.models.company import Company
 from app.models.project_so import OrderInquiryLink, OrderInquiryRow
@@ -113,29 +115,45 @@ def _rows_named_by_book(db, service: ProjectOrderInquiryService, company_id: str
     return named
 
 
-def _company_link_snapshot(db, company_id: str) -> Dict[str, Decimal]:
-    """Every order_inquiry_row in this company that carries a link, and how
-    much quantity it carries in total - the one comparison a page's before
-    and after read to find what THIS page actually changed, whichever row it
-    landed on (a book row it linked, or a holder it displaced)."""
+def _company_link_snapshot(db, company_id: str) -> Dict[str, Dict[str, Decimal]]:
+    """Every order_inquiry_row in this company that carries a link, per TARGET
+    it is linked to - the one comparison a page's before and after read to
+    find what THIS page actually changed, whichever row it landed on (a book
+    row it linked, or a holder it displaced).
+
+    Per-target, not a per-row total (review round item 10, reviewer finding
+    10): a displaced holder the trailing cascade re-links to a DIFFERENT
+    document for the SAME quantity leaves the row's own total unchanged, so a
+    total-only comparison would see nothing happened to it at all - the
+    book's own displacement would vanish from the report. Comparing the
+    target set (and each one's qty) catches that: the OLD target dropping out
+    is a displacement, the NEW one appearing is a link, on the same row, in
+    the same page."""
     rows = (
-        db.query(OrderInquiryLink.row_id, OrderInquiryLink.qty)
+        db.query(
+            OrderInquiryLink.row_id,
+            func.coalesce(OrderInquiryLink.po_line_id, OrderInquiryLink.spo_allocation_id),
+            OrderInquiryLink.qty,
+        )
         .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
         .filter(OrderInquiryRow.company_id == company_id)
         .all()
     )
-    snapshot: Dict[str, Decimal] = {}
-    for row_id, qty in rows:
-        key = str(row_id)
-        snapshot[key] = snapshot.get(key, _ZERO) + _dec(qty)
+    snapshot: Dict[str, Dict[str, Decimal]] = {}
+    for row_id, target_id, qty in rows:
+        snapshot.setdefault(str(row_id), {})[str(target_id)] = _dec(qty)
     return snapshot
 
 
 def run_company(db, company_id: str, *, apply: bool, batch: int) -> Dict[str, Any]:
     """Page one company's rows through `follow_book_for_rows`. The caller
     has already entered this company's scope."""
-    service = ProjectOrderInquiryService(db)
-    named_rows = _rows_named_by_book(db, service, company_id)
+    # Review round item 8: a fresh service instance per page, never one reused
+    # across pages - `ProjectOrderInquiryService` memoises per-instance
+    # (`_linked_by_target`, claims, awaiting-link tallies) for the length of
+    # ONE cascade pass; carrying that memo across pages this script itself
+    # commits between would answer a later page with an earlier page's totals.
+    named_rows = _rows_named_by_book(db, ProjectOrderInquiryService(db), company_id)
 
     rows_linked: set = set()
     quantity_linked = _ZERO
@@ -156,20 +174,24 @@ def run_company(db, company_id: str, *, apply: bool, batch: int) -> Dict[str, An
 
         before = _company_link_snapshot(db, company_id)
         savepoint = None if apply else db.begin_nested()
-        service.follow_book_for_rows(
+        ProjectOrderInquiryService(db).follow_book_for_rows(
             page_ids, trigger="backfill", company_id=company_id, max_rows=None,
         )
         db.flush()
         after = _company_link_snapshot(db, company_id)
 
         for row_id in set(before) | set(after):
-            was = before.get(row_id, _ZERO)
-            now = after.get(row_id, _ZERO)
-            if now > was:
-                rows_linked.add(row_id)
-                quantity_linked += now - was
-            elif now < was:
-                rows_displaced.add(row_id)
+            before_targets = before.get(row_id, {})
+            after_targets = after.get(row_id, {})
+            for target_id, qty in after_targets.items():
+                was = before_targets.get(target_id, _ZERO)
+                if qty > was:
+                    rows_linked.add(row_id)
+                    quantity_linked += qty - was
+            for target_id, qty in before_targets.items():
+                now = after_targets.get(target_id, _ZERO)
+                if now < qty:
+                    rows_displaced.add(row_id)
 
         if apply:
             db.commit()
