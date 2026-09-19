@@ -223,6 +223,16 @@ class _Match:
     #: ever recorded, adopting the sheet row as the Was the settle never wrote. `None` when
     #: `repair_row_id` is `None`.
     repair_shape: Optional[str] = None
+    #: 2.1(a) (`PLAN-oi-rollback-recover-planning-rows.md`, R6): the id of the live
+    #: `Replaces N used` sibling row this sheet row is raised AS - an exact quantity AND
+    #: date match against its OWN `previous_qty` / `previous_delivery_date`, with no used
+    #: row of its own yet. Set in `_resolve_recovery_matches`, which also flips
+    #: `already_raised` back to `False` so this match is raised rather than skipped.
+    used_sibling_id: Optional[str] = None
+    #: R6: this match sits beside a `Replaces N used` line, but no fresh row's own
+    #: previous quantity AND date matches it exactly - nothing is guessed, and `apply`
+    #: reports it under its own code (AC-RB-3) instead of the ordinary `ALREADY_RAISED`.
+    no_used_delivery_match: bool = False
 
     @property
     def raisable(self) -> bool:
@@ -987,10 +997,14 @@ def _match_in_passes(
 
 def _already_raised(
     db: Session, core_lines: Sequence[SalesOrderLine]
-) -> Tuple[set, Dict[str, str]]:
+) -> Tuple[set, Dict[str, str], Dict[str, List[Any]]]:
     """The core lines whose MIRROR already carries a non-cancelled order inquiry row (D2),
-    and the core-line-id -> mirror-id map that answer was read off (S3, 19 Sep 2026):
-    `_resolve_delivery_date_repairs` needs the same map and must not re-query it.
+    the core-line-id -> mirror-id map that answer was read off (S3, 19 Sep 2026):
+    `_resolve_delivery_date_repairs` needs the same map and must not re-query it, and the
+    mirror-id -> its own LIVE rows map `_resolve_recovery_matches` (2.1(a)) reads its used-
+    row candidates off - the SAME query, extended to keep the full rows rather than only
+    `so_line_id`, so the recovery rule costs no second pass over this table (plan section
+    3.1: "one query for the whole plan, not one per row").
 
     Read off the state BEFORE this upload, once, and for every line the named orders carry
     rather than only the matched ones, because the matcher consults it as it goes: the
@@ -1002,7 +1016,7 @@ def _already_raised(
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow, ProjectSalesOrderLine
 
     if not core_lines:
-        return set(), {}
+        return set(), {}, {}
     core_ids = [str(line.id) for line in core_lines]
     mirrors = (
         db.query(ProjectSalesOrderLine.id, ProjectSalesOrderLine.core_sales_order_line_id)
@@ -1010,11 +1024,11 @@ def _already_raised(
         .all()
     )
     if not mirrors:
-        return set(), {}
+        return set(), {}, {}
     core_by_mirror = {str(mirror_id): str(core_id) for mirror_id, core_id in mirrors}
     mirror_by_core = {core_id: mirror_id for mirror_id, core_id in core_by_mirror.items()}
     held = (
-        db.query(OrderInquiryRow.so_line_id)
+        db.query(OrderInquiryRow)
         .filter(
             OrderInquiryRow.so_line_id.in_(list(core_by_mirror)),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
@@ -1022,9 +1036,96 @@ def _already_raised(
         .all()
     )
     raised = {
-        core_by_mirror[str(mirror_id)] for (mirror_id,) in held if str(mirror_id) in core_by_mirror
+        core_by_mirror[str(row.so_line_id)]
+        for row in held
+        if str(row.so_line_id) in core_by_mirror
     }
-    return raised, mirror_by_core
+    rows_by_mirror: Dict[str, List[Any]] = {}
+    for row in held:
+        rows_by_mirror.setdefault(str(row.so_line_id), []).append(row)
+    return raised, mirror_by_core, rows_by_mirror
+
+
+def _used_row_candidate(
+    mirror_rows: Sequence[Any], row: Any, claimed: set
+) -> Tuple[Optional[Any], bool]:
+    """AC-RB-1/AC-RB-2 (R6): the LIVE `Replaces N used` sibling this sheet row is raised
+    AS, or `(None, report)` when nothing exact fits.
+
+    A candidate is a live row with no used pair of its own yet (`redirected_to_pool` is
+    false, `previous_qty` / `previous_delivery_date` set, note starting `"Replaces "` - the
+    exact shape `project_order_inquiry_service.py` ~1104-1185 writes for a replan that
+    redirected a received line). The note prefix matters: 2.1(b)'s own settle also sets
+    `previous_qty` / `previous_delivery_date` on a row that is NOT a used-row candidate at
+    all (AC-RB-16), and without it a second upload would mistake a settled row for one and
+    raise a spurious used row beside it. An EXACT quantity AND date match against its own
+    previous figures wins it (never a quantity-only guess: AC-RB-2's own CB2807-DIY shape
+    carries two candidates of the SAME quantity, told apart only by date) - unless a used
+    row already sits at that exact quantity and date (AC-RB-4, a second upload of the same
+    book: silently left alone, not reported) or another sheet row already claimed it
+    earlier in this same pass.
+
+    `report` is true only when this mirror carries a used-row candidate SHAPE at all but
+    none of them fits this row exactly (AC-RB-3): a plain live row (AC-RB-15) reports
+    nothing here, because it is not this rule's business at all.
+    """
+    sheet_qty = _dec(row.qty)
+    fresh_rows = [
+        r
+        for r in mirror_rows
+        if not r.redirected_to_pool
+        and r.previous_qty is not None
+        and r.previous_delivery_date is not None
+        and (r.note or "").startswith("Replaces ")
+    ]
+    if not fresh_rows:
+        return None, False
+    for candidate in fresh_rows:
+        if str(candidate.id) in claimed:
+            continue
+        if _dec(candidate.previous_qty) != sheet_qty:
+            continue
+        if candidate.previous_delivery_date != row.delivery_date:
+            continue
+        already_used = any(
+            other.redirected_to_pool
+            and _dec(other.qty) == sheet_qty
+            and other.delivery_date == row.delivery_date
+            for other in mirror_rows
+        )
+        if already_used:
+            return None, False
+        return candidate, False
+    return None, True
+
+
+def _resolve_recovery_matches(
+    db: Session, plan: _Plan, rows_by_mirror: Dict[str, List[Any]]
+) -> None:
+    """2.1(a) (`PLAN-oi-rollback-recover-planning-rows.md`): decide, for every matched row
+    already sitting on a `Replaces N used` line, whether it is raised AS the used row
+    rather than skipped (already raised) - read here, before `_pair` and
+    `_matched_lines_by_order` decide what this run links and adopts, since both key off
+    `match.raisable` / `match.already_raised`.
+    """
+    claimed: set = set()
+    for match in plan.matches:
+        if match.core_line is None or match.duplicate or match.code or match.reason:
+            continue
+        mirror_id = plan.mirror_by_core_line.get(str(match.core_line.id))
+        if mirror_id is None:
+            continue
+        if not match.already_raised:
+            continue
+        candidate, report = _used_row_candidate(
+            rows_by_mirror.get(mirror_id, []), match.row, claimed
+        )
+        if candidate is not None:
+            match.already_raised = False
+            match.used_sibling_id = str(candidate.id)
+            claimed.add(str(candidate.id))
+        elif report:
+            match.no_used_delivery_match = True
 
 
 def _resolve_line_repairs(
@@ -1547,7 +1648,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     plan.matches = [_Match(row=row) for row in expanded]
     plan.rows_expanded = len(expanded)
 
-    raised_already, plan.mirror_by_core_line = _already_raised(
+    raised_already, plan.mirror_by_core_line, rows_by_mirror = _already_raised(
         db, [held[0] for group in lines.values() for held in group]
     )
     #: Which candidate lines the book BOUGHT for, over every line of every order the sheet
@@ -1622,6 +1723,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
         pending.append(match)
 
     _match_in_passes(plan, lines, taken, raised_already, pending)
+    _resolve_recovery_matches(db, plan, rows_by_mirror)
 
     plan.orders_in_play = sorted({
         match.row.so_number for match in plan.matches if match.raisable
@@ -2206,13 +2308,18 @@ def _identity(row) -> dict:
     """What names a sheet row in the job detail. No ids - the operator reads SO numbers.
 
     The tab is part of the name: row numbers restart on every sheet, so "row 42" alone names
-    four different rows in a book of monthly tabs.
+    four different rows in a book of monthly tabs. `qty` joined 20 Sep 2026
+    (`NO_USED_DELIVERY_MATCH`, AC-RB-3): a date/quantity mismatch is exactly what that
+    report exists to tell purchasing about, and every other outcome simply ignores the key.
     """
+    from app.services.project_order_inquiry_service import _qty_str
+
     return {
         "doc_no": row.so_number,
         "item_code": row.item_code,
         "delivery_date": row.delivery_date.isoformat() if row.delivery_date else "",
         "sheet": getattr(row, "sheet", "") or "",
+        "qty": _qty_str(_dec(row.qty)),
     }
 
 
@@ -2578,6 +2685,9 @@ class _Raiser:
             ack_state=ACK_ACKNOWLEDGED,
             acknowledged_by=self.actor,
             acknowledged_at=self.now,
+            # 2.1(a): raised AS the used row rather than skipped, when `match` is a
+            # recovered `Replaces N used` pairing (`_resolve_recovery_matches`).
+            redirected_to_pool=bool(match.used_sibling_id),
         )
         self.db.add(entry)
         self.db.flush()
@@ -2623,6 +2733,87 @@ def _close_history(rows: Sequence[Any], actor: Optional[str], now: datetime) -> 
         # have written the act-as principal on an unattended run, and NULL says less.
         row.actioned_by = actor or row.actioned_by
         row.actioned_at = now
+
+
+def _document_facts_for_link(db: Session, link: Any) -> Dict[str, Any]:
+    """Supplier and expected date for the document `link` already names, for the note stamp
+    `_write_link` writes when 2.2 moves it - looked up directly rather than through
+    `_target_facts`, which filters to LIVE remaining capacity and would refuse the very
+    closed or fully-received line a received link sits on.
+    """
+    row = None
+    if link.po_line_id:
+        row = (
+            db.query(Supplier.supplier_name, PurchaseOrderLine.expected_date)
+            .select_from(PurchaseOrderLine)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(PurchaseOrderLine.id == link.po_line_id)
+            .first()
+        )
+    elif link.spo_allocation_id:
+        row = (
+            db.query(Supplier.supplier_name, SPOAllocation.expected_date)
+            .select_from(SPOAllocation)
+            .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
+            .filter(SPOAllocation.id == link.spo_allocation_id)
+            .first()
+        )
+    return {
+        "document": link.document,
+        "supplier_name": row[0] if row else None,
+        "expected_date": row[1] if row else None,
+        "po_line_id": link.po_line_id,
+        "spo_allocation_id": link.spo_allocation_id,
+    }
+
+
+def _move_received_links(
+    db: Session, service: Any, used_row: Any, sibling_id: str, link_actor: str
+) -> Optional[Any]:
+    """2.2 (AC-RB-6/7/8/9/10, rulings R1/R2): a used row raised by 2.1(a) takes over its
+    `Replaces N used` sibling's RECEIVED links, up to its OWN quantity - through
+    `_write_link`, the one link writer, so the claim at that identity is REUSED rather than
+    duplicated (both rows share the same order inquiry header, mirror and item code, so
+    `claim_placed_on_po` resolves onto the claim the sibling's own link already wrote). An
+    OPEN link never moves (AC-RB-8): `_received_documents_for` is the SAME received test
+    `_redirect_row_if_received` already applies.
+
+    A link bigger than the used row's own quantity is REDUCED, not deleted, so the
+    sibling keeps what the used row does not need (AC-RB-7).
+
+    Returns the sibling row when anything actually moved, so the caller can resync its own
+    derived fields too - `None` when there was nothing received to move.
+    """
+    from app.models.project_so import OrderInquiryRow
+
+    sibling = db.get(OrderInquiryRow, sibling_id)
+    if sibling is None:
+        return None
+    links = service._links_of(sibling.id)
+    if not links:
+        return None
+    received = service._received_documents_for(links)
+    received_links = [link for link in links if str(link.id) in received]
+    if not received_links:
+        return None
+    remaining = _dec(used_row.qty)
+    moved = False
+    for link in received_links:
+        if remaining <= _ZERO:
+            break
+        take = min(remaining, _dec(link.qty))
+        if take <= _ZERO:
+            continue
+        candidate = _document_facts_for_link(db, link)
+        service._write_link(used_row, candidate, take, actor_user_id=link_actor)
+        if take >= _dec(link.qty):
+            service._remove_links(sibling, [link])
+        else:
+            link.qty = _dec(link.qty) - take
+        remaining -= take
+        moved = True
+    return sibling if moved else None
 
 
 def apply(
@@ -2796,6 +2987,13 @@ def apply(
                 outcome.updated(row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
                                  identity=identity, value=row.so_number,
                                  entity_type="order_inquiry_row", entity_id=migrated.id)
+            elif match.no_used_delivery_match:
+                # AC-RB-3 (R6): this line carries a `Replaces N used` row, but neither its
+                # quantity nor its date matches the fresh row's own previous figures - never
+                # guessed at, and named under its own code rather than the ordinary
+                # ALREADY_RAISED so purchasing and CS know which delivery to look at by hand.
+                outcome.skip(row=row.source_row, code=oc.NO_USED_DELIVERY_MATCH,
+                             identity=identity, value=row.so_number)
             else:
                 outcome.skip(row=row.source_row, code=oc.ALREADY_RAISED,
                              identity=identity, value=row.so_number)
@@ -2818,24 +3016,38 @@ def apply(
             history.append(entry)
 
         held = links.get(index)
-        if not held:
-            continue
-        if service is None:
-            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+        if held or match.used_sibling_id:
+            if service is None:
+                from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-            service = ProjectOrderInquiryService(db)
-        for take in held.takes:
-            # `_write_link` is the ONE writer of a link, its audit claim and the row's note
-            # stamp. Called directly rather than through `place_on_po_allocations`, whose
-            # open-line gate is exactly what D8 removes: history is closed lines.
-            service._write_link(
-                entry,
-                take,
-                take["qty"],
-                actor_user_id=link_actor,
-                auto_trigger=_AUTOCOUNT_TRIGGER if take["from_book"] else None,
-            )
-        linked.append(entry)
+                service = ProjectOrderInquiryService(db)
+            entry_touched = False
+            if held:
+                for take in held.takes:
+                    # `_write_link` is the ONE writer of a link, its audit claim and the
+                    # row's note stamp. Called directly rather than through
+                    # `place_on_po_allocations`, whose open-line gate is exactly what D8
+                    # removes: history is closed lines.
+                    service._write_link(
+                        entry,
+                        take,
+                        take["qty"],
+                        actor_user_id=link_actor,
+                        auto_trigger=_AUTOCOUNT_TRIGGER if take["from_book"] else None,
+                    )
+                entry_touched = True
+            if match.used_sibling_id:
+                # 2.2 (AC-RB-6/7/8/9/10): the used row takes over its sibling's RECEIVED
+                # links, up to its own quantity - separate from the book pairing above,
+                # which this line's own citation may or may not also have found.
+                sibling = _move_received_links(
+                    db, service, entry, match.used_sibling_id, link_actor,
+                )
+                if sibling is not None:
+                    entry_touched = True
+                    linked.append(sibling)
+            if entry_touched:
+                linked.append(entry)
 
     if service is not None and linked:
         # ONCE, for every row this upload linked. `refresh_link_state` re-derives each

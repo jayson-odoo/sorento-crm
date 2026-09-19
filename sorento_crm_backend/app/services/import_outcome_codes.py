@@ -87,6 +87,12 @@ ALREADY_EXISTS = "already_exists"
 #: board or by an earlier upload. Left exactly as it is, links included: the sheet is a
 #: migration, not a second opinion about a row somebody has since worked on.
 ALREADY_RAISED = "already_raised"
+#: The sales order line this row names sits beside a `Replaces N used` row (a replan that
+#: redirected a received line), but its quantity or date matches no fresh row's own
+#: `previous_qty` / `previous_delivery_date` exactly (`PLAN-oi-rollback-recover-planning-
+#: rows.md`, ruling R6). Nothing is guessed at: no used row is raised, and this row is
+#: named so purchasing and customer service know which delivery to look at by hand.
+NO_USED_DELIVERY_MATCH = "no_used_delivery_match"
 #: The sales order line this row names already carries a MIGRATED row, on the line's own
 #: date rather than the sheet's - the 18 Sep 2026 reversal of section 7.4. Re-uploading
 #: the same sheet, corrected, is how that date gets fixed: the migrated row's own
@@ -178,6 +184,7 @@ LABELS: dict[str, str] = {
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",
     ALREADY_RAISED: "Left alone: this line already carries an order inquiry",
+    NO_USED_DELIVERY_MATCH: "Beside a used-row line, but no exact quantity/date match",
     DELIVERY_DATE_UPDATED: "Delivery date corrected to the sheet's own",
     ALREADY_RECEIVED_GUARD: "Blocked: quantity already received",
     CHARGE_LINE: "Charge line: money on the order, no product",
