@@ -194,6 +194,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))
 PERMISSION_REGISTRY.append({"slug": "master_data.products.import", "name": "Import Products", "description": "Permission to bulk import products."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.export", "name": "Export Products", "description": "Permission to export products with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": "Bulk Delete Products", "description": "Permission to bulk delete products."})
+# PLAN-autocount-pull-review.md: pull a frozen products snapshot from AutoCount (via
+# FoundryX) and review/confirm it, instead of exporting + uploading the workbook by hand.
+PERMISSION_REGISTRY.append({"slug": "master_data.products.autocount_pull", "name": "Pull Products from AutoCount", "description": "Permission to pull a products snapshot from AutoCount and review/confirm it."})
 # The spec-search vocabulary. Editing it silently reshapes every future product search
 # for every customer, so it gets its own permission rather than riding on products.edit.
 PERMISSION_REGISTRY.extend(_crud("master_data", "spec_registry", "Spec Registry"))
@@ -255,6 +258,9 @@ PERMISSION_REGISTRY.extend([
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "warehouses", "Warehouses"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
+# PLAN-autocount-pull-review.md: pull a frozen stock-balance snapshot from AutoCount (via
+# FoundryX) and review/confirm it, instead of exporting + uploading the Stock List by hand.
+PERMISSION_REGISTRY.append({"slug": "inventory.stock.autocount_pull", "name": "Pull Stock from AutoCount", "description": "Permission to pull a stock balance snapshot from AutoCount and review/confirm it."})
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_ledger", "Stock Ledger"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_transfers", "Stock Transfers"))

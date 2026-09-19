@@ -147,6 +147,16 @@ UPSERT_ERROR = "upsert_error"
 ROW_ERROR = "row_error"
 DB_ERROR = "db_error"
 
+# --- AutoCount pull (PLAN-autocount-pull-review.md) -----------------------
+#: A row FoundryX itself left out of the snapshot (its own `excludedRows` /
+#: `excludedNonzeroCount`, e.g. a mapping failure on their side). Never applied by
+#: either preview or Confirm; rides on OUTCOME_SKIPPED, carrying FoundryX's own
+#: reason/message so the reviewer sees exactly what AutoCount refused and why.
+#: Upper-cased, unlike every other code here: it names FoundryX's own reason
+#: vocabulary rather than one of ours, so it is spelled the way FoundryX's own
+#: `excludedRows[].reason` codes are (see the cross-repo contract, Appendix A).
+AUTOCOUNT_EXCLUDED = "AUTOCOUNT_EXCLUDED"
+
 LABELS: dict[str, str] = {
     CREATED: "Created",
     UPDATED: "Updated",
@@ -195,6 +205,7 @@ LABELS: dict[str, str] = {
     UPSERT_ERROR: "Could not be saved",
     ROW_ERROR: "Row could not be written",
     DB_ERROR: "Database error",
+    AUTOCOUNT_EXCLUDED: "Left out by AutoCount",
 }
 
 

@@ -1121,9 +1121,23 @@ def _value_changed(current: Any, incoming: Any) -> bool:
     ``Decimal('0.00')`` where the canonical payload carries ``Decimal('0')`` or
     an int, and reporting that as a change would fill an operator's diff with
     edits that are not edits -- which trains them to skim the one that is.
+
+    A foreign key (``category_id``, ``brand_id``, ``base_uom_id``, ...) is the
+    same shape of false positive, for a different reason: ``_diff``'s ``current``
+    comes back from a raw ``text()`` SELECT, which the driver hands back as a
+    native ``uuid.UUID`` for every postgres ``uuid`` column regardless of the
+    ORM column's own ``as_uuid=False`` -- while every id this module resolves
+    (``product_rules.ensure_reference``, ``resolve_master_by_code``, an
+    incoming payload's own FK) is a plain ``str``. Left unguarded, an unchanged
+    FK on an otherwise-identical record compared ``UUID(...) != "same value"``,
+    which is always true, and reported the record as changed with a diff that
+    named nothing real (caught by AC-PP-3's parity test, PLAN-autocount-pull-review.md).
     """
     if current is None or incoming is None:
         return (current is None) != (incoming is None)
+
+    if isinstance(current, uuid.UUID) or isinstance(incoming, uuid.UUID):
+        return str(current) != str(incoming)
 
     numeric = (int, float, Decimal)
     if (
