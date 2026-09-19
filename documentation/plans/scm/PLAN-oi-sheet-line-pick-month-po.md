@@ -41,6 +41,13 @@ copy before sizing the prod repair (section 4).
   the sheet remark at all"): the sheet's PO still PAIRS nothing, the link stays the book's own.
 - **R3** Same month before PO order: 04-01 lands on 04-02; 02-02 and 03-02 then take 05-01 and
   05-02.
+- **R4** (19 Sep, prod C-FH14): the sheet's PO outranks the month when they disagree; pass order
+  is exact, month and PO, PO, month, fallback.
+- **R5** (19 Sep, prod CB1178A-SS-NEW): a restatement is only ever across tabs; two identical
+  rows inside one tab are two separate instructions, and a later tab restates them by position.
+  The single-sheet variant (`Order Inquiry Form.xlsx`) has no second tab at all, so restatement
+  dedup never applies there - every row of that file is its own instruction, pinned by
+  `test_single_sheet_variant_never_dedupes_a_repeat`.
 
 ## 2. Design
 
@@ -48,18 +55,28 @@ One seam: the match loop in `_plan` plus `_rank_for`. No new table, no setting, 
 
 **Passes instead of one loop.** `_plan` keeps building `plan.matches` in file order and keeps the
 `stated` duplicate check exactly as is. The rows that reach `_match_row` today are then matched
-in four passes over the same `taken` ledger; a row matched in a pass is out of the later ones:
+in FIVE passes over the same `taken` ledger; a row matched in a pass is out of the later ones
+(R4, prod C-FH14, 19 Sep 2026, added the month/PO split - the original four-pass design let the
+month alone decide ahead of a row's own citation, which stole a month-mate's line from the row
+that actually cited it):
 
 1. **Exact date**: candidates narrowed to lines whose `required_date` is the row's date.
-2. **Same month**: candidates narrowed to lines in the row's year and month. Tie-break inside the
-   month: book PO is a PO the row cites, then nearest date, then today's terms.
-3. **Sheet PO**: candidates narrowed to lines whose book PO is a PO the row cites. Rows are taken
-   in delivery-date order so the earliest row gets the earliest free line.
-4. **Fallback**: today's `_rank_for`, unchanged, for whatever is left (no PO cited, no free line).
+2. **Same month AND the sheet's PO**: candidates narrowed to lines in the row's year and month
+   WHOSE book PO is also a PO the row cites. Tie-break inside: live before cancelled, then
+   nearest date, then today's terms.
+3. **Sheet PO alone**: candidates narrowed to lines whose book PO is a PO the row cites, whatever
+   their month. Rows are taken in delivery-date order so the earliest row gets the earliest free
+   line.
+4. **Same month alone**: candidates narrowed to lines in the row's year and month, no citation
+   filter - catches a row that cites nothing, or whose citation named no free line anywhere
+   (passes 2 and 3 already tried every candidate that could possibly satisfy the citation, so a
+   candidate reaching this pass can never still tie on it; the citation tie-break term this pass
+   shares with pass 2 is therefore dead here and was dropped, review round 2, 19 Sep 2026).
+5. **Fallback**: today's `_rank_for`, unchanged, for whatever is left.
 
 Inside every pass the existing filters (item, location, quantity against the ledger) and the
 existing rank terms (live before cancelled, open, earliest, oldest, id) still apply, so D1 and
-determinism are kept. A failure reason is reported only after pass 4, and it is still the first
+determinism are kept. A failure reason is reported only after pass 5, and it is still the first
 filter that refused the row.
 
 **Book PO per line.** `_bought_rows` already loads the `PurchaseOrderLine` and `SPOAllocation`
@@ -82,12 +99,20 @@ first statement carries none, copy them onto the first statement's row (`datacla
 Needs `stated` to map key -> match instead of being a set. Fix the `_restates` docstring to say
 what the code does.
 
+R5 (19 Sep 2026, prod CB1178A-SS-NEW) narrowed "the first statement" further: `stated` maps key
+-> the LIST of instructions that key has stated so far (one per tab-position it reached, not one
+per key), paired with a `(sheet, key)` counter, because a restatement is only ever ACROSS tabs -
+two identical rows inside ONE tab are two separate instructions, not one restated. A later tab's
+n-th row of a key restates the n-th instruction (position-matched), and lending targets that same
+position rather than always the first.
+
 ## 3. Test list (tester writes these red first, Postgres, own seeded chain)
 
 `tests/test_oi_sheet_line_pick_month_po.py`, one fixture builder for the UAC table:
-AC-LP-1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 (both halves), 13. Then run the whole inquiry
-import family before push (lesson 18 Sep: a confirm-seam change went red in four untouched
-files): `tests/test_*order_inquiry*import*`, `test_*oi_sheet*`.
+AC-LP-1 to AC-LP-13. Then run the whole inquiry import family before push (lesson 18 Sep: a
+confirm-seam change went red in four untouched files): `tests/test_*order_inquiry*import*`,
+`test_*oi_sheet*`. Two later small-fix slices, coder-owned tests both times (R4, R5): AC-LP-14
+(the sheet's PO outranks the month) and AC-LP-15 (a restatement is only ever across tabs).
 
 Expected to change: any existing test that asserts finding 9's no-charge behaviour. Rewrite it to
 AC-LP-12, do not delete it.
