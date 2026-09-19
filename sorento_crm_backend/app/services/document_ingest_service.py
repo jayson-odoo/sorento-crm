@@ -1065,17 +1065,32 @@ class DocumentIngestService(MasterRefResolver):
         and this ingest never overwrites or blanks it, whatever a fresh run of
         the ladder would say today (AC-V2-6). Only when NOTHING is stored yet
         does `classify_document` run at all.
+
+        ONE exception (PLAN-demand-class-agent-arrival.md): AutoCount pushes a
+        new sales order before its agent is filled in - SO421912 first pushed
+        with `agent_code: null` on 17 Sep 2026, then a second push 78 minutes
+        later carried the agent. When the stored header still has no agent AND
+        this push resolves one whose demand class is known, the ladder is run
+        again exactly as for a new document (so a stored or stated order type
+        still outranks the agent) and the answer, if any, is written - it is
+        never blanked. A stored class with a stored agent, or an arriving
+        agent with no demand class of its own, is still settled and returns
+        immediately.
         """
         stored_order_type = getattr(header, "order_type", None)
         stated_order_type = payload.order_type
         if not stored_order_type and stated_order_type:
             values["order_type"] = stated_order_type
 
-        if getattr(header, "demand_class", None):
-            return
-
         agent_id = values.get("sales_agent_id")
         agent_demand_class = self._agent_demand_class(agent_id)
+        stored_class = getattr(header, "demand_class", None)
+        agent_arriving = bool(
+            stored_class and not getattr(header, "sales_agent_id", None) and agent_demand_class
+        )
+        if stored_class and not agent_arriving:
+            return
+
         debtor_code = customer_code or getattr(header, "debtor_code", None)
         customer_id = values.get("customer_id")
         if not debtor_code and customer_id:
@@ -1095,7 +1110,10 @@ class DocumentIngestService(MasterRefResolver):
         )
         if cls is not None:
             values["demand_class"] = cls
-        else:
+        elif not agent_arriving:
+            # The order is already classified on the agent-arrival re-run; a
+            # ladder miss here (which does not happen while agent_demand_class
+            # is set) would not be a fresh unclassified order.
             warnings.append(WARN_UNCLASSIFIED_DEMAND)
 
     def _agent_demand_class(self, agent_id: Optional[str]) -> Optional[str]:

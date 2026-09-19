@@ -12,6 +12,18 @@
             that cannot classify (even one that names a conflicting segment)
   AC-V2-7   `demand_class` is not an accepted payload key (extra="forbid")
 
+PLAN-demand-class-agent-arrival.md's UAC AC-1..AC-7 (the agent arriving on a LATER push):
+  AC-1   no agent, retail segment lands retail; a second push naming a project agent
+         takes over
+  AC-2   mirror of AC-1: project segment, arriving retail agent takes over
+  AC-3   stored class AND a stored agent, a later push names a DIFFERENT agent: unchanged
+  AC-4   stored class, no stored agent, the arriving agent has no class: unchanged
+  AC-5   stored class, no stored agent, stored order_type says project, arriving agent
+         is retail: order type still outranks the agent
+  AC-6   a hand-set class on an order that already HAS an agent survives every later push
+  AC-7   first push unclassified + warns; the push bringing a classed agent fills it
+         (existing behaviour, asserted so it cannot regress)
+
 Plus a direct parity test of `app.services.scm.demand_class.classify_document`,
 the pure ladder function PLAN section 1 D4 extracts out of
 `outstanding_import_service._classify_demand`.
@@ -47,10 +59,15 @@ __all__ = ["env"]
 
 
 # ------------------------------------------------------------------ seed helpers
-def _seed_so_header(env, *, order_type=None, demand_class=None, ref=None, number=None):
+def _seed_so_header(
+    env, *, order_type=None, demand_class=None, ref=None, number=None, sales_agent_id=None
+):
     """A `sales_orders` header written DIRECTLY (not through the API), because
     `order_type` and `demand_class` are not payload fields - the only way a
-    header carries them today is a prior import / CS edit."""
+    header carries them today is a prior import / CS edit. `sales_agent_id`
+    is direct too, for PLAN-demand-class-agent-arrival.md's AC-3/AC-6: a
+    stored agent has to already be on the row BEFORE the push under test, not
+    resolved by it."""
     row = SalesOrder(
         id=str(uuid.uuid4()),
         company_id=env.company_a,
@@ -58,6 +75,7 @@ def _seed_so_header(env, *, order_type=None, demand_class=None, ref=None, number
         status="open",
         order_type=order_type,
         demand_class=demand_class,
+        sales_agent_id=sales_agent_id,
         source_system="autocount",
     )
     env.db.add(row)
@@ -236,6 +254,169 @@ class TestDemandClassIsNeverAPayloadField:
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
         assert "demand_class" in entry.get("errors", {}), entry
+
+
+# ==================================================== agent-arrival AC-1 / AC-2
+class TestAgentArrivingOnALaterPushTakesOverFromTheSegment:
+    def test_agent_project_takes_over_from_a_retail_segment(self, env):
+        """AC-1: no agent, retail segment lands retail; a classed agent on the
+        second push ends project."""
+        segment = _market_segment(env, stem="RETAIL")
+        customer_ref = _linked_customer_ref(env, segment_code=segment.code)
+        record = _so_record(env, customer_ref=customer_ref)
+
+        res = env.post(INGEST_SO, [record])
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        first = env.header("sales_orders", record["source_ref"])
+        assert first["demand_class"] == "retail"
+        assert first["sales_agent_id"] is None
+
+        agent_ref = _linked_agent_ref(env, demand_class="project")
+        record2 = _so_record(
+            env,
+            ref=record["source_ref"],
+            number=record["so_number"],
+            customer_ref=customer_ref,
+            sales_agent_ref=agent_ref,
+        )
+        res2 = env.post(INGEST_SO, [record2])
+        entry2 = res2.json()["records"][0]
+        assert entry2["outcome"] == "updated", res2.text
+        stored = env.header("sales_orders", record["source_ref"])
+        assert stored["demand_class"] == "project"
+        assert stored["sales_agent_id"] is not None
+
+    def test_agent_retail_takes_over_from_a_project_segment(self, env):
+        """AC-2: mirror of AC-1, a retail agent takes over from a project segment."""
+        segment = _market_segment(env, stem="PROJECT")
+        customer_ref = _linked_customer_ref(env, segment_code=segment.code)
+        record = _so_record(env, customer_ref=customer_ref)
+
+        res = env.post(INGEST_SO, [record])
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        first = env.header("sales_orders", record["source_ref"])
+        assert first["demand_class"] == "project"
+
+        agent_ref = _linked_agent_ref(env, demand_class="retail")
+        record2 = _so_record(
+            env,
+            ref=record["source_ref"],
+            number=record["so_number"],
+            customer_ref=customer_ref,
+            sales_agent_ref=agent_ref,
+        )
+        res2 = env.post(INGEST_SO, [record2])
+        entry2 = res2.json()["records"][0]
+        assert entry2["outcome"] == "updated", res2.text
+        stored = env.header("sales_orders", record["source_ref"])
+        assert stored["demand_class"] == "retail"
+
+
+# =========================================================== agent-arrival AC-3
+class TestStoredAgentAlreadySettlesTheClass:
+    def test_a_later_push_naming_a_different_agent_does_not_change_the_class(self, env):
+        first_agent = _agent_with_class(env, demand_class="retail")
+        header, source_ref = _seed_so_header(
+            env, demand_class="retail", sales_agent_id=first_agent.id
+        )
+        other_agent_ref = _linked_agent_ref(env, demand_class="project")
+
+        record = _so_record(
+            env, ref=source_ref, number=header.so_number, sales_agent_ref=other_agent_ref
+        )
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", res.text
+        stored = env.header("sales_orders", source_ref)
+        assert stored["demand_class"] == "retail"
+
+
+# =========================================================== agent-arrival AC-4
+class TestArrivingAgentWithNoDemandClassNeverBlanksTheStoredOne:
+    def test_class_is_unchanged_when_the_arriving_agent_has_no_class_of_its_own(self, env):
+        header, source_ref = _seed_so_header(env, demand_class="retail")
+        agent_ref = _linked_agent_ref(env, demand_class=None)
+
+        record = _so_record(
+            env, ref=source_ref, number=header.so_number, sales_agent_ref=agent_ref
+        )
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", res.text
+        stored = env.header("sales_orders", source_ref)
+        assert stored["demand_class"] == "retail"
+
+
+# =========================================================== agent-arrival AC-5
+class TestStoredOrderTypeOutranksTheArrivingAgent:
+    def test_order_type_still_wins_over_a_conflicting_arriving_agent(self, env):
+        header, source_ref = _seed_so_header(
+            env, order_type="Project Alpha", demand_class="project"
+        )
+        agent_ref = _linked_agent_ref(env, demand_class="retail")
+
+        record = _so_record(
+            env, ref=source_ref, number=header.so_number, sales_agent_ref=agent_ref
+        )
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", res.text
+        stored = env.header("sales_orders", source_ref)
+        assert stored["demand_class"] == "project"
+        assert stored["order_type"] == "Project Alpha"
+
+
+# =========================================================== agent-arrival AC-6
+class TestHandSetClassWithAnAgentAlreadyStoredSurvives:
+    def test_survives_a_later_push_that_would_classify_differently_from_scratch(self, env):
+        agent = _agent_with_class(env, demand_class="retail")
+        header, source_ref = _seed_so_header(
+            env, demand_class="project", sales_agent_id=agent.id
+        )
+        segment = _market_segment(env, stem="RETAIL")
+        customer_ref = _linked_customer_ref(env, segment_code=segment.code)
+
+        record = _so_record(
+            env, ref=source_ref, number=header.so_number, customer_ref=customer_ref
+        )
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", res.text
+        stored = env.header("sales_orders", source_ref)
+        assert stored["demand_class"] == "project"
+
+
+# =========================================================== agent-arrival AC-7
+class TestFirstPushUnclassifiedThenAgentArrivalFillsIt:
+    def test_unclassified_first_push_then_a_classed_agent_fills_it(self, env):
+        record = _so_record(env)  # no order_type, no agent, no customer
+
+        res = env.post(INGEST_SO, [record])
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "unclassified_demand" in entry.get("warnings", []), entry
+        first = env.header("sales_orders", record["source_ref"])
+        assert first["demand_class"] is None
+
+        agent_ref = _linked_agent_ref(env, demand_class="project")
+        record2 = _so_record(
+            env,
+            ref=record["source_ref"],
+            number=record["so_number"],
+            sales_agent_ref=agent_ref,
+        )
+        res2 = env.post(INGEST_SO, [record2])
+        entry2 = res2.json()["records"][0]
+        assert entry2["outcome"] == "updated", res2.text
+        assert "unclassified_demand" not in entry2.get("warnings", []), entry2
+        stored = env.header("sales_orders", record["source_ref"])
+        assert stored["demand_class"] == "project"
 
 
 # ============================================================ parity: the ladder
