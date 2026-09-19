@@ -1608,7 +1608,18 @@ class TestLinkFollowsBookPairing:
         allocations`) unbounded. `FOLLOW_BOOK_REPAIRING_MAX_MOVES` (named on
         `ProjectOrderInquiryService`) does not exist yet, so this monkeypatches
         it in (`raising=False` - the attribute genuinely is not there today) to
-        cap 3 real moves at 2 without seeding 200+."""
+        cap 3 real moves at 2 without seeding 200+.
+
+        Seeding repair (fix round, 19 Sep): S2's own ingest hook now links row
+        A during the FIRST push already (its line's `from_so_line_ref` names
+        row A's exact core line) - the manual `OrderInquiryLink` add this test
+        used to seed here became a SECOND link on the SAME row and target.
+        `follow_book_repairing`'s own move capture reads every link on a
+        target with no de-duplication by row, so one row holding two links on
+        one target counted as TWO moves instead of one, throwing off the cap
+        arithmetic across all three seeded rows (every row ended up unlinked
+        instead of exactly one being left alone, confirmed by running this
+        test alone first). Asserted on the hook's own link instead."""
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         monkeypatch.setattr(
@@ -1639,12 +1650,12 @@ class TestLinkFollowsBookPairing:
             assert res.json()["records"][0]["outcome"] == "created", res.text
             header = env.header("purchase_orders", record["source_ref"])
             po_line = env.po_lines(header["id"])[0]
-            env.db.add(OrderInquiryLink(
-                id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
-                po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("9"),
-                auto=True,
-            ))
-            env.db.commit()
+            link_before = (
+                env.db.query(OrderInquiryLink)
+                .filter(OrderInquiryLink.row_id == row_a.id)
+                .one()
+            )
+            assert str(link_before.po_line_id) == str(po_line["id"]), link_before
             rows_a.append(row_a)
             repush_records.append(dict(
                 record,
