@@ -62,6 +62,13 @@ logger = logging.getLogger(__name__)
 #: mismatch. Never a refusal - see `_content_hash_warnings`.
 CONTENT_HASH_MISMATCH = "content_hash_mismatch"
 
+#: Warning code appended to the PULL job's `metadata.autocount_pull.warnings` (the row
+#: the review page reads, never the apply job's own) when a stock apply's stock import
+#: committed but the best-effort Stock List archive step failed (captain ruling, SR4 fix
+#: round): the sync is real, but the chatbot/n8n would otherwise keep answering from a
+#: stale file with no visible sign anything is wrong.
+STOCK_LIST_NOT_ARCHIVED = "stock_list_not_archived"
+
 
 class UnsupportedPullEntity(ValueError):
     """A pull entity this task cannot preview yet."""
@@ -129,12 +136,13 @@ def apply_autocount_pull(db_job_id: str) -> None:
         apply_meta = dict((job.job_metadata or {}).get("autocount_apply") or {})
         entity = apply_meta.get("entity")
         snapshot_id = apply_meta.get("snapshot_id")
+        pull_job_id = apply_meta.get("pull_job_id")
 
         try:
             if entity == "products":
                 summary = _apply_products(db, job, snapshot_id)
             elif entity == "stock_balances":
-                summary = _apply_stock(db, job, snapshot_id)
+                summary = _apply_stock(db, job, snapshot_id, pull_job_id)
             else:
                 raise UnsupportedPullEntity(f"Unknown pull entity {entity!r}.")
         except Exception as exc:  # noqa: BLE001 - one job's failure, reported on the job
@@ -191,11 +199,13 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
     return result.as_dict()["summary"]
 
 
-def _apply_stock(db, job: ImportJob, snapshot_id: str) -> dict:
+def _apply_stock(db, job: ImportJob, snapshot_id: str, pull_job_id: Optional[str]) -> dict:
     """AC-SC-2: re-verifies the SAME snapshot, refuses (AC-SC-2/AC-SP-1's own guard,
     re-checked here) when the FETCHED header still reports `excludedNonzeroCount > 0`,
     then runs `bulk_import_stock` for real and archives the Stock List from the FED rows
-    - only once the import has committed (AC-SC-4c); a failed import archives nothing."""
+    - only once the import has committed (AC-SC-4c); a failed import archives nothing.
+    `pull_job_id` is where an archive failure's warning goes (see below) - the apply
+    job's own metadata is not what the review page reads."""
     client = FoundryxAutocountClient()
     header, rows, warnings = fetch_verified_snapshot(
         client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
@@ -237,6 +247,7 @@ def _apply_stock(db, job: ImportJob, snapshot_id: str) -> dict:
             "autocount pull apply: stock import committed but the Stock List archive "
             "failed (job=%s)", job.id, exc_info=True,
         )
+        _append_pull_warning(db, pull_job_id, STOCK_LIST_NOT_ARCHIVED)
 
     return {
         "created": result.get("created", 0),
@@ -245,6 +256,34 @@ def _apply_stock(db, job: ImportJob, snapshot_id: str) -> dict:
         "system_adjusted_to_zero": result.get("system_adjusted_to_zero", 0),
         "errors": result.get("errors", []),
     }
+
+
+def _append_pull_warning(db, pull_job_id: Optional[str], code: str) -> None:
+    """Appends `code` to the PULL job's own `metadata.autocount_pull.warnings` - the
+    row `serialize()`/the review page reads, never the apply job's own metadata.
+    Best-effort: a failure here must not turn the apply job itself into a failure
+    over and above the thing it is already warning about."""
+    if not pull_job_id:
+        return
+    try:
+        pull_job = db.query(ImportJob).filter(ImportJob.id == pull_job_id).first()
+        if pull_job is None:
+            return
+        meta = dict(pull_job.job_metadata or {})
+        pull = dict(meta.get("autocount_pull") or {})
+        warnings = list(pull.get("warnings") or [])
+        if code not in warnings:
+            warnings.append(code)
+        pull["warnings"] = warnings
+        meta["autocount_pull"] = pull
+        pull_job.job_metadata = meta
+        pull_job.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception:
+        logger.warning(
+            "autocount pull apply: could not append warning %r to pull job %s",
+            code, pull_job_id, exc_info=True,
+        )
 
 
 def _company_code(db, company_id) -> str:

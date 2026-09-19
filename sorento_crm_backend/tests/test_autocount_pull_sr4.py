@@ -1201,3 +1201,57 @@ class TestStockApplyArchivesStockList:
         _run_apply(monkeypatch, factory, job_id)
 
         assert order == ["import", "archive"], order
+
+
+# ================================================================= SR4 fix round
+
+
+class TestStockApplyArchiveFailureIsAVisibleWarning:
+    """Captain ruling (SR4 fix round): an archive failure must not fail an apply whose
+    stock import already committed (sc_2 pins that), but it must not be silent either -
+    the chatbot/n8n would otherwise keep answering from a stale Stock List file with no
+    visible sign anything is wrong. `stock_list_not_archived` lands on the PULL job's own
+    `metadata.autocount_pull.warnings` (the row `serialize()`/the review page reads),
+    never the apply job's."""
+
+    def test_sc_4d_archive_failure_appends_a_warning_to_the_pull_job(self, task_db, monkeypatch):
+        from app.models.inventory import Warehouse
+
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake)
+        # Deliberately NO Stock_List AttachmentType seeded - reproduces sc_2's own
+        # "the import succeeds, the archive step has nothing to write to" case.
+
+        active_wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-SC4D-FED",
+                               warehouse_name="Fed", is_active=True, company_id=DEFAULT_COMPANY_ID)
+        db.add(active_wh)
+        db.flush()
+        _seed_product_with_stock(db, DEFAULT_COMPANY_ID, active_wh.id, code=f"{MARKER}-SC4D", qty=1)
+
+        rows = [_stock_row(f"{MARKER}-SC4D", active_wh.warehouse_code, 8)]
+        snapshot_id = f"{MARKER}-snap-sc4d"
+        header = _stock_header(rows)
+        fake.status = (200, {**header, "snapshotId": snapshot_id})
+        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
+                                "totalPages": 1, "recordCount": len(rows), "rows": rows})}
+
+        pull_job_id = _seed_pull_job(
+            db, job_type="autocount_stock_pull", user_id=str(uuid.uuid4()),
+            company_id=DEFAULT_COMPANY_ID, entity="stock_balances", company_code="SRT",
+            snapshot_id=snapshot_id, phase="confirmed", header=_stored(header),
+        )
+        job_id = _seed_apply_job(
+            db, user_id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, entity="stock_balances",
+            snapshot_id=snapshot_id, pull_job_id=str(pull_job_id),
+        )
+
+        _run_apply(monkeypatch, factory, job_id)
+
+        row_after = _job_row(db, job_id)
+        assert row_after["status"] == "finished", row_after["error"]
+        assert _stock_qty(db, f"{MARKER}-SC4D") == 8, "the stock import itself is real"
+
+        pull_row = _job_row(db, pull_job_id)
+        warnings = pull_row["metadata"]["autocount_pull"]["warnings"]
+        assert "stock_list_not_archived" in (warnings or []), warnings

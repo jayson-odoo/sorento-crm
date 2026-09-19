@@ -43,6 +43,13 @@ const ENTITY_LABEL: Record<AutocountPullEntity, string> = {
   stock_balances: 'AutoCount stock pull',
 };
 
+/** Known `pull.warnings` codes only - an unrecognised code renders nothing rather than a
+ * raw slug (captain ruling, SR4 fix round). */
+const WARNING_LABEL: Record<string, string> = {
+  stock_list_not_archived: 'Stock List file was not replaced',
+  content_hash_mismatch: 'Snapshot checksum did not match',
+};
+
 /** dd/MM/yyyy HH:mm, Malaysia time - the one place this page states a snapshot time. */
 function formatSnapshotTime(iso?: string | null): string {
   if (!iso) return '-';
@@ -179,6 +186,13 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
         {pull.phase === 'review' && pull.confirm_blocked_reason && (
           <p className="text-xs text-destructive">{pull.confirm_blocked_reason}</p>
         )}
+        {(pull.warnings ?? [])
+          .filter((code) => WARNING_LABEL[code])
+          .map((code) => (
+            <p key={code} className="text-xs text-destructive">
+              {WARNING_LABEL[code]}
+            </p>
+          ))}
         {summaryLine && <p className="text-xs text-muted-foreground">{summaryLine}</p>}
       </CardHeader>
 

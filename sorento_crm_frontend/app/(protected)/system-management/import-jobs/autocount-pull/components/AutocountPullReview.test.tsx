@@ -244,3 +244,21 @@ describe('AutocountPullReview - Confirm enablement (AC-CM-6/P11, R5)', () => {
     expect(screen.getByRole('button', { name: /Confirm/ })).toBeDisabled();
   });
 });
+
+describe('AutocountPullReview - warnings (captain ruling, SR4 fix round)', () => {
+  it('a known warning code renders as one line near the header', () => {
+    usePull.mockReturnValue({
+      data: basePull({
+        phase: 'confirmed',
+        header: PRODUCTS_HEADER,
+        counts: PRODUCT_COUNTS,
+        warnings: ['stock_list_not_archived'],
+      }),
+      isLoading: false,
+    });
+
+    render(<AutocountPullReview jobId="job-1" />);
+
+    expect(screen.getByText('Stock List file was not replaced')).toBeInTheDocument();
+  });
+});
