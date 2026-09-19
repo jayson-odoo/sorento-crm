@@ -2810,17 +2810,6 @@ SUGGEST_FLOOR = 0.40
 # 0.40 floor silently dropped.
 ENTITY_MISS_SUGGEST_FLOOR = 0.30
 
-# B3 (owner hand pass 7, 19 Sep 2026, "chun chun delivery"): the customer trgm scan's
-# own tail cut. `TRGM_THRESHOLD`/`TRGM_LIMIT` above are an ABSOLUTE floor and a row
-# count, and neither says anything about the SPREAD within one batch - "CHIN CHUN
-# HARDWARE" (several tied ledgers) rostered alongside "CHUN FATT", "CHEW CHUN KEAT",
-# "CHIA LEE CHUN" and "CHUN YE", none of them a real reading of what was typed. Rows
-# arrive `ORDER BY sim DESC`, so the first row's own score is this batch's ceiling; a
-# name trailing it by more than this gap is dropped, while genuine ties (several
-# ledgers of the one name) clear it by construction. A judgment call, not a measured
-# number - retune on replay if a real near-tie customer starts getting cut.
-_CUSTOMER_TRGM_TAIL_GAP = 0.15
-
 # Entity types `_trgm_lookup` can probe. Used as the default scope for resolve
 # "did you mean" alternatives when the caller passed no entity-type whitelist.
 _ALL_TRGM_TYPES = frozenset({"product", "customer", "customer_order", "promotion", "transporter"})
@@ -2958,10 +2947,9 @@ def _trgm_lookup(
                     ),
                     {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
-            top_sim = float(rows[0].sim or 0.0) if rows else 0.0
             for r in rows:
                 sim = float(r.sim or 0.0)
-                if sim < TRGM_THRESHOLD or (top_sim - sim) > _CUSTOMER_TRGM_TAIL_GAP:
+                if sim < TRGM_THRESHOLD:
                     continue
                 out.append(
                     ResolvedEntity(
@@ -2997,10 +2985,9 @@ def _trgm_lookup(
                     ),
                     {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
-            top_sim = float(rows[0].sim or 0.0) if rows else 0.0
             for r in rows:
                 sim = float(r.sim or 0.0)
-                if sim < TRGM_THRESHOLD or (top_sim - sim) > _CUSTOMER_TRGM_TAIL_GAP:
+                if sim < TRGM_THRESHOLD:
                     continue
                 out.append(
                     ResolvedEntity(
