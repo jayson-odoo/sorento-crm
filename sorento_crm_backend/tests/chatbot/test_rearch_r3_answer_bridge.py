@@ -171,13 +171,17 @@ class TestAccessAskArm:
     @pytest.mark.parametrize(
         "availability,label",
         [
-            ({"office": True, "dealer": True}, "all-has"),
-            ({"office": True, "dealer": False}, "mixed"),
             (None, "none-measured"),
         ],
-        ids=["all-has", "mixed", "none-measured"],
+        ids=["none-measured"],
     )
     def test_text_matches_the_production_chain(self, availability, label) -> None:
+        """Captain ruling 20 Sep 2026: a real `_exit_kind == "access_ask"` payload
+        (aggregate-empty contact) never carries `tier_availability` - only the
+        tier-ask FETCH arm's own per-tier promotion probe does
+        (`TestAccessAskArmViaTierAskFetch` below). The `all-has`/`mixed` availability
+        variants moved there; this arm keeps only the `None`/unmeasured case, which
+        matches every payload this trigger can actually produce."""
         bridge = _require_bridge()
         item = _tier_item(["office", "dealer"])
         parser = _promo_parser()
@@ -299,10 +303,22 @@ class TestAccessAskArmViaTierAskFetch:
     ruling 2 for the measured shape of `fetch`.
     """
 
-    def test_text_matches_the_production_chain_via_fetch(self) -> None:
+    @pytest.mark.parametrize(
+        "availability,label",
+        [
+            ({"office": True, "dealer": True}, "all-has"),
+            ({"office": True, "dealer": False}, "mixed"),
+        ],
+        ids=["all-has", "mixed"],
+    )
+    def test_text_matches_the_production_chain_via_fetch(self, availability, label) -> None:
+        """Captain ruling 20 Sep 2026: the `all-has`/`mixed` availability variants
+        moved here from `TestAccessAskArm` - only THIS arm's payload (the per-tier
+        promotion probe run inside `run_fetch`'s own tier_ask arm) ever carries
+        `tier_availability`, so this is the only trigger a real stamped access-ask
+        text can come from."""
         bridge = _require_bridge()
         entitled = ["office", "dealer"]
-        availability = {"office": True, "dealer": False}
         fetch_item = _tier_ask_fetch_item(entitled, availability=availability)
         parser = _promo_parser()
         expected_text, _lane_item = _expected_access_ask(fetch_item, parser, availability=availability)
@@ -370,8 +386,13 @@ def _customer_gate_payload() -> dict[str, Any]:
     }
 
 
-def _expected_customer_offer(gate: dict[str, Any], parser: dict[str, Any], *, probe: Any):
-    annotated = pickers.annotate_customer(dict(gate), probe=probe, parser=parser)
+def _expected_offer_text_from_annotated(annotated: dict[str, Any], parser: dict[str, Any]):
+    """Composes the production reply from an ALREADY-annotated gate payload - no
+    annotate call in here. Captain ruling 20 Sep 2026: production's `offer` exit is
+    ALWAYS post-annotation (`resolve_gate.py:~1096`/`~1133` call
+    `pickers.annotate_incoming`/`annotate_customer` with the real probe before
+    returning), so the bridge must never probe or annotate - it only ever sees the
+    already-annotated payload, and so must this helper."""
     lane_item = {**annotated, "branch_kind": "not_found"}
     ctx = _ctx_for(parser)
     canned = _canned()
@@ -409,10 +430,14 @@ class TestOfferArmCustomer:
                 }
             ]
         }
-        expected_text, _lane_item = _expected_customer_offer(gate, parser, probe=probe)
+        # Annotate the SAME dict the bridge receives - production hands the bridge
+        # an already-annotated payload, so the test must too, not a separately
+        # annotated copy compared against an unannotated original.
+        annotated = pickers.annotate_customer(gate, probe=probe, parser=parser)
+        expected_text, _lane_item = _expected_offer_text_from_annotated(annotated, parser)
         assert "has DO" in expected_text and "no DO" in expected_text, expected_text
 
-        payload = {**gate, "_exit_kind": "offer"}
+        payload = {**annotated, "_exit_kind": "offer"}
         answer = bridge.question_for(
             payload, parser=parser, ctx=_ctx_for(parser), canned=_canned(), asked_at_turn=3
         )
@@ -453,17 +478,6 @@ def _incoming_gate_payload() -> dict[str, Any]:
     }
 
 
-def _expected_incoming_offer(gate: dict[str, Any], parser: dict[str, Any], *, probe: Any):
-    annotated = pickers.annotate_incoming(dict(gate), probe=probe)
-    lane_item = {**annotated, "branch_kind": "not_found"}
-    ctx = _ctx_for(parser)
-    canned = _canned()
-    catalog = outcome_mod.escalate_catalog(lane_item, ctx, canned, incoming_picker=lane_item)
-    built = outcome_mod.build_outcome([{"json": catalog}], {"escalate-catalog": catalog})
-    text = reply_ladder.compose_reply(built[0]["json"]["outcome"])["text"]
-    return text, lane_item
-
-
 class TestOfferArmIncomingProduct:
     """The product-roster half of the offer arm the plan can actually produce today
     (see module docstring point 3 for why this is `incoming`, not `product_attachment`
@@ -477,10 +491,15 @@ class TestOfferArmIncomingProduct:
             "entities": [{"raw": "srtwc286", "hint": "product", "current_message": True}],
         }
         probe = {"answers": [{"title": "SRTWC286-1"}]}
-        expected_text, _lane_item = _expected_incoming_offer(gate, parser, probe=probe)
+        # Annotate the SAME dict the bridge receives (captain ruling 20 Sep 2026:
+        # production's offer exit is ALWAYS post-annotation - the bridge must not
+        # probe or annotate, so hand it an already-annotated payload, not an
+        # unannotated original compared against a separately annotated copy).
+        annotated = pickers.annotate_incoming(gate, probe=probe)
+        expected_text, _lane_item = _expected_offer_text_from_annotated(annotated, parser)
         assert "has incoming" in expected_text and "no incoming" in expected_text, expected_text
 
-        payload = {**gate, "_exit_kind": "offer"}
+        payload = {**annotated, "_exit_kind": "offer"}
         answer = bridge.question_for(
             payload, parser=parser, ctx=_ctx_for(parser), canned=_canned(), asked_at_turn=2
         )
