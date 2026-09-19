@@ -1,9 +1,6 @@
 # PLAN: order inquiry sheet - correct a settled row's Was date too
 
-Status: Track: small fix - ready for PR review. Follow-up to `PLAN-oi-sheet-date-follow-
-sheet.md` (#1004, MERGED and deployed as `92c9b27d2`). Lane worktree
-`sorento_crm-oi-sheet-date`, branch `fix/oi-sheet-date-settled-rows`. DB `sorento_oisd_ci`.
-Backend only.
+Status: shipped (merged in #1011, 18 Sep 2026)
 
 UAC: `oi-sheet-date-settled-rows-acceptance-criteria.md`.
 

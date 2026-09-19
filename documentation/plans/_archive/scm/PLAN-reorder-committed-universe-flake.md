@@ -1,6 +1,6 @@
 # PLAN: the reorder committed-universe tests stop deadlocking against a migration replay
 
-Status: Track: small fix - ready for PR review
+Status: shipped (merged in #1013, 18 Sep 2026)
 Domain: scm / reorder run, backend test substrate
 Branch: `fix/reorder-committed-universe-flake` (worktree `sorento_crm-scm-flake`, test DB `sorento_xdist_local`)
 UAC: none - repair of an existing test, no product behaviour changes.
