@@ -376,6 +376,80 @@ entry and exit presets apply; nothing else animates.
   SRTWC286-SH 0.62, strwc286 -> SRTWC286-SH 0.33, so the floor must be 0.3. Also collapse
   the triple negative into one line when it still applies.
 
+### Hand pass 7 rulings (19 Sep 2026)
+
+- R-d. Reply copy = production copy per domain. `turn/compose.py` re-rendered `figures`
+  under its own `*{label}* for {codes}:` header and dropped the production intro, fields,
+  flags and footer `lanes/business/fetch.py::output_structurer` already builds into
+  `fetched["response"]` (the SAME production copy the OLD engine sends: stock intro/rows/
+  discontinued+pending flags/footer, incoming's "I have attached the file(s) below."
+  first, orders with formatted dates, PO/purchase-cost intros). Fixed at the ONE compose
+  seam: `lane_text` (`fetched["response"]`), when present, IS the section verbatim -
+  header included - and `_render_row`'s own grammar is now a fallback for an envelope
+  that never went through that lane (a unit test's own hand-built dict has figures with
+  no lane_text). A multi-domain answer's per-section header is now that domain's own
+  production intro, said once. `header_override`/`own_header` (the outstanding report)
+  unaffected - reusing `lane_text` verbatim is exactly what those two branches already
+  did. The attached-file sentence is de-duplicated (a domain with attachments already
+  opens `lane_text` with it).
+- R-e. An exact product code answers straight away. `turn/narrow.py`'s
+  `resolved_candidates` gate: a token that IS one of the resolver's own matched codes
+  (`typed_exactly`) settles the narrowing to that code, dropping any fuzzy family
+  siblings that came back beside it - the same rule `ambiguous_filter_asks` already
+  applied for `optional_filter`, extended to the roster-building branch. "incoming for
+  srtwc286" (no exact code) still rosters, unaffected.
+- R-f. Miss copy names the team (partial). The generic escalate offer
+  (`turn/compose.py`) now names the team when there is exactly one
+  ("Would you like me to escalate to {team} team?", via `tail.outcome.pretty_team`,
+  matching `CHATBOT_REPLY_ESCALATE_OFFER`'s tail wording). The product_attachment
+  miss's own "Here's what you want:" axis breakdown
+  (`lanes/business/answer.py::build_breakdown_msg`/`_AXES`) and the order-domain
+  member-offer wiring (`tail/member_offer.py`, a new position-accepting pending kind)
+  are NOT ported this round - measured as two more subsystems (the `_AXES` axis
+  breakdown, and member_offer's own DB-threaded roster plus assignment side effects)
+  the new engine never calls at all, each large enough to need its own scoped slice.
+  Flagged, not guessed at.
+- R-g. Roster copy (partial). `lanes/business/gate.py::run_gate`'s own picker line for
+  `product_attachment` ("{domain} search needs to be more specific. Multiple matches
+  found. Please choose:") is restored in `compose_question` via the pending's own
+  `payload.domain`. A product code that is a SEPARATE record in two companies is now TWO
+  options, never merged into one because they share a label (`gate.py` carries
+  `company_name` the same additive way it already carries `display_name`;
+  `turn_runtime.candidates_by_kind` copies it onto the candidate; `narrow.py::_options`
+  dedupes by (label, company) and appends "(company)" the way `gate.py`'s own duplicate-
+  code suffix does). The "has/no {attachment_type}" STAMP is NOT restored - measured as
+  `miss_suggest.py`'s own ~1400-line did-you-mean probe/annotate subsystem
+  (`dym_annotate`/`dym_probe_meta`), never wired into the new engine at all; a safe port
+  needs its own scoped slice, not a fix-round guess.
+
+### Hand pass 7 bugs (19 Sep 2026)
+
+- B1. Roster explosion (partial fix). `turn/narrow.py::_options` now hard-caps every
+  roster at 10 (`_ROSTER_CAP`), in the resolver's own (relevance) order - measured
+  necessary regardless of root cause: "SRTWT165-FT CERT" printed 200 unrelated codes.
+  The suspected root cause (a class-word token's `spec_search` matches leaking into a
+  DIFFERENT token's disambiguation picker in `lanes/business/gate.py`'s
+  `REQUIRE_SPECIFIC_DOMAINS` arm) is NOT fixed - no live repro was run this round to
+  confirm the hypothesis, and an unverified change to that shared, heavily-relied-on
+  gate is a worse risk than the cap alone. Flagged for a follow-up round with a live
+  trace.
+- B2. "outstanding quantity" typo tolerance. `chatbot_parser_prompt.py`'s existing
+  hand-pass-5 rule ("outstanding quantity cb2805a" -> status "outstanding", domain_hint
+  "order") is generalised: a garbled spelling of "outstanding" ("oustaning",
+  "oustangind") or "quantity" ("quantiyt"), and a bare "... report for <product>" beside
+  a status word, read for MEANING and stay domain_hint "order" - never "inventory".
+  Republished on the clone as `chatbot_semantic_parser` v36 (id
+  `5a0f7f20-f325-4e0b-8e5d-882467e4433c`), `production` label moved, `blocks_hash`
+  unchanged (`98649089e4455e...`, no policy rows moved). New `CONSTANT_CHARS` (the body
+  before the growth-r1/last-cost/low-stock addenda): **62277** (was 61284).
+- B3. Customer fuzzy tail. `entity_resolver.py`'s customer trgm probe (both the
+  `customers` table block and the `orders.debtor_name` block) now drops a row trailing
+  the batch's own top score by more than `_CUSTOMER_TRGM_TAIL_GAP` (0.15, a judgment
+  call, not a measured number - retune on replay if a real near-tie customer starts
+  getting cut). "chun chun delivery" no longer rosters "CHUN FATT" / "CHEW CHUN KEAT" /
+  "CHIA LEE CHUN" / "CHUN YE" alongside the CHIN CHUN ledgers; genuine ties (several
+  ledgers of one name) clear the gap by construction.
+
 ## Appendix A - Compatibility contract (129 lines, signed 15 Sep 2026)
 
 Source: architecture page section 9. `main` = live on prod today; `lane` = on
