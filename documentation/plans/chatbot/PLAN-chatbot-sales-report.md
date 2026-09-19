@@ -1,7 +1,8 @@
 # PLAN - Chatbot sales report: confirmed vs outstanding sales, by month, one shape
 
-Status: BUILT, Phase 3 fix round in progress 19 Sep 2026; DRAFT PR #1034.
-UAC: `chatbot-sales-report-acceptance-criteria.md` (AC-16xx, rulings S1 to S13).
+Status: BUILT, Phase 3 fix round in progress 19 Sep 2026; DRAFT PR #1034. S19
+(product-code prefix rule, live-testing fix) landed 19 Sep 2026, small fix track.
+UAC: `chatbot-sales-report-acceptance-criteria.md` (AC-16xx, rulings S1 to S19).
 Base: origin/main. The turn re-architecture (#952, #863) is on hold by owner ruling and this
 lane does not wait for it. Branch `feat/chatbot-sales-report`, one lane, one PR.
 Precedent: `PLAN-chatbot-outstanding-report.md` (#862). This plan copies that lane's seams,
@@ -72,7 +73,7 @@ view permission as that route.
 
 | param | type | rule |
 |---|---|---|
-| `product_code` | str | exact, case-insensitive |
+| `product_code` | str | prefix, case-insensitive, min 3 chars (S19) |
 | `customer_ids` | csv uuid | the lane's resolved ledgers |
 | `customer_query` | str | `customer_name ILIKE %q%`, for n8n / the in-app assistant |
 | `channel` | `dealer` / `project` | absent = all; else 422 |
@@ -88,7 +89,8 @@ Response (`SalesReportResponse`, every field declared):
 
 ```
 {
-  "customer_name": str | null, "product_code": str | null, "channel": "dealer"|"project"|null,
+  "customer_name": str | null, "product_code": str | null, "product_codes": [str],
+  "channel": "dealer"|"project"|null,
   "location_token": str | null, "warehouse_codes": [str], "date_from": date|null, "date_to": date|null,
   "months": [ { "month": "2026-09", "so_count": int,
                 "ordered_value", "ordered_qty", "confirmed_value", "confirmed_qty",

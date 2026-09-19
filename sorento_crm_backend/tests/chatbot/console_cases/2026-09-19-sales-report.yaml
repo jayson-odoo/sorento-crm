@@ -211,6 +211,23 @@ cases:
             - "*SO Number:*"
           no_uuid: true
 
+  - name: "S19 - a product family stem covers its siblings (Srt5674 also matches SRT5674-N)"
+    cold: true
+    turns:
+      # Owner ruling S19, live testing 19 Sep 2026: this exact message answered "No sales
+      # found." before the prefix fix because every August sale sat on the sibling
+      # SRT5674-N, never the bare SRT5674 code. Must now find August and print the family
+      # form of the Product header line (AC-1633).
+      - text: "Srt5674 August total sale quantity"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "Product: SRT5674 ("
+            - "SRT5674-N"
+            - "*_Aug 2026_*"
+          reply_not_contains: ["No sales found."]
+          no_uuid: true
+
   - name: "TRAP - dealer inside an outstanding ask is not read as a channel word"
     cold: true
     turns:

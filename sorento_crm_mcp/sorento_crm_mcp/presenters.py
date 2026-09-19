@@ -2241,6 +2241,27 @@ def _sales_channel_header(channel: Any) -> str:
     return "all"
 
 
+def _sales_product_header(typed_code: Any, codes: Any) -> str:
+    """S19/AC-1633: the Product line follows the SAME shape the Location line
+    already uses (`_outstanding_location_header`) - a typed prefix that
+    matched several codes prints bracketed (``"SRT5674 (SRT5674,
+    SRT5674-N)"``), a prefix that matched only itself prints bare, more than
+    10 matches collapses to a count (the header would otherwise run to a
+    whole family, e.g. HANLIM's 80 products a month), and no product at all
+    prints ``"all"``. A typed code with NO matched rows in the report (a
+    genuine miss) also prints bare - there is nothing to bracket."""
+    if not _filled(typed_code):
+        return "all"
+    resolved = [c for c in (codes or []) if _filled(c)]
+    if len(resolved) > 10:
+        return f"{typed_code} ({len(resolved)} products)"
+    if len(resolved) >= 2 or (
+        len(resolved) == 1 and str(resolved[0]).casefold() != str(typed_code).casefold()
+    ):
+        return f"{typed_code} ({', '.join(str(c) for c in resolved)})"
+    return str(typed_code)
+
+
 def _sales_breakdown(month: dict) -> tuple[str, str, list]:
     """Which breakdown a month block carries (AC-1604/AC-1628): the heading, the
     row's name key, and its rows - ``("*_By product_*", "product_code", rows)``
@@ -2300,7 +2321,7 @@ def _sales_report(report: dict) -> str:
     header = "\n".join(
         (
             f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
-            f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
+            f"Product: {_sales_product_header(report.get('product_code'), report.get('product_codes'))}",
             f"Channel: {_sales_channel_header(report.get('channel'))}",
             f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
             f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}",
@@ -2330,6 +2351,13 @@ def _sales_report_detail(report: dict) -> str:
         field_lines = [
             f"*SO Number:* {row.get('so_number')}",
             f"*Customer:* {_outstanding_label(row.get('customer_name'))}",
+        ]
+        # AC-1633: absent-safe - an OLD body (rendered before this field
+        # existed) has no `product_codes` key at all, and a customer-subject
+        # report never gets one either; both print no Product line at all.
+        if _filled(row.get("product_codes")):
+            field_lines.append(f"*Product:* {row.get('product_codes')}")
+        field_lines.extend([
             f"*Location:* {_outstanding_label(row.get('location'))}",
             f"*Order Date:* {_outstanding_ddmmyyyy(order_date) if _filled(order_date) else _outstanding_label(order_date)}",
             f"*Ordered:* {_rm_money(row.get('ordered_value'))} (Qty: {_outstanding_fmt_int(row.get('ordered_qty'))})",
@@ -2337,7 +2365,7 @@ def _sales_report_detail(report: dict) -> str:
             f"(Qty: {_outstanding_fmt_int(row.get('confirmed_qty'))})",
             f"*Outstanding:* {_rm_money(row.get('outstanding_value'))} "
             f"(Qty: {_outstanding_fmt_int(row.get('outstanding_qty'))})",
-        ]
+        ])
         items.append(f"{i}. " + "\n".join(field_lines))
     return "\n\n".join(items)
 

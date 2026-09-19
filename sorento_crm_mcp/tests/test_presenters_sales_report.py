@@ -127,6 +127,70 @@ def test_location_header_matches_the_outstanding_header():
 
 
 # --------------------------------------------------------------------------
+# AC-1633: the Product header line follows the S19 prefix rule the same way
+# Location follows the warehouse-token rule - family form, single-equal bare
+# form, a >10-match count form, and "all" with no product at all.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "product_code,product_codes,expected",
+    [
+        (None, [], "all"),
+        ("SRT5674", ["SRT5674"], "SRT5674"),
+        ("SRT5674", ["SRT5674", "SRT5674-N"], "SRT5674 (SRT5674, SRT5674-N)"),
+        ("SRT56", [f"SRT56{i:02d}" for i in range(11)], "SRT56 (11 products)"),
+    ],
+)
+def test_product_header_family_and_count_forms(product_code, product_codes, expected):
+    report = copy.deepcopy(_mock("miss"))
+    report["product_code"] = product_code
+    report["product_codes"] = product_codes
+    rendered = _sales_report(report)
+    assert f"Product: {expected}" in rendered
+
+
+def test_product_header_bare_when_no_rows_matched_in_the_report():
+    """A typed code that resolved (against the product master) but has NO rows
+    in this filtered report - a genuine miss - prints bare, the same as the
+    single-equal case: there is nothing to bracket."""
+    report = copy.deepcopy(_mock("miss"))
+    report["product_code"] = "SRTWT9999"
+    report["product_codes"] = []
+    assert "Product: SRTWT9999" in _sales_report(report)
+
+
+# --------------------------------------------------------------------------
+# AC-1633: detail rows carry a *Product:* line after *Customer:* when present,
+# and are absent-safe for an OLD body with no product_codes key at all.
+# --------------------------------------------------------------------------
+
+
+def test_detail_rows_show_product_codes_when_present_and_stay_absent_safe():
+    with_product = {
+        "so_rows": [
+            {
+                "so_number": "SO1", "customer_name": "Acme", "location": "BRW-IB",
+                "order_date": "2026-09-01", "product_codes": "SRT5674, SRT5674-N",
+                "ordered_value": 10, "ordered_qty": 1, "confirmed_value": 10,
+                "confirmed_qty": 1, "outstanding_value": 0, "outstanding_qty": 0,
+            }
+        ]
+    }
+    rendered = _sales_report_detail(with_product)
+    lines = rendered.splitlines()
+    assert lines[1] == "*Customer:* Acme"
+    assert lines[2] == "*Product:* SRT5674, SRT5674-N"
+    assert lines[3] == "*Location:* BRW-IB"
+
+    without_product = copy.deepcopy(with_product)
+    del without_product["so_rows"][0]["product_codes"]
+    rendered2 = _sales_report_detail(without_product)
+    assert "*Product:*" not in rendered2
+    assert "*Location:* BRW-IB" in rendered2
+
+
+# --------------------------------------------------------------------------
 # AC-1604: breakdown heading follows the subject
 # --------------------------------------------------------------------------
 

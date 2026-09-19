@@ -233,6 +233,11 @@ class SalesReportSORow(BaseModel):
     confirmed_value: float
     outstanding_qty: int
     outstanding_value: float
+    #: S19/AC-1633: the SO's own DISTINCT matched product codes, comma joined -
+    #: present ONLY when a `product_code` filter was given (absent otherwise,
+    #: never an empty string). The presenter reads it absent-safe so an OLD
+    #: body (deployed before this field existed) still renders.
+    product_codes: Optional[str] = None
 
 
 class SalesReportResponse(BaseModel):
@@ -250,6 +255,10 @@ class SalesReportResponse(BaseModel):
 
     customer_name: Optional[str] = None
     product_code: Optional[str] = None
+    #: S19: the DISTINCT product codes matched by `product_code`'s prefix rule
+    #: THAT HAVE ROWS in the filtered report, sorted ascending. `[]` when no
+    #: product filter was given (AC-1631, AC-1633).
+    product_codes: List[str] = []
     channel: Optional[str] = None
     # Echo only (S9), same contract as `OutstandingReportResponse`'s route-level
     # `location_token` handling - never filters, always present on this report's

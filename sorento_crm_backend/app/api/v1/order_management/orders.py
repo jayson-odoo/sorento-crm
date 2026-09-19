@@ -1560,7 +1560,9 @@ async def get_sales_report(
     product_code: Optional[str] = Query(
         None,
         description=(
-            "Exact product code, case-insensitive. No sibling-code expansion. "
+            "PREFIX, case-insensitive (S19, 19 Sep 2026): matches the typed code AND "
+            "every product whose code STARTS WITH it, e.g. 'SRT5674' also matches "
+            "'SRT5674-N'. Must be at least 3 characters after stripping. "
             "OPTIONAL: the report's subject may be a customer instead, or both - "
             "but at least one of product_code / customer_ids / customer_query is required."
         ),
@@ -1661,6 +1663,18 @@ async def get_sales_report(
             "customer_query must be at least 3 characters",
             detail=_customer_query_stripped,
             code="customer_query_too_short",
+        )
+
+    # S19 (owner ruling, 19 Sep 2026): product_code is now a PREFIX, so the
+    # same reasoning as customer_query_too_short above applies - a 1-2
+    # character prefix would LIKE-scan the whole product master, company-wide.
+    _product_code_stripped = (product_code or "").strip()
+    if _product_code_stripped and len(_product_code_stripped) < 3:
+        raise AppException(
+            422,
+            "product_code must be at least 3 characters",
+            detail=_product_code_stripped,
+            code="product_code_too_short",
         )
 
     # SEC-S2 (security review, Phase 3 fix round, ruling S14): contact_id and space_id

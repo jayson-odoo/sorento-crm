@@ -512,27 +512,46 @@ def test_subject_required(client, db):
 
 
 # --------------------------------------------------------------------- AC-1627
+# S19 (owner ruling from live testing, 19 Sep 2026): a sales-report `product_code`
+# covers the typed code AND every product whose code STARTS WITH it, case-
+# insensitively - "Srt5674 August total sale quantity" answered "No sales
+# found." because every August sale sat on the sibling SRT5674-N. The
+# OUTSTANDING report keeps its own exact-code rule (AC-1119) and is untouched.
 
 
 def test_product_exact_and_warehouse_filter(client, db):
-    """`product_code=abc1` (lowercase) matches `ABC1` case-insensitively but NEVER
-    the sibling `ABC10`. `warehouse_codes` filters lines to those exact codes."""
+    """`product_code=abc1` (lowercase) matches `ABC1`, `ABC10` and `ABC1-N`
+    case-insensitively (S19's prefix rule) but NEVER `XABC1` - the prefix must
+    anchor at the START of the code. `product_codes` echoes the DISTINCT
+    matched codes that have rows in the filtered report, sorted ascending.
+    `warehouse_codes` still filters lines to those exact codes (S9, untouched
+    by S19)."""
     w1_code = "ZZT-SR-W1"
-    target = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC1")
-    sibling = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC10")
+    abc1 = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC1")
+    abc10 = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC10")
+    abc1n = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC1-N")
+    xabc1 = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-XABC1")
     wh1 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=w1_code)
     wh2 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SR-W2")
 
     _so_line(
-        db, product_id=target.id, ordered=10, delivered=0, line_total=Decimal("100.00"),
+        db, product_id=abc1.id, ordered=10, delivered=0, line_total=Decimal("100.00"),
         warehouse_id=wh1.id, order_date=date(2026, 6, 1),
     )
     _so_line(
-        db, product_id=target.id, ordered=20, delivered=0, line_total=Decimal("200.00"),
+        db, product_id=abc1.id, ordered=20, delivered=0, line_total=Decimal("200.00"),
         warehouse_id=wh2.id, order_date=date(2026, 6, 1),
     )
     _so_line(
-        db, product_id=sibling.id, ordered=99, delivered=0, line_total=Decimal("990.00"),
+        db, product_id=abc10.id, ordered=5, delivered=0, line_total=Decimal("50.00"),
+        warehouse_id=wh1.id, order_date=date(2026, 6, 1),
+    )
+    _so_line(
+        db, product_id=abc1n.id, ordered=7, delivered=0, line_total=Decimal("70.00"),
+        warehouse_id=wh1.id, order_date=date(2026, 6, 1),
+    )
+    _so_line(
+        db, product_id=xabc1.id, ordered=99, delivered=0, line_total=Decimal("990.00"),
         warehouse_id=wh1.id, order_date=date(2026, 6, 1),
     )
     db.commit()
@@ -541,12 +560,107 @@ def test_product_exact_and_warehouse_filter(client, db):
     assert unfiltered.status_code == 200, unfiltered.text
     ubody = unfiltered.json()
     assert ubody["product_code"] == "ZZT-ABC1", ubody
-    assert sum(m["ordered_qty"] for m in ubody["months"]) == 30, ubody  # 10 + 20, sibling excluded
+    assert ubody["product_codes"] == ["ZZT-ABC1", "ZZT-ABC1-N", "ZZT-ABC10"], ubody
+    # 10 + 20 + 5 + 7 - XABC1 (99) excluded, its prefix does not START with abc1
+    assert sum(m["ordered_qty"] for m in ubody["months"]) == 42, ubody
 
     filtered = client.get(BASE, params={"product_code": "zzt-abc1", "warehouse_codes": w1_code})
     assert filtered.status_code == 200, filtered.text
     fbody = filtered.json()
-    assert sum(m["ordered_qty"] for m in fbody["months"]) == 10, fbody
+    assert sum(m["ordered_qty"] for m in fbody["months"]) == 22, fbody  # 10 + 5 + 7
+
+
+def test_product_code_needs_three_characters(client, db):
+    """A stripped `product_code` shorter than 3 characters is 422
+    `product_code_too_short` - a 1-2 character prefix would LIKE-scan the
+    whole product master, company-wide (SEC-B2's own reasoning for
+    `customer_query_too_short`, reused here)."""
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust"))
+
+    too_short = client.get(BASE, params={"product_code": " ab "})
+    assert too_short.status_code == 422, too_short.text
+    assert "product_code_too_short" in too_short.text, too_short.text
+
+    # A 2-char product_code alongside a customer subject is STILL rejected -
+    # the check applies whenever product_code is given, not only when it is
+    # the sole subject.
+    with_customer = client.get(BASE, params={"product_code": "ab", "customer_ids": cust.id})
+    assert with_customer.status_code == 422, with_customer.text
+    assert "product_code_too_short" in with_customer.text, with_customer.text
+
+
+def test_like_metacharacters_in_product_code_are_literal(client, db):
+    """`%` and `_` typed in `product_code` are LITERAL characters, never SQL
+    LIKE wildcards - `AB%` must not match `ABCD` (which it would if `%` were
+    left unescaped) and `AB_` must not match `ABC` (ditto for `_`, which
+    matches any single character unescaped)."""
+    percent_literal = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-AB%LIT")
+    percent_victim = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABCD")
+    underscore_literal = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-AB_LIT")
+    underscore_victim = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC")
+    for p in (percent_literal, percent_victim, underscore_literal, underscore_victim):
+        _so_line(
+            db, product_id=p.id, ordered=1, delivered=0, line_total=Decimal("10.00"),
+            order_date=date(2026, 6, 1),
+        )
+    db.commit()
+
+    percent_resp = client.get(BASE, params={"product_code": "ZZT-AB%"})
+    assert percent_resp.status_code == 200, percent_resp.text
+    assert percent_resp.json()["product_codes"] == ["ZZT-AB%LIT"], percent_resp.json()
+
+    underscore_resp = client.get(BASE, params={"product_code": "ZZT-AB_"})
+    assert underscore_resp.status_code == 200, underscore_resp.text
+    assert underscore_resp.json()["product_codes"] == ["ZZT-AB_LIT"], underscore_resp.json()
+
+
+def test_unknown_prefix_404(client, db):
+    """No product code starts with the typed prefix - 404, the same shape the
+    exact-match rule raised before S19."""
+    resp = client.get(BASE, params={"product_code": "ZZT-NOSUCHPREFIX"})
+    assert resp.status_code == 404, resp.text
+
+
+def test_detail_rows_carry_their_matched_product_codes(client, db):
+    """S19/AC-1633: `detail=so` rows carry the SO's own DISTINCT matched
+    product codes, comma joined - an SO with lines under two matched codes
+    lists both, an SO with lines under only one lists just that one."""
+    stem_a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SRDTL")
+    stem_b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SRDTL-N")
+
+    so_both = SalesOrder(
+        id=str(uuid.uuid4()), so_number="ZZT-SR-DTL-BOTH", order_date=date(2026, 6, 1),
+        status="open", company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(so_both)
+    db.flush()
+    db.add_all(
+        [
+            SalesOrderLine(
+                id=str(uuid.uuid4()), sales_order_id=so_both.id, product_id=stem_a.id,
+                qty_ordered=1, qty_delivered=0, line_total=Decimal("10.00"),
+                line_status="open", company_id=DEFAULT_COMPANY_ID,
+            ),
+            SalesOrderLine(
+                id=str(uuid.uuid4()), sales_order_id=so_both.id, product_id=stem_b.id,
+                qty_ordered=1, qty_delivered=0, line_total=Decimal("10.00"),
+                line_status="open", company_id=DEFAULT_COMPANY_ID,
+            ),
+        ]
+    )
+    _so_line(
+        db, product_id=stem_a.id, ordered=2, delivered=0, line_total=Decimal("20.00"),
+        order_date=date(2026, 6, 2), so_number="ZZT-SR-DTL-ONE",
+    )
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": "ZZT-SRDTL", "detail": "so"})
+    assert resp.status_code == 200, resp.text
+    rows = {r["so_number"]: r for r in resp.json()["so_rows"]}
+    assert set(rows["ZZT-SR-DTL-BOTH"]["product_codes"].split(", ")) == {
+        "ZZT-SRDTL", "ZZT-SRDTL-N",
+    }, rows
+    assert rows["ZZT-SR-DTL-ONE"]["product_codes"] == "ZZT-SRDTL", rows
 
 
 # --------------------------------------------------------------------- AC-1628
@@ -817,10 +931,11 @@ def test_response_model_keeps_every_field(client, db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     for key in (
-        "customer_name", "product_code", "channel", "location_token",
+        "customer_name", "product_code", "product_codes", "channel", "location_token",
         "warehouse_codes", "date_from", "date_to", "months",
     ):
         assert key in body, f"missing field: {key}"
+    assert body["product_codes"] == [prod.product_code], body
     assert body["location_token"] == "ZZT-NOT-A-REAL-WAREHOUSE", (
         "location_token echoes the raw param; it never filters (S9)"
     )

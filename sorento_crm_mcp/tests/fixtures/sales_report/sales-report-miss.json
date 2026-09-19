@@ -1,6 +1,7 @@
 {
   "customer_name": null,
   "product_code": "SRTWT9999",
+  "product_codes": [],
   "channel": null,
   "location_token": null,
   "warehouse_codes": [],

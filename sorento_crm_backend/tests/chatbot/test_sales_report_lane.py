@@ -66,7 +66,8 @@ from typing import Any
 import pytest
 
 from app.services.chatbot.lanes.business import fetch as fetch_mod
-from app.services.chatbot.lanes.business.services import FetchServices
+from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
+from tests.chatbot.conftest import validating_resolve_entity
 from tests.chatbot.test_outstanding_lane import (
     CUSTOMER_NAME,
     CUSTOMER_UUID,
@@ -1362,3 +1363,131 @@ class TestProductOnlyDefaultsToCurrentYear:
         assert name == "crm_sales_report", name
         assert args.get("date_from") == "2026-06-01", args
         assert args.get("date_to") == "2026-06-30", args
+
+
+# --------------------------------------------------------------------------- #
+# S19 item 3 (captain brief, 19 Sep 2026): the typed-code-wins rule sends the
+# raw STEM to `crm_sales_report`, which the ROUTE then prefix-matches - never
+# a resolver-picked family member.
+# --------------------------------------------------------------------------- #
+
+
+def _family_resolve_services(*, token: str, matches: list[dict[str, Any]]) -> ResolveGateServices:
+    """ONE token resolving to SEVERAL product matches under an OR-mode probe -
+    the shape a real prefix/family resolution returns (`_ambiguous_hanlim_
+    resolve_services`'s own pattern, ported for a product family instead of
+    an ambiguous customer)."""
+
+    def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": [token],
+            "resolutions": [{"token": token, "matches": matches}],
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve_entity),
+        probe=lambda **_: None,
+    )
+
+
+class TestTypedStemWinsOverFamilySibling:
+    def test_a_stem_that_is_itself_a_product_wins_over_its_sibling(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """The must-have case (S19's own live bug): "Srt5674" is itself a real
+        product AND a family stem - the resolver's OR-mode probe also matches
+        its sibling SRT5674-N under the same token. The typed-code-wins rule
+        (`outstanding_product_code`, AC-1119) must send the RAW TYPED STEM to
+        the tool, never the sibling - the ROUTE's own S19 prefix rule is what
+        then re-expands it back to both."""
+        stem_uuid = "33333333-3333-3333-3333-333333333333"
+        sibling_uuid = "44444444-4444-4444-4444-444444444444"
+        resolve_services = _family_resolve_services(
+            token="SRT5674",
+            matches=[
+                {"entity_type": "product", "canonical_code": "SRT5674", "uuid": stem_uuid},
+                {"entity_type": "product", "canonical_code": "SRT5674-N", "uuid": sibling_uuid},
+            ],
+        )
+
+        _seed_contact(session_factory, variables={})
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                entities=[
+                    {
+                        "raw": "SRT5674", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="sales report for SRT5674",
+            msg_id="ZZT-sales-report-s19-stem-1",
+            attributes=["sales_orders.sales_report"],
+            resolve_services=resolve_services,
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert captured, "the report must run"
+        name, args = captured[0]
+        assert name == "crm_sales_report", name
+        assert args.get("product_code") == "SRT5674", (
+            "typed-code-wins (AC-1119) must send the RAW TYPED STEM, never a "
+            f"family sibling the OR-mode probe also matched: {args}"
+        )
+
+    def test_a_stem_that_is_not_itself_a_product_documents_current_behaviour(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """The edge case the captain's brief asks to REPORT rather than force:
+        "SRT567" is a prefix of several products but not itself one of them.
+        No resolved candidate's own code casefold-equals the typed raw, so the
+        typed-code-wins match in `_resolve_report_product_and_location` never
+        fires; `outstanding_product_code`'s own fallback then picks whichever
+        product entity is FIRST in resolution order - here, deliberately, the
+        member that is NOT alphabetically first, to show the choice is
+        POSITIONAL (resolution order), not the customer's own stem. This is a
+        gap, not a fix: pinned so a future change to either function shows up
+        here rather than silently, and reported to the captain as measured
+        behaviour rather than silently patched.
+        """
+        first_uuid = "55555555-5555-5555-5555-555555555555"
+        second_uuid = "66666666-6666-6666-6666-666666666666"
+        resolve_services = _family_resolve_services(
+            token="SRT567",
+            matches=[
+                {"entity_type": "product", "canonical_code": "SRT5679", "uuid": first_uuid},
+                {"entity_type": "product", "canonical_code": "SRT5670", "uuid": second_uuid},
+            ],
+        )
+
+        _seed_contact(session_factory, variables={})
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                entities=[
+                    {
+                        "raw": "SRT567", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="sales report for SRT567",
+            msg_id="ZZT-sales-report-s19-stem-2",
+            attributes=["sales_orders.sales_report"],
+            resolve_services=resolve_services,
+            mcp_response=SALES_REPORT_HIT,
+        )
+        assert captured, "the report must run"
+        name, args = captured[0]
+        assert name == "crm_sales_report", name
+        # MEASURED, not desired: today's code sends the FIRST resolved match
+        # (resolution order), never the customer's own typed stem "SRT567".
+        assert args.get("product_code") == "SRT5679", (
+            "current (gap) behaviour: the first resolved match wins, not the "
+            f"typed stem - if this now reads 'SRT567' the gap has been closed "
+            f"and this test's docstring/report line is stale: {args}"
+        )

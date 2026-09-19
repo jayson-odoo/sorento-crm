@@ -2,7 +2,9 @@
 
 `documentation/plans/chatbot/PLAN-chatbot-sales-report.md` ("Backend contract");
 `documentation/plans/chatbot/chatbot-sales-report-acceptance-criteria.md`
-AC-1620 to AC-1632, rulings S15 to S17 (Phase 3 fix round).
+AC-1620 to AC-1632, rulings S15 to S19 (S19: 19 Sep 2026 live-testing fix
+round - `product_code` is now a PREFIX, `_resolve_products`, not a single
+exact match).
 
 AGGREGATED IN SQL, not rolled up from raw rows in Python (SEC-B2/ruling S17): a
 big dealer is 1,230 SOs over 37 months (UAC "Measured"), thousands of lines - too
@@ -113,14 +115,23 @@ def _as_date(v: DateLike) -> Optional[date]:
     return v
 
 
-def _resolve_product(db: Session, product_code: Optional[str]) -> Optional[Product]:
+def _resolve_products(db: Session, product_code: Optional[str]) -> list[Product]:
+    """S19 (owner ruling from live testing, 19 Sep 2026): `product_code` matches
+    the typed code AND every product whose code STARTS WITH it, case-
+    insensitively - "Srt5674 August total sale quantity" answered "No sales
+    found." because every August sale sat on the sibling SRT5674-N. The
+    OUTSTANDING report keeps its own exact-code rule (AC-1119) and does not
+    share this helper. LIKE metacharacters in the typed code are escaped
+    (`_escape_like`, reused from the exact-match rule this replaces) so a
+    literal `%` or `_` in what the customer typed can never wildcard-match."""
     code = (product_code or "").strip()
     if not code:
-        return None
+        return []
+    pattern = _escape_like(code.lower()) + "%"
     return (
         db.query(Product)
-        .filter(func.lower(Product.product_code) == code.lower())
-        .first()
+        .filter(func.lower(Product.product_code).like(pattern, escape=_LIKE_ESCAPE))
+        .all()
     )
 
 
@@ -216,7 +227,7 @@ def _figure_sum_labels(exprs: dict) -> list:
 
 
 def _common_filters(
-    *, product, customer_query, customer_ids, channel, warehouse_ids, date_from, date_to,
+    *, product_ids, customer_query, customer_ids, channel, warehouse_ids, date_from, date_to,
     bucket_expr,
 ) -> list:
     filters = [
@@ -227,8 +238,12 @@ def _common_filters(
         # created_at.
         bucket_expr.isnot(None),
     ]
-    if product is not None:
-        filters.append(SalesOrderLine.product_id == product.id)
+    if product_ids:
+        # S19: the product SUBJECT is now a SET (the typed code plus every
+        # sibling whose code starts with it) - filtered by id, resolved once
+        # up front in `_resolve_products`, so this stays a plain IN() and no
+        # query below needs its own Product join just to filter.
+        filters.append(SalesOrderLine.product_id.in_(product_ids))
     if customer_query:
         filters.append(
             Customer.customer_name.ilike(
@@ -266,15 +281,23 @@ def sales_report(
     ROUTE raises 422 `subject_required` before calling this). `channel` is
     already normalised to `"dealer"` / `"project"` / `None` by the route (S8);
     `detail` is `"so"` or `None` - `so_rows` is computed ONLY when it is `"so"`
-    (captain ruling: a big dealer is 1,230 SOs, never build that unasked)."""
-    product = _resolve_product(db, product_code) if (product_code or "").strip() else None
-    if (product_code or "").strip() and product is None:
+    (captain ruling: a big dealer is 1,230 SOs, never build that unasked).
+
+    S19: `product_code` is a PREFIX - `_resolve_products` returns every
+    product whose code starts with it, case-insensitively (the typed code
+    itself included, since every code "starts with" itself). 404 only when
+    NOTHING starts with it (the route's own 422 `product_code_too_short`
+    guards the pathological single-character case before this ever runs)."""
+    product_code_stripped = (product_code or "").strip()
+    matched_products = _resolve_products(db, product_code_stripped) if product_code_stripped else []
+    if product_code_stripped and not matched_products:
         raise handle_not_found("Product", product_code)
+    product_ids = [p.id for p in matched_products]
 
     warehouse_ids = resolve_warehouse_ids(db, warehouse_codes)
     customer_ids = [str(c).strip() for c in (customer_ids or []) if str(c).strip()] or None
     has_customer = bool(customer_ids) or bool((customer_query or "").strip())
-    has_product = product is not None
+    has_product = bool(matched_products)
     # S6/AC-1628: customer subject -> By product; product subject -> By customer;
     # both named -> neither breakdown.
     want_by_product = has_customer and not has_product
@@ -283,7 +306,7 @@ def sales_report(
 
     bucket_expr = _bucket_expr()
     filters = _common_filters(
-        product=product, customer_query=customer_query, customer_ids=customer_ids,
+        product_ids=product_ids, customer_query=customer_query, customer_ids=customer_ids,
         channel=channel, warehouse_ids=warehouse_ids, date_from=date_from, date_to=date_to,
         bucket_expr=bucket_expr,
     )
@@ -371,6 +394,26 @@ def sales_report(
             entry["by_customer"] = _rank_breakdown(rows, name_key="customer_name")
         months.append(entry)
 
+    # ------------------------------------------------------- product_codes (S19)
+    # ONE small grouped query, the DISTINCT matched codes THAT HAVE ROWS in the
+    # filtered report (never the whole prefix family - a code that resolved but
+    # carries no line in scope must not appear on the header or in a detail
+    # row). `filters` already carries the `product_id IN (...)` predicate, so
+    # this join only pulls the CODE back for what already passed every other
+    # filter.
+    product_codes: list[str] = []
+    if has_product:
+        q_codes = (
+            db.query(Product.product_code)
+            .select_from(SalesOrderLine)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .join(Product, Product.id == SalesOrderLine.product_id)
+            .filter(*filters)
+            .distinct()
+        )
+        product_codes = sorted(r[0] for r in q_codes.all())
+
     # ----------------------------------------------------------------- so_rows (detail=so)
     so_rows: Optional[list[dict]] = None
     if want_so_rows:
@@ -383,20 +426,33 @@ def sales_report(
             Warehouse.warehouse_code.distinct(),
             aggregate_order_by(literal_column("', '"), Warehouse.warehouse_code),
         )
-        q3 = (
-            db.query(
-                SalesOrder.so_number,
-                SalesOrder.order_date,
-                Customer.customer_name,
-                location_expr.label("location"),
-                *_figure_sum_labels(figure_exprs),
+        select_cols_so: list = [
+            SalesOrder.so_number,
+            SalesOrder.order_date,
+            Customer.customer_name,
+            location_expr.label("location"),
+        ]
+        if has_product:
+            # S19/AC-1633: this SO's own distinct matched codes, comma joined -
+            # the same `string_agg(DISTINCT ...)` idiom as `location` above.
+            # ONLY selected/joined when a product filter is active - a
+            # customer-subject report has no matched-code family to name.
+            product_codes_expr = func.string_agg(
+                Product.product_code.distinct(),
+                aggregate_order_by(literal_column("', '"), Product.product_code),
             )
+            select_cols_so.append(product_codes_expr.label("product_codes"))
+        q3 = (
+            db.query(*select_cols_so, *_figure_sum_labels(figure_exprs))
             .select_from(SalesOrderLine)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
-            .filter(*filters)
-            .group_by(SalesOrder.id, SalesOrder.so_number, SalesOrder.order_date, Customer.customer_name)
+        )
+        if has_product:
+            q3 = q3.join(Product, Product.id == SalesOrderLine.product_id)
+        q3 = q3.filter(*filters).group_by(
+            SalesOrder.id, SalesOrder.so_number, SalesOrder.order_date, Customer.customer_name
         )
         rows = [
             {
@@ -404,6 +460,7 @@ def sales_report(
                 "customer_name": r.customer_name,
                 "location": r.location,
                 "order_date": r.order_date,
+                **({"product_codes": r.product_codes} if has_product else {}),
                 **_quantised_figures({
                     "ordered_qty": _dec(r.ordered_qty), "ordered_value": _dec(r.ordered_value),
                     "confirmed_qty": _dec(r.confirmed_qty), "confirmed_value": _dec(r.confirmed_value),
@@ -424,7 +481,12 @@ def sales_report(
 
     return {
         "customer_name": _customer_echo(db, customer_query, customer_ids),
-        "product_code": product.product_code if product is not None else None,
+        # S19: echoes what the customer TYPED (upper-cased, as the exact-match
+        # rule always did - a real code is stored upper-case), never a single
+        # resolved product's own code - there is no longer one, the subject is
+        # a whole family.
+        "product_code": product_code_stripped.upper() if product_code_stripped else None,
+        "product_codes": product_codes,
         "channel": channel,
         "warehouse_codes": [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()],
         "date_from": _as_date(date_from),

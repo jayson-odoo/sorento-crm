@@ -83,6 +83,7 @@ Other stakeholders: nobody is notified; this is a read.
 | S16 | A line with neither `required_date` nor its SO's `order_date` is excluded from EVERYTHING (no further fallback to `created_at`) - not just absent from `months[]` but from `so_rows` too, under every date window including none. |
 | S17 | `customer_query` needs at least 3 characters (after strip) - shorter is 422. The report is aggregated in SQL, not rolled up from raw rows in Python. |
 | S18 | A PRODUCT-ONLY ask (a resolved product, no customer) with no date window defaults to the CURRENT CALENDAR YEAR (Malaysia time); a customer ask, or a customer+product ask, with no date stays all dates. The default is built in the lane, never the route - `date_from`/`date_to` absent still means all dates when the route is called directly. "All dates" said in words turns the default off. |
+| S19 | On the SALES REPORT, a product ask covers the typed code AND every product whose code STARTS WITH it (case-insensitive). The OUTSTANDING report keeps its exact-code rule (AC-1119), do not touch it. (Owner ruling from live testing, 19 Sep 2026: "Srt5674 August total sale quantity" answered "No sales found." because every August sale sat on the sibling SRT5674-N.) |
 
 ## Phase 1 - the reply (presenter over mock JSON)
 
@@ -110,6 +111,14 @@ Other stakeholders: nobody is notified; this is a read.
   unsorted body comes out in input order. Evidence: pytest.
 - **AC-1609 [FE][T]** Money prints `RM 1,234.50`; zero prints `RM 0.00`; no dash characters
   anywhere in the output. Evidence: pytest plus the dash guard.
+- **AC-1633 [FE][T]** (S19) The `Product:` header line follows the Location line's own
+  shape: `SRT5674 (SRT5674, SRT5674-N)` when `product_codes` has 2+ entries or a single
+  entry that differs from the typed code; the bare code when the only matched code equals
+  the typed one; `SRT56 (37 products)` when more than 10 codes matched; `all` with no
+  product. A `detail=so` row prints a `*Product:*` line (after `*Customer:*`) with the
+  SO's own matched codes, comma joined, when the body carries them; an OLD body with no
+  `product_codes` key at all still renders, with no `*Product:*` line. Evidence: pytest,
+  golden fixtures.
 
 ## Phase 2 - route and service
 
@@ -133,8 +142,14 @@ Other stakeholders: nobody is notified; this is a read.
   null-class SO appears under neither word. Any other value is 422. Evidence: pytest.
 - **AC-1626 [BE][T]** Neither `product_code` nor `customer_ids` nor `customer_query` = 422
   `subject_required`. Product only, customer only and both each return 200. Evidence: pytest.
-- **AC-1627 [BE][T]** `product_code` is exact and case-insensitive, no siblings.
-  `warehouse_codes` filters lines to those codes. Evidence: pytest.
+- **AC-1627 [BE][T]** `product_code` is a PREFIX, case-insensitive (S19): it matches
+  the typed code AND every product whose code STARTS WITH it (`abc1` matches `ABC1`,
+  `ABC10` and `ABC1-N`, never `XABC1`). LIKE metacharacters in the typed code are
+  literal, never wildcards. A stripped `product_code` under 3 characters is 422
+  `product_code_too_short`. No code starting with it is 404. The response echoes
+  `product_codes`: the DISTINCT matched codes that have rows in the filtered report,
+  sorted ascending, `[]` with no product filter. `warehouse_codes` filters lines to
+  those codes (unchanged by S19). Evidence: pytest.
 - **AC-1628 [BE][T]** Breakdown key follows the subject: customer subject carries
   `by_product[]`, product subject `by_customer[]`, both named carries neither key.
   Evidence: pytest.
