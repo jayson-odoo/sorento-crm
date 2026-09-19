@@ -137,6 +137,8 @@ Reviewer, security reviewer and the API evidence run all reported. Every blocker
 | Displacement note names no trigger or actor; backfill passes no actor | Fix. |
 | Backfill counters infer from a before/after snapshot | Fix. Count what the book placed and what it displaced. |
 | Security S4: gate displacement behind the delete permission | DECLINED. Owner rulings D3 and D4 ("we must follow autocount link always", manual links too) make the AutoCount feed the authority; a gate would switch the ruling off by default. Stated plainly instead: **the AutoCount ingest key holds unlink authority over every order inquiry row of its own company.** Owner informed 19 Sep. |
+| A row already FULLY linked to a document the book does not name is never corrected (tester, 19 Sep) | LEFT AS IS, owner ruling 19 Sep: "i think it is fine for the row already fully linked". The book fills unlinked quantity only; to correct such a row a person unlinks it and the next pass follows the book. |
+| Security S4 again | Owner confirmed 19 Sep: no delete-permission gate. |
 | Book step ignores the link horizon | ACCEPTED as the rule under "always follow": a document AutoCount names is linked whatever the horizon; `after_horizon` counts only rows the cascade held back. |
 | Worklist Supplier reads the first PO link only, so an SPO-only row says "Not linked" (5,156 rows on the prod copy) | Fix in this lane (AC-FB-52): the journey promises the shipping order's supplier on the row. |
 
