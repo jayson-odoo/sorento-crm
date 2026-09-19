@@ -338,3 +338,121 @@ class TestCrossDomainRungNeverRunsWithNoEntities:
         """A guard on the parametrize source itself: if the seed data ever drops every
         ladder, this test file's own parametrization would silently cover nothing."""
         assert _ladder_domains(), "expected at least one domain with a non-empty ladder"
+
+
+# --------------------------------------------------------------------------- #
+# AC-1688 gap found while re-pinning `handbuilt-rp-004` (fixture round, 20 Sep 2026,
+# captain-confirmed real): `_climb`'s `if not spec.entities: return` guard only
+# catches a LITERALLY EMPTY list. `narrow.decide`'s own `unplaced_never_offered`
+# outcome (`NarrowOutcome(None, [], candidates, None, note="unplaced_never_offered")`)
+# hands the fetch a NON-EMPTY entities list whose members carry no `uuid` at all - the
+# exact SAME "did this resolve" signal `lanes/business/fetch.py::entity_ids_
+# transformer` reads to decide `missing_or_bad_uuid` (measured there: `uuid` falsy OR
+# not shaped like `_UUID_RE`, `^[0-9a-f]{8}-...`). Pinned on that same signal, not a
+# new one: a rung must never run when NO entity in the spec carries a resolved uuid.
+# --------------------------------------------------------------------------- #
+
+
+def _unresolved_entity(code: str) -> dict[str, Any]:
+    """The shape `narrow.decide`'s `unplaced_never_offered` outcome actually leaves an
+    entity in - present (raw/canonical_code), no `uuid` at all. This is exactly the
+    entity `fetch.py::entity_ids_transformer` reports `missing_or_bad_uuid` for."""
+    return {"raw": code, "canonical_code": code, "entity_type": "product"}
+
+
+def _resolved_entity(code: str, uuid: str) -> dict[str, Any]:
+    """A real, resolved candidate - a valid `_UUID_RE`-shaped uuid, the signal
+    `entity_ids_transformer` reads as "this one is real, pass its id through"."""
+    return {"raw": code, "canonical_code": code, "entity_type": "product", "uuid": uuid}
+
+
+class TestCrossDomainRungNeverRunsWhenNoEntityIsResolved:
+    """Measured today (both ladder domains, via `run_fetch` directly - the same seam
+    `TestCrossDomainRungNeverRunsWithNoEntities` uses): a spec whose ONLY entity has no
+    resolved uuid still climbs the WHOLE ladder exactly as a spec with a real,
+    resolved-but-still-missing product would - `[('inventory', [...]), ('incoming',
+    [...]), ('purchase_order', [...])]` for `inventory`, `[('incoming', [...]),
+    ('inventory', [...]), ('purchase_order', [...])]` for `incoming` - because
+    `_climb`'s own guard only asks "is this list empty", never "does anything in it
+    have a real id". This is the live path `handbuilt-rp-004`'s own re-pin measured
+    this session: "stock and eta for SRTWT2634" (SRTWT2634 never resolves) climbs to
+    `purchase_order` and fires a real `crm_procurement_po_placed_list` call whose args
+    carry zero real uuids (`skipped: [{"code": "SRTWT2634", "reason":
+    "missing_or_bad_uuid"}]`) - the rows are discarded later by `_answered_unfiltered`,
+    but the unfiltered MCP round trip itself still happens.
+    """
+
+    @pytest.mark.parametrize("domain", _ladder_domains())
+    def test_rung_does_not_run_when_no_entity_in_the_spec_is_resolved(
+        self, domain: str
+    ) -> None:
+        ctx, calls = _spying_ctx(granted_reveals=["purchase_orders.placed"])
+        unresolved = [_unresolved_entity("SRTWT2634")]
+        spec = FetchSpec(domain=domain, entities=unresolved, filters={}, date_window=None)
+        plan = Plan(domains=[domain], fetch=[spec], ask=None, denied=[], trace=Trace())
+
+        run_fetch(plan, ctx)
+
+        assert calls == [(domain, unresolved)], (
+            f"run_fetch climbed the {domain!r} ladder for a spec whose ONLY entity has "
+            f"no resolved uuid (the exact missing_or_bad_uuid signal) and called "
+            f"{calls[1:]!r} beyond the primary fetch - a rung must never run when "
+            "nothing in the spec actually resolved, whatever the ladder names"
+        )
+
+    @pytest.mark.parametrize("domain", _ladder_domains())
+    def test_rung_still_runs_when_one_of_two_entities_is_resolved(
+        self, domain: str
+    ) -> None:
+        """The permissive half: a spec that has AT LEAST ONE real, resolved entity
+        beside an unresolved one is not "nothing to narrow by" - today's code already
+        lets the rung run in this shape (it does not distinguish resolved from
+        unresolved at all yet), and that is correct, so this is a green control, not a
+        new pin. If a future fix over-corrects to "any unresolved entity blocks the
+        rung", this is the test that would catch it."""
+        ctx, calls = _spying_ctx(granted_reveals=["purchase_orders.placed"])
+        mixed = [
+            _resolved_entity("SRTWC286", "11111111-1111-1111-1111-111111111111"),
+            _unresolved_entity("SRTWT2634"),
+        ]
+        spec = FetchSpec(domain=domain, entities=mixed, filters={}, date_window=None)
+        plan = Plan(domains=[domain], fetch=[spec], ask=None, denied=[], trace=Trace())
+
+        run_fetch(plan, ctx)
+
+        rung_domains = [c[0] for c in calls[1:]]
+        assert rung_domains, (
+            f"expected the {domain!r} ladder to still climb when one of two entities "
+            f"is genuinely resolved, but no rung ran at all: {calls!r}"
+        )
+
+
+class TestThePrimaryFetchIsAlreadyProtectedByADifferentMechanism:
+    """What the captain asked this session to check before pinning anything further:
+    does the PRIMARY fetch (not a rung) also run unfiltered for an all-unresolved,
+    non-empty entities list? Measured: NO - `turn_runtime._answered_unfiltered` (a
+    DIFFERENT mechanism than `_climb`'s spec.entities guard, living in `make_tool_
+    runner`'s own closure, not in `turn/fetch.py` at all) already treats this exact
+    shape as unfiltered and overrides the tool's own answer with a clean miss. This is
+    R1's OWN already-shipped fix (this file's `TestAnsweredUnfilteredTreatsEmpty
+    EntitiesAsUnfiltered.test_control_non_empty_entities_all_unplaced_still_
+    unfiltered`, already green before this class existed) - restated here, beside the
+    rung gap, so a reader comparing the two seams side by side sees why only one of
+    them needed a new pin this round.
+    """
+
+    def test_primary_fetch_protection_is_answered_unfiltered_not_climbs_own_guard(
+        self,
+    ) -> None:
+        fragment = {"fetch": {"tool": {"name": "crm_inventory_stock_balance_list"}}}
+        unplaced = {_token_key("SRTWT2634"): "SRTWT2634"}
+        entities = [_unresolved_entity("SRTWT2634")]
+
+        result = _answered_unfiltered(fragment, entities, unplaced)
+
+        assert result is True, (
+            "the primary fetch's own protection (_answered_unfiltered) no longer "
+            "treats a non-empty, all-unresolved entities list as unfiltered - if this "
+            "ever goes red, the PRIMARY fetch (not just the rung) is at risk, and the "
+            "fix belongs in turn_runtime.py, not turn/fetch.py::_climb"
+        )
