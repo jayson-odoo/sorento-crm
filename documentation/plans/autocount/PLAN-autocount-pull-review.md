@@ -173,11 +173,23 @@ and calls it; the apply task calls it with the generated xlsx. No behaviour chan
 ### Compare (P11)
 
 `app/services/autocount_pull_compare.py`, two pure functions over lists of dicts, no database:
-`compare_products(excel_rows, pull_rows)` and `compare_stock(excel_rows, fed_rows)`. The Excel-side
-normalisation CALLS the manual import's own helpers where they are importable (Desc 2 join, price
-clamp, Is Active parse) so the two cannot drift; if a rule lives inline in `bulk_import_products`,
-lift it into a small function there and call it from both. Differences are returned to the browser
-and never stored; only the summary goes into the metadata.
+`compare_products(excel_rows, pull_rows)` (SR3) and `compare_stock(excel_rows, fed_rows)` (SR4).
+The Excel-side normalisation CALLS the manual import's own helpers, lifted onto module-level
+functions in `product_service.py` (`join_description_and_desc2`, `parse_manual_list_price`,
+`is_active_from_manual_value` - Desc 2 join, price clamp, Is Active parse) so the two cannot drift.
+Differences are returned to the browser and never stored; only the summary goes into the metadata.
+The description comparison collapses internal whitespace runs to one space before comparing (not
+byte-exact): the `/rows` view's own Desc 2 (AC-RV-3, "the remainder... stripped") already discards
+whatever run of whitespace separated Description from Desc 2 in the source AutoCount field, so a
+file built by rejoining that view (one space, by the manual join rule) can never byte-match a raw
+snapshot `description` that happened to carry two. A real checker's own exported file carries the
+original spacing verbatim (CM-2b), so this is a compare-tab tolerance rule, not a defect in either
+import path.
+
+`app/services/autocount_pull_service.py` (SR3) additionally holds the `/rows` and `/download.xlsx`
+shared pieces: `fetch_snapshot_rows` (the FoundryX `all_rows` fetch, no cache, reused by rows,
+download and compare) and `map_product_row` (the AC-RV-3 view mapping, reused by rows and
+download only - compare works off the raw rows, per AC-CM-2).
 
 ### Frontend
 

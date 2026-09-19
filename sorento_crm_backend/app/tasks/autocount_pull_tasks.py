@@ -94,6 +94,96 @@ def preview_autocount_pull(db_job_id: str) -> None:
         db.close()
 
 
+def apply_autocount_pull(db_job_id: str) -> None:
+    """AC-PC-2/3/4: the SECOND job Confirm creates. Re-verifies the SAME snapshot through
+    `fetch_verified_snapshot` (the same guards the preview ran, against a fresh fetch -
+    FoundryX answering `SNAPSHOT_EXPIRED` / `UNKNOWN_SNAPSHOT` fails the job with "pull
+    again" and writes nothing), then runs `MasterIngestService.ingest` for REAL - not a dry
+    run - stamping the confirming user onto every created/updated product (AC-PC-4)."""
+    db = SessionLocal()
+    try:
+        job = db.query(ImportJob).filter(ImportJob.id == db_job_id).first()
+        if job is None:
+            logger.warning("apply_autocount_pull: job %s not found", db_job_id)
+            return
+
+        apply_meta = dict((job.job_metadata or {}).get("autocount_apply") or {})
+        entity = apply_meta.get("entity")
+        snapshot_id = apply_meta.get("snapshot_id")
+
+        try:
+            if entity == "products":
+                summary = _apply_products(db, job, snapshot_id)
+            else:
+                raise UnsupportedPullEntity(
+                    f"Stock apply is not implemented yet (SR4); entity={entity!r}."
+                )
+        except Exception as exc:  # noqa: BLE001 - one job's failure, reported on the job
+            db.rollback()
+            logger.warning(
+                "autocount pull apply failed job=%s entity=%s", db_job_id, entity, exc_info=True
+            )
+            job.status = JobStatus.FAILED.value
+            job.error = str(exc)[:2000]
+            job.completed_at = datetime.utcnow()
+            job.updated_at = datetime.utcnow()
+            db.commit()
+            return
+
+        apply_meta["counts"] = summary
+        job.job_metadata = {**(job.job_metadata or {}), "autocount_apply": apply_meta}
+        job.status = JobStatus.FINISHED.value
+        job.completed_at = datetime.utcnow()
+        job.updated_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
+
+
+def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
+    client = FoundryxAutocountClient()
+    header, rows, warnings = fetch_verified_snapshot(
+        client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
+    )
+
+    company_id = str(job.company_id) if job.company_id else None
+    ingest = MasterIngestService(db, company_id=company_id, stamp_user_id=str(job.user_id))
+    result = ingest.ingest("products", rows)
+
+    outcome_writer = ImportOutcome(job.id)
+    for raw, record in zip(rows, result.records):
+        item_code = raw.get("code") if isinstance(raw, dict) else None
+        if record.outcome == IngestOutcome.CREATED:
+            _write_created_outcome(outcome_writer, item_code, record)
+        elif record.outcome == IngestOutcome.UPDATED:
+            # A real ingest carries no `diff` (dry-run only) - one outcome per updated
+            # record either way, just without the field-by-field detail the preview shows.
+            outcome_writer.updated(
+                message=f"Product updated: {item_code}",
+                value=item_code,
+                identity={"item_code": item_code},
+                entity_id=record.entity_id,
+                entity_type="product",
+            )
+        else:
+            _write_failed_outcome(outcome_writer, item_code, record)
+    outcome_writer.flush()
+
+    return result.as_dict()["summary"]
+
+
+def _company_code(db, company_id) -> str:
+    """Same shape as `autocount_pull_service._company_code` - duplicated rather than
+    imported (that one is a module-private helper; `supplier_notice_service.py` carries
+    its own copy of this exact lookup for the same reason)."""
+    from app.models.company import Company
+
+    if not company_id:
+        return ""
+    company = db.query(Company).filter(Company.id == str(company_id)).first()
+    return company.code if company is not None else ""
+
+
 def _preview_products(db, job: ImportJob, pull: dict) -> dict:
     client = FoundryxAutocountClient()
     header, rows, warnings = fetch_verified_snapshot(
@@ -122,12 +212,7 @@ def _preview_products(db, job: ImportJob, pull: dict) -> dict:
         item_code = raw.get("code") if isinstance(raw, dict) else None
         if record.outcome == IngestOutcome.CREATED:
             counts["new"] += 1
-            outcome_writer.success(
-                value=item_code,
-                identity={"item_code": item_code},
-                entity_id=record.entity_id,
-                entity_type="product",
-            )
+            _write_created_outcome(outcome_writer, item_code, record)
         elif record.outcome == IngestOutcome.UPDATED:
             diff = record.diff or {}
             if not diff:
@@ -146,12 +231,7 @@ def _preview_products(db, job: ImportJob, pull: dict) -> dict:
             )
         else:  # FAILED or RETRYABLE - both surface as a failed row on the pull
             counts["failed"] += 1
-            outcome_writer.fail(
-                code=_first_error_code(record.errors),
-                message="; ".join(f"{k}: {v}" for k, v in (record.errors or {}).items()) or None,
-                value=item_code,
-                identity={"item_code": item_code},
-            )
+            _write_failed_outcome(outcome_writer, item_code, record)
 
     excluded_rows = header.get("excludedRows") or []
     counts["left_out"] = len(excluded_rows)
@@ -165,6 +245,28 @@ def _preview_products(db, job: ImportJob, pull: dict) -> dict:
 
     outcome_writer.flush()
     return counts
+
+
+def _write_created_outcome(outcome_writer: ImportOutcome, item_code, record) -> None:
+    """CREATED is written the same way whether this is a dry-run preview or a real
+    apply - shared by `_preview_products` and `_apply_products` (SR3)."""
+    outcome_writer.success(
+        value=item_code,
+        identity={"item_code": item_code},
+        entity_id=record.entity_id,
+        entity_type="product",
+    )
+
+
+def _write_failed_outcome(outcome_writer: ImportOutcome, item_code, record) -> None:
+    """FAILED/RETRYABLE is written the same way whether this is a dry-run preview or a
+    real apply - shared by `_preview_products` and `_apply_products` (SR3)."""
+    outcome_writer.fail(
+        code=_first_error_code(record.errors),
+        message="; ".join(f"{k}: {v}" for k, v in (record.errors or {}).items()) or None,
+        value=item_code,
+        identity={"item_code": item_code},
+    )
 
 
 def fetch_verified_snapshot(

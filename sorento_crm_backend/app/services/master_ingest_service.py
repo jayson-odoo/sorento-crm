@@ -662,7 +662,8 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
 
 class MasterIngestService:
     def __init__(
-        self, db: Session, integration_id: Optional[str] = None, *, company_id: str
+        self, db: Session, integration_id: Optional[str] = None, *, company_id: str,
+        stamp_user_id: Optional[str] = None,
     ):
         self.db = db
         self.integration_id = integration_id
@@ -670,6 +671,10 @@ class MasterIngestService:
         # push meant for the other one would land there silently -- the failure
         # this whole anchor exists to prevent.
         self.company_id = company_id
+        # SR3 (PLAN-autocount-pull-review.md, AC-PC-4): the confirming user, for a real
+        # ingest triggered by a pull Confirm only. None (the default) is the ordinary
+        # FoundryX push - it stamps neither `created_by` nor `updated_by`, unchanged.
+        self.stamp_user_id = stamp_user_id
         self.refs = IntegrationReferenceService(db, company_id=self.company_id)
         # Set for the duration of a dry-run ingest. Read by _apply to decide
         # whether to capture a before/after diff; the rollback that makes the
@@ -1045,6 +1050,13 @@ class MasterIngestService:
                 # D18: only on create - an existing agent's provenance (manual,
                 # import) is never overwritten by a later AutoCount confirmation.
                 row.source = "autocount"
+            if self.stamp_user_id:
+                # AC-PC-4: only a pull Confirm sets `stamp_user_id` at all - the
+                # ordinary FoundryX push leaves both columns untouched, same as today.
+                if hasattr(row, "created_by"):
+                    row.created_by = self.stamp_user_id
+                if hasattr(row, "updated_by"):
+                    row.updated_by = self.stamp_user_id
             self.db.add(row)
             self.db.flush()
             return str(row.id)
@@ -1102,6 +1114,10 @@ class MasterIngestService:
                 setattr(row, column, value)
             if hasattr(row, "updated_at"):
                 row.updated_at = datetime.utcnow()
+            if self.stamp_user_id and hasattr(row, "updated_by"):
+                # AC-PC-4: `created_by` is never touched on an update - only `_insert`
+                # sets it, so a record's original creator survives every later sync.
+                row.updated_by = self.stamp_user_id
             self.db.flush()
 
     def _link(self, entity_type: str, entity_id: str, payload: Any) -> None:
