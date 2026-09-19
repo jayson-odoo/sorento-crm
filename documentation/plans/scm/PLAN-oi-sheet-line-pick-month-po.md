@@ -1,6 +1,6 @@
 # PLAN - order inquiry sheet: line pick by exact date, then same month, then the sheet's PO
 
-Status: DRAFT, awaiting owner go (19 Sep 2026). No lane open.
+Status: IN PROGRESS (owner go 19 Sep 2026). Lane `fix/oi-sheet-line-pick-month-po`, worktree `sorento_crm-oi-line-pick`.
 UAC: `oi-sheet-line-pick-month-po-acceptance-criteria.md`
 
 ## 0. What was measured
@@ -71,8 +71,11 @@ query at most (PO numbers by id). Nothing new is read per row.
 finding 9 (14 Sep) on purpose: the first upload charges the line, so the re-upload must too or
 the two runs land differently (cause 3). Finding 9's worry, a later row reading
 `qty_exceeds_ordered` for quantity nobody used, now only happens when the sheet states more
-deliveries than the order has lines, which is a true report. Name this in the PR for the
-reviewer.
+deliveries than the order has lines, which is a true report. One more consequence, found in
+review (S1): a row bumped off a full already-raised line that still fits ANOTHER free line of
+the order is RAISED there by the fallback pass, where the old re-upload skipped it silently.
+That is exactly where a first upload of the same sheet puts it, so it is kept and tested
+(`test_ac_lp_12_bumped_row_takes_the_next_free_line`). Name both in the PR for the reviewer.
 
 **Lending.** In the `stated` branch of `_plan`: when the duplicate carries `po_numbers` and the
 first statement carries none, copy them onto the first statement's row (`dataclasses.replace`).
@@ -81,7 +84,7 @@ what the code does.
 
 ## 3. Test list (tester writes these red first, Postgres, own seeded chain)
 
-`tests/test_order_inquiry_line_pick_month_po.py`, one fixture builder for the UAC table:
+`tests/test_oi_sheet_line_pick_month_po.py`, one fixture builder for the UAC table:
 AC-LP-1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 (both halves), 13. Then run the whole inquiry
 import family before push (lesson 18 Sep: a confirm-seam change went red in four untouched
 files): `tests/test_*order_inquiry*import*`, `test_*oi_sheet*`.

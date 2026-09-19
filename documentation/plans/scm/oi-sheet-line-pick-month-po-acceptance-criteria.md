@@ -61,7 +61,9 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   and every row reports the SAME line it landed on the first time (no two rows on one line).
 - **AC-LP-12** Ledger: a row that lands on an already-raised line charges the file's ledger, so
   the next same-item row cannot land on that line again. Two sheet rows that legitimately split
-  one line (qty 100 + 100 on a 200 line, AC-S1-2) still both land on it.
+  one line (qty 120 + 80 on a 200 line, AC-S1-2) still both land on it. Two rows equal on all
+  five `_restates` terms are one instruction written twice, not a split. A row bumped off a full
+  already-raised line lands on the order's next free line, as a first upload would land it.
 - **AC-LP-13** Preview and apply land every row on the same line (determinism, as today).
 
 ## Not in scope

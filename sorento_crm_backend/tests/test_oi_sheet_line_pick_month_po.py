@@ -345,6 +345,36 @@ def test_ac_lp_4_same_month_two_lines_po_then_nearest_date():
             "with no PO to tell the two lines apart, the nearer date should have won"
         )
 
+    with world() as w:
+        # The row's own date (04-20) sits BEFORE the earlier line and AFTER the later one
+        # is impossible with only two candidates, so instead the row sits BETWEEN them,
+        # much closer to the later one - "earliest" and "nearest" disagree here, and only
+        # "nearest" is the UAC's own rule.
+        order = w.order()
+        earliest_by_date = _with_ref(
+            w, w.line(order, qty_ordered="80", required_date=date(2026, 4, 2)), _ref(),
+        )
+        nearest_by_proximity = _with_ref(
+            w, w.line(order, qty_ordered="80", required_date=date(2026, 4, 25)), _ref(),
+        )
+        po_a, po_line_a = w.po_line(qty_ordered="80")
+        _names(w, po_line_a, earliest_by_date.source_ref)
+        po_b, po_line_b = w.po_line(qty_ordered="80")
+        _names(w, po_line_b, nearest_by_proximity.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 80, date(2026, 4, 20),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(nearest_by_proximity)
+        assert mirror is not None
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "the month pass picked the EARLIEST line rather than the NEAREST one"
+        )
+
 
 def test_ac_lp_5_sheet_po_pass_hands_out_in_date_order():
     """AC-LP-5. Two rows left after the month pass, both citing the same purchase order,
@@ -595,7 +625,9 @@ def test_ac_lp_9_order_back_lands_on_the_cited_po_line():
 
         assert result["rows_raised"] == 1, result
         row = w.one_row()
-        assert row.delivery_date is None, "an ORDER BACK row should carry no delivery date"
+        # Existing behaviour, not this lane's: an ORDER BACK row adopts the delivery date
+        # of the line it lands on, so this is the CITED line's own required date.
+        assert row.delivery_date == date(2026, 7, 15)
         mirror = w.mirror_of(cited)
         assert mirror is not None
         assert str(row.so_line_id) == str(mirror.id), (
@@ -612,14 +644,20 @@ def test_ac_lp_9_order_back_lands_on_the_cited_po_line():
 def test_ac_lp_10_restatement_lends_its_po_to_the_first_statement():
     """AC-LP-10. A restatement that carries a PO lends it to the first statement when that
     one carries none - and the line pick, which can only be settled by the PO pass here,
-    actually reads it. A first statement that already cites its own PO keeps it."""
+    actually reads it. A first statement that already cites its own PO keeps it.
+
+    `line_lent` is dated LATER than `line_other` (2026-10-01 against 2026-08-01)
+    deliberately: the fallback's own "earliest date" term would otherwise pick
+    `line_lent` on its own, and this criterion would pass whether or not the lending ever
+    reached the line pick at all.
+    """
     with world() as w:
         order = w.order()
         line_lent = _with_ref(
-            w, w.line(order, qty_ordered="70", required_date=date(2026, 8, 1)), _ref(),
+            w, w.line(order, qty_ordered="70", required_date=date(2026, 10, 1)), _ref(),
         )
         line_other = _with_ref(
-            w, w.line(order, qty_ordered="70", required_date=date(2026, 10, 1)), _ref(),
+            w, w.line(order, qty_ordered="70", required_date=date(2026, 8, 1)), _ref(),
         )
         po_lent, po_line_lent = w.po_line(qty_ordered="70")
         _names(w, po_line_lent, line_lent.source_ref)
@@ -687,13 +725,20 @@ def test_ac_lp_10_restatement_lends_its_po_to_the_first_statement():
 def test_ac_lp_11_reupload_reports_the_same_line_every_time():
     """AC-LP-11. Re-upload of the same file after AC-LP-1: nothing new raises, all six
     dates report `rows_already_raised`, and every one names the SAME line it landed on the
-    first time - no two rows ever end up on one line."""
+    first time - no two rows ever end up on one line.
+
+    `_assert_uac_landing` is asserted after BOTH applies, not just the counts: the UAC's
+    own fixture has a line (2025-12-01) that a wrong line pick lands on instead of one of
+    the six named lines, and a wrong pick there still leaves the counts alone (still six
+    raised, still zero already-raised the second time) - only the landing map catches it.
+    """
     with world() as w:
         order, lines, pos = _uac_book(w)
         data = _uac_month_and_rollup(_uac_rows(w, order, pos))
 
         first = w.apply(data)
         assert first["rows_raised"] == 6, first
+        _assert_uac_landing(w, lines)
         first_landing = {row.delivery_date: str(row.so_line_id) for row in w.rows()}
 
         second = w.apply(data)
@@ -701,6 +746,7 @@ def test_ac_lp_11_reupload_reports_the_same_line_every_time():
         assert second["rows_raised"] == 0, second
         assert second["rows_already_raised"] == 6, second
         assert len(w.rows()) == 6, "a re-upload raised a second row on some line"
+        _assert_uac_landing(w, lines)
         second_landing = {row.delivery_date: str(row.so_line_id) for row in w.rows()}
         assert second_landing == first_landing, (
             "the re-upload reported a different line than the first upload did"
@@ -743,18 +789,64 @@ def test_ac_lp_12_charge_already_raised_line():
         ], result
 
 
+def test_ac_lp_12_bumped_row_takes_the_next_free_line():
+    """AC-LP-12 (bumped, re-upload = first upload). Line A is already raised; the sheet's
+    first row (150) lands there and charges the ledger, leaving only 50 - too little for
+    the second row's 100 - so the second row is bumped onto line B, the next free line
+    that fits.
+
+    This is exactly the landing a FIRST upload of this sheet would give against a clean
+    line A: charging the ledger on an already-raised line (AC-LP-12's own "charge" half)
+    is what makes a RE-upload land the rest of its rows the same way the first upload
+    would have, rather than silently absorbing every same-item row onto the one already-
+    raised line no matter how many the file states.
+    """
+    with world() as w:
+        order = w.order()
+        line_a = w.line(order, qty_ordered="200", required_date=D_OCT)
+        line_b = w.line(order, qty_ordered="200", required_date=date(2026, 12, 1))
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        w.board_row(w.mirror_of(line_a), qty="5")
+        data = sheet([
+            (order.so_number, w.product.product_code, 150, D_OCT,
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 100, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_raised"] == 1, result
+        assert result["rows_line_not_found"] == 0, result
+        mirror_b = w.mirror_of(line_b)
+        assert mirror_b is not None
+        bumped = [row for row in w.rows() if Decimal(str(row.qty)) == Decimal("100")]
+        assert len(bumped) == 1, [str(row.qty) for row in w.rows()]
+        assert str(bumped[0].so_line_id) == str(mirror_b.id), (
+            "the bumped row did not land on the next free line"
+        )
+
+
 def test_ac_lp_12_legitimate_split_still_lands_both_rows():
     """AC-LP-12 (split, AC-S1-2 kept). Two sheet rows that legitimately split ONE line's
-    quantity - 100 plus 100 on a 200 line, neither of them already raised - still both
+    quantity - 120 plus 80 on a 200 line, neither of them already raised - still both
     land on it: the ledger charge above must not turn into a rule that only one row of a
-    file may ever reach a line."""
+    file may ever reach a line.
+
+    The two quantities must differ (120/80, not 100/100): `_restates`' key is sales order,
+    item, quantity, delivery date and location, so two rows identical on all five are a
+    RESTATEMENT of one instruction (owner ruling R3, 14 Sep), not a split, and only one of
+    them would raise. A split is two rows that differ on one of those five - here, the
+    quantity - which is exactly what AC-S1-2 means by "the sheet may split one line".
+    """
     with world() as w:
         order = w.order()
         line = w.line(order, qty_ordered="200", required_date=D_OCT)
         data = sheet([
-            (order.so_number, w.product.product_code, 100, D_OCT,
+            (order.so_number, w.product.product_code, 120, D_OCT,
              w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 100, D_OCT,
+            (order.so_number, w.product.product_code, 80, D_OCT,
              w.warehouse.warehouse_code, ""),
         ])
 
@@ -765,7 +857,7 @@ def test_ac_lp_12_legitimate_split_still_lands_both_rows():
         rows = w.rows()
         assert {str(row.so_line_id) for row in rows} == {str(mirror.id)}
         assert sorted(Decimal(str(row.qty)) for row in rows) == [
-            Decimal("100"), Decimal("100"),
+            Decimal("80"), Decimal("120"),
         ]
 
 
