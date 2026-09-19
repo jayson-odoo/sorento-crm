@@ -356,6 +356,34 @@ class TestF5CompanyRecheck:
             assert resp.status_code == 404, resp.text
             assert resp.json().get("code") == "NOT_FOUND", resp.json()
 
+    def test_f5b_multi_company_scope_that_omits_the_pulls_company_also_gets_404(self, env):
+        """Captain tightening (fix-round follow-up, #1045): the F-5 re-check must be SET
+        membership, not a single-company comparison - a caller whose scope is a
+        multi-company frozenset that does not contain the pull's own company must be
+        refused exactly like a single-company mismatch is."""
+        from app.models.company import Company
+
+        owner = env.user("master_data.products.autocount_pull")
+        env.as_user(owner, scope=frozenset({env.company_a}))
+        job_id, _ = sr3._seed_review_job(env, owner=owner)  # company_a
+
+        company_c = Company(
+            id=str(uuid.uuid4()), name=f"{MARKER} C", code=f"ZLC{uuid.uuid4().hex[:6]}",
+        )
+        env.db.add(company_c)
+        env.db.commit()
+
+        # A multi-company scope that does NOT include company_a at all.
+        env.as_user(owner, scope=frozenset({env.company_b, str(company_c.id)}))
+        resp = env.get_pull(job_id)
+        assert resp.status_code == 404, resp.text
+        assert resp.json().get("code") == "NOT_FOUND", resp.json()
+
+        # A multi-company scope that DOES include company_a -> unrestricted.
+        env.as_user(owner, scope=frozenset({env.company_a, env.company_b}))
+        resp = env.get_pull(job_id)
+        assert resp.status_code == 200, resp.text
+
 
 # ============================================================================ F-6
 

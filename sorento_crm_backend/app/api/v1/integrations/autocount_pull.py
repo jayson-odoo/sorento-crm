@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.base import get_company_scope
 from app.models.job import ImportJob
 from app.services import autocount_pull_service as pull_service
 from app.services.autocount_pull_compare import compare_products, compare_stock
@@ -81,24 +82,36 @@ def _resolve_pull(db: Session, current_user: dict, job_id: str) -> ImportJob:
     """Owner-only 404, then a company re-check, then the permission of the pull's OWN
     entity - AC-BD-7 / P12, shared by every `/{job_id}...` route.
 
-    Phase 3 fix round (F-5): the owner check alone is not enough once a user can switch
-    company scope - the SAME owner, viewing under a company scope that no longer covers
-    the pull's own `company_id` (a company switch, not a different account), gets the
-    same 404 a non-owner would. Only enforced when the caller's own request carries a
-    single, concrete company (`active_company_id_from_scope`, the same reader `GET
-    /current` already uses) - an all-companies/system/multi-company scope leaves nothing
-    concrete to compare against, so it is not restricted here.
+    Phase 3 fix round (F-5, tightened): the owner check alone is not enough once a user
+    can switch company scope - the SAME owner, viewing under a company scope that no
+    longer covers the pull's own `company_id` (a company switch, not a different
+    account), gets the same 404 a non-owner would. This is SET membership against the
+    raw four-state scope (`get_company_scope`, `app/models/base.py`), not a
+    single-company comparison - a multi-company scope that omits the pull's company is
+    refused exactly like a single-company mismatch is:
+
+      - `frozenset({ids})` (single or multi-company): 404 unless the pull's own
+        `company_id` is one of `ids`.
+      - `None` (all-companies / system, e.g. a superadmin or an X-API-Key caller with no
+        contact identity): unrestricted, same as today.
+      - `UNSET` (the resolver never ran, or a real user with zero company grants -
+        `company_scope_resolver.py`'s own "no grants at all -> leave UNSET" branch): the
+        four-state table's own rule for this state is fail-closed (0 rows), so this
+        follows the same rule rather than treating it as "no restriction" - a caller
+        with no company standing at all gets no owned pull either, whatever they own.
     """
     job = pull_service.get_owned_pull(db, job_id=job_id, user_id=current_user["id"])
     if job is None:
         raise AppException(
             status_code=status.HTTP_404_NOT_FOUND, message="Job not found", code="NOT_FOUND"
         )
-    active_company_id = active_company_id_from_scope(db)
-    if active_company_id and str(job.company_id) != str(active_company_id):
-        raise AppException(
-            status_code=status.HTTP_404_NOT_FOUND, message="Job not found", code="NOT_FOUND"
-        )
+    scope = get_company_scope(db)
+    if scope is not None:
+        allowed = isinstance(scope, frozenset) and str(job.company_id) in {str(cid) for cid in scope}
+        if not allowed:
+            raise AppException(
+                status_code=status.HTTP_404_NOT_FOUND, message="Job not found", code="NOT_FOUND"
+            )
     _require_entity_permission(db, current_user, pull_service.entity_of(job))
     return job
 
