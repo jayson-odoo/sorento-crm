@@ -946,7 +946,16 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 # `fetch.entity_ids_transformer` (`jsc.get`) - already read absence as null, and nothing
 # here WRITES either key, so an absent one cannot raise and never lands in the emission
 # (which is what keeps every captured `output_exchange` fixture byte-equal).
-_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis", "group_by", "top_n"})
+#
+# The sales report slice joins `sales_channel` to the exemption for the SAME reason,
+# corrected from an earlier ruling that left it out of the schema's `required` list
+# entirely: `additionalProperties: false` + the provider's strict-schema mode
+# (`llm_provider.py`'s `strict: True`) rejects a `properties` key that is not also
+# `required`, so the key HAS to be required at the wire - and, exactly like `group_by`
+# / `top_n`, no prompt version before the sales report addendum ever emits it, so it
+# is exempted here rather than enforced. `o.get("sales_channel")` is how every reader
+# already reads it, so an absent key still reads as null and no fixture changes shape.
+_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis", "group_by", "top_n", "sales_channel"})
 _EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
 _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 

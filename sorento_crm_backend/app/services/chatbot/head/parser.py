@@ -71,13 +71,15 @@ class ParserConfig:
 
 
 def _build_json_schema() -> dict[str, Any]:
-    """The strict 28-key `ParseOutput` schema the provider is held to (AC-105).
+    """The strict 29-key `ParseOutput` schema the provider is held to (AC-105).
 
     26 top-level keys, and `routing` carries exactly two members, is what the LIVE
     parser emits: every one of the 488 captured raw emissions has that shape. Growth r1
     (AC-909 / AC-910) adds `group_by` and `top_n`, which no captured emission carries -
     see their own comment below, and `output_exchange._EXEMPT_FROM_REQUIRED` for how a
-    pre-growth-r1 emission still post-processes.
+    pre-growth-r1 emission still post-processes. The sales report slice adds a 29th,
+    `sales_channel`, exempted the SAME way and for the SAME reason - see its own
+    comment below.
 
     Built from the prompt's own OUTPUT block. `additionalProperties: false` is what makes
     "exactly these keys, no others" a provider guarantee instead of an instruction, and
@@ -156,13 +158,16 @@ def _build_json_schema() -> dict[str, Any]:
                 ],
             },
             "top_n": {"type": ["integer", "null"]},
-            # PLAN-chatbot-sales-report.md S4 wiring point 1 (captain ruling 4): the
-            # sales report's channel filter. NOT in the schema's `required` list
-            # below (unlike `group_by` / `top_n`, which ARE required but exempted
-            # from the post-processor's OWN required-key check) - a published OLDER
-            # prompt version that never emits this key must not fail a turn, and
-            # this field is genuinely conditional (emitted only on a sales report
-            # ask), so there is nothing to exempt: absence simply reads as null.
+            # PLAN-chatbot-sales-report.md S4 wiring point 1 (captain ruling 4, corrected
+            # 19 Sep): the sales report's channel filter. `additionalProperties: false`
+            # means the provider is called in STRICT mode (`llm_provider.py`'s `strict:
+            # True`), and strict mode rejects a `properties` key absent from `required` -
+            # so this key MUST be in the `required` list below, exactly like `group_by` /
+            # `top_n`, and is exempted from the post-processor's OWN required-key check
+            # the same way: `output_exchange._EXEMPT_FROM_REQUIRED`. A published OLDER
+            # prompt version that never emits this key still post-processes with it
+            # reading as null; the field is genuinely conditional (emitted only on a
+            # sales report ask) either way.
             "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
             "correction": {"type": ["boolean", "null"]},
             "routing": {
@@ -229,6 +234,7 @@ def _build_json_schema() -> dict[str, Any]:
             "order_status",
             "group_by",
             "top_n",
+            "sales_channel",
             "correction",
             "routing",
             "escalation",

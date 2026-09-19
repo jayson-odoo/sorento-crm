@@ -953,11 +953,40 @@ class TestParserPromptAndContractsTeachSalesReport:
 
     def test_sales_channel_is_declared_on_the_parser_output_schema(self) -> None:
         from app.services.chatbot.head import parser as parser_mod
+        from app.services.chatbot.head import output_exchange as output_exchange_mod
 
         schema = parser_mod.PARSE_OUTPUT_JSON_SCHEMA
         assert "sales_channel" in schema["properties"], (
             f"sales_channel must be a declared parser output key: {sorted(schema['properties'])}"
         )
+        # `additionalProperties: false` + the provider's strict schema mode
+        # (`llm_provider.py`'s `strict: True`) rejects a `properties` key absent from
+        # `required` outright, so `sales_channel` MUST be required at the wire - and,
+        # exactly like `group_by` / `top_n`, exempted from the post-processor's OWN
+        # required-key check so an ask that never emits it (every ask that is not a
+        # sales report, and any published prompt that predates it) still post-processes.
+        assert "sales_channel" in schema["required"], (
+            "sales_channel must be required in the strict json_schema sent to the "
+            "provider, or the live parser call 400s"
+        )
+        assert "sales_channel" in output_exchange_mod._EXEMPT_FROM_REQUIRED, (
+            "sales_channel must be exempted from output_exchange's own required-key "
+            "check the same way group_by/top_n are, or a turn that never emits it "
+            "(every non-sales-report ask) fails to post-process"
+        )
+
+    def test_an_emission_without_sales_channel_still_post_processes(self) -> None:
+        """The wire compatibility half: `sales_channel` is required-but-exempt (schema
+        `required`, `output_exchange._EXEMPT_FROM_REQUIRED`), mirroring `group_by` /
+        `top_n` (`test_parser_growth_r1_reachability.py::
+        test_a_pre_growth_r1_emission_still_post_processes`) - a published prompt
+        version that predates the key, or simply a non-sales-report ask, must not fail
+        a turn for lacking it."""
+        from app.services.chatbot.head.output_exchange import _assert_emission
+
+        emission = _parser_output()
+        assert "sales_channel" not in emission
+        _assert_emission(emission)  # must not raise
 
     def test_sales_channel_is_allowlisted_on_session_vars(self) -> None:
         from app.services.chatbot import contracts as contracts_mod

@@ -195,6 +195,17 @@ def _capturing_mcp(response: Any = None):
             return response
         if name == "crm_outstanding_report":
             return _present_response()(name, json.dumps(_report_route_body(response, args)))
+        if name == "crm_sales_report":
+            # Same reason as the `crm_outstanding_report` branch above: the lane reads
+            # the PRESENTER's envelope (`has_result`, `response`), never the route body
+            # raw, so a fake that skipped the presenter armed nothing off a real hit.
+            # No scope handling here (the sales report has one bucket, not so/do) - only
+            # the detail pick's own `detail=so` echoed onto the body, the same field
+            # `_sales_report_envelope` reads to decide which text to render.
+            body = dict(response)
+            if args.get("detail") == "so":
+                body["detail"] = "so"
+            return _present_response()(name, json.dumps(body))
         return json.dumps(response)
 
     return _call, captured
