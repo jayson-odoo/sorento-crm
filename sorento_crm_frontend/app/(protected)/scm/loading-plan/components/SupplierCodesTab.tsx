@@ -67,9 +67,14 @@ function matchedToLabel(alias: SupplierCodeAlias): string {
   return EM_DASH;
 }
 
-/** What the queue row says in words, which is what a search over it reads. */
+/** What the queue row says in words, which is what a search over it reads. Leads with the
+ *  supplier's own \u578b\u53f7 (owner feedback round 5) - `item_code` can be OUR composed guess for
+ *  a bare model, and "Supplier says" has to say what the sheet actually printed. Omitted
+ *  when it is identical to the row's own code (a letter-led model, or a proforma line,
+ *  which names no separate \u578b\u53f7 at all) - repeating the code back at itself says nothing. */
 function saysText(row: UnmatchedSupplierCode): string {
-  return [row.product_name, row.brand, row.spec].filter(Boolean).join(' \u00b7 ');
+  const modelNo = row.model_no && row.model_no !== row.item_code ? row.model_no : null;
+  return [modelNo, row.product_name, row.brand, row.spec].filter(Boolean).join(' \u00b7 ');
 }
 
 /** Whitespace-split, lower-cased, empties dropped - every token has to hit something. */

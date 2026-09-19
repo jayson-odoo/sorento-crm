@@ -62,6 +62,10 @@ class InventoryRow:
     brand: Optional[str] = None
     spec: Optional[str] = None
     remark: Optional[str] = None
+    #: The 型号 exactly as the supplier wrote it (after merge fill-through), whatever
+    #: `item_code` ends up being - composed, raw-joined, or (letter-led) identical to it.
+    #: "Supplier says" (the Supplier codes tab) leads with this, not the composed guess.
+    model_no: Optional[str] = None
 
 
 @dataclass
@@ -264,6 +268,7 @@ def read_workbook(
                 brand=brand,
                 spec=spec,
                 remark=_text(values.get("remark")),
+                model_no=code,
             )
         )
 

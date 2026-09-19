@@ -196,6 +196,7 @@ def preview(
         "sample": [
             {
                 "item_code": r.item_code,
+                "model_no": r.model_no,
                 "product_name": r.product_name,
                 "qty_packed": r.qty_packed,
                 "qty_unfinished": r.qty_unfinished,
@@ -332,13 +333,16 @@ def apply(
                 "brand": None,
                 "spec": None,
                 "remark": None,
+                "model_no": None,
             },
         )
         cur["qty_packed"] += r.qty_packed
         cur["qty_unfinished"] += r.qty_unfinished
         if cur["cbm_per_unit"] is None and r.cbm_per_unit is not None:
             cur["cbm_per_unit"] = r.cbm_per_unit
-        for f in ("product_name", "brand", "spec", "remark"):
+        # First row wins, same as product_name/brand/spec/remark below - the family's own
+        # 型号 (owner feedback round 5), not the composed `item_code` it merged on.
+        for f in ("product_name", "brand", "spec", "remark", "model_no"):
             if cur[f] is None:
                 cur[f] = getattr(r, f)
 
@@ -349,6 +353,7 @@ def apply(
                 id=_uuid(),
                 supplier_id=supplier_id,
                 item_code=code,
+                model_no=v["model_no"],
                 product_id=(known.get(code) or {}).get("product_id"),
                 product_set_id=(known.get(code) or {}).get("product_set_id"),
                 qty_packed=v["qty_packed"],
@@ -499,6 +504,7 @@ def snapshot(db: Session, *, supplier_id: str) -> dict:
         "rows": [
             {
                 "item_code": r.item_code,
+                "model_no": r.model_no,
                 "product_id": str(r.product_id) if r.product_id else None,
                 "product_name": r.product_name,
                 "qty_packed": float(r.qty_packed or 0),

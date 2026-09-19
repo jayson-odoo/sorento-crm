@@ -17,6 +17,14 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
   `盆` -> `SRTWB7055`; `8605-RL` / blank / `SORENTO` / `水箱` -> `SRTWCY8605-RL`;
   `1009` / `250mm` / `CABANA` / `分体马桶` -> `CWC1009-250`; `888` / `600*450*200mm` /
   `SORENTO` / `盆` -> `SRTWB888`.
+- AC-R4b (owner feedback round 5): `InventoryRow.model_no` is the raw 型号 text, ALWAYS
+  populated - on a bare row it is the pre-composition text (`8613`, not `SRTWC8613-150`); on
+  a letter-led row it equals `item_code`; on a merged 型号, every covered row's `model_no` is
+  the anchor's raw text, the same as the anchor's own, fetched the same way `item_code`'s own
+  fill-through already is. `apply` writes it to `scm.supplier_inventory.model_no`
+  (nullable String(120)), and a merged-family collapse (same `item_code` from more than one
+  parsed row) keeps the first row's `model_no`. `unmatched_for_plan` and
+  `unmatched_for_supplier` return `model_no` per queue row.
 - AC-R5: Bare 型号, a word unknown (商标 blank, 品名 unknown, or a CJK run in 型号 / 规格 with
   no row): `item_code` = raw join 型号 + 规格 + 商标 + 品名 (present parts, space-joined):
   `7609对冲 150mm 连体马桶`, `7604-RL高压 横排180mm CABANA 座头`.
@@ -86,6 +94,10 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
 - AC-F5: Supplier codes tab renders a `Stock list words` link to
   `/system-management/import-field-aliases?doc_type=supplier_inventory_word`; the page opens
   on that doc type when the query param is present and on its default otherwise.
+- AC-F6 (owner feedback round 5): the Supplier codes tab's "Supplier says" cell is
+  `[model_no, product_name, brand, spec]` joined with " · ", but `model_no` is omitted when
+  it equals the row's own `item_code` - a letter-led row must not read
+  `SRTWC8357-RL · 盆 · S`. Snapshot for a bare row: `8613 · 连体马桶 · SORENTO · 150mm`.
 
 ## Browser (S5)
 
