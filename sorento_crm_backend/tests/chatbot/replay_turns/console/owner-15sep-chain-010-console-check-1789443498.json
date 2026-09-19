@@ -530,7 +530,27 @@
         "recorded_at": "2026-09-15T12:38:58.793674+09:00",
         "turn_id": "b225bf5a-cf7e-4090-b145-ddd82f043b8f"
       },
-      "tool_results": [],
+      "tool_results": [
+        {
+          "tool": "crm_procurement_spo_allocations_last_receipt_list",
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "total_uuids_passed": 0,
+              "scalar_truncated": [],
+              "skipped": [{"code": "SRTWC8517", "reason": "missing_or_bad_uuid"}],
+              "unmapped_types": []
+            },
+            "view": "render",
+            "date_mode": null,
+            "contact_id": "437264483",
+            "space_id": "364817",
+            "access_levels": [],
+            "is_active": null
+          },
+          "envelope": {"has_result": false, "items": []}
+        }
+      ],
       "verdict": {
         "access_levels": [],
         "broaden_axis": null,

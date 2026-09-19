@@ -681,3 +681,21 @@ session did not run) - signed instead, per the ruling, measured against this hea
 
 - console/case-046-d10-a-product-set-only-code-on-an-incoming-ask-offers-its-real-siblings.json: tools: zero resolver matches (the case's own resolutions stub) means no roster can be armed from real candidates; the engine now runs a real incoming-stock fetch instead of the recording's no-tool-call miss, resolving to a not-found line (signed JT 2026-09-17, item-4-typed-token-roster-retirement)
 - console/case-046-d10-a-product-set-only-code-on-an-incoming-ask-offers-its-real-siblings.json: pending: the ONE-OPTION typed-token `product_pick` roster (labelled with the raw unresolved word itself) is retired by the 17 Sep 2026 ruling - a roster never offers an unresolved raw token; with zero real candidates the engine now arms no pending at all (signed JT 2026-09-17, item-4-typed-token-roster-retirement)
+
+## R1 fixture round, 20 Sep 2026 (tester 27, PLAN-chatbot-answer-half-reattach slice R1)
+
+Two fixtures pinned the OLD one-option-roster shape AC-1691/AC-1692 (owner-approved,
+PLAN-chatbot-answer-half-reattach, coder commit `f42cdb9f4`) removes: a roster that
+echoes a fully unresolved token back as its own single option (F8). Captain read done
+before signing: both fixtures directly corrected in place (`expected.pending` and
+`tool_results`), not merely excused, matching the `handpass1-002`/`case-046` precedent
+above. Both new outcomes measured directly against the current engine with realistic
+(`has_result: false`, empty) MCP stubs for every tool the turn now calls, confirming a
+CLEAN MISS (plus, for the first, a team_pick escalation offer) - no foreign product
+code or unfiltered catalogue row anywhere in either reply, so this is AC-1691/AC-1692's
+intended outcome, not the AC-1688/N-1 unfiltered-fetch shape the captain asked this
+session to rule out before signing.
+
+- console/handbuilt-rp-004-two-domains-in-one-message-fan-out-in-message-order-contract-122.json: pending: old `product_pick` roster echoed the fully unresolved `SRTWT2634` token back as its own single option (F8); the current engine arms no such roster - the two domains (inventory, incoming) each miss, climb to the `purchase_order` ladder rung and also miss, and the turn now offers a `team_pick` escalation ("stock"/"incoming stock"/"No it's okay") instead, measured directly, no leaked product code (signed captain, 20 Sep 2026: AC-1691 / AC-1692 of PLAN-chatbot-answer-half-reattach (owner approved), a roster never has fewer than two options and an unplaced token is never offered back)
+- console/handbuilt-rp-004-two-domains-in-one-message-fan-out-in-message-order-contract-122.json: tools: the old recording expected zero tool calls (the roster short-circuited before any fetch); the current engine now calls `crm_inventory_stock_balance_list`, `crm_incoming_stock_list` and `crm_procurement_po_placed_list` (the ladder rung both domains climb to) with the unresolved token skipped `missing_or_bad_uuid` on every call (`total_uuids_passed: 0`) - `tool_results` corrected to the three real calls with empty (`has_result: false`) envelopes, matching the measured miss reply (signed captain, 20 Sep 2026: AC-1691 / AC-1692 of PLAN-chatbot-answer-half-reattach (owner approved), a roster never has fewer than two options and an unplaced token is never offered back)
+- console/owner-15sep-chain-010-console-check-1789443498.json: step 4: tools: this case's `pending` divergence (every step, including step 4) was already signed 17 Sep 2026 above (`unseeded-code-plus-16sep-narrow-ruling`) - step 4's OWN new divergence this round is `tools` only: the old recording expected zero tool calls for "last in for SRTWC8517" (`spo_allocation` domain, unresolved product); the current engine now calls `crm_procurement_spo_allocations_last_receipt_list` with the token skipped `missing_or_bad_uuid` (`total_uuids_passed: 0`) - `tool_results` corrected to that one real call with an empty (`has_result: false`) envelope, matching the measured clean-miss reply ("No matching results found.\nI could not find SRTWC8517.", no escalation offer since `spo_allocation` has no escalation team) (signed captain, 20 Sep 2026: AC-1691 / AC-1692 of PLAN-chatbot-answer-half-reattach (owner approved), a roster never has fewer than two options and an unplaced token is never offered back)

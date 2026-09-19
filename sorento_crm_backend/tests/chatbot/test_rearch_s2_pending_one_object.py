@@ -160,9 +160,18 @@ def test_asked_at_turn_is_set_from_state():
     from tests.chatbot._turn_helpers import build_policy, entity, verdict
 
     state = State(focus=Focus(), pending=None, profile=Profile(), turn_no=42)
+    # Two candidates, not one (AC-1691, PLAN-chatbot-answer-half-reattach R1, coder
+    # commit f42cdb9f4): a roster is never asked with fewer than two options, so a
+    # single ambiguous candidate no longer arms `plan.ask` at all - this test's own
+    # purpose is `Pending.asked_at_turn`'s wiring, not the roster floor, so it is kept
+    # rostering with a second candidate rather than asserting around the new,
+    # correct one-candidate-settles behaviour.
     v = verdict(
         domain_hint="incoming",
-        entities=[entity("wc286", hint="product", confident=True)],
+        entities=[
+            entity("wc286", hint="product", confident=True),
+            entity("wc287", hint="product", confident=True),
+        ],
     )
     _state2, plan = apply(state, v, build_policy())
     assert plan.ask is not None
