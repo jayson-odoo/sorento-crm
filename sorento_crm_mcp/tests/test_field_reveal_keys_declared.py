@@ -48,6 +48,10 @@ _LANE_GATED_KEYS = {
     # business/__init__.py::run_fetch` forces scope to `do` and skips the SO query
     # entirely without it.
     "sales_orders.outstanding": "app/services/chatbot/lanes/business/__init__.py",
+    # PLAN-chatbot-sales-report.md S4 wiring point 4 (AC-1651): the whole TOOL is
+    # per contact, no fallback scope - `lanes/business/__init__.py::run_fetch`
+    # refuses before any fetch and arms nothing without the grant.
+    "sales_orders.sales_report": "app/services/chatbot/lanes/business/__init__.py",
     # AC-64 (PLAN-low-stock-report.md): the whole TOOL is per contact, not one field of
     # it - the report is a workbook, so there is nothing for a presenter to mask. Two
     # seams enforce it and both refuse before any work: `lanes/business/__init__.py::

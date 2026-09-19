@@ -1557,6 +1557,14 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_outstanding_report":
         return json.dumps(_outstanding_envelope(data))
 
+    # S3 (PLAN-chatbot-sales-report.md): the SAME bypass, for the SAME reason - the
+    # report's shape (a month block per bucket, each with its own breakdown) has no
+    # row list the generic envelope could build items from. `detail` on the payload
+    # is the SAME "payload-keyed presenter swap" `crm_outstanding_report` uses above:
+    # present, it swaps in `_sales_report_detail`; absent, the month-block report.
+    if tool_name == "crm_sales_report":
+        return json.dumps(_sales_report_envelope(data))
+
     # The same bypass, for the same reason: the low stock report's payload is a STATUS
     # (ready / pending / busy) plus an attachment list, not a row collection the generic
     # item/field envelope could build items from. `attachments` rides through untouched -
@@ -2331,3 +2339,25 @@ def _sales_report_detail(report: dict) -> str:
         ]
         items.append(f"{i}. " + "\n".join(field_lines))
     return "\n\n".join(items)
+
+
+def _sales_report_envelope(report: dict) -> dict:
+    """What `present_response` returns for `crm_sales_report`: the rendered text plus
+    the one fact the text cannot carry.
+
+    `has_result` is "a month came back" (or, under `detail=so`, "the SO list is
+    non-empty") - the header renders on a total miss too (AC-1607), so reading the
+    TEXT would call a miss an answer and the chatbot lane's escalate offer
+    (AC-1658) would never fire. Mirrors `_outstanding_envelope` for the same reason."""
+    if report.get("detail") == "so":
+        return {
+            "result_type": "sales_report_detail",
+            "response": _sales_report_detail(report),
+            "has_result": bool(report.get("so_rows")),
+        }
+    months = report.get("months")
+    return {
+        "result_type": "sales_report",
+        "response": _sales_report(report),
+        "has_result": isinstance(months, list) and len(months) > 0,
+    }

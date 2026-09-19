@@ -44,6 +44,11 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     ("purchase_orders.supplier", "PO supplier"),
     ("purchase_orders.cost", "Last purchase cost"),
     ("sales_orders.outstanding", "Sales order outstanding"),
+    # PLAN-chatbot-sales-report.md S10 (AC-1641). Like `sales_orders.outstanding`
+    # above, this gates a whole TOOL rather than one field - the lane refuses the
+    # ask before any fetch (`lanes/business/__init__.py::run_fetch`), with no
+    # fallback scope to redirect to (unlike D13's SO/DO redirect).
+    ("sales_orders.sales_report", "Sales report"),
     # PLAN-low-stock-report S6 (AC-63). Unlike its neighbours this key does not hide a
     # FIELD - it gates a whole tool, because that tool's fetch creates a reorder run and
     # sends a workbook. The lane refuses before any fetch (AC-64) and the route refuses

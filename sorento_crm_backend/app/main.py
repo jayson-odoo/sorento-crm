@@ -447,6 +447,21 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Outstanding report bootstrap failed at startup: {str(e)}", exc_info=True)
 
+    try:
+        from app.database import SessionLocal
+        from app.services import sales_report_bootstrap
+        _db = SessionLocal()
+        try:
+            # Runs after sync_catalog so the crm_sales_report row exists: enables
+            # it for the in-app assistant without an admin visiting a settings
+            # screen (same mechanism as outstanding_report_bootstrap above).
+            # Additive and idempotent.
+            sales_report_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Sales report bootstrap failed at startup: {str(e)}", exc_info=True)
+
     # AC-65 STRUCK (security N4, Phase 3): `crm_low_stock_report` is deliberately NOT added
     # to the in-app assistant's `enabled_tools`. The assistant force-empties
     # `contact_id`/`space_id`, which this route requires (422), so the tool could only ever
