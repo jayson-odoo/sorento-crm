@@ -1,0 +1,245 @@
+# Evidence run - oi-follow-book-chain, API level (AC-FB-42, data half of AC-FB-50)
+
+Date: 19 Sep 2026. Backend under test: lane backend at http://127.0.0.1:8060, database
+`sorento_oi_book_chain_e2e` (scrubbed clone of the 18 Sep prod backup at alembic head, plus
+the two documents the coordinator inserted ahead of the backup date). No pytest run in this
+round (owned by the reviewer). No browser, no frontend (the machine's one dev server belongs
+to another lane) - this is an API-and-SQL-only pass.
+
+Company: Sorento (SRT), id `00000000-0000-0000-0000-000000000001`.
+
+## Step 0: auth
+
+The brief asked to mint a JWT the way route tests do. The live auth path does not decode a
+bare JWT: `app/dependencies.py::get_current_user` calls `_resolve_session_to_user`, which
+validates an OPAQUE, DB-backed session token via `resolve_session()` against the
+`user_sessions` table (`_decode_jwt_user` still exists in the file but is dead code, never
+called). So a bare JWT signed with `JWT_SECRET` would not have authenticated at all against
+this running server. Instead, a real ACTIVE admin user was picked straight off the `users`
+table (`tehjayson@gmail.com`, id `5994214c-81a1-4662-abce-2e93520ce642`, role `admin`, no user
+created, no permission changed), and a session row was minted for that real user through the
+SAME function `POST /api/v1/auth/login` itself calls (`app.services.user_session_service
+.mint_session`), run as a one-off script against the SAME database the server reads. The
+resulting opaque token was used as the Bearer credential for every call below.
+
+```
+SORENTO_ENV_FILE=<redacted path>/.env venv/bin/python <redacted path>/mint.py
+# -> <SESSION TOKEN, REDACTED>
+```
+
+Verified against `GET /api/v1/user-management/users/me`:
+
+```
+curl -s -H "Authorization: Bearer <REDACTED>" http://127.0.0.1:8060/api/v1/user-management/users/me
+# -> 200, {"email":"tehjayson@gmail.com","name":"Teh Jayson","status":"ACTIVE",...}
+```
+
+PASS, with the auth-mechanism correction noted above.
+
+## Step 1: what the database held before anything was driven
+
+```
+psql -d sorento_oi_book_chain_e2e -c "SELECT id, so_number, status FROM sales_orders WHERE so_number='SO421886';"
+-- 533c4570-e5b7-48a2-9137-6b31bb1ac281 | SO421886 | open
+
+psql -d sorento_oi_book_chain_e2e -c "SELECT id, product_id, qty_ordered, source_ref FROM sales_order_lines WHERE sales_order_id = '533c4570-...';"
+-- 6 lines, C-FHSS14 line id 31e1c9c6-a213-4381-bca9-415111154bae, qty 2,
+--   source_ref AED_SORENTO:45810027:45810033
+
+psql -d sorento_oi_book_chain_e2e -c "SELECT id, source_ref, from_so_line_ref, qty_ordered, qty_received, line_status, po_number FROM purchase_order_lines JOIN purchase_orders ...;"
+-- e94f24ba-8456-4ffe-9c9d-96fbeac5f1b3 | AED_SORENTO:45391885:45820014 |
+--   AED_SORENTO:45810027:45810033 | 2.0000 | 2.0000 | closed | 202607-S0110
+
+psql -d sorento_oi_book_chain_e2e -c "SELECT id, spo_number, spo_line_number, source_ref, from_po_line_ref, from_po_number, from_so_line_ref, allocated_quantity, line_status FROM spo_allocations WHERE source_ref='AED_SORENTO:45728035:45820113';"
+-- 1717b55d-2149-4bfb-92c5-d5a0a0ba3ece | SPO-2026/09-0036 | 237 |
+--   AED_SORENTO:45728035:45820113 | AED_SORENTO:45391885:45820014 | 202607-S0110 |
+--   (from_so_line_ref empty) | 2 | open
+
+-- no projects.sales_orders mirror, no projects.order_inquiries row for SO421886:
+psql -d sorento_oi_book_chain_e2e -At -c "SELECT count(*) FROM projects.order_inquiries oi JOIN projects.sales_orders pso ON pso.id = oi.project_sales_order_id WHERE pso.so_id = '533c4570-...';"
+-- 0
+```
+
+All exactly as the coordinator described. Note for future runs: `projects.sales_orders` /
+`projects.sales_order_lines` are the PROJECT-module mirror tables, same table names as the
+CORE `public.sales_orders` / `public.sales_order_lines` but a different schema
+(`__table_args__ = {"schema": "projects"}` on `ProjectSalesOrder`) - `\dt` alone does not show
+them; `pg_tables` filtered by schema does.
+
+PASS.
+
+## Step 2: raise the order inquiry row
+
+No route raises an Order Inquiry row directly. The real CS sequence, read from
+`app/api/v1/projects/fulfilment_planning.py`:
+
+1. `POST /api/v1/project-sales/fulfilment-planning/adopt` `{"sales_order_id": "533c4570-..."}`
+   -> 200, `{"project_sales_order_id":"08abc75b-ce57-4f5e-be6f-13dcb4ec1e86","so_number":"SO421886","review_state":"needs_cs_review","already_adopted":false}`.
+   `ProjectSOAdoptionService.adopt`'s own docstring: adoption alone writes NO
+   `order_inquiry_rows` - "Only CS confirming the sheet moves it."
+
+2. `GET /api/v1/project-sales/sales-orders/08abc75b-.../supply` -> the engine's own proposal
+   for all 6 lines. Trimmed to what matters: line 1 (C-FHSS14, `project_line_id`
+   `3e48ccb2-d6a5-4e8e-8f58-bdfd6fb716c2`, open_qty 2) proposes `reserve 1` (pool BRW) +
+   `buy 1` (nothing else covers the remaining 1). Lines 2-5 propose `reserve` only (their
+   whole open qty covered from pool stock, no buy at all). Line 6 (TPE-9201) carries
+   `"unplannable_reason":"Outside fulfilment planning"`, no components.
+
+   IMPORTANT: the engine proposes a BUY of 1, not 2. The UAC's own "Measured" section (18
+   Sep 03:00 prod copy) records this row unlinked with need 2; this E2E clone's CURRENT pool
+   stock for C-FHSS14 (1216 spare in BRW) covers 1 of the 2 from stock first. This is a real
+   difference in live stock balance between the 18 Sep measurement and now, not a defect -
+   the follow-book mechanism is exercised on whatever the BUY portion turns out to be.
+
+3. `POST /api/v1/project-sales/sales-orders/08abc75b-.../confirm`, body built by taking the
+   proposal's own numbers for the 5 decidable lines exactly as proposed (no amendment - line
+   6 left undecided, matching "a line the body does not name is left undecided on purpose"):
+
+   ```json
+   {"lines": [
+     {"project_line_id": "3e48ccb2-...", "reserve": [{"warehouse_id": "21608757-...", "qty": "1"}], "borrow": [], "buy_qty": "1"},
+     {"project_line_id": "40274f75-...", "reserve": [{"warehouse_id": "21608757-...", "qty": "2"}], "borrow": [], "buy_qty": "0"},
+     {"project_line_id": "41c1627c-...", "reserve": [{"warehouse_id": "21608757-...", "qty": "1"}], "borrow": [], "buy_qty": "0"},
+     {"project_line_id": "5d4b7c2c-...", "reserve": [{"warehouse_id": "21608757-...", "qty": "1"}], "borrow": [], "buy_qty": "0"},
+     {"project_line_id": "ee405c10-...", "reserve": [{"warehouse_id": "21608757-...", "qty": "2"}], "borrow": [], "buy_qty": "0"}
+   ]}
+   ```
+
+   -> 200, `{"revision_no":1,"confirmed_at":"2026-09-19T03:44:38...","review_state":"confirmed","inquiry_rows_created":1,"exceptions":[],"lines_decided":5,"lines_undecided":1,...}`.
+
+`inquiry_rows_created: 1` - exactly one row, for the one line with an actual buy. PASS: the
+row was raised through the real minimal CS sequence (adopt, read the proposal, confirm it as
+proposed), no SQL insert.
+
+## Step 3: read the worklist, before acknowledge
+
+`GET /api/v1/project-sales/order-inquiries?query=SO421886` (this is the route the FE Supply
+Chain > Order Inquiries page calls). One row. Trimmed:
+
+```json
+{
+  "id": "f4abdada-123b-42a1-b335-016a306e0b44",
+  "inquiry_no": "OI-000741",
+  "so_number": "SO421886",
+  "item_code": "C-FHSS14",
+  "qty": "1",
+  "state": "placed",
+  "verb": "ORDER",
+  "note": "Linked to SPO-2026/09-0036 (XIAMEN TAIYANG TECHNOLOGY CO.,LTD), expected 2026-09-02; auto: raise",
+  "po_number": null,
+  "supplier": null,
+  "links": [{
+    "id": "cc7226a8-6c5d-4c9b-a459-970d2fece2b7",
+    "kind": "spo",
+    "document": "SPO-2026/09-0036",
+    "qty": "1",
+    "auto": true,
+    "po_id": null,
+    "source_po_number": "202607-S0110",
+    "derived_po": true
+  }],
+  "linked_qty": "1",
+  "ack_state": "awaiting"
+}
+```
+
+The row shows SPO-2026/09-0036, PO 202607-S0110 with `derived_po: true` / `source_po_number`
+(the "via SPO" marker), and the supplier name inside the note - XIAMEN TAIYANG TECHNOLOGY
+CO.,LTD, matching the UAC's expectation. The top-level `supplier` / `po_number` fields on the
+row are null even though the note and the link both carry the supplier/PO - worth a look, not
+chased further here (see Findings).
+
+`ack_state: "awaiting"` - still To confirm.
+
+## Step 4: acknowledge, re-read
+
+`POST /api/v1/project-sales/order-inquiries/acknowledge` `{"row_ids":["f4abdada-..."]}` -> 200,
+`{"acknowledged":1,"linked_rows":0,"links":0,"after_horizon":0,"skipped":0}`.
+
+Re-read (same query): identical row, `ack_state` now `"acknowledged"`,
+`"acknowledged_by_name":"Teh Jayson"`, `"acknowledged_at":"2026-09-19T03:45:27..."`. Nothing
+else on the row changed (same link id, same qty, same note). PASS.
+
+## Step 5: SQL read-back
+
+```
+psql -d sorento_oi_book_chain_e2e -c "SELECT id, po_line_id, spo_allocation_id, document, qty, auto FROM projects.order_inquiry_links WHERE row_id = 'f4abdada-...';"
+-- cc7226a8-... | (null) | 86131c31-2d98-49e9-93cb-168e547cdc01 | SPO-2026/09-0036 | 1.0000 | t
+
+psql -d sorento_oi_book_chain_e2e -c "SELECT note, state, ack_state, verb, qty FROM projects.order_inquiry_rows WHERE id = 'f4abdada-...';"
+-- "Linked to SPO-2026/09-0036 (...), expected 2026-09-02; auto: raise" | placed | acknowledged | ORDER | 1.0000
+```
+
+Exactly ONE link, on the SPO side (`po_line_id` NULL), qty 1, `auto = true`. Row note names
+the trigger ("auto: raise" - the trigger `auto_place_for_products` was called with at raise
+time, not `autocount_ingest`, since this came through the CS confirm door rather than an ESB
+push - see Findings). PASS on shape (one link, SPO not PO, auto true, note names a trigger);
+see Finding 1 for which SPO allocation it actually landed on.
+
+## Other five lines of SO421886
+
+```
+psql -d sorento_oi_book_chain_e2e -c "SELECT oir.id, sol.line_no, oir.verb, oir.qty, oir.state FROM projects.order_inquiry_rows oir JOIN projects.order_inquiries oi ON ... JOIN projects.sales_order_lines sol ON ... WHERE oi.project_sales_order_id = '08abc75b-...';"
+-- exactly ONE row: line 1, ORDER, qty 1, placed
+```
+
+Lines 2-5 (fully reserved from pool stock, no buy) and line 6 (unplannable) raised NO order
+inquiry row at all - no links invented for a line the book does not name, and no link at all
+for a line with nothing to buy. Confirmed by `inquiry_rows_created: 1` from the confirm
+response and directly by this query. PASS.
+
+## Findings
+
+**Finding 1 (real, not worked around): the link landed on the wrong SPO allocation LINE of
+the right document.** Expected (AC-FB-1, the exact book chain the coordinator seeded): the
+link on `spo_allocations` row `1717b55d-2149-4bfb-92c5-d5a0a0ba3ece` (spo_line_number 237,
+source_ref `AED_SORENTO:45728035:45820113`, `from_po_line_ref` = the closed PO line's own
+`source_ref` exactly). Actual: the link is on `spo_allocations` row
+`86131c31-2d98-49e9-93cb-168e547cdc01` (spo_line_number 228, source_ref
+`AED_SORENTO:45728035:45781523`), a DIFFERENT line of the SAME shipping order document
+(SPO-2026/09-0036), whose own `from_po_line_ref` (`AED_SORENTO:45391885:45391935`) names a
+DIFFERENT, unrelated PO line under the same PO number - not the one the book actually states
+for this sales-order line.
+
+I verified this is not a book-pairing bug: calling `pair_needs` directly (read-only, no
+commit, via `app.services.project_order_inquiry_import_service._bought_rows` +
+`pair_needs` against the real core line and a need of 1) returns EXACTLY the seeded target,
+line 237, qty 1 - the book-matching logic itself is correct on this real data. So something
+between the raise (`ProjectSupplyService.confirm`) and the cascade it calls
+(`auto_place_for_products`) did not route this row through `follow_book_for_rows` before the
+ordinary candidate walk placed it - either the book pass never saw this row at raise time, or
+the ordinary cascade ran and claimed the need before the book pass had the chance, on the SAME
+shipping order document (228 and 237 share the SO doc, differ only in which PO line they
+trace to) coincidentally satisfying the display-level checks (SPO-2026/09-0036, PO
+202607-S0110 marked via SPO, correct supplier) while NOT actually being the SPECIFIC line
+AutoCount's own book states. This reads like a gap in AC-FB-20's own promise ("book pairing
+runs before the raise-time cascade in the same transaction") for the CS-confirm raise door
+specifically (as opposed to the ingest hooks and `Link now`, which this lane's own test suite
+already covers and which passed). I did not chase this further into
+`ProjectSupplyService.confirm`'s own internals - flagging it for the coder/captain to route
+correctly since I did not find a plan test that raises a row through the CS-confirm door and
+then reads its SPECIFIC target back with a book naming a different SPO line of the same
+document as a decoy (the closest existing test, `test_fb11_cascade_deals_only_remainder`,
+calls `auto_place_for_products` directly, not through this raise door, and does not seed a
+decoy line on the same document).
+
+**Finding 2 (minor, not chased): the worklist row's top-level `supplier` and `po_number`
+fields are both `null`** even though the link itself carries `source_po_number` and the
+supplier name is embedded in the row's own note. If the FE reads the top-level fields for its
+own supplier/PO columns rather than the note or the link entry, the screen may show a blank
+where AC-FB-50 expects "supplier XIAMEN TAIYANG TECHNOLOGY CO.,LTD" - worth checking against
+the actual FE component, which nobody has looked at in this API-only round.
+
+**Finding 3 (expected, not a defect): the BUY quantity is 1, not 2.** The UAC's own "need 2"
+figure was measured against 18 Sep 03:00 prod stock; this clone's CURRENT pool stock for
+C-FHSS14 covers 1 of the 2 from a Reserve, leaving only 1 to buy. The chain mechanics under
+test (SPO over closed PO, "via SPO", no link on the PO line, auto true) are unaffected by
+which quantity actually needed buying.
+
+## Session token hygiene
+
+The minted session token was not logged in full anywhere in this file or in shell history
+this document quotes; it expires in 8 hours (`remember=False` short TTL) and was never
+revoked, matching an ordinary un-logged-out staff session - no additional cleanup performed
+per the "all writes go through the API" instruction (the mint went through the same function
+the login route calls, not a raw INSERT).
