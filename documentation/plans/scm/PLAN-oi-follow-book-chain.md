@@ -121,6 +121,25 @@ and that is recorded in the PR description. Browser verification still runs (AC-
 * No reservation of a book-named document before its row exists. D3 corrects it when the row
   arrives. Trigger to revisit: displacement notes becoming a daily sight for purchasing.
 
+## 5b. Review round, 19 Sep 2026: findings and the captain's rulings
+
+Reviewer, security reviewer and the API evidence run all reported. Every blocker was reproduced.
+
+| Finding | Ruling |
+| --- | --- |
+| Board confirm raises AWAITING rows; the book step narrowed to acknowledged rows, so the cascade linked SO421886 to the wrong line of SPO-2026/09-0036 (evidence run) | Fix. The book step acts on awaiting rows too; a link on an unconfirmed row is a draft. Rejected rows never. AC-FB-20 gets its own test. |
+| A re-deal pass (`redeal_drafts`, PO confirm and Link now) unplaces the book link it just wrote | Fix. A link on a target the book names for the row's own line is never a draft, in the same call or a later one. |
+| `follow_book_for_rows` links `redirected_to_pool` rows from the hooks and the backfill | Fix. One linkable-row predicate, the cascade's own. |
+| Displacement sized off raw `qty_ordered` while pairing nets a PO line by its own shipments: strips a holder for no gain, or misses a displacement | Fix. One capacity rule: displacement reads the pairing's own figures. Invariant: every unit displaced is a unit the book row links in the same call. |
+| Cap applied before narrowing, unordered; holder choice unordered; ambiguous PO line ref resolved with `.first()` | Fix. Cap after narrowing over `(created_at, id)`; newest link displaced first; ambiguous ref refused. |
+| Displaced holders re-enter the cascade, which re-enters the book step, unbounded | Fix. The re-offer pass skips the book step. |
+| Partial displacement does not invalidate the link tally cache; scoped tally read outside its scope | Fix. |
+| Displacement note names no trigger or actor; backfill passes no actor | Fix. |
+| Backfill counters infer from a before/after snapshot | Fix. Count what the book placed and what it displaced. |
+| Security S4: gate displacement behind the delete permission | DECLINED. Owner rulings D3 and D4 ("we must follow autocount link always", manual links too) make the AutoCount feed the authority; a gate would switch the ruling off by default. Stated plainly instead: **the AutoCount ingest key holds unlink authority over every order inquiry row of its own company.** Owner informed 19 Sep. |
+| Book step ignores the link horizon | ACCEPTED as the rule under "always follow": a document AutoCount names is linked whatever the horizon; `after_horizon` counts only rows the cascade held back. |
+| Worklist Supplier reads the first PO link only, so an SPO-only row says "Not linked" (5,156 rows on the prod copy) | Fix in this lane (AC-FB-52): the journey promises the shipping order's supplier on the row. |
+
 ## 6. Slices (one lane, one PR)
 
 | Slice | Holds | ACs |
@@ -130,6 +149,7 @@ and that is recorded in the PR description. Browser verification still runs (AC-
 | S3 | displacement (after D3 is ruled) and AC-RL-43 (after D4) | FB-30 to FB-33 |
 | S4 | backfill script, dry run on the 18 Sep copy | FB-40 to FB-42 |
 | S5 | browser evidence run | FB-50, FB-51 |
+| S6 | review round fixes and the Supplier column for SPO-only rows | FB-52 and the rulings in 5b |
 
 ## 7. Testing seams (agreed before Phase 2)
 

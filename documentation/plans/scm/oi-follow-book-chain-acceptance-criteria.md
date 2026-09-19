@@ -137,6 +137,16 @@ Every AC is seeded on `tests/_pg_fixture.py` with its own chain. `[BE][T]` unles
 * **AC-FB-50 [E2E]** Order Inquiries, reached by sidebar clicks, search SO421886: the C-FHSS14
   row shows SPO-2026/09-0036, PO 202607-S0110 marked "via SPO", supplier XIAMEN TAIYANG
   TECHNOLOGY CO.,LTD. No clipping at 375px and 1280px. No console errors.
+* **AC-FB-52 [BE]** Given a row whose only links are shipping order lines, when the worklist lists it,
+  then its Supplier is that shipping order line's supplier, never "Not linked". A row with a PO
+  link reads as it does today.
+* **AC-FB-53 [BE]** Given a row is awaiting confirmation, the book step links it as a draft exactly as
+  it would an acknowledged row; a rejected row and a row released to stock are never linked.
+* **AC-FB-54 [BE]** Given a link sits on a document the book names for that row's own line, no re-deal
+  pass (PO confirm, Link now) moves it.
+* **AC-FB-55 [BE][SEC]** Every unit displaced is a unit the book row links in the same call; a holder is
+  never stripped for no gain; displaced holders are re-offered to the cascade once, with no further
+  book step.
 * **AC-FB-51 [FE]** No frontend file changes. If the run shows one is needed, it is raised as a
   finding, not absorbed.
 
