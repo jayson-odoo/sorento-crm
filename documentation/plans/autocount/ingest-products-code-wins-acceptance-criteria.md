@@ -86,6 +86,15 @@ All `[BE]` ACs are pytest on Postgres through the real route or service, seeding
 - **AC-DL-9 [BE]** `codes` that is not a JSON object, or holds a non-string value, is rejected
   with the route's existing 422 validation shape and nothing is deleted. A `codes` key that names
   a reference not present in `source_refs` is ignored.
+- **AC-DL-10 [BE]** (Fix round 1, PIN - owner-approved contract A9 item 3) Given a product `P`
+  with NO reference at all and nothing pointing at it, when its deletion is called by an
+  unresolved `source_ref` plus a `codes` entry naming `P`'s code, then the code rung still finds
+  it: outcome `deleted`, `P`'s row is gone, `warnings: ["ref_mismatch"]`. The code rung proceeds
+  when the matched product is unlinked, not only when it already carries a reference under the
+  same source system.
+- **AC-DL-11 [BE]** Same as AC-DL-10 but a sales order line points at `P`: outcome `deactivated`,
+  `P.is_discontinued` is true, `P.is_active` is unchanged, `P`'s row stays present,
+  `warnings: ["ref_mismatch"]`.
 
 ### Contract
 

@@ -80,7 +80,7 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
     _is_company_scoped,
-    is_same_source_system,
+    is_unclaimed_or_same_source,
 )
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
@@ -863,7 +863,7 @@ class MasterIngestService:
         if adopted is not None:
             origin = self.refs.origin_of(entity_type=entity_type, entity_id=adopted)
             if origin is not None:
-                if entity_type == "products" and is_same_source_system(origin):
+                if entity_type == "products" and is_unclaimed_or_same_source(origin):
                     # Code-wins (ingest-products-code-wins, SR0): the same
                     # rule `MasterRefResolver` already applies to a document
                     # line's product rung (`WARN_REF_MISMATCH`) - the

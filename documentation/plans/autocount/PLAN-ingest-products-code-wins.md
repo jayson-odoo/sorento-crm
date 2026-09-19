@@ -90,6 +90,17 @@ Document ingest. The unique index. Every other entity's conflict behaviour.
 - A retired item's code reused for a different item updates the old Sorento product.
 - A casing change of an item code changes FoundryX's reference but not the match, so that
   product stays on the code rung permanently.
+- For a code-wins product `_link` never runs, so that reference row's `last_synced_at` and
+  `integration_id` stay at the value document ingest wrote. Nothing reads `last_synced_at` today;
+  the pull lane must not build a "last synced" display on it.
+- "Same source system" compares against the constant source system (`autocount`), not the calling
+  integration. Trigger to revisit: a second `source_system` value, or a second integration issued
+  a key on `autocount`; at that point compare `integration_id` as well.
+- The deletions code rung trusts the body `companyCode` exactly as ingest already does (the
+  FoundryX integration serves two books, so it carries no single company binding). A batch sent
+  under the wrong `companyCode` would match by item code inside that company. Mitigations:
+  FoundryX derives `companyCode` and `codes` from the same book record; `codes` is capped at the
+  batch limit; every code-rung delete is logged. Recorded for the owner's ruling before merge.
 
 ## Files
 

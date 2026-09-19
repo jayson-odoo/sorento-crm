@@ -870,6 +870,18 @@ def delete_records(
                 message="Body 'codes', when present, must be an object of source_ref -> code strings",
                 code="INVALID_BODY",
             )
+        # Fix round 1: the SAME cap `source_refs` already carries, refused
+        # with the same status/code/shape - `codes` is a second per-batch
+        # array on this body and must not be a way around the limit above.
+        if len(codes) > MAX_BATCH:
+            raise AppException(
+                status_code=413,
+                message=(
+                    f"Batch of {len(codes)} 'codes' entries exceeds the maximum of {MAX_BATCH}. "
+                    "Split it; the response is never silently truncated."
+                ),
+                code="BATCH_TOO_LARGE",
+            )
 
     company_id = resolve_company_anchor(db, payload, current_user)
 

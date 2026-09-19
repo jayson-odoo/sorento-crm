@@ -92,22 +92,29 @@ def _is_company_scoped(table: str) -> bool:
 DEFAULT_SOURCE_SYSTEM = "autocount"
 
 
-def is_same_source_system(
-    origin: Optional[IntegrationReference], source_system: str = DEFAULT_SOURCE_SYSTEM
-) -> bool:
-    """Whether an already-fetched ``origin_of()`` result is missing entirely,
-    or claims the row under ``source_system`` already.
+def is_unclaimed_or_same_source(origin: Optional[IntegrationReference]) -> bool:
+    """Whether an already-fetched ``origin_of()`` result is missing entirely
+    (the row is unclaimed), or claims the row under the constant AutoCount
+    source system already.
 
     The one predicate the code-wins seams (`MasterIngestService._apply_scoped`'s
     adopt branch, `DeletionService`'s code fallback - ingest-products-code-wins,
-    SR0) share: a product AutoCount already claims resolves by code instead of
-    conflicting, but a row another source system claims still refuses - only
-    the SAME source gets to say "this is the same thing, just under a
-    different key". Takes the origin rather than re-resolving it, since both
-    call sites already hold one from their own `origin_of()`/`resolve()` call
-    and this runs on a batch that pushes thousands of records.
+    SR0) share: a product AutoCount already claims, or has never claimed at
+    all, resolves by code instead of conflicting/refusing, but a row another
+    source system claims still refuses - only the SAME source (or nobody yet)
+    gets to say "this is the same thing, just under a different key". Takes
+    the origin rather than re-resolving it, since both call sites already
+    hold one from their own `origin_of()`/`resolve()` call and this runs on a
+    batch that pushes thousands of records.
+
+    Compares against `DEFAULT_SOURCE_SYSTEM` specifically, not a parameter -
+    there is exactly one source system on this surface today (D3, PLAN
+    "Accepted consequences"). The trigger to widen this into a real
+    comparison (an `integration_id` alongside it, say) is a second
+    `source_system` value actually appearing, or a second integration issued
+    a key on `autocount` - not before.
     """
-    return origin is None or origin.source_system == source_system
+    return origin is None or origin.source_system == DEFAULT_SOURCE_SYSTEM
 
 
 def _require_supported(entity_type: str) -> str:

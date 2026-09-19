@@ -47,7 +47,7 @@ from app.services.dependent_probe import is_referenced, referrers_of, relation_n
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
-    is_same_source_system,
+    is_unclaimed_or_same_source,
 )
 from app.services.master_ingest_service import (
     INTERNAL_ERROR_MESSAGE,
@@ -294,6 +294,10 @@ class DeletionService:
         ref = source_ref if isinstance(source_ref, str) else str(source_ref)
         entity_id: Optional[str] = None
         warnings: list[str] = []
+        # Fix round 1: which rung actually found the row, so a code-rung
+        # match is traced separately from an ordinary reference hit - see the
+        # two `logger.info` calls below.
+        via_code_rung = False
 
         # Each record commits or rolls back alone. Without this savepoint a
         # failed flush poisons the session and every later reference in the batch
@@ -305,6 +309,7 @@ class DeletionService:
                 entity_id = self._resolve_product_by_code(code)
                 if entity_id is not None:
                     warnings = [WARN_REF_MISMATCH]
+                    via_code_rung = True
             if entity_id is None or not self._in_anchor_company(entity_type, entity_id):
                 # Another company's row reads exactly like a row that is not
                 # there. It is not this caller's to delete, and telling it the
@@ -318,6 +323,17 @@ class DeletionService:
                 try:
                     self._hard_delete(entity_type, entity_id)
                     savepoint.commit()
+                    if via_code_rung:
+                        logger.info(
+                            "deletion.code_rung entity=%s company=%s source_ref=%s "
+                            "code=%s entity_id=%s outcome=%s",
+                            entity_type,
+                            self.company_id,
+                            ref,
+                            code,
+                            entity_id,
+                            DeletionOutcome.DELETED.value,
+                        )
                     return DeletionRecordResult(
                         source_ref=ref,
                         outcome=DeletionOutcome.DELETED,
@@ -338,6 +354,17 @@ class DeletionService:
 
             self._deactivate(entity_type, entity_id)
             savepoint.commit()
+            if via_code_rung:
+                logger.info(
+                    "deletion.code_rung entity=%s company=%s source_ref=%s "
+                    "code=%s entity_id=%s outcome=%s",
+                    entity_type,
+                    self.company_id,
+                    ref,
+                    code,
+                    entity_id,
+                    DeletionOutcome.DEACTIVATED.value,
+                )
             return DeletionRecordResult(
                 source_ref=ref,
                 outcome=DeletionOutcome.DEACTIVATED,
@@ -370,7 +397,7 @@ class DeletionService:
         Company-scoped the same way `resolve_master_by_code` scopes the
         master ingest's own adopt lookup. A match is used only when it is
         unlinked, or its own reference is under the SAME source system this
-        deletion resolves under (`is_same_source_system`) - a code that
+        deletion resolves under (`is_unclaimed_or_same_source`) - a code that
         happens to match a row another source system, or another company,
         claims is reported exactly like no match at all (AC-DL-6, AC-DL-7).
         """
@@ -378,7 +405,7 @@ class DeletionService:
         if candidate is None:
             return None
         origin = self.refs.origin_of(entity_type="products", entity_id=candidate)
-        if not is_same_source_system(origin):
+        if not is_unclaimed_or_same_source(origin):
             return None
         return candidate
 

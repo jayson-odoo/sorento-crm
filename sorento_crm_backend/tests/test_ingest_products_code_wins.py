@@ -33,6 +33,7 @@ change.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 
@@ -715,6 +716,68 @@ class TestCodeWinsDeletions:
         assert res.status_code == 200, res.text
         assert res.json()["records"][0]["outcome"] == "not_found"
         assert env.row("products", untouched_id) is not None
+
+    def test_dl10_unlinked_product_is_deleted_by_code(self, env):
+        # Fix round 1, PIN (owner-approved contract A9 item 3): the code rung
+        # proceeds when the matched product is unlinked, not only when its
+        # own reference is under the same source system - already the
+        # behaviour, pinned here as its own scenario.
+        product_id, code = env.product()
+        code_ref = _ref("BRADL10")
+
+        res = env.delete("products", [code_ref], codes={code_ref: code})
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "deleted", entry
+        assert entry["warnings"] == ["ref_mismatch"], entry
+        assert env.row("products", product_id) is None
+
+    def test_dl11_unlinked_product_with_dependents_is_deactivated(self, env):
+        product_id, code = env.product()
+        env.sales_order_line(product_id)
+        code_ref = _ref("BRADL11")
+
+        res = env.delete("products", [code_ref], codes={code_ref: code})
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "deactivated", entry
+        assert entry["warnings"] == ["ref_mismatch"], entry
+        row = env.row("products", product_id)
+        assert row is not None
+        assert row["is_discontinued"] is True
+        assert row["is_active"] is True
+
+    def test_dl12_oversized_codes_is_refused_and_deletes_nothing(self, env):
+        # Fix round 1: `codes` gets the SAME batch cap `source_refs` already
+        # has, refused with the same status/code/shape.
+        ref, product_id, code = env.linked_product()
+        code_ref = _ref("BRADL12")
+        oversized_codes = {f"{MARKER}:X:{i}": "X" for i in range(1001)}
+
+        res = env.delete("products", [code_ref], codes=oversized_codes)
+
+        assert res.status_code == 413, res.text
+        assert res.json()["code"] == "BATCH_TOO_LARGE"
+        assert env.row("products", product_id) is not None
+
+    def test_dl13_code_rung_delete_is_traced(self, env, caplog):
+        # Fix round 1: one INFO line per record the code rung actually
+        # resolved and deleted/deactivated - a security-review trace item,
+        # not asserted anywhere else in this file.
+        product_id, code = env.product()
+        code_ref = _ref("BRADL13")
+
+        with caplog.at_level(logging.INFO, logger="app.services.deletion_service"):
+            res = env.delete("products", [code_ref], codes={code_ref: code})
+
+        assert res.status_code == 200, res.text
+        assert res.json()["records"][0]["outcome"] == "deleted"
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("deletion.code_rung" in m and code_ref in m and code in m for m in messages), (
+            messages
+        )
 
 
 # =================================================================== contract
