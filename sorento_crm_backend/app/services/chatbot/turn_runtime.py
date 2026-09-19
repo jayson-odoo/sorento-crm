@@ -1437,7 +1437,12 @@ def _tier_gate(spec: FetchSpec, verdict: dict[str, Any], focus: Focus) -> dict[s
     entitled = [
         a for a in (verdict.get("access_levels") or []) if isinstance(a, str) and a.strip()
     ]
-    recomposed = recompose([tier], list(focus.brands or []), entitled)["access_levels"]
+    # AC-1698 ("1 and 2", "all"): `narrow_by_tier`'s own settle carries every chosen
+    # tier, a list once more than one was picked (a single pick stays the scalar
+    # `filter_value` always was) - `recompose` already takes several (`jsc.array`),
+    # so every chosen tier reaches ONE fetch's own `access_levels`, never just the last.
+    tiers = tier if isinstance(tier, list) else [tier]
+    recomposed = recompose(tiers, list(focus.brands or []), entitled)["access_levels"]
     if not recomposed:
         recomposed = sorted(entitled, key=jsc.js_string)
     return {

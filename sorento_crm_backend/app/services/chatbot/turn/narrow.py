@@ -412,9 +412,19 @@ def decide(
             if attributes and not candidates:
                 return NarrowOutcome(None, [], [], profile.tier)
             if candidates:
-                one = candidates[-1]
-                value = one.get("canonical_code") or one.get("raw")
-                return NarrowOutcome(None, [], [], value)
+                # AC-1698 ("1 and 2", "all"): every tier the customer picked settles,
+                # not just the last - `apply._set_kind_field` already files every one
+                # of them onto `focus.tier` (a list); `filter_value` carrying only
+                # `candidates[-1]` threw the rest away before the fetch ever saw them,
+                # so "1 and 2" fetched Dealer promotions alone. A single pick stays a
+                # bare string (unchanged shape, `turn_runtime._tier_gate`'s own
+                # `spec.filters["tier"]` scalar path).
+                values = [
+                    v
+                    for v in (c.get("canonical_code") or c.get("raw") for c in candidates)
+                    if v
+                ]
+                return NarrowOutcome(None, [], [], values[0] if len(values) == 1 else values)
             if profile.tier:
                 return NarrowOutcome(None, [], [], profile.tier)
             return NarrowOutcome("tier_pick", [], [], None)
