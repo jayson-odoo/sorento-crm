@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from app.services.chatbot.tail.outcome import pretty_team
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
@@ -236,28 +237,28 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             header = header_override.strip()
         else:
             header = f"*{label}* for {codes}:" if codes else f"*{label}*:"
-        # A tool that renders its own answer - a report, a refusal, a miss suggestion -
-        # hands it over as `lane_text` and the section prints THAT; rows go through the
-        # grammar above (contract 102). One or the other, never both.
+        # R-d (owner hand pass 7, 19 Sep 2026): the lane's own `lane_text` IS the
+        # section, whether or not it carries rows. `lanes/business/fetch.py::
+        # output_structurer` already renders the production intro, the per-row
+        # grammar WITH its flags (PRODUCT DISCONTINUED, PENDING ALLOCATION) and its
+        # date/bool formatting (`_fmt_value`, which this module's own `_render_row`
+        # below never applied - measured as the "2026-09-14T00:00:00" defect), and
+        # the "_Data last updated: ..._" footer, into ONE string - reusing it
+        # verbatim is the one change that keeps every domain's copy production-
+        # identical without a second, parallel string table here. A fan-out over
+        # several domains still says one thing per section (contract 122) because
+        # `lane_text` already names what it is an answer FOR; `own_header`/`denied`
+        # already state their own scope the same way (contract 7, AC-1139) and are
+        # no longer special-cased - printing `lane_text` verbatim is exactly what
+        # those two branches already did.
+        #
+        # `figures`/`_render_row` below is now a FALLBACK for an envelope that never
+        # went through that lane at all (a unit test's own hand-built dict).
         lane_words = env.get("lane_text")
-        if rows_text:
-            block = header + "\n" + "\n\n".join(rows_text)
-        elif (env.get("denied") or env.get("own_header")) and isinstance(lane_words, str) and lane_words.strip():
-            # Contract 7. A refusal is the WHOLE section and carries no header: naming
-            # the domain above "Sorry, you are not allowed to access purchase cost"
-            # would print the very thing the sentence is refusing to discuss. Checked
-            # before the generic `lane_text` branch below for that reason.
-            #
-            # AC-1139 puts the outstanding report on the same footing: it opens with its
-            # OWN four-line scope header (`Product:` / `Customer:` / `Location:` /
-            # `Order date:`), so the generic `*orders* for SRTWT7445:` line above it
-            # states the search scope twice, in two different grammars, over one answer.
+        if isinstance(lane_words, str) and lane_words.strip():
             block = lane_words.strip()
-        elif isinstance(lane_words, str) and lane_words.strip():
-            # The header still names the domain: one section per domain is the grammar
-            # (contract 122), and a fan-out whose second leg found nothing must still say
-            # WHICH leg that was.
-            block = header + "\n" + lane_words.strip()
+        elif rows_text:
+            block = header + "\n" + "\n\n".join(rows_text)
         elif env.get("denied"):
             block = f"*{label}*: this is not enabled for your account."
         elif env.get("error"):
@@ -338,7 +339,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 teams.append(team)
         if teams:
             offer = Offer(teams=teams)
-            text += "\n\nWould you like me to escalate?"
+            # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in the
+            # offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER` sends
+            # ("...to {{team}} team?"), ported via `tail.outcome.pretty_team` rather
+            # than a second underscore-to-space rule. Several teams keep the bare
+            # question because the roster right below it is what names them.
+            text += (
+                f"\n\nWould you like me to escalate to {pretty_team(teams[0])} team?"
+                if len(teams) == 1
+                else "\n\nWould you like me to escalate?"
+            )
             carried = getattr(state, "pending", None)
             if carried is not None and is_roster(carried.kind):
                 # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and
@@ -362,7 +372,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         actions = [
             {"kind": "send_file", "url": f.get("url"), "filename": f.get("filename")} for f in files
         ]
-        text += "\n\n" + _ATTACHED_SENTENCE
+        # R-d: a domain with attachments (incoming, product photos, ...) already
+        # opens its OWN `lane_text` with this exact sentence (`sorento_crm_mcp.
+        # presenters`'s universal "has attachments" intro) now that `lane_text` is
+        # reused verbatim above - appending a second copy read as the sentence
+        # twice in one reply.
+        if _ATTACHED_SENTENCE not in text:
+            text += "\n\n" + _ATTACHED_SENTENCE
 
     return Answer(
         sections=sections, question=question, offer=offer, canned=[], files=files, actions=actions, text=text
@@ -392,6 +408,16 @@ _ASK_HEADERS: dict[str, str] = {
     # question asked with nothing yet to number.
     "product_ask": "Which product do you mean?",
 }
+
+#: R-g (owner hand pass 7, 19 Sep 2026): `lanes/business/gate.py::run_gate`'s OWN
+#: ambiguity picker, for the domains it still gates pre-fetch
+#: (`gate.REQUIRE_SPECIFIC_DOMAINS`), opens with this line rather than the generic
+#: `_ASK_HEADERS` question - "product_attachment search needs to be more specific.
+#: Multiple matches found. Please choose:", verbatim off `gate.py`'s own
+#: `gate_clarification` string. Scoped to `product_attachment` only: `incoming`'s own
+#: roster already reads `_ASK_HEADERS["product_pick"]` today and no hand pass has
+#: named it wrong, so widening this to `incoming` too is left alone rather than risked.
+_REQUIRE_SPECIFIC_HEADER_DOMAINS = frozenset({"product_attachment"})
 
 
 def _join_words(names: list[str]) -> str:
@@ -457,9 +483,16 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     # resolver could not place, so the ask offers what it DID find rather than asking them
     # to choose from a roster they did not ask for.
     did_you_mean = any((o.get("payload") or {}).get("did_you_mean") for o in pending.options)
-    header = (
-        "Did you mean:" if did_you_mean else _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
-    )
+    ask_domain = str((pending.payload or {}).get("domain") or "")
+    if did_you_mean:
+        header = "Did you mean:"
+    elif ask_domain in _REQUIRE_SPECIFIC_HEADER_DOMAINS:
+        header = (
+            f"{ask_domain} search needs to be more specific. Multiple matches found. "
+            "Please choose:"
+        )
+    else:
+        header = _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
     lines = [header]
     labels: list[str] = []
     for option in pending.options:
