@@ -14,10 +14,17 @@ Plan: `PLAN-demand-class-agent-arrival.md`. Track: small fix.
   does not change and is never blanked.
 - **AC-5** Stored class, no stored agent, stored `order_type` says project, arriving agent is
   `retail`: the order is `project` (order type outranks the agent).
-- **AC-6** A class set by hand on an order that already has an agent survives every later push.
+- **AC-6** A class set by hand on an order that already has an agent survives every later push,
+  including an agent-less push followed by a push naming a DIFFERENT agent: the agent-less push
+  must not blank the stored agent, or that second push would be misread as the agent arriving
+  for the first time and would re-decide the hand-set class.
 - **AC-7** First push with no agent and a customer with no segment still warns
   `unclassified_demand` and lands NULL; the push that brings a classed agent fills it (existing
   behaviour, asserted so it cannot regress).
+- **AC-11** (fix round 1) A push that carries NO agent at all (`sales_agent_ref` and `agent_code`
+  both empty) never blanks a stored `sales_agent_id`.
+- **AC-12** (fix round 1) A push naming a DIFFERENT agent still replaces the stored
+  `sales_agent_id` (A -> B); it does not, on its own, change the demand class (AC-3 covers that).
 
 ## Agent master backfill
 

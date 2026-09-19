@@ -17,6 +17,12 @@ left to change. This exact statement was already run by hand against the shared 
 19 Aug 2026 (63 rows) before this migration existed, so `upgrade()` here is expected to match 0
 rows there - that IS the idempotency check.
 
+Superseded 20 Sep 2026: the ladder this migration corrects towards was itself re-ranked - the
+selling agent's class now outranks the customer's market segment (captain ruling 28 Aug 2026,
+`PLAN-demand-class-agent-arrival.md`). The rows this migration moved are non-NULL today, so the
+new ladder's ingest and backfill paths leave them alone; this file's revision id, SQL and rowcount
+are historical record and are not touched by that change.
+
 Revision ID: 401_so_class_segment_rank
 Revises: 400_oi_place_on_po
 Create Date: 2026-08-20

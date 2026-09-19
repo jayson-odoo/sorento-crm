@@ -12,17 +12,26 @@
             that cannot classify (even one that names a conflicting segment)
   AC-V2-7   `demand_class` is not an accepted payload key (extra="forbid")
 
-PLAN-demand-class-agent-arrival.md's UAC AC-1..AC-7 (the agent arriving on a LATER push):
+PLAN-demand-class-agent-arrival.md's UAC AC-1..AC-12 (the agent arriving on a LATER push):
   AC-1   no agent, retail segment lands retail; a second push naming a project agent
          takes over
   AC-2   mirror of AC-1: project segment, arriving retail agent takes over
-  AC-3   stored class AND a stored agent, a later push names a DIFFERENT agent: unchanged
+  AC-3   stored class AND a stored agent, a later push names a DIFFERENT agent: the
+         class is unchanged (AC-12: the stored agent id still moves A -> B)
   AC-4   stored class, no stored agent, the arriving agent has no class: unchanged
   AC-5   stored class, no stored agent, stored order_type says project, arriving agent
          is retail: order type still outranks the agent
-  AC-6   a hand-set class on an order that already HAS an agent survives every later push
+  AC-6   a hand-set class on an order that already HAS an agent survives every later
+         push, INCLUDING an agent-less push followed by a push naming a DIFFERENT
+         agent (fix round 1: an agent-less push must not blank the stored agent id,
+         or that second push would be misread as the agent "arriving" and re-decide
+         the hand-set class)
   AC-7   first push unclassified + warns; the push bringing a classed agent fills it
          (existing behaviour, asserted so it cannot regress)
+  AC-11  (fix round 1, Seam 1b) an agent-less push never blanks a stored
+         `sales_agent_id`
+  AC-12  folded into AC-3's own test: a later push naming a DIFFERENT agent still
+         replaces the stored agent id
 
 Plus a direct parity test of `app.services.scm.demand_class.classify_document`,
 the pure ladder function PLAN section 1 D4 extracts out of
@@ -314,14 +323,17 @@ class TestAgentArrivingOnALaterPushTakesOverFromTheSegment:
         assert stored["demand_class"] == "retail"
 
 
-# =========================================================== agent-arrival AC-3
+# ==================================================== agent-arrival AC-3 / AC-12
 class TestStoredAgentAlreadySettlesTheClass:
     def test_a_later_push_naming_a_different_agent_does_not_change_the_class(self, env):
+        """AC-3: the class does not change. AC-12: the stored agent id still DOES
+        change (A -> B) - only the class is settled, not the agent column."""
         first_agent = _agent_with_class(env, demand_class="retail")
         header, source_ref = _seed_so_header(
             env, demand_class="retail", sales_agent_id=first_agent.id
         )
-        other_agent_ref = _linked_agent_ref(env, demand_class="project")
+        other_agent = _agent_with_class(env, demand_class="project")
+        other_agent_ref = env._link("sales_agents", other_agent.id, "AGENT-DC")
 
         record = _so_record(
             env, ref=source_ref, number=header.so_number, sales_agent_ref=other_agent_ref
@@ -332,6 +344,7 @@ class TestStoredAgentAlreadySettlesTheClass:
         assert entry["outcome"] == "updated", res.text
         stored = env.header("sales_orders", source_ref)
         assert stored["demand_class"] == "retail"
+        assert str(stored["sales_agent_id"]) == other_agent.id
 
 
 # =========================================================== agent-arrival AC-4
@@ -390,6 +403,53 @@ class TestHandSetClassWithAnAgentAlreadyStoredSurvives:
         assert entry["outcome"] == "updated", res.text
         stored = env.header("sales_orders", source_ref)
         assert stored["demand_class"] == "project"
+
+    def test_survives_an_agent_less_push_followed_by_a_different_retail_agent(self, env):
+        """Strengthened AC-6 (fix round 1): the seam-1b regression the reviewers
+        reproduced. An agent-less re-push must not blank the stored agent id -
+        if it did, a LATER push naming a DIFFERENT (retail) agent would find no
+        stored agent, treat it as the agent "arriving" for the first time, and
+        re-decide the hand-set `project` class down to `retail`."""
+        agent = _agent_with_class(env, demand_class="retail")
+        header, source_ref = _seed_so_header(
+            env, demand_class="project", sales_agent_id=agent.id
+        )
+
+        agentless_record = _so_record(env, ref=source_ref, number=header.so_number)
+        res1 = env.post(INGEST_SO, [agentless_record])
+        entry1 = res1.json()["records"][0]
+        assert entry1["outcome"] == "updated", res1.text
+        after_first = env.header("sales_orders", source_ref)
+        assert after_first["demand_class"] == "project"
+        assert str(after_first["sales_agent_id"]) == agent.id
+
+        other_agent_ref = _linked_agent_ref(env, demand_class="retail")
+        record2 = _so_record(
+            env, ref=source_ref, number=header.so_number, sales_agent_ref=other_agent_ref
+        )
+        res2 = env.post(INGEST_SO, [record2])
+        entry2 = res2.json()["records"][0]
+        assert entry2["outcome"] == "updated", res2.text
+        stored = env.header("sales_orders", source_ref)
+        assert stored["demand_class"] == "project"
+
+
+# ========================================================== agent-arrival AC-11
+class TestAgentlessPushNeverBlanksAStoredAgent:
+    def test_stored_sales_agent_id_survives_an_agent_less_push(self, env):
+        agent = _agent_with_class(env, demand_class="retail")
+        header, source_ref = _seed_so_header(
+            env, demand_class="retail", sales_agent_id=agent.id
+        )
+
+        record = _so_record(env, ref=source_ref, number=header.so_number)
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", res.text
+        stored = env.header("sales_orders", source_ref)
+        assert str(stored["sales_agent_id"]) == agent.id
+        assert stored["demand_class"] == "retail"
 
 
 # =========================================================== agent-arrival AC-7

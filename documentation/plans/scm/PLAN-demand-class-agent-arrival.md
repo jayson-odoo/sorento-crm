@@ -1,7 +1,7 @@
 # PLAN - demand class follows the agent when the agent arrives late
 
-**Status:** building. **Track: small fix** (two seams in one domain, under 50 app lines, no
-migration, no endpoint, no auth or scoping change). Branch `fix/scm-demand-class-agent-arrival`.
+**Status:** built, in review. **Track: small fix** (two seams in one domain, under 50 app lines,
+no migration, no endpoint, no auth or scoping change). Branch `fix/scm-demand-class-agent-arrival`.
 
 ## The ruling this serves
 
@@ -43,6 +43,33 @@ where the arriving agent has no demand class is settled.
 Rejected alternative: leave the class NULL while the agent is null. It strands the orders that
 never get an agent as unclassified, and the plan page has no Unclassified column.
 
+### Seam 1b - `document_ingest_service._header_values` (fix round 1)
+
+Reviewers found the blocker: an agent-less push (`sales_agent_ref` and `agent_code` both
+empty, so `_resolve_master` returns `None`) BLANKED a stored `sales_agent_id` - the
+`header_refs` loop wrote `values["sales_agent_id"] = None` unconditionally, and the setattr
+loop after `_header_values` applied it. That re-arms Seam 1's exception by accident: a
+hand-set `project` class on an order with a stored agent survives an agent-less push (Seam 1's
+own guard), but the agent-less push itself blanks the stored agent, so the NEXT push naming a
+different agent finds no stored agent, reads as "the agent is arriving for the first time",
+and re-decides the class. It also let an API caller pick the class by alternating agent codes.
+
+Measured, same prod copy, `api_call_log` (2031 sales-order pushes): an agent followed by an
+agent-less push happened 0 times; agent-less then an agent, 5 times; agent A changed to a
+DIFFERENT agent B, 7 times. Nothing legitimate relies on an agent-less push blanking a stored
+agent.
+
+Fix: in `_header_values`'s `header_refs` loop, when the resolved value for `sales_agent_id` is
+`None` AND the stored header already has an agent, the key is dropped from the header-values
+dict instead of being set to `None`. Dropping the key (not writing `None` over it) keeps it off
+the unconditional setattr loop AND off `_diff`'s dry-run report, so an agent-less re-push
+neither blanks the column nor is reported as changing it. Scoped to `sales_agent_id` only
+(the only column this spec resolves that has this problem); `customer_id` and the
+purchase-orders spec are untouched - `sales_agent_id` is a sales-orders-only column, so the
+guard cannot reach a PO. A push naming a DIFFERENT agent still overwrites it (A -> B unchanged)
+and still does not re-decide the class, because `header.sales_agent_id` stays non-empty for
+that push.
+
 ### Seam 2 - `sales_agent_service._backfill_null_class_orders`
 
 Collapse the two UPDATEs into one: every order with `sales_agent_id = agent.id AND
@@ -57,7 +84,27 @@ nothing else uses it.
   per-customer split). Owner-run SQL, drafted separately.
 - Any per-customer override rung above the agent.
 
+## Risks accepted
+
+1. A class hand-set while the order had NO agent yet is re-decided, once, the first time an
+   agent with a demand class of its own arrives (Seam 1's exception, unchanged by round 1). A
+   project-to-retail flip on that re-decision removes the order from the fulfilment board, the
+   reconciliation worklist, the order-inquiry import and any open line drafts built against it.
+2. Pre-existing, out of scope: `_backfill_null_class_orders`'s UPDATE carries no company
+   predicate, so a shared agent row (`company_id IS NULL`) reaches that agent's orders across
+   every company - the same row set the UPDATE touched before this lane, single-UPDATE or two.
+3. Pre-existing: `sales_orders` carries no audit tracking, so a demand-class change (by either
+   seam, or by hand) leaves no audit row behind.
+4. Migration `401_so_class_segment_rank.py` moved about 63 prod rows to the customer segment's
+   class under the pre-28-Aug ranking. Those rows are non-NULL today, so neither seam touches
+   them - Seam 1 never overwrites a stored class, and Seam 2 only fills `demand_class IS NULL`.
+
 ## Tests (Postgres only, shared dev DB, touched files only)
 
 - `tests/test_ingest_documents_v2_demand.py` - extend.
 - `tests/scm/test_sales_agent_demand_class_backfill.py` - extend / correct.
+
+Fix round 1 additions: AC-11 (new test), AC-12 (folded into AC-3's own test - the assertion
+that a later push naming a different agent still replaces the stored agent id), and AC-6
+strengthened to a two-push regression (agent-less push, then a push naming a different agent)
+that reproduces the blanking bug before Seam 1b.

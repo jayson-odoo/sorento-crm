@@ -125,7 +125,8 @@ the existing upload drawer is not involved. (No notification surface is added in
   `demand_class` stays as it was (NULL on create), and the verdict carries
   `warnings: ["unclassified_demand"]`.
 - **AC-V2-6 [BE]** A stored `demand_class` is never downgraded or blanked by a later push that
-  cannot classify.
+  cannot classify. See `demand-class-agent-arrival-acceptance-criteria.md` for the one exception:
+  a class is re-decided, once, when an agent with a demand class of its own first arrives.
 - **AC-V2-7 [BE]** `demand_class` is not accepted in the payload (`extra="forbid"` rejects it).
 
 ## Group V3 - Shipping orders (`tests/test_ingest_shipping_orders.py`)

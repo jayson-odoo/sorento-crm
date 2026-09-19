@@ -346,6 +346,9 @@ payload still validates. Deviations from the v1 behaviour above, all deliberate:
    restated). `demand_class` is derived: stored `order_type` -> payload `order_type` -> the agent's
    class -> the customer's market segment; never blanked or downgraded; when nothing classifies the
    record still lands with `unclassified_demand`. `demand_class` itself is rejected as a key.
+   One exception (`PLAN-demand-class-agent-arrival.md`): a class is re-decided, once, the first
+   time an agent with a demand class of its own arrives on a later push naming one; a push that
+   carries no agent at all never blanks a stored `sales_agent_id`.
 6. **Line adoption at cutover (D11).** For a header adopted by number whose lines carry no
    `source_ref`, incoming lines adopt existing rows in three passes: (product, warehouse-or-NULL,
    outstanding) with position tie-break; (product, warehouse-or-NULL) when exactly one remains;

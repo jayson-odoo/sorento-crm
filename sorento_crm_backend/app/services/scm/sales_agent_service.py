@@ -25,7 +25,6 @@ from typing import Iterable, Optional
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.models.order import SalesOrder
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.scm.demand_class import DEMAND_CLASSES, is_valid
