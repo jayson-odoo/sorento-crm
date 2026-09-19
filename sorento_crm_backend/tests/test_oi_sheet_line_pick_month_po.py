@@ -888,3 +888,46 @@ def test_ac_lp_13_preview_and_apply_land_every_row_the_same():
         assert after["rows_raised"] == 0, after
         assert after["rows_already_raised"] == 6, after
         assert after["rows_line_not_found"] == 0, after
+
+
+# --------------------------------------------------------------------------- #
+# New measured defect (19 Sep 2026): Excel date SERIALS in the delivery cell,  #
+# not an AC-LP of the UAC - the importer-level regression the reader defect    #
+# causes (see test_oi_sheet_reader_serial_dates.py for the reader itself).     #
+# --------------------------------------------------------------------------- #
+
+
+def test_serial_dated_rows_are_not_restatements():
+    """The customer's current `JAN - DEC 2026 ORDERabc.xlsx` leaves DELIVERY DATE in
+    General format holding a plain Excel serial (`46024` = 2026-01-02, `46113` =
+    2026-04-01), not a date cell. `_as_date` does not parse a serial (measured, 19 Sep
+    2026: 15,942 of 16,057 rows read with no delivery date), so both rows here tie on
+    `_restates`' key - same SO, item, qty, and a now-identical `delivery_date=None` - and
+    the SECOND is read as a restatement of the first: two real deliveries of 200 collapse
+    into one raised row instead of two.
+    """
+    with world() as w:
+        order = w.order()
+        line_first = w.line(order, qty_ordered="200", required_date=date(2026, 1, 2))
+        line_second = w.line(order, qty_ordered="200", required_date=date(2026, 4, 2))
+        data = sheet([
+            (order.so_number, w.product.product_code, 200, 46024,
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 200, 46113,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 2, (
+            "before the serial-date fix both rows tie on `_restates`' key (same qty, "
+            f"delivery date None) and the second reads as a restatement: {result}"
+        )
+        rows = w.rows()
+        assert len(rows) == 2, [str(row.qty) for row in rows]
+        mirror_first = w.mirror_of(line_first)
+        mirror_second = w.mirror_of(line_second)
+        assert mirror_first is not None and mirror_second is not None
+        assert {str(row.so_line_id) for row in rows} == {
+            str(mirror_first.id), str(mirror_second.id),
+        }, "one row per line, not both stacked onto one"
