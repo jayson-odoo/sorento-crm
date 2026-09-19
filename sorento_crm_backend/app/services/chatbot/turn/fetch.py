@@ -151,10 +151,24 @@ def _climb(
     entity list would climb the whole ladder and hand each rung's tool the same no-filter
     spec, which is how "ETA cb2805q" once dumped 50 unrelated products under an
     "Incoming" header. Nothing left to narrow BY is nothing to climb with.
+
+    R1 addendum: an EMPTY list is not the only "nothing to narrow BY" shape -
+    `narrow.decide`'s `unplaced_never_offered` outcome leaves a NON-empty entities list
+    whose members carry no resolved uuid at all (the resolver never placed them), and
+    the same unfiltered climb happened for that shape too ("stock and eta for
+    SRTWT2634" fired a real `crm_procurement_po_placed_list` call whose args skipped
+    every entity `missing_or_bad_uuid`). Refused on the SAME signal
+    `lanes/business/fetch.py::entity_ids_transformer` already reads per entity before
+    building a tool's `*_ids` (`entity_has_resolved_uuid`, imported lazily to keep this
+    module's own import graph the pure one its header describes) - not a second uuid
+    rule. A spec with at least one genuinely resolved entity beside an unresolved one
+    still climbs: one real subject is something to narrow by.
     """
-    if not spec.entities:
-        return
     if not envelope_missed(primary):
+        return
+    from app.services.chatbot.lanes.business.fetch import entity_has_resolved_uuid
+
+    if not any(entity_has_resolved_uuid(e) for e in spec.entities):
         return
     rungs = [r for r in _ladder_of(ctx, spec.domain) if r not in (planned or set())]
     if not rungs:

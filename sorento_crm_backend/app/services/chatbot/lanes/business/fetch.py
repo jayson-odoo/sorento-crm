@@ -331,6 +331,19 @@ _UUID_RE = re.compile(
 )
 
 
+def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
+    """The single-entity half of `entity_ids_transformer`'s own `missing_or_bad_uuid`
+    read, lifted out so a second caller can ask the SAME question rather than a second
+    uuid rule: a real, `_UUID_RE`-shaped id, not a bare code the resolver could not
+    place. `turn/fetch.py::_climb` is that second caller (R1 addendum, AC-1688) - a
+    cross-domain rung must never run for a spec where nothing in it would actually
+    narrow the rung's own tool call, the exact test this transformer's loop already
+    applies per entity before building `*_ids`.
+    """
+    uuid = jsc.get(entity, "uuid") if jsc.truthy(entity) else None
+    return bool(jsc.truthy(uuid) and _UUID_RE.match(jsc.js_string(uuid)))
+
+
 # Tools that answer a DOCUMENT request and must be given something to narrow by.
 # `crm_resource_attachments_list`'s own contract says it: "They named NO document at all ->
 # this tool returns NOTHING, by design. `contact_id` alone is NOT a narrowing filter". The
@@ -507,7 +520,7 @@ def entity_ids_transformer(
     for e in jsc.array(entities):
         entity_type = jsc.get(e, "entity_type") if jsc.truthy(e) else None
         uuid = jsc.get(e, "uuid") if jsc.truthy(e) else None
-        if not jsc.truthy(uuid) or not _UUID_RE.match(jsc.js_string(uuid)):
+        if not entity_has_resolved_uuid(e):
             skipped.append(
                 {"code": jsc.get(e, "code") if jsc.truthy(e) else None, "reason": "missing_or_bad_uuid"}
             )
