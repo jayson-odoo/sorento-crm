@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useConfirmPull, useDownloadPullXlsx, usePull } from '../hooks/useAutocountPull';
+import { isCompareFullMatch } from '../types/compareMatch';
 import { PullChangesTab } from './PullChangesTab';
 import { PullExcelViewTab } from './PullExcelViewTab';
 import { PullCompareTab } from './PullCompareTab';
@@ -96,7 +97,7 @@ function stockCounters(counts: StockPullCounts) {
 function compareSummaryLine(pull: AutocountPull): string | null {
   const compare = pull.compare;
   if (!compare) return null;
-  if (compare.matched === compare.total && compare.different === 0 && compare.only_in_excel === 0 && compare.only_in_pull === 0) {
+  if (isCompareFullMatch(compare)) {
     return `100% match. ${compare.matched} of ${compare.total} items agree with ${compare.filename}.`;
   }
   const parts = [`${compare.matched} of ${compare.total} match`];
@@ -155,25 +156,25 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
             </span>
           )}
           <span className="grow" />
+          {(pull.phase === 'review' || pull.phase === 'confirmed') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => downloadMutation.mutate(jobId)}
+              disabled={downloadMutation.isPending}
+            >
+              <Download className="size-4" />
+              {downloadMutation.isPending ? 'Preparing…' : downloadLabel}
+            </Button>
+          )}
           {pull.phase === 'review' && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => downloadMutation.mutate(jobId)}
-                disabled={downloadMutation.isPending}
-              >
-                <Download className="size-4" />
-                {downloadMutation.isPending ? 'Preparing…' : downloadLabel}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => confirmMutation.mutate(jobId)}
-                disabled={Boolean(pull.confirm_blocked_reason) || confirmMutation.isPending}
-              >
-                {confirmMutation.isPending ? 'Confirming…' : 'Confirm'}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={() => confirmMutation.mutate(jobId)}
+              disabled={Boolean(pull.confirm_blocked_reason) || confirmMutation.isPending}
+            >
+              {confirmMutation.isPending ? 'Confirming…' : 'Confirm'}
+            </Button>
           )}
           {pull.phase === 'confirmed' && pull.apply_job_id && (
             <Button asChild variant="outline" size="sm">

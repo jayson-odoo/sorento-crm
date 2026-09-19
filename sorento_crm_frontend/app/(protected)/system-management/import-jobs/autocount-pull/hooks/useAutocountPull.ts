@@ -33,11 +33,15 @@ export function useStartPull() {
   });
 }
 
-/** The caller's open pull for this entity, or `null`. Drives the button label (AC-PL-5). */
-export function useCurrentPull(entity: AutocountPullEntity) {
+/** The caller's open pull for this entity, or `null`. Drives the button label (AC-PL-5).
+ *  `enabled` (captain ruling, Phase 3 fix round, V-2) gates the query itself - a caller
+ *  without the entity's permission must never fire `GET /current` at all, not just hide
+ *  the button that would have used the result. */
+export function useCurrentPull(entity: AutocountPullEntity, enabled = true) {
   return useQuery({
     queryKey: ['autocount-pull-current', entity],
     queryFn: () => getCurrentPull(entity),
+    enabled,
     staleTime: 1000 * 15,
     retry: 1,
   });
@@ -132,7 +136,7 @@ export function useAutocountPullAction(
 ): AutocountPullAction {
   const visible = useHasPermission(permissionSlug);
   const router = useRouter();
-  const { data: currentPull } = useCurrentPull(entity);
+  const { data: currentPull } = useCurrentPull(entity, visible);
   const startMutation = useStartPull();
 
   const label = currentPull ? 'Review pull' : 'Pull from AutoCount';

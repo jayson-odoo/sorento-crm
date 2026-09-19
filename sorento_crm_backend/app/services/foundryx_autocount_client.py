@@ -26,6 +26,11 @@ _BUILD_TIMEOUT_SECONDS = 15
 _STATUS_TIMEOUT_SECONDS = 15
 _ROWS_TIMEOUT_SECONDS = 30
 
+#: A runaway upstream (`totalPages` that keeps growing, or never settles) must not page
+#: forever - `all_rows` refuses once it would exceed this many pages. Generous for any
+#: real snapshot (the largest today, SRT products, is about 12 pages at 1000 rows each).
+MAX_PAGES = 100
+
 #: FoundryX statuses that mean "not FoundryX's fault, ours" - a bad/expired key or a
 #: company code the key cannot see. Mapped to one stable code and a 502 (upstream
 #: refused us) rather than passed through, so the FE never has to special-case FoundryX's
@@ -81,9 +86,19 @@ class FoundryxAutocountClient:
     def _parse(self, response: httpx.Response) -> dict:
         if response.status_code < 400:
             try:
-                return response.json()
+                body = response.json()
             except ValueError:
                 return {}
+            if not isinstance(body, dict):
+                # FoundryX answered 2xx with something that is not a JSON object (a bare
+                # array, a string, ...) - every caller here treats the body as a dict, so
+                # this is not a shape we can trust rather than a shape to crash on.
+                raise FoundryxPullError(
+                    code="UNREACHABLE",
+                    message="AutoCount returned an unexpected response.",
+                    status=502,
+                )
+            return body
 
         try:
             body = response.json()
@@ -130,13 +145,24 @@ class FoundryxAutocountClient:
         )
 
     def all_rows(self, snapshot_id: str) -> list[dict]:
-        """Pages through every row of a ready snapshot, in order."""
+        """Pages through every row of a ready snapshot, in order. Refuses past `MAX_PAGES`
+        (module constant) - an upstream whose `totalPages` keeps growing (or never settles)
+        must not be paged forever."""
         rows: list[dict] = []
         page = 1
         total_pages = 1
         while page <= total_pages:
+            if page > MAX_PAGES:
+                raise FoundryxPullError(
+                    code="ROW_LIMIT",
+                    message=f"AutoCount snapshot exceeds {MAX_PAGES} pages; pull again.",
+                    status=502,
+                )
             body = self.rows_page(snapshot_id, page)
             rows.extend(body.get("rows") or [])
-            total_pages = body.get("totalPages") or 1
+            try:
+                total_pages = int(body.get("totalPages") or 1)
+            except (TypeError, ValueError):
+                total_pages = 1
             page += 1
         return rows

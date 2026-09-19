@@ -37,8 +37,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import text
 
@@ -68,6 +67,14 @@ CONTENT_HASH_MISMATCH = "content_hash_mismatch"
 #: round): the sync is real, but the chatbot/n8n would otherwise keep answering from a
 #: stale file with no visible sign anything is wrong.
 STOCK_LIST_NOT_ARCHIVED = "stock_list_not_archived"
+
+#: Confirm-blocked / apply-refusal wording when a stock pull's FED batch is empty
+#: (Phase 3 fix round, F-1, #1045 HIGH): `StockService.bulk_import_stock`'s own
+#: "active warehouse, absent from this batch -> zeroed" sweep is company-wide, so an
+#: empty batch would otherwise zero every active warehouse's stock, not just whatever
+#: this pull was ever about. Shared by the preview's `confirm_blocked_reason` and the
+#: apply's own refusal so the two never say something different about the same guard.
+EMPTY_FED_REASON = "No row matched an active warehouse; nothing to apply."
 
 
 class UnsupportedPullEntity(ValueError):
@@ -219,6 +226,13 @@ def _apply_stock(db, job: ImportJob, snapshot_id: str, pull_job_id: Optional[str
 
     company_id = str(job.company_id) if job.company_id else None
     fed_rows = classify_stock_rows(db, company_id, rows)["fed"]
+
+    if not fed_rows:
+        # HIGH (F-1b): refuse BEFORE `bulk_import_stock` ever runs - that call's own
+        # "active, absent from this batch -> zeroed" sweep is company-wide, so an empty
+        # batch would otherwise wipe every active warehouse's stock, not just whatever
+        # this pull was about. Nothing written, nothing archived.
+        raise ValueError(EMPTY_FED_REASON)
 
     outcome_writer = ImportOutcome(job.id)
     scope = frozenset({company_id}) if company_id else None
@@ -464,10 +478,18 @@ def _preview_stock(db, job: ImportJob, pull: dict) -> dict:
     }
 
     excluded_nonzero = header.get("excludedNonzeroCount") or 0
-    pull["confirm_blocked_reason"] = (
-        f"AutoCount reports {excluded_nonzero} non-zero excluded pair(s); pull again."
-        if excluded_nonzero > 0 else None
-    )
+    if not fed_rows:
+        # HIGH (F-1a): no pulled row matched an active warehouse at all - Confirm must
+        # never reach `_apply_stock`'s own empty-batch guard for real, so the preview
+        # blocks it here too. Takes priority over the excluded-pair message below: an
+        # empty batch is the more dangerous state (see `EMPTY_FED_REASON`).
+        pull["confirm_blocked_reason"] = EMPTY_FED_REASON
+    elif excluded_nonzero > 0:
+        pull["confirm_blocked_reason"] = (
+            f"AutoCount reports {excluded_nonzero} non-zero excluded pair(s); pull again."
+        )
+    else:
+        pull["confirm_blocked_reason"] = None
     return counts
 
 

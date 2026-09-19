@@ -87,19 +87,27 @@ export interface AutocountPullCompareSummary {
   qty_total_pull?: number | null;
 }
 
-/** One field-level (or row-level) difference the Compare tab lists and can export. */
+/** One field-level (or row-level) difference the Compare tab lists and can export - the
+ *  REAL backend shape (`app/services/autocount_pull_compare.py`): `excel` / `pull`, not
+ *  `your_excel` / `autocount_pull`. */
 export interface AutocountCompareDifference {
   item_code: string;
   /** Stock compare only - the pair's location. */
   location?: string;
   field: string;
-  your_excel: string;
-  autocount_pull: string;
+  excel: string;
+  pull: string;
 }
 
+/** `POST /api/v1/autocount/pulls/{job_id}/compare` response. `summary` is the STORED
+ *  compare summary (same shape `GET /{job_id}` returns as `compare`); `only_in_excel` /
+ *  `only_in_pull` here are the item-code LISTS the comparison just computed - distinct
+ *  from `summary.only_in_excel` / `summary.only_in_pull`, which are counts. */
 export interface AutocountComparePullResult {
   summary: AutocountPullCompareSummary;
   differences: AutocountCompareDifference[];
+  only_in_excel: string[];
+  only_in_pull: string[];
 }
 
 /** `GET /api/v1/autocount/pulls/{job_id}` response - also what `POST /` and `/current` return. */

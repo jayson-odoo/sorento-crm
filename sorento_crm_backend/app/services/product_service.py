@@ -170,6 +170,21 @@ def file_carries_reorder_column(rows: list, headers: tuple[str, ...]) -> bool:
     return False
 
 
+from app.models.procurement import ProductSupplier, Supplier
+from app.models.resources import Attachment, AttachmentType
+from app.schemas.product import (
+    ProductCreate, ProductUpdate, ProductCategoryCreate, ProductCategoryUpdate,
+    BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate,
+    ProductAttachmentCreate, ProductAttachmentUpdate, ProductBulkUpdates
+)
+from app.services.error_handler import handle_not_found, handle_conflict, AppException
+from app.services.company_scope import stamp_lookup_companies
+from app.schemas.common import PaginationResponse
+from app.models.user import SystemSetting
+from app.services.embedding_events import publish_embedding_event
+from app.services.identifier_resolver import is_uuid, resolve_identifier
+
+
 # Lifted out of `bulk_import_products` (PLAN-autocount-pull-review.md, P11) so the
 # AutoCount pull's "Compare with my Excel" tab (`autocount_pull_compare.py`) applies the
 # SAME rules the manual import applies, rather than a second copy that can drift.
@@ -201,21 +216,6 @@ def is_active_from_manual_value(raw_active) -> bool:
     if raw_active is not None and str(raw_active).strip().upper() in ("F", "FALSE", "0", "N", "NO"):
         return False
     return True
-
-
-from app.models.procurement import ProductSupplier, Supplier
-from app.models.resources import Attachment, AttachmentType
-from app.schemas.product import (
-    ProductCreate, ProductUpdate, ProductCategoryCreate, ProductCategoryUpdate,
-    BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate,
-    ProductAttachmentCreate, ProductAttachmentUpdate, ProductBulkUpdates
-)
-from app.services.error_handler import handle_not_found, handle_conflict, AppException
-from app.services.company_scope import stamp_lookup_companies
-from app.schemas.common import PaginationResponse
-from app.models.user import SystemSetting
-from app.services.embedding_events import publish_embedding_event
-from app.services.identifier_resolver import is_uuid, resolve_identifier
 
 
 class ProductService:

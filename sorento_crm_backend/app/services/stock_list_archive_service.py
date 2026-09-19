@@ -8,9 +8,12 @@ storage router, same webhook. The route keeps its own macro-strip step
 (`.xlsm` -> values-only `.xlsx`, `excel_macro_stripper.extract_macro_
 template_xlsx`) and hands this function the ALREADY-clean bytes; every caller
 here (the manual route post-strip, the apply task's generated workbook) is
-handing over genuine `.xlsx` content, so the mime is fixed rather than
-threaded through as a parameter - keeps the signature to exactly what both
-callers naturally have: file bytes, a filename, the acting user.
+handing over genuine `.xlsx` content by default, so the mime type is an
+OPTIONAL keyword (Phase 3 fix round, F-12) rather than threaded through
+unconditionally - the route still passes its own upload's mime through
+explicitly, so a non-`.xlsm` upload (`.xls`, ...) keeps its own mime exactly
+as the pre-move route did, and the apply task's own generated workbook (no
+mime passed at all) falls back to the real xlsx spreadsheetml mime.
 """
 from __future__ import annotations
 
@@ -26,10 +29,17 @@ logger = logging.getLogger(__name__)
 _STOCK_LIST_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def replace_latest_stock_list(db: Session, *, file_bytes: bytes, filename: str, user_id: str):
+def replace_latest_stock_list(
+    db: Session, *, file_bytes: bytes, filename: str, user_id: str, mime_type: str | None = None,
+):
     """Archives every live `Stock_List` attachment and uploads `file_bytes` as the new
     one. Returns the created `Attachment` ORM row - the caller (route or apply task)
-    decides what to do with it (build an HTTP response, or nothing at all)."""
+    decides what to do with it (build an HTTP response, or nothing at all).
+
+    `mime_type` defaults to the real xlsx spreadsheetml mime (every caller here hands
+    over genuine `.xlsx` content unless it says otherwise) - the route passes its
+    upload's own mime explicitly, so a non-`.xlsm` file keeps the mime it arrived with.
+    """
     from app.api.v1.resources.attachments import STOCK_LIST_TYPE_NAMES
     from app.models.resources import Attachment, AttachmentType
     from app.schemas.resources import AttachmentCreate
@@ -73,12 +83,13 @@ def replace_latest_stock_list(db: Session, *, file_bytes: bytes, filename: str, 
     )
     entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
     s3_file_path = f"{entity_type}/{safe_filename}"
+    resolved_mime = mime_type or _STOCK_LIST_MIME
 
     provider = default_provider()
     backend = get_backend(provider)
     try:
         s3_key, _ = backend.upload_file(
-            file_content=file_bytes, file_path=s3_file_path, content_type=_STOCK_LIST_MIME,
+            file_content=file_bytes, file_path=s3_file_path, content_type=resolved_mime,
         )
     except Exception as storage_error:
         logger.error(
@@ -99,7 +110,7 @@ def replace_latest_stock_list(db: Session, *, file_bytes: bytes, filename: str, 
         stored_filename=safe_filename,
         file_path=stored_file_path,
         file_size_bytes=file_size,
-        mime_type=_STOCK_LIST_MIME,
+        mime_type=resolved_mime,
         file_hash=file_hash,
         entity_type=entity_type,
         entity_id=None,

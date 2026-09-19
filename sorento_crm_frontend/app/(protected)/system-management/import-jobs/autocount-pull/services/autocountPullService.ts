@@ -52,6 +52,14 @@ export async function getPullRows(
   return response.json();
 }
 
+/** Pulls a filename out of a `Content-Disposition: attachment; filename="..."` header, or
+ *  `null` if the header is absent/unparseable. */
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export async function downloadPullXlsx(jobId: string): Promise<void> {
   const response = await apiFetch(`/api/v1/autocount/pulls/${jobId}/download.xlsx`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not download the file.'));
@@ -59,7 +67,10 @@ export async function downloadPullXlsx(jobId: string): Promise<void> {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `autocount-pull-${jobId}.xlsx`;
+  // Server's own Content-Disposition filename (V-3, captain ruling, Phase 3 fix round) -
+  // never the job id (no entity known at this layer, and no UUID in what the user sees).
+  anchor.download =
+    filenameFromContentDisposition(response.headers.get('Content-Disposition')) ?? 'autocount-pull.xlsx';
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

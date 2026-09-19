@@ -1182,6 +1182,7 @@ async def replace_latest_stock_list(
             file_bytes=file_content,
             filename=upload_filename,
             user_id=current_user["id"],
+            mime_type=upload_mime,
         )
 
         service = AttachmentService(db)

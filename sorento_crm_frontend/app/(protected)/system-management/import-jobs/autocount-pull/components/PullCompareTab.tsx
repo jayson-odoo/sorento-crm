@@ -17,6 +17,7 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import { toast } from '@/lib/toast';
 import { generateExcelFile, parseExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useComparePull } from '../hooks/useAutocountPull';
+import { isCompareFullMatch } from '../types/compareMatch';
 import type {
   AutocountCompareDifference,
   AutocountComparePullResult,
@@ -30,7 +31,7 @@ export interface PullCompareTabProps {
 
 function summaryHeadline(result: AutocountComparePullResult): { title: string; body: string; ok: boolean } {
   const { summary } = result;
-  const ok = summary.matched === summary.total && result.differences.length === 0;
+  const ok = isCompareFullMatch(summary);
   if (ok) {
     return {
       title: '100% match.',
@@ -102,21 +103,21 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
         size: 180,
       },
       {
-        accessorKey: 'your_excel',
+        accessorKey: 'excel',
         header: ({ column }) => <DataGridColumnHeader title="Your Excel" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate" title={row.original.your_excel}>
-            {row.original.your_excel}
+          <span className="block truncate" title={row.original.excel}>
+            {row.original.excel}
           </span>
         ),
         size: 220,
       },
       {
-        accessorKey: 'autocount_pull',
+        accessorKey: 'pull',
         header: ({ column }) => <DataGridColumnHeader title="AutoCount pull" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate" title={row.original.autocount_pull}>
-            {row.original.autocount_pull}
+          <span className="block truncate" title={row.original.pull}>
+            {row.original.pull}
           </span>
         ),
         size: 220,
@@ -140,10 +141,11 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
         ? [{ key: 'location', label: 'Location', selected: true } satisfies ColumnOption]
         : []),
       { key: 'field', label: 'Difference', selected: true },
-      { key: 'your_excel', label: 'Your Excel', selected: true },
-      { key: 'autocount_pull', label: 'AutoCount pull', selected: true },
+      { key: 'excel', label: 'Your Excel', selected: true },
+      { key: 'pull', label: 'AutoCount pull', selected: true },
     ];
-    await generateExcelFile(result.differences, cols, `autocount-pull-${jobId}-differences.xlsx`);
+    // No UUID in the filename the user sees (cursor rule) - the entity, not the job id.
+    await generateExcelFile(result.differences, cols, `autocount-${entity}-differences.xlsx`);
   };
 
   const headline = result ? summaryHeadline(result) : null;

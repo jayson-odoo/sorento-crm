@@ -101,12 +101,22 @@ Apply job metadata: `{"autocount_apply": {"pull_job_id": "...", "snapshot_id": "
 | `GET /{job_id}` | owner only (404, not 403, for a job that exists but is not the caller's - existence is never revealed). While `building`: passthrough to FoundryX status, stores progress, on `ready` stores the header (display only, see Tasks) and enqueues the preview ONCE (conditional UPDATE on phase), on `failed` fails the job, past 60 min expires it. Always returns phase, progress, header facts, counts, compare summary, confirm_blocked_reason, apply_job_id, warnings |
 | `GET /{job_id}/rows?page&limit&query` | Excel view rows, mapped from the snapshot page(s). Desc 2 round-trips through the manual join formula (`f"{description} {desc2}".strip()`): it is the remainder of the raw `description` after `name` with EXACTLY ONE separator space removed - any further leading whitespace (a real double space in the source data) is KEPT, not stripped, so the downloaded file, re-imported by hand, stores exactly what the pull stores. `description == name` -> Desc 2 empty; `description` not starting with `name` at all -> no boundary to split on, so the Description cell carries the full raw text and Desc 2 is empty |
 | `GET /{job_id}/download.xlsx` | Excel view as a file (stock: the Stock List file) |
-| `POST /{job_id}/compare` `{filename, rows}` | advisory compare, stores the summary only, returns summary + differences |
-| `POST /{job_id}/confirm` | guards, creates + enqueues the apply job once, marks the pull confirmed |
+| `POST /{job_id}/compare` `{filename, rows}` | advisory compare, stores the summary only, returns `{summary, differences, only_in_excel, only_in_pull}` - `summary` is the SAME shape `GET /{job_id}` returns as `compare` (filename, compared_at, total, matched, different, only_in_excel/only_in_pull as COUNTS); the top-level `only_in_excel`/`only_in_pull` are the item-code LISTS the comparison just computed, distinct from the summary's counts. `filename` is bounded to 255 chars, `rows` to 200,000 items (Phase 3 fix round, F-3) |
+| `POST /{job_id}/confirm` | guards, creates + enqueues the apply job once, marks the pull confirmed. The once-guard's conditional UPDATE runs BEFORE the apply job row is inserted (Phase 3 fix round, F-7) - the loser of a race leaves no orphan `import_jobs` row behind |
 
 Entity to permission: `products` -> `master_data.products.autocount_pull`, `stock_balances` ->
-`inventory.stock.autocount_pull`; every route resolves the pull first and checks the permission of
-ITS entity, except `GET /current` (above). Ownership reuses the jobs rule (P12).
+`inventory.stock.autocount_pull`; every route resolves the pull first, RE-CHECKS the caller's
+current single-company scope still covers the pull's own `company_id` (404 if not - Phase 3 fix
+round, F-5: a company switch, not just a different owner, must not reach a pull that is no longer
+in scope), then checks the permission of ITS entity, except `GET /current` (above). Ownership
+reuses the jobs rule (P12).
+
+`map_product_row`'s `price` is a real number (a float of `list_price`, 0 when blank/unparseable),
+never the raw FoundryX string - the FE never parses it and the download's Price cell lands numeric
+(Phase 3 fix round, F-9). Compare keeps working off the RAW pull rows, unaffected. Both workbook
+builders (`build_products_workbook`, `build_stock_workbook`) run every string cell through one
+formula-injection guard before saving (F-4): AutoCount item text is untrusted, and a value
+starting with `=` would otherwise execute as a formula the moment a checker opens the file.
 
 Excel view paging: FoundryX pages are 1000 rows with stable ordering, so Sorento page N of size L maps
 to FoundryX page `ceil` arithmetic with `pageSize=1000`; `query` (item code contains) and the stock
@@ -119,8 +129,12 @@ the snapshot id for the snapshot's remaining life.
 
 One small class, sync `httpx.Client`, `timeout=15` for build and status, `30` for a rows page. Methods
 `build(company_code, entity)`, `status(snapshot_id)`, `rows_page(snapshot_id, page)`,
-`all_rows(snapshot_id)` (pages until `totalPages`). Errors become one `FoundryxPullError(code,
-message, status)`; the code is FoundryX's own stable code or `UNREACHABLE` / `NOT_CONFIGURED`. The key
+`all_rows(snapshot_id)` (pages until `totalPages`, refuses past the module constant `MAX_PAGES`
+(100) with `FoundryxPullError(code="ROW_LIMIT")` - an upstream whose `totalPages` keeps growing must
+not be paged forever, Phase 3 fix round, F-2). Errors become one `FoundryxPullError(code,
+message, status)`; the code is FoundryX's own stable code or `UNREACHABLE` / `NOT_CONFIGURED` - a 2xx
+response whose body is not a JSON object (a bare array, ...) is ALSO `UNREACHABLE` (F-8), never a
+500 the caller has to guard against separately. The key
 is read from settings, sent only as `X-API-Key`, never logged. Settings: `foundryx_base_url`,
 `foundryx_api_key` (`FOUNDRYX_BASE_URL`, `FOUNDRYX_API_KEY`) in `app/config.py`. Tests inject an
 `httpx.MockTransport` that serves the committed fixtures (copied into
@@ -157,14 +171,21 @@ message, the same as a failed guard.
     query of current on hand for the fed pairs to list quantity changes (a pair with no existing stock
     row is a new pair - no row, no counter). `confirm_blocked_reason` is set (a message naming the
     excluded-pair count) whenever the FETCHED header's `excludedNonzeroCount > 0`; the preview still
-    finishes `review` either way (AC-SP-1).
+    finishes `review` either way (AC-SP-1). Takes priority over the excluded-pair message: when NO
+    pulled row matched an active warehouse at all (`fed` count 0), `confirm_blocked_reason` names
+    that instead (`EMPTY_FED_REASON`, Phase 3 fix round, F-1, #1045 HIGH) - see the apply guard below
+    for why.
 - `apply_autocount_pull(db_job_id)`: `fetch_verified_snapshot` again (AC-PC-2: same guards, same
   snapshot), then
   - products: `MasterIngestService(db, company_id=..., stamp_user_id=<confirming user>)
     .ingest("products", rows)`.
   - stock: refuses first (job failed, nothing written) when the FETCHED header's
     `excludedNonzeroCount > 0` - the same check Confirm's own guard names, re-checked here per
-    AC-PC-2's pattern; else `classify_stock_rows` + `bulk_import_stock(fed, user_id, outcome=...)`
+    AC-PC-2's pattern; ALSO refuses first (job failed, nothing written, nothing archived) when the
+    classified FED batch is empty (Phase 3 fix round, F-1, #1045 HIGH) - `StockService.
+    bulk_import_stock`'s own "active warehouse, absent from this batch -> zeroed" sweep is
+    company-wide, so an empty batch reaching it for real would zero every active warehouse's stock,
+    not just whatever this pull was about; else `classify_stock_rows` + `bulk_import_stock(fed, user_id, outcome=...)`
     inside `company_scope(...)`, then build the Stock List xlsx from the fed rows (every one, including
     a row the import itself skipped as product-not-found) and archive it through the shared service
     function. The archive happens only after the import committed, and is BEST-EFFORT: a missing or
@@ -270,6 +291,12 @@ FoundryX lane (:8009) waits for their gateway (their S4) and for the owner to pl
   shows no "last synced".
 - Worker restart needed after deploy (new tasks). New env on prod: `FOUNDRYX_BASE_URL`,
   `FOUNDRYX_API_KEY`, placed by the owner.
+- The `Stock_List` attachment `replace_latest_stock_list` writes is ONE install-wide file
+  (`company_id` NULL, same as the manual n8n upload route) - a stock pull's Confirm for ANY one
+  company replaces the SAME file a Sorento manual upload would have written. Parity with the manual
+  flow as it already behaves today, not a new consequence this lane introduces, but worth naming: a
+  multi-company install has no per-company Stock List, so the chatbot/n8n always reads whichever
+  company's upload (manual or pull) landed last. Owner ruling requested in the PR.
 
 ## Definition of Done
 

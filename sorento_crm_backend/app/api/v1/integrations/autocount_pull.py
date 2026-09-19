@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -46,8 +46,13 @@ class PullStartBody(BaseModel):
 
 
 class ComparePostBody(BaseModel):
-    filename: str
-    rows: list[dict[str, Any]]
+    # Bounds (Phase 3 fix round, F-3): a filename is display text, never a file itself -
+    # 255 is the same ceiling `original_filename` already carries elsewhere in this repo.
+    # `rows` is a checker's own workbook, parsed client-side and posted whole - 200,000
+    # is generous for any real stock/products file (the largest today is about 11,840
+    # rows) and stops a malformed/hostile body from being read into memory unbounded.
+    filename: str = Field(max_length=255)
+    rows: list[dict[str, Any]] = Field(max_length=200_000)
 
 
 def _permission_slug(entity: str) -> str:
@@ -73,10 +78,24 @@ def _require_entity_permission(db: Session, user: dict, entity: str) -> None:
 
 
 def _resolve_pull(db: Session, current_user: dict, job_id: str) -> ImportJob:
-    """Owner-only 404, then the permission of the pull's OWN entity - AC-BD-7 / P12,
-    shared by every `/{job_id}...` route."""
+    """Owner-only 404, then a company re-check, then the permission of the pull's OWN
+    entity - AC-BD-7 / P12, shared by every `/{job_id}...` route.
+
+    Phase 3 fix round (F-5): the owner check alone is not enough once a user can switch
+    company scope - the SAME owner, viewing under a company scope that no longer covers
+    the pull's own `company_id` (a company switch, not a different account), gets the
+    same 404 a non-owner would. Only enforced when the caller's own request carries a
+    single, concrete company (`active_company_id_from_scope`, the same reader `GET
+    /current` already uses) - an all-companies/system/multi-company scope leaves nothing
+    concrete to compare against, so it is not restricted here.
+    """
     job = pull_service.get_owned_pull(db, job_id=job_id, user_id=current_user["id"])
     if job is None:
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND, message="Job not found", code="NOT_FOUND"
+        )
+    active_company_id = active_company_id_from_scope(db)
+    if active_company_id and str(job.company_id) != str(active_company_id):
         raise AppException(
             status_code=status.HTTP_404_NOT_FOUND, message="Job not found", code="NOT_FOUND"
         )
@@ -236,8 +255,19 @@ def compare_pull(
     else:
         fed = pull_service.classify_stock_rows(db, str(job.company_id), pull_rows)["fed"]
         result = compare_stock(body.rows, fed)
-    pull_service.store_compare_summary(db, job, filename=body.filename, result=result)
-    return result
+    job = pull_service.store_compare_summary(db, job, filename=body.filename, result=result)
+    # AC-CM-5 / Phase 3 fix round (F-10): `summary` in the response is the SAME shape
+    # `GET /{job_id}` returns as `compare` - what got stored, not the raw comparison
+    # function's own summary (which carries `only_in_excel`/`only_in_pull` as COUNTS
+    # under different keys than the stored one and no `filename`/`compared_at` at all).
+    # `differences` and the top-level `only_in_excel`/`only_in_pull` stay the raw LISTS
+    # the comparison just computed - never stored (AC-CM-5).
+    return {
+        "summary": pull_service.serialize(job)["compare"],
+        "differences": result.get("differences", []),
+        "only_in_excel": result.get("only_in_excel", []),
+        "only_in_pull": result.get("only_in_pull", []),
+    }
 
 
 @router.post("/{job_id}/confirm")

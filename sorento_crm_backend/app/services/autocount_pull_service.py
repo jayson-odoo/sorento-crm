@@ -133,6 +133,11 @@ def find_open_pull(
         .all()
     )
     for job in candidates:
+        if job.status == JobStatus.FAILED.value:
+            # The orphan sweep (or a dead-worker task) marked the `import_jobs` row
+            # itself failed while the pull's own stored phase is stale (F-11) - not
+            # "open" whatever the metadata still says.
+            continue
         pull = _pull_meta(job)
         if pull.get("phase") not in _OPEN_PHASES:
             continue
@@ -282,11 +287,19 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
 
 def serialize(job: ImportJob) -> dict:
     pull = _pull_meta(job)
+    phase = pull.get("phase")
+    if job.status == JobStatus.FAILED.value and phase not in ("failed", "expired"):
+        # A worker death (or the orphan sweep) can leave `import_jobs.status` `failed`
+        # while the pull's own stored phase is still whatever it was mid-task (F-11) - the
+        # job row's own status is the honest answer here, never a stale "previewing" the
+        # task never got the chance to overwrite. `failed`/`expired` are already the
+        # code's own deliberate answer (`_mark_failed` sets both together) and stay as-is.
+        phase = "failed"
     return {
         "job_id": str(job.id),
         "entity": pull.get("entity"),
         "company_code": pull.get("company_code"),
-        "phase": pull.get("phase"),
+        "phase": phase,
         "progress": pull.get("progress"),
         "header": pull.get("header"),
         "counts": pull.get("counts") or {},
@@ -349,9 +362,23 @@ def map_product_row(row: dict) -> dict:
         "desc_2": desc2,
         "item_group": row.get("category_code"),
         "item_brand": row.get("brand_code"),
-        "price": row.get("list_price"),
+        "price": _row_price(row.get("list_price")),
         "is_active": row.get("is_active"),
     }
+
+
+def _row_price(raw_list_price) -> float:
+    """AC-RV-3 (Phase 3 fix round, F-9): `price` is a real number, not the raw FoundryX
+    string, so the FE never parses it and the download's Price cell lands numeric. A blank
+    or unparseable value reads as 0 - the same "no price" sentinel the manual import's own
+    `parse_manual_list_price` uses, but here as a float (compare keeps the raw pull rows,
+    never this mapped view, so nothing else reads this conversion)."""
+    if raw_list_price is None or str(raw_list_price).strip() == "":
+        return 0.0
+    try:
+        return float(raw_list_price)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def paginate_rows(mapped_rows: list[dict], *, page: int, limit: int, query: Optional[str]) -> dict:
@@ -382,6 +409,20 @@ def download_filename(job: ImportJob) -> str:
     return f"autocount-{entity}-pull.xlsx"
 
 
+def _neutralize_formula_cells(sheet) -> None:
+    """Formula-injection guard (Phase 3 fix round, F-4): AutoCount item text (a
+    Description, an Item Description) is untrusted input that lands straight in a
+    workbook a checker opens in Excel - a value starting with `=` (or `+`/`-`/`@`, the
+    same leading characters Excel treats as a formula) would otherwise execute as one
+    the moment the file opens. Every string cell openpyxl would itself have classified
+    as a formula (`data_type == "f"`) is forced back to a literal string cell, value
+    unchanged - shared by both workbook builders so neither can forget it."""
+    for row in sheet.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and cell.data_type == "f":
+                cell.data_type = "s"
+
+
 def build_products_workbook(mapped_rows: list[dict]) -> bytes:
     """AC-RV-5: the template header row exactly, with a trailing blank UOM column."""
     import io
@@ -397,6 +438,7 @@ def build_products_workbook(mapped_rows: list[dict]) -> bytes:
             row["item_code"], row["description"], row["desc_2"], row["item_group"],
             row["item_brand"], row["price"], bool(row["is_active"]), None,
         ])
+    _neutralize_formula_cells(sheet)
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -480,6 +522,7 @@ def build_stock_workbook(template_rows: list[dict]) -> bytes:
             row.get("Item Code"), row.get("Item Description"),
             row.get("Location"), row.get("On Hand Qty"),
         ])
+    _neutralize_formula_cells(sheet)
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -522,8 +565,12 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
     an apply job - returns the same apply job and enqueues nothing.
 
     The once-guard is a conditional UPDATE on the pull's own stored phase (`review` ->
-    `confirmed`), the same style `_claim_and_enqueue_preview` uses on `status`: a caller
-    that loses the race finds zero rows to update and enqueues nothing.
+    `confirmed`), the same style `_claim_and_enqueue_preview` uses on `status` - run
+    FIRST, before anything about the apply job is written. Only the caller whose UPDATE
+    actually affects a row (the winner) then inserts the apply job row and enqueues it;
+    a caller that loses the race (Phase 3 fix round, F-7) leaves no orphan `import_jobs`
+    row behind, unlike the earlier "insert unconditionally, then check who won" order,
+    which left the loser's own apply-job insert committed and never enqueued.
     """
     pull = _pull_meta(job)
     if pull.get("phase") == "confirmed" and pull.get("apply_job_id"):
@@ -538,25 +585,14 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         raise PullNotReadyForConfirm(str(pull["confirm_blocked_reason"]))
 
     entity = pull.get("entity")
-    apply_job = ImportJob(
-        job_id=str(uuid.uuid4()),
-        job_type=APPLY_JOB_TYPES[entity],
-        status=JobStatus.QUEUED.value,
-        user_id=user_id,
-        company_id=job.company_id,
-        job_metadata={
-            "autocount_apply": {
-                "pull_job_id": str(job.id),
-                "snapshot_id": pull.get("snapshot_id"),
-                "entity": entity,
-            }
-        },
-    )
-    db.add(apply_job)
-    db.flush()
+    # Generated up front so the ONE conditional UPDATE can write phase + apply_job_id
+    # together, atomically - the apply job row itself is inserted only once that UPDATE
+    # has proven this caller won the race.
+    apply_job_id = str(uuid.uuid4())
+    apply_job_rq_id = str(uuid.uuid4())
 
     pull["phase"] = "confirmed"
-    pull["apply_job_id"] = str(apply_job.id)
+    pull["apply_job_id"] = apply_job_id
     new_meta = _with_pull(job, pull)
 
     result = db.execute(
@@ -570,11 +606,29 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
     )
     db.commit()
     if result.rowcount != 1:
-        # Someone else confirmed it first between our read and this write - the apply
-        # job we just inserted is already committed (harmless, unused) and the winner's
-        # is the one that counts.
+        # Someone else confirmed it first between our read and this write - nothing of
+        # ours was ever written, so there is nothing to clean up. The winner's apply job
+        # (and its own apply_job_id) is the one that counts.
         db.refresh(job)
         return serialize(job)
+
+    apply_job = ImportJob(
+        id=apply_job_id,
+        job_id=apply_job_rq_id,
+        job_type=APPLY_JOB_TYPES[entity],
+        status=JobStatus.QUEUED.value,
+        user_id=user_id,
+        company_id=job.company_id,
+        job_metadata={
+            "autocount_apply": {
+                "pull_job_id": str(job.id),
+                "snapshot_id": pull.get("snapshot_id"),
+                "entity": entity,
+            }
+        },
+    )
+    db.add(apply_job)
+    db.commit()
 
     from app.tasks.autocount_pull_tasks import apply_autocount_pull
 
