@@ -138,9 +138,10 @@ cases:
           pending_kind: sales_report_detail
           no_uuid: true
 
-      # 4. A product refinement on top - both customer AND product now named, so S6 prints NO
-      # breakdown heading at all (neither By product nor By customer). Prior filters (channel,
-      # narrowed date) stay carried.
+      # 4. A product refinement on top - both customer AND product now named. SRTWT7445
+      # covers a whole family on the live DB (2+ codes), so S20 prints By product only (not
+      # the old "neither heading at all", which only holds for a single-code product).
+      # Prior filters (channel, narrowed date) stay carried.
       - text: "only SRTWT7445"
         expect:
           branch_kind: business_query
@@ -148,15 +149,17 @@ cases:
             - "Product: SRTWT7445"
             - "Delivery date: 01/06/2026 to 30/06/2026"
             - "Channel: Dealer"
-          reply_not_contains: ["*_By product_*", "*_By customer_*"]
+            - "*_By product_*"
+          reply_not_contains: ["*_By customer_*"]
           pending_kind: sales_report_detail
           no_uuid: true
 
   - name: S18 - a product-only ask with no date defaults to the current calendar year
     cold: true
     turns:
-      # Journey step 5. Product only (no customer) = By customer breakdown; no date named
-      # defaults to the CURRENT YEAR (S18), unlike a customer ask which stays "all".
+      # Journey step 5. Product only (no customer) over a family (SRTWT7445 covers 2+ codes)
+      # = BOTH breakdowns (S20); no date named defaults to the CURRENT YEAR (S18), unlike a
+      # customer ask which stays "all".
       - text: "sales report for SRTWT7445"
         expect:
           branch_kind: business_query
@@ -165,6 +168,7 @@ cases:
             - "Channel: all"
             # Current calendar year (Malaysia time), today is 19 Sep 2026. BUMP EVERY JANUARY.
             - "Delivery date: 01/01/2026 to 31/12/2026"
+            - "*_By product_*"
             - "*_By customer_*"
           reply_not_contains: ["Delivery date: all"]
           no_uuid: true
@@ -221,13 +225,18 @@ cases:
       # as a PRODUCT, and a pre-fetch miss gate refused the turn before the report
       # ever ran. Fix A (resolve_gate.py's if3_miss) plus fix B (the prompt wording)
       # must both land: the report itself must run, Channel: Dealer, an Aug 2026
-      # block, never the generic miss text.
+      # block, never the generic miss text. "Srt5674-N" also covers a family (SRT5674-N,
+      # SRT5674-NL) on the live DB, so S20 prints BOTH breakdowns - By product (with the
+      # SRT5674-N row the original defect's own August sales sit on) then By customer.
       - text: "dealer Srt5674-N August total sale quantity"
         expect:
           branch_kind: business_query
           reply_contains:
             - "Channel: Dealer"
             - "*_Aug 2026_*"
+            - "*_By product_*"
+            - "SRT5674-N:"
+            - "*_By customer_*"
           reply_not_contains: ["matched these", "No sales found."]
           no_uuid: true
 

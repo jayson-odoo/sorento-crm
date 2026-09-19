@@ -681,36 +681,115 @@ def test_detail_rows_carry_their_matched_product_codes(client, db):
 
 
 def test_breakdown_key_follows_subject(client, db):
-    """Customer subject carries `by_product` and never `by_customer`; product
-    subject carries `by_customer` and never `by_product`; both named carries
-    neither key at all (R13's rule, ported from the outstanding report)."""
-    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
-    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust"))
+    """S6 baseline, extended by S20 (owner ruling, live testing 19 Sep 2026): which
+    breakdown(s) a month carries follows the SUBJECT *and* how many codes the
+    product filter COVERS (the S19 family) -
+
+      * customer only -> `by_product` only (S6, unchanged)
+      * product only, ONE covered code -> `by_customer` only (S6, unchanged)
+      * product only, 2+ covered codes -> BOTH `by_product` and `by_customer`
+      * customer + product, ONE covered code -> neither key (S6, unchanged)
+      * customer + product, 2+ covered codes -> `by_product` only
+
+    Seeded: a family `ZZT-FAMBD` / `ZZT-FAMBD-N` (2 covered codes, one line each,
+    under two different customers) plus a single-code product with no siblings.
+    """
+    fam_a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-FAMBD")
+    fam_b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-FAMBD-N")
+    single = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SOLO"))
+    cust1 = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust1"))
+    cust2 = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust2"))
+    for prod, cust in ((fam_a, cust1), (fam_b, cust2)):
+        _so_line(
+            db, product_id=prod.id, ordered=10, delivered=0, line_total=Decimal("100.00"),
+            customer_id=cust.id, order_date=date(2026, 6, 1),
+        )
     _so_line(
-        db, product_id=prod.id, ordered=10, delivered=0, line_total=Decimal("100.00"),
-        customer_id=cust.id, order_date=date(2026, 6, 1),
+        db, product_id=single.id, ordered=10, delivered=0, line_total=Decimal("100.00"),
+        customer_id=cust1.id, order_date=date(2026, 6, 1),
     )
     db.commit()
 
-    customer_subject = client.get(BASE, params={"customer_ids": cust.id})
+    # customer only -> by_product only
+    customer_subject = client.get(BASE, params={"customer_ids": cust1.id})
     assert customer_subject.status_code == 200, customer_subject.text
     cs_month = customer_subject.json()["months"][0]
     assert "by_product" in cs_month, cs_month
     assert "by_customer" not in cs_month, cs_month
 
-    product_subject = client.get(BASE, params={"product_code": prod.product_code})
-    assert product_subject.status_code == 200, product_subject.text
-    ps_month = product_subject.json()["months"][0]
-    assert "by_customer" in ps_month, ps_month
-    assert "by_product" not in ps_month, ps_month
+    # product only, ONE covered code -> by_customer only
+    single_subject = client.get(BASE, params={"product_code": single.product_code})
+    assert single_subject.status_code == 200, single_subject.text
+    single_month = single_subject.json()["months"][0]
+    assert "by_customer" in single_month, single_month
+    assert "by_product" not in single_month, single_month
 
-    both_subject = client.get(
-        BASE, params={"product_code": prod.product_code, "customer_ids": cust.id}
+    # product only, 2+ covered codes -> BOTH
+    family_subject = client.get(BASE, params={"product_code": "ZZT-FAMBD"})
+    assert family_subject.status_code == 200, family_subject.text
+    assert len(family_subject.json()["product_codes"]) == 2, family_subject.json()
+    family_month = family_subject.json()["months"][0]
+    assert "by_product" in family_month, family_month
+    assert "by_customer" in family_month, family_month
+
+    # customer + product, ONE covered code -> neither
+    both_single = client.get(
+        BASE, params={"product_code": single.product_code, "customer_ids": cust1.id}
     )
-    assert both_subject.status_code == 200, both_subject.text
-    both_month = both_subject.json()["months"][0]
-    assert "by_customer" not in both_month, both_month
-    assert "by_product" not in both_month, both_month
+    assert both_single.status_code == 200, both_single.text
+    bs_month = both_single.json()["months"][0]
+    assert "by_customer" not in bs_month, bs_month
+    assert "by_product" not in bs_month, bs_month
+
+    # customer + product, 2+ covered codes -> by_product only
+    both_family = client.get(
+        BASE, params={"product_code": "ZZT-FAMBD", "customer_ids": cust1.id}
+    )
+    assert both_family.status_code == 200, both_family.text
+    bf_month = both_family.json()["months"][0]
+    assert "by_product" in bf_month, bf_month
+    assert "by_customer" not in bf_month, bf_month
+
+
+def test_family_breakdowns_both_tally_with_month_totals(client, db):
+    """S20: when a product-only ask covers 2+ codes, BOTH `by_product` and
+    `by_customer` are returned, and BOTH tally to the month's own six figures
+    to the cent - the same 10/3-repeating rounding shape
+    `test_rounding_tallies_to_the_cent` uses (per-line cent rounding, S15),
+    now spread across a two-code family and two customers so a drifted
+    breakdown (one query rounding differently from the other) would show up
+    as a one-cent mismatch rather than by coincidence tallying anyway."""
+    fam_a = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("FAMA"))
+    fam_stem = fam_a.product_code
+    fam_b = product(db, company_id=DEFAULT_COMPANY_ID, code=f"{fam_stem}-N")
+    cust1 = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust1"))
+    cust2 = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust2"))
+    # Three lines, qty 3 delivered 1, line_total 10.00 each (10/3 repeating) -
+    # spread over both codes and both customers.
+    for prod, cust in ((fam_a, cust1), (fam_a, cust2), (fam_b, cust1)):
+        _so_line(
+            db, product_id=prod.id, ordered=3, delivered=1, line_total=Decimal("10.00"),
+            customer_id=cust.id, order_date=date(2026, 6, 1),
+        )
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": fam_stem})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["product_codes"]) == 2, body
+    month = body["months"][0]
+    assert _money(month["confirmed_value"]) == Decimal("9.99"), month
+    assert _money(month["outstanding_value"]) == Decimal("20.01"), month
+    assert _money(month["ordered_value"]) == Decimal("30.00"), month
+
+    assert "by_product" in month, month
+    assert "by_customer" in month, month
+    for key in ("by_product", "by_customer"):
+        for figure in ("ordered_value", "confirmed_value", "outstanding_value"):
+            total = sum((_money(r[figure]) for r in month[key]), Decimal("0"))
+            assert total == _money(month[figure]), (key, figure, month[key], month)
+        for figure in ("ordered_qty", "confirmed_qty", "outstanding_qty"):
+            assert sum(r[figure] for r in month[key]) == month[figure], (key, figure, month)
 
 
 # --------------------------------------------------------------------- AC-1629

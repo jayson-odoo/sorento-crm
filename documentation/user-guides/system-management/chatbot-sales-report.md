@@ -83,6 +83,13 @@ Under the customer's own numbers sits a breakdown list, ranked by ordered value,
 * Name both a customer and a product and there is no breakdown at all - the month's own four
   lines are the whole answer, because there is nothing left to break down.
 
+**Asking about a product that covers more than one code prints By product too**, so you can
+still see which of those codes actually sold. Since a product code also covers every sibling
+code that starts with it (see above), a product-only ask over such a family prints **both**
+breakdowns - By product first, then By customer. Naming a customer alongside that same family
+prints By product only; naming a customer alongside a single, non-family code still prints no
+breakdown at all.
+
 Every matching row is listed; nothing is ever shortened with "+N more".
 
 If nothing matches at all, the report still prints its header, then one line: `No sales

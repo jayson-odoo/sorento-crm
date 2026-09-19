@@ -2,20 +2,27 @@
 
 `documentation/plans/chatbot/PLAN-chatbot-sales-report.md` ("Backend contract");
 `documentation/plans/chatbot/chatbot-sales-report-acceptance-criteria.md`
-AC-1620 to AC-1632, rulings S15 to S19 (S19: 19 Sep 2026 live-testing fix
+AC-1620 to AC-1632, rulings S15 to S20 (S19: 19 Sep 2026 live-testing fix
 round - `product_code` is now a PREFIX, `_resolve_products`, not a single
-exact match).
+exact match; S20: same day, second live-testing round - a product filter
+covering 2+ codes ALSO wants `by_product`, even alongside a named customer,
+so `by_product` and `by_customer` are no longer mutually exclusive).
 
 AGGREGATED IN SQL, not rolled up from raw rows in Python (SEC-B2/ruling S17): a
 big dealer is 1,230 SOs over 37 months (UAC "Measured"), thousands of lines - too
-many to read into the request process for one WhatsApp reply. THREE grouped
-queries, each `GROUP BY`, so a total can never drift from the SAME per-line SQL
+many to read into the request process for one WhatsApp reply. Grouped queries,
+each `GROUP BY`, so a total can never drift from the SAME per-line SQL
 expressions:
 
-* `_months_and_breakdown_query` - one row per (month, breakdown key), or per
-  month alone when neither breakdown is wanted (both subjects named). Month
-  TOTALS are the Python sum of that month's breakdown rows - summing already-
-  computed SQL sums, not re-deriving them from raw lines.
+* `_breakdown_query` - one row per (month, breakdown key), called ONCE PER
+  breakdown key wanted (S20: up to two, `by_product` and `by_customer`, never
+  materialising raw lines to build both from one pass). Neither wanted (both
+  subjects named, one covered code) falls back to a single query grouped by
+  month alone. Month TOTALS are the Python sum of whichever breakdown ran
+  first - summing already-computed SQL sums, not re-deriving them from raw
+  lines, and never drifting between the two breakdowns because `product_id`
+  is NOT NULL/FK-RESTRICT (the `by_product` query's inner join to `Product`
+  drops no row the `by_customer` query would otherwise have kept).
 * `_so_count_query` - one row per month, `COUNT(DISTINCT sales_order_id)`. A
   SEPARATE query because a DISTINCT count cannot be summed from the breakdown
   rows above (the same SO can carry lines under more than one product/customer
@@ -298,9 +305,21 @@ def sales_report(
     customer_ids = [str(c).strip() for c in (customer_ids or []) if str(c).strip()] or None
     has_customer = bool(customer_ids) or bool((customer_query or "").strip())
     has_product = bool(matched_products)
-    # S6/AC-1628: customer subject -> By product; product subject -> By customer;
-    # both named -> neither breakdown.
-    want_by_product = has_customer and not has_product
+    # S6/AC-1628, extended by S20 (owner ruling, live testing 19 Sep 2026): a
+    # customer subject alone still wants By product; a product subject alone
+    # still wants By customer, REGARDLESS of how many codes it covers - the
+    # extension is that a product filter covering 2+ codes (the S19 family)
+    # ALSO wants By product, even alongside a named customer. Only a
+    # customer+product ask whose product covers exactly one code keeps the
+    # original "no breakdown at all" shape.
+    #   customer only                       -> by_product
+    #   product only, 1 covered code        -> by_customer
+    #   product only, 2+ covered codes      -> by_product AND by_customer
+    #   customer + product, 1 covered code  -> neither
+    #   customer + product, 2+ covered codes -> by_product only
+    want_by_product = (has_customer and not has_product) or (
+        has_product and len(matched_products) >= 2
+    )
     want_by_customer = has_product and not has_customer
     want_so_rows = (detail or "").strip().lower() == "so"
 
@@ -314,49 +333,65 @@ def sales_report(
     month_expr = func.date_trunc("month", bucket_expr)
 
     # ----------------------------------------------------------------- months + breakdown
-    # ONE grouped query: GROUP BY month and the breakdown key (product_code, customer_name,
-    # or nothing when both subjects are named) - month TOTALS are the Python sum of a
-    # month's own breakdown rows below (summing SQL sums, not raw lines).
-    select_cols: list = [month_expr.label("month_dt")]
-    group_cols: list = [month_expr]
-    breakdown_col = None
-    if want_by_product:
-        breakdown_col = Product.product_code
-        select_cols.append(Product.product_code.label("breakdown_key"))
-        group_cols.append(Product.product_code)
-    elif want_by_customer:
-        breakdown_col = Customer.customer_name
-        select_cols.append(Customer.customer_name.label("breakdown_key"))
-        group_cols.append(Customer.customer_name)
+    # ONE grouped query PER breakdown key wanted (S20: up to two - `by_product` and
+    # `by_customer` can both be wanted at once, a product filter covering 2+ codes
+    # alongside a named customer, or a product-only ask over a family), never a
+    # single query materialising raw lines. Neither wanted -> ONE query grouped by
+    # month alone. Month TOTALS are the Python sum of whichever breakdown ran first
+    # (both tally to the cent - S20 - `product_id` is NOT NULL/FK-RESTRICT, so the
+    # `by_product` query's inner join to `Product` never drops a row the
+    # `by_customer` query would otherwise have kept).
+    def _breakdown_query(breakdown_expr, *, needs_product_join: bool) -> dict[str, dict[str, dict]]:
+        q = (
+            db.query(
+                month_expr.label("month_dt"),
+                breakdown_expr.label("breakdown_key"),
+                *_figure_sum_labels(figure_exprs),
+            )
+            .select_from(SalesOrderLine)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+        )
+        if needs_product_join:
+            q = q.join(Product, Product.id == SalesOrderLine.product_id)
+        q = q.filter(*filters).group_by(month_expr, breakdown_expr)
+        acc: dict[str, dict[str, dict]] = {}
+        for row in q.all():
+            month_key = _month_key(row.month_dt)
+            fig = acc.setdefault(month_key, {}).setdefault(row.breakdown_key, _new_figures())
+            _accumulate(fig, row)
+        return acc
 
-    q1 = (
-        db.query(*select_cols, *_figure_sum_labels(figure_exprs))
-        .select_from(SalesOrderLine)
-        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
-    )
+    by_product_acc: dict[str, dict[str, dict]] = {}
+    by_customer_acc: dict[str, dict[str, dict]] = {}
+    primary_acc: Optional[dict[str, dict[str, dict]]] = None
     if want_by_product:
-        q1 = q1.join(Product, Product.id == SalesOrderLine.product_id)
-    q1 = q1.filter(*filters).group_by(*group_cols)
+        by_product_acc = _breakdown_query(Product.product_code, needs_product_join=True)
+        primary_acc = by_product_acc
+    if want_by_customer:
+        by_customer_acc = _breakdown_query(Customer.customer_name, needs_product_join=False)
+        if primary_acc is None:
+            primary_acc = by_customer_acc
 
     months_acc: dict[str, dict] = {}
-    breakdown_acc: dict[str, dict[str, dict]] = {}
-    for row in q1.all():
-        month_key = _month_key(row.month_dt)
-        if breakdown_col is not None:
-            key = row.breakdown_key
-            fig = breakdown_acc.setdefault(month_key, {}).setdefault(key, _new_figures())
-            _accumulate(fig, row)
-        else:
-            fig = months_acc.setdefault(month_key, _new_figures())
-            _accumulate(fig, row)
-
-    if breakdown_col is not None:
-        for month_key, keyed in breakdown_acc.items():
+    if primary_acc is not None:
+        for month_key, keyed in primary_acc.items():
             totals = months_acc.setdefault(month_key, _new_figures())
             for fig in keyed.values():
                 for k in totals:
                     totals[k] += fig[k]
+    else:
+        q1 = (
+            db.query(month_expr.label("month_dt"), *_figure_sum_labels(figure_exprs))
+            .select_from(SalesOrderLine)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .filter(*filters)
+            .group_by(month_expr)
+        )
+        for row in q1.all():
+            fig = months_acc.setdefault(_month_key(row.month_dt), _new_figures())
+            _accumulate(fig, row)
 
     # ----------------------------------------------------------------- so_count per month
     # A SEPARATE query (a DISTINCT count cannot be summed from the breakdown rows
@@ -383,13 +418,13 @@ def sales_report(
         if want_by_product:
             rows = [
                 {"product_code": code, **_quantised_figures(fig)}
-                for code, fig in breakdown_acc.get(month_key, {}).items()
+                for code, fig in by_product_acc.get(month_key, {}).items()
             ]
             entry["by_product"] = _rank_breakdown(rows, name_key="product_code")
         if want_by_customer:
             rows = [
                 {"customer_name": name, **_quantised_figures(fig)}
-                for name, fig in breakdown_acc.get(month_key, {}).items()
+                for name, fig in by_customer_acc.get(month_key, {}).items()
             ]
             entry["by_customer"] = _rank_breakdown(rows, name_key="customer_name")
         months.append(entry)

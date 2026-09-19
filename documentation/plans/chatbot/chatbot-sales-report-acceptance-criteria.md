@@ -70,7 +70,7 @@ Other stakeholders: nobody is notified; this is a read.
 | S3 | A line belongs to the month of its own `required_date`; a line with none falls back to `sales_orders.order_date`. Header line is `Delivery date:`. An SO with lines in two months counts once in each month's `Sales orders`. Future months print like any other. |
 | S4 | No date in the message = all dates, printed `Delivery date: all`. |
 | S5 | ONE shape: a block per month, latest first, each with its own breakdown list, always. Every row is sent, no "+N more". |
-| S6 | Breakdown under a month: customer subject = By product; product subject = By customer; both named = no breakdown. Ranked by ordered value descending, ties by ordered quantity descending, then name ascending. Sorted in the route; the presenter never re-sorts. |
+| S6 | Breakdown under a month: customer subject = By product; product subject = By customer; both named = no breakdown, UNLESS the product filter covers 2+ codes (S20 extends this - see S20). Ranked by ordered value descending, ties by ordered quantity descending, then name ascending. Sorted in the route; the presenter never re-sorts. |
 | S7 | Subject rule: at least one of customer or product (422 `subject_required` otherwise). |
 | S8 | Channel is a filter the PARSER reads: "dealer" = `demand_class = 'retail'`, "project" = `demand_class = 'project'`, neither word = all, including the null-class SOs, which appear under `all` only. Header line `Channel: Dealer / Project / all`. The outstanding report is unchanged: "dealer" binds nothing there. |
 | S9 | Location filters like the outstanding report (same warehouse resolver, exact code or `-suffix`), header line `Location:` printed the way the outstanding header prints it: `IB (BRW-IB, MWH-IB)`. The route echoes `location_token` for that and never filters on it. |
@@ -84,6 +84,7 @@ Other stakeholders: nobody is notified; this is a read.
 | S17 | `customer_query` needs at least 3 characters (after strip) - shorter is 422. The report is aggregated in SQL, not rolled up from raw rows in Python. |
 | S18 | A PRODUCT-ONLY ask (a resolved product, no customer) with no date window defaults to the CURRENT CALENDAR YEAR (Malaysia time); a customer ask, or a customer+product ask, with no date stays all dates. The default is built in the lane, never the route - `date_from`/`date_to` absent still means all dates when the route is called directly. "All dates" said in words turns the default off. |
 | S19 | On the SALES REPORT, a product ask covers the typed code AND every product whose code STARTS WITH it (case-insensitive). The OUTSTANDING report keeps its exact-code rule (AC-1119), do not touch it. (Owner ruling from live testing, 19 Sep 2026: "Srt5674 August total sale quantity" answered "No sales found." because every August sale sat on the sibling SRT5674-N.) The `Product:` header line and the response's own `product_codes` echo BOTH follow this same "covers" rule, not "has a row in the report": `product_codes` is every code the prefix matches (a covered code with zero sales in the window still appears), sorted ascending, printed as a comma-separated list (AC-1633 - second fix round, owner ruling, 19 Sep 2026: the earlier bracket form `SRT5674 (SRT5674, SRT5674-N)` read "weird"). |
+| S20 | (Owner ruling from live testing, 19 Sep 2026: with S19, the header read `Product: SRT5674, SRT5674-BL, SRT5674-N, SRT5674-NL` but each month only printed `*_By customer_*` - "how I know the report is for which product".) The breakdown a month carries is decided by the SUBJECT AND by how many product codes the product filter COVERS (`product_codes`, the S19 family): customer only -> `by_product` (unchanged); product only, ONE covered code -> `by_customer` (unchanged); product only, 2+ covered codes -> BOTH: `by_product` first, then `by_customer`; customer + product, ONE covered code -> none (unchanged); customer + product, 2+ covered codes -> `by_product` only. `by_product` rows list only codes that HAVE sales in that month (a covered code with no sales in the month is absent, never a zero row), same six figures, ranked per S6 (ordered value desc, ordered qty desc, code asc). Both lists sum to the month totals to the cent (per-line cent rounding, S15). Still aggregated in SQL: when both lists are needed the route runs the grouped query once per breakdown key (two grouped queries), never materialising lines. The presenter prints `*_By product_*` then `*_By customer_*` when both keys are present, in that order; each still prints rows in the order given, never sorts. Absent key = heading absent (unchanged). |
 
 ## Phase 1 - the reply (presenter over mock JSON)
 
@@ -98,7 +99,10 @@ Other stakeholders: nobody is notified; this is a read.
 - **AC-1603 [FE][T]** Any header axis absent from the body prints `all`, never an omitted
   line. `Channel` prints `Dealer`, `Project` or `all`. `Location` prints `IB (BRW-IB, MWH-IB)` when the body carries a `location_token`, the bare code when the token is itself the one code, `all` with no token. Evidence: pytest, presenter.
 - **AC-1604 [FE][T]** Product subject prints `*_By customer_*`; customer subject prints
-  `*_By product_*`; both named prints no breakdown heading at all. Evidence: three goldens.
+  `*_By product_*`; both named prints no breakdown heading at all - UNLESS the product
+  covers 2+ codes (S20): product-only over a family prints BOTH headings, `*_By product_*`
+  first; customer + a family prints `*_By product_*` only. Evidence: goldens, presenter
+  tests.
 - **AC-1605 [FE][T]** A hit ends with `Reply 1 for the sales order list.` and nothing after
   it. Evidence: golden fixture.
 - **AC-1606 [FE][T]** With `detail=so` the presenter prints one numbered item per row:
@@ -154,8 +158,18 @@ Other stakeholders: nobody is notified; this is a read.
   with no product filter. `warehouse_codes` filters lines to
   those codes (unchanged by S19). Evidence: pytest.
 - **AC-1628 [BE][T]** Breakdown key follows the subject: customer subject carries
-  `by_product[]`, product subject `by_customer[]`, both named carries neither key.
-  Evidence: pytest.
+  `by_product[]`, product subject `by_customer[]`, both named carries neither key -
+  UNLESS the product filter covers 2+ codes (S20): product-only over a family carries
+  BOTH keys; customer + a family carries `by_product[]` only. Evidence: pytest, the
+  five-case table (customer only / product-only-one-code / product-only-family /
+  both-one-code / both-family).
+- **AC-1634 [BE][T]** (S20) When a month carries both `by_product[]` and `by_customer[]`
+  (a product filter covering 2+ codes), BOTH lists sum to the month's own six figures
+  to the cent - the per-line cent rounding (S15) tallies identically whichever
+  breakdown key rolled them up, never a one-cent drift between the two grouped
+  queries. `by_product[]` lists only codes with sales inside the window; a covered
+  code with none in that month is absent, never a zero row. Evidence: pytest, the
+  10/3-repeating rounding seed shape.
 - **AC-1629 [BE][T]** `detail=so` returns `so_rows[]`, one row per SO with lines rolled up
   over the WHOLE filtered window: `so_number`, `customer_name`, `location` (distinct codes,
   comma joined), `order_date`, ordered / confirmed / outstanding value and quantity; sorted

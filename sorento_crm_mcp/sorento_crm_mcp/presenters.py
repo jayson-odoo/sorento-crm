@@ -2188,9 +2188,10 @@ def _outstanding_detail(report: dict, scope: str) -> str:
 # same echo-token/resolved-codes pair the outstanding report carries (S9,
 # captain ruling 19 Sep 2026: "Location:" prints exactly as the outstanding
 # header does), `date_from` / `date_to` the bucket-date window, `months[]`
-# latest first with `by_product[]` XOR `by_customer[]` XOR neither (S6/AC-1628
-# - the ROUTE decides which, this presenter only renders whichever key the
-# month carries), and `so_rows[]` for `detail=so`.
+# latest first with `by_product[]`, `by_customer[]`, both, or neither (S6/
+# AC-1628, extended S20 - the ROUTE decides which keys are present, this
+# presenter only renders whichever it was handed, `by_product` first when
+# both are there), and `so_rows[]` for `detail=so`.
 #
 # Reused verbatim from the outstanding section above, no re-import needed
 # (same module): `_outstanding_fmt_int` (thousands-separated quantities, S13),
@@ -2262,20 +2263,26 @@ def _sales_product_header(typed_code: Any, codes: Any) -> str:
     return str(typed_code)
 
 
-def _sales_breakdown(month: dict) -> tuple[str, str, list]:
-    """Which breakdown a month block carries (AC-1604/AC-1628): the heading, the
-    row's name key, and its rows - ``("*_By product_*", "product_code", rows)``
-    for a customer subject, ``("*_By customer_*", "customer_name", rows)`` for a
-    product subject, or ``("", "", [])`` when both were named and the route sent
-    neither key. The route decides which key is present; this never re-derives
-    the subject from `customer_name` / `product_code` itself."""
+def _sales_breakdown_blocks(month: dict) -> list[tuple[str, str, list]]:
+    """Which breakdown(s) a month block carries (AC-1604/AC-1628, extended S20):
+    each present key becomes ``(heading, name_key, rows)`` - ``("*_By
+    product_*", "product_code", rows)`` when `by_product` is present,
+    ``("*_By customer_*", "customer_name", rows)`` when `by_customer` is
+    present. Both may be present at once (S20: a product filter covering 2+
+    codes, alone or alongside a named customer) - `by_product` prints FIRST,
+    then `by_customer`, in that order (S20 - not the dict/JSON key order,
+    this function's own return order). Neither present (both subjects named,
+    one covered code) returns an empty list. The route decides which keys are
+    present; this never re-derives the subject from `customer_name` /
+    `product_code` itself, and never sorts the rows themselves (S6/AC-1608)."""
+    blocks: list[tuple[str, str, list]] = []
     by_product = month.get("by_product")
     if isinstance(by_product, list):
-        return "*_By product_*", "product_code", by_product
+        blocks.append(("*_By product_*", "product_code", by_product))
     by_customer = month.get("by_customer")
     if isinstance(by_customer, list):
-        return "*_By customer_*", "customer_name", by_customer
-    return "", "", []
+        blocks.append(("*_By customer_*", "customer_name", by_customer))
+    return blocks
 
 
 def _sales_breakdown_lines(rows: list, name_key: str) -> list[str]:
@@ -2302,8 +2309,7 @@ def _sales_month_block(month: dict) -> str:
         f"Outstanding: {_rm_money(month.get('outstanding_value'))} "
         f"(Qty: {_outstanding_fmt_int(month.get('outstanding_qty'))})",
     ]
-    heading, name_key, rows = _sales_breakdown(month)
-    if heading:
+    for heading, name_key, rows in _sales_breakdown_blocks(month):
         lines.append(heading)
         lines.extend(_sales_breakdown_lines(rows, name_key))
     return "\n".join(lines)

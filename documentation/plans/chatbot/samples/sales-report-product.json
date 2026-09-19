@@ -22,6 +22,26 @@
       "confirmed_qty": 720,
       "outstanding_value": 10000.0,
       "outstanding_qty": 180,
+      "by_product": [
+        {
+          "product_code": "SRT5674",
+          "ordered_value": 35000.0,
+          "ordered_qty": 630,
+          "confirmed_value": 28000.0,
+          "confirmed_qty": 504,
+          "outstanding_value": 7000.0,
+          "outstanding_qty": 126
+        },
+        {
+          "product_code": "SRT5674-N",
+          "ordered_value": 15000.0,
+          "ordered_qty": 270,
+          "confirmed_value": 12000.0,
+          "confirmed_qty": 216,
+          "outstanding_value": 3000.0,
+          "outstanding_qty": 54
+        }
+      ],
       "by_customer": [
         {
           "customer_name": "HANLIM TRADING SDN BHD",

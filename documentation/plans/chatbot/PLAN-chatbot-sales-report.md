@@ -1,8 +1,10 @@
 # PLAN - Chatbot sales report: confirmed vs outstanding sales, by month, one shape
 
 Status: BUILT, Phase 3 fix round in progress 19 Sep 2026; DRAFT PR #1034. S19
-(product-code prefix rule, live-testing fix) landed 19 Sep 2026, small fix track.
-UAC: `chatbot-sales-report-acceptance-criteria.md` (AC-16xx, rulings S1 to S19).
+(product-code prefix rule, live-testing fix) landed 19 Sep 2026, small fix track. S20
+(a family-covering product ask also breaks out By product, small fix track) landed 19 Sep
+2026 too.
+UAC: `chatbot-sales-report-acceptance-criteria.md` (AC-16xx, rulings S1 to S20).
 Base: origin/main. The turn re-architecture (#952, #863) is on hold by owner ruling and this
 lane does not wait for it. Branch `feat/chatbot-sales-report`, one lane, one PR.
 Precedent: `PLAN-chatbot-outstanding-report.md` (#862). This plan copies that lane's seams,
@@ -72,6 +74,36 @@ codes, the bare code when the family is just one, `SRT56 (37 products)` past 10,
 no product. `product_codes` (the field this renders) is every code the prefix COVERS, not
 only codes with a row in this filtered report - a covered code with zero sales still counts.
 
+S20 (owner ruling from live testing, 19 Sep 2026: with S19, the header read `Product:
+SRT5674, SRT5674-BL, SRT5674-N, SRT5674-NL` but each month still only printed `*_By
+customer_*` - "how I know the report is for which product"): a product ask that COVERS 2+
+codes also prints `*_By product_*`, By product first when both lists print:
+
+```
+Product: SRT5674, SRT5674-N
+Channel: all
+Location: all
+Delivery date: all
+
+*_Sep 2026_*
+Sales orders: 12
+Ordered: RM 50,000.00 (Qty: 900)
+Confirmed (DO): RM 40,000.00 (Qty: 720)
+Outstanding: RM 10,000.00 (Qty: 180)
+*_By product_*
+SRT5674: RM 35,000.00 (Qty: 630) (Confirmed: RM 28,000.00, Qty: 504)
+SRT5674-N: RM 15,000.00 (Qty: 270) (Confirmed: RM 12,000.00, Qty: 216)
+*_By customer_*
+HANLIM TRADING SDN BHD: RM 30,000.00 (Qty: 540) (Confirmed: RM 24,000.00, Qty: 432)
+KIM HUAT HARDWARE SDN BHD: RM 20,000.00 (Qty: 360) (Confirmed: RM 16,000.00, Qty: 288)
+
+Reply 1 for the sales order list.
+```
+
+A customer named alongside a family-covering product prints `*_By product_*` only (the
+`*_By customer_*` list drops, same as any customer+product ask). A single-code product ask
+is unchanged: `*_By customer_*` only, no `*_By product_*`.
+
 ## Backend contract
 
 `GET /api/v1/order-management/sales-report` on the no-prefix router beside
@@ -102,8 +134,12 @@ Response (`SalesReportResponse`, every field declared):
   "months": [ { "month": "2026-09", "so_count": int,
                 "ordered_value", "ordered_qty", "confirmed_value", "confirmed_qty",
                 "outstanding_value", "outstanding_qty",
-                "by_product":  [ { "product_code",  ...same six figures } ],   # customer subject
+                "by_product":  [ { "product_code",  ...same six figures } ],   # customer subject,
+                                                                                # or a product filter
+                                                                                # covering 2+ codes (S20)
                 "by_customer": [ { "customer_name", ...same six figures } ] } ],# product subject
+                                                                                 # (both keys can be
+                                                                                 # present at once, S20)
   "so_rows": [ { "so_number", "customer_name", "location", "order_date", ...six figures } ]
 }
 ```

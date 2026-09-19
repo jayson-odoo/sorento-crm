@@ -198,22 +198,47 @@ def test_detail_rows_show_product_codes_when_present_and_stay_absent_safe():
 
 
 @pytest.mark.parametrize(
-    "name,expected_heading",
+    "name,expected_headings",
     [
-        # customer subject -> By product; product subject -> By customer;
-        # both named -> no breakdown heading at all (AC-1604's third case).
-        ("customer", "*_By product_*"),
-        ("product", "*_By customer_*"),
-        ("both", None),
+        # customer subject -> By product only (S6, unchanged).
+        ("customer", ("*_By product_*",)),
+        # product subject over a FAMILY (2+ covered codes, S20) -> BOTH headings,
+        # By product first - the "product" mock now carries both keys.
+        ("product", ("*_By product_*", "*_By customer_*")),
+        # both named, one covered code -> neither heading at all (S6, unchanged).
+        ("both", ()),
     ],
 )
-def test_breakdown_heading_follows_subject(name, expected_heading):
+def test_breakdown_heading_follows_subject(name, expected_headings):
     rendered = _sales_report(_mock(name))
     for heading in ("*_By product_*", "*_By customer_*"):
-        if heading == expected_heading:
+        if heading in expected_headings:
             assert heading in rendered, rendered
         else:
             assert heading not in rendered, rendered
+
+
+def test_both_breakdowns_print_in_order_when_both_present():
+    """S20: when a month carries both `by_product` and `by_customer`, the
+    presenter prints `*_By product_*` FIRST, then `*_By customer_*` - the
+    "product" mock (a family, S20) carries both."""
+    rendered = _sales_report(_mock("product"))
+    by_product_at = rendered.index("*_By product_*")
+    by_customer_at = rendered.index("*_By customer_*")
+    assert by_product_at < by_customer_at, rendered
+
+
+def test_by_product_only_for_customer_and_family():
+    """S20: a customer subject alongside a product filter covering 2+ codes
+    prints `*_By product_*` only, never `*_By customer_*` - the route sends
+    only the `by_product` key in that case, and this presenter renders
+    whichever keys it is handed."""
+    report = copy.deepcopy(_mock("product"))
+    report["customer_name"] = "ZZT Family Customer"
+    report["months"][0].pop("by_customer")
+    rendered = _sales_report(report)
+    assert "*_By product_*" in rendered, rendered
+    assert "*_By customer_*" not in rendered, rendered
 
 
 # --------------------------------------------------------------------------
