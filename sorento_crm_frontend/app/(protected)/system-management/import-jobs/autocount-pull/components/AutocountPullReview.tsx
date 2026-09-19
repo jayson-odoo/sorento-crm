@@ -187,10 +187,12 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
         {pull.phase === 'review' && pull.confirm_blocked_reason && (
           <p className="text-xs text-destructive">{pull.confirm_blocked_reason}</p>
         )}
+        {/* Advisory, not destructive (fix round 3, item 3) - the repo's warning token
+            (`--warning`, `css/config.reui.css`), never `text-destructive`. */}
         {(pull.warnings ?? [])
           .filter((code) => WARNING_LABEL[code])
           .map((code) => (
-            <p key={code} className="text-xs text-destructive">
+            <p key={code} className="text-xs text-warning">
               {WARNING_LABEL[code]}
             </p>
           ))}

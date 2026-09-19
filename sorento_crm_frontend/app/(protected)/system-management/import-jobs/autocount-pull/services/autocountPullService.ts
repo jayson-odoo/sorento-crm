@@ -53,11 +53,18 @@ export async function getPullRows(
 }
 
 /** Pulls a filename out of a `Content-Disposition: attachment; filename="..."` header, or
- *  `null` if the header is absent/unparseable. */
+ *  `null` if the header is absent/unparseable - including a malformed percent-encoded
+ *  sequence (`decodeURIComponent` throws `URIError` on those; the caller's own `??
+ *  'autocount-pull.xlsx'` fallback is what a `null` here is for). */
 function filenameFromContentDisposition(header: string | null): string | null {
   if (!header) return null;
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 export async function downloadPullXlsx(jobId: string): Promise<void> {

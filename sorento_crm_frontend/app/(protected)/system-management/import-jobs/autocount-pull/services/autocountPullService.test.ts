@@ -259,6 +259,17 @@ describe('downloadPullXlsx filename (captain ruling, Phase 3 fix round, V-3)', (
 
     expect(anchor.get()!.download).toBe('autocount-products-pull.xlsx');
   });
+
+  it('V-3c: a malformed percent-encoded filename does not throw, falls back to the generic name (fix round 3, item 6)', async () => {
+    apiFetch.mockResolvedValue(
+      blobResponse({ 'content-disposition': "attachment; filename*=UTF-8''%E0%A4%A" }),
+    );
+    const anchor = captureDownloadAnchor();
+
+    await expect(downloadPullXlsx(REVIEW_PULL.job_id)).resolves.not.toThrow();
+
+    expect(anchor.get()!.download).toBe('autocount-pull.xlsx');
+  });
 });
 
 describe('startPullErrorMessage (AC-PL-6)', () => {

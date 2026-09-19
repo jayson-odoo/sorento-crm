@@ -219,6 +219,44 @@ class TestF1EmptyFedGuard:
         assert archive_calls == [], "a refused apply must never reach the archive step"
 
 
+class TestF1cEmptyFedSetToZeroCount:
+    def test_f1c_empty_fed_preview_reports_zero_set_to_zero_not_the_companys_whole_stock(
+        self, task_db, monkeypatch
+    ):
+        """Follow-up (fix round 3, item 4): with an empty FED batch, `bulk_import_stock`'s
+        OWN validate-only summary counts EVERY active-warehouse stock row in the company
+        as "would system-adjust to zero" (F-1's own point - the sweep is company-wide).
+        Confirm is already blocked for an empty batch (F-1a); the review screen's own
+        `counts.set_to_zero` must not still surface that scary company-wide number, since
+        nothing will ever actually be applied."""
+        from app.models.inventory import Warehouse
+
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake)
+
+        wh = Warehouse(
+            id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-F1C-WH", warehouse_name="Fed",
+            is_active=True, company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(wh)
+        db.flush()
+        # Real, nonzero, active-warehouse stock this pull's own rows never mention - the
+        # exact number `would_system_adjust_to_zero` would otherwise report.
+        sr4._seed_product_with_stock(db, DEFAULT_COMPANY_ID, wh.id, code=f"{MARKER}-F1C", qty=9)
+
+        rows = [sr4._stock_row(f"{MARKER}-F1C-GHOST", f"{MARKER}-F1C-GHOST-WH", 5)]  # no warehouse match
+        job_id = sr4._prepare_stock_preview(db, fake, rows=rows, owner=str(uuid.uuid4()))
+
+        _run_preview(monkeypatch, factory, job_id)
+
+        row_after = _job_row(db, job_id)
+        assert row_after["status"] == "finished", row_after["error"]
+        pull = row_after["metadata"]["autocount_pull"]
+        assert pull["counts"]["fed"] == 0, pull["counts"]
+        assert pull["counts"]["set_to_zero"] == 0, pull["counts"]
+
+
 # ============================================================================ F-2
 
 
@@ -489,6 +527,66 @@ class TestF7ExactlyOnceConfirm:
         ).scalar()
         assert apply_count == 1, "the loser's own apply-job insert must not survive as an orphan"
 
+    def test_f7b_apply_row_commit_failure_leaves_the_pull_in_review_not_confirmed(
+        self, task_db, monkeypatch
+    ):
+        """Follow-up tightening: the phase-flip UPDATE and the apply job INSERT must
+        commit TOGETHER. If the commit that would write the apply row fails for any
+        reason, the pull must never be left `confirmed` pointing at an apply job that
+        was never actually written - it must still read `review`, with no
+        `apply_job_id`, and a LATER Confirm must succeed cleanly from there."""
+        from app.models.job import ImportJob
+        from app.services.autocount_pull_service import confirm_pull
+
+        db, factory = task_db
+        owner_id = str(uuid.uuid4())
+        job_id = _seed_pull_job(
+            db, job_type="autocount_products_pull", user_id=owner_id,
+            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
+            snapshot_id=f"{MARKER}-snap-f7b", phase="review",
+        )
+
+        captured = []
+        monkeypatch.setattr(
+            "app.services.autocount_pull_service.enqueue_job",
+            lambda *a, **k: captured.append(1) or MagicMock(id=str(uuid.uuid4())),
+        )
+
+        real_commit = db.commit
+
+        def _raise_once():
+            db.commit = real_commit  # only the FIRST commit (the apply-row insert) fails
+            raise RuntimeError("simulated apply-row insert failure")
+
+        db.commit = _raise_once
+
+        job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+        with pytest.raises(RuntimeError):
+            confirm_pull(db, job, user_id=owner_id)
+
+        assert captured == [], "must never enqueue when the apply row never committed"
+
+        row_after = _job_row(db, job_id)
+        pull_after = row_after["metadata"]["autocount_pull"]
+        assert pull_after["phase"] == "review", pull_after
+        assert pull_after["apply_job_id"] is None, pull_after
+
+        apply_count = db.execute(
+            text(
+                "SELECT count(*) FROM import_jobs WHERE job_type = 'autocount_products_apply' "
+                "AND metadata->'autocount_apply'->>'pull_job_id' = :pid"
+            ),
+            {"pid": str(job_id)},
+        ).scalar()
+        assert apply_count == 0, "the failed commit must leave no apply row behind"
+
+        # A later Confirm succeeds cleanly.
+        job_retry = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+        result = confirm_pull(db, job_retry, user_id=owner_id)
+        assert result["phase"] == "confirmed"
+        assert result["apply_job_id"]
+        assert captured == [1]
+
 
 # ============================================================================ F-8
 
@@ -683,3 +781,53 @@ class TestF12ArchiveMime:
         stored2 = db.query(Attachment).filter(Attachment.id == attachment2.id).first()
         assert stored2.mime_type == "application/vnd.ms-excel", stored2.mime_type
 
+
+# ================================================================ fix round 3, item 2
+
+
+class TestSerializeApplyStatus:
+    def test_serialize_reports_the_apply_jobs_own_status_and_none_without_one(self, env):
+        """Follow-up (fix round 3, item 2): the apply task's own `stock_list_not_archived`
+        warning lands on the PULL job's metadata only once the apply task actually runs,
+        but `usePull` stops its 10s poll the instant `phase` reaches `confirmed` - the FE
+        needs the apply job's OWN status to know whether to keep polling."""
+        from app.models.job import ImportJob
+        from app.services.autocount_pull_service import serialize
+
+        owner = env.user("master_data.products.autocount_pull")
+        apply_job_id = _seed_apply_job(
+            env.db, user_id=owner["id"], company_id=env.company_a, entity="products",
+            snapshot_id=f"{MARKER}-snap-apply-status",
+        )
+        confirmed_job_id = _seed_pull_job(
+            env.db, job_type="autocount_products_pull", user_id=owner["id"],
+            company_id=env.company_a, entity="products", company_code=env.company_a_code,
+            snapshot_id=f"{MARKER}-snap-confirmed-status", phase="confirmed",
+            extra={"apply_job_id": str(apply_job_id)},
+        )
+        confirmed_job = env.db.query(ImportJob).filter(ImportJob.id == confirmed_job_id).first()
+        result = serialize(confirmed_job, env.db)
+        assert result["apply_status"] == "queued", result
+
+        review_job_id = _seed_pull_job(
+            env.db, job_type="autocount_products_pull", user_id=owner["id"],
+            company_id=env.company_a, entity="products", company_code=env.company_a_code,
+            snapshot_id=f"{MARKER}-snap-no-apply", phase="review",
+        )
+        review_job = env.db.query(ImportJob).filter(ImportJob.id == review_job_id).first()
+        assert serialize(review_job, env.db)["apply_status"] is None
+
+
+# ================================================================ fix round 3, item 5
+
+
+class TestRowPriceNonFinite:
+    def test_row_price_nan_and_inf_read_as_zero(self):
+        """Follow-up (fix round 3, item 5): `float()` parses "nan"/"inf" without raising,
+        but neither is a real price - `math.isfinite` catches both, same 0.0 fallback a
+        blank/unparseable value already gets."""
+        from app.services.autocount_pull_service import _row_price
+
+        assert _row_price("nan") == 0.0
+        assert _row_price("inf") == 0.0
+        assert _row_price("-inf") == 0.0

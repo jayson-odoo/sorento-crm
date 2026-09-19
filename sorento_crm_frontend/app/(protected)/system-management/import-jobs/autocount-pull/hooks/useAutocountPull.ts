@@ -47,7 +47,12 @@ export function useCurrentPull(entity: AutocountPullEntity, enabled = true) {
   });
 }
 
-/** Polls every 10s while `building` or `previewing` (AC-BD-6); stops on every other phase. */
+/** Polls every 10s while `building` or `previewing` (AC-BD-6), AND while `confirmed` with
+ *  its apply job not yet in a terminal state (fix round 3, item 2) - the apply task's own
+ *  `stock_list_not_archived` warning lands on the pull's metadata only once the apply task
+ *  actually runs, after `phase` has already flipped to `confirmed`, so stopping the poll
+ *  the instant Confirm returns would mean that warning never reaches the screen. Stops once
+ *  the apply job reaches `finished`/`failed`, and on every other phase. */
 export function usePull(jobId: string, enabled = true) {
   return useQuery({
     queryKey: ['autocount-pull', jobId],
@@ -56,8 +61,15 @@ export function usePull(jobId: string, enabled = true) {
     staleTime: 1000 * 5,
     retry: 1,
     refetchInterval: (query) => {
-      const phase = query.state.data?.phase;
-      return phase === 'building' || phase === 'previewing' ? 10000 : false;
+      const data = query.state.data;
+      const phase = data?.phase;
+      if (phase === 'building' || phase === 'previewing') return 10000;
+      if (phase === 'confirmed') {
+        const applyStatus = data?.apply_status;
+        const applyEnded = applyStatus === 'finished' || applyStatus === 'failed';
+        return applyEnded ? false : 10000;
+      }
+      return false;
     },
   });
 }

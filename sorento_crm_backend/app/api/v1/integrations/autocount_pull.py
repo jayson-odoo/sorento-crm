@@ -159,7 +159,7 @@ def start_pull(
         )
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    return pull_service.serialize(job)
+    return pull_service.serialize(job, db)
 
 
 @router.get("/current")
@@ -178,7 +178,7 @@ def get_current_pull(
         raise AppException(
             status_code=status.HTTP_404_NOT_FOUND, message="No open pull.", code="NOT_FOUND"
         )
-    return pull_service.serialize(job)
+    return pull_service.serialize(job, db)
 
 
 @router.get("/{job_id}")
@@ -276,7 +276,7 @@ def compare_pull(
     # `differences` and the top-level `only_in_excel`/`only_in_pull` stay the raw LISTS
     # the comparison just computed - never stored (AC-CM-5).
     return {
-        "summary": pull_service.serialize(job)["compare"],
+        "summary": pull_service.serialize(job, db)["compare"],
         "differences": result.get("differences", []),
         "only_in_excel": result.get("only_in_excel", []),
         "only_in_pull": result.get("only_in_pull", []),

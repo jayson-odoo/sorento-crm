@@ -110,6 +110,9 @@ export interface AutocountComparePullResult {
   only_in_pull: string[];
 }
 
+/** The apply job's own `import_jobs.status` (backend `JobStatus`). */
+export type AutocountApplyStatus = 'pending' | 'queued' | 'started' | 'finished' | 'failed' | 'cancelled';
+
 /** `GET /api/v1/autocount/pulls/{job_id}` response - also what `POST /` and `/current` return. */
 export interface AutocountPull {
   job_id: string;
@@ -125,6 +128,11 @@ export interface AutocountPull {
   compare?: AutocountPullCompareSummary | null;
   /** Set once Confirm has been clicked - the apply job the page links to. */
   apply_job_id?: string | null;
+  /** The apply job's own status (fix round 3, item 2); `null` while there is no apply job
+   *  yet. `usePull` keeps polling past `phase === 'confirmed'` while this is not yet
+   *  `finished`/`failed` - the apply task's own `stock_list_not_archived` warning lands on
+   *  the pull's metadata only once the apply task actually runs. */
+  apply_status?: AutocountApplyStatus | null;
   /** String warning codes (e.g. `content_hash_mismatch`) - never a refusal, absent or empty
    *  means a clean match. */
   warnings?: string[];

@@ -466,13 +466,19 @@ def _preview_stock(db, job: ImportJob, pull: dict) -> dict:
     outcome_writer.flush()
 
     summary = validate_result.get("summary") or {}
+    # `would_system_adjust_to_zero` is `bulk_import_stock`'s own count of every active-
+    # warehouse stock row NOT in this batch (EMPTY_FED_REASON's own point, F-1) - with
+    # an empty FED batch that is every active-warehouse row in the company, a number
+    # the review screen must never surface: Confirm is already blocked below, so
+    # nothing will ever be applied and nothing will actually be set to zero.
+    set_to_zero = summary.get("would_system_adjust_to_zero", 0) if fed_rows else 0
     counts = {
         "received": len(rows),
         "fed": len(fed_rows),
         "not_applied_inactive": len(inactive_rows),
         "not_applied_unknown": len(unknown_rows),
         "qty_changes": qty_changes,
-        "set_to_zero": summary.get("would_system_adjust_to_zero", 0),
+        "set_to_zero": set_to_zero,
         "skipped_product_not_found": outcome_writer.count_of(codes.PRODUCT_NOT_FOUND),
         "negative_in_autocount": len(negative_pairs),
     }

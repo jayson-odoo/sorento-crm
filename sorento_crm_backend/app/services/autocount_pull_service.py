@@ -18,6 +18,7 @@ directly - see the test file's module docstring.
 """
 from __future__ import annotations
 
+import math
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -255,7 +256,7 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
         if _is_build_expired(job):
             _mark_failed(db, job, pull, phase="expired", error="pull again")
             db.refresh(job)
-            return serialize(job)
+            return serialize(job, db)
 
         client = FoundryxAutocountClient()
         body = client.status(pull.get("snapshot_id"))
@@ -264,7 +265,7 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
         if foundryx_status == "ready":
             _claim_and_enqueue_preview(db, job, pull, body)
             db.refresh(job)
-            return serialize(job)
+            return serialize(job, db)
 
         if foundryx_status == "failed":
             error = body.get("error") or {}
@@ -272,7 +273,7 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
             message = error.get("message", "")
             _mark_failed(db, job, pull, phase="failed", error=f"{code}: {message}".rstrip(": "))
             db.refresh(job)
-            return serialize(job)
+            return serialize(job, db)
 
         # Still building - store progress when FoundryX sent one.
         if body.get("progress") is not None:
@@ -282,10 +283,18 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
             db.commit()
             db.refresh(job)
 
-    return serialize(job)
+    return serialize(job, db)
 
 
-def serialize(job: ImportJob) -> dict:
+def serialize(job: ImportJob, db: Session) -> dict:
+    """`db` reads the apply job's own `status` (fix-round follow-up, F-13): the
+    `stock_list_not_archived` warning the apply task can append is written onto the
+    PULL job's own metadata (`_append_pull_warning`) only AFTER the apply task starts,
+    and the FE stops polling the instant `phase` reaches `confirmed` - `apply_status`
+    is what lets it know whether the apply job is still running (`queued`/`started`) or
+    has reached a terminal state (`finished`/`failed`), so it can keep polling until
+    that warning (or anything else the apply job settles) has had a chance to land.
+    `None` when there is no apply job yet."""
     pull = _pull_meta(job)
     phase = pull.get("phase")
     if job.status == JobStatus.FAILED.value and phase not in ("failed", "expired"):
@@ -295,6 +304,12 @@ def serialize(job: ImportJob) -> dict:
         # task never got the chance to overwrite. `failed`/`expired` are already the
         # code's own deliberate answer (`_mark_failed` sets both together) and stay as-is.
         phase = "failed"
+    apply_job_id = pull.get("apply_job_id")
+    apply_status = None
+    if apply_job_id:
+        apply_status = db.execute(
+            text("SELECT status FROM import_jobs WHERE id = :id"), {"id": apply_job_id}
+        ).scalar()
     return {
         "job_id": str(job.id),
         "entity": pull.get("entity"),
@@ -305,7 +320,8 @@ def serialize(job: ImportJob) -> dict:
         "counts": pull.get("counts") or {},
         "confirm_blocked_reason": pull.get("confirm_blocked_reason"),
         "compare": pull.get("compare"),
-        "apply_job_id": pull.get("apply_job_id"),
+        "apply_job_id": apply_job_id,
+        "apply_status": apply_status,
         "warnings": pull.get("warnings") or [],
         "error": job.error,
     }
@@ -372,13 +388,16 @@ def _row_price(raw_list_price) -> float:
     string, so the FE never parses it and the download's Price cell lands numeric. A blank
     or unparseable value reads as 0 - the same "no price" sentinel the manual import's own
     `parse_manual_list_price` uses, but here as a float (compare keeps the raw pull rows,
-    never this mapped view, so nothing else reads this conversion)."""
+    never this mapped view, so nothing else reads this conversion). `nan`/`inf` (fix-round
+    follow-up, item 5) are floats `float()` parses without error but that are not a price -
+    `math.isfinite` catches both, same fallback to 0."""
     if raw_list_price is None or str(raw_list_price).strip() == "":
         return 0.0
     try:
-        return float(raw_list_price)
+        value = float(raw_list_price)
     except (TypeError, ValueError):
         return 0.0
+    return value if math.isfinite(value) else 0.0
 
 
 def paginate_rows(mapped_rows: list[dict], *, page: int, limit: int, query: Optional[str]) -> dict:
@@ -412,11 +431,13 @@ def download_filename(job: ImportJob) -> str:
 def _neutralize_formula_cells(sheet) -> None:
     """Formula-injection guard (Phase 3 fix round, F-4): AutoCount item text (a
     Description, an Item Description) is untrusted input that lands straight in a
-    workbook a checker opens in Excel - a value starting with `=` (or `+`/`-`/`@`, the
-    same leading characters Excel treats as a formula) would otherwise execute as one
-    the moment the file opens. Every string cell openpyxl would itself have classified
-    as a formula (`data_type == "f"`) is forced back to a literal string cell, value
-    unchanged - shared by both workbook builders so neither can forget it."""
+    workbook a checker opens in Excel - a value starting with `=` would otherwise
+    execute as a formula the moment the file opens. Every string cell openpyxl would
+    itself have classified as a formula (`data_type == "f"`) is forced back to a
+    literal string cell, value unchanged - shared by both workbook builders so neither
+    can forget it. (`+`/`-`/`@` are a CSV-open concern, not an xlsx one - openpyxl
+    never classifies them as `data_type == "f"`, so there is nothing here for them to
+    catch.)"""
     for row in sheet.iter_rows():
         for cell in row:
             if isinstance(cell.value, str) and cell.data_type == "f":
@@ -566,15 +587,22 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
 
     The once-guard is a conditional UPDATE on the pull's own stored phase (`review` ->
     `confirmed`), the same style `_claim_and_enqueue_preview` uses on `status` - run
-    FIRST, before anything about the apply job is written. Only the caller whose UPDATE
-    actually affects a row (the winner) then inserts the apply job row and enqueues it;
-    a caller that loses the race (Phase 3 fix round, F-7) leaves no orphan `import_jobs`
-    row behind, unlike the earlier "insert unconditionally, then check who won" order,
-    which left the loser's own apply-job insert committed and never enqueued.
+    FIRST, before anything about the apply job is written, and its rowcount is checked
+    BEFORE any commit. A caller that loses the race (Phase 3 fix round, F-7) rolls back
+    (nothing of its own was ever committed) and re-reads the winner's state instead,
+    leaving no orphan `import_jobs` row behind.
+
+    ONE transaction, tightened further (fix-round follow-up): the phase-flip UPDATE and
+    the apply job INSERT commit TOGETHER, in the SAME `db.commit()` call - the pull can
+    never be stored `confirmed` without its own apply row existing. If that commit fails
+    for any reason, the whole transaction (phase flip included) rolls back and the
+    exception propagates - the pull is left exactly as it was (`review`, no
+    `apply_job_id`), so a later Confirm starts over cleanly rather than pointing at an
+    apply job that was never actually written.
     """
     pull = _pull_meta(job)
     if pull.get("phase") == "confirmed" and pull.get("apply_job_id"):
-        return serialize(job)
+        return serialize(job, db)
     if pull.get("phase") != "review":
         raise PullNotReadyForConfirm(
             f"Pull is in phase {pull.get('phase')!r}; only a pull in review can be confirmed."
@@ -604,13 +632,14 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         .values(job_metadata=new_meta, updated_at=datetime.utcnow())
         .execution_options(synchronize_session=False)
     )
-    db.commit()
     if result.rowcount != 1:
-        # Someone else confirmed it first between our read and this write - nothing of
-        # ours was ever written, so there is nothing to clean up. The winner's apply job
-        # (and its own apply_job_id) is the one that counts.
+        # Someone else confirmed it first between our read and this write - the UPDATE
+        # above was never committed, so a plain rollback discards it; nothing of ours
+        # was ever visible to anyone. The winner's apply job (and its own apply_job_id)
+        # is the one that counts.
+        db.rollback()
         db.refresh(job)
-        return serialize(job)
+        return serialize(job, db)
 
     apply_job = ImportJob(
         id=apply_job_id,
@@ -628,7 +657,13 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         },
     )
     db.add(apply_job)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        # The apply row failed to write - the pull must never end up `confirmed`
+        # without it, so the whole transaction (the phase flip included) is undone.
+        db.rollback()
+        raise
 
     from app.tasks.autocount_pull_tasks import apply_autocount_pull
 
@@ -640,4 +675,4 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         job_id=str(apply_job.job_id),
     )
     db.refresh(job)
-    return serialize(job)
+    return serialize(job, db)

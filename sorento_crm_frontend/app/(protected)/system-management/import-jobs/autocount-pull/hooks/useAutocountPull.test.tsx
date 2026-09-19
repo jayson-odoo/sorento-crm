@@ -2,7 +2,11 @@
  * useAutocountPull - SR2 red test.
  *
  * AC-BD-6: the pull page polls the pull status every 10 seconds while `building` or
- * `previewing`, and stops on `review`, `failed`, `expired` and `confirmed`.
+ * `previewing`, and stops on `review`, `failed`, `expired`. `confirmed` (fix round 3, item 2)
+ * is NOT an unconditional stop: the apply task's own `stock_list_not_archived` warning lands
+ * on the pull's metadata only once the apply task actually runs, after `phase` has already
+ * flipped to `confirmed`, so the poll continues while `apply_status` is not yet terminal
+ * (`finished`/`failed`) and stops once it is.
  *
  * `usePull`'s `refetchInterval` callback already reads `query.state.data?.phase` correctly in
  * Phase 1 code, so this exercises it against the REAL `getPull` service call (mocked at the
@@ -35,7 +39,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
-function pullWithPhase(phase: string) {
+function pullWithPhase(phase: string, applyStatus: string | null = null) {
   return {
     job_id: 'job-1',
     entity: 'products',
@@ -45,7 +49,8 @@ function pullWithPhase(phase: string) {
     counts: null,
     confirm_blocked_reason: null,
     compare: null,
-    apply_job_id: null,
+    apply_job_id: phase === 'confirmed' ? 'apply-1' : null,
+    apply_status: applyStatus,
     warnings: [],
   };
 }
@@ -82,7 +87,7 @@ describe('usePull polling (AC-BD-6)', () => {
     await vi.waitFor(() => expect(getPull.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
-  it.each(['review', 'failed', 'expired', 'confirmed'])(
+  it.each(['review', 'failed', 'expired'])(
     'H1c: stops polling once phase is %s',
     async (phase) => {
       getPull.mockResolvedValue(pullWithPhase(phase));
@@ -93,6 +98,35 @@ describe('usePull polling (AC-BD-6)', () => {
 
       await vi.advanceTimersByTimeAsync(30000);
       // No further calls - the interval callback returned `false`.
+      expect(getPull.mock.calls.length).toBe(callsAfterFirst);
+    },
+  );
+});
+
+describe('usePull polling while confirmed (fix round 3, item 2)', () => {
+  it.each(['queued', 'started'])(
+    'H1d: keeps refetching every 10s while phase is confirmed and apply_status is %s',
+    async (applyStatus) => {
+      getPull.mockResolvedValue(pullWithPhase('confirmed', applyStatus));
+      renderHook(() => usePull('job-1'), { wrapper });
+
+      await vi.waitFor(() => expect(getPull).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(10000);
+      await vi.waitFor(() => expect(getPull.mock.calls.length).toBeGreaterThanOrEqual(2));
+    },
+  );
+
+  it.each(['finished', 'failed'])(
+    'H1e: stops polling once phase is confirmed and apply_status is %s',
+    async (applyStatus) => {
+      getPull.mockResolvedValue(pullWithPhase('confirmed', applyStatus));
+      renderHook(() => usePull('job-1'), { wrapper });
+
+      await vi.waitFor(() => expect(getPull).toHaveBeenCalledTimes(1));
+      const callsAfterFirst = getPull.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(30000);
+      // No further calls - the apply job has reached a terminal state.
       expect(getPull.mock.calls.length).toBe(callsAfterFirst);
     },
   );

@@ -1,6 +1,6 @@
 # PLAN - AutoCount pull + review (products and stock balance)
 
-Status: in progress (2026-09-20, owner reviewed the plan page, rulings P11 to P13, "ok all good"; unattended build to a DRAFT PR authorised, no merge, no deploy)
+Status: in progress (2026-09-20: SR1 to SR4 built, reviewer + security-reviewer READY, browser pass AC-PC-6 / AC-SC-5 pending the owner's login ruling on the e2e clone)
 UAC: `documentation/plans/autocount/autocount-pull-review-acceptance-criteria.md`
 Branch: `feat/autocount-pull-review` (one lane, one PR; SR0 #1041 merges first)
 Cross-repo contract: FoundryX plan 10 Appendix A1 to A10; fixtures `10-fixtures/` (commit 3deac4f7 in
@@ -280,10 +280,15 @@ FoundryX lane (:8009) waits for their gateway (their S4) and for the owner to pl
 
 - Preview and apply can differ when Sorento data changes in between; the apply job's rows are the
   record. The snapshot itself cannot change.
-- A dry run over about 11,840 products takes one savepoint per record. Measured in SR1 on the prod
-  copy; if it approaches the 3600 s job timeout the preview runs the ingest in chunks of 1,000
-  inside the one task.
-- The first SRT products pull needs SR0 live, else about 9,067 records fail as reference conflicts.
+- A dry run over about 11,840 products takes one savepoint per record. MEASURED 20 Sep 2026 on a
+  prod-copy clone with a full-size fake snapshot: products preview 11,876 records in 260 s (about
+  46 records/s, rate fell from 82 to 48 records/s across the run, so cost grows faster than
+  linearly with catalogue size); stock preview 9,847 pairs in 1.2 s; chunking not needed at today's
+  size (7 percent of the 3600 s timeout). One full re-page of the snapshot costs Sorento 0.1 s
+  against a loopback fake; the real FoundryX per-page latency is still unmeasured, so the Redis
+  fallback stays named.
+- Without SR0 (#1049) live, 9,070 of 11,876 SRT products fail the preview as reference conflicts
+  (measured), so SR0 must deploy before the first real SRT products pull.
 - Excel view search and the stock FED filter page the whole snapshot per request (see Routes).
 - The pull page is reachable by its owner only; a non-superadmin reaches it from the button and the
   toast, never from the jobs list.
@@ -292,11 +297,15 @@ FoundryX lane (:8009) waits for their gateway (their S4) and for the owner to pl
 - Worker restart needed after deploy (new tasks). New env on prod: `FOUNDRYX_BASE_URL`,
   `FOUNDRYX_API_KEY`, placed by the owner.
 - The `Stock_List` attachment `replace_latest_stock_list` writes is ONE install-wide file
-  (`company_id` NULL, same as the manual n8n upload route) - a stock pull's Confirm for ANY one
-  company replaces the SAME file a Sorento manual upload would have written. Parity with the manual
-  flow as it already behaves today, not a new consequence this lane introduces, but worth naming: a
-  multi-company install has no per-company Stock List, so the chatbot/n8n always reads whichever
-  company's upload (manual or pull) landed last. Owner ruling requested in the PR.
+  (`company_id` NULL, same as the manual n8n upload route) - that part is old, already true of the
+  manual flow today. What this lane ADDS is a SECOND WRITER selected per company: whoever holds
+  `inventory.stock.autocount_pull` for Mocha can Confirm a stock pull and replace the SAME file a
+  Sorento upload wrote, and vice versa - a multi-company install has no per-company Stock List, so
+  the chatbot/n8n always reads whichever company's upload (manual or pull) landed last. Owner
+  ruling requested in the PR.
+- Known UX edge: under a multi-company scope `/current` finds nothing, so the list button reads
+  "Pull from AutoCount" and the click answers the single-company 400; a pull is only ever started
+  and reviewed with one company selected.
 
 ## Definition of Done
 
