@@ -1,0 +1,16 @@
+Customer: all
+Product: SRTWT7445
+Channel: all
+Location: BRW-IB
+Delivery date: 01/01/2026 to 31/12/2026
+
+*_Sep 2026_*
+Sales orders: 12
+Ordered: RM 50,000.00 (Qty: 900)
+Confirmed (DO): RM 40,000.00 (Qty: 720)
+Outstanding: RM 10,000.00 (Qty: 180)
+*_By customer_*
+HANLIM TRADING SDN BHD: RM 30,000.00 (Qty: 540) (Confirmed: RM 24,000.00, Qty: 432)
+KIM HUAT HARDWARE SDN BHD: RM 20,000.00 (Qty: 360) (Confirmed: RM 16,000.00, Qty: 288)
+
+Reply 1 for the sales order list.
