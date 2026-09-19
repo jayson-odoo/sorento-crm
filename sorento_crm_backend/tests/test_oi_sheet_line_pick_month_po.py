@@ -1,11 +1,11 @@
 """The order inquiry sheet's line pick: exact date, then same month, then the sheet's PO.
 
 Contract: `documentation/plans/scm/oi-sheet-line-pick-month-po-acceptance-criteria.md`,
-AC-LP-1 to AC-LP-16, with `PLAN-oi-sheet-line-pick-month-po.md` sections 0 to 3 for the
+AC-LP-1 to AC-LP-17, with `PLAN-oi-sheet-line-pick-month-po.md` sections 0 to 3 for the
 promised behaviour. One test per criterion, named for it; AC-LP-12 gets two (the ledger
-charge, and the legitimate split it must not break). AC-LP-14 (R4) and AC-LP-15 (R5) are
-later small-fix slices, added after the pick's own tests below first went green, and moved
-it from four passes to the five it runs today.
+charge, and the legitimate split it must not break). AC-LP-14 (R4), AC-LP-15 (R5), AC-LP-16
+(R6) and AC-LP-17 (R7) are later small-fix slices, each added after the pick's own tests
+below first went green.
 
 TEST-FIRST, written before the four-pass line pick exists (AC-LP-1 to AC-LP-13 below; the
 red state for those was TODAY's single-pass `_rank_for` behaviour on `origin/main` - a row
@@ -1353,3 +1353,130 @@ def test_ac_lp_16_equal_quantity_in_the_fallback():
         assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
             w.mirror_of(line_230).id
         ), "the 230 row did not land on the 230 line"
+
+
+# --------------------------------------------------------------------------- #
+# AC-LP-17: a cancelled line may only be taken by the fallback pass (R7)      #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_lp_17_live_line_in_a_later_pass_beats_a_cancelled_exact_date():
+    """AC-LP-17 (R7, prod comparison workbook, 19 Sep 2026, SO324265 / CB2807-DIY). A
+    cancelled line dated exactly the row's own date used to be the ONLY exact-date
+    candidate, so pass 1 handed it the row before a live line elsewhere in the order - one
+    the row's own citation names - was ever offered in a later pass. R7: a cancelled line
+    may only be taken by the fallback, so pass 1 now finds nothing here and the citation
+    pass (pass 3) lands the row on the live line instead."""
+    with world() as w:
+        order = w.order()
+        w.line(
+            order, qty_ordered="25", required_date=date(2026, 3, 2),
+            line_status="cancelled",
+        )
+        live = _with_ref(
+            w, w.line(order, qty_ordered="25", required_date=date(2026, 5, 2)), _ref(),
+        )
+        po, po_line = w.po_line(qty_ordered="25")
+        _names(w, po_line, live.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 25, date(2026, 3, 2),
+             w.warehouse.warehouse_code, po.po_number),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(live)
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "the exact-date pass took the cancelled line before the citation pass ever "
+            "offered the live one"
+        )
+
+
+def test_ac_lp_17_cancelled_line_never_wins_the_po_passes():
+    """AC-LP-17 (R7, guards passes 2 and 3 specifically). A cancelled line in the row's own
+    month, named by the row's own citation, sits beside a LIVE line in the SAME month that
+    nothing names, on a different day than either the cancelled line or the row itself - so
+    only the month-and-PO pass (2) or the PO-alone pass (3) could ever offer the cancelled
+    line, and only the month-alone pass (4) can ever offer the live one. Before R7 dropped
+    cancelled candidates from those two passes as well as the exact-date and month-alone
+    ones, the cancelled line's citation match won it pass 2 outright, since the live line
+    cites nothing to tie on there at all - this is exactly the gap a fix that only guards
+    passes 1 and 4 would leave open."""
+    with world() as w:
+        order = w.order()
+        cancelled = _with_ref(
+            w,
+            w.line(
+                order, qty_ordered="40", required_date=date(2026, 6, 10),
+                line_status="cancelled",
+            ),
+            _ref(),
+        )
+        live = w.line(order, qty_ordered="40", required_date=date(2026, 6, 20))
+        po, po_line = w.po_line(qty_ordered="40")
+        _names(w, po_line, cancelled.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 40, date(2026, 6, 1),
+             w.warehouse.warehouse_code, po.po_number),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(live)
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "a PO pass (2 or 3) took the cancelled line it cites over the live line "
+            "nothing names"
+        )
+
+
+def test_ac_lp_17_no_citation_still_prefers_the_live_line():
+    """AC-LP-17 (R7). Same two lines, but the row cites nothing at all: passes 1 to 4 never
+    offer the cancelled line (R7) and never offer the live one either (neither its date nor
+    its month matches the row's), so the fallback settles it - and there, D1's own rank
+    still puts the live line ahead of the cancelled one."""
+    with world() as w:
+        order = w.order()
+        w.line(
+            order, qty_ordered="25", required_date=date(2026, 3, 2),
+            line_status="cancelled",
+        )
+        live = w.line(order, qty_ordered="25", required_date=date(2026, 5, 2))
+        data = sheet([
+            (order.so_number, w.product.product_code, 25, date(2026, 3, 2),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(live)
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "the fallback took the cancelled line over the live one"
+        )
+
+
+def test_ac_lp_17_lone_cancelled_line_still_matches():
+    """AC-LP-17 (D1 kept). With no live line anywhere in the order, the cancelled line is
+    still where the history is: the fallback still takes it rather than refusing the row,
+    exactly as before R7."""
+    with world() as w:
+        order = w.order()
+        lonely = w.line(
+            order, qty_ordered="25", required_date=date(2026, 3, 2),
+            line_status="cancelled",
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 25, date(2026, 3, 2),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        assert result["rows_line_not_found"] == 0, result
+        mirror = w.mirror_of(lonely)
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "a lone cancelled line still matches - it is where the history is (D1)"
+        )

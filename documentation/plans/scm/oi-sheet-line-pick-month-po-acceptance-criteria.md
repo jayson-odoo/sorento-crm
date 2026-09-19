@@ -62,6 +62,24 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   at all still reports its row `no_line_for_item`, never an exception that rolls the whole
   upload back.
 
+- **AC-LP-17** (R7, prod comparison workbook, 19 Sep 2026) A cancelled line may only be taken
+  by the fallback pass. Passes 1 to 4 never offer a cancelled candidate, even when it is the
+  ONLY candidate a narrowed pass would otherwise have found - a cancelled line dated exactly
+  the row's own date, or sharing its month, or named by its own citation, is invisible to
+  those four passes, not merely ranked last inside them. A live line elsewhere in the order
+  that a later pass can reach, through its own citation or the fallback, is landed on instead.
+  With no live line anywhere in the order, the fallback still takes the cancelled one rather
+  than refusing the row (D1 kept).
+
+  Accepted cost: R7 settles each row against the ledger as it stands when that row's own pass
+  reaches it, not against the order's lines as a set, so a row that would have taken a ghost
+  under the old behaviour can now take a live line another row of the same file needed, and
+  strand that other row (`qty_exceeds_ordered`) where a global best assignment would have
+  placed both. Measured net-neutral on the 18 Sep prod copy (landed rows held at 9,307), with
+  30 rows losing their landing and 30 others gaining one underneath that net figure. Not
+  fixed here (PLAN section 5); re-measured on the next prod copy before this is judged big
+  enough to need one.
+
 ## Citation lending
 
 - **AC-LP-10** A restatement that carries a PO lends it to the first statement when that one
