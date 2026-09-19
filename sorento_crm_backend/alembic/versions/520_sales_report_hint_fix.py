@@ -32,7 +32,7 @@ outside alembic (e.g. to publish against the shared dev database without an
 ``alembic upgrade``, which is how the console check gets a version id to pass to
 ``--prompt-version``).
 
-Revision ID: 520_chatbot_sales_report_hint_fix
+Revision ID: 520_sales_report_hint_fix
 Revises: 519_chatbot_sales_report_vocab
 """
 import logging
@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
-revision = "520_chatbot_sales_report_hint_fix"
+revision = "520_sales_report_hint_fix"
 down_revision = "519_chatbot_sales_report_vocab"
 branch_labels = None
 depends_on = None
