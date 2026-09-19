@@ -1014,6 +1014,43 @@ class TestParserPromptAndContractsTeachSalesReport:
             f"{contracts_mod.PENDING_KINDS}"
         )
 
+    def test_the_addendum_is_appended_to_both_bodies(self) -> None:
+        """Both texts ship: prod's `production` label is on the FULL body and dev's is on
+        the SLIM one, so a vocabulary published to only one is taught to only one
+        environment - which reads as "works on dev, silent in prod". Same treatment as
+        `test_parser_low_stock_words.py::TestBothPublishedBodiesCarryTheVocabulary`:
+        `SALES_REPORT_ADDENDUM` is the newest addendum, so it is the tail of both
+        published bodies."""
+        from app.services.chatbot_parser_prompt import (
+            SALES_REPORT_ADDENDUM,
+            SEMANTIC_PARSER_PROMPT,
+            SEMANTIC_PARSER_PROMPT_SLIM,
+        )
+
+        bodies = {"FULL": SEMANTIC_PARSER_PROMPT, "SLIM": SEMANTIC_PARSER_PROMPT_SLIM}
+        for name, body in bodies.items():
+            assert body.endswith(SALES_REPORT_ADDENDUM), (
+                f"{name} body does not end with SALES_REPORT_ADDENDUM - it is the newest "
+                "addendum, so it is the tail"
+            )
+
+    def test_the_addendum_stacks_after_low_stock(self) -> None:
+        """The ORDER the existing pins' strip chains assume (`test_parser_prompt_is_live`,
+        `test_parser_growth_r1_reachability`, `test_parser_low_stock_words`). A new
+        addendum inserted anywhere but the end makes all of them wrong."""
+        from app.services.chatbot_parser_prompt import (
+            LOW_STOCK_ADDENDUM,
+            SALES_REPORT_ADDENDUM,
+            SEMANTIC_PARSER_PROMPT,
+            SEMANTIC_PARSER_PROMPT_SLIM,
+        )
+
+        bodies = {"FULL": SEMANTIC_PARSER_PROMPT, "SLIM": SEMANTIC_PARSER_PROMPT_SLIM}
+        for name, body in bodies.items():
+            assert body.removesuffix(SALES_REPORT_ADDENDUM).endswith(LOW_STOCK_ADDENDUM), (
+                f"{name}: SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
+            )
+
 
 # --------------------------------------------------------------------------- #
 # R-B3 (reviewer finding, Phase 3 fix round): the stored `outstanding_filters`

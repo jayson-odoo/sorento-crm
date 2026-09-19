@@ -76,12 +76,20 @@ class TestBothPublishedBodiesCarryTheVocabulary:
     def test_the_addendum_is_appended_to_both_bodies(self) -> None:
         """Both texts ship: prod's `production` label is on the FULL body and dev's is on
         the SLIM one, so a vocabulary published to only one is taught to only one
-        environment - which reads as "works on dev, silent in prod"."""
+        environment - which reads as "works on dev, silent in prod".
+
+        `SALES_REPORT_ADDENDUM` (PLAN-chatbot-sales-report.md S4) stacked AFTER this one,
+        newest outermost, so it is stripped first before `LOW_STOCK_ADDENDUM` is asserted
+        as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
+        `LOW_STOCK_ADDENDUM` landed."""
+        from app.services.chatbot_parser_prompt import SALES_REPORT_ADDENDUM
+
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
-            assert body.endswith(addendum), (
-                f"{name} body does not end with LOW_STOCK_ADDENDUM - it is the newest "
-                "addendum, so it is the tail"
+            assert body.removesuffix(SALES_REPORT_ADDENDUM).endswith(addendum), (
+                f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
+                "SALES_REPORT_ADDENDUM is stripped - LOW_STOCK_ADDENDUM must stay the "
+                "tail beneath it"
             )
 
     def test_the_addendum_stacks_after_last_cost(self) -> None:
@@ -90,13 +98,18 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         get back to the live-derived body; a new addendum inserted anywhere but the end
         makes both of them wrong in a way whose failure message points at the wrong
         constant."""
-        from app.services.chatbot_parser_prompt import LAST_COST_ADDENDUM
+        from app.services.chatbot_parser_prompt import (
+            LAST_COST_ADDENDUM,
+            SALES_REPORT_ADDENDUM,
+        )
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
-            assert body.removesuffix(addendum).endswith(LAST_COST_ADDENDUM), (
-                f"{name}: LOW_STOCK_ADDENDUM must stack AFTER LAST_COST_ADDENDUM"
-            )
+            assert (
+                body.removesuffix(SALES_REPORT_ADDENDUM)
+                .removesuffix(addendum)
+                .endswith(LAST_COST_ADDENDUM)
+            ), f"{name}: LOW_STOCK_ADDENDUM must stack AFTER LAST_COST_ADDENDUM"
 
     @pytest.mark.parametrize("phrase", TRIGGER_PHRASES)
     def test_both_bodies_teach_each_trigger_phrase(self, phrase: str) -> None:
