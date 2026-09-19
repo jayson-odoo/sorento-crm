@@ -1,27 +1,31 @@
 """A re-upload rebuilds the rows planning worked on; a rollback keeps them.
 
 Contract: `documentation/plans/scm/oi-rollback-recover-planning-rows-acceptance-criteria.md`,
-AC-RB-1 to AC-RB-21 (RB-22/23 are the captain's own rehearsal/regression runs, not a test
-file). Plan: `documentation/plans/scm/PLAN-oi-rollback-recover-planning-rows.md`, section 3.1
-for the seams and section 3.2 for this file's own test list.
+AC-RB-1 to AC-RB-21 (round 1, RB-22/23 are the captain's own rehearsal/regression runs, not a
+test file) and AC-RB-24 to AC-RB-30 (round 2, slice S5, "Shapes found on the full 18 Sep copy",
+rulings R7/R8). Plan: `documentation/plans/scm/PLAN-oi-rollback-recover-planning-rows.md`,
+section 3.1 for the seams and section 3.2 for round 1's test list; round 2's test list travels
+in the captain's own message rather than a plan-file update.
 
 TEST-FIRST, written before the importer, `follow_book_for_rows` or the rollback script carry
-any of 2.1/2.2/2.3. The red state is therefore a missing outcome code, a `redirected_to_pool`
-row that never gets raised (the importer still answers `already_raised` and skips), a link
-that stays on the wrong row, or a rollback script with no `kept` count - never an import error
-or a fixture typo. A handful of criteria (named in each test's own docstring) may legitimately
-already be green: today's plain re-raise, the existing `already_raised` skip and the existing
-demand-exclusion read do not need 2.1/2.2/2.3 to hold.
+any of 2.1/2.2/2.3 (round 1) or R7/R8 (round 2, S5). The red state is therefore a missing
+outcome code, a `redirected_to_pool` row that never gets raised (the importer still answers
+`already_raised` and skips), a link that stays on the wrong row, or a rollback script with no
+`kept` count - never an import error or a fixture typo. A handful of criteria (named in each
+test's own docstring) may legitimately already be green: today's plain re-raise, the existing
+`already_raised` skip and the existing demand-exclusion read do not need 2.1/2.2/2.3 or R7/R8
+to hold. Round 2's own tests are asserted straight off the UAC wording, not off round 2's
+implementation (there is none yet when this file is written).
 
 Harness: `World` / `world()` from `test_project_order_inquiry_import_migration.py`, `_apply` /
 `_rollback` / `_rows_of` from `test_oi_sheet_pairing_repair.py` - imported, never copied, so
 this file cannot drift about what a seeded world or a rollback run is. CI's database is empty:
-every test seeds its own order, lines, PO/SPO/claim chain, `Replaces N used` sibling and supply
-decision. Postgres only, via `blank_session` (never sqlite).
+every test seeds its own order, lines, PO/SPO/claim chain, `Replaces N used` sibling, notice row
+and supply decision. Postgres only, via `blank_session` (never sqlite).
 
-A `Replaces N used` row and an active decision are seeded DIRECTLY, matching prod's own state
-today (a fresh row/decision, the used row already deleted) - only AC-RB-21 drives the real
-`ProjectSupplyService.confirm`, per the plan's own instruction.
+A `Replaces N used` row, a DELAY notice row and an active decision are seeded DIRECTLY, matching
+prod's own state today - only AC-RB-21 drives the real `ProjectSupplyService.confirm`, per the
+plan's own instruction.
 """
 from __future__ import annotations
 
@@ -35,6 +39,8 @@ from app.models.project_so import (
     ACK_CHANGED,
     DECISION_ACTIVE,
     DECISION_SUPERSEDED,
+    INQUIRY_CANCELLED,
+    IV_DELAY,
     OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -1146,3 +1152,369 @@ def test_journey_upload_confirm_old_delete_rollback_reupload():
         }
         assert after_used_links == before_used_links, (before_used_links, after_used_links)
         assert after_fresh_links == before_fresh_links, (before_fresh_links, after_fresh_links)
+
+
+# --------------------------------------------------------------------------- #
+# AC-RB-24 to AC-RB-30: notice rows and the top-up shape (R7/R8, slice S5)      #
+# --------------------------------------------------------------------------- #
+#
+# "Shapes found on the full 18 Sep copy" (UAC), rulings R7/R8 (plan section 1). Written
+# straight off the UAC wording, not off round 2's implementation - there is none yet.
+
+
+def _delay_notice(w: World, mirror, *, qty: str, delivery_date: date, note: str) -> OrderInquiryRow:
+    """A DELAY notice: what a date-moved-later amendment raises, verb DELAY - never ORDER
+    or ORDER BACK, and never (R7) a stand-in for the line's own still-owed row. Built on
+    `board_row`'s own header/row plumbing, verb and note overwritten after, exactly as
+    `_used_sibling` overwrites a plain board row into a `Replaces N used` shape."""
+    row = w.board_row(mirror, qty=qty)
+    row.verb = IV_DELAY
+    row.delivery_date = delivery_date
+    row.note = note
+    w.db.flush()
+    return row
+
+
+def test_delay_notice_does_not_block_the_line():
+    """AC-RB-24 (R7), the TPE-9204 (a) shape. A line whose only live row is a DELAY notice
+    is NOT "already raised": AC-RB-11 applies to it exactly as it would to a line with no
+    live row at all - raised already settled (280, was 182), and the notice's own presence
+    changes nothing about that."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="280", required_date=date(2027, 4, 1))
+        mirror = _adopted_mirror(w, order, line)
+        decision = _decision(w, mirror, line, buy_qty="280", required_date=date(2027, 4, 1))
+        notice = _delay_notice(
+            w, mirror, qty="280", delivery_date=date(2027, 4, 1), note="Was 2026-09-01",
+        )
+        ref = _ref()
+        line.source_ref = ref
+        po, po_line = w.po_line(qty_ordered="280")
+        po_line.from_so_line_ref = ref
+        w.db.flush()
+        old_date = date(2026, 9, 1)
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, old_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert oc.ALREADY_RAISED not in capture.codes(), capture.calls
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 2, [(r.verb, str(r.qty), r.delivery_date) for r in rows]
+        settled = next(r for r in rows if str(r.id) != str(notice.id))
+        assert Decimal(str(settled.qty)) == Decimal("280")
+        assert settled.delivery_date == date(2027, 4, 1)
+        assert Decimal(str(settled.previous_qty)) == Decimal("182")
+        assert settled.previous_delivery_date == old_date
+        assert str(settled.supply_decision_id) == str(decision.id)
+        assert settled.changed_at is not None
+        assert settled.ack_state == ACK_CHANGED
+        assert (settled.note or "").startswith(f"{importer._MIGRATION_STAMP} journey.xlsx")
+        assert f"Was 182 on {old_date.isoformat()}" in (settled.note or ""), settled.note
+
+
+def test_delay_notice_line_without_decision_raises_plain():
+    """AC-RB-24 (R7), no decision. The same DELAY-notice-only line, with no active decision
+    covering it: the sheet row is raised plain, exactly as a line with no live row and no
+    decision is today."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="182", required_date=date(2026, 9, 1))
+        mirror = _adopted_mirror(w, order, line)
+        notice = _delay_notice(
+            w, mirror, qty="280", delivery_date=date(2027, 4, 1), note="Was 2026-09-01",
+        )
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 9, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert oc.ALREADY_RAISED not in capture.codes(), capture.calls
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 2, [(r.verb, str(r.qty), r.delivery_date) for r in rows]
+        plain = next(r for r in rows if str(r.id) != str(notice.id))
+        assert Decimal(str(plain.qty)) == Decimal("182")
+        assert plain.previous_qty is None
+
+
+def test_notice_row_is_never_touched():
+    """AC-RB-25 (R7). The notice row itself is never altered, re-raised or cancelled by
+    the upload: every column equal before and after, whatever the upload does to the rest
+    of the line."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="280", required_date=date(2027, 4, 1))
+        mirror = _adopted_mirror(w, order, line)
+        _decision(w, mirror, line, buy_qty="280", required_date=date(2027, 4, 1))
+        notice = _delay_notice(
+            w, mirror, qty="280", delivery_date=date(2027, 4, 1), note="Was 2026-09-01",
+        )
+        # Refreshed before snapshotting - see the note on the same pattern in
+        # `test_board_row_without_active_decision_still_already_raised`.
+        w.db.refresh(notice)
+        before = _row_snapshot(notice)
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 9, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data, file_name="journey.xlsx")
+
+        w.db.refresh(notice)
+        after = _row_snapshot(notice)
+        assert before == after, (before, after)
+        assert notice.state != INQUIRY_CANCELLED
+
+
+def test_top_up_shape_raises_sheet_row_plain():
+    """AC-RB-26 (R8), the SRTWC8605-SC-RL shape. The line's live ORDER row (38) carries the
+    active decision's own `supply_decision_id`, and the sheet's 182 plus that 38 equals the
+    decision's buy_qty (220): the sheet row is raised PLAIN - no Was/Now, not greyed - and
+    still takes AutoCount's own link; the top-up row is untouched."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="500", required_date=date(2027, 1, 4))
+        mirror = _adopted_mirror(w, order, line)
+        decision = _decision(w, mirror, line, buy_qty="220", required_date=date(2027, 1, 4))
+        top_up = w.board_row(mirror, qty="38")
+        top_up.supply_decision_id = decision.id
+        w.db.flush()
+        # Refreshed before snapshotting (see the same note in
+        # `test_board_row_without_active_decision_still_already_raised`): the AFTER read is
+        # off the database, and an unrefreshed BEFORE would disagree with it on `Decimal`
+        # formatting alone.
+        w.db.refresh(top_up)
+        top_up_before = _row_snapshot(top_up)
+        ref = _ref()
+        line.source_ref = ref
+        po, po_line = w.po_line(qty_ordered="182")
+        po_line.from_so_line_ref = ref
+        w.db.flush()
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2027, 1, 4),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data, file_name="journey.xlsx")
+
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 2, [(r.verb, str(r.qty), r.delivery_date) for r in rows]
+        plain = next(r for r in rows if str(r.id) != str(top_up.id))
+        assert Decimal(str(plain.qty)) == Decimal("182")
+        assert plain.previous_qty is None
+        assert plain.previous_delivery_date is None
+        assert plain.changed_at is None
+        assert plain.redirected_to_pool is False
+        links = w.links(plain)
+        assert len(links) == 1, links
+        assert links[0].document == po.po_number
+        w.db.refresh(top_up)
+        assert _row_snapshot(top_up) == top_up_before, "the top-up row must be untouched"
+
+
+@pytest.mark.parametrize("scenario", ["sheet_180", "decision_230"])
+def test_top_up_sum_mismatch_raises_nothing_and_is_reported(scenario):
+    """AC-RB-27 (R8). Same top-up shape, but the sum does not equal the decision's buy_qty
+    - either the sheet's own quantity is off (180, not 182) or the decision's buy_qty is off
+    (230, not 220): nothing is raised, and the upload report names the sheet row with its own
+    outcome code, as AC-RB-3 does.
+
+    `oc.TOP_UP_SUM_MISMATCH` does not exist yet; referencing it directly reds only this test
+    with an AttributeError, never the whole module."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="500", required_date=date(2027, 1, 4))
+        mirror = _adopted_mirror(w, order, line)
+        buy_qty = "230" if scenario == "decision_230" else "220"
+        decision = _decision(w, mirror, line, buy_qty=buy_qty, required_date=date(2027, 1, 4))
+        top_up = w.board_row(mirror, qty="38")
+        top_up.supply_decision_id = decision.id
+        w.db.flush()
+        sheet_qty = 180 if scenario == "sheet_180" else 182
+        sheet_date = date(2027, 1, 4)
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, sheet_qty, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 1, [(r.verb, str(r.qty), r.delivery_date) for r in rows]
+        assert str(rows[0].id) == str(top_up.id), "no new row may be raised"
+
+        matching = capture.by_code(oc.TOP_UP_SUM_MISMATCH)
+        assert len(matching) == 1, capture.calls
+        identity = matching[0].get("identity") or {}
+        assert identity.get("doc_no") == order.so_number, identity
+        assert identity.get("item_code") == w.product.product_code, identity
+        assert identity.get("delivery_date") == sheet_date.isoformat(), identity
+        named_qty = (
+            identity.get("qty") == str(sheet_qty)
+            or str(sheet_qty) in str(matching[0].get("value") or "")
+            or str(sheet_qty) in str(matching[0].get("message") or "")
+        )
+        assert named_qty, matching[0]
+
+
+@pytest.mark.parametrize("shape", ["no_decision", "superseded_decision"])
+def test_board_row_without_active_decision_still_already_raised(shape):
+    """AC-RB-28. A line whose live ORDER row carries no `supply_decision_id` of the ACTIVE
+    decision - either none at all (a board row raised before the migration, the original D2
+    case) or one that points at a SUPERSEDED decision - is still left alone: `already_raised`,
+    exactly as today, row unchanged. May already be green: today's `_already_raised` never
+    reads `supply_decision_id` at all."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="182", required_date=date(2026, 6, 1))
+        mirror = _adopted_mirror(w, order, line)
+        board_row = w.board_row(mirror, qty="182")
+        board_row.delivery_date = date(2026, 6, 1)
+        if shape == "superseded_decision":
+            stale = _decision(
+                w, mirror, line, buy_qty="182", required_date=date(2026, 6, 1),
+                state=DECISION_SUPERSEDED,
+            )
+            board_row.supply_decision_id = stale.id
+        w.db.flush()
+        # Refreshed rather than snapshotted straight from the in-memory object: Postgres'
+        # NUMERIC(15,4) round-trips `Decimal("182")` as `Decimal("182.0000")`, and the AFTER
+        # snapshot below is read fresh off the database - an unrefreshed BEFORE would fail
+        # the comparison on formatting alone, never on behaviour.
+        w.db.refresh(board_row)
+        before = _row_snapshot(board_row)
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert result["rows_raised"] == 0, result
+        matching = capture.by_code(oc.ALREADY_RAISED)
+        assert len(matching) == 1, capture.calls
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 1, rows
+        w.db.refresh(board_row)
+        after = _row_snapshot(board_row)
+        assert before == after, (before, after)
+
+
+@pytest.mark.parametrize("sibling_kind", ["supply_decision_id", "replaces_used", "delay_notice"])
+def test_rollback_keeps_stamped_row_on_a_planning_line(sibling_kind):
+    """AC-RB-29. Rollback also keeps a stamped row whose LINE (not the row itself) carries a
+    live sibling planning made - a row with `supply_decision_id`, a `Replaces N used` row, or
+    a DELAY notice - trait `planning_row_on_line` in the kept listing. A stamped plain row on
+    a line with NO such sibling is still deleted, in the same run."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="220", required_date=date(2027, 3, 1))
+        ref = _ref()
+        line.source_ref = ref
+        po, po_line = w.po_line(qty_ordered="182")
+        po_line.from_so_line_ref = ref
+        w.db.flush()
+        result = _apply(
+            w,
+            sheet([
+                (order.so_number, w.product.product_code, 182, date(2026, 6, 1),
+                 w.warehouse.warehouse_code, ""),
+            ]),
+            file_name="a.xlsx",
+        )
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(line)
+        stamped = next(
+            r for r in _rows_of(w, "a.xlsx") if str(r.so_line_id) == str(mirror.id)
+        )
+
+        if sibling_kind == "supply_decision_id":
+            decision = _decision(w, mirror, line, buy_qty="220", required_date=date(2027, 3, 1))
+            sibling = w.board_row(mirror, qty="38")
+            sibling.supply_decision_id = decision.id
+            w.db.flush()
+        elif sibling_kind == "replaces_used":
+            _used_sibling(
+                w, mirror, qty="220", delivery_date=date(2027, 3, 1),
+                previous_qty="182", previous_delivery_date=date(2026, 6, 1),
+                note="Replaces 182 used; SPO-2026/08-0104 received",
+            )
+        else:
+            _delay_notice(
+                w, mirror, qty="220", delivery_date=date(2027, 3, 1), note="Was 2026-09-01",
+            )
+
+        # The control: a stamped plain row on a DIFFERENT line of the SAME upload, with no
+        # planning sibling of its own - still goes.
+        _control_order, _control_line, control = _stamped_row(w, file_name="a.xlsx", trait=None)
+
+        stamped_id = str(stamped.id)
+        control_id = str(control.id)
+
+        counts = _rollback().run(w.db, file_name="a.xlsx", apply=True)
+
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == stamped_id
+        ).count() == 1, (
+            f"the stamped row on a line carrying a {sibling_kind} sibling must survive"
+        )
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == control_id
+        ).count() == 0, "a stamped plain row with no planning sibling on its line must still go"
+        kept_rows = counts.get("kept_rows") or []
+        named = next(
+            (row for row in kept_rows if row.get("so_number") == order.so_number), None
+        )
+        assert named is not None, kept_rows
+        assert named.get("trait") == "planning_row_on_line", named
+
+
+@pytest.mark.parametrize("shape", ["delay_notice", "top_up"])
+def test_second_upload_changes_nothing_on_s5_lines(shape):
+    """AC-RB-30. A second upload after AC-RB-24 (the notice shape) or AC-RB-26 (the top-up
+    shape) changes nothing on those lines: 0 raised, every column of every row on the line
+    equal before and after."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="500", required_date=date(2027, 4, 1))
+        mirror = _adopted_mirror(w, order, line)
+        if shape == "delay_notice":
+            _decision(w, mirror, line, buy_qty="280", required_date=date(2027, 4, 1))
+            _delay_notice(
+                w, mirror, qty="280", delivery_date=date(2027, 4, 1), note="Was 2026-09-01",
+            )
+            sheet_qty, sheet_date = 182, date(2026, 9, 1)
+        else:
+            decision = _decision(w, mirror, line, buy_qty="220", required_date=date(2027, 1, 4))
+            top_up = w.board_row(mirror, qty="38")
+            top_up.supply_decision_id = decision.id
+            w.db.flush()
+            sheet_qty, sheet_date = 182, date(2027, 1, 4)
+        data = sheet([
+            (order.so_number, w.product.product_code, sheet_qty, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+        first = _apply(w, data, file_name="journey.xlsx")
+        rows_before = {
+            str(r.id): _row_snapshot(r)
+            for r in w.rows() if str(r.so_line_id) == str(mirror.id)
+        }
+        assert len(rows_before) == 2, rows_before
+
+        second = _apply(w, data, file_name="journey.xlsx")
+
+        assert second["rows_raised"] == 0, second
+        rows_after = {
+            str(r.id): _row_snapshot(r)
+            for r in w.rows() if str(r.so_line_id) == str(mirror.id)
+        }
+        assert rows_after == rows_before, (rows_before, rows_after)
