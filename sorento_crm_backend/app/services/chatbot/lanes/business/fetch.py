@@ -403,10 +403,22 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # is order_date, never actual_delivery_date - a pending DO by definition has
     # none, and the SO arm has no delivery date at all.
     "crm_outstanding_report": ("order_date_from", "order_date_to"),
+    # PLAN-chatbot-sales-report.md S4 wiring point 5: the report's own contract, on
+    # the bucket date (required_date, else order_date) - never actual_delivery_date.
+    "crm_sales_report": ("date_from", "date_to"),
     # AC-71: the low stock report's window narrows which sales orders the fresh plan
     # counts as demand - the run's own "plan until" pair, under the route's names.
     "crm_low_stock_report": ("date_from", "date_to"),
 }
+
+def _current_myt_year() -> int:
+    """S18: the current CALENDAR YEAR in Malaysia time (UTC+8, no DST) - the SAME
+    formula `engine._current_date_directive` uses for "today" in the parser prompt,
+    so this default and that directive can never disagree about what year it is."""
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).year
+
 
 # S4 point 3 (AC-1131 fetch half): so_outstanding/do_outstanding/outstanding_both ->
 # so/do/both. Bare "outstanding" is deliberately absent - it is resolved by the
@@ -608,6 +620,69 @@ def entity_ids_transformer(
         detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
         if detail_pick in ("so", "do", "both"):
             out["detail"] = detail_pick
+
+    # PLAN-chatbot-sales-report.md S4 wiring point 5: `crm_sales_report`'s OWN
+    # contract - the SAME shape `crm_outstanding_report` above builds by hand
+    # (`product_code` a string, `customer_ids`, `warehouse_codes` csv, `date_from`/
+    # `date_to` above), plus `channel` (S4 point 5's `sales_channel` -> `channel`).
+    if tool_name == "crm_sales_report":
+        out.pop("product_ids", None)
+        out.pop("warehouse_ids", None)
+        picked_code = outstanding_product_code(entities, semantic_input)
+        if jsc.truthy(picked_code):
+            out["product_code"] = picked_code
+        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
+        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
+            out["location_token"] = location_token
+        # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
+        # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
+        # over whatever THIS turn's own (empty) entity list produced.
+        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
+        if isinstance(carried_customers, list) and carried_customers:
+            out["customer_ids"] = carried_customers
+        # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
+        # when given; a pick or a refinement of an open sales_report_detail offer names
+        # no channel of its own, so the offer's CARRIED channel (restored by
+        # `head/output_exchange.py::_apply_outstanding_pending`) is the fallback.
+        channel = jsc.get(semantic_input, "sales_channel")
+        if not jsc.truthy(channel):
+            channel = jsc.get(semantic_input, "outstanding_carried_channel")
+        if jsc.truthy(channel):
+            out["channel"] = jsc.js_string(channel)
+        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
+        if detail_pick == "so":
+            out["detail"] = "so"
+
+        # S18 (owner ruling, mid-lane): a PRODUCT-ONLY ask (a resolved product, no
+        # customer) with no date window defaults to the CURRENT CALENDAR YEAR
+        # (Malaysia time) - a customer ask, or a customer+product ask, with no date
+        # stays all dates (S4, unchanged). Built HERE, in the lane, never the route:
+        # `date_from`/`date_to` absent still means all dates when the route is
+        # called directly (e.g. n8n). "All dates" said in words (`broaden_axis ==
+        # "date"`, the SAME field R15's date-window-drop already reads) turns the
+        # default off - no word table, the parser already decided it.
+        if (
+            jsc.truthy(out.get("product_code"))
+            and not jsc.truthy(out.get("customer_ids"))
+            and not jsc.truthy(out.get("date_from"))
+            and not jsc.truthy(out.get("date_to"))
+            and jsc.lower_or_empty(jsc.get(semantic_input, "broaden_axis")) != "date"
+        ):
+            year = _current_myt_year()
+            out["date_from"] = f"{year}-01-01"
+            out["date_to"] = f"{year}-12-31"
+            # Mutated onto `semantic_input` too (not just `out`, this function's own
+            # return value): `output_structurer` -> `_sales_report_output` ->
+            # `_sales_report_filters_from_ctx` reads `ctx["semantic_input"]` - the
+            # SAME dict object `run_fetch` built `trigger` with - to arm the detail
+            # offer's stored filter set, so the default has to land there too, or a
+            # later "1" would list every date instead of the year just answered.
+            if isinstance(semantic_input, dict):
+                semantic_input["date_filter_start"] = out["date_from"]
+                semantic_input["date_filter_end"] = out["date_to"]
 
     # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
     # route resolves warehouse and product CODES, and a UUID would silently match nothing.
@@ -1764,6 +1839,104 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
     }
 
 
+def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
+    """The `outstanding_filters` shape the sales-report lane arms its own detail
+    offer with (PLAN-chatbot-sales-report.md S4 wiring point 7). `tool` names WHICH
+    report this stored filter set belongs to - carried for a reader of the stored
+    session state, but the re-run itself is decided by the PENDING KIND, not this
+    key: `head/output_exchange.py::_apply_outstanding_pending` stamps `order_status:
+    "sales_report"` off `kind == "sales_report_detail"` directly, the same way an
+    `outstanding_detail` offer's own scope decides its re-run."""
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input)
+    semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+    product_code = outstanding_product_code(ctx.get("entities"), semantic_input)
+    customer_ids: list[Any] = []
+    for e in jsc.array(ctx.get("entities")):
+        if not isinstance(e, dict):
+            continue
+        if e.get("entity_type") == "customer":
+            uid = e.get("uuid")
+            if uid and uid not in customer_ids:
+                customer_ids.append(uid)
+    if not customer_ids:
+        # R13-equivalent: a CUSTOMER-subject answering turn resolved no entity this
+        # turn - the ids rode in on the carried filter set, and they have to ride
+        # back out on it too, or the offer this hit arms loses its only subject.
+        customer_ids = [
+            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+        ]
+    return {
+        "tool": "crm_sales_report",
+        "product_code": product_code,
+        "date_filter_start": semantic_input.get("date_filter_start"),
+        "date_filter_end": semantic_input.get("date_filter_end"),
+        "customer_ids": customer_ids,
+        "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+        "location_token": semantic_input.get("outstanding_location_token"),
+        "channel": semantic_input.get("sales_channel"),
+    }
+
+
+def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """S4 wiring point 7 (AC-1654/AC-1655/AC-1658): `crm_sales_report` never goes
+    through the generic envelope below - mirrors `_outstanding_report_output` for
+    the sibling tool, the SAME reason: the report's shape (a month block per
+    bucket) has no row list to build items from.
+
+    `_outstanding_offer_from_text` is REUSED, not copied: this report's own single
+    closing sentence (`Reply 1 for the sales order list.`) is byte-identical to the
+    outstanding report's single-scope offer, so the same regex finds it and returns
+    the SAME one-row shape (`idx` 1, `Sales order list`, `so`) this tool's own
+    detail offer needs.
+    """
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+    else:
+        # The render never happened (an MCP that returned the raw body, or a failure
+        # fallback). Nothing can be said about absence from a shape this function did
+        # not get, so the text stands and the turn is treated as an answer.
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
+    offer = _outstanding_offer_from_text(text)
+
+    outstanding_ask = (
+        {
+            "kind": "sales_report_detail",
+            "last_result_set": offer,
+            "filters": {
+                **_sales_report_filters_from_ctx(ctx),
+                "offer_text": _outstanding_offer_block(text),
+            },
+        }
+        if offer
+        else None
+    )
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": outstanding_ask,
+        # AC-1659: this report carries its OWN Customer / Product / Channel /
+        # Location / Delivery date header, so `tail/compile_state.py` must skip the
+        # generic search-scope header (the same marker `crm_outstanding_report`
+        # already reuses this for, S4 point 9).
+        "outstanding_report": True,
+    }
+
+
 #: The miss line for an unrendered low stock payload (N6). The presenter carries the same
 #: wording for its own error envelope; this copy covers only the "render never happened"
 #: fallback, where the presenter's text never reached this function.
@@ -1866,6 +2039,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ctx = ctx if isinstance(ctx, dict) else {}
     if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
         return _outstanding_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_report":
+        return _sales_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
     e = _extract_envelope(result)

@@ -158,3 +158,115 @@ class OutstandingReportResponse(BaseModel):
     do_by_product: Optional[List[OutstandingDOProductRow]] = None
     so_rows: List[OutstandingSORow] = []
     do_rows: List[OutstandingDORow] = []
+
+
+# ---------------------------------------------------------------------------
+# sales report - confirmed vs outstanding sales, by month
+# (`documentation/plans/chatbot/PLAN-chatbot-sales-report.md` "Backend contract";
+# `documentation/plans/chatbot/chatbot-sales-report-acceptance-criteria.md`
+# AC-1620 to AC-1632)
+# ---------------------------------------------------------------------------
+#: Money fields are `float`, never `Decimal` (captain ruling, S2 fix round): a
+#: `Decimal` field serialises through `model_dump(mode="json")` as a STRING
+#: (`"1234.50"`), which is not the contract - money must be a JSON NUMBER,
+#: rounded to 2 places by the service before it reaches this schema. Quantities
+#: are `int`, same as `OutstandingSOBlock` above.
+class SalesReportProductRow(BaseModel):
+    """The By product group, for a CUSTOMER-subject report (S6)."""
+
+    product_code: Optional[str] = None
+    ordered_qty: int
+    ordered_value: float
+    confirmed_qty: int
+    confirmed_value: float
+    outstanding_qty: int
+    outstanding_value: float
+
+
+class SalesReportCustomerRow(BaseModel):
+    """As `SalesReportProductRow`, for a PRODUCT-subject report."""
+
+    customer_name: Optional[str] = None
+    ordered_qty: int
+    ordered_value: float
+    confirmed_qty: int
+    confirmed_value: float
+    outstanding_qty: int
+    outstanding_value: float
+
+
+class SalesReportMonth(BaseModel):
+    """One month bucket (S3: `required_date`, else the SO's `order_date`).
+
+    `by_product` / `by_customer` follow the report's SUBJECT (AC-1628): a
+    customer-subject ask carries `by_product`, a product-subject ask carries
+    `by_customer`, both named carries NEITHER - the route strips whichever key
+    the subject does not want (`None` here is not asked, an empty list would be
+    asked-and-nobody, a different fact).
+    """
+
+    month: str
+    so_count: int
+    ordered_qty: int
+    ordered_value: float
+    confirmed_qty: int
+    confirmed_value: float
+    outstanding_qty: int
+    outstanding_value: float
+    by_product: Optional[List[SalesReportProductRow]] = None
+    by_customer: Optional[List[SalesReportCustomerRow]] = None
+
+
+class SalesReportSORow(BaseModel):
+    """One SO, lines rolled up over the WHOLE filtered window (AC-1629) - no
+    `product_code` (unlike `OutstandingSORow`): the plan's own contract table
+    for `so_rows[]` never names one, and the presenter's detail reply (S1)
+    never prints a Product line for this report."""
+
+    so_number: str
+    customer_name: Optional[str] = None
+    location: Optional[str] = None
+    order_date: Optional[date] = None
+    ordered_qty: int
+    ordered_value: float
+    confirmed_qty: int
+    confirmed_value: float
+    outstanding_qty: int
+    outstanding_value: float
+    #: S19/AC-1633: the SO's own DISTINCT matched product codes, comma joined -
+    #: present ONLY when a `product_code` filter was given (absent otherwise,
+    #: never an empty string). The presenter reads it absent-safe so an OLD
+    #: body (deployed before this field existed) still renders.
+    product_codes: Optional[str] = None
+
+
+class SalesReportResponse(BaseModel):
+    """`GET /api/v1/order-management/sales-report`.
+
+    `so_rows` is `None` (and the route strips the key entirely) unless the
+    caller asked `detail=so` (captain ruling, S2 fix round): a big dealer is
+    1,230 SOs, so the service never computes or sends them unasked - the SAME
+    "declared but stripped by the route when unset" pattern
+    `OutstandingReportResponse.so`/`do` already use above.
+
+    Every field is declared on purpose - `response_model` silently drops any
+    field the schema does not name (LESSONS-LEARNT.md).
+    """
+
+    customer_name: Optional[str] = None
+    product_code: Optional[str] = None
+    #: S19: the DISTINCT product codes matched by `product_code`'s prefix rule
+    #: THAT HAVE ROWS in the filtered report, sorted ascending. `[]` when no
+    #: product filter was given (AC-1631, AC-1633).
+    product_codes: List[str] = []
+    channel: Optional[str] = None
+    # Echo only (S9), same contract as `OutstandingReportResponse`'s route-level
+    # `location_token` handling - never filters, always present on this report's
+    # body (AC-1631), unlike the outstanding route where it is tacked onto the
+    # body only when given.
+    location_token: Optional[str] = None
+    warehouse_codes: List[str] = []
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    months: List[SalesReportMonth] = []
+    so_rows: Optional[List[SalesReportSORow]] = None
