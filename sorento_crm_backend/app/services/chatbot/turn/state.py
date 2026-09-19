@@ -26,6 +26,14 @@ class Focus:
     domains: list[str] = field(default_factory=list)
     document: list[str] = field(default_factory=list)
     status: str | None = None
+    # PLAN-chatbot-sales-report.md S4 wiring point 2: the sales report's own channel
+    # filter ("dealer" / "project" / None), an axis of the same kind as `status` and
+    # carried the same way. A sales report ask that stopped at the customer picker, or
+    # whose detail offer is answered with a bare "1", names no channel word on the turn
+    # that resumes it - the focus is the one carry in this engine, so it rides here
+    # rather than on a session key of its own (the retired head kept a second copy on
+    # `outstanding_filters` and the two could disagree).
+    sales_channel: str | None = None
     date_window: dict[str, Any] | None = None
     # The twelfth slot (AC-1534, contract 115): where a counted-set answer got to.
     # `{"set_key": ..., "offset": n}` - the set the last answer described and how many of
@@ -74,6 +82,7 @@ FOCUS_LIST_FIELDS = ("products", "customers", "warehouse", "brands", "tier", "do
 def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire: dict[str, Any] = {name: list(getattr(focus, name)) for name in FOCUS_LIST_FIELDS}
     wire["status"] = focus.status
+    wire["sales_channel"] = focus.sales_channel
     wire["date_window"] = focus.date_window
     wire["set_page"] = focus.set_page
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
@@ -119,6 +128,8 @@ def focus_from_wire(raw: Any) -> Focus:
     if not isinstance(status, str):
         status = raw.get("order_status")
     focus.status = status if isinstance(status, str) else None
+    channel = raw.get("sales_channel")
+    focus.sales_channel = channel if isinstance(channel, str) else None
     window = raw.get("date_window")
     focus.date_window = window if isinstance(window, dict) else None
     page = raw.get("set_page")

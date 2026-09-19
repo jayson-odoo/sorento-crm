@@ -301,10 +301,19 @@ def decide(
         typed_exactly = any(
             _code_of(row).casefold() in typed_now for row in resolved_candidates
         )
+        # PLAN-chatbot-sales-report.md S19: on a SALES REPORT ask a product token is a
+        # PREFIX that COVERS its whole family ("Srt5674" is SRT5674 and SRT5674-N and
+        # SRT5674-NL, one report over all of them), so an "ambiguous" product is not a
+        # choice at all there and there is nothing to ask - the owner's journey says
+        # nothing but the customer picker is ever asked. Keyed on the STATUS axis, not
+        # on the domain: the outstanding report answers under the same `order` domain
+        # and keeps the exact-code rule (AC-1119) this is the opposite of.
+        covers_the_family = kind == "product" and focus.status == "sales_report"
         if (
             policy_value == "optional_filter"
             and typed_now
             and not typed_exactly
+            and not covers_the_family
             and _choices(resolved_candidates, family_grouping) > 1
         ):
             return NarrowOutcome(

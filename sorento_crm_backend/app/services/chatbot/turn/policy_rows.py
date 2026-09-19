@@ -126,6 +126,11 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             "crm_order_management_orders_by_product_list",
             "crm_master_customers_list",
             "crm_outstanding_report",
+            # PLAN-chatbot-sales-report.md S4 wiring point 3: an allow-list member only
+            # (`fetch.CHATBOT_READ_ONLY_TOOLS` is this seed's own union), NEVER
+            # `tools[0]` - the pick is an override in
+            # `lanes/business/__init__.py::run_fetch`, beside the outstanding one.
+            "crm_sales_report",
         ],
         escalation_team_code="customer_service",
         switch_words=[
@@ -275,6 +280,7 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_sla_conversation_event_logs_list",
     "crm_procurement_po_placed_list",
     "crm_outstanding_report",
+    "crm_sales_report",
     "crm_low_stock_report",
 }
 

@@ -15,7 +15,7 @@ and AC-1502's tier order (`system_settings`) - all three are plain model columns
 database (never `create_all`) carries them.
 
 Revision ID: chatbot_rearch_s0
-Revises: slbc_0002_inventory_model_no
+Revises: 521_sales_report_month_fix
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "chatbot_rearch_s0"
-down_revision = "slbc_0002_inventory_model_no"
+down_revision = "521_sales_report_month_fix"
 branch_labels = None
 depends_on = None
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.chatbot.contracts import DETAIL_OFFER_KINDS
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus
 
@@ -42,8 +43,12 @@ NEW_ASK = "new_ask"
 CARRY = "carry"
 
 #: Contract 38 and 39: the outstanding report's own two questions. Business questions,
-#: not escalation offers - answering one is a fetch.
-OUTSTANDING_KINDS: frozenset[str] = frozenset({"outstanding_scope", "outstanding_detail"})
+#: not escalation offers - answering one is a fetch. The sales report's detail offer
+#: (PLAN-chatbot-sales-report.md S4 wiring point 7) joins through
+#: `contracts.DETAIL_OFFER_KINDS` rather than a second literal: its offer has exactly
+#: the shape `outstanding_detail`'s has (a numbered roster of scopes, re-run with
+#: `detail=`, sticky across its own pick), so this arm reads both by membership.
+OUTSTANDING_KINDS: frozenset[str] = frozenset({"outstanding_scope", *DETAIL_OFFER_KINDS})
 
 #: The scope an option names, as the documents the focus then carries. One table, read
 #: both ways: a picked option becomes a `document` list, and a `document` the parser

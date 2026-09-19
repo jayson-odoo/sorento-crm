@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-# The lane's eight offer/roster kinds plus the reconciliation-only ninth.
+# The lane's eight offer/roster kinds plus the reconciliation-only ninth, and the sales
+# report's own detail offer (PLAN-chatbot-sales-report.md S4 wiring point 7): a KIND is
+# added, an arm is not - every site that used to test the literal `"outstanding_detail"`
+# tests membership in `contracts.DETAIL_OFFER_KINDS` instead, so the two share one
+# mechanism rather than one being a copy of the other.
 PENDING_KINDS: tuple[str, ...] = (
     "product_pick",
     "customer_pick",
@@ -15,6 +19,7 @@ PENDING_KINDS: tuple[str, ...] = (
     "member_offer",
     "outstanding_scope",
     "outstanding_detail",
+    "sales_report_detail",
     "kind_pick",
 )
 

@@ -304,6 +304,11 @@ def _drop_question_subject(focus: Focus, pending: Pending) -> None:
         # writes it straight back in `_focus_rules`.
         focus.document = []
         focus.status = None
+    if filters.get("channel"):
+        # Same rule, the sales report's own axis: a fresh ask that names no channel word
+        # counts every channel, and inheriting a dead report's "Dealer" would answer a
+        # different question under a header nobody asked for.
+        focus.sales_channel = None
 
 
 def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None = None) -> None:
@@ -366,6 +371,13 @@ def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None
             "start": filters.get("date_filter_start"),
             "end": filters.get("date_filter_end"),
         }
+    if filters.get("channel") and not focus.sales_channel:
+        # The sales report's own axis (S4 wiring point 2), settled the same way and for
+        # the same reason: the turn that answers "1" says no channel word, and a re-run
+        # that dropped it would count every channel under a header saying "Dealer".
+        # A DEFAULT like the window above - `_focus_rules` runs next and a channel this
+        # turn named itself ("for project only") wins.
+        focus.sales_channel = str(filters["channel"])
 
 
 def _answer_outstanding(
@@ -395,11 +407,24 @@ def _answer_outstanding(
 
     Anything else returns None: the generic rules settle it, in one place.
 
-    The scope question clears when it is answered; the detail offer does not (contract
+    The scope question clears when it is answered; a detail offer does not (contract
     39, owner ruling 13 Sep 2026 - "after '1' (SO list), typing '2' must give the DO
-    list"), so it is the one offer kind that stays on screen across its own pick.
+    list"), so those are the offer kinds that stay on screen across their own pick.
+
+    PLAN-chatbot-sales-report.md S4 wiring point 7: `sales_report_detail` runs through
+    THIS arm, not a copy of it. Two facts differ and nothing else does - the status
+    word this answer re-runs under (`sales_report`, which is what
+    `turn_runtime.lane_parse_output` projects onto `order_status` and what
+    `lanes/business.run_fetch`'s own override reads), and the document axis, which the
+    sales report has no concept of at all (one bucket, confirmed AND outstanding, S4
+    ruling 6: "no scope question exists here"). The `so` its one option carries is a
+    `detail` argument, never a document.
     """
     asked_for = pending.payload.get("domain")
+    sales_report = pending.kind == "sales_report_detail"
+    #: The status word the re-run goes out under, and therefore which tool
+    #: `run_fetch`'s order-domain override picks.
+    status_word = "sales_report" if sales_report else "outstanding"
 
     if decision.refines:
         # The subject SETTLES exactly as an answer's does - the question's own resolved
@@ -408,15 +433,19 @@ def _answer_outstanding(
         # it a re-run of the REPORT rather than one of its lists: the customer narrowed
         # the search, they did not ask for a list.
         _settle_question_subject(focus, pending, trace)
-        focus.status = "outstanding"
+        focus.status = status_word
         # The scope question has NOT been answered, only narrowed (AC-1158), so the
         # document axis stays empty and `lane_parse_output`'s `("", "outstanding")`
         # bucket re-arms the same question over the new filters through the arm that
         # armed it - one writer for the question's text, no second re-ask path. The
         # detail offer's scope is already known (a report ran, or it could not have
         # offered its lists), so its re-run carries it and never asks a question that
-        # has been answered.
-        focus.document = list(DOCUMENT_BY_SCOPE[decision.scope]) if decision.scope else []
+        # has been answered. The sales report has no document axis at all.
+        focus.document = (
+            []
+            if sales_report
+            else (list(DOCUMENT_BY_SCOPE[decision.scope]) if decision.scope else [])
+        )
         if asked_for:
             focus.domains = [asked_for]
         trace.rules_fired.append("outstanding_refined")
@@ -433,16 +462,16 @@ def _answer_outstanding(
 
     named_scope = decision.why == "named_document"
     _settle_question_subject(focus, pending, trace)
-    focus.document = list(DOCUMENT_BY_SCOPE[decision.scope])
-    focus.status = "outstanding"
+    focus.document = [] if sales_report else list(DOCUMENT_BY_SCOPE[decision.scope])
+    focus.status = status_word
     if asked_for:
         # Contract 121: the answer goes back to the domain the question was asked for.
         focus.domains = [asked_for]
     # A document the message NAMED is a new scope, not a pick off the offer: the REPORT
     # re-runs for that document and the old question goes with it (row 5). A POSITION is
-    # the offer's own answer and keeps contract 39's rule, where the detail offer is the
+    # the offer's own answer and keeps contract 39's rule, where a detail offer is the
     # one kind that survives its own pick.
-    answers_the_offer = pending.kind == "outstanding_detail" and not named_scope
+    answers_the_offer = pending.kind in contracts.DETAIL_OFFER_KINDS and not named_scope
     trace.rules_fired.append(
         "answer_outstanding" if not named_scope else "outstanding_pending_dropped"
     )
@@ -712,6 +741,12 @@ def _focus_rules(
         focus.document = list(document)
     if status:
         focus.status = status
+    # S4 wiring point 2: the channel axis, written from the parser's own field and
+    # nothing else (S12 - no word table in deterministic code). Only when the message
+    # named one: a sales report ask with no channel word counts every channel, and a
+    # turn that narrows an open one ("for project only") names it and wins here.
+    if verdict.get("sales_channel"):
+        focus.sales_channel = str(verdict["sales_channel"])
     if verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end"):
         focus.date_window = {
             "mode": verdict.get("date_mode"),
@@ -830,6 +865,7 @@ _IDLE_CHAT_DISQUALIFIERS = (
     "reference_target",
     "document",
     "status",
+    "sales_channel",
     "scope_intent",
     "broaden_axis",
     "group_by",

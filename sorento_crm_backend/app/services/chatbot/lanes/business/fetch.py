@@ -628,7 +628,7 @@ def entity_ids_transformer(
     if tool_name == "crm_sales_report":
         out.pop("product_ids", None)
         out.pop("warehouse_ids", None)
-        picked_code = outstanding_product_code(entities, semantic_input)
+        picked_code = sales_report_product_code(entities, semantic_input)
         if jsc.truthy(picked_code):
             out["product_code"] = picked_code
         warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
@@ -1710,6 +1710,37 @@ def outstanding_product_codes(entities: Any, semantic_input: Any) -> list[str]:
     return codes
 
 
+#: The shortest a `crm_sales_report` `product_code` may be - the route 422s
+#: `product_code_too_short` under it (AC-1627, S19).
+_SALES_REPORT_MIN_PREFIX = 3
+
+
+def sales_report_product_code(entities: Any, semantic_input: Any) -> str:
+    """WHICH product the SALES report is about, as ONE string.
+
+    `outstanding_product_codes` is the shared rule for which codes are in play (AC-1119);
+    this route's own parameter is different in kind, because `crm_sales_report`'s
+    `product_code` is a PREFIX that covers a family (S19), not an exact code, and the
+    route declares no `product_codes` list at all.
+
+    So a carry of SEVERAL codes - "all" over a product roster, `outstanding_carried_
+    product_codes` - travels as the longest prefix they share, which covers exactly them
+    (and any sibling sitting between them) rather than reporting on the first alone under
+    a header naming it (the outstanding report's own turn 0a6f0379, 16 Sep 2026). One
+    code, which is every ordinary ask, is returned verbatim and this is a no-op.
+    """
+    codes = outstanding_product_codes(entities, semantic_input)
+    if not codes:
+        return ""
+    if len(codes) == 1:
+        return codes[0]
+    shared = codes[0]
+    for code in codes[1:]:
+        while shared and not code.upper().startswith(shared.upper()):
+            shared = shared[:-1]
+    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
+
+
 #: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
 #: numbered list and every option line under it, to the end of the reply.
 _OFFER_BLOCK_RE = re.compile(
@@ -1851,7 +1882,7 @@ def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     if isinstance(semantic_input, str):
         semantic_input = _safe_json(semantic_input)
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    product_code = outstanding_product_code(ctx.get("entities"), semantic_input)
+    product_code = sales_report_product_code(ctx.get("entities"), semantic_input)
     customer_ids: list[Any] = []
     for e in jsc.array(ctx.get("entities")):
         if not isinstance(e, dict):

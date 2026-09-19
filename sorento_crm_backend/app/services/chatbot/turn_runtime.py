@@ -358,7 +358,44 @@ def with_routing_agent_default(verdict: dict[str, Any]) -> dict[str, Any]:
     if not routing.get("suggested_agent"):
         routing["suggested_agent"] = DEFAULT_SUGGESTED_AGENT
     out["routing"] = routing
+    _report_status_means_order_domain(out)
     return out
+
+
+def _report_status_means_order_domain(out: dict[str, Any]) -> None:
+    """A REPORT status word always routes to the `order` domain. Mutates `out`.
+
+    Main's finding 3(b) (owner live testing, 19 Sep 2026,
+    PLAN-chatbot-sales-report.md), re-homed: it lived in the retired
+    `head/output_exchange._post_process`, and this is the seam that now normalises a
+    fresh verdict before anything reads it. The measured emission for "Srt5674 August
+    total sale quantity" parsed the report status and still named `master_products`,
+    and BOTH report overrides in `lanes/business/__init__.py::run_fetch` gate on
+    `domain == "order"` - so the turn fell through to the product-master listing. The
+    same hole swallows an outstanding ask whose domain came back `inventory`.
+
+    Reads ONLY the parser's own structured fields, never the message text, and only
+    the status axis - `OUTSTANDING_ORDER_STATUS` is the set `resolve_gate.py`'s own R20
+    rule already shares between the outstanding buckets and `sales_report`, so this
+    extends one existing normalisation rather than adding a second.
+    """
+    from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
+
+    status = jsc.js_string(out.get("status") or "").strip()
+    if status not in OUTSTANDING_ORDER_STATUS:
+        status = jsc.js_string(out.get("order_status") or "").strip()
+    if status not in OUTSTANDING_ORDER_STATUS:
+        return
+    prior = out.get("domain_hint")
+    if prior == "order":
+        return
+    # A message that names SEVERAL domains ("stock and outstanding for 7445") states its
+    # own list and this rule is not about it: `asks` is what the plan fans out on, and
+    # rewriting the single hint under it would drop the other ask.
+    if out.get("asks"):
+        return
+    out["domain_hint"] = "order"
+    out["domain_corrected"] = f"{prior}->order (order_status {status})"
 
 
 def lane_parse_output(
@@ -425,6 +462,14 @@ def lane_parse_output(
     out["outstanding_scope_ask_candidate"] = (
         jsc.js_string(out.get("order_status") or "").strip() == "outstanding"
     )
+    # PLAN-chatbot-sales-report.md S4 wiring point 2: the sales report's channel, off the
+    # FOCUS when this message named none of its own. The turn that answers a customer
+    # picker ("1") or a detail offer ("1") types no channel word, and a re-run that
+    # dropped it would count every channel under a header still saying "Dealer". One
+    # carry, one seam - the same place the document/status projection is made - rather
+    # than a second session key the two could disagree about.
+    if not out.get("sales_channel") and focus is not None and focus.sales_channel:
+        out["sales_channel"] = focus.sales_channel
 
     routing = dict(out.get("routing") or {})
     if accepted_team:

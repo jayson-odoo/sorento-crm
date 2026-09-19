@@ -407,6 +407,11 @@ _ASK_HEADERS: dict[str, str] = {
     # with a different sentence reads as a second, different question.
     "outstanding_scope": "Outstanding for which document?",
     "outstanding_detail": "Which list would you like?",
+    # The sales report's own detail offer (PLAN-chatbot-sales-report.md S4 wiring point
+    # 7) asks the same question. Its live wording is the presenter's own sentence,
+    # carried verbatim on `payload.filters.offer_text` like the outstanding one's; this
+    # is the fallback for a re-print of an offer that stored none.
+    "sales_report_detail": "Which list would you like?",
     "kind_pick": "Which one do you mean?",
     "attachment_type_ask": "Which kind of file do you need?",
     # Defect 6 (hand pass 6, 17 Sep 2026): `narrow_by_type` over an empty "product"
