@@ -721,6 +721,48 @@ def test_the_supplier_and_po_are_the_ones_the_row_actually_links_to(api):
     assert [row["id"] for row in filtered["data"]] == [seeded["adopted_row"].id]
 
 
+def test_supplier_reads_off_an_spo_only_links_own_supplier(api):
+    """AC-FB-52 (measured on the prod copy: 5,156 SPO-only rows show "Not linked"
+    under Supplier): a row whose ONLY link is an SPO allocation with no `po_line_id`
+    at all (a genuine book-chain SPO, never resolved back to a source PO line) must
+    still serialise top-level `supplier` off THAT allocation's own `supplier_id` -
+    not blank. `_SPO_LINKED_PO_ID` requires `SPOAllocation.po_line_id` to be set, so
+    `_PLACED_PO_ID` (the coalesce every one of its three legs reads) comes back NULL
+    for this row and the Supplier outerjoin (keyed off `PurchaseOrder.supplier_id`,
+    never `SPOAllocation.supplier_id` directly) never even considers it. A row with
+    a PO link is unchanged (the test above)."""
+    client, db, company_id, seeded = api
+    line = _line_on_authored_order(db, company_id, seeded, qty="12", day=9)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO ONLY SUPPLIER",
+    )
+    db.add(supplier)
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}",
+        spo_line_number=1, product_id=line.product_id, allocated_quantity=12,
+        quantity_received=0, line_status="open", supplier_id=supplier.id,
+        po_line_id=None,
+    )
+    db.add(allocation)
+    db.flush()
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    row = _row(
+        db, company_id, inquiry, so_line_id=line.id, qty="12", state="placed",
+    )
+    db.add(OrderInquiryLink(
+        id=_uid(), company_id=company_id, row_id=row.id,
+        spo_allocation_id=allocation.id, document=allocation.spo_number,
+        qty=Decimal("12"),
+    ))
+    db.commit()
+
+    body = client.get(LIST).json()
+    listed = next(r for r in body["data"] if r["id"] == row.id)
+    assert listed["supplier"] == supplier.supplier_name, listed
+
+
 # ------------------------------------------------------------------- location
 
 
