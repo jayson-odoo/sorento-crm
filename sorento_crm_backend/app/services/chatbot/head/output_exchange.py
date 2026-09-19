@@ -1676,6 +1676,28 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["intent_hint"] = "check_product_attachment"
             o["domain_corrected"] = "resource_attachment->product_attachment (product present)"
 
+    # -- A REPORT order_status ALWAYS ROUTES TO THE order DOMAIN ------------------------ #
+    # Finding 3(b) (owner live testing, 19 Sep 2026, PLAN-chatbot-sales-report.md): the
+    # measured emission for "Srt5674 August total sale quantity" (FULL prompt, one run)
+    # parsed order_status "sales_report" but domain_hint "master_products" - the parser
+    # KNEW the ask was a report and still named the product-master domain. Both
+    # `lanes/business/__init__.py` tool-pick overrides for a report ask (outstanding and
+    # sales_report alike) gate on `domain == "order"` and otherwise fall through to
+    # whatever `select_tool(domain)` picks for the WRONG domain - here, the product
+    # listing. `OUTSTANDING_ORDER_STATUS` is the SAME set `resolve_gate.py`'s own R20
+    # hole already shares between the outstanding statuses and `sales_report` (imported
+    # lazily - that module imports THIS one back, function-local, at its own line ~337),
+    # so this reads ONLY the parser's own structured `order_status` field, never the
+    # message text, the same discipline the `resource_attachment` correction above
+    # already keeps, and extends one existing normalisation rather than adding a second.
+    from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
+
+    report_order_status = jsc.js_string(o.get("order_status") or "").strip()
+    if report_order_status in OUTSTANDING_ORDER_STATUS and o.get("domain_hint") != "order":
+        prior_domain = o.get("domain_hint")
+        o["domain_hint"] = "order"
+        o["domain_corrected"] = f"{prior_domain}->order (order_status {report_order_status})"
+
     # -- MENU-LABEL OVERRIDE ------------------------------------------------------------ #
     # Exact menu/button labels are SELECTIONS (-> portal link), not free-text queries.
     # Matched against the ORIGINAL user message, not the LLM output.

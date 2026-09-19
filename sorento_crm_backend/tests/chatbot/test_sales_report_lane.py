@@ -1590,3 +1590,58 @@ class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
         assert "matched these" not in reply, (
             f"the generic delivery-order miss probe text must not appear: {reply!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Finding 3(b) (owner live testing, 19 Sep 2026, PLAN-chatbot-sales-report.md):
+# "Srt5674 August total sale quantity" (no "dealer") sometimes came back
+# `domain_hint: "master_products"` alongside a correct `order_status:
+# "sales_report"` - the parser knew the ask was a report and still named the
+# wrong domain, and the sales_report tool-pick override in
+# `lanes/business/__init__.py` only fires for `domain == "order"`, so the turn
+# fell through to the product-master listing instead of the report.
+# `head/output_exchange.py::_post_process` now forces `domain_hint` back to
+# "order" whenever `order_status` is a report status (`OUTSTANDING_ORDER_
+# STATUS`), read off the parser's own structured field alone. Parametrized
+# over the sales report AND one legacy outstanding status, since both share
+# that one set and that one correction.
+# --------------------------------------------------------------------------- #
+
+
+class TestReportOrderStatusAlwaysReachesTheReportDespiteAWrongDomainHint:
+    @pytest.mark.parametrize(
+        "order_status,attributes,tool,mock_hit",
+        [
+            ("sales_report", ["sales_orders.sales_report"], "crm_sales_report", SALES_REPORT_HIT),
+            ("so_outstanding", ["sales_orders.outstanding"], "crm_outstanding_report", REPORT_HIT),
+        ],
+    )
+    def test_a_master_products_domain_hint_still_reaches_the_report(
+        self, session_factory, monkeypatch, order_status, attributes, tool, mock_hit
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", domain_hint="master_products",
+                intent_hint="check_product", order_status=order_status,
+                requested_attributes=["quantity"],
+                entities=[
+                    {
+                        "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="Srt5674 August total sale quantity",
+            msg_id=f"ZZT-report-domain-fix-{order_status}-1",
+            attributes=attributes,
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=mock_hit,
+        )
+        assert captured, (
+            f"the {order_status} report must run even though domain_hint was "
+            f"master_products, not answer a product-master listing"
+        )
+        name, _args = captured[0]
+        assert name == tool, (order_status, name)
