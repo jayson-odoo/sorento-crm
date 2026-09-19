@@ -1343,7 +1343,13 @@ class TestLinkFollowsBookPairing:
 
     def test_same_ref_repush_changes_nothing(self, env):
         """AC-RL-45 (second half): a re-push with the SAME ref moves nothing at
-        all - no note, the same link untouched."""
+        all - no FURTHER note, the same link untouched.
+
+        Seeding repair (fix round, 19 Sep): S2's own ingest hook now links row A
+        during the FIRST push already (its line's `from_so_line_ref` names row
+        A's exact core line), so the manual `OrderInquiryLink` add this test used
+        to seed here would be a SECOND link on the same row and raise
+        `MultipleResultsFound` - asserted on the hook's own link instead."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a = _ref("SOLA")
         so_a, core_line_a = _seed_ref_only_so_line(
@@ -1360,15 +1366,11 @@ class TestLinkFollowsBookPairing:
         assert res.json()["records"][0]["outcome"] == "created", res.text
         header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
-        env.db.add(OrderInquiryLink(
-            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
-            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("9"),
-            auto=True,
-        ))
-        env.db.commit()
-        link_id_before = str(
-            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        link_before = (
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one()
         )
+        assert str(link_before.po_line_id) == str(po_line["id"]), link_before
+        link_id_before = str(link_before.id)
         note_before = row_a.note
 
         repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=ref_a, qty_ordered=9)
@@ -1402,7 +1404,12 @@ class TestLinkFollowsBookPairing:
         (the SO has not been pushed yet - the ordinary case) must not be read the
         same way an explicit `null` is (AC-RL-45). `_resolve_ref_line` returns
         `(None, None)` for BOTH today, so an unresolved ref currently unlinks row A
-        and stamps an "AutoCount removed" note exactly as a genuine clear does."""
+        and stamps an "AutoCount removed" note exactly as a genuine clear does.
+
+        Seeding repair (fix round, 19 Sep): S2's own ingest hook now links row A
+        during the FIRST push already (its line's `from_so_line_ref` names row
+        A's exact core line) - asserted on the hook's own link, never a second,
+        manual one (`MultipleResultsFound`)."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a = _ref("SOLA")
         so_a, core_line_a = _seed_ref_only_so_line(
@@ -1419,15 +1426,11 @@ class TestLinkFollowsBookPairing:
         assert res.json()["records"][0]["outcome"] == "created", res.text
         header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
-        env.db.add(OrderInquiryLink(
-            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
-            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("22"),
-            auto=True,
-        ))
-        env.db.commit()
-        link_id_before = str(
-            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        link_before = (
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one()
         )
+        assert str(link_before.po_line_id) == str(po_line["id"]), link_before
+        link_id_before = str(link_before.id)
         note_before = row_a.note
 
         # A ref shaped exactly like a real one - three segments in the family
@@ -1453,7 +1456,12 @@ class TestLinkFollowsBookPairing:
         """AC-RL-48: `_resolve_ref_line` carries no company filter at all - a ref
         that happens to name ANOTHER company's sales-order line resolves as
         confidently as one of ours, and row A's real link is unlinked for a "move"
-        this company never authored or even has visibility into."""
+        this company never authored or even has visibility into.
+
+        Seeding repair (fix round, 19 Sep): S2's own ingest hook now links row A
+        during the FIRST push already (its line's `from_so_line_ref` names row
+        A's exact core line) - asserted on the hook's own link, never a second,
+        manual one (`MultipleResultsFound`)."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a = _ref("SOLA")
         so_a, core_line_a = _seed_ref_only_so_line(
@@ -1487,15 +1495,11 @@ class TestLinkFollowsBookPairing:
         assert res.json()["records"][0]["outcome"] == "created", res.text
         header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
-        env.db.add(OrderInquiryLink(
-            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
-            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("14"),
-            auto=True,
-        ))
-        env.db.commit()
-        link_id_before = str(
-            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        link_before = (
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one()
         )
+        assert str(link_before.po_line_id) == str(po_line["id"]), link_before
+        link_id_before = str(link_before.id)
         note_before = row_a.note
 
         # Pushed under company A's own anchor (`env.post` defaults to
@@ -1538,7 +1542,12 @@ class TestLinkFollowsBookPairing:
         canonical payload schema (`Decimal = Field(..., ge=0)`) but the column is
         `Numeric(15, 4)` (11 integer digits) - a 15-digit value passes validation
         and overflows at `_sync_lines`' own flush, caught by the generic `except
-        Exception` (empirically verified: the record reports `failed`)."""
+        Exception` (empirically verified: the record reports `failed`).
+
+        Seeding repair (fix round, 19 Sep): S2's own ingest hook now links row A
+        during the FIRST push already (its line's `from_so_line_ref` names row
+        A's exact core line) - asserted on the hook's own link, never a second,
+        manual one (`MultipleResultsFound`)."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
         so_a, core_line_a = _seed_ref_only_so_line(
@@ -1562,12 +1571,10 @@ class TestLinkFollowsBookPairing:
         assert res.json()["records"][0]["outcome"] == "created", res.text
         header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
-        env.db.add(OrderInquiryLink(
-            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
-            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("30"),
-            auto=True,
-        ))
-        env.db.commit()
+        link_before = (
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one()
+        )
+        assert str(link_before.po_line_id) == str(po_line["id"]), link_before
         link_id_before = str(
             env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
         )
@@ -1666,7 +1673,15 @@ class TestLinkFollowsBookPairing:
         sharing one ref (a data anomaly the ESB should never produce, but the
         column carries no unique constraint to refuse it) resolve to whichever
         one Postgres happens to return first, and the move is applied against a
-        guess rather than refused."""
+        guess rather than refused.
+
+        Seeding repair (fix round, 19 Sep): S2's own ingest hook now links row A
+        during the FIRST push already (its line's `from_so_line_ref` names row
+        A's exact core line) - asserted on the hook's own link, never a second,
+        manual one (`MultipleResultsFound`). The push #2 ambiguous ref itself
+        (`shared_ref`) never resolves to any order-inquiry row either (the two
+        dupe lines carry no mirror), so S2's own hook has nothing to follow
+        there and this stays a pure test of the AC-RL-51 refusal."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a = _ref("SOLA")
         so_a, core_line_a = _seed_ref_only_so_line(
@@ -1706,15 +1721,11 @@ class TestLinkFollowsBookPairing:
         assert res.json()["records"][0]["outcome"] == "created", res.text
         header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
-        env.db.add(OrderInquiryLink(
-            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
-            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("18"),
-            auto=True,
-        ))
-        env.db.commit()
-        link_id_before = str(
-            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        link_before = (
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one()
         )
+        assert str(link_before.po_line_id) == str(po_line["id"]), link_before
+        link_id_before = str(link_before.id)
 
         with caplog.at_level(logging.WARNING, logger="app.services.project_order_inquiry_service"):
             repush_line = _po_line(
@@ -1739,7 +1750,26 @@ class TestLinkFollowsBookPairing:
         `_follow_one_move` currently treats `old_line_id is None` the SAME way
         either way, so an unresolvable old ref falls into the "every link on the
         target is a candidate" branch and sweeps up row A's real link even though
-        nothing here proves it was ever on the line the move claims to be FROM."""
+        nothing here proves it was ever on the line the move claims to be FROM.
+
+        Assertion rewrite (fix round, 19 Sep, owner ruling D3 19 Sep 2026 "the
+        book wins, always"): the AC-RL-52 guard itself still holds - the warning
+        log line below ("did not resolve ... no-op") is `_follow_one_move`'s OWN
+        early return, proof the sweep this test originally guarded against did
+        NOT fire. But the SAME repush's `from_so_line_ref` now genuinely names
+        row B's own core line for the whole of `po_line`'s capacity, and row B is
+        in need - so S2's own ingest hook (a SEPARATE mechanism from the
+        AC-RL-52 sweep) runs `follow_book_for_rows`, and D3 correctly displaces
+        row A's link (sitting on a target the book now states for a DIFFERENT
+        core line) to free it for row B. Row A loses the document with the
+        "AutoCount states" note, never "AutoCount moved" (that note is
+        `_follow_one_move`'s own, and `_follow_one_move` never touched this
+        link at all - the log line proves it). This is a real book-naming
+        collision the original seeding did not intend to create; kept AS THE
+        RED CASE for this AC per the fix-round brief, since it is a more
+        faithful proof of the AC-RL-52 guard than an inert repush would be (the
+        guard is exactly what stops `_follow_one_move` from ALSO sweeping row A,
+        leaving D3 as the only mechanism that legitimately touches it)."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
         so_a, core_line_a = _seed_ref_only_so_line(
@@ -1790,6 +1820,14 @@ class TestLinkFollowsBookPairing:
         links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
         links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
 
-        assert len(links_a) == 1, "an unresolvable OLD ref must not sweep row A's link at all"
-        assert str(links_a[0].id) == link_id_before
-        assert links_b == [], "nothing should be placed for a move whose OLD side was never proven"
+        # AC-RL-52's own guard held: `_follow_one_move` logged its no-op (the
+        # unresolvable OLD ref) and never touched row A's link itself. What
+        # actually moves it is D3 - the repush's `from_so_line_ref=ref_b` names
+        # row B's own line for the whole of `po_line`, and row B is in need, so
+        # S2's ingest hook displaces row A's link to free it for row B (owner
+        # ruling D3, 19 Sep 2026: "the book wins, always").
+        assert links_a == [], "row A's link is displaced by the book naming po_line for row B"
+        row_a_db = env.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_a.id).one()
+        assert "AutoCount states" in (row_a_db.note or ""), row_a_db.note
+        assert len(links_b) == 1, links_b
+        assert str(links_b[0].po_line_id) == str(po_line["id"])
