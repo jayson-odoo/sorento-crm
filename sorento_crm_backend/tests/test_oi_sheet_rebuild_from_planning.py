@@ -1797,12 +1797,18 @@ def test_used_row_is_not_counted_in_top_up_sum():
         assert plain.previous_qty is None
 
 
-@pytest.mark.parametrize("bad_field", ["required_date", "buy_qty"])
+@pytest.mark.parametrize(
+    "bad_field", ["required_date", "buy_qty", "buy_qty_nan", "buy_qty_inf"]
+)
 def test_malformed_snapshot_never_aborts_the_upload(bad_field):
-    """AC-RB-37. A malformed snapshot entry (unreadable `buy_qty` or `required_date`) never
-    aborts the upload: today the whole `apply()` call raises, taking every other row in the
-    same sheet down with it. That sheet row is raised plain instead, and a second, healthy
-    row in the same upload is processed normally."""
+    """AC-RB-37. A malformed snapshot entry (unreadable `buy_qty` or `required_date`, or a
+    `buy_qty` that is not a finite number - `NaN` / `Infinity`, both legal `Decimal`
+    literals that read without error but are not a real quantity) never aborts the upload:
+    today an unreadable field takes the whole `apply()` call down, taking every other row in
+    the same sheet with it, and `NaN`/`Infinity` are readable as `Decimal` but persist a
+    non-finite quantity onto the row rather than falling back. That sheet row is raised
+    plain with the SHEET's own quantity instead, and a second, healthy row in the same
+    upload is processed normally."""
     with world() as w:
         order = w.order()
         bad_line = w.line(order, qty_ordered="182", required_date=date(2026, 6, 1))
@@ -1813,7 +1819,12 @@ def test_malformed_snapshot_never_aborts_the_upload(bad_field):
         ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
         bad_mirror = w.mirror_of(bad_line)
         healthy_mirror = w.mirror_of(healthy_line)
-        buy_qty = "abc" if bad_field == "buy_qty" else "280"
+        bad_buy_qty = {
+            "buy_qty": "abc",
+            "buy_qty_nan": "NaN",
+            "buy_qty_inf": "Infinity",
+        }.get(bad_field)
+        buy_qty = bad_buy_qty if bad_buy_qty is not None else "280"
         required_date = "not-a-date" if bad_field == "required_date" else "2027-03-01"
         snapshot = {
             "line_no": 1,
@@ -1991,3 +2002,96 @@ def test_preview_names_rows_to_look_at_by_hand():
         ]
         assert len(matching) == 1, result["warnings"]
         assert "2" in matching[0], matching[0]
+
+
+# --------------------------------------------------------------------------- #
+# Re-review: AC-RB-40 (rollback spares links with the row), AC-RB-33's own     #
+# stamped-only equality exit                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_rollback_spares_a_rows_links_with_the_row(monkeypatch):
+    """AC-RB-40 (re-review N1). `_companies_of` runs between the single read
+    (`_partition_stamped`) and the deletes - monkeypatched here to set `changed_at` on the
+    row IN BETWEEN, simulating planning touching the row in that window. The row survives
+    (the DELETE's own trait predicate already guards it, per AC-RB-17), but links and
+    claims must address the SAME set: a row the rollback spares must keep every link and
+    its claim, not merely its own row.
+
+    The fix takes the read under a row lock (`FOR UPDATE`); inside ONE session a row lock
+    never blocks that same session's own write, so this monkeypatch simulation stays
+    meaningful only through the "links, claims and rows address the SAME set" half of the
+    AC, never through the lock itself (which is review-verified, not tested here). Today:
+    the row survives, but its links are gone (0), because the links DELETE repeats none of
+    the row's own trait predicates the ROW delete does."""
+    with world() as w:
+        _order, _line, row = _stamped_row(w, file_name="a.xlsx", trait=None)
+        row_id = str(row.id)
+        links_before = w.links(row)
+        assert links_before, "the premise: the stamped row holds a link"
+        claim_ids = [str(l.claim_id) for l in links_before if l.claim_id]
+        assert claim_ids, "the premise: the link carries a claim"
+
+        rollback_module = _rollback()
+        original_companies_of = rollback_module._companies_of
+
+        def _touch_then_call(db, rows):
+            for candidate in rows:
+                if str(candidate.id) == row_id:
+                    candidate.changed_at = datetime(2026, 9, 20, 9, 0, 0)
+            db.flush()
+            return original_companies_of(db, rows)
+
+        monkeypatch.setattr(rollback_module, "_companies_of", _touch_then_call)
+
+        rollback_module.run(w.db, file_name="a.xlsx", apply=True)
+
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == row_id
+        ).count() == 1, "the row itself must survive (the DELETE's own trait guard)"
+        w.db.refresh(row)
+        after_links = w.links(row)
+        assert len(after_links) == len(links_before), (
+            "a row the rollback spares must keep its links too"
+        )
+        assert w.db.query(OrderLinkClaim).filter(
+            OrderLinkClaim.id.in_(claim_ids)
+        ).count() == len(claim_ids), "the claim behind the spared link must survive too"
+
+
+def test_board_top_up_of_same_qty_and_date_does_not_swallow_a_top_up():
+    """AC-RB-33's own counter-arm (re-review). The equality exit only ever compares against
+    a row THIS SHEET raised (its note carries the migration stamp) - a board-made top-up row
+    of the SAME quantity and date must never swallow a genuine second top-up. Decision buy
+    76, an existing board top-up of 38 (never sheet-stamped), sheet row ALSO 38 on the same
+    date: two live ORDER rows (38 + 38 = 76) is exactly AC-RB-26's own shape, and the sheet
+    row must be raised plain. Today: swallowed as `already_raised` because its (quantity,
+    date) happens to equal the board row's."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="500", required_date=date(2027, 1, 4))
+        mirror = _adopted_mirror(w, order, line)
+        decision = _decision(w, mirror, line, buy_qty="76", required_date=date(2027, 1, 4))
+        top_up = w.board_row(mirror, qty="38")
+        top_up.delivery_date = date(2027, 1, 4)
+        top_up.supply_decision_id = decision.id
+        w.db.flush()
+        assert not (top_up.note or "").startswith(importer._MIGRATION_STAMP), (
+            "fixture sanity: the top-up row must NOT be sheet-stamped"
+        )
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, 38, date(2027, 1, 4),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert oc.ALREADY_RAISED not in capture.codes(), capture.calls
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 2, [(r.verb, str(r.qty), r.delivery_date) for r in rows]
+        plain = next(r for r in rows if str(r.id) != str(top_up.id))
+        assert Decimal(str(plain.qty)) == Decimal("38")
+        assert plain.delivery_date == date(2027, 1, 4)
+        assert plain.previous_qty is None
+        assert result["rows_raised"] == 1, result
