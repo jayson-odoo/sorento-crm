@@ -40,6 +40,7 @@ from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
+    SALES_REPORT_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
     SEMANTIC_PARSER_PROMPT_SLIM,
 )
@@ -147,13 +148,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         FULL body and dev's is on the SLIM one.
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
-        LATER addenda first, newest outermost: `LOW_STOCK_ADDENDUM`
-        (PLAN-low-stock-report.md S7, 14 Sep 2026) then `LAST_COST_ADDENDUM`. Each stacks
+        LATER addenda first, newest outermost: `SALES_REPORT_ADDENDUM`
+        (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
+        (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
-            assert body.removesuffix(LOW_STOCK_ADDENDUM).removesuffix(
+            assert body.removesuffix(SALES_REPORT_ADDENDUM).removesuffix(LOW_STOCK_ADDENDUM).removesuffix(
                 LAST_COST_ADDENDUM
             ).endswith(GROWTH_R1_ADDENDUM)
 

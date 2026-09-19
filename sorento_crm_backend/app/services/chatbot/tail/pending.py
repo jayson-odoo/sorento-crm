@@ -32,6 +32,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import DETAIL_OFFER_KINDS
 
 
 # How many turns an UNANSWERED member offer survives, counted down on the marker. The
@@ -70,11 +71,12 @@ def derive(
     dym-offer lifecycle learned the hard way: a branch that relies on "the key just is not
     there" survives one refactor and then silently keeps a stale offer alive.
     """
-    if selection_context in ("outstanding_scope", "outstanding_detail"):
-        # PLAN-chatbot-outstanding-report.md, S4 point 4/5: two more numbered-question
-        # kinds, one-turn life like `team_clarify` - `output_exchange.py` resolves
-        # against the `outstanding_filters` session variable carried alongside, never
-        # against this marker's own body.
+    if selection_context == "outstanding_scope" or selection_context in DETAIL_OFFER_KINDS:
+        # PLAN-chatbot-outstanding-report.md, S4 point 4/5 (extended by
+        # PLAN-chatbot-sales-report.md S4 wiring point 7 to `sales_report_detail`,
+        # the shared `DETAIL_OFFER_KINDS`): numbered-question kinds -
+        # `output_exchange.py` resolves against the `outstanding_filters` session
+        # variable carried alongside, never against this marker's own body.
         #
         # ONE exception, R22 (owner round 9, 13 Sep 2026): whether this turn was itself a
         # RE-PRINT of the same question over a reply that answered nothing. The head

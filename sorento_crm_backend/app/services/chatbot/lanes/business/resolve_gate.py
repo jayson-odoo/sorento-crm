@@ -55,13 +55,15 @@ _PRODUCT_FOLD = re.compile(r"[-\s]+")
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
 
-#: R20 (owner round 7, 13 Sep 2026): the `order_status` values that make a turn an
-#: OUTSTANDING ask, which is the one ask the customer picker must not offer a delivery
-#: hint on - see the `If-customer-picker` arm. The three scope words come from
-#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, and bare `outstanding`
-#: is added because that table deliberately omits it (the field-reveal gate resolves it).
+#: R20 (owner round 7, 13 Sep 2026), extended by PLAN-chatbot-sales-report.md S4
+#: wiring point 8: the `order_status` values whose customer picker must not offer a
+#: delivery hint - see the `If-customer-picker` arm. The three scope words come from
+#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, bare `outstanding`
+#: is added because that table deliberately omits it (the field-reveal gate resolves
+#: it), and `sales_report` for the SAME reason as the outstanding asks: the probe
+#: measures DELIVERED DOs, a population this report does not read at all.
 OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
-    {"outstanding", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+    {"outstanding", "sales_report", *fetch_mod.ORDER_STATUS_TO_SCOPE}
 )
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input

@@ -33,6 +33,7 @@ from app.services.chatbot import jsc, topic
 from app.services.chatbot.contracts import (
     BARE_ENTITY_TYPE_BY_DOMAIN,
     DEFAULT_SUGGESTED_TEAM,
+    DETAIL_OFFER_KINDS,
     DOMAIN_SPEC,
     DOMAIN_SWITCH_WORDS,
     ENTITY_HINTS,
@@ -1194,7 +1195,7 @@ def _outstanding_scope_ask_candidate(o: dict, prev_pending: Any) -> bool:
     """
     stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
         "outstanding_scope",
-        "outstanding_detail",
+        *DETAIL_OFFER_KINDS,
     ) and not jsc.truthy(o.get("outstanding_pending_dropped"))
     return (
         not stale_outstanding_ask_open
@@ -1233,7 +1234,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     only and stamped on `o`; the second pass re-asserts it.
     """
     kind = jsc.get(prev_pending, "kind")
-    if kind not in ("outstanding_scope", "outstanding_detail"):
+    if kind != "outstanding_scope" and kind not in DETAIL_OFFER_KINDS:
         return
 
     filters = jsc.get(prev_state, "outstanding_filters")
@@ -1319,7 +1320,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_refinement_entities"] = [
                 dict(e) for e in named_entities if isinstance(e, dict)
             ]
-        elif names_entity or (own_question and (kind == "outstanding_detail" or picked is None)):
+        elif names_entity or (own_question and (kind in DETAIL_OFFER_KINDS or picked is None)):
             # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask
             # is DROPPED here, and every later reader of `prev_pending` this turn has to
             # see that - the scope-ask signal below and the `outstanding_filters` carry in
@@ -1462,7 +1463,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_reask_filters"] = filters
         return
 
-    # kind == "outstanding_detail" (AC-1138; R14 added the third option)
+    # kind in DETAIL_OFFER_KINDS (AC-1138; R14 added the third option). PLAN-chatbot-
+    # sales-report.md S4 wiring point 7 folds `sales_report_detail` into this SAME
+    # membership test - its tool has no scope concept at all, so its `order_status`
+    # is the fixed word, never derived from a stored `scope` (which its own filter
+    # set does not carry).
     if refining:
         # AC-1157: the SAME report re-runs, for the SAME scope it was run for, with this
         # turn's filters overlaid - and with NO `detail` argument, because the customer
@@ -1471,11 +1476,13 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         # so a later "1" lists the narrowed set. The scope is read back off the stored
         # filters: the offer exists only because a report ran, so its scope is known, and
         # re-asking for it would be asking a question that has already been answered.
-        o["order_status"] = _ORDER_STATUS_BY_SCOPE.get(
-            jsc.js_string(filters.get("scope") or ""), "outstanding_both"
+        o["order_status"] = (
+            "sales_report"
+            if kind == "sales_report_detail"
+            else _ORDER_STATUS_BY_SCOPE.get(jsc.js_string(filters.get("scope") or ""), "outstanding_both")
         )
     elif picked in ("so", "do", "both"):
-        o["order_status"] = _ORDER_STATUS_BY_SCOPE[picked]
+        o["order_status"] = "sales_report" if kind == "sales_report_detail" else _ORDER_STATUS_BY_SCOPE[picked]
         o["outstanding_detail_pick"] = picked
     else:
         # AC-1143(c): the message answered nothing on offer - a number that named no
@@ -1492,7 +1499,12 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         #
         # `run_fetch` reads these rows directly, the way the scope question's own
         # out-of-range re-ask does, because this turn typed no product to resolve.
+        # `kind` rides along (PLAN-chatbot-sales-report.md ruling 2) so the re-print
+        # re-arms the SAME kind that was open - `outstanding_detail` and
+        # `sales_report_detail` share this one arm and must not stamp each other's
+        # literal.
         o["outstanding_detail_reask"] = {
+            "kind": kind,
             "filters": filters,
             "rows": [dict(row) for row in jsc.array(jsc.get(prev_state, "last_result_set"))
                      if jsc.truthy(row)],
@@ -2062,6 +2074,15 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 jsc.get(pcs, "order_status")
             ):
                 o["order_status"] = jsc.get(pcs, "order_status")
+
+            # sales_channel: the SAME axis, the SAME carry, for the SAME reason
+            # (PLAN-chatbot-sales-report.md, S4 wiring point 2, captain ruling 1) -
+            # a sales report ask that hit the ambiguous-customer picker is answered
+            # by a bare pick naming no channel word at all.
+            if not jsc.truthy(o.get("sales_channel")) and jsc.truthy(
+                jsc.get(pcs, "sales_channel")
+            ):
+                o["sales_channel"] = jsc.get(pcs, "sales_channel")
 
             # requested_attributes: the PERSPECTIVE of the question is an axis the pick
             # turn did not name - carry it like the date window (exec 13951947).

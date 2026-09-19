@@ -57,6 +57,16 @@ DELEGATE = "business_query"
 # function, is the one place that checks it, before any tool call.
 _OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
 
+# PLAN-chatbot-sales-report.md, S4 wiring point 4 (AC-1651): the sales report's OWN
+# field-reveal key. Unlike `_OUTSTANDING_SO_GRANT` above there is no fallback scope
+# here - the report has nothing partial to answer with, so its absence refuses the
+# WHOLE ask before any fetch, with one line and nothing else.
+_SALES_REPORT_GRANT = "sales_orders.sales_report"
+#: The one sentence a contact without that key sees, verbatim (AC-1651) - the sibling
+#: of `fetch.SO_NOT_ENABLED_MESSAGE` / `LOW_STOCK_NOT_ENABLED_MESSAGE` above, a
+#: literal for the same reason: one wording, in one place.
+SALES_REPORT_NOT_ENABLED_MESSAGE = "Sales report is not enabled for your account."
+
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
 #: read in ONE place (`run_fetch`), before any tool call, because this tool's fetch creates
@@ -387,13 +397,52 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
-def _outstanding_detail_reoffer(filters: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _sales_report_not_enabled() -> dict[str, Any]:
+    """S4 wiring point 4 (AC-1651): refuse a sales-report ask BEFORE any fetch, with
+    ONE line and nothing else.
+
+    There is no fallback scope here (unlike D13's SO/DO redirect on the outstanding
+    report), so there is nothing partial to answer with - `has_result: True` and no
+    `outstanding_ask` (same shape as `_outstanding_offer_closed`'s decline reply)
+    keeps this OFF the miss lane entirely: no escalate offer, nothing armed.
+    """
+    structured: dict[str, Any] = {
+        "response": SALES_REPORT_NOT_ENABLED_MESSAGE,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        # AC-1139/S4 point 9's own marker: this reply carries nothing but itself, so
+        # the generic search-scope header must not print above it either.
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
+def _outstanding_detail_reoffer(
+    filters: dict[str, Any], rows: list[dict[str, Any]], *, kind: str = "outstanding_detail"
+) -> dict[str, Any]:
     """AC-1143(c): an out-of-range number against an OPEN detail offer re-prints that
     offer, fetches nothing, and leaves it open - the same `structured` shape (and so the
     same one code path in `tail/compile_state.py`) the scope question's own re-ask uses.
 
     The option lines are the stored rows themselves, never rebuilt from a scope guess, so
-    the customer reads back exactly the list they replied to."""
+    the customer reads back exactly the list they replied to. `kind` (PLAN-chatbot-
+    sales-report.md ruling 2) is whichever `DETAIL_OFFER_KINDS` member was actually
+    open - `outstanding_detail` and `sales_report_detail` share this one function."""
     # AC-1102: the SAME text the customer is already looking at, kept verbatim from the
     # turn that offered it (`fetch._outstanding_offer_block`). Re-rendering it here is
     # what produced two wordings for one offer: a single-scope report offers R9's one
@@ -407,7 +456,7 @@ def _outstanding_detail_reoffer(filters: dict[str, Any], rows: list[dict[str, An
     structured: dict[str, Any] = {
         "response": text,
         "outstanding_ask": {
-            "kind": "outstanding_detail",
+            "kind": kind,
             "last_result_set": [dict(row) for row in rows],
             "filters": filters,
         },
@@ -583,6 +632,10 @@ def _fetch_semantic_input(
         # AC-1138: "1"/"2" against an OPEN outstanding_detail offer - which detail list
         # to render, passed straight through to the MCP tool's own `detail` param.
         "outstanding_detail_pick": parse_output.get("outstanding_detail_pick"),
+        # PLAN-chatbot-sales-report.md S4 wiring point 5 (AC-1652): the parser's OWN
+        # channel value, never the message text - passed straight through to
+        # `crm_sales_report`'s own `channel` param.
+        "sales_channel": parse_output.get("sales_channel"),
     }
 
 
@@ -637,6 +690,101 @@ def _fetch_failure_outcome(tool_name: Any, exc: BaseException) -> str | None:
     if isinstance(exc, TimeoutError) or "timed out" in text or "timeout" in text:
         return "not_found"
     return None
+
+
+def _resolve_report_product_and_location(
+    parse_output: dict[str, Any],
+    entities: Any,
+    semantic_input: dict[str, Any],
+    *,
+    db: Any,
+) -> None:
+    """The product-code and location resolution BOTH report overrides need
+    (`crm_outstanding_report` and `crm_sales_report`), fixed ONCE at this seam for
+    both (captain ruling 3, PLAN-chatbot-sales-report.md): mutates `semantic_input`
+    in place with `outstanding_product_code` / `outstanding_warehouse_codes` /
+    `outstanding_location_token`.
+
+    -- AC-1119 (reviewer N5): the code the customer TYPED is the subject -- The gate
+    hands a report the whole prefix FAMILY: a single product token takes the
+    resolver's OR-mode, which calls a candidate exact only when `match_tier ==
+    "exact"` - a tier `entity_resolver._prefix_probe_product` never stamps (product
+    rows come back "prefix" / "substring" / "trgm"). Picked here rather than in the
+    shared gate: this is the report's own contract (exact code, no sibling
+    expansion). D10: an ANSWERING turn ("1"/"2"/a scope word) carries the product
+    the offer was made about, and that wins outright - re-resolving the carried
+    token is what let a family sibling take its place.
+
+    R17/ruling 3: a REFINEMENT's own product entity lives OFF `parse_output
+    ["entities"]` (R17 keeps it there so it dies with the offer), and on a
+    refinement turn the gate itself is SKIPPED (`run_until_exit`'s carried-subject
+    short-circuit), so the GATE-resolved `entities` list is always empty there and
+    the typed-codes match below can never fire. Read directly off the offer-scoped
+    `outstanding_refinement_entities` copy instead - the same seam the warehouse
+    loop below already reads for a location word, and for the same reason: this
+    report matches its subject EXACTLY (AC-1119), so no gate resolution is needed.
+
+    -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- Read
+    off the RAW parsed entities (`parse_output`), never the gated `entities` above -
+    those only ever carry what the GENERIC resolver matched, and D5's
+    exact-then-suffix grammar is this report's own rule, not that resolver's job (a
+    suffix token like "IB" is not any single warehouse's own code, so the generic
+    resolver never returns it). `db` is None outside a real turn (this module's own
+    direct `run_fetch` tests), which is a no-op, same as no location word at all.
+    """
+    carried_code = parse_output.get("outstanding_carried_product_code")
+    if jsc.truthy(carried_code):
+        semantic_input["outstanding_product_code"] = jsc.js_string(carried_code)
+    else:
+        typed_codes = {
+            jsc.js_string(e.get("raw") or "").strip().casefold()
+            for e in jsc.array(parse_output.get("entities"))
+            if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "product"
+        }
+        typed_codes.discard("")
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or e.get("entity_type") != "product":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code).strip().casefold() in typed_codes:
+                semantic_input["outstanding_product_code"] = jsc.js_string(code)
+                break
+
+        if not jsc.truthy(semantic_input.get("outstanding_product_code")):
+            for e in jsc.array(parse_output.get("outstanding_refinement_entities")):
+                if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "product":
+                    continue
+                token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+                if token:
+                    semantic_input["outstanding_product_code"] = token
+                break
+
+    for e in [
+        *jsc.array(parse_output.get("entities")),
+        *jsc.array(parse_output.get("outstanding_refinement_entities")),
+    ]:
+        if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
+            continue
+        token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+        if not token or db is None:
+            break
+        codes = resolve_warehouse_token(db, token)
+        if codes:
+            semantic_input["outstanding_warehouse_codes"] = codes
+            semantic_input["outstanding_location_token"] = token
+        break  # D5/AC-1105: one location word per turn
+
+    # AC-1132/AC-1138: the SCOPE-ANSWER and DETAIL-PICK turns re-type no location
+    # word at all (they are "2" / "1"), so the loop above finds nothing. The codes
+    # the asking turn already resolved are restored here - the alternative is a
+    # re-run over every warehouse under a header that says otherwise.
+    if not semantic_input.get("outstanding_warehouse_codes"):
+        carried_codes = parse_output.get("outstanding_carried_warehouse_codes")
+        if isinstance(carried_codes, list) and carried_codes:
+            semantic_input["outstanding_warehouse_codes"] = carried_codes
+            semantic_input["outstanding_location_token"] = parse_output.get(
+                "outstanding_carried_location_token"
+            )
 
 
 def run_fetch(
@@ -725,7 +873,13 @@ def run_fetch(
     if isinstance(detail_reask, dict):
         reoffer_rows = [r for r in jsc.array(detail_reask.get("rows")) if isinstance(r, dict)]
         if reoffer_rows:
-            return _outstanding_detail_reoffer(detail_reask.get("filters") or {}, reoffer_rows)
+            # PLAN-chatbot-sales-report.md ruling 2: absent (a marker written before
+            # this shipped) reads as `outstanding_detail`, so a session open at
+            # deploy keeps re-printing the kind it always did.
+            reask_kind = detail_reask.get("kind") or "outstanding_detail"
+            return _outstanding_detail_reoffer(
+                detail_reask.get("filters") or {}, reoffer_rows, kind=reask_kind
+            )
 
     reask_filters = parse_output.get("outstanding_reask_filters")
     if isinstance(reask_filters, dict):
@@ -932,77 +1086,9 @@ def run_fetch(
         tool_name = "crm_outstanding_report"
         tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
 
-        # -- AC-1119 (reviewer N5): the code the customer TYPED is the subject -- #
-        # The gate hands this report the whole prefix FAMILY: a single product token
-        # takes the resolver's OR-mode, which calls a candidate exact only when
-        # `match_tier == "exact"` - a tier `entity_resolver._prefix_probe_product` never
-        # stamps (product rows come back "prefix" / "substring" / "trgm"). AND-mode has
-        # the right rule already (`gate.py`: `prod_exacts` = canonical_code EQUALS a
-        # typed token), OR-mode does not, so `SRTWT7445` and its eight siblings all
-        # arrived and the transformer took whichever was FIRST - on the prod copy,
-        # `SRTWT7445-LV-GM`. Picked here rather than in the shared gate: this is the
-        # report's own contract (exact code, no sibling expansion), and every other
-        # domain keeps the family it deliberately widened to.
-        # D10: an ANSWERING turn ("1"/"2"/a scope word) carries the product the offer was
-        # made about, and that wins outright - re-resolving the carried token is what let a
-        # family sibling or another product in the resolver's scope take its place.
-        carried_code = parse_output.get("outstanding_carried_product_code")
-        if jsc.truthy(carried_code):
-            semantic_input["outstanding_product_code"] = jsc.js_string(carried_code)
-        else:
-            typed_codes = {
-                jsc.js_string(e.get("raw") or "").strip().casefold()
-                for e in jsc.array(parse_output.get("entities"))
-                if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "product"
-            }
-            typed_codes.discard("")
-            for e in jsc.array(entities):
-                if not isinstance(e, dict) or e.get("entity_type") != "product":
-                    continue
-                code = e.get("code") or e.get("canonical_code")
-                if jsc.truthy(code) and jsc.js_string(code).strip().casefold() in typed_codes:
-                    semantic_input["outstanding_product_code"] = jsc.js_string(code)
-                    break
-
-        # -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- #
-        # Read off the RAW parsed entities (`parse_output`), never the gated
-        # `entities`/`compatible_entities` above - those only ever carry what the
-        # GENERIC resolver matched, and D5's exact-then-suffix grammar is this
-        # report's own rule, not that resolver's job (a suffix token like "IB" is not
-        # any single warehouse's own code, so the generic resolver never returns it).
-        # `db` is None outside a real turn (this module's own direct `run_fetch`
-        # tests), which is a no-op, same as no location word at all.
-        # R17: a REFINEMENT's own filter entities are deliberately NOT in
-        # `parse_output["entities"]` - they belong to the offer, not to the conversation,
-        # so they never enter the list the session persists (`head/output_exchange.py`,
-        # R17's own note). They are read here, from the offer-scoped copy, so the location
-        # word still resolves on the turn that named it.
-        for e in [
-            *jsc.array(parse_output.get("entities")),
-            *jsc.array(parse_output.get("outstanding_refinement_entities")),
-        ]:
-            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
-                continue
-            token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
-            if not token or db is None:
-                break
-            codes = resolve_warehouse_token(db, token)
-            if codes:
-                semantic_input["outstanding_warehouse_codes"] = codes
-                semantic_input["outstanding_location_token"] = token
-            break  # D5/AC-1105: one location word per turn
-
-        # AC-1132/AC-1138: the SCOPE-ANSWER and DETAIL-PICK turns re-type no location
-        # word at all (they are "2" / "1"), so the loop above finds nothing. The codes
-        # the asking turn already resolved are restored here - the alternative is a
-        # re-run over every warehouse under a header that says otherwise.
-        if not semantic_input.get("outstanding_warehouse_codes"):
-            carried_codes = parse_output.get("outstanding_carried_warehouse_codes")
-            if isinstance(carried_codes, list) and carried_codes:
-                semantic_input["outstanding_warehouse_codes"] = carried_codes
-                semantic_input["outstanding_location_token"] = parse_output.get(
-                    "outstanding_carried_location_token"
-                )
+        # -- AC-1119/S4c/D5/R17 (ruling 3): product-code + location resolution, the
+        # ONE seam shared with `crm_sales_report` below. --------------------------- #
+        _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
 
         # -- R19: the NAMES for the question's own `Customer:` line ------------ #
         # Worked out once, here, and stored on both filter builders. The ids are uuids
@@ -1043,6 +1129,30 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
+    elif (
+        domain == "order"
+        and (has_product or has_customer or carried_subject)
+        and order_status_raw == "sales_report"
+    ):
+        # S4 wiring point 3 (AC-1650): domain "order" + a resolved product OR
+        # customer + `order_status: "sales_report"` picks THIS tool - one more
+        # branch beside the outstanding override above, never `tools[0]`.
+        tool_name = "crm_sales_report"
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_report_override"}}
+
+        # -- S4 wiring point 4 (AC-1651): the gate, BEFORE any fetch. There is no
+        # fallback scope here (unlike D13's SO/DO redirect above), so the absence
+        # of the grant refuses the WHOLE ask, with no fetch and nothing armed. -- #
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _SALES_REPORT_GRANT not in granted:
+            return _sales_report_not_enabled()
+
+        # -- AC-1119/S4c/D5/R17 (ruling 3): the SAME product-code + location
+        # resolution the outstanding override above uses, fixed once at this one
+        # seam for both tools. --------------------------------------------------- #
+        _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
     elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
         # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only
         # catches an `so_outstanding` ask with NO subject at all (no product and no

@@ -156,6 +156,14 @@ def _build_json_schema() -> dict[str, Any]:
                 ],
             },
             "top_n": {"type": ["integer", "null"]},
+            # PLAN-chatbot-sales-report.md S4 wiring point 1 (captain ruling 4): the
+            # sales report's channel filter. NOT in the schema's `required` list
+            # below (unlike `group_by` / `top_n`, which ARE required but exempted
+            # from the post-processor's OWN required-key check) - a published OLDER
+            # prompt version that never emits this key must not fail a turn, and
+            # this field is genuinely conditional (emitted only on a sales report
+            # ask), so there is nothing to exempt: absence simply reads as null.
+            "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
             "correction": {"type": ["boolean", "null"]},
             "routing": {
                 "type": "object",

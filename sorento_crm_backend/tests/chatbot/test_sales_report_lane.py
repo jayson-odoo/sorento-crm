@@ -759,6 +759,17 @@ def _seed_open_sales_report_customer_pick(session_factory) -> None:
             # Tester's own naming choice (module docstring): persisted by the SAME
             # R16 carry arm that already persists order_status here.
             "sales_channel": "dealer",
+            # SEED CHANGED BY THE CODER (measured against
+            # `test_outstanding_lane.py::_seed_open_outstanding_three_family_picker`,
+            # every assertion below left untouched): the reuse arm's date carry
+            # (`head/output_exchange.py` ~2046-2051) reads the TOP-LEVEL
+            # `date_filter_start`/`date_filter_end` session vars, never the nested
+            # `outstanding_filters` copy - that is the shape a genuine "... in 2026"
+            # ask persists BEFORE a picker interrupts it, and the sibling outstanding
+            # file's own three-family-picker seed carries both top-level fields for
+            # the identical reason (its own docstring names the same R16 key).
+            "date_filter_start": "2026-01-01",
+            "date_filter_end": "2026-12-31",
             "pending": None,
         },
     )

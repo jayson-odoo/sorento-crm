@@ -193,6 +193,11 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
             # outstanding order_status. Listed here only so `CHATBOT_READ_ONLY_TOOLS`
             # (derived from `DOMAIN_CLAIMED_TOOLS`, this tuple's own union) allows it.
             "crm_outstanding_report",
+            # PLAN-chatbot-sales-report.md S4 wiring point 3: NEVER `tools[0]` either -
+            # the override lives beside the one above in
+            # `lanes/business/__init__.py::run_fetch`, for domain "order" + a
+            # resolved product or customer + `order_status: "sales_report"`.
+            "crm_sales_report",
         ),
         escalation_team="customer_service",
     ),
@@ -618,8 +623,23 @@ PENDING_KINDS = (
     # PLAN-chatbot-outstanding-report.md, S4 points 4/5.
     "outstanding_scope",
     "outstanding_detail",
+    # PLAN-chatbot-sales-report.md, S4 wiring point 7: the sales report's OWN
+    # detail offer, sharing the mechanism `outstanding_detail` built rather than a
+    # copy of it - see `DETAIL_OFFER_KINDS` below.
+    "sales_report_detail",
 )
 PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
+
+# PLAN-chatbot-sales-report.md, S4 wiring point 7 (captain ruling 2): the ONE shared
+# constant every site that used to test the literal `"outstanding_detail"` reads
+# instead - a membership test, not a second copy of the arm. `sales_report_detail`'s
+# own offer has exactly the shape `outstanding_detail`'s already has (a roster of one
+# or more scopes, re-run with `detail=...`, sticky across a pick/casual turn, closes
+# on a decline or a second unreadable reply) - so every arm that reads
+# `kind in DETAIL_OFFER_KINDS` handles both, and the re-run reads WHICH tool to call
+# off the stored filter set (`outstanding_filters["tool"]`, absent =
+# `crm_outstanding_report`, so a session open at deploy keeps working).
+DETAIL_OFFER_KINDS: tuple[str, ...] = ("outstanding_detail", "sales_report_detail")
 
 # --------------------------------------------------------------------------- #
 # Session state (R2: every key compile-current-state writes, nothing dropped)
@@ -747,6 +767,11 @@ class SessionVars(BaseModel):
     # the same axis-of-the-question role `date_filter_start` and `requested_attributes`
     # above already have (see `tail/compile_state.py`).
     order_status: Any = None
+    # PLAN-chatbot-sales-report.md, S4 wiring point 2 (captain ruling 1): the sales
+    # report's own channel filter, persisted beside `order_status` and carried by
+    # the SAME R16 reuse arm - a sales report ask that hit the gate's ambiguous-
+    # customer picker names no channel word on the pick turn that resumes it.
+    sales_channel: Any = None
     pending: Pending | None = None
 
 
