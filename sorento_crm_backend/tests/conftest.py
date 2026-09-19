@@ -410,6 +410,13 @@ def pytest_configure(config):
         "allow_live_llm: opt this test out of the no_live_llm get_provider() guard "
         "(a test that genuinely means to exercise a real provider call).",
     )
+    config.addinivalue_line(
+        "markers",
+        "serial_ddl: this test runs DDL (or an unbounded write) against a SHARED "
+        "relation of the real schema, not a scratch one, so it must not run inside "
+        "the xdist pool. CI deselects it with `-m \"not serial_ddl\"` and runs it "
+        "afterwards with `-p no:xdist`. See .github/workflows/deploy.yml.",
+    )
 
 
 @pytest.fixture

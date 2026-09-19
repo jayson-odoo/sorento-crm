@@ -601,6 +601,11 @@ def _run_downgrade_510(db) -> None:
         module.downgrade()
 
 
+# `serial_ddl`: the ALTER TABLEs below are on the REAL `scm.proforma_invoice_line`
+# and `scm.proforma_invoice_packing_line` (`pg_session`, not a scratch schema), so
+# they hold an AccessExclusiveLock on two shared tables until the rollback. Outside
+# the xdist pool for the same reason as issue #987's view DDL.
+@pytest.mark.serial_ddl
 def test_b6_migration_510_backfills_description_en_and_downgrade_drops_the_columns():
     """B6 - a line and a packing row with `description='盆'` written BEFORE the migration,
     and a memory row for `盆`, carry `description_en='Basin'` after upgrade; downgrade drops
