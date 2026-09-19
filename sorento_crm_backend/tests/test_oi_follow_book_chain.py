@@ -744,6 +744,58 @@ class TestFollowBookForRows:
         assert sum(Decimal(str(l.qty)) for l in links) == Decimal("5")
 
 
+# ===================================================== AC-FB-24, cascade caller
+class TestCascadePathIsNotCapped:
+    def test_cascade_path_is_not_capped(self, ctx, monkeypatch):
+        """AC-FB-24's cap is a guard on the EXTERNAL INGEST surface (an ESB batch
+        naming arbitrarily many moves/rows), not on the cascade - fix-round finding,
+        19 Sep: a company-wide `auto_place_for_products` pass logged "capped at 200
+        rows, skipped 4388 of 4588", so the book was honoured for an arbitrary 200
+        of 4,588 eligible rows only, on every ordinary Confirm/Link now/board press.
+
+        Each row's own target is a CLOSED, fully received PO line - invisible to
+        the ordinary candidate walk (`line_status == 'open'` only, same premise as
+        `test_fb11_cascade_deals_only_remainder`) - so a link landing here can only
+        have come from the book pass inside `auto_place_for_products`, never the
+        ordinary cascade finding it by coincidence. With the cap monkeypatched to
+        1, today's code processes only 1 of the 3 named rows and drops the other 2
+        - `test_fb24_cap_and_dropped_count` (the ingest route) must keep passing
+        unchanged; this is the cascade's OWN caller, a different seam."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+
+        rows = []
+        for _ in range(3):
+            ref = _ref("SOL")
+            _so, core_line = _seed_so_line(
+                db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="2"
+            )
+            _seed_po_line(
+                db,
+                company_id=ctx.company_a,
+                product_id=product.id,
+                from_so_line_ref=ref,
+                qty_ordered="2",
+                qty_received="2",
+            )
+            _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+                db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="2"
+            )
+            rows.append(row)
+        db.commit()
+
+        monkeypatch.setattr(ProjectOrderInquiryService, "FOLLOW_BOOK_FOR_ROWS_MAX_ROWS", 1)
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None,
+            actor_user_id=None,
+            trigger="zzt_cascade_uncapped",
+            row_ids=[str(row.id) for row in rows],
+        )
+
+        linked_counts = [len(_links_of(db, row.id)) for row in rows]
+        assert linked_counts == [1, 1, 1], linked_counts
+
+
 # ============================================================ AC-FB-12, no new test
 def test_fb12_importer_pairing_unchanged_baseline():
     """AC-FB-12: `_pair`'s own extraction into `pair_needs` must not move a single one

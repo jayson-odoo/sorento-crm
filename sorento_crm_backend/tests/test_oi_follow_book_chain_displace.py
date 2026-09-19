@@ -543,3 +543,85 @@ class TestBookMoveLiftsReceivedGuard:
         assert "AutoCount moved" in note, note
         assert len(links_new) == 1, links_new
         assert str(links_new[0].po_line_id) == str(po_line["id"])
+
+
+# ============================================================== AC-FB-30 (over-held)
+class TestOverheldTargetDisplacement:
+    def test_fb30c_overheld_target_is_freed_enough(self, ctx):
+        """AC-FB-30, fix round finding 19 Sep: on the prod copy an SPO line of
+        capacity 81 already carries TWO auto links of 81 each (a legacy over-link,
+        162 held against 81) - both on rows of another sales order line. The book
+        names it for row_A (need 81). Today `_displace_other_line_holders` stops
+        the moment `freed >= amount_needed` (81), so it takes the FIRST 81-qty
+        link and leaves the second sitting on the target - `pair_needs` then reads
+        `capacity(81) - used(81) = 0` free and row_A gets nothing, exactly the
+        symptom measured. The fix has to size the displacement off the shortfall
+        against FREE capacity (which may already be negative), not off the book
+        row's own need alone, so BOTH over-holding links come off: after the call
+        the target holds no more than its own capacity, row_A has the document,
+        and both displaced rows carry the note."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+
+        ref_a = _ref("SOL")
+        so_a, core_line_a = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_a, qty="81",
+        )
+        ref_b = _ref("SOL")
+        _so_b, core_line_b = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_b, qty="162",
+        )
+
+        x = _seed_spo_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            from_so_line_ref=ref_a, allocated_quantity=81,
+        )
+
+        _pso_a, _mirror_a, _inquiry_a, row_a = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_a, product_id=product.id, qty="81",
+        )
+
+        _pso_b, mirror_b, inquiry_b = _seed_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_b, product_id=product.id, qty="162",
+        )
+        row_b1 = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry_b.id, so_line_id=mirror_b.id,
+            qty="81", state=INQUIRY_PLACED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        row_b2 = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry_b.id, so_line_id=mirror_b.id,
+            qty="81", state=INQUIRY_PLACED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        _existing_link(
+            db, company_id=ctx.company_a, row_id=row_b1.id, document=x.spo_number,
+            qty="81", spo_allocation_id=x.id, auto=True,
+        )
+        _existing_link(
+            db, company_id=ctx.company_a, row_id=row_b2.id, document=x.spo_number,
+            qty="81", spo_allocation_id=x.id, auto=True,
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).follow_book_for_rows(
+            [str(row_a.id)], trigger="autocount_ingest", company_id=ctx.company_a,
+            actor_user_id=None,
+        )
+
+        links_a = _links_of(db, row_a.id)
+        assert len(links_a) == 1 and links_a[0].spo_allocation_id == x.id, links_a
+        assert Decimal(str(links_a[0].qty)) == Decimal("81"), links_a
+
+        all_links_on_x = (
+            db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.spo_allocation_id == x.id)
+            .all()
+        )
+        total_on_x = sum(Decimal(str(l.qty)) for l in all_links_on_x)
+        assert total_on_x <= Decimal("81"), all_links_on_x
+
+        db.refresh(row_b1)
+        db.refresh(row_b2)
+        note_b1 = row_b1.note or ""
+        note_b2 = row_b2.note or ""
+        assert "AutoCount states" in note_b1, note_b1
+        assert "AutoCount states" in note_b2, note_b2
