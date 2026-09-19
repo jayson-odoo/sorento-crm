@@ -943,8 +943,18 @@ class TestDisplacementDeterminismAndAmbiguity:
         po_line_ref).first()` - if TWO purchase order lines share
         `(po_number, source_ref)`, that `.first()` guesses one of them rather
         than refusing (treat as not named). A holder that is NOT actually
-        exempt must still be displaced when the book names the target for
-        the OTHER core line.
+        exempt must still be displaced OFF THE TARGET the book names for the
+        OTHER core line (S below).
+
+        Repair (captain's job 1, 19 Sep, coder trace confirmed): asserts only
+        that holder_row no longer holds S. `ambiguous_matching` (one leg of
+        the ambiguous pair) is ALSO, separately, a genuine unambiguous book
+        target for holder_row's own line via a direct `from_so_line_ref`
+        match - once displaced off S, holder_row is legitimately re-offered
+        to the cascade and its own book step finds and takes it. That second
+        placement is real and correct, has nothing to do with the (po_number,
+        source_ref) exemption check under test, and is deliberately not
+        asserted on here.
         """
         db = ctx.db
         product = _seed_product(db, company_id=ctx.company_a)
@@ -1036,11 +1046,22 @@ class TestDisplacementDeterminismAndAmbiguity:
             actor_user_id=None,
         )
 
-        assert _links_of(db, holder_row.id) == [], (
+        # Coder's fix-round trace confirmed (captain's job 1, 19 Sep): displacing
+        # holder_row off S succeeds exactly as this test asks - the assertion is
+        # narrowed to THAT target, never to the holder's overall link state.
+        # holder_row is legitimately re-offered to the cascade afterward and its
+        # own book step finds `ambiguous_matching` a genuine, UNAMBIGUOUS target
+        # for its own line (a direct `from_so_line_ref` match, nothing to do with
+        # the (po_number, source_ref) exemption check this test is about) - that
+        # second, correct placement is not what is under test here.
+        holder_links = _links_of(db, holder_row.id)
+        assert s.id not in {l.spo_allocation_id for l in holder_links}, (
             "ambiguous (po_number, source_ref) must refuse the exemption and "
-            "still displace, not guess a match"
+            "still displace holder_row off the ambiguous target S, not guess a match"
         )
-        assert _links_of(db, book_row.id) != []
+
+        links_book = _links_of(db, book_row.id)
+        assert len(links_book) == 1 and links_book[0].spo_allocation_id == s.id, links_book
 
 
 # ============================================================== review round item 7
