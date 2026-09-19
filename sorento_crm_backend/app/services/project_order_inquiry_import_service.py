@@ -233,6 +233,13 @@ class _Match:
     #: previous quantity AND date matches it exactly - nothing is guessed, and `apply`
     #: reports it under its own code (AC-RB-3) instead of the ordinary `ALREADY_RAISED`.
     no_used_delivery_match: bool = False
+    #: 2.1(b): the ACTIVE `so_supply_decisions` row covering this (unraised) line, when its
+    #: snapshot differs from the sheet and its `buy_qty` is not zero (R4). `settle_buy_qty`
+    #: / `settle_required_date` are the decision's own figures, read once in `_plan` so
+    #: `raise_row`'s caller never re-parses the snapshot.
+    settle_decision_id: Optional[str] = None
+    settle_buy_qty: Optional[Decimal] = None
+    settle_required_date: Optional[date] = None
 
     @property
     def raisable(self) -> bool:
@@ -1099,15 +1106,60 @@ def _used_row_candidate(
     return None, True
 
 
+def _active_decision_snapshots(
+    db: Session, order_ids: set
+) -> Dict[str, Tuple[Any, dict]]:
+    """2.1(b): every mirror line's ACTIVE `so_supply_decisions` snapshot, for whichever of
+    these CORE sales orders even carry one - one pass over the whole plan
+    (`ProjectSupplyService.active_decision`'s own filter, restated here as a plan-wide read
+    since the importer has no request-scoped service to call it on), never one query per
+    row.
+    """
+    from app.models.project_so import DECISION_ACTIVE, ProjectSalesOrder, SOSupplyDecision
+
+    if not order_ids:
+        return {}
+    psos = (
+        db.query(ProjectSalesOrder.id)
+        .filter(ProjectSalesOrder.so_id.in_(sorted(str(i) for i in order_ids)))
+        .all()
+    )
+    if not psos:
+        return {}
+    pso_ids = [str(pso_id) for (pso_id,) in psos]
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id.in_(pso_ids),
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .all()
+    )
+    out: Dict[str, Tuple[Any, dict]] = {}
+    for decision in decisions:
+        for snapshot in decision.line_snapshots or []:
+            mirror_id = snapshot.get("project_line_id")
+            if mirror_id:
+                out[str(mirror_id)] = (decision, snapshot)
+    return out
+
+
+def _snapshot_date(value: Optional[str]) -> Optional[date]:
+    """`line_snapshots` freezes a date as its own ISO string (S3.1)."""
+    return date.fromisoformat(value) if value else None
+
+
 def _resolve_recovery_matches(
     db: Session, plan: _Plan, rows_by_mirror: Dict[str, List[Any]]
 ) -> None:
-    """2.1(a) (`PLAN-oi-rollback-recover-planning-rows.md`): decide, for every matched row
-    already sitting on a `Replaces N used` line, whether it is raised AS the used row
-    rather than skipped (already raised) - read here, before `_pair` and
+    """2.1(a) and 2.1(b) (`PLAN-oi-rollback-recover-planning-rows.md`): decide, for every
+    matched row, whether it is recovering a planning trait rather than being skipped
+    (already raised) or raised plain - read here, before `_pair` and
     `_matched_lines_by_order` decide what this run links and adopts, since both key off
     `match.raisable` / `match.already_raised`.
     """
+    order_ids = {str(order.id) for order in plan.orders.values()}
+    decision_snapshots = _active_decision_snapshots(db, order_ids)
     claimed: set = set()
     for match in plan.matches:
         if match.core_line is None or match.duplicate or match.code or match.reason:
@@ -1115,17 +1167,31 @@ def _resolve_recovery_matches(
         mirror_id = plan.mirror_by_core_line.get(str(match.core_line.id))
         if mirror_id is None:
             continue
-        if not match.already_raised:
+        if match.already_raised:
+            candidate, report = _used_row_candidate(
+                rows_by_mirror.get(mirror_id, []), match.row, claimed
+            )
+            if candidate is not None:
+                match.already_raised = False
+                match.used_sibling_id = str(candidate.id)
+                claimed.add(str(candidate.id))
+            elif report:
+                match.no_used_delivery_match = True
             continue
-        candidate, report = _used_row_candidate(
-            rows_by_mirror.get(mirror_id, []), match.row, claimed
-        )
-        if candidate is not None:
-            match.already_raised = False
-            match.used_sibling_id = str(candidate.id)
-            claimed.add(str(candidate.id))
-        elif report:
-            match.no_used_delivery_match = True
+        decision, snapshot = decision_snapshots.get(mirror_id, (None, None))
+        if decision is None:
+            continue
+        buy_qty = _dec(snapshot.get("buy_qty"))
+        if buy_qty <= _ZERO:
+            # R4: all from stock for this line - the sheet row is raised plain, not settled.
+            continue
+        required_date = _snapshot_date(snapshot.get("required_date"))
+        if buy_qty == _dec(match.row.qty) and required_date == match.row.delivery_date:
+            # AC-RB-12: the decision agrees with the sheet - nothing to restate.
+            continue
+        match.settle_decision_id = decision.id
+        match.settle_buy_qty = buy_qty
+        match.settle_required_date = required_date
 
 
 def _resolve_line_repairs(
@@ -2735,6 +2801,34 @@ def _close_history(rows: Sequence[Any], actor: Optional[str], now: datetime) -> 
         row.actioned_at = now
 
 
+def _apply_settle_recovery(entry: Any, match: _Match, now: datetime) -> None:
+    """2.1(b) (AC-RB-11): the row's Now becomes the ACTIVE decision's own buy quantity and
+    date, its Was the sheet's own - the same fields `project_order_inquiry_service.
+    _settle_row_in_place` writes when a planning change restates a line in place, and the
+    same Was fragment format, so a recovered row reads exactly as if a confirm had just
+    restated it.
+    """
+    from app.models.project_so import ACK_CHANGED
+    from app.services.project_order_inquiry_service import _qty_str
+
+    previous_qty = entry.qty
+    previous_date = entry.delivery_date
+    entry.qty = match.settle_buy_qty
+    if match.settle_required_date is not None:
+        entry.delivery_date = match.settle_required_date
+    entry.previous_qty = previous_qty
+    entry.previous_delivery_date = previous_date
+    entry.supply_decision_id = match.settle_decision_id
+    entry.changed_at = now
+    entry.ack_state = ACK_CHANGED
+    fragment = (
+        f"Was {_qty_str(previous_qty)} on {previous_date.isoformat()}"
+        if previous_date
+        else f"Was {_qty_str(previous_qty)}, no previous delivery date"
+    )
+    entry.note = f"{entry.note}; {fragment}" if entry.note else fragment
+
+
 def _document_facts_for_link(db: Session, link: Any) -> Dict[str, Any]:
     """Supplier and expected date for the document `link` already names, for the note stamp
     `_write_link` writes when 2.2 moves it - looked up directly rather than through
@@ -3009,6 +3103,10 @@ def apply(
                          identity=identity, value=row.so_number)
             continue
         raised += 1
+        if match.settle_decision_id:
+            # 2.1(b) (AC-RB-11): the row's Now/Was is the decision's, not the sheet's own -
+            # written AFTER the raise, over the ordinary fields `raise_row` just set.
+            _apply_settle_recovery(entry, match, now)
         outcome.success(row=row.source_row, code=oc.CREATED, identity=identity,
                         value=row.so_number, entity_type="order_inquiry_row",
                         entity_id=entry.id)
