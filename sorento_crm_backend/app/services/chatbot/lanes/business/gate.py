@@ -42,12 +42,17 @@ from app.services.chatbot import jsc
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
 # `chatbot_entity_kinds.roster_cap` entirely - a raw `disallowed-entity-gate` port-
 # replay fixture (`tests/chatbot/test_replay.py`) or a hand-built low-level test with
-# no opinion on the feature - and gets `legacy_default` back, byte-for-byte what this
-# gate did before the column existed (8 for the customer picker, uncapped for the
-# product/attachment one). A caller that DOES supply a mapping - `resolve_gate.run`,
-# reached from the real turn engine, which always builds one from every seeded
-# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the column's
-# own server default) for any kind missing from it.
+# no opinion on the feature - and gets `legacy_default` back: 10 for the customer
+# picker (`test_rearch_r3_roster_cap.py::test_a_missing_customer_key_or_none_means_10`
+# - a widening from the old literal 8, never a narrowing, so no recorded capture with
+# 8 or fewer real matches moves), uncapped for the product/attachment one (that arm
+# had NO ceiling at all before this column existed, and one port-replay capture in
+# the corpus - `exec-14213018` - genuinely has 13 real candidates; capping it by
+# default would be a port-fidelity regression `test_replay.py` has no signed
+# divergence for). A caller that DOES supply a mapping - `resolve_gate.run`, reached
+# from the real turn engine, which always builds one from every seeded
+# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the
+# column's own server default) for any kind missing from it.
 _DEFAULT_ROSTER_CAP = 10
 
 
@@ -982,8 +987,9 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if cust_pinned:
             cust_pin_kept = True
         if not pick_applied and not cust_pinned and len(bases) > 1:
-            # `legacy_default=8`: this was the literal `[:8]` before the column existed.
-            reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=8)]
+            # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
+            # per `test_a_missing_customer_key_or_none_means_10`.
+            reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
             # matching delivery?" under the SAME filters. Send the WHOLE ACCOUNT FAMILY,

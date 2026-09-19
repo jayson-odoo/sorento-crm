@@ -727,9 +727,11 @@ def resolve_kinds(
     the generic "resolve" every branch used to share.
 
     `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap") is
-    `{entity kind: chatbot_entity_kinds.roster_cap}`, the caller's own read of the
-    policy rows - this function has no policy of its own, it only forwards the mapping
-    to `resolve_gate.run` -> `gate.run_gate`, the one place a roster is actually cut.
+    `{entity kind: chatbot_entity_kinds.roster_cap}`. The engine passes its own read
+    of the already-loaded `Policy` object (no second query); a caller with no policy
+    of its own leaves it `None` and this function reads `chatbot_entity_kinds`
+    directly - either way it is forwarded to `resolve_gate.run` -> `gate.run_gate`,
+    the one place a roster is actually cut.
     """
     from app.services.chatbot.lanes.business import ENTRY_BY_BRANCH_KIND
     from app.services.chatbot.lanes.business import pickers
@@ -739,6 +741,19 @@ def resolve_kinds(
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
         return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
+    if roster_caps is None:
+        from app.models.chatbot_policy import ChatbotEntityKind
+
+        try:
+            roster_caps = {
+                row.kind: row.roster_cap for row in db.query(ChatbotEntityKind).all()
+            }
+        except Exception:  # noqa: BLE001 - a caller handing over a test double with no
+            # real session (every `resolve_kinds` test that stubs `resolve_gate.run`
+            # entirely) has no opinion on roster caps either; `gate.run_gate`'s own
+            # `legacy_default` then stands, exactly as it does for any other caller
+            # that never adopted this column.
+            roster_caps = None
     services = business_services.production_services(db)
     entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
     try:
