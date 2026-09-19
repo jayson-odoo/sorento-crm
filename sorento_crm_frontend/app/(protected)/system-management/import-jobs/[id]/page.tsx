@@ -25,6 +25,12 @@ import { PlanningChangeOutcomeCard } from '../components/PlanningChangeOutcomeCa
 import { toast } from '@/lib/toast';
 import type { OutstandingPlanningChangeBatch } from '../../../scm/reorder/services/outstandingImportService';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { AutocountPullReview } from '../autocount-pull/components/AutocountPullReview';
+import { usePull } from '../autocount-pull/hooks/useAutocountPull';
+
+/** The two pull job types get the review header/counters/tabs above the usual cards
+ *  (PLAN-autocount-pull-review.md) - every other job type renders exactly as before. */
+const AUTOCOUNT_PULL_JOB_TYPES = new Set(['autocount_products_pull', 'autocount_stock_pull']);
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -41,6 +47,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   po_history_import: 'Purchase History Import',
   sales_history_import: 'Sales History Import',
   order_inquiry_import: 'Order Inquiry Import',
+  autocount_products_pull: 'AutoCount Products Pull',
+  autocount_stock_pull: 'AutoCount Stock Pull',
 };
 
 function getJobTypeLabel(jobType: string): string {
@@ -101,8 +109,15 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const totalOnPage = jobIds.length;
   const showPagination = pageIndex !== null && totalOnPage > 0 && currentIndex >= 0;
 
+  const isPullJob = Boolean(job && AUTOCOUNT_PULL_JOB_TYPES.has(job.job_type));
+  const { data: pullStatus } = usePull(id, isPullJob);
+  // The pull's own review component polls itself every 10s (AC-BD-6) - the generic 2s
+  // job-progress poll below has nothing to show while FoundryX is still building (no RQ job
+  // exists yet for that phase), so it stays off for as long as that is true.
+  const pullStillBuilding = isPullJob && pullStatus?.phase === 'building';
+
   // Poll for status updates if job is still processing
-  const { data: statusData } = useImportJobStatus(id, !isLoading && !!job);
+  const { data: statusData } = useImportJobStatus(id, !isLoading && !!job && !pullStillBuilding);
   const cancelJobMutation = useCancelImportJob();
 
   if (isLoading) {
@@ -245,6 +260,11 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
 
       <Container>
         <div className="space-y-6">
+          {/* AutoCount pull review - header pill, counters, Changes / Excel view / Compare
+              tabs, Download and Confirm. Renders above the usual cards; every other job
+              type is untouched. */}
+          {isPullJob && <AutocountPullReview jobId={id} />}
+
           {/* Summary Card */}
           <Card>
             <CardHeader>
