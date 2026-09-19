@@ -139,25 +139,6 @@
             "is_active": null
           },
           "envelope": {"has_result": false, "items": []}
-        },
-        {
-          "tool": "crm_procurement_po_placed_list",
-          "args": {
-            "_diagnostics": {
-              "entities_in": 1,
-              "total_uuids_passed": 0,
-              "scalar_truncated": [],
-              "skipped": [{"code": "SRTWT2634", "reason": "missing_or_bad_uuid"}],
-              "unmapped_types": []
-            },
-            "view": "render",
-            "date_mode": null,
-            "contact_id": "437264483",
-            "space_id": "364817",
-            "access_levels": [],
-            "is_active": null
-          },
-          "envelope": {"has_result": false, "items": []}
         }
       ],
       "verdict": {

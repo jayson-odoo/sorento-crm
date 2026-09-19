@@ -321,11 +321,6 @@ _XFAIL_REPLAY_CASES = {
         "(already-tracked Finding 9/Row 1 tier-pick gap) (engine defect, AC-1591, "
         "follow-up PR #952)"
     ),
-    "console/focus-003-c-roster-survives-a-declined-escalate-offer-ac-1015-ac-1017.json": (
-        "step 3 branch_kind: expected 'escalation_declined', got 'business_query' "
-        "(a plain 'no' over a team_pick pending falls through to business_query) "
-        "(engine defect, AC-1591, follow-up PR #952)"
-    ),
 }
 
 

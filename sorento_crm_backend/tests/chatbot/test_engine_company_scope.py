@@ -231,7 +231,7 @@ def _spy_resolve_kinds(monkeypatch: Any) -> list[list[dict[str, Any]]]:
 
     def _spy(db: Any, **kwargs: Any) -> Any:
         result = real_resolve_kinds(db, **kwargs)
-        calls.append(result[1])
+        calls.append(result.compatible_entities)
         return result
 
     monkeypatch.setattr(engine_mod.turn_runtime, "resolve_kinds", _spy)
