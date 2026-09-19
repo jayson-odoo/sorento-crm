@@ -1619,7 +1619,24 @@ class TestLinkFollowsBookPairing:
         one target counted as TWO moves instead of one, throwing off the cap
         arithmetic across all three seeded rows (every row ended up unlinked
         instead of exactly one being left alone, confirmed by running this
-        test alone first). Asserted on the hook's own link instead."""
+        test alone first). Asserted on the hook's own link instead.
+
+        Captain's ruling (fix round, 19 Sep 2026): AC-RL-50's own property -
+        one push cannot fan out into unbounded work - still holds: this push's
+        follow work is bounded by TWO caps now, `FOLLOW_BOOK_REPAIRING_MAX_
+        MOVES` on the move sweep here and `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` on
+        S2's own ingest hook (`test_follow_book_hook_cap_bounds_the_same_push`
+        below guards that second one). What does NOT hold any more is this
+        test's own incidental assumption that the THIRD line (the one this
+        cap drops) is left exactly where it was: under owner rulings D3 and D4
+        (19 Sep 2026, "we must follow autocount link always") S2's hook
+        legitimately follows the book for that third line anyway, within ITS
+        OWN cap (200 here, never reached by 3 rows) - intended behaviour, not
+        a leak past the cap under test. The third line's outcome is
+        deterministic here (`FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` is untouched, so
+        every one of the 3 candidate rows the hook resolves is processed, and
+        only the third's own PO line is still wrongly held by a different
+        sales-order line by the time the hook runs)."""
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         monkeypatch.setattr(
@@ -1628,8 +1645,116 @@ class TestLinkFollowsBookPairing:
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
 
         rows_a = []
+        rows_b = []
         repush_records = []
         for i in range(3):
+            ref_a, ref_b = _ref(f"SOLA{i}"), _ref(f"SOLB{i}")
+            so_a, core_line_a = _seed_ref_only_so_line(
+                env, so_number=f"{MARKER}-SOA{i}-{uuid.uuid4().hex[:8]}", product_id=product_id,
+                source_ref=ref_a,
+            )
+            so_b, core_line_b = _seed_ref_only_so_line(
+                env, so_number=f"{MARKER}-SOB{i}-{uuid.uuid4().hex[:8]}", product_id=product_id,
+                source_ref=ref_b,
+            )
+            _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+                env, core_line=core_line_a, product_id=product_id, qty="9",
+            )
+            _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+                env, core_line=core_line_b, product_id=product_id, qty="11",
+            )
+
+            line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=9)
+            record = _po_record(env, lines=[line])
+            res = env.post(INGEST_PO, [record])
+            assert res.json()["records"][0]["outcome"] == "created", res.text
+            header = env.header("purchase_orders", record["source_ref"])
+            po_line = env.po_lines(header["id"])[0]
+            link_before = (
+                env.db.query(OrderInquiryLink)
+                .filter(OrderInquiryLink.row_id == row_a.id)
+                .one()
+            )
+            assert str(link_before.po_line_id) == str(po_line["id"]), link_before
+            rows_a.append(row_a)
+            rows_b.append(row_b)
+            repush_records.append(dict(
+                record,
+                lines=[_po_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=9)],
+            ))
+
+        with caplog.at_level(logging.WARNING, logger="app.services.project_order_inquiry_service"):
+            res2 = env.post(INGEST_PO, repush_records)
+        assert all(r["outcome"] == "updated" for r in res2.json()["records"]), res2.text
+        assert res2.json()["summary"].get("book_repair_moves_dropped") == 1, res2.text
+
+        assert any(
+            "follow_book_repairing" in record.getMessage() for record in caplog.records
+        ), "the overflow must be logged, naming what was skipped"
+
+        # The first two moves apply normally (`ref_moves` is built in submission
+        # order, one entry per record, so the cap of 2 keeps exactly these two).
+        env.db.expire_all()
+        for row_a, row_b in zip(rows_a[:2], rows_b[:2]):
+            a_links = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+            b_links = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+            assert a_links == [], a_links
+            assert len(b_links) == 1, b_links
+
+        # The THIRD line is the one `follow_book_repairing`'s own cap dropped -
+        # but D3/D4 (owner ruling 19 Sep: "we must follow autocount link
+        # always") means S2's OWN ingest hook still follows it: its document
+        # now sits on row B (the line the repush actually names), and the
+        # previous holder (row A) carries the "AutoCount states" note, not
+        # "AutoCount moved" (that fragment belongs to `_follow_one_move`,
+        # which never touched this link - the cap kept it out of `moving`
+        # entirely; the log line above is what proves that).
+        third_row_a, third_row_b = rows_a[2], rows_b[2]
+        a_links = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == third_row_a.id).all()
+        b_links = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == third_row_b.id).all()
+        assert a_links == [], (
+            "the third line's document now sits on row B, the line the repush names - D3/D4"
+        )
+        assert len(b_links) == 1, b_links
+        third_row_a_db = (
+            env.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == third_row_a.id).one()
+        )
+        assert "AutoCount states" in (third_row_a_db.note or ""), third_row_a_db.note
+
+    def test_follow_book_hook_cap_bounds_the_same_push(self, env, monkeypatch, caplog):
+        """AC-RL-50, the OTHER half of the bound: S2's own ingest hook
+        (`_run_follow_book_po_hook` -> `follow_book_for_rows`) fans out over
+        every row a written PO line's `from_so_line_ref` resolves to, and D3/D4
+        (owner ruling 19 Sep: "we must follow autocount link always") make it
+        follow the book even for a line `follow_book_repairing`'s own cap
+        dropped - the test above. Left unguarded, THIS fan-out would be the
+        actual unbounded surface AC-RL-50 exists for; `FOLLOW_BOOK_FOR_ROWS_
+        MAX_ROWS` is what bounds it.
+
+        Five lines (more than either cap alone), `FOLLOW_BOOK_REPAIRING_MAX_
+        MOVES=2` and `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS=1` monkeypatched together.
+        `_rows_for_core_line_refs` (the hook's own row resolution) carries no
+        `ORDER BY`, so WHICH of the up-to-five candidate rows its size-1 cap
+        admits is not guaranteed by Postgres - this test does not pin that
+        identity. It asserts the bound instead: both dropped-counts read
+        exactly what their own cap arithmetic predicts (deterministic - each
+        is a candidate-set SIZE, never an ordering), and the total number of
+        lines this push actually completed end to end is capped at the sum of
+        the two caps, never all five - the concrete "cannot fan out into
+        unbounded work" property AC-RL-50 asks for."""
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        monkeypatch.setattr(
+            ProjectOrderInquiryService, "FOLLOW_BOOK_REPAIRING_MAX_MOVES", 2, raising=False,
+        )
+        monkeypatch.setattr(
+            ProjectOrderInquiryService, "FOLLOW_BOOK_FOR_ROWS_MAX_ROWS", 1, raising=False,
+        )
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+
+        rows_a = []
+        repush_records = []
+        for i in range(5):
             ref_a, ref_b = _ref(f"SOLA{i}"), _ref(f"SOLB{i}")
             so_a, core_line_a = _seed_ref_only_so_line(
                 env, so_number=f"{MARKER}-SOA{i}-{uuid.uuid4().hex[:8]}", product_id=product_id,
@@ -1651,9 +1776,7 @@ class TestLinkFollowsBookPairing:
             header = env.header("purchase_orders", record["source_ref"])
             po_line = env.po_lines(header["id"])[0]
             link_before = (
-                env.db.query(OrderInquiryLink)
-                .filter(OrderInquiryLink.row_id == row_a.id)
-                .one()
+                env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one()
             )
             assert str(link_before.po_line_id) == str(po_line["id"]), link_before
             rows_a.append(row_a)
@@ -1666,17 +1789,31 @@ class TestLinkFollowsBookPairing:
             res2 = env.post(INGEST_PO, repush_records)
         assert all(r["outcome"] == "updated" for r in res2.json()["records"]), res2.text
 
+        summary = res2.json()["summary"]
+        # Deterministic set SIZES, never row order: 5 moves capped at 2 (drop
+        # 3), 5 candidate rows resolved from the 5 written refs capped at 1
+        # (drop 4) - each figure is its own cap's arithmetic, provable without
+        # knowing which specific rows survive either cap.
+        assert summary.get("book_repair_moves_dropped") == 3, summary
+        assert summary.get("book_follow_rows_dropped") == 4, summary
+
+        # The bound itself: `follow_book_repairing`'s cap ALONE guarantees 2
+        # lines move (deterministic - `ref_moves` is built in submission
+        # order, so the cap keeps exactly the first 2 of 5). The hook's own
+        # cap of 1 may ALSO complete one more of the remaining 3 (D3/D4), or
+        # may spend its one allowance on a row already satisfied by the move
+        # above (a no-op) - genuinely not pinned by row order. Either way the
+        # number of lines this push actually finished is bounded at 2 + 1 = 3,
+        # never all 5 - the property under test.
         env.db.expire_all()
-        still_linked = [
-            row_a for row_a in rows_a
-            if env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).count() > 0
-        ]
-        assert len(still_linked) == 1, (
-            "the cap must stop AT 2 applied moves, leaving exactly one of the three untouched"
+        completed = sum(
+            1 for row_a in rows_a
+            if env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).count() == 0
         )
-        assert any(
-            "follow_book_repairing" in record.getMessage() for record in caplog.records
-        ), "the overflow must be logged, naming what was skipped"
+        assert 2 <= completed <= 3, (
+            f"completed={completed}: at least the 2 moves the repairing cap always applies, "
+            "never more than that plus the ONE extra the rows cap allows"
+        )
 
     def test_ambiguous_ref_two_lines_same_source_ref_is_refused(self, env, caplog):
         """AC-RL-51: `_resolve_ref_line` reads `.first()` off a query that has no
