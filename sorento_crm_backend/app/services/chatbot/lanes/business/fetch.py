@@ -853,9 +853,17 @@ def entity_ids_transformer(
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number
     # has no `.trim`, so `String()` must come first - `.trim().toString()` is a TypeError on
     # the int the answer path actually receives. `String(x ?? '')` handles int, string,
-    # padded string, null and undefined without knowing which caller sent what, and lands on
-    # `''` (a scope that matches nothing) rather than `undefined`, which would DROP the key
-    # and widen the read to every customer.
+    # padded string, null and undefined without knowing which caller sent what, and lands
+    # on `''` rather than `undefined`, which would DROP the key rather than send it blank.
+    # N-4 (security review, 20 Sep 2026): a blank `contact_id` here is NOT a scope that
+    # matches nothing - that fail-closed rule is `resolve_contact_company_scope`'s own
+    # (`company_scope_resolver.py`), which the chatbot ENGINE already calls once, in
+    # process, before this tool call, to stamp the session's company scope (see
+    # `engine.py`'s own comment above `_contact_company_scope`). This `out["contact_id"]`
+    # is a separate value, sent to the MCP tool call itself, and the ROUTER dependency
+    # that reads it (`_resolve_api_key_scope`, `company_scope_resolver.py:233-237`)
+    # returns `None` for a blank `contact_id`/`space_id` pair - `None` means ALL
+    # companies (AC-F1, backward-compat), the opposite of "matches nothing".
     raw_contact = trig.get("contact_id")
     if raw_contact is None:
         raw_contact = jsc.get(semantic_input, "contact_id")
@@ -2523,10 +2531,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # would be circular.
     #
     # `set_header` also travels out as its OWN key (below, `out["set_header"]`), not
-    # only baked into `response` - the turn re-architecture's `compose.py` renders its
-    # OWN per-row grammar from `figures`/`entities` rather than reusing this arm's
-    # `response` string wholesale (`lane_text` there is read only when a tool has NO
-    # rows to hand over), so without a header of its own a counted-set answer's rows
+    # only baked into `response` - R-d (owner hand pass 7, 19 Sep 2026) has
+    # `turn/compose.py` print this arm's `lane_text` VERBATIM as the whole section
+    # whenever the envelope carries one, rows or not (`turn/compose.py`'s own R-d
+    # comment), so without a header of its own a counted-set answer's `lane_text`
     # would render with no leading count/attribute line at all.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_header: str | None = None
