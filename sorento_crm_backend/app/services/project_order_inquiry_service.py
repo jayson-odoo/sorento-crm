@@ -106,7 +106,7 @@ from app.models.projects import (
     ProjectPurchaseOrder,
     ProjectTask,
 )
-from app.services.company_scope import build_company_predicate, resolve_write_company_id
+from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
@@ -623,6 +623,12 @@ class ProjectOrderInquiryService:
     #: this many `moves` in one call - each one fans out into several queries, and
     #: nothing else bounds how many an ESB push can name in a single request.
     FOLLOW_BOOK_REPAIRING_MAX_MOVES = 200
+
+    #: AC-FB-24 (`PLAN-oi-follow-book-chain.md`, S2): `follow_book_for_rows`' own
+    #: sibling cap - same figure, same reason: a single ESB push (the PO/SPO
+    #: ingest hooks) can name arbitrarily many rows, and each one fans out into
+    #: several queries.
+    FOLLOW_BOOK_FOR_ROWS_MAX_ROWS = 200
 
     def __init__(self, db: Session):
         self.db = db
@@ -1776,10 +1782,11 @@ class ProjectOrderInquiryService:
         target_id = move.get("target_id")
         if not target_kind or not target_id:
             return
-        # AC-RL-43: a fully received document is S2's own history - a replan is
-        # what redirects it, never a book pairing repair.
-        if self._is_target_received(target_kind, target_id):
-            return
+        # AC-RL-43 is RETIRED (D4, `PLAN-oi-follow-book-chain.md`, owner ruling 18
+        # Sep: lift fully). A move follows AutoCount whether or not the goods have
+        # landed - a fully received document used to be read as S2's own history,
+        # exempt from a book pairing repair, but the owner's "doesn't matter it is
+        # closed or not" applies here exactly as it does to S1's own pairing.
         link_column = (
             OrderInquiryLink.po_line_id
             if target_kind == "po"
@@ -1914,55 +1921,6 @@ class ProjectOrderInquiryService:
                         )
         self.db.flush()
 
-    def _is_target_received(self, target_kind: str, target_id: str) -> bool:
-        """AC-RL-43: the single-id reading of AC-RL-10's own rule (`_received_
-        documents_for`'s batched one) - a PO line whose `qty_received >=
-        qty_ordered` or `line_status = 'closed'`, or an SPO allocation that fails
-        `spo_supply.open_incoming_clauses()`."""
-        if target_kind == "po":
-            line = (
-                self.db.query(
-                    PurchaseOrderLine.qty_ordered,
-                    PurchaseOrderLine.qty_received,
-                    PurchaseOrderLine.line_status,
-                )
-                .filter(PurchaseOrderLine.id == target_id)
-                .first()
-            )
-            if line is None:
-                return False
-            qty_ordered, qty_received, line_status = line
-            # REV nit (17 Sep): same guard as `_received_documents_for` - a null or
-            # zero `qty_ordered` line is not "received".
-            return bool(
-                line_status == "closed"
-                or (_dec(qty_ordered) > _ZERO and _dec(qty_received) >= _dec(qty_ordered))
-            )
-        allocation = (
-            self.db.query(
-                SPOAllocation.line_status,
-                SPOAllocation.receipt_status,
-                InboundShipment.actual_arrival_date,
-            )
-            .outerjoin(
-                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
-            )
-            .filter(SPOAllocation.id == target_id)
-            .first()
-        )
-        if allocation is None:
-            return False
-        line_status, receipt_status, arrival_date = allocation
-        is_open = (
-            (line_status is None or line_status == "open")
-            and (
-                receipt_status is None
-                or receipt_status not in spo_supply.RECEIVED_RECEIPT_STATUSES
-            )
-            and arrival_date is None
-        )
-        return not is_open
-
     def _resolve_ref_line(
         self, ref: Optional[str], *, company_id: str
     ) -> Tuple[Optional[str], Optional[str]]:
@@ -2067,10 +2025,12 @@ class ProjectOrderInquiryService:
         company_id: str,
         actor_user_id: Optional[str] = None,
     ) -> int:
-        """S1 (`PLAN-oi-follow-book-chain.md`, AC-FB-1 to AC-FB-12, AC-FB-20): a row
-        follows the document AutoCount's own book already states for its sales-order
-        line - closed or not (owner ruling 18 Sep: "doesn't matter it is closed or
-        not, if autocount has that linking, we must use and follow that").
+        """S1/S3 (`PLAN-oi-follow-book-chain.md`, AC-FB-1 to AC-FB-12, AC-FB-20,
+        AC-FB-30 to AC-FB-33): a row follows the document AutoCount's own book
+        already states for its sales-order line - closed or not, and even when
+        another line's link is already sitting on it (owner ruling 18 Sep:
+        "doesn't matter it is closed or not, if autocount has that linking, we
+        must use and follow that"; D3, 19 Sep: "the book wins, always").
 
         Runs the OI sheet importer's own pairing rule
         (`project_order_inquiry_import_service.pair_needs`, an extraction of `_pair`
@@ -2089,15 +2049,36 @@ class ProjectOrderInquiryService:
         yet) must never resolve a ref belonging to another company as confidently
         as one of ours.
 
+        D3 (AC-FB-30 to 33): when `pair_needs` cannot fully satisfy a need because
+        a book-named target's whole capacity already sits under another core
+        line's link, that link is DISPLACED - removed (or reduced, for the
+        quantity the book row does not need) with a note, never a row of the SAME
+        core line (AC-FB-6/33) - and `pair_needs` is re-run once so the freed
+        capacity actually reaches the book row. The displaced rows are then
+        offered to the ordinary cascade, once, after the book rows are linked.
+
         Each take is written through `_write_link` (the one link writer, exactly
         as the importer's own `apply` calls it) with `auto_trigger=trigger`, and
         `refresh_link_state` runs once for every row this call actually touched.
 
-        Returns how many rows this call linked, fully or partly.
+        Capped at `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` rows per call (AC-FB-24,
+        `follow_book_repairing`'s own sibling cap and shape): the rest are
+        skipped, logged, and this returns how many were dropped - 0 on every
+        ordinary push, whatever this call itself actually linked or displaced.
         """
         wanted = [str(row_id) for row_id in row_ids if row_id]
         if not wanted:
             return 0
+
+        cap = self.FOLLOW_BOOK_FOR_ROWS_MAX_ROWS
+        dropped = 0
+        if cap is not None and len(wanted) > cap:
+            dropped = len(wanted) - cap
+            wanted = wanted[:cap]
+            logger.warning(
+                "follow_book_for_rows: capped at %s rows, skipped %s of %s",
+                cap, dropped, len(row_ids),
+            )
 
         from app.services.project_order_inquiry_import_service import (
             _Need,
@@ -2108,7 +2089,7 @@ class ProjectOrderInquiryService:
         with company_scope(self.db, frozenset({company_id})):
             rows_by_id, core_line_by_row = self._linkable_rows_with_core_line(wanted)
             if not core_line_by_row:
-                return 0
+                return dropped
 
             core_lines_by_id: Dict[str, SalesOrderLine] = {}
             needs: List[_Need] = []
@@ -2120,12 +2101,49 @@ class ProjectOrderInquiryService:
                 core_lines_by_id[str(core_line.id)] = core_line
                 needs.append(_Need(key=row_id, need_qty=need_qty, core_line=core_line))
             if not needs:
-                return 0
+                return dropped
 
             bought_rows = _bought_rows(self.db, list(core_lines_by_id.values()))
             links_by_key, _not_linkable = pair_needs(self.db, needs, bought_rows)
-            if not links_by_key:
-                return 0
+
+            # D3: a need `pair_needs` could not fully satisfy might be blocked
+            # only by another core line's link sitting on the book's own target -
+            # never re-derived from `links_by_key` alone, since a need that took
+            # NOTHING is absent from it entirely.
+            displaced_rows: List[OrderInquiryRow] = []
+            shortfalls = [
+                need for need in needs
+                if self._still_needed(need, links_by_key) > _ZERO
+            ]
+            if shortfalls:
+                # Computed ONCE for the whole batch, reusing `bought_rows` -
+                # never per need (a prod-scale batch's own performance:
+                # `_bought_rows`'s own `_unambiguous_refs` scan is not cheap to
+                # repeat hundreds of times over).
+                book_targets_map = self._book_targets_map(
+                    [need.core_line for need in shortfalls], bought_rows
+                )
+                for need in shortfalls:
+                    still = self._still_needed(need, links_by_key)
+                    if still <= _ZERO:
+                        continue
+                    so_number = self._so_number_for_core_line(need.core_line)
+                    for target_id in book_targets_map.get(str(need.core_line.id), []):
+                        if still <= _ZERO:
+                            break
+                        freed, rows = self._displace_other_line_holders(
+                            target_id,
+                            protect_core_line_id=str(need.core_line.id),
+                            amount_needed=still,
+                            note_so_number=so_number,
+                        )
+                        still -= freed
+                        displaced_rows.extend(rows)
+            if displaced_rows:
+                # Capacity has moved - the SAME needs, re-paired, is the only way
+                # the freed quantity actually reaches the book row (never a
+                # hand-written write here, which would be a second pairing rule).
+                links_by_key, _not_linkable = pair_needs(self.db, needs, bought_rows)
 
             touched: List[OrderInquiryRow] = []
             for row_id, held in links_by_key.items():
@@ -2138,10 +2156,240 @@ class ProjectOrderInquiryService:
                     )
                 touched.append(row)
 
-            self.db.flush()
-            self.refresh_link_state(touched)
-            self.db.flush()
-            return len(touched)
+            if touched:
+                self.db.flush()
+                self.refresh_link_state(touched)
+                self.db.flush()
+
+            if displaced_rows:
+                # AC-FB-30: "the holder is offered to the cascade again" - once,
+                # after the book's own rows are linked, so a displaced row is
+                # measured against what is left rather than what it just gave up.
+                self.auto_place_for_products(
+                    None, actor_user_id=actor_user_id, trigger=trigger,
+                    row_ids=sorted({str(row.id) for row in displaced_rows}),
+                )
+
+        return dropped
+
+    @staticmethod
+    def _still_needed(need, links_by_key: Dict[Any, Any]) -> Decimal:
+        held = links_by_key.get(need.key)
+        taken = sum((_dec(t["qty"]) for t in held.takes), _ZERO) if held else _ZERO
+        return max(need.need_qty - taken, _ZERO)
+
+    def _book_targets_map(
+        self, core_lines: Sequence[SalesOrderLine], bought_rows
+    ) -> Dict[str, List[str]]:
+        """Every `po_line_id`/`spo_allocation_id` the book states for EACH of
+        these core lines, source-1 only (each one's own ref, direct or through
+        the PO -> SPO chain), in the same rank `pair_needs` reads them in -
+        WITHOUT a capacity check, because which targets exist to be displaced
+        onto is a different question from whether they are currently free
+        (D3). Reuses the same primitives `pair_needs` itself is built from,
+        never a second rule.
+
+        Computed ONCE for the whole batch (`bought_rows` is the pairing's own
+        read, already covering every one of these lines), keyed by core line
+        id - a per-line version of this would repeat `_bought_rows`' own
+        `_unambiguous_refs` scan and `_chain_allocations` once per need, which
+        measured out to minutes rather than seconds the one time this ran
+        against a company-scale batch instead of a handful of seeded rows.
+        """
+        from app.services.project_order_inquiry_import_service import (
+            _chain_allocations,
+            _ref_targets,
+            _target_facts,
+        )
+
+        ref_allocations, ref_po_lines = _ref_targets(bought_rows)
+        targets: Dict[str, List[str]] = {}
+        po_line_ids_by_line: Dict[str, List[str]] = {}
+        all_po_line_ids: set = set()
+        products: set = set()
+        for core_line in core_lines:
+            ref = (core_line.source_ref or "").strip()
+            product = str(core_line.product_id or "")
+            products.add(product)
+            key = str(core_line.id)
+            targets[key] = list(ref_allocations.get((ref, product), []))
+            po_line_ids = ref_po_lines.get((ref, product), [])
+            po_line_ids_by_line[key] = po_line_ids
+            all_po_line_ids.update(po_line_ids)
+        if not all_po_line_ids:
+            return targets
+        facts = _target_facts(self.db, all_po_line_ids)
+        po_numbers = {facts[i]["document"] for i in all_po_line_ids if i in facts}
+        chain, chain_by_line = _chain_allocations(self.db, po_numbers, products)
+        for core_line in core_lines:
+            key = str(core_line.id)
+            product = str(core_line.product_id or "")
+            for po_line_id in po_line_ids_by_line.get(key, []):
+                fact = facts.get(po_line_id)
+                if fact is None:
+                    continue
+                exact = chain_by_line.get(
+                    (str(fact["document"]), str(fact.get("source_ref") or ""), product)
+                )
+                targets[key].extend(exact or chain.get((str(fact["document"]), product), []))
+                targets[key].append(po_line_id)
+        return targets
+
+    def _book_names_target_for_line(
+        self,
+        core_line: SalesOrderLine,
+        *,
+        po_line_id: Optional[str],
+        spo_allocation_id: Optional[str],
+    ) -> bool:
+        """AC-FB-33's exemption, as a single-purpose lookup rather than the
+        batch walk above: does the book ALSO state this ONE target for this
+        ONE other core line? Runs only when `_displace_other_line_holders`
+        actually finds a holder to check - rare - so a couple of targeted
+        queries here cost nothing like repeating the batch walk per holder
+        would."""
+        ref = (core_line.source_ref or "").strip()
+        if not ref:
+            return False
+        if po_line_id:
+            row = (
+                self.db.query(PurchaseOrderLine.from_so_line_ref)
+                .filter(PurchaseOrderLine.id == po_line_id)
+                .first()
+            )
+            return bool(row and row[0] == ref)
+        if spo_allocation_id:
+            row = (
+                self.db.query(
+                    SPOAllocation.from_so_line_ref,
+                    SPOAllocation.from_po_line_ref,
+                    SPOAllocation.from_po_number,
+                )
+                .filter(SPOAllocation.id == spo_allocation_id)
+                .first()
+            )
+            if row is None:
+                return False
+            direct_ref, po_line_ref, po_number = row
+            if direct_ref:
+                return direct_ref == ref
+            if po_line_ref and po_number:
+                match = (
+                    self.db.query(PurchaseOrderLine.from_so_line_ref)
+                    .join(
+                        PurchaseOrder,
+                        PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
+                    )
+                    .filter(
+                        PurchaseOrder.po_number == po_number,
+                        PurchaseOrderLine.source_ref == po_line_ref,
+                    )
+                    .first()
+                )
+                return bool(match and match[0] == ref)
+        return False
+
+    def _displace_other_line_holders(
+        self,
+        target_id: str,
+        *,
+        protect_core_line_id: str,
+        amount_needed: Decimal,
+        note_so_number: Optional[str],
+    ) -> Tuple[Decimal, List[OrderInquiryRow]]:
+        """D3 (AC-FB-30 to 33): free up to `amount_needed` of `target_id` by
+        taking it off whichever OTHER core line's link is sitting on it.
+
+        Never a row of `protect_core_line_id` (AC-FB-6): the same line already
+        holding its own document is not a conflict. Never a holder the book
+        ALSO names this exact target for (AC-FB-33): two shipping-order lines,
+        one per sales-order line, is each row on its own document, not a
+        collision. A manual link is taken exactly like an automatic one
+        (AC-FB-31, owner ruling 19 Sep). Partial: only what the book row needs
+        comes off (AC-FB-30b) - the holder keeps the rest.
+        """
+        if amount_needed <= _ZERO:
+            return _ZERO, []
+        links = (
+            self.db.query(OrderInquiryLink)
+            .filter(
+                or_(
+                    OrderInquiryLink.po_line_id == target_id,
+                    OrderInquiryLink.spo_allocation_id == target_id,
+                )
+            )
+            .all()
+        )
+        if not links:
+            return _ZERO, []
+        when = date.today().strftime("%d/%m/%Y")
+        freed = _ZERO
+        displaced: List[OrderInquiryRow] = []
+        for link in links:
+            if freed >= amount_needed:
+                break
+            row = (
+                self.db.query(OrderInquiryRow)
+                .filter(OrderInquiryRow.id == link.row_id)
+                .first()
+            )
+            if row is None:
+                continue
+            holder_core_line_id = self._core_line_id_for_row(row)
+            if holder_core_line_id is None or holder_core_line_id == protect_core_line_id:
+                continue
+            holder_core_line = self._core_line_by_id(holder_core_line_id)
+            if holder_core_line is not None and self._book_names_target_for_line(
+                holder_core_line,
+                po_line_id=link.po_line_id,
+                spo_allocation_id=link.spo_allocation_id,
+            ):
+                # AC-FB-33: the book names this SAME target for the holder's own
+                # line too - it is not wrongly held, so nothing is displaced.
+                continue
+            take = min(amount_needed - freed, _dec(link.qty))
+            if take <= _ZERO:
+                continue
+            document = link.document
+            fragment = (
+                f"AutoCount states {document or 'the document'} is for "
+                f"{note_so_number or 'another sales order'}, {when}"
+            )
+            row.note = f"{row.note}; {fragment}" if row.note else fragment
+            if take >= _dec(link.qty):
+                self._remove_links(row, [link])
+            else:
+                link.qty = _dec(link.qty) - take
+                self.db.flush()
+            self.refresh_link_state([row])
+            freed += take
+            displaced.append(row)
+        return freed, displaced
+
+    def _core_line_id_for_row(self, row: OrderInquiryRow) -> Optional[str]:
+        if not row.so_line_id:
+            return None
+        found = (
+            self.db.query(ProjectSalesOrderLine.core_sales_order_line_id)
+            .filter(ProjectSalesOrderLine.id == row.so_line_id)
+            .first()
+        )
+        return str(found[0]) if found and found[0] else None
+
+    def _core_line_by_id(self, core_line_id: str) -> Optional[SalesOrderLine]:
+        return (
+            self.db.query(SalesOrderLine)
+            .filter(SalesOrderLine.id == core_line_id)
+            .first()
+        )
+
+    def _so_number_for_core_line(self, core_line: SalesOrderLine) -> Optional[str]:
+        found = (
+            self.db.query(SalesOrder.so_number)
+            .filter(SalesOrder.id == core_line.sales_order_id)
+            .first()
+        )
+        return found[0] if found else None
 
     def _linkable_rows_with_core_line(
         self, row_ids: Sequence[str]
@@ -7330,24 +7578,28 @@ class ProjectOrderInquiryService:
         # while the cascade buys it a second one. Every cascade trigger (Confirm,
         # Link now, a purchase-order confirm, the board) goes through this one
         # method, so honouring the book here is honouring it everywhere at once.
-        # `resolve_write_company_id` reads the ambient scope rather than a new
-        # parameter, `ambiguous=None` so a scope this call cannot pin to one
-        # company (UNSET, or more than one) skips the book pass rather than
-        # guessing - the ordinary cascade below is unaffected either way.
-        book_company_id = resolve_write_company_id(
-            get_company_scope(self.db), ambiguous=None
-        )
-        if book_company_id is not None:
-            book_row_ids = [
-                str(row_id) for (row_id,) in query.with_entities(OrderInquiryRow.id).all()
-            ]
-            if book_row_ids:
-                self.follow_book_for_rows(
-                    book_row_ids,
-                    trigger=trigger,
-                    company_id=book_company_id,
-                    actor_user_id=actor_user_id,
+        #
+        # Grouped by the ROW's own `company_id` (S1 review fix), never the
+        # ambient session scope: a scope of `None` (the `X-API-Key` principal,
+        # or a batch this pass runs across products of several companies) would
+        # otherwise skip the book pass entirely for a multi-company press of the
+        # very same button, which is not a case `follow_book_for_rows` itself
+        # needs to guess about - it already re-scopes per call.
+        book_rows_by_company: Dict[str, List[str]] = {}
+        for row_id, row_company_id in query.with_entities(
+            OrderInquiryRow.id, OrderInquiryRow.company_id
+        ).all():
+            if row_company_id:
+                book_rows_by_company.setdefault(str(row_company_id), []).append(
+                    str(row_id)
                 )
+        for book_company_id, book_row_ids in book_rows_by_company.items():
+            self.follow_book_for_rows(
+                book_row_ids,
+                trigger=trigger,
+                company_id=book_company_id,
+                actor_user_id=actor_user_id,
+            )
 
         rows = query.all()
         rows = self._rank_raised_rows(rows)

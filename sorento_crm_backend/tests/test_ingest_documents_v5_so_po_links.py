@@ -1206,21 +1206,25 @@ class TestLinkFollowsBookPairing:
         new_rows = {str(r["id"]) for r in _spo_rows(env, number)}
         assert str(links_b[0].spo_allocation_id) in new_rows
 
-    def test_received_document_ref_move_changes_nothing(self, env):
-        """AC-RL-43: a fully received PO line's ref moves too, but S2 owns a
-        received document - the link is left exactly where it is."""
+    def test_received_document_ref_move_follows(self, env):
+        """AC-FB-34 (D4, `PLAN-oi-follow-book-chain.md`): AC-RL-43 is RETIRED,
+        owner ruling 18 Sep ("lift fully") - a fully received PO line's ref
+        move follows the book anyway, exactly like an open one's."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
         so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
-        _seed_ref_only_so_line(
+        so_b, core_line_b = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
         _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
             env, core_line=core_line_a, product_id=product_id, qty="4",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="4",
         )
 
         line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=4, qty_received=4)
@@ -1236,9 +1240,6 @@ class TestLinkFollowsBookPairing:
             auto=True,
         ))
         env.db.commit()
-        link_id_before = str(
-            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
-        )
 
         repush_line = _po_line(
             env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=4, qty_received=4,
@@ -1249,9 +1250,12 @@ class TestLinkFollowsBookPairing:
 
         env.db.expire_all()
         links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
-        assert len(links_a) == 1, links_a
-        assert str(links_a[0].id) == link_id_before
-        assert str(links_a[0].po_line_id) == str(po_line["id"])
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+        assert links_a == [], links_a
+        row_a_db = env.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_a.id).one()
+        assert "AutoCount moved" in (row_a_db.note or ""), row_a_db.note
+        assert len(links_b) == 1, links_b
+        assert str(links_b[0].po_line_id) == str(po_line["id"])
 
     def test_manual_link_follows_book(self, env):
         """AC-RL-44: a link written BY HAND (`auto=False`) follows the book the
