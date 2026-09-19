@@ -154,7 +154,9 @@ never restated the row). Under AC-RB-24 + AC-RB-11 it comes back 219 @ 2027-05-0
 - **AC-RB-33** A second upload reports `already_raised`, and no other code, for the row rebuilt
   by AC-RB-11, by AC-RB-24 and by AC-RB-26. The mismatch codes never fire on a line whose live
   stamped row already equals this sheet row on (quantity, date) or on (previous quantity,
-  previous date).
+  previous date). Only a row this sheet raised (its note carries the stamp) counts for that
+  test: a board-made top-up row of the same quantity and date never swallows a genuine top-up
+  (plan buy 76, top-up 38, sheet 38 on the same date: the sheet row is raised plain, AC-RB-26).
 - **AC-RB-34** A decision snapshot with no `required_date` proposes no date change: quantity
   equal to the sheet raises PLAIN; quantity different settles the quantity and keeps the sheet's
   date.
@@ -162,16 +164,21 @@ never restated the row). Under AC-RB-24 + AC-RB-11 it comes back 219 @ 2027-05-0
   ORDER row, the buy verbs used everywhere else; a line whose only live row is RESERVE AND ORDER
   reads `already_raised`, and the top-up sum counts it.
 - **AC-RB-36** A used row (`redirected_to_pool`) is never counted in the top-up sum.
-- **AC-RB-37** A malformed snapshot entry (unreadable `buy_qty` or `required_date`) never aborts
+- **AC-RB-37** A malformed snapshot entry (unreadable `buy_qty` or `required_date`, or a
+  `buy_qty` that is not a finite number, `NaN` / `Infinity`) never aborts
   the upload: that sheet row is raised plain and every other row is processed.
 - **AC-RB-38** `changed_at` on a row rebuilt by AC-RB-11 is the decision's `confirmed_at`.
 - **AC-RB-39** The rollback's more-than-one-company refusal is evaluated over EVERY stamped row,
-  kept ones included, before any kept row is listed; without `--all-companies` nothing of a
-  second company is printed or returned.
-- **AC-RB-40** `[code]` The rollback reads the stamped rows and their line siblings ONCE and
-  derives kept and removable from that one read; the DELETE itself repeats the row's own three
-  traits as predicates, so a row planning touches after the read is not deleted. Verified by
-  review, not by a test.
+  kept ones included, before any kept row is listed; without `--all-companies` no kept row of a
+  second company is printed or returned (the per-company row count line the script has always
+  printed before refusing stays).
+- **AC-RB-40** The rollback reads the stamped rows and their line siblings ONCE, under a row
+  lock (`FOR UPDATE` on the order inquiry rows), and derives kept and removable from that one
+  read, so planning cannot put a trait on a row between the read and the DELETE. Links, claims and
+  rows always address the SAME set: a row the rollback spares keeps every link and its claim
+  (re-review N1: a trait set between the read and the deletes, simulated in the test, leaves the
+  row AND its links). The DELETE still repeats the row's own three traits as predicates. A
+  planning row that lands on the LINE after the read is outside this guard, and the script says so.
 - **AC-RB-41** The upload preview's "already carries an order inquiry" warning counts
   `no_used_delivery_match` and `top_up_sum_mismatch` rows on their own line of text.
 
