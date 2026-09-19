@@ -183,6 +183,49 @@ def test_ac_s1_a_bare_code_file_binds_via_the_exact_rung_and_writes_no_alias():
         assert remembered == 0
 
 
+def test_ac_r4b_model_no_is_written_on_a_bare_composed_row():
+    """Owner feedback round 5: the Supplier codes tab's "Supplier says" showed the
+    translated words but never the sheet's own 型号 - `model_no` is the raw 型号 (here
+    `-7055`, sign and all), stored alongside the composed `item_code` (`SRTWB7055`)."""
+    with pg_session() as db:
+        codes = Codes()
+        supplier_id = seed(db, codes, product_code="SRTWB7055")
+        _seed_shared_words(db)
+        data = workbook([["-7055", "盆", "SORENTO", None, 5, 0, 0.2, ""]])
+
+        svc.apply(db, data, supplier_id=supplier_id, as_of=date(2026, 9, 14))
+
+        row = held(db, supplier_id)[0]
+        assert row.item_code == "SRTWB7055"
+        assert row.model_no == "-7055"
+
+
+def test_ac_r4b_merged_family_collapse_keeps_the_shared_model_no():
+    """Two covered rows of one merged 型号 family (`8613`) whose specs both read as the
+    same trap size (`150mm` and bare `150`) compose to the SAME `item_code`, so `apply`'s
+    duplicate-model collapse merges them into one row - `model_no` must survive that
+    collapse as the family's own shared raw text, not go missing or turn into `None`."""
+    with pg_session() as db:
+        codes = Codes()
+        supplier_id = seed(db, codes)
+        _seed_shared_words(db, pairs=(("SRT", "SORENTO"), ("WC", "连体马桶")))
+        data = merged_workbook(
+            [
+                ["8613", "连体马桶", "SORENTO", "150mm", 5, 0, 0.2, ""],
+                [None, None, None, "150", 7, 0, 0.2, ""],
+            ],
+            merges=["A2:A3", "B2:B3", "C2:C3"],
+        )
+
+        out = svc.apply(db, data, supplier_id=supplier_id, as_of=date(2026, 9, 14))
+
+        assert out["rows_written"] == 1
+        assert out["duplicate_models_merged"] == 1
+        row = held(db, supplier_id)[0]
+        assert row.item_code == "SRTWC8613-150"
+        assert row.model_no == "8613"
+
+
 def test_ac_r7_four_bare_rows_sharing_a_merged_model_become_four_rows_with_their_own_quantities():
     """The owner's own `8613` example (plan D2): 品名/商标/型号 merged over four rows that
     each state their own 规格 (150/200/250mm, 横排180mm) compose to FOUR different codes,
