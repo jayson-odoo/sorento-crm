@@ -105,6 +105,41 @@ Fixture shape, measured on prod copy `sorento_ai_automation_0918_1900` (SO314593
 - **AC-RB-20** Rollback then re-upload, with kept rows on the lines: the kept rows are not
   duplicated and not altered (AC-RB-4 and AC-RB-16 hold across a rollback).
 
+## Shapes found on the full 18 Sep copy (ruling R7, R8, 20 Sep 2026; slice S5)
+
+Measured: of 12,285 live sheet rows, 13 share their line with a row planning made. 10 are the
+used rows above. The other 3:
+
+| Line | Sheet row | Planning's row on the same line | Decision |
+| --- | --- | --- | --- |
+| TPE-9204 (a) | restated 280 @ 2027-04-01, was 182 @ 2026-09-01 | DELAY notice 280 @ 2027-04-01, `Was 2026-09-01` | buy 280 |
+| TPE-9204 (b) | plain 176 @ 2026-12-01 | DELAY notice 219 @ 2027-05-04, `Was 2026-12-01` | buy 219 |
+| SRTWC8605-SC-RL | plain 182 @ 2026-03-01 | top-up ORDER 38 @ 2027-01-04, `supply_decision_id` set | buy 220 (182 + 38) |
+
+- **AC-RB-24** (R7) A notice row never stands for the line's own row: "this line already carries
+  an order inquiry" counts only a live row whose verb is ORDER or ORDER BACK (the same two verbs
+  `_settle_row_in_place` settles). A line whose only live row is a DELAY notice is raised on,
+  and AC-RB-11 applies to it (the TPE-9204 (a) shape comes back 280, was 182).
+- **AC-RB-25** (R7) The notice row itself is never altered, re-raised or cancelled by the upload.
+- **AC-RB-26** (R8) Top-up shape: the line's live ORDER rows all carry a `supply_decision_id` of
+  the ACTIVE decision, and the sheet row's quantity PLUS those rows' quantities EQUALS the
+  decision's `buy_qty` for the line: the sheet row is raised PLAIN (182 beside the 38), never
+  restated, and takes AutoCount's links as any raised row does.
+- **AC-RB-27** (R8) Same line, the sum does NOT equal the decision's `buy_qty`: nothing is raised
+  and the upload report names the sheet row (its own outcome code), as AC-RB-3 does.
+- **AC-RB-28** A line whose live ORDER row carries no `supply_decision_id` of the active decision
+  (a row raised on the board before the migration, the original D2 case) is still left alone:
+  `already_raised`, exactly as today.
+- **AC-RB-29** Rollback also keeps a stamped row whose LINE carries a live row planning made
+  (a row with `supply_decision_id`, a `Replaces N used` row, or a notice row), trait named
+  `planning_row_on_line` in the kept listing, so a later rollback never makes these shapes.
+- **AC-RB-30** A second upload after AC-RB-24 and AC-RB-26 changes nothing on those lines.
+
+Known difference from the 18 Sep state, accepted unless the owner rules otherwise: TPE-9204 (b)
+read PLAIN 176 @ 2026-12-01 beside its DELAY notice (the confirm told purchasing of the delay but
+never restated the row). Under AC-RB-24 + AC-RB-11 it comes back 219 @ 2027-05-04, was 176 @
+2026-12-01, which is what the active decision says. The rehearsal (AC-RB-22) lists it by name.
+
 ## The whole journey
 
 - **AC-RB-21** `[T]` One test walks step 2 to step 4 of the journey on the fixture above: upload,
@@ -112,11 +147,15 @@ Fixture shape, measured on prod copy `sorento_ai_automation_0918_1900` (SO314593
   way the old rollback did (the prod state today), run the new rollback, upload again. The used
   row, the restated row, the fresh row and every link read exactly as they did before the
   deletion, and the all-from-stock row is plain.
-- **AC-RB-22** `[E2E]` Rehearsal before the PR is marked ready: on a copy restored from a CURRENT
-  prod backup, rollback + upload of the 2026 book; the 22 rows on SO314592 to SO314595 match
-  `~/Desktop/oi-compare/recovery_0918_rows.json` on quantity, date, Was/Now, greyed, and which
-  document sits on which row. Landings are counted by KIND (used, restated, plain, reported),
-  never as one "landed" total. Evidence recorded in the PR description.
+- **AC-RB-22** `[E2E]` Rehearsal before the PR is marked ready, on the 18 Sep 19:00 prod copy
+  `sorento_ai_automation_0918_1900` (owner, 20 Sep: no fresh backup needed), inside ONE
+  transaction that is rolled back, so the copy is never written: delete every stamped row the old
+  way, run `follow_book` over SO314592 to SO314595 (prod's state today), run the new rollback,
+  upload the 2026 book. The 22 rows match `~/Desktop/oi-compare/recovery_0918_rows.json` on
+  quantity, date, Was/Now, greyed, and which document sits on which row; the 3 rows of AC-RB-24
+  to 27 land as stated. Landings are counted by KIND (used, restated, plain, reported), never as
+  one "landed" total. Evidence recorded in the PR description. What the copy cannot show (prod
+  drift since 18 Sep 19:00) is covered on prod by the rollback dry run and `compare.py`.
 - **AC-RB-23** `[T]` Every existing test in `test_oi_sheet_line_pick_month_po.py`,
   `test_oi_sheet_pairing_repair.py`, `test_oi_sheet_date_follow_sheet.py` and the inquiry test
   family stays green unchanged.

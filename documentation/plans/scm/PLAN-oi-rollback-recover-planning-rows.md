@@ -57,6 +57,17 @@ Grill, 20 Sep 2026 (each measured on the 0918 copy first):
   second live row under an active decision that differs from the sheet. 2.1(b)'s "the line
   carries no live row" condition is what keeps them untouched (AC-RB-15).
 
+Second measurement, 20 Sep (the whole 0918 copy, 12,285 live sheet rows; 13 share a line with a
+row planning made, 10 of them the used rows):
+
+- **R7** A notice row (DELAY and the other non-buy verbs) never stands for the line's own row:
+  "already raised" counts only live ORDER / ORDER BACK rows. Measured: TPE-9204's restated row and
+  a plain TPE-9204 row each sit beside a DELAY notice, which today reads as already raised.
+- **R8** Top-up shape (SRTWC8605-SC-RL: sheet 182 beside a decision's top-up 38, buy 220): the
+  sheet row comes back PLAIN when its quantity plus the active decision's own live ORDER rows on
+  the line equals the decision's `buy_qty`; otherwise reported, nothing guessed. The rollback also
+  keeps a stamped row whose line carries a row planning made. UAC AC-RB-24 to AC-RB-30, slice S5.
+
 ## 2. Design - rebuild from the LIVE planning decisions (owner, 19 Sep: no recovery from an old copy)
 
 Checked against the pre-rollback copy that everything lost is derivable from data that is still
