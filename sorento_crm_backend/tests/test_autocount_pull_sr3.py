@@ -83,13 +83,33 @@ MARKER = "ZZTAP3"
 
 def _expected_view_row(row: dict) -> dict:
     """The `/rows` shape AC-RV-3 pins, computed from a raw snapshot row so the
-    test does not just restate whatever the route happens to return."""
+    test does not just restate whatever the route happens to return.
+
+    Captain ruling (SR3 amend round, contract fix): `desc_2` must ROUND-TRIP
+    through the manual join formula (`f"{description} {desc2}".strip()`), so
+    it is the remainder of `description` after `name` with EXACTLY ONE
+    separator space removed - any further leading whitespace (a real double
+    space in the source data) is KEPT, never `.strip()`-ped away, because that
+    one extra space is exactly what the join's own inserted space needs to
+    reproduce. `description == name` -> `desc_2 == ""`. `description` not even
+    starting with `name` (a shape no fixture row hits, but the rule must still
+    answer something) -> `desc_2 == ""` and the `description` CELL becomes the
+    full raw `description`, not `name` - there is no boundary to split on.
+    """
     name = row["name"]
     description = row.get("description") or ""
-    desc2 = "" if description == name else description[len(name):].strip()
+    if description == name:
+        view_description, desc2 = name, ""
+    elif not description.startswith(name):
+        view_description, desc2 = description, ""
+    else:
+        remainder = description[len(name):]
+        if remainder.startswith(" "):
+            remainder = remainder[1:]
+        view_description, desc2 = name, remainder
     return {
         "item_code": row["code"],
-        "description": name,
+        "description": view_description,
         "desc_2": desc2,
         "item_group": row.get("category_code"),
         "item_brand": row.get("brand_code"),
@@ -168,6 +188,11 @@ class TestRowsRoute:
             assert got["is_active"] == expected["is_active"]
 
     def test_rv_3b_desc2_remainder_double_space_byte_exact_and_equal_case_empty(self, env):
+        """The double-space item keeps ONE leading space in `desc_2` - the
+        rule's whole point: `name + " " + desc_2` (the manual join formula)
+        must reproduce the pull's raw double-spaced `description` byte for
+        byte, and that only works if `desc_2` itself carries the extra space
+        rather than having it stripped away."""
         owner = env.user("master_data.products.autocount_pull")
         env.as_user(owner)
         job_id, rows = _seed_review_job(env, owner=owner)
@@ -178,11 +203,32 @@ class TestRowsRoute:
 
         double_space = next(r for r in rows if r["code"] == "SRTSH9112-GM")
         assert by_code["SRTSH9112-GM"]["description"] == double_space["name"]
-        assert by_code["SRTSH9112-GM"]["desc_2"] == "WITH LED LIGHT"
+        assert by_code["SRTSH9112-GM"]["desc_2"] == " WITH LED LIGHT"
+        # The round-trip itself, not just the literal.
+        rejoined = f'{by_code["SRTSH9112-GM"]["description"]} {by_code["SRTSH9112-GM"]["desc_2"]}'.strip()
+        assert rejoined == double_space["description"]
 
         equal_case = next(r for r in rows if r["code"] == "A611")
         assert equal_case["description"] == equal_case["name"]  # the fixture's own premise
         assert by_code["A611"]["desc_2"] == ""
+
+    def test_rv_3b_description_not_starting_with_name_keeps_the_full_text(self, env):
+        """A shape no committed fixture row hits, but the rule must still
+        answer something: when `description` does not even start with `name`,
+        there is no boundary to split on - `desc_2` is empty and the
+        `description` CELL carries the full raw text, not the (wrong) `name`."""
+        owner = env.user("master_data.products.autocount_pull")
+        env.as_user(owner)
+        hand_row = _canonical_row(
+            f"{MARKER}-NOMATCH", name="Foo", description="Completely different text",
+        )
+        job_id, _rows = _seed_review_job(env, owner=owner, rows=[hand_row])
+
+        resp = env.client.get(f"{PULLS_URL}/{job_id}/rows", params={"limit": 50})
+        assert resp.status_code == 200, resp.text
+        row = resp.json()["data"][0]
+        assert row["description"] == "Completely different text"
+        assert row["desc_2"] == ""
 
     def test_rv_3c_query_filters_by_item_code_case_insensitive(self, env):
         owner = env.user("master_data.products.autocount_pull")
@@ -255,12 +301,16 @@ class TestDownloadRoute:
 
         body_rows = list(ws.iter_rows(min_row=2, values_only=True))
         assert len(body_rows) == 10
+        # openpyxl reads a cell written with an empty string back as None (a
+        # library quirk, not a data difference) - normalise BOTH sides (the
+        # JSON `/rows` side can itself be None, e.g. MOCHA's item_brand)
+        # before comparing.
         for sheet_row, api_row in zip(body_rows, api_rows):
-            assert sheet_row[0] == api_row["item_code"]
-            assert sheet_row[1] == api_row["description"]
-            assert sheet_row[2] == api_row["desc_2"]
-            assert sheet_row[3] == api_row["item_group"]
-            assert sheet_row[4] == api_row["item_brand"]
+            assert (sheet_row[0] or "") == (api_row["item_code"] or "")
+            assert (sheet_row[1] or "") == (api_row["description"] or "")
+            assert (sheet_row[2] or "") == (api_row["desc_2"] or "")
+            assert (sheet_row[3] or "") == (api_row["item_group"] or "")
+            assert (sheet_row[4] or "") == (api_row["item_brand"] or "")
             assert _num(sheet_row[5]) == _num(api_row["price"])
             assert bool(sheet_row[6]) == bool(api_row["is_active"])
             assert sheet_row[7] in (None, ""), "products add a trailing BLANK UOM column"
@@ -346,6 +396,38 @@ class TestComparePureFunction:
 
         description_diffs = [d for d in result["differences"] if d["field"] == "description"]
         assert description_diffs == [], result["differences"]
+
+    def test_cm_2b2_single_space_excel_vs_double_space_pull_is_a_strict_difference(self):
+        """Captain ruling (SR3 amend round): compare is STRICT, never
+        whitespace-normalising. An Excel file whose Description/Desc 2 join to
+        a SINGLE space where the pull's raw `description` carries a double
+        space is a real, reportable difference - the coder's own added
+        normalisation on the description compare is overruled."""
+        from app.services.autocount_pull_compare import compare_products
+
+        pull_row = _canonical_row(
+            "SRTSH9112-GM",
+            name="SORENTO SERENE CEILING MOUNTED RAIN SHOWER HEAD SRTSH9112-GM",
+            description=(
+                "SORENTO SERENE CEILING MOUNTED RAIN SHOWER HEAD SRTSH9112-GM  WITH LED LIGHT"
+            ),
+        )
+        excel_row = {
+            "Item Code": "SRTSH9112-GM",
+            # No trailing space on Description this time - the join formula's
+            # own single separator space is the ONLY space between the two
+            # halves, one short of the pull's real double space.
+            "Description": "SORENTO SERENE CEILING MOUNTED RAIN SHOWER HEAD SRTSH9112-GM",
+            "Desc 2": "WITH LED LIGHT",
+            "Item Group": pull_row["category_code"], "Item Brand": pull_row["brand_code"],
+            "Price": pull_row["list_price"], "Is Active": "TRUE",
+        }
+
+        result = compare_products([excel_row], [pull_row])
+
+        description_diffs = [d for d in result["differences"] if d["field"] == "description"]
+        assert len(description_diffs) == 1, result["differences"]
+        assert description_diffs[0]["item_code"] == "SRTSH9112-GM"
 
     def test_cm_2c_item_group_and_item_brand_reported_as_differences(self):
         from app.services.autocount_pull_compare import compare_products
@@ -846,7 +928,11 @@ class TestApplyTaskStamping:
         created_by, updated_by = db.execute(
             text("SELECT created_by, updated_by FROM products WHERE product_code = :c"), {"c": code}
         ).first()
-        assert created_by == original_creator, "an update must never touch created_by"
+        # A raw text() SELECT hands back a native uuid.UUID for a postgres
+        # uuid column (see LESSONS-LEARNT "uuid-id stack" / master_ingest_
+        # service._value_changed's own note on this) - stringify before
+        # comparing to the plain str id this test seeded.
+        assert str(created_by) == original_creator, "an update must never touch created_by"
         assert str(updated_by) == job_user
 
     def test_pc_4c_push_path_without_stamp_user_id_stamps_neither(self, task_db):
