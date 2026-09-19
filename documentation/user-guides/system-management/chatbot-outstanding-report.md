@@ -150,5 +150,6 @@ Without that grant:
 ## See also
 
 * [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md)
+* [Chatbot - sales report (confirmed vs outstanding, by month and product)](chatbot-sales-report.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
 * [System Management - Data reference for admins](data-analysis.md)
