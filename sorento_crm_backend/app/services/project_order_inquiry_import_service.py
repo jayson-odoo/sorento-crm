@@ -251,6 +251,22 @@ class _RowLinks:
     from_book: bool = False
 
 
+@dataclass
+class _Need:
+    """One thing wanting a document, over one core sales-order line - `pair_needs`'
+    own unit (S1, `PLAN-oi-follow-book-chain.md`).
+
+    `key` is whatever the caller wants back: `_pair` uses the match's index into
+    `plan.matches` (unchanged, AC-FB-12), and `ProjectOrderInquiryService.
+    follow_book_for_rows` uses the row id directly, since a live row already
+    exists and does not need one raised for it first.
+    """
+
+    key: Any
+    need_qty: Decimal
+    core_line: SalesOrderLine
+
+
 def _orders_by_number(db: Session, numbers: set) -> Dict[str, SalesOrder]:
     """The sales orders the sheet names, one per number, the OLDEST first.
 
@@ -1307,8 +1323,19 @@ def _claim_order(facts: Dict[str, dict]) -> Callable[[dict], tuple]:
     return key
 
 
-def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
-    """What each raisable row would be linked to, in the order the two sources rank.
+def pair_needs(
+    db: Session,
+    needs: Sequence[_Need],
+    bought_rows: Optional[Tuple[List[Any], List[Any]]],
+) -> Tuple[Dict[Any, _RowLinks], List[str]]:
+    """What each need would be linked to, in the order the two sources rank.
+
+    Extracted from `_pair` (S1, `PLAN-oi-follow-book-chain.md`) with no behaviour
+    change for the importer (AC-FB-12): `_pair` builds its own `needs` from
+    `plan.matches` and calls this. The seam exists so a LIVE order inquiry row
+    (`ProjectOrderInquiryService.follow_book_for_rows`) can run through the exact
+    same rule a migrated row does, keyed by its own row id rather than a match's
+    index into a sheet that does not exist for it.
 
     **Source 1, the line reference AutoCount itself wrote** (D9 as repaired, R1: "we don't
     trust the remark column in the sheet ... the source of truth is the autocount linkage").
@@ -1332,18 +1359,18 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     and stays on the result only so the contract keeps its keys.
 
     Nothing is written here. `apply` writes exactly what this returns, and `preview` counts
-    it, so the two can never answer differently.
+    it, so the two can never answer differently. `follow_book_for_rows` is the third caller
+    that keeps that same promise: nothing is written until it decides to write it.
     """
-    wanted = [(i, m) for i, m in enumerate(plan.matches) if m.raisable]
-    links: Dict[int, _RowLinks] = {}
+    links: Dict[Any, _RowLinks] = {}
     not_linkable: List[str] = []
-    if not wanted:
+    if not needs:
         return links, not_linkable
 
     claims = [
         claim
         for claim in order_link_service._claim_rows(
-            db, so_line_ids={str(m.core_line.id) for _, m in wanted}
+            db, so_line_ids={str(n.core_line.id) for n in needs}
         )
         if claim["source"] in _BOOK_CLAIM_SOURCES
     ]
@@ -1351,7 +1378,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     for claim in claims:
         by_line.setdefault(str(claim["so_line_id"]), []).append(claim)
 
-    ref_allocations, ref_po_lines = _ref_targets(plan.bought_rows or ([], []))
+    ref_allocations, ref_po_lines = _ref_targets(bought_rows or ([], []))
 
     target_ids = {claim["target_id"] for claim in claims}
     target_ids |= {i for ids in ref_allocations.values() for i in ids}
@@ -1374,7 +1401,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             for line_id in ids
             if line_id in facts
         },
-        {str(m.core_line.product_id or "") for _, m in wanted},
+        {str(n.core_line.product_id or "") for n in needs},
     )
     chained = {
         allocation_id for allocations in chain.values() for allocation_id in allocations
@@ -1389,8 +1416,8 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
 
     used = _claimed_capacity(db)
 
-    for index, match in wanted:
-        held = _RowLinks(need_left=_dec(match.row.qty))
+    for need in needs:
+        held = _RowLinks(need_left=_dec(need.need_qty))
         seen: set = set()
 
         def take(target_id: str, *, from_book: bool) -> bool:
@@ -1418,7 +1445,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             held.from_book = held.from_book or from_book
             return True
 
-        product = str(match.core_line.product_id or "")
+        product = str(need.core_line.product_id or "")
 
         def _through_po(po_line_id: str) -> None:
             """A purchase order line the book named: its shipping orders first (D10), the
@@ -1442,7 +1469,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             if held.need_left > _ZERO:
                 take(str(po_line_id), from_book=True)
 
-        ref = (match.core_line.source_ref or "").strip()
+        ref = (need.core_line.source_ref or "").strip()
         if ref:
             for allocation_id in ref_allocations.get((ref, product), []):
                 if held.need_left <= _ZERO:
@@ -1453,7 +1480,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
                     break
                 _through_po(po_line_id)
 
-        line_claims = by_line.get(str(match.core_line.id)) or []
+        line_claims = by_line.get(str(need.core_line.id)) or []
         for claim in sorted(line_claims, key=_claim_order(facts)):
             if held.need_left <= _ZERO:
                 break
@@ -1466,8 +1493,22 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             _through_po(claim["target_id"])
 
         if held.takes:
-            links[index] = held
+            links[need.key] = held
     return links, not_linkable
+
+
+def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
+    """`plan.matches`, turned into `pair_needs`' own units and paired.
+
+    The importer's own caller, unchanged behaviour (AC-FB-12): every raisable match
+    becomes one `_Need`, keyed by its index into `plan.matches` exactly as before.
+    """
+    needs = [
+        _Need(key=i, need_qty=_dec(m.row.qty), core_line=m.core_line)
+        for i, m in enumerate(plan.matches)
+        if m.raisable
+    ]
+    return pair_needs(db, needs, plan.bought_rows)
 
 
 # --------------------------------------------------------------------------- #

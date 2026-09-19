@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlalchemy import event, func, or_, tuple_
 from sqlalchemy.orm import Session, aliased
 
-from app.models.base import get_company_scope
+from app.models.base import company_scope, get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
@@ -106,7 +106,7 @@ from app.models.projects import (
     ProjectPurchaseOrder,
     ProjectTask,
 )
-from app.services.company_scope import build_company_predicate
+from app.services.company_scope import build_company_predicate, resolve_write_company_id
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
@@ -2056,6 +2056,138 @@ class ProjectOrderInquiryService:
             if self._unlinked_need(row) > _ZERO:
                 return row
         return None
+
+    # ---------------------------------------------------------- S1: follow the book
+
+    def follow_book_for_rows(
+        self,
+        row_ids: Sequence[str],
+        *,
+        trigger: str,
+        company_id: str,
+        actor_user_id: Optional[str] = None,
+    ) -> int:
+        """S1 (`PLAN-oi-follow-book-chain.md`, AC-FB-1 to AC-FB-12, AC-FB-20): a row
+        follows the document AutoCount's own book already states for its sales-order
+        line - closed or not (owner ruling 18 Sep: "doesn't matter it is closed or
+        not, if autocount has that linking, we must use and follow that").
+
+        Runs the OI sheet importer's own pairing rule
+        (`project_order_inquiry_import_service.pair_needs`, an extraction of `_pair`
+        with no behaviour change, AC-FB-12) against LIVE rows instead of a migrated
+        one. `row_ids` is narrowed first to the cascade's own linkable predicate
+        (`_linkable_row_for_core_line`'s: state, verb, ack) with need left
+        (`_unlinked_need`), and resolved to each row's core sales-order line - a
+        row whose mirror never adopted one is left alone, same as a row this pass
+        does not otherwise touch.
+
+        `company_id` pins the company scope for the WHOLE call (AC-FB-9), same
+        shape and same reason as `ShippingOrderIngestService._apply`: the pairing's
+        own queries are ordinary company-scoped ORM reads, filtered by whatever the
+        session's ambient scope happens to be - and a caller whose own scope is
+        wider than one company (an `X-API-Key` principal with no tenant resolved
+        yet) must never resolve a ref belonging to another company as confidently
+        as one of ours.
+
+        Each take is written through `_write_link` (the one link writer, exactly
+        as the importer's own `apply` calls it) with `auto_trigger=trigger`, and
+        `refresh_link_state` runs once for every row this call actually touched.
+
+        Returns how many rows this call linked, fully or partly.
+        """
+        wanted = [str(row_id) for row_id in row_ids if row_id]
+        if not wanted:
+            return 0
+
+        from app.services.project_order_inquiry_import_service import (
+            _Need,
+            _bought_rows,
+            pair_needs,
+        )
+
+        with company_scope(self.db, frozenset({company_id})):
+            rows_by_id, core_line_by_row = self._linkable_rows_with_core_line(wanted)
+            if not core_line_by_row:
+                return 0
+
+            core_lines_by_id: Dict[str, SalesOrderLine] = {}
+            needs: List[_Need] = []
+            for row_id, core_line in core_line_by_row.items():
+                row = rows_by_id[row_id]
+                need_qty = self._unlinked_need(row)
+                if need_qty <= _ZERO:
+                    continue
+                core_lines_by_id[str(core_line.id)] = core_line
+                needs.append(_Need(key=row_id, need_qty=need_qty, core_line=core_line))
+            if not needs:
+                return 0
+
+            bought_rows = _bought_rows(self.db, list(core_lines_by_id.values()))
+            links_by_key, _not_linkable = pair_needs(self.db, needs, bought_rows)
+            if not links_by_key:
+                return 0
+
+            touched: List[OrderInquiryRow] = []
+            for row_id, held in links_by_key.items():
+                row = rows_by_id[row_id]
+                for take in held.takes:
+                    self._write_link(
+                        row, take, take["qty"],
+                        actor_user_id=actor_user_id,
+                        auto_trigger=trigger,
+                    )
+                touched.append(row)
+
+            self.db.flush()
+            self.refresh_link_state(touched)
+            self.db.flush()
+            return len(touched)
+
+    def _linkable_rows_with_core_line(
+        self, row_ids: Sequence[str]
+    ) -> Tuple[Dict[str, OrderInquiryRow], Dict[str, SalesOrderLine]]:
+        """Of these row ids, the ones `_linkable_row_for_core_line`'s own predicate
+        (state, verb, ack) accepts, resolved to their core sales-order line.
+
+        A row whose mirror resolves to no core line - never adopted, or the join
+        itself finds nothing - is absent from the second map and left for the
+        caller to skip; this never raises over it, the same way the cascade's own
+        walk quietly moves past a row it cannot resolve a product for.
+        """
+        rows = (
+            self.db.query(OrderInquiryRow, ProjectSalesOrderLine.core_sales_order_line_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .filter(
+                OrderInquiryRow.id.in_(row_ids),
+                OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+                OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
+                OrderInquiryRow.ack_state.in_(ACK_LINKABLE),
+            )
+            .all()
+        )
+        core_line_ids = {str(core_id) for _row, core_id in rows if core_id}
+        core_lines = (
+            {
+                str(line.id): line
+                for line in self.db.query(SalesOrderLine).filter(
+                    SalesOrderLine.id.in_(core_line_ids)
+                )
+            }
+            if core_line_ids
+            else {}
+        )
+        rows_by_id: Dict[str, OrderInquiryRow] = {}
+        core_line_by_row: Dict[str, SalesOrderLine] = {}
+        for row, core_id in rows:
+            core_line = core_lines.get(str(core_id)) if core_id else None
+            if core_line is None:
+                continue
+            rows_by_id[str(row.id)] = row
+            core_line_by_row[str(row.id)] = core_line
+        return rows_by_id, core_line_by_row
 
     def _dispatch_changed_with_links(
         self, inquiry: OrderInquiry, row: OrderInquiryRow, *, had_link: bool
@@ -7189,6 +7321,33 @@ class ProjectOrderInquiryService:
             if narrowed is None:
                 return self._nothing_placed(link_up_to)
             query = narrowed
+
+        # S1 (`PLAN-oi-follow-book-chain.md`, AC-FB-11/AC-FB-20): the book is asked
+        # FIRST, for exactly the rows this pass is about to deal - a closed PO line
+        # or a chain-only SPO line is invisible to the candidate walk below (it
+        # reads open balance and existing claims, never `from_so_line_ref`), so
+        # without this a document AutoCount already named for a row sits unused
+        # while the cascade buys it a second one. Every cascade trigger (Confirm,
+        # Link now, a purchase-order confirm, the board) goes through this one
+        # method, so honouring the book here is honouring it everywhere at once.
+        # `resolve_write_company_id` reads the ambient scope rather than a new
+        # parameter, `ambiguous=None` so a scope this call cannot pin to one
+        # company (UNSET, or more than one) skips the book pass rather than
+        # guessing - the ordinary cascade below is unaffected either way.
+        book_company_id = resolve_write_company_id(
+            get_company_scope(self.db), ambiguous=None
+        )
+        if book_company_id is not None:
+            book_row_ids = [
+                str(row_id) for (row_id,) in query.with_entities(OrderInquiryRow.id).all()
+            ]
+            if book_row_ids:
+                self.follow_book_for_rows(
+                    book_row_ids,
+                    trigger=trigger,
+                    company_id=book_company_id,
+                    actor_user_id=actor_user_id,
+                )
 
         rows = query.all()
         rows = self._rank_raised_rows(rows)
