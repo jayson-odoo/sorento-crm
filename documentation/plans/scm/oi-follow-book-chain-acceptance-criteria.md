@@ -1,6 +1,6 @@
 # UAC - Order inquiry rows follow the AutoCount book, through the PO to SPO chain, closed or not
 
-Plan: `PLAN-oi-follow-book-chain.md`. Status: DRAFT 18 Sep 2026, awaiting owner grill (decisions D1 to D4 in the plan).
+Plan: `PLAN-oi-follow-book-chain.md`. Status: D1, D2, D4 RULED by the owner 18 Sep 2026. D3 built on the recommendation, owner to confirm before merge.
 
 Owner ruling, 18 Sep 2026: "doesn't matter it is closed or not, if autocount has that
 linking, we must use and follow that."
@@ -111,10 +111,17 @@ Every AC is seeded on `tests/_pg_fixture.py` with its own chain. `[BE][T]` unles
   is refreshed, the row of L is linked, and the holder is offered to the cascade again.
 * **AC-FB-31** Given the holder's link is MANUAL, then the same happens (ruling 16 Sep:
   "manual links follow too"). Owner to confirm in the grill.
-* **AC-FB-32** Given the holder is on a fully received document and its row is redirected, then
-  it is never displaced (history).
+* **AC-FB-32** Given the holder is a row of a DIFFERENT sales order line on a fully received
+  document, then it is displaced like any other holder and carries the note (D4: always follow).
+  A row of the SAME sales order line is never displaced (AC-FB-6).
 * **AC-FB-33** Given the book ALSO names X for the holder's own line (two PO lines, one
   shipping order line each), then nothing is displaced: each row gets its own line.
+
+* **AC-FB-34 (D4, retires AC-RL-43)** Given a link on a fully received PO line or SPO line, when
+  a push moves that line's `from_so_line_ref` to another sales order line, then the link leaves
+  the old row with the note `AutoCount moved <document> to <SO> on <date>` and is placed on the
+  new line's linkable row, which shows it as received. A push that repeats the same ref moves
+  nothing.
 
 ## Group D - existing rows
 

@@ -1,6 +1,6 @@
 # PLAN - Order inquiry rows follow the AutoCount book, through the PO to SPO chain
 
-Status: DRAFT 18 Sep 2026. D1 and D2 RULED by the owner on the review page 18 Sep ("we must follow autocount link always"). D3 and D4 awaiting his answer. No code written.
+Status: DRAFT 18 Sep 2026. D1 and D2 RULED by the owner on the review page 18 Sep ("we must follow autocount link always"). D4 RULED: lift fully. D3 was left unanswered when he closed the page; S3 is built on the recommendation (book wins, manual links too), which is the only option consistent with his two rulings, and is flagged for his confirmation before merge. No code written.
 UAC: `oi-follow-book-chain-acceptance-criteria.md`. Branch `lane/oi-follow-book-chain`.
 Domain: SCM, order inquiries. Owner ruling 18 Sep 2026: "doesn't matter it is closed or not,
 if autocount has that linking, we must use and follow that."
@@ -65,13 +65,13 @@ follow too (ruling 16 Sep). Never displaced: a row of the same sales order line,
 redirected row holding a received document. The alternative, leaving the holder and the book
 row unlinked, keeps the screen disagreeing with AutoCount, which is what the ruling forbids.
 
-**D4. AC-RL-43 (16 Sep): a book MOVE skips a fully received document.** Today's ruling reads
-as lifting it, and the owner's page note ("we must follow autocount link always") moves the
-recommendation to lifting it FULLY: a move follows whether or not the goods have landed, the
-old row gets a note. The narrower option (lift only while goods have not landed) keeps a
-landed row's history untouched (`oi-replan-received-links` journey, step 4) at the cost of
-the screen disagreeing with AutoCount. Owner to pick. First links to a landed document are still
-written (AC-FB-3): that is history being recorded, not rewritten.
+**D4. AC-RL-43 (16 Sep): a book MOVE skips a fully received document.** RULED 18 Sep on the
+review page: LIFT FULLY. A move follows AutoCount whether or not the goods have landed; the
+old row loses the document and gets the note, the new row shows it as received. AC-RL-43 is
+retired by this plan, and the test that guards it is rewritten to assert the move (AC-FB-34).
+The `oi-replan-received-links` rule at SETTLE is untouched: a replan still redirects a row
+whose document is fully received, and a fresh row of the same line still takes nothing from
+it (AC-FB-6), because the redirected row holds the capacity.
 
 ## 4. Design
 
