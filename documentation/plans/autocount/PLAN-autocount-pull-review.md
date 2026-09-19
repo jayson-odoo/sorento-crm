@@ -99,7 +99,7 @@ Apply job metadata: `{"autocount_apply": {"pull_job_id": "...", "snapshot_id": "
 | `POST /` `{entity}` | permission of the entity, single-company guard, reuse an open pull else FoundryX `POST /snapshots`, create the pending row. Returns `{job_id, phase}`, `job_id` is the `import_jobs.id` (never the RQ `job_id` column) |
 | `GET /current?entity=` | the caller's own open pull for the active company + entity, else 404. Carries no permission check of its own: it can only ever return a pull the caller already owns, so there is nothing a permission gate would additionally protect |
 | `GET /{job_id}` | owner only (404, not 403, for a job that exists but is not the caller's - existence is never revealed). While `building`: passthrough to FoundryX status, stores progress, on `ready` stores the header (display only, see Tasks) and enqueues the preview ONCE (conditional UPDATE on phase), on `failed` fails the job, past 60 min expires it. Always returns phase, progress, header facts, counts, compare summary, confirm_blocked_reason, apply_job_id, warnings |
-| `GET /{job_id}/rows?page&limit&query` | Excel view rows, mapped from the snapshot page(s) |
+| `GET /{job_id}/rows?page&limit&query` | Excel view rows, mapped from the snapshot page(s). Desc 2 round-trips through the manual join formula (`f"{description} {desc2}".strip()`): it is the remainder of the raw `description` after `name` with EXACTLY ONE separator space removed - any further leading whitespace (a real double space in the source data) is KEPT, not stripped, so the downloaded file, re-imported by hand, stores exactly what the pull stores. `description == name` -> Desc 2 empty; `description` not starting with `name` at all -> no boundary to split on, so the Description cell carries the full raw text and Desc 2 is empty |
 | `GET /{job_id}/download.xlsx` | Excel view as a file (stock: the Stock List file) |
 | `POST /{job_id}/compare` `{filename, rows}` | advisory compare, stores the summary only, returns summary + differences |
 | `POST /{job_id}/confirm` | guards, creates + enqueues the apply job once, marks the pull confirmed |
@@ -178,13 +178,11 @@ The Excel-side normalisation CALLS the manual import's own helpers, lifted onto 
 functions in `product_service.py` (`join_description_and_desc2`, `parse_manual_list_price`,
 `is_active_from_manual_value` - Desc 2 join, price clamp, Is Active parse) so the two cannot drift.
 Differences are returned to the browser and never stored; only the summary goes into the metadata.
-The description comparison collapses internal whitespace runs to one space before comparing (not
-byte-exact): the `/rows` view's own Desc 2 (AC-RV-3, "the remainder... stripped") already discards
-whatever run of whitespace separated Description from Desc 2 in the source AutoCount field, so a
-file built by rejoining that view (one space, by the manual join rule) can never byte-match a raw
-snapshot `description` that happened to carry two. A real checker's own exported file carries the
-original spacing verbatim (CM-2b), so this is a compare-tab tolerance rule, not a defect in either
-import path.
+Every comparison is STRICT - byte for byte on `description`, exact on the rest: a single-space
+Excel join against a pull `description` that carries a real double space IS a reportable
+difference. This only works because `/rows`' own Desc 2 rule (above) round-trips through the join
+formula exactly, so a checker's own genuine export - which carries its original spacing verbatim -
+never has anything to forgive against a clean pull.
 
 `app/services/autocount_pull_service.py` (SR3) additionally holds the `/rows` and `/download.xlsx`
 shared pieces: `fetch_snapshot_rows` (the FoundryX `all_rows` fetch, no cache, reused by rows,

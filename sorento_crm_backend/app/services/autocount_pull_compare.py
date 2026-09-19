@@ -16,6 +16,14 @@ The Excel-side normalisation calls the manual import's OWN rules (Desc 2 join,
 price parse/clamp, Is Active truthy rule, all lifted onto module-level
 functions in `product_service.py` for exactly this reason) so this tab and the
 manual upload can never quietly disagree on what counts as a match.
+
+Every comparison is STRICT - byte for byte on `description`, exact on the rest
+(captain ruling, SR3 fix round): a single-space Excel join against a pull
+`description` that carries a real double space IS a reportable difference, not
+noise to smooth over. `map_product_row`'s own Desc 2 rule (AC-RV-3) exists so a
+downloaded, re-imported file round-trips exactly - a checker's own genuine
+export carries its original spacing verbatim (a mismatch here means their file
+actually differs), so there is nothing left for this tab to forgive.
 """
 from __future__ import annotations
 
@@ -43,15 +51,6 @@ def _pull_code(row: dict) -> str:
 
 def _excel_description(row: dict) -> str:
     return join_description_and_desc2(row.get("Description") or "", row.get("Desc 2") or "")
-
-
-def _normalize_ws(text: str) -> str:
-    """Collapses any run of whitespace to a single space for the EQUALITY check
-    only - the AC-RV-3 row mapping already strips a Desc 2 remainder down to
-    its own text (rv_3b), so re-joining it loses whatever spacing the source
-    AutoCount `description` field originally carried between the two halves.
-    That loss is not a real difference for the checker to see."""
-    return " ".join((text or "").split())
 
 
 def _excel_price(row: dict) -> Decimal:
@@ -102,7 +101,7 @@ def compare_products(excel_rows: list[dict], pull_rows: list[dict]) -> dict:
 
         excel_desc = _excel_description(excel_row)
         pull_desc = pull_row.get("description") or ""
-        if _normalize_ws(excel_desc) != _normalize_ws(pull_desc):
+        if excel_desc != pull_desc:
             row_diffs.append(("description", excel_desc, pull_desc))
 
         excel_group = (excel_row.get("Item Group") or "").strip()

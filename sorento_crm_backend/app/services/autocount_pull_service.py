@@ -318,15 +318,34 @@ def fetch_snapshot_rows(job: ImportJob) -> list[dict]:
 
 
 def map_product_row(row: dict) -> dict:
-    """AC-RV-3: the pull's Excel-view shape for one raw snapshot row. Description is the
-    row's `name`; Desc 2 is the remainder of `description` after `name` (empty when the
-    two are equal)."""
+    """AC-RV-3: the pull's Excel-view shape for one raw snapshot row.
+
+    Captain ruling (SR3 fix round): Desc 2 must ROUND-TRIP through the manual join
+    formula (`f"{description} {desc2}".strip()`, `product_service.
+    join_description_and_desc2`) - the downloaded file, re-imported by hand, has to
+    store exactly what the pull stores. So Desc 2 is the remainder of `description`
+    after `name` with EXACTLY ONE separator space removed - any FURTHER leading
+    whitespace (a real double space in the source data) is KEPT, never stripped, because
+    that extra space is exactly what the join's own inserted space needs to reproduce.
+    `description == name` -> Desc 2 empty. `description` not even starting with `name`
+    (no committed fixture row hits this, but the rule must still answer something) -
+    there is no boundary to split on, so the Description cell carries the full raw text
+    and Desc 2 is empty.
+    """
     name = row.get("name") or ""
     description = row.get("description") or ""
-    desc2 = "" if description == name else description[len(name):].strip()
+    if description == name:
+        view_description, desc2 = name, ""
+    elif not description.startswith(name):
+        view_description, desc2 = description, ""
+    else:
+        remainder = description[len(name):]
+        if remainder.startswith(" "):
+            remainder = remainder[1:]
+        view_description, desc2 = name, remainder
     return {
         "item_code": row.get("code"),
-        "description": name,
+        "description": view_description,
         "desc_2": desc2,
         "item_group": row.get("category_code"),
         "item_brand": row.get("brand_code"),
