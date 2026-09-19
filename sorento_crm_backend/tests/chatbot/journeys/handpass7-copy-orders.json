@@ -1,0 +1,33 @@
+{
+  "name": "handpass7-copy-orders",
+  "source": "hand pass 7 owner console turns 19 Sep 2026 21:54:13 and 21:54:37 MYT (contact_respond_id 437264483): 'chun chun delivery' -> 'one and two'. Ruling R-d: a delivery-orders answer opens with a scope block ('Customer: ...' / 'Product: all products' / 'Dates: all dates') then the production intro 'Here are the orders I found.' (sorento_crm_mcp/presenters.py _DEFAULT_INTRO['crm_order_management_orders_list']), and dates render dd/mm/yyyy, never the raw ISO 'T00:00:00' the rearch engine currently prints. Contact 440987225 confirmed to hold this grant (measured live 19 Sep 2026, no refusal).",
+  "cases": [
+    {
+      "name": "delivery-orders-scope-block-and-intro-and-dates",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "chun chun delivery",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": ["Which customer do you mean?"],
+            "roster_min_options": 2
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": [
+              "Customer:",
+              "Product: all products",
+              "Dates: all dates",
+              "Here are the orders I found."
+            ],
+            "max_occurrences": {"T00:00:00": 0}
+          }
+        }
+      ]
+    }
+  ]
+}
