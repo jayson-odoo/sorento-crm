@@ -477,6 +477,12 @@ class TestMigration473WidensTheSourceCheck:
             transaction.rollback()
             connection.close()
 
+    # `serial_ddl`: `bind` is a plain `engine.connect()` on the REAL database and the
+    # two statements below DROP and ADD a constraint on the SHARED
+    # `scm.order_link_claim`, which holds an AccessExclusiveLock on it until the
+    # rollback. Same hazard as issue #987's `scm.committed_v` DDL, in the sharded
+    # `test-backend` job rather than the SCM one, so it leaves the xdist pool too.
+    @pytest.mark.serial_ddl
     def test_apply_widens_an_old_constraint_and_an_autocount_claim_then_inserts(
         self, bind
     ):

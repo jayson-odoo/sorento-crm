@@ -17,6 +17,7 @@ import {
   Link2,
   List,
   PackageSearch,
+  RotateCcw,
   Undo2,
   Unlink,
   Upload,
@@ -315,7 +316,7 @@ export function OrderInquiriesClient() {
     ORDER_INQUIRY_ACTION_PERMISSION,
   );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
-  const { linkNow, acknowledge } = useOrderInquiryHandshake();
+  const { linkNow, acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
   const [linkingSelected, setLinkingSelected] = React.useState(false);
 
@@ -994,6 +995,14 @@ export function OrderInquiriesClient() {
     const state = ackStateOf(row);
     return (state === 'awaiting' || state === 'changed') && row.state !== 'cancelled';
   });
+  // Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026): ticked rows
+  // purchasing HAS signed off - `acknowledged` or `changed` - the reverse of Confirm's
+  // own set above. Excludes a cancelled row even if ticked (review round 1, S1): its
+  // handshake is history, not something to reopen.
+  const selectedUnconfirmable = selectedRows.filter((row) => {
+    const state = ackStateOf(row);
+    return (state === 'acknowledged' || state === 'changed') && row.state !== 'cancelled';
+  });
   // The manual Link dialog is a ONE-row override (R8/S4 "Choose document"), so it is
   // offered at exactly one tick: two ticked rows would leave the page choosing which of
   // them it meant.
@@ -1028,6 +1037,15 @@ export function OrderInquiriesClient() {
         },
       },
     );
+  }
+
+  /** Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md): ticked rows by id only - no
+   * "Select all N matching" scope, and no confirmation dialog - reversible, a plain
+   * Confirm undoes it. */
+  function runUnconfirm() {
+    unacknowledge.mutate(selectedUnconfirmable.map((row) => row.id), {
+      onSuccess: () => setRowSelection({}),
+    });
   }
 
   async function unlinkSelected() {
@@ -1468,6 +1486,25 @@ export function OrderInquiriesClient() {
                     ? 'Tick rows purchasing still owes an answer on.'
                     : undefined,
                 onClick: () => setRejectingSelected(true),
+              },
+              {
+                // Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026): the
+                // reverse of Confirm, for a row taken on by mistake or a reconfirm CS
+                // has not actually made yet. Reversible - a plain Confirm undoes it -
+                // so no confirmation dialog, unlike the destructive/detach actions above.
+                key: 'unconfirm-selected',
+                label: countLabel(
+                  'Unconfirm',
+                  selectedUnconfirmable.length,
+                  selectedRows.length,
+                ),
+                icon: RotateCcw,
+                disabled: selectedUnconfirmable.length === 0 || unacknowledge.isPending,
+                disabledReason:
+                  selectedUnconfirmable.length === 0
+                    ? 'Tick rows purchasing has already confirmed.'
+                    : undefined,
+                onClick: () => runUnconfirm(),
               },
             ]
           : []),

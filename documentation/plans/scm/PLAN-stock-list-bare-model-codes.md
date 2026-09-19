@@ -1,6 +1,6 @@
 # PLAN: Stock list - bare model codes composed from brand, type and trap size
 
-Status: IN REVIEW - PR #1000 ready 18 Sep 2026, CI green, browser pass done on :3086; awaiting owner hand test + merge go
+Status: #1000 merged and deployed 18 Sep 2026; follow-up #1025 in review (owner feedback round 5: Supplier says leads with the sheet's own 型号)
 Domain: scm
 Branch: feat/stock-list-bare-model-codes
 UAC: stock-list-bare-model-codes-acceptance-criteria.md
@@ -129,8 +129,7 @@ any change to `supplier_code_matcher.py`.
 ## Slices (one PR)
 
 - **S1 Reader + composer** - `supplier_inventory_reader.py`: `item_code` fill-through (D8);
-  bare rows composed through a `WordList` built for the supplier (no `model_no` field: nothing
-  downstream reads the raw 型号, the key is the code). New
+  bare rows composed through a `WordList` built for the supplier (`InventoryRow.model_no` keeps the raw 型号: round 5 shows it first in "Supplier says" on the Supplier codes tab, omitted when it equals the code). New
   `app/services/scm/supplier_code_composer.py`: `WORD_TOKEN_RE`, `MAX_KEY_LENGTH`,
   `parse_spec()`, `compose(model_no, spec, brand, product_name, words) -> Optional[str]`,
   `raw_key(...)`.
@@ -160,6 +159,9 @@ any change to `supplier_code_matcher.py`.
   the page honouring that query param as its initial doc type.
   Tests: `AttachmentPreviewModal.test.tsx`, `ImportFieldAliasesList.test.tsx`,
   `ImportFieldAliasFormDialog.test.tsx`, `SupplierCodesTab.test.tsx`.
+- **S6 Round 5 (PR #1025)** - `scm.supplier_inventory.model_no` by its own migration
+  `slbc_0002_inventory_model_no` (the deployed `ifa_supplier_word_col` is never edited); `apply`
+  writes it; the unmatched queues return it; `SupplierCodesTab` leads "Supplier says" with it.
 - **S5 Browser** - owner file re-uploaded on a DAFUYUAN plan on a prod copy; JINBAICHUAN plan
   re-uploaded, bound count unchanged (363); Open on the stock list attachment opens the sheet.
 

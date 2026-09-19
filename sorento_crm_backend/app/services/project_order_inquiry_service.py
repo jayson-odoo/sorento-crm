@@ -500,6 +500,21 @@ def project_customer_label(
     return " / ".join(parts) if parts else None
 
 
+def project_title_with_note(
+    project_title: Optional[str],
+    is_pre_order: Optional[bool] = False,
+) -> Optional[str]:
+    """The split worklist's own Project cell
+    (`PLAN-oi-worklist-split-customer-project.md`): the same "PRE-ORDER" note
+    `project_customer_label` appends to the combined column, carried on the Project half
+    now that Customer and Project print as two columns instead of one, so a pre-order row
+    still reads as one.
+    """
+    if not is_pre_order:
+        return project_title
+    return f"{project_title} / PRE-ORDER" if project_title else "PRE-ORDER"
+
+
 def _as_date(value: Any) -> Optional[date]:
     if value is None or value == "":
         return None
@@ -4678,6 +4693,100 @@ class ProjectOrderInquiryService:
             "link_up_to": placed["link_up_to"],
             "link_horizon": placed["link_horizon"],
         }
+
+    def unacknowledge_rows(
+        self, row_ids: Sequence[str], *, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, Slice 3, owner 18
+        Sep 2026) - the reverse of `acknowledge_rows`, for a row purchasing took on by
+        mistake or a re-confirm CS has not actually made yet. It is reversible (Confirm
+        again undoes it), so unlike every write above this refuses NOTHING: a row not
+        currently `acknowledged`/`changed`, or CANCELLED regardless of what its
+        `ack_state` still reads (a superseded row's handshake is history, not something
+        to reopen) - already `awaiting`, `rejected`, or gone from this company's own
+        scope entirely - is counted on `skipped` rather than raised as a 404 or a 422 for
+        the whole batch. `row_ids` only, deliberately no `filter` branch: the Actions
+        menu names exactly what is ticked, never "everything matching a scope" the way
+        "Select all N matching" does for Confirm.
+
+        Company-scoped the same way `acknowledge_rows`'s own `_rows_or_404` is: a bare
+        `db.query(OrderInquiryRow)` naming the model at the TOP level of the statement,
+        so the session's own `company_scope` listener (`with_loader_criteria`) silently
+        excludes another company's row from `rows` below - it never reaches `found_by_id`
+        and so counts as `skipped`, the same as a row_id nobody can find at all.
+
+        Clears `ack_state`/`acknowledged_by`/`acknowledged_at` only. `changed_at` STAYS
+        (owner ruling, review round 1): it is the Was/Now audit trail
+        `_settle_row_in_place` reads and `_handshake_for_raise` carries forward across a
+        carry, not a stamp of Unconfirm's own to clear.
+
+        No cascade: taking a row off purchasing's plate does not touch whatever it was
+        already linked to - only Unlink, by its own press, does that.
+
+        `OrderInquiryRow` carries no `__audit_track__` (review round 1, security item d:
+        verified by `test_oi_unconfirm.py::test_unacknowledge_writes_an_audit_log_entry`,
+        which fails without this), so the generic session-dirty listener never sees this
+        write - one `log_audit` call per BATCH, naming the actor and every row id this
+        call actually moved, the same manual-event pattern `procurement_service.py` and
+        `project_supply_undo_service.py` use for a write outside that listener's reach.
+        Nothing is written when nothing was eligible - an audit entry for zero rows moved
+        would be a log of NOT doing something.
+        """
+        wanted = [str(row_id) for row_id in row_ids if row_id]
+        if not wanted:
+            raise AppException(
+                status_code=422,
+                message="Name at least one row.",
+                code="order_inquiry_no_rows",
+            )
+        rows = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(wanted)).all()
+        found_by_id = {str(row.id): row for row in rows}
+        updated = 0
+        skipped = 0
+        touched_ids: List[str] = []
+        prior_states: List[Dict[str, Any]] = []
+        for row_id in wanted:
+            row = found_by_id.get(row_id)
+            if (
+                row is None
+                or row.state == INQUIRY_CANCELLED
+                or row.ack_state not in (ACK_ACKNOWLEDGED, ACK_CHANGED)
+            ):
+                skipped += 1
+                continue
+            prior_states.append({"id": row_id, "ack_state": row.ack_state})
+            row.ack_state = ACK_AWAITING
+            row.acknowledged_by = None
+            row.acknowledged_at = None
+            touched_ids.append(row_id)
+            updated += 1
+        if touched_ids:
+            from app.audit_context import get_audit_context
+            from app.services.audit_service import log_audit
+
+            # ip_address only - `user_id` stays `actor_user_id`, the route's own
+            # resolved caller, not whatever `get_audit_context` names (review round 2).
+            _, ip_address = get_audit_context()
+            log_audit(
+                self.db,
+                "project_order_inquiry_rows",
+                touched_ids[0],
+                "UPDATE",
+                # The REAL prior ack_state per row (review round 2) - "acknowledged" and
+                # "changed" are different facts to undo, and a flat placeholder erased
+                # that distinction.
+                old_values={"rows": prior_states},
+                new_values={"ack_state": "awaiting", "row_ids": touched_ids},
+                user_id=actor_user_id,
+                # A NULL `company_id` audit row shows in every company's listing
+                # (review round 2) - every touched row is this same company's (the
+                # session's own company-scope listener already excludes any other),
+                # so the first one's is as good as any.
+                company_id=found_by_id[touched_ids[0]].company_id,
+                ip_address=ip_address,
+                description=f"Unconfirm: {len(touched_ids)} row(s) back to To confirm",
+            )
+        return {"updated": updated, "skipped": skipped}
 
     def acknowledge_eligible_rows(
         self,
