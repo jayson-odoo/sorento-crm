@@ -71,17 +71,22 @@ Pull job `metadata`:
     "snapshot_id": "8f1e...",
     "phase": "building | previewing | review | confirmed | failed | expired",
     "progress": {"pagesDone": 2, "pagesTotal": 4, "stage": "lookup:uom"},
-    "header": { "...the FoundryX ready header, minus excludedRows and negativePairList..." },
+    "header": { "...the FoundryX ready header, minus excludedRows and negativePairList; display only, the preview/apply task never reads it back..." },
     "counts": { "received": 0, "new": 0, "changed": 0, "unchanged": 0, "failed": 0,
                 "left_out": 0, "price_to_zero": 0 },
     "confirm_blocked_reason": null,
     "compare": { "filename": "...", "compared_at": "...", "total": 0, "matched": 0,
                  "different": 0, "only_in_excel": 0, "only_in_pull": 0,
                  "qty_total_excel": null, "qty_total_pull": null },
-    "apply_job_id": null
+    "apply_job_id": null,
+    "warnings": []
   }
 }
 ```
+
+`warnings` is a list of string codes set by the preview/apply task; currently only
+`content_hash_mismatch` (A5 recheck disagrees with the header, never a refusal). Absent or
+empty means a clean match.
 
 Stock `counts`: `received`, `fed`, `not_applied_inactive`, `not_applied_unknown`, `qty_changes`,
 `set_to_zero`, `skipped_product_not_found`, `negative_in_autocount`.
@@ -91,9 +96,9 @@ Apply job metadata: `{"autocount_apply": {"pull_job_id": "...", "snapshot_id": "
 
 | Route | Does |
 | --- | --- |
-| `POST /` `{entity}` | permission of the entity, single-company guard, reuse an open pull else FoundryX `POST /snapshots`, create the pending row. Returns `{job_id, phase}` |
-| `GET /current?entity=` | the caller's open pull for the active company + entity, else 404 |
-| `GET /{job_id}` | owner only. While `building`: passthrough to FoundryX status, stores progress, on `ready` stores the header and enqueues the preview ONCE (conditional UPDATE on phase), on `failed` fails the job, past 60 min expires it. Always returns phase, progress, header facts, counts, compare summary, confirm_blocked_reason, apply_job_id |
+| `POST /` `{entity}` | permission of the entity, single-company guard, reuse an open pull else FoundryX `POST /snapshots`, create the pending row. Returns `{job_id, phase}`, `job_id` is the `import_jobs.id` (never the RQ `job_id` column) |
+| `GET /current?entity=` | the caller's own open pull for the active company + entity, else 404. Carries no permission check of its own: it can only ever return a pull the caller already owns, so there is nothing a permission gate would additionally protect |
+| `GET /{job_id}` | owner only (404, not 403, for a job that exists but is not the caller's - existence is never revealed). While `building`: passthrough to FoundryX status, stores progress, on `ready` stores the header (display only, see Tasks) and enqueues the preview ONCE (conditional UPDATE on phase), on `failed` fails the job, past 60 min expires it. Always returns phase, progress, header facts, counts, compare summary, confirm_blocked_reason, apply_job_id, warnings |
 | `GET /{job_id}/rows?page&limit&query` | Excel view rows, mapped from the snapshot page(s) |
 | `GET /{job_id}/download.xlsx` | Excel view as a file (stock: the Stock List file) |
 | `POST /{job_id}/compare` `{filename, rows}` | advisory compare, stores the summary only, returns summary + differences |
@@ -101,7 +106,7 @@ Apply job metadata: `{"autocount_apply": {"pull_job_id": "...", "snapshot_id": "
 
 Entity to permission: `products` -> `master_data.products.autocount_pull`, `stock_balances` ->
 `inventory.stock.autocount_pull`; every route resolves the pull first and checks the permission of
-ITS entity. Ownership reuses the jobs rule (P12).
+ITS entity, except `GET /current` (above). Ownership reuses the jobs rule (P12).
 
 Excel view paging: FoundryX pages are 1000 rows with stable ordering, so Sorento page N of size L maps
 to FoundryX page `ceil` arithmetic with `pageSize=1000`; `query` (item code contains) and the stock
@@ -121,17 +126,34 @@ is read from settings, sent only as `X-API-Key`, never logged. Settings: `foundr
 `httpx.MockTransport` that serves the committed fixtures (copied into
 `sorento_crm_backend/tests/fixtures/autocount_pull/`).
 
+A5 contentHash rule, implemented in `app/tasks/autocount_pull_tasks.py` (`_content_hash`): sha256 over
+the concatenation, page-then-row order, of `json.dumps(row, sort_keys=True, separators=(",", ":")) +
+"\n"` per row, utf-8. A mismatch against the fetched header's `contentHash` never refuses; it appends
+the string code `content_hash_mismatch` to `metadata.autocount_pull.warnings` and logs a warning that
+never includes row content.
+
 ### Tasks (`app/tasks/autocount_pull_tasks.py`, queue `imports`, `job_timeout=3600`)
 
-- `preview_autocount_pull(db_job_id)`: company scope from the job (`_apply_import_job_scope`), fetch
-  all rows, guards (UAC AC-PP-1), then
+Both tasks re-fetch the snapshot header ONCE at their own start, through the shared
+`fetch_verified_snapshot(client, snapshot_id, company_code)`: `client.status(snapshot_id)`, then every
+row via `all_rows`, then the AC-PP-1 guards (`complete`, assembled row count vs the header's
+`recordCount`, `companyCode`) and the A5 contentHash check, all against THAT fetch. The header the
+route stored on the job (`pull["header"]`, stripped of `excludedRows` / `negativePairList`, AC-BD-2)
+is for the review page only and is never read back by a task - `excludedRows` itself, like every other
+guard input, comes from the fresh fetch. FoundryX answering anything other than `ready` for the
+snapshot (including 404 `UNKNOWN_SNAPSHOT` / 410 `SNAPSHOT_EXPIRED`) fails the job with a "pull again"
+message, the same as a failed guard.
+
+- `preview_autocount_pull(db_job_id)`: company scope from the job (`_apply_import_job_scope`),
+  `fetch_verified_snapshot`, then
   - products: `MasterIngestService(db, company_id=...).ingest("products", rows, dry_run=True)`; map
     records to `import_job_rows` through `ImportOutcome` (updated + empty diff = unchanged = no row);
-    excluded rows from the header become `skipped` / `AUTOCOUNT_EXCLUDED`.
+    excluded rows from the FETCHED header become `skipped` / `AUTOCOUNT_EXCLUDED`.
   - stock: classify rows by warehouse (one query for the company's warehouses, match on
     `upper(btrim(code))`), `bulk_import_stock(fed, user_id, validate_only=True)`, plus one query of
     current on hand for the fed pairs to list quantity changes.
-- `apply_autocount_pull(db_job_id)`: re-read the same snapshot, same guards, then
+- `apply_autocount_pull(db_job_id)`: `fetch_verified_snapshot` again (AC-PC-2: same guards, same
+  snapshot), then
   - products: `MasterIngestService(db, company_id=..., stamp_user_id=<confirming user>)
     .ingest("products", rows)`.
   - stock: `bulk_import_stock(fed, user_id, outcome=...)`, then build the Stock List xlsx from the
@@ -240,7 +262,10 @@ Backend: `app/config.py`, `app/services/foundryx_autocount_client.py` (new),
 `app/services/autocount_pull_service.py` (new: start, status, rows mapping, confirm),
 `app/services/autocount_pull_compare.py` (new), `app/services/stock_list_archive_service.py` (new,
 moved code), `app/tasks/autocount_pull_tasks.py` (new), `app/api/v1/integrations/autocount_pull.py`
-(new) + mount in `app/api/v1/__init__.py`, `app/services/master_ingest_service.py` (`stamp_user_id`),
+(new) + mount in `app/api/v1/__init__.py`, `app/services/master_ingest_service.py` (`stamp_user_id`;
+SR1 also fixed `_value_changed` to stringify a `uuid.UUID` before comparing - a raw `text()` SELECT
+hands back a native UUID for any postgres `uuid` column regardless of the ORM's own `as_uuid=False`,
+so an unchanged foreign key was reported as a diff on every dry run),
 `app/services/import_outcome_codes.py` (new codes), `app/api/v1/resources/attachments.py` (call the
 moved function), `app/rbac/permission_registry.py`, `alembic/versions/522_autocount_pull_perms.py`,
 `worker.py` only if task modules are registered by name there.

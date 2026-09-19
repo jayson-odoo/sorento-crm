@@ -159,6 +159,9 @@ def start_pull(db: Session, *, user_id: str, company_id: str, entity: str) -> Im
         "confirm_blocked_reason": None,
         "compare": None,
         "apply_job_id": None,
+        # Set by the preview/apply task from the A5 contentHash recheck (currently
+        # the only warning code); absent or empty means a clean match.
+        "warnings": [],
     }
     job = ImportJob(
         job_id=str(uuid.uuid4()),
@@ -266,4 +269,5 @@ def serialize(job: ImportJob) -> dict:
         "confirm_blocked_reason": pull.get("confirm_blocked_reason"),
         "compare": pull.get("compare"),
         "apply_job_id": pull.get("apply_job_id"),
+        "warnings": pull.get("warnings") or [],
     }
