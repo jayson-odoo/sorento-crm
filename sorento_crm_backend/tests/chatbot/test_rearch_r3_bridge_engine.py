@@ -48,6 +48,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.business import answer as answer_mod
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business.services import ResolveGateServices
+from app.services.chatbot.lanes.business.tier_gate import recompose
 from app.services.chatbot.tail import outcome as outcome_mod
 from app.services.chatbot.tail import reply_ladder
 from app.services.chatbot.turn import compose as turn_compose
@@ -172,11 +173,29 @@ class TestPromotionAskMultiSelect:
     entitlement-blind tier_pick already uses entity_type == 'tier' on its own
     options (it is not the bridge's mechanism, but `apply._answer_pending`'s
     generic single-position handling already works for it), so answering '1' with
-    one already runs one promotion fetch. 'one-and-two' and 'all' are genuinely
-    RED: only one promotion call fires regardless of how many positions/broaden_axis
-    named multiple tiers.
+    one already runs one promotion fetch.
 
-    Captain ruling 20 Sep 2026: the ASK turn's own `captured1` is not empty -
+    Captain ruling 20 Sep 2026 (second round): AC-1698 says the reply returns EACH
+    chosen tier's promotions - it does not say how many MCP calls that takes.
+    Production answers a multi-select with ONE promotion fetch whose `access_levels`
+    argument carries every chosen tier's recomposed name(s), not one call per tier -
+    so the answer-turn assertion is graded on the UNION of `access_levels` requested
+    across every captured promotion call, computed via the real
+    `lanes.business.tier_gate.recompose` function, never a hardcoded tier-name list.
+    Measured, reading production (`turn/narrow.py:409-416`'s own `narrow_by_tier`
+    "proceed" arm, `kind == "tier"`): `one = candidates[-1]` - it reads the LAST
+    picked tier candidate ONLY, discarding every other one focus.tier carries, so
+    `spec.filters["tier"]` (and so `_tier_gate`'s own `access_levels_recomposed`,
+    `turn_runtime.py:1454-1468`) is a scalar, one tier, never several. `one-and-two`
+    and `all` are therefore STILL genuinely RED: the union of requested access
+    levels is missing whichever tier was not `candidates[-1]` (measured: for
+    entitled `["Sorento Dealer", "Sorento Office"]`, `ASK_ORDER` puts option 1 =
+    office, option 2 = dealer, so `focus.tier = ["office", "dealer"]` after either
+    answer and `candidates[-1]` = "dealer" - "Sorento Office" never reaches the
+    fetch at all). `single` stays the GREEN CONTROL it always was.
+
+    Captain ruling 20 Sep 2026 (first round): the ASK turn's own `captured1` is not
+    empty -
     `TestPromotionAskUsesProductionCopy`'s own green test in this same file asserts
     the ask's reply is stamped "has promotion"/"no promotion" per entitled tier, and
     that stamp can only come from `lanes/business/__init__.py`'s own tier_ask arm
@@ -187,16 +206,16 @@ class TestPromotionAskMultiSelect:
     ANSWER turn still fetches per chosen tier as before."""
 
     @pytest.mark.parametrize(
-        "answer_text,answer_overrides,expected_tier_count",
+        "answer_text,answer_overrides,chosen_tiers",
         [
-            ("1", {"reference_positions": [1]}, 1),
-            ("1 and 2", {"reference_positions": [1, 2]}, 2),
-            ("all", {"broaden_axis": "all"}, 2),
+            ("1", {"reference_positions": [1]}, ["office"]),
+            ("1 and 2", {"reference_positions": [1, 2]}, ["office", "dealer"]),
+            ("all", {"broaden_axis": "all"}, ["office", "dealer"]),
         ],
         ids=["single", "one-and-two", "all"],
     )
     def test_answering_the_tier_pick_runs_the_promotion_fetch_per_chosen_tier(
-        self, session_factory, monkeypatch, answer_text: str, answer_overrides: dict, expected_tier_count: int
+        self, session_factory, monkeypatch, answer_text: str, answer_overrides: dict, chosen_tiers: list[str]
     ) -> None:
         _seed_contact(session_factory, variables={})
         resolve_services = _one_tier_resolve_services(
@@ -232,10 +251,21 @@ class TestPromotionAskMultiSelect:
             "each per-tier probe call must be scoped to exactly that tier's own "
             f"access level: {captured1}"
         )
+        # `verdict["access_levels"]` is the compound-entitled-name carry
+        # `turn_runtime._tier_gate` reads for a SETTLED tier (measured + already
+        # pinned green: `test_rearch_r3_answer_bridge.py::
+        # TestMakeToolRunnerCarriesTheRealTierGate::
+        # test_a_settled_tier_pick_keeps_todays_synthetic_recompose` feeds it the same
+        # way) - a real answer turn's own parser carries the contact's entitled
+        # compound names forward the same way it carries `routing`/`domain_hint`;
+        # this test's own qf must too, or `_tier_gate` recomposes against an empty
+        # entitlement regardless of which tier(s) were picked.
+        entitled_names = ["Sorento Dealer", "Sorento Office"]
         answer_qf = _parser_output(
             domain_hint=None,
             intent_hint=None,
             entities=[],
+            access_levels=entitled_names,
             **answer_overrides,
         )
         _result2, captured2 = _run_turn(
@@ -248,8 +278,20 @@ class TestPromotionAskMultiSelect:
             mcp_response={"has_result": False, "items": []},
         )
         promo_calls = [c for c in captured2 if "promotion" in c[0]]
-        assert len(promo_calls) == expected_tier_count, (
-            f"{answer_text!r} must run the promotion fetch once per chosen tier: {captured2}"
+        assert promo_calls, f"{answer_text!r} must run at least one promotion fetch: {captured2}"
+        # AC-1698: the reply returns EACH chosen tier's promotions - graded here on the
+        # UNION of access_levels requested across every promotion call (one call or
+        # several - production's own contract, not this test's guess), computed via
+        # the REAL recompose() function rather than a hardcoded tier-name list.
+        requested_access_levels: set[str] = set()
+        for _name, args in promo_calls:
+            requested_access_levels.update(args.get("access_levels") or [])
+        expected_access_levels = set(recompose(chosen_tiers, [], entitled_names)["access_levels"])
+        assert requested_access_levels == expected_access_levels, (
+            f"{answer_text!r} (chosen tiers {chosen_tiers}) must reach the promotion "
+            f"fetch scoped to exactly those tiers' recomposed access levels - got "
+            f"{requested_access_levels!r}, expected {expected_access_levels!r}: "
+            f"{captured2}"
         )
 
 
