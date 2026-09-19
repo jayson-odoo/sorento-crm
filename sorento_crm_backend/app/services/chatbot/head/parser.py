@@ -358,7 +358,15 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: a harness value is held to the same check a provider answer is (`assert_emission`).
 #: Absent reads as null everywhere, so an old recording behaves exactly as it did.
 #: A key leaves this set when the corpus has been re-recorded with it.
-TOLERATED_ABSENT: frozenset[str] = frozenset({"broaden_to", "domain_in_message"})
+#: `sales_channel` joins them for the SAME reason and by the SAME rule the sales report
+#: lane states for the retired `output_exchange._EXEMPT_FROM_REQUIRED` (the pre-rearch
+#: home of this set): strict mode rejects a `properties` key absent from `required`, so
+#: it HAS to be declared at the wire, and no prompt version before the sales report
+#: addendum ever emits it - so every recorded emission and every `mock_reformulator_
+#: output` a console case carries lacks it, and reads as null.
+TOLERATED_ABSENT: frozenset[str] = frozenset(
+    {"broaden_to", "domain_in_message", "sales_channel"}
+)
 
 
 def resolve_config(

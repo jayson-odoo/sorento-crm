@@ -379,8 +379,19 @@ def _report_status_means_order_domain(out: dict[str, Any]) -> None:
     rule already shares between the outstanding buckets and `sales_report`, so this
     extends one existing normalisation rather than adding a second.
     """
+    from app.services.chatbot.lanes.business import _LOW_STOCK_INTENT
     from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
 
+    if jsc.js_string(out.get("intent_hint") or "").strip() == _LOW_STOCK_INTENT:
+        # The ONE intent with a tool override of its own, and `run_fetch` already ranks
+        # it ahead of both report overrides (`intent_hint == _LOW_STOCK_INTENT` is its
+        # first branch). "reorder report" / "what is below level" records
+        # `order_status: "outstanding"` off its own words with `domain_hint:
+        # "inventory"`, and flipping the domain here sent three recorded low-stock
+        # turns to the order lane (`test_turn_replay.py`'s `handbuilt-lsr-001`,
+        # `-lsr-002`, `handbuilt-rp-003`: `pending options ['stock'] -> ['orders']`).
+        # Same precedence, stated at both seams.
+        return
     status = jsc.js_string(out.get("status") or "").strip()
     if status not in OUTSTANDING_ORDER_STATUS:
         status = jsc.js_string(out.get("order_status") or "").strip()
@@ -489,8 +500,33 @@ def lane_parse_output(
 # --------------------------------------------------------------------------- #
 
 
+#: The resolver's own product-token fold, `resolve_gate._PRODUCT_FOLD`'s ASCII `[-\s]+`.
+#: Spelled here rather than imported so this module keeps its one-way dependency on the
+#: kept lane, and byte-identical to it on purpose (see `_token_key`).
+_TOKEN_FOLD = re.compile(r"[-\s]+")
+
+
 def _token_key(value: Any) -> str:
-    return jsc.nullish_str(value).strip().casefold()
+    r"""The key the resolver's OWN answer is filed under, for a join against it.
+
+    Separators are REMOVED, not just lower-cased: `resolve_gate.resolve_entity_body`
+    sends a product entity through `_PRODUCT_FOLD` (`[-\s]+`) before the resolver ever
+    sees it, so a token the customer typed as `SRTWT165-FT` comes back in
+    `unresolved_tokens` as `SRTWT165FT`. Keying one side with the hyphen and the other
+    without silently failed the join for EVERY hyphenated code - measured on turn
+    bb921451 (hand pass 7, B1): `unresolved_tokens: ["SRTWT165FT"]` against an entity
+    whose `raw` is `SRTWT165-FT` gave `unplaced == {}`, so the "I could not find X"
+    sentence, R-c's did-you-mean roster (`unplaced_alternatives`) and the
+    unfiltered-catalogue guard (`_without_guesses`) were all dead for exactly the codes
+    that need them most. Sorento product codes are hyphenated far more often than not.
+    """
+    return _TOKEN_FOLD.sub("", jsc.nullish_str(value).strip().casefold())
+
+
+def _entity_token_key(entity: dict[str, Any]) -> str:
+    """`_token_key` of whichever of the three names a row spells its code under - the key
+    to join a plan/compatible row against `unplaced_tokens` / `unplaced_alternatives`."""
+    return _token_key(_code_of(entity))
 
 
 def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
@@ -1123,7 +1159,9 @@ def make_tool_runner(
                     str(ask["kind"]).removesuffix("_pick"), ask["last_result_set"]
                 )
                 asked_codes = {
-                    _code_of(e) for e in entities if alts_by_token.get(_code_of(e))
+                    _entity_token_key(e)
+                    for e in entities
+                    if alts_by_token.get(_entity_token_key(e))
                 }
                 envelope_unplaced = {
                     k: v for k, v in unplaced.items() if k not in asked_codes
@@ -1442,7 +1480,7 @@ def _resolve_dominant_neighbours(
     """
     out: list[dict[str, Any]] = []
     for entity in entities:
-        alts = alts_by_token.get(_code_of(entity))
+        alts = alts_by_token.get(_entity_token_key(entity))
         distinct = _distinct_alt_codes(alts, _hint_of(entity)) if alts else {}
         if len(distinct) != 1:
             out.append(entity)
@@ -1468,7 +1506,7 @@ def _alternatives_ask(
     question per turn.
     """
     for entity in entities:
-        alts = alts_by_token.get(_code_of(entity))
+        alts = alts_by_token.get(_entity_token_key(entity))
         if not alts:
             continue
         hint = _hint_of(entity) or "product"
@@ -1523,7 +1561,7 @@ def _answered_unfiltered(
     """
     if not entities or not unplaced:
         return False
-    if not all(_code_of(e) in unplaced for e in entities):
+    if not all(_entity_token_key(e) in unplaced for e in entities):
         return False
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
     if fetched.get("outstanding_report"):
