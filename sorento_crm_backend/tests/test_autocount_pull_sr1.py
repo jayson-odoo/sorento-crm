@@ -33,6 +33,7 @@ Two substrates, for two different reasons:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -155,26 +156,45 @@ def _canonical_row(code: str, **overrides) -> dict:
     return row
 
 
-def _header(*, record_count: int, company_code: str = "SRT", complete: bool = True,
-            content_hash: str = "deadbeef" * 8, zero_list_price_count: int = 0,
-            negative_list_price_count: int = 0, excluded_count: int = 0,
+def _content_hash(rows: list[dict]) -> str:
+    """The A5 rule (FoundryX contract, fixtures README "contentHash - how it was
+    computed"): sha256 over the concatenation, page-then-row order, of
+    `json.dumps(row, sort_keys=True, separators=(",", ":")) + "\\n"` per row, utf-8."""
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _header(rows: list[dict], *, record_count: int | None = None, company_code: str = "SRT",
+            complete: bool = True, content_hash: str | None = None,
+            zero_list_price_count: int = 0, negative_list_price_count: int = 0,
             excluded_rows: list | None = None) -> dict:
+    """A ready products header that is VALID for `rows` unless an override says
+    otherwise: recordCount = len(rows), contentHash = the real A5 hash of `rows`."""
     header = {
         "entity": "products",
         "companyCode": company_code,
         "status": "ready",
-        "recordCount": record_count,
+        "recordCount": len(rows) if record_count is None else record_count,
         "complete": complete,
-        "contentHash": content_hash,
+        "contentHash": _content_hash(rows) if content_hash is None else content_hash,
         "sourcePageSize": 1000,
         "zeroListPriceCount": zero_list_price_count,
         "negativeListPriceCount": negative_list_price_count,
         "enrichMissCount": 0,
-        "excludedCount": excluded_count,
+        "excludedCount": len(excluded_rows or []),
     }
     if excluded_rows is not None:
         header["excludedRows"] = excluded_rows
     return header
+
+
+def _stored(header: dict) -> dict:
+    """What the ROUTE keeps on the job (AC-BD-2): the header minus `excludedRows` and
+    `negativePairList`. For the page only - the preview task never trusts it."""
+    return {k: v for k, v in header.items() if k not in ("excludedRows", "negativePairList")}
 
 
 # ============================================================== job seeding
@@ -844,6 +864,42 @@ def _load_migration_module(path: Path):
 
 
 # ======================================================================= PP
+#
+# Captain ruling (SR1 amend): the preview task RE-FETCHES the full header from FoundryX
+# `status(snapshot_id)` when it starts. The guards (complete, recordCount, companyCode),
+# the contentHash check and `excludedRows` are all read from THAT header. The header the
+# route stored on the job is stripped (AC-BD-2) and is for the page only - so every test
+# below stores a VALID stripped header and drives the decision through `fake.status`. A
+# task that reads the stored copy goes green on nothing here.
+
+
+def _prepare_preview(db, fake: _FakeFoundryX, *, rows: list[dict], fetched_header: dict | None = None,
+                     stored_header: dict | None = None, pages: dict | None = None,
+                     snapshot_id: str | None = None):
+    """Seeds a `previewing` products pull and points the fake at its snapshot.
+
+    `fetched_header` is what `GET /snapshots/{id}` answers (default: valid for `rows`);
+    `stored_header` is what sits on the job (default: the VALID header, stripped).
+    """
+    snapshot_id = snapshot_id or f"{MARKER}-snap-{uuid.uuid4().hex[:8]}"
+    valid = _header(rows)
+    fake.status = (200, {**(fetched_header or valid), "snapshotId": snapshot_id})
+    fake.rows = pages or {
+        1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000, "totalPages": 1,
+                  "recordCount": len(rows), "rows": rows})
+    }
+    return _seed_pull_job(
+        db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
+        company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
+        snapshot_id=snapshot_id, phase="previewing", header=_stored(stored_header or valid),
+    )
+
+
+def _status_calls(fake: _FakeFoundryX) -> list[dict]:
+    return [
+        c for c in fake.calls
+        if c["method"] == "GET" and "/snapshots/" in c["path"] and not c["path"].endswith("/rows")
+    ]
 
 
 class TestProductsPreview:
@@ -855,84 +911,110 @@ class TestProductsPreview:
         snapshot_id = f"{MARKER}-snap-pages"
         row1 = _canonical_row(f"{MARKER}-PG1")
         row2 = _canonical_row(f"{MARKER}-PG2")
-        fake.rows = {
+        pages = {
             1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1, "totalPages": 2,
                       "recordCount": 2, "rows": [row1]}),
             2: (200, {"snapshotId": snapshot_id, "page": 2, "pageSize": 1, "totalPages": 2,
                       "recordCount": 2, "rows": [row2]}),
         }
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing", header=_header(record_count=2),
+        job_id = _prepare_preview(
+            db, fake, rows=[row1, row2], pages=pages, snapshot_id=snapshot_id
         )
 
         _run_preview(monkeypatch, factory, job_id)
 
         rows_calls = [c for c in fake.calls if c["path"].endswith("/rows")]
         assert {c["params"].get("page") for c in rows_calls} == {"1", "2"}
+        assert _job_row(db, job_id)["status"] == "finished"
 
-    def test_pp_1b_incomplete_snapshot_fails_the_job(self, task_db, monkeypatch):
+    def test_pp_1_task_fetches_the_snapshot_status_exactly_once(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
         _patch_foundryx(monkeypatch, fake)
-        snapshot_id = f"{MARKER}-snap-incomplete"
-        row = _canonical_row(f"{MARKER}-INC")
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": 1, "rows": [row]})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing",
-            header=_header(record_count=1, complete=False),
+        rows = _fixture("products-rows-page1.json")["rows"]
+        snapshot_id = f"{MARKER}-snap-statusonce"
+        job_id = _prepare_preview(db, fake, rows=rows, snapshot_id=snapshot_id)
+
+        _run_preview(monkeypatch, factory, job_id)
+
+        status_calls = _status_calls(fake)
+        assert len(status_calls) == 1, fake.calls
+        assert status_calls[0]["path"].endswith(f"/api/v1/autocount/snapshots/{snapshot_id}")
+        assert status_calls[0]["headers"].get("x-api-key") == API_KEY
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"complete": False},
+            {"record_count": 3},
+            {"company_code": "MCH"},
+        ],
+        ids=["pp_1b_incomplete", "pp_1c_record_count_mismatch", "pp_1d_company_code_mismatch"],
+    )
+    def test_pp_1bcd_a_bad_fetched_header_fails_the_job(self, task_db, monkeypatch, overrides):
+        """The STORED header is valid in every arm; only the header FoundryX answers at
+        preview time is wrong. The job must refuse because of the fetched one."""
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake)
+        rows = [_canonical_row(f"{MARKER}-GUARD")]
+        job_id = _prepare_preview(
+            db, fake, rows=rows, fetched_header=_header(rows, **overrides)
         )
 
         _run_preview(monkeypatch, factory, job_id)
 
         row_after = _job_row(db, job_id)
         assert row_after["status"] == "failed"
+        assert row_after["metadata"]["autocount_pull"]["phase"] == "failed"
+        assert (row_after["error"] or "").strip() != ""
+        assert _job_rows(db, job_id) == []
 
-    def test_pp_1c_assembled_row_count_mismatch_fails_the_job(self, task_db, monkeypatch):
+    def test_pp_1e_matching_content_hash_records_no_warning(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
         _patch_foundryx(monkeypatch, fake)
-        snapshot_id = f"{MARKER}-snap-countmismatch"
-        row = _canonical_row(f"{MARKER}-CM")
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": 1, "rows": [row]})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing",
-            # header claims 3 records, only 1 is actually delivered
-            header=_header(record_count=3),
+        rows = _fixture("products-rows-page1.json")["rows"]
+        fixture_header = _fixture("products-header-ready.json")
+        # The committed fixture pair is genuinely consistent under the A5 rule.
+        assert fixture_header["contentHash"] == _content_hash(rows)
+        job_id = _prepare_preview(
+            db, fake, rows=rows, fetched_header=fixture_header, stored_header=fixture_header,
+            snapshot_id=fixture_header["snapshotId"],
         )
 
         _run_preview(monkeypatch, factory, job_id)
 
         row_after = _job_row(db, job_id)
-        assert row_after["status"] == "failed"
+        assert row_after["status"] == "finished", row_after["error"]
+        pull = row_after["metadata"]["autocount_pull"]
+        assert pull["phase"] == "review"
+        assert "content_hash_mismatch" not in (pull.get("warnings") or [])
+        # Proves the clean verdict came from the FETCHED header's hash, not from skipping it.
+        assert len(_status_calls(fake)) == 1
 
-    def test_pp_1d_company_code_mismatch_fails_the_job(self, task_db, monkeypatch):
+    def test_pp_1e_content_hash_mismatch_warns_and_never_refuses(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
         _patch_foundryx(monkeypatch, fake)
-        snapshot_id = f"{MARKER}-snap-companymismatch"
-        row = _canonical_row(f"{MARKER}-CC")
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": 1, "rows": [row]})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing",
-            # header echoes a DIFFERENT companyCode than the job's own
-            header=_header(record_count=1, company_code="MCH"),
+        rows = _fixture("products-rows-page1.json")["rows"]
+        fixture_header = _fixture("products-header-ready.json")
+        tampered = {**fixture_header, "contentHash": "0" * 64}
+        job_id = _prepare_preview(
+            db, fake, rows=rows, fetched_header=tampered, stored_header=fixture_header,
+            snapshot_id=fixture_header["snapshotId"],
         )
 
         _run_preview(monkeypatch, factory, job_id)
 
         row_after = _job_row(db, job_id)
-        assert row_after["status"] == "failed"
+        assert row_after["status"] == "finished", row_after["error"]
+        pull = row_after["metadata"]["autocount_pull"]
+        assert pull["phase"] == "review"
+        warnings = pull.get("warnings")
+        assert isinstance(warnings, list), pull
+        assert "content_hash_mismatch" in warnings
+        assert all(isinstance(w, str) for w in warnings)
 
     def test_pp_2_dry_run_persists_nothing(self, task_db, monkeypatch):
         from app.models.embeddings import EmbeddingQueue
@@ -955,34 +1037,32 @@ class TestProductsPreview:
         db.add(existing)
         db.commit()
 
-        def _count(model) -> int:
-            return db.query(model).count()
+        def _count(table: str) -> int:
+            # Raw SQL: an ORM count on a session with no company scope is fail-closed to 0
+            # and would make this assertion vacuous.
+            return db.execute(text(f"SELECT count(*) FROM {table}")).scalar()
 
-        products_before, refs_before, embed_before = (
-            _count(Product), _count(IntegrationReference), _count(EmbeddingQueue)
+        tables = (
+            Product.__tablename__, IntegrationReference.__tablename__,
+            EmbeddingQueue.__tablename__, ProductCategory.__tablename__,
         )
+        before = {t: _count(t) for t in tables}
+        assert before[Product.__tablename__] >= 1
 
-        snapshot_id = f"{MARKER}-snap-dryrun"
-        row = _canonical_row(code, list_price="99.00")
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": 1, "rows": [row]})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing", header=_header(record_count=1),
-        )
+        job_id = _prepare_preview(db, fake, rows=[_canonical_row(code, list_price="99.00")])
 
         _run_preview(monkeypatch, factory, job_id)
 
         db.expire_all()
-        assert _count(Product) == products_before
-        assert _count(IntegrationReference) == refs_before
-        assert _count(EmbeddingQueue) == embed_before
-        db.refresh(existing)
-        assert existing.list_price == Decimal("50.00")
+        assert _job_row(db, job_id)["status"] == "finished"
+        assert {t: _count(t) for t in tables} == before
+        stored_price = db.execute(
+            text("SELECT list_price FROM products WHERE id = :id"), {"id": existing.id}
+        ).scalar()
+        assert stored_price == Decimal("50.00")
 
     def test_pp_3_created_updated_unchanged_and_excluded_rows(self, task_db, monkeypatch):
-        from app.models.product import Product, ProductCategory, UnitOfMeasure
+        from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 
         db, factory = task_db
         fake = _FakeFoundryX()
@@ -1005,8 +1085,6 @@ class TestProductsPreview:
         # == name, no dimensions in the description).
         cat2 = ProductCategory(category_code="SRT-SH", category_name="cat2")
         uom2 = UnitOfMeasure(uom_code=unique_code(MARKER)[:20], uom_name="unit2")
-        from app.models.product import Brand
-
         brand = Brand(brand_code="SORENTO", brand_name="Sorento")
         db.add_all([cat2, uom2, brand])
         db.flush()
@@ -1022,26 +1100,17 @@ class TestProductsPreview:
         db.commit()
 
         rows = _fixture("products-rows-page1.json")["rows"]
-        snapshot_id = f"{MARKER}-snap-pp3"
         excluded_entry = {
             "source_ref": f"{MARKER}:EXCLUDED-1", "code": f"{MARKER}-EXCLUDED-1",
             "reason": "mapping_failed", "message": "name: this field is required",
         }
-        header = _header(
-            record_count=len(rows), excluded_count=1, excluded_rows=[excluded_entry],
+        # Excluded rows live ONLY on the header FoundryX answers at preview time. The
+        # stored header (default: valid, stripped) carries none - exactly the real pipeline.
+        job_id = _prepare_preview(
+            db, fake, rows=rows, fetched_header=_header(rows, excluded_rows=[excluded_entry]),
         )
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": len(rows), "rows": rows})}
-        # Defensive: the header stored on the job (BD-2) is documented as "minus
-        # excludedRows", so the preview task may instead re-fetch the full status to
-        # learn about excluded rows. Both are covered.
-        fake.status = (200, {**header, "snapshotId": snapshot_id, "status": "ready"})
-
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing", header=header,
-        )
+        stored = _job_row(db, job_id)["metadata"]["autocount_pull"]["header"]
+        assert "excludedRows" not in stored and stored["excludedCount"] == 0
 
         _run_preview(monkeypatch, factory, job_id)
 
@@ -1051,20 +1120,26 @@ class TestProductsPreview:
             by_outcome.setdefault(r["outcome"], []).append(r)
 
         assert len(by_outcome.get("created", [])) == 8, rows_written
-        assert "unchanged" not in by_outcome or by_outcome["unchanged"] == []
+        assert not by_outcome.get("unchanged"), rows_written
+        assert not [r for r in rows_written if r["value"] == "A611"], rows_written
 
         updated = by_outcome.get("updated", [])
         assert len(updated) == 1, rows_written
+        assert updated[0]["value"] == "SRTW1000"
         blob = " ".join(
-            str(v) for r in updated for v in (r["message"], r["value"], r["identity"]) if v
+            str(v) for v in (updated[0]["message"], updated[0]["identity"]) if v
         )
         assert "list_price" in blob
         assert "50" in blob
         assert "81" in blob
 
-        skipped = by_outcome.get("skipped", [])
-        excluded = [r for r in skipped if r["code"] == "AUTOCOUNT_EXCLUDED"]
+        excluded = [
+            r for r in by_outcome.get("skipped", []) if r["code"] == "AUTOCOUNT_EXCLUDED"
+        ]
         assert len(excluded) == 1, rows_written
+        assert excluded[0]["value"] == f"{MARKER}-EXCLUDED-1"
+        assert "mapping_failed" in json.dumps(excluded[0]["identity"]) + str(excluded[0]["message"])
+        assert _job_row(db, job_id)["metadata"]["autocount_pull"]["counts"]["left_out"] == 1
 
     def test_pp_4_metadata_counts_and_header_price_counters(self, task_db, monkeypatch):
         from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -1088,16 +1163,9 @@ class TestProductsPreview:
         db.commit()
 
         rows = _fixture("products-rows-page1.json")["rows"]
-        snapshot_id = f"{MARKER}-snap-pp4"
-        header = _header(
-            record_count=len(rows), zero_list_price_count=3, negative_list_price_count=1,
-        )
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": len(rows), "rows": rows})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing", header=header,
+        header = _header(rows, zero_list_price_count=3, negative_list_price_count=1)
+        job_id = _prepare_preview(
+            db, fake, rows=rows, fetched_header=header, stored_header=header
         )
 
         _run_preview(monkeypatch, factory, job_id)
@@ -1114,54 +1182,49 @@ class TestProductsPreview:
         assert counts["price_to_zero"] == 1
         assert meta["header"]["zeroListPriceCount"] == 3
         assert meta["header"]["negativeListPriceCount"] == 1
+        assert "excludedRows" not in meta["header"]
 
     def test_pp_5_ten_fixture_rows_against_an_empty_company_all_create(self, task_db, monkeypatch):
+        """No category / brand / UoM is pre-seeded: `master_ingest_service` creates an
+        unknown `category_code` / `brand_code` on the fly (D3) and fills `base_uom_id`
+        from the default UoM on create, so an empty company takes all ten rows."""
         db, factory = task_db
         fake = _FakeFoundryX()
         _patch_foundryx(monkeypatch, fake)
-
         rows = _fixture("products-rows-page1.json")["rows"]
-        snapshot_id = f"{MARKER}-snap-pp5"
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": len(rows), "rows": rows})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing", header=_header(record_count=len(rows)),
-        )
+        mocha = next(r for r in rows if r["code"] == "MWT2800-N/H")
+        assert "brand_code" not in mocha  # the fixture's own premise
+        job_id = _prepare_preview(db, fake, rows=rows)
 
         _run_preview(monkeypatch, factory, job_id)
 
         rows_written = _job_rows(db, job_id)
-        created = [r for r in rows_written if r["outcome"] == "created"]
-        failed = [r for r in rows_written if r["outcome"] == "failed"]
-        assert len(created) == 10, rows_written
-        assert len(failed) == 0, rows_written
+        assert len([r for r in rows_written if r["outcome"] == "created"]) == 10, rows_written
+        assert [r for r in rows_written if r["outcome"] == "failed"] == [], rows_written
 
-        mch_row = db.execute(
-            text(
-                "SELECT p.id, p.brand_id FROM products p WHERE p.product_code = 'MWT2800-N/H' "
-                "AND p.company_id = :cid"
-            ),
-            {"cid": DEFAULT_COMPANY_ID},
-        ).mappings().first()
-        assert mch_row is not None, "the Mocha row (no brand_code key) was not created"
-        assert mch_row["brand_id"] is None
+        mocha_rows = [r for r in rows_written if r["value"] == "MWT2800-N/H"]
+        assert len(mocha_rows) == 1, rows_written
+        assert mocha_rows[0]["outcome"] == "created"
+        # What the task records for a created row today: code "created", identity
+        # {"item_code": ...} and no field detail - so no error code and no brand.
+        assert mocha_rows[0]["code"] == "created"
+        recorded = json.dumps(
+            {k: mocha_rows[0][k] for k in ("message", "identity")}, default=str
+        ).lower()
+        assert "brand" not in recorded
+
+        # AC-PP-2: it was a dry run - the review row exists, the product does not.
+        persisted = db.execute(
+            text("SELECT count(*) FROM products WHERE product_code = 'MWT2800-N/H'")
+        ).scalar()
+        assert persisted == 0
 
     def test_pp_6_success_leaves_the_job_finished_in_review_phase(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
         _patch_foundryx(monkeypatch, fake)
-
         rows = _fixture("products-rows-page1.json")["rows"]
-        snapshot_id = f"{MARKER}-snap-pp6"
-        fake.rows = {1: (200, {"snapshotId": snapshot_id, "page": 1, "pageSize": 1000,
-                                "totalPages": 1, "recordCount": len(rows), "rows": rows})}
-        job_id = _seed_pull_job(
-            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
-            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
-            snapshot_id=snapshot_id, phase="previewing", header=_header(record_count=len(rows)),
-        )
+        job_id = _prepare_preview(db, fake, rows=rows)
 
         _run_preview(monkeypatch, factory, job_id)
 
