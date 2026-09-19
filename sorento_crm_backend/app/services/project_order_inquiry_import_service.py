@@ -1207,15 +1207,19 @@ def _active_decision_snapshots(
 def _snapshot_reads(snapshot: dict) -> Optional[Tuple[Decimal, Optional[date]]]:
     """AC-RB-37: `(buy_qty, required_date)` off one `line_snapshots` entry, tolerant.
 
-    `None` when EITHER field is present but Decimal / `date.fromisoformat` cannot read it -
-    the caller treats that as "this decision cannot be used for this line" and raises the
-    sheet row plain, never aborting the rest of the upload over one bad snapshot. An
-    ABSENT `required_date` is not malformed (AC-RB-34's own shape, "no date proposed"):
-    only a value that is THERE and fails to parse counts as unreadable.
+    `None` when EITHER field is present but Decimal / `date.fromisoformat` cannot read it,
+    or `buy_qty` reads as a non-finite `Decimal` (`NaN`, `Infinity` - both legal `Decimal`
+    literals Python parses without error, never a real quantity) - the caller treats that
+    as "this decision cannot be used for this line" and raises the sheet row plain, never
+    aborting the rest of the upload over one bad snapshot. An ABSENT `required_date` is not
+    malformed (AC-RB-34's own shape, "no date proposed"): only a value that is THERE and
+    fails to parse counts as unreadable.
     """
     try:
         buy_qty = _dec(snapshot.get("buy_qty"))
     except InvalidOperation:
+        return None
+    if not buy_qty.is_finite():
         return None
     raw_date = snapshot.get("required_date")
     if not raw_date:
@@ -1233,17 +1237,22 @@ def _top_up_blocked(mirror_rows: Sequence[Any], row: Any, matches_on_mirror: int
 
     True when more than one sheet row lands on this mirror in this same upload (AC-RB-32:
     a sum over several rows would double-count whichever the file states more than once -
-    the same refusal `_settle_row_in_place` makes for two live rows), or when a live row on
-    this mirror ALREADY carries this sheet row's own figures, as its Now (`qty`,
-    `delivery_date`) or as its Was (`previous_qty`, `previous_delivery_date`) - AC-RB-33: a
-    re-upload of a row AC-RB-11 or AC-RB-26 already rebuilt, whose own newly-settled or
-    newly-raised quantity would otherwise sum against the very sheet row it came from and
-    read as a mismatch that was never one.
+    the same refusal `_settle_row_in_place` makes for two live rows), or when a live row
+    THIS SHEET RAISED (its own note carries the migration stamp - re-review N2) ALREADY
+    carries this sheet row's own figures, as its Now (`qty`, `delivery_date`) or as its Was
+    (`previous_qty`, `previous_delivery_date`) - AC-RB-33: a re-upload of a row AC-RB-11 or
+    AC-RB-26 already rebuilt, whose own newly-settled or newly-raised quantity would
+    otherwise sum against the very sheet row it came from and read as a mismatch that was
+    never one. A BOARD row of the same quantity and date is a different fact - a genuine
+    second top-up beside it (buy 76, an existing top-up of 38, a sheet row ALSO 38) must
+    still be raised, never swallowed on nothing but a coincidence of figures.
     """
     if matches_on_mirror > 1:
         return True
     sheet_qty = _dec(row.qty)
     for sibling in mirror_rows:
+        if not (sibling.note or "").startswith(_MIGRATION_STAMP):
+            continue
         if _dec(sibling.qty) == sheet_qty and sibling.delivery_date == row.delivery_date:
             return True
         if (

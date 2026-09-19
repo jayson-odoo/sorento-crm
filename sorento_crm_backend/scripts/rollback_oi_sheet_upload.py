@@ -181,7 +181,12 @@ def _stamp(file_name: str) -> str:
 
 
 def _stamped(db: Session, file_name: str) -> List[OrderInquiryRow]:
-    """Every row this file raised, kept and removable both.
+    """Every row this file raised, kept and removable both, under a ROW LOCK (re-review
+    N1/AC-RB-40): `with_for_update(of=OrderInquiryRow)` names the table explicitly so a
+    join added to this query later cannot make Postgres refuse `FOR UPDATE` outright. The
+    lock holds until the caller's transaction ends (the dry run's own SAVEPOINT releases
+    it on rollback, same as any other write inside one), and it is what stops another
+    session confirming a plan on one of these rows while this read is still being decided.
 
     `_note_for` writes the stamp alone, or the stamp then `"; <remark>"`, so those are the
     only two shapes this may match. A bare `startswith(stamp)` would additionally match every
@@ -200,6 +205,7 @@ def _stamped(db: Session, file_name: str) -> List[OrderInquiryRow]:
                 OrderInquiryRow.note.startswith(f"{stamp};", autoescape=True),
             )
         )
+        .with_for_update(of=OrderInquiryRow)
         .all()
     )
 
@@ -295,6 +301,40 @@ def _companies_of(db: Session, rows: Sequence[OrderInquiryRow]) -> List[tuple]:
     )
 
 
+def _lock_removable_now(
+    db: Session, candidate_ids: Sequence[str]
+) -> List[OrderInquiryRow]:
+    """The removable rows, RECONFIRMED under a row lock immediately before claims, links
+    and the rows themselves are touched (re-review N1/AC-RB-40 - the blocker: claims and
+    links were freed off `candidate_ids` unguarded while only the row DELETE repeated the
+    three trait predicates, so a row that gained a trait in between survived STRIPPED of
+    its own links and claim, worse off than before the rollback ran at all).
+
+    `candidate_ids` is `_partition_stamped`'s own `removable` list, read a moment earlier;
+    this re-reads exactly that id set under `FOR UPDATE`, filtered by the row's own three
+    kept traits again, so claims, the links DELETE and the rows DELETE below all address
+    ONE list - never three separately-stale ones. Only ever NARROWS `candidate_ids`.
+
+    Covers the row's OWN three traits only (`redirected_to_pool`, `changed_at`,
+    `supply_decision_id`) - a planning row that lands on this row's LINE (AC-RB-29's
+    `planning_row_on_line`) in this same window is outside this guard, exactly as
+    `_partition_stamped`'s own single read already was.
+    """
+    if not candidate_ids:
+        return []
+    return (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.id.in_(candidate_ids),
+            OrderInquiryRow.redirected_to_pool.is_(False),
+            OrderInquiryRow.changed_at.is_(None),
+            OrderInquiryRow.supply_decision_id.is_(None),
+        )
+        .with_for_update(of=OrderInquiryRow)
+        .all()
+    )
+
+
 def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
     """Claims freed, then links, then the rows, then the headers left empty - a row
     planning has worked on since it was raised is never touched (section 2.3): `rows_of`
@@ -304,6 +344,12 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
     AC-RB-39: the more-than-one-company refusal is evaluated over EVERY stamped row, kept
     ones included, and BEFORE anything about a kept row is printed, counted or returned -
     a second company whose only stamped row happens to be a kept one must still trip it.
+
+    N4 (AC-RB-40): the guard this function and `_lock_removable_now` build covers a row's
+    OWN three traits only. A planning row that lands on the LINE (not the row) between the
+    read and the delete - the shape `_has_planning_sibling` / `planning_row_on_line` reads
+    - is outside it: `_partition_stamped`'s own sibling read is a single snapshot, not
+    locked, and this function does not re-check it.
     """
     removable, kept = _partition_stamped(db, file_name)
     stamped = removable + [row for row, _trait in kept]
@@ -326,7 +372,10 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
         print("  no rows carry that stamp" if not kept else "  every stamped row is kept")
         return counts
 
-    rows = removable
+    # AC-RB-40: the ONE reconfirmed set claims, links and rows all work from - never the
+    # `removable` list above, which was read before the company check and everything else
+    # this function has done since.
+    rows = _lock_removable_now(db, [str(row.id) for row in removable])
     row_ids = [str(row.id) for row in rows]
     inquiry_ids = sorted({str(row.order_inquiry_id) for row in rows if row.order_inquiry_id})
 
@@ -348,16 +397,17 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
         counts["claims"] = len(claim_ids) - (
             db.query(OrderLinkClaim).filter(OrderLinkClaim.id.in_(claim_ids)).count()
         )
+    # `order_inquiry_links.row_id` is ON DELETE CASCADE, so the links go BEFORE the rows -
+    # reordering this would let the row DELETE take its own links down uncounted.
     counts["links"] = (
         db.query(OrderInquiryLink)
         .filter(OrderInquiryLink.row_id.in_(row_ids))
         .delete(synchronize_session=False)
     )
-    # AC-RB-40: self-guarding - the DELETE repeats the row's own three kept traits as
-    # predicates beside `id IN (...)`, so a row planning touched AFTER the read above
-    # (which is what decided it belonged in `removable`) is not deleted anyway. `counts
-    # ["rows"]` is the DELETE's own row count, so it always reflects what actually went,
-    # never what `removable` merely named a moment earlier.
+    # Belt and braces: `row_ids` is already `_lock_removable_now`'s own reconfirmed set, so
+    # this repeats the same three predicates rather than leaning on that alone - `counts
+    # ["rows"]` is the DELETE's own row count either way, so it always reflects what
+    # actually went, never what a list computed a moment earlier merely named.
     counts["rows"] = (
         db.query(OrderInquiryRow)
         .filter(
