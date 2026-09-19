@@ -1,0 +1,393 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT7443 sales order outstanding",
+              "type": "text"
+            },
+            "messageId": "console-check-ae6ba50d75e2",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7443\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 82\nOrdered: 14,262\nTransferred to DO: 15\nOutstanding: 14,247\nOrder date range: 14/12/2022 to 02/09/2026\n*_By location_*\nBRW-BB: 6,847 (O/S: 6,847)\nBRW-IB: 3,545 (O/S: 3,530)\nBRW-IR: 3,365 (O/S: 3,365)\nUnassigned: 328 (O/S: 328)\nBRW: 167 (O/S: 167)\nBRW-SMC: 10 (O/S: 10)\n*_By customer_*\nOTM GROUP SDN BHD: 2,528 (O/S: 2,528)\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nECO WORLD TRADING SDN BHD (PROJECT): 1,083 (O/S: 1,083)\nPESONA METRO SDN BHD (PROJECT): 1,050 (O/S: 1,050)\nKEE LIN TRADING SDN BHD (PROJECT ACCOUNT): 986 (O/S: 986)\nSETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 795 (O/S: 795)\nBUIMACO SDN BHD (PROJECT): 788 (O/S: 788)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nJV PERKASA SDN BHD (PROJECT): 442 (O/S: 442)\nLOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT): 420 (O/S: 420)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 373 (O/S: 373)\nGLOBAL INGRESS SDN BHD (PROJECT): 358 (O/S: 358)\nPARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 282 (O/S: 282)\nVIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT): 248 (O/S: 248)\nUNIJOH DEVELOPMENT SDN BHD (PROJECT): 200 (O/S: 200)\nLEN MIN STEEL SDN BHD (PROJECT): 188 (O/S: 188)\nUnassigned: 178 (O/S: 178)\nYEW LEAN MARKETING SDN BHD (PROJECT): 156 (O/S: 156)\nTOONG STAR SDN BHD: 150 (O/S: 150)\nSUNWAY MARKETING SDN BHD: 104 (O/S: 104)\nAT & E BUILDING MATERIALS: 60 (O/S: 60)\nBEYOND BATH SDN BHD: 56 (O/S: 56)\nHONG BEE HARDWARE COMPANY SDN BHD (PROJECT): 46 (O/S: 46)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nBUILDERS HARDWARE HOME APPLIANCES SDN BHD: 27 (O/S: 27)\nSTONIX SDN BHD (PROJECT): 25 (O/S: 25)\nJAYAPLUS DEVELOPMENT SDN BHD (PROJECT): 19 (O/S: 19)\nEXACO MARKETING SDN BHD (PROJECT): 18 (O/S: 18)\nHILLCREST GARDENS SDN BHD: 18 (O/S: 18)\nJATI CERAMIC SDN BHD [PROJECT]: 16 (O/S: 16)\nFULLSHUN SANITARYWARE SDN BHD: 12 (O/S: 12)\nA & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 10 (O/S: 10)\nCHIN CHUN HOMEMART SDN BHD: 10 (O/S: 10)\nSK ONE STOP HOME CENTRE SDN BHD: 10 (O/S: 10)\nWM BATH KITCHEN WARE: 9 (O/S: 9)\nCPI EMPOWER SDN BHD (PROJECT): 8 (O/S: 8)\nUNIMAX LIVINGMART (M) SDN BHD: 8 (O/S: 8)\nDEPARAMAX SDN BHD: 6 (O/S: 6)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCOMMERCE HOUSE SDN BHD (PROJECT): 5 (O/S: 5)\nI BATH STUDIO: 5 (O/S: 5)\nTOTAL HOME DIY SDN BHD: 5 (O/S: 5)\nGLORY MOTION SDN BHD: 4 (O/S: 4)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\nEUROTAN ENTERPRISE SDN BHD: 3 (O/S: 3)\nHOME PRODUCT CENTER (MALAYSIA) SDN BHD: 3 (O/S: 3)\nHARMONI BATH & KITCHEN SDN BHD [A/C I]: 2 (O/S: 2)\nJIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]: 1 (O/S: 1)\nKBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI): 1 (O/S: 1)\nPERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER): 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT7443"
+          }
+        ],
+        "tokens": [
+          "SRTWT7443"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7443"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:06:06.456896+09:00",
+        "turn_id": "2049e7b0-761f-4b40-9443-fcbc1daa111c"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_code": "SRTWT7443",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT7443\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 82\nOrdered: 14,262\nTransferred to DO: 15\nOutstanding: 14,247\nOrder date range: 14/12/2022 to 02/09/2026\n*_By location_*\nBRW-BB: 6,847 (O/S: 6,847)\nBRW-IB: 3,545 (O/S: 3,530)\nBRW-IR: 3,365 (O/S: 3,365)\nUnassigned: 328 (O/S: 328)\nBRW: 167 (O/S: 167)\nBRW-SMC: 10 (O/S: 10)\n*_By customer_*\nOTM GROUP SDN BHD: 2,528 (O/S: 2,528)\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nECO WORLD TRADING SDN BHD (PROJECT): 1,083 (O/S: 1,083)\nPESONA METRO SDN BHD (PROJECT): 1,050 (O/S: 1,050)\nKEE LIN TRADING SDN BHD (PROJECT ACCOUNT): 986 (O/S: 986)\nSETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 795 (O/S: 795)\nBUIMACO SDN BHD (PROJECT): 788 (O/S: 788)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nJV PERKASA SDN BHD (PROJECT): 442 (O/S: 442)\nLOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT): 420 (O/S: 420)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 373 (O/S: 373)\nGLOBAL INGRESS SDN BHD (PROJECT): 358 (O/S: 358)\nPARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 282 (O/S: 282)\nVIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT): 248 (O/S: 248)\nUNIJOH DEVELOPMENT SDN BHD (PROJECT): 200 (O/S: 200)\nLEN MIN STEEL SDN BHD (PROJECT): 188 (O/S: 188)\nUnassigned: 178 (O/S: 178)\nYEW LEAN MARKETING SDN BHD (PROJECT): 156 (O/S: 156)\nTOONG STAR SDN BHD: 150 (O/S: 150)\nSUNWAY MARKETING SDN BHD: 104 (O/S: 104)\nAT & E BUILDING MATERIALS: 60 (O/S: 60)\nBEYOND BATH SDN BHD: 56 (O/S: 56)\nHONG BEE HARDWARE COMPANY SDN BHD (PROJECT): 46 (O/S: 46)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nBUILDERS HARDWARE HOME APPLIANCES SDN BHD: 27 (O/S: 27)\nSTONIX SDN BHD (PROJECT): 25 (O/S: 25)\nJAYAPLUS DEVELOPMENT SDN BHD (PROJECT): 19 (O/S: 19)\nEXACO MARKETING SDN BHD (PROJECT): 18 (O/S: 18)\nHILLCREST GARDENS SDN BHD: 18 (O/S: 18)\nJATI CERAMIC SDN BHD [PROJECT]: 16 (O/S: 16)\nFULLSHUN SANITARYWARE SDN BHD: 12 (O/S: 12)\nA & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 10 (O/S: 10)\nCHIN CHUN HOMEMART SDN BHD: 10 (O/S: 10)\nSK ONE STOP HOME CENTRE SDN BHD: 10 (O/S: 10)\nWM BATH KITCHEN WARE: 9 (O/S: 9)\nCPI EMPOWER SDN BHD (PROJECT): 8 (O/S: 8)\nUNIMAX LIVINGMART (M) SDN BHD: 8 (O/S: 8)\nDEPARAMAX SDN BHD: 6 (O/S: 6)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCOMMERCE HOUSE SDN BHD (PROJECT): 5 (O/S: 5)\nI BATH STUDIO: 5 (O/S: 5)\nTOTAL HOME DIY SDN BHD: 5 (O/S: 5)\nGLORY MOTION SDN BHD: 4 (O/S: 4)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\nEUROTAN ENTERPRISE SDN BHD: 3 (O/S: 3)\nHOME PRODUCT CENTER (MALAYSIA) SDN BHD: 3 (O/S: 3)\nHARMONI BATH & KITCHEN SDN BHD [A/C I]: 2 (O/S: 2)\nJIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]: 1 (O/S: 1)\nKBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI): 1 (O/S: 1)\nPERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER): 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7443"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check the outstanding sales order for SRTWT7443"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "no",
+              "type": "text"
+            },
+            "messageId": "console-check-39c7557bac1b",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 24,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 24,
+              "source": "current_message",
+              "value": "so_outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 24,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7443"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 24,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the sales order list.",
+                "product_code": "SRTWT7443",
+                "scope": "so",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Okay, noted.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:06:17.453552+09:00",
+        "turn_id": "5ce8be6d-74cc-4d1c-ad2d-27fc64282dfa"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": false,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to decline the pending option"
+      }
+    }
+  ]
+}

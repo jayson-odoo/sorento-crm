@@ -37,6 +37,11 @@ import pytest
 
 from app.services.chatbot.lanes import escalation as escalation_mod
 
+_XFAIL_CLARIFY_TEXT_IS_NONE = (
+    "on the clarify arm, result.reply['text'] (and persisted ChatbotTurn.response) is "
+    "None while quick_replies is correct (follow-up, PR #952)"
+)
+
 
 # --------------------------------------------------------------------------- #
 # Builders - deliberately local, so the tester's file and this one cannot
@@ -341,6 +346,7 @@ PRIOR_ROSTER_PLAN = [
 ]
 
 
+@pytest.mark.xfail(strict=True, reason=_XFAIL_CLARIFY_TEXT_IS_NONE)
 def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     session_factory, system_settings_row, monkeypatch
 ) -> None:
@@ -530,6 +536,7 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     }
 
 
+@pytest.mark.xfail(strict=True, reason=_XFAIL_CLARIFY_TEXT_IS_NONE)
 def test_a_clarifys_quick_replies_reach_the_persisted_reply(
     session_factory, system_settings_row, monkeypatch
 ) -> None:

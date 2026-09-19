@@ -1,0 +1,295 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTJC802A-1500 product details",
+              "type": "text"
+            },
+            "messageId": "console-check-350ff56909b9",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "ecd1cb9d-776c-4f52-b16c-df62f06666cd"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Here are the matching products.\n\n1. *Product Code:* SRTJC802A-1500\n*Description:* SORENTO FREE STANDING BATHTUB 1500X800X580MM SRTJC802A-1500\n*List Price:* MYR 6300.00\n*Dimensions:* 1500.00 x 800.00 x 580.00 mm\n*Specs:* Product class: Bathtub, Length: 1500 mm, Material: acrylic, Mounting: free_standing, Width: 800 mm, Brand: SORENTO, Has a drainer: True, Has an overflow: True, Height: 580 mm\n\n_Data last updated: 04/09/2026 18:58:40_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_specs",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_master_products_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "SRTJC802A-1500",
+                "entity_type": "product",
+                "uuid": "ecd1cb9d-776c-4f52-b16c-df62f06666cd"
+              }
+            ],
+            "resolved": true,
+            "token": "SRTJC802A-1500"
+          }
+        ],
+        "tokens": [
+          "SRTJC802A-1500"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:52:13.413980+09:00",
+        "turn_id": "d0a5224c-89e0-4b62-a1a5-a63d986eae36"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "include_specs": true,
+            "is_active": null,
+            "product_ids": [
+              "ecd1cb9d-776c-4f52-b16c-df62f06666cd"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "Here are the matching products.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTJC802A-1500"
+                  },
+                  {
+                    "label": "Description",
+                    "value": "SORENTO FREE STANDING BATHTUB 1500X800X580MM SRTJC802A-1500"
+                  },
+                  {
+                    "label": "List Price",
+                    "value": "MYR 6300.00"
+                  },
+                  {
+                    "label": "Dimensions",
+                    "value": "1500.00 x 800.00 x 580.00 mm"
+                  },
+                  {
+                    "key": "spec:class",
+                    "label": "Product class",
+                    "value": "Bathtub"
+                  },
+                  {
+                    "key": "spec:dim_length",
+                    "label": "Length",
+                    "value": "1500 mm"
+                  },
+                  {
+                    "key": "spec:material",
+                    "label": "Material",
+                    "value": "acrylic"
+                  },
+                  {
+                    "key": "spec:mounting",
+                    "label": "Mounting",
+                    "value": "free_standing"
+                  },
+                  {
+                    "key": "spec:dim_width",
+                    "label": "Width",
+                    "value": "800 mm"
+                  },
+                  {
+                    "key": "spec:brand",
+                    "label": "Brand",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "key": "spec:has_drainer",
+                    "label": "Has a drainer",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:has_overflow",
+                    "label": "Has an overflow",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:dim_height",
+                    "label": "Height",
+                    "value": "580 mm"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTJC802A-1500"
+              }
+            ],
+            "last_updated_at": "2026-09-04T18:58:40.838601",
+            "result_type": "products",
+            "spec_vocabulary": {
+              "brand": "Brand",
+              "class": "Product class",
+              "dim_height": "Height",
+              "dim_length": "Length",
+              "dim_width": "Width",
+              "has_drainer": "Has a drainer",
+              "has_overflow": "Has an overflow",
+              "material": "Material",
+              "mounting": "Mounting"
+            }
+          },
+          "tool": "crm_master_products_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTJC802A-1500"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check product details for SRTJC802A-1500"
+      }
+    }
+  ]
+}

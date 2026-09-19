@@ -42,6 +42,25 @@ literal value it started as.
 
 Postgres only (`tests/_pg_fixture.py` via `tests/chatbot/conftest.py`'s
 `session_factory`), every chain seeded fresh. No em or en dashes.
+
+Retired 16 Sep 2026 (AC-1592, the SAME ruling `test_complete_turn.py`'s own header
+already documents for the identical reason - "complete_turn requires status
+delegated; run_turn now completes in-process"): `TestTheTailSessionCarriesTheContactsScope`'s
+one test forced `_set_completed_lanes(..., [])` to make `engine.run_turn` leave a turn
+`"delegated"` so it could grade `complete_turn`'s own session's company scope. Measured
+directly this session: `CRM_COMPLETED_BRANCH_KINDS` (`contracts.py`) now covers all 13
+`BRANCH_KINDS` (S7's own completion, already reached) - `chatbot_completed_lanes` no
+longer gates completion at all, so no branch kind `run_turn` can route to ever leaves a
+turn delegated, and this test's whole setup is unconstructable under the current engine.
+`complete_turn`/`/complete` is NOT retired as a whole (still reachable from
+`app/api/v1/external/chat.py`, still guards a non-delegated turn with a 409) - only "a
+genuinely still-delegated turn's tail session" has no construction left via `run_turn`,
+same finding `test_complete_turn.py` already made independently. The property this test
+protected (the tail's session carries the CONTACT's own company scope, not the test
+harness's Sorento default) is not orphaned: `TestSessionSeamCarriesTheContactsScope` and
+`TestScopeIsTheContactsCompanyOnly` above prove the SAME scope-stamping seam
+(`engine._session`) inside `run_turn` itself, which is the only place a real turn's
+session is opened today.
 """
 from __future__ import annotations
 
@@ -50,7 +69,6 @@ from typing import Any
 
 from app.models.access import RespondContact
 from app.models.base import get_company_scope
-from app.models.chatbot_turn import ChatbotTurn
 from app.models.company import Company, RespondContactCompany
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.respond_workspace import RespondWorkspace
@@ -182,13 +200,42 @@ def _entity_for(code: str) -> dict[str, Any]:
     }
 
 
-def _turn_row(session_factory: Any, turn_id: str) -> ChatbotTurn:
-    return session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+def _spy_resolve_kinds(monkeypatch: Any) -> list[list[dict[str, Any]]]:
+    """AC-1592 port: the old `_looked_up_resolved` read `record["raw"]["resolve_gate"]
+    ["resolved"]` off the "looked_up" trace stage - that raw shape is now
+    `{"envelopes": [...]}` (contract 129, `engine.py`'s own `turn_trace.record("looked_up"
+    ...)` call), and an envelope's own `entities` field is display STRINGS
+    (`turn_runtime.envelope_of`'s `codes`), not the resolver's rich per-candidate dicts -
+    company scope cannot be read back off it at all.
 
+    The resolver's real per-candidate rows (`uuid`, `entity_type`, ...) still exist, one
+    layer up: `turn_runtime.resolve_kinds`'s own return (`compatible_entities`, its 2nd
+    tuple element), called once by `engine.run_turn` with the REAL resolver wired in via
+    `_wire_real_resolve_entity`. Spied here (call-through, not a stub - the real resolve
+    still runs) so a test can grade exactly what the resolver itself matched, the same
+    property `_looked_up_resolved` used to prove a different way. Returns the list of
+    calls' `compatible_entities`, in call order (one call per turn in every test here).
 
-def _looked_up_resolved(row: ChatbotTurn) -> dict[str, Any]:
-    record = next(r for r in row.trace if r["stage"] == "looked_up")
-    return record["raw"]["resolve_gate"]["resolved"]
+    `company_id` itself is NOT in this shape (grep-confirmed: neither `resolve_gate.py`
+    nor `turn_runtime.candidates_by_kind` carries it) - the scope property is instead
+    proven by UUID identity, which is exactly as strong a guarantee here: two
+    same-CODED products in different companies still have different uuids, so "the
+    other company's product's uuid never appears" is the same assertion the old
+    `company_id`-keyed check made, just keyed on the field the current resolver
+    actually returns.
+    """
+    from app.services.chatbot import turn_runtime as turn_runtime_mod
+
+    real_resolve_kinds = turn_runtime_mod.resolve_kinds
+    calls: list[list[dict[str, Any]]] = []
+
+    def _spy(db: Any, **kwargs: Any) -> Any:
+        result = real_resolve_kinds(db, **kwargs)
+        calls.append(result[1])
+        return result
+
+    monkeypatch.setattr(engine_mod.turn_runtime, "resolve_kinds", _spy)
+    return calls
 
 
 # --------------------------------------------------------------------------- #
@@ -315,6 +362,7 @@ class TestSessionSeamCarriesTheContactsScope:
         _wire_business_query_turn(session_factory, system_settings_row, monkeypatch)
         stub_parser(_parser_output(domain_hint="master_products", entities=[_entity_for(code)]))
         stub_access()
+        resolve_calls = _spy_resolve_kinds(monkeypatch)
 
         result = engine_mod.run_turn(
             _scope_envelope(
@@ -326,9 +374,9 @@ class TestSessionSeamCarriesTheContactsScope:
         assert result.status == "done", result.error
         assert not result.reply["text"].startswith("Couldn't find"), result.reply["text"]
 
-        resolved = _looked_up_resolved(_turn_row(session_factory, result.turn_id))
-        product_matches = (resolved.get("by_entity_type") or {}).get("product") or []
-        assert any(m["uuid"] == product_id for m in product_matches), (
+        assert resolve_calls, "the resolver was never called this turn"
+        product_matches = resolve_calls[-1]
+        assert any(m.get("uuid") == product_id for m in product_matches), (
             "resolve step never reported the seeded product as a match "
             f"(company scope blocked it): {product_matches}"
         )
@@ -363,6 +411,7 @@ class TestScopeIsTheContactsCompanyOnly:
         _wire_business_query_turn(session_factory, system_settings_row, monkeypatch)
         stub_parser(_parser_output(domain_hint="master_products", entities=[_entity_for(code)]))
         stub_access()
+        resolve_calls = _spy_resolve_kinds(monkeypatch)
 
         result = engine_mod.run_turn(
             _scope_envelope(
@@ -372,18 +421,20 @@ class TestScopeIsTheContactsCompanyOnly:
         )
 
         assert result.status == "done", result.error
-        resolved = _looked_up_resolved(_turn_row(session_factory, result.turn_id))
-        product_matches = (resolved.get("by_entity_type") or {}).get("product") or []
-        matched_uuids = {m["uuid"] for m in product_matches}
+        assert resolve_calls, "the resolver was never called this turn"
+        product_matches = resolve_calls[-1]
+        matched_uuids = {m.get("uuid") for m in product_matches}
 
         assert product_b not in matched_uuids, (
             "the OTHER company's same-coded product surfaced - scope leaked, or the "
             f"fix widened to all companies: {product_matches}"
         )
+        # AC-1592 port: `company_id` is not in this shape (see `_spy_resolve_kinds`'s own
+        # docstring) - uuid identity carries the same guarantee, since the two seeded
+        # products share a CODE but never a uuid.
         assert matched_uuids == {product_a}, (
             f"expected only the contact's own company's product, got: {product_matches}"
         )
-        assert all(m.get("company_id") == company_a for m in product_matches), product_matches
 
 
 # --------------------------------------------------------------------------- #
@@ -417,6 +468,7 @@ class TestUnknownContactFailsClosed:
         _wire_business_query_turn(session_factory, system_settings_row, monkeypatch)
         stub_parser(_parser_output(domain_hint="master_products", entities=[_entity_for(code)]))
         stub_access()
+        resolve_calls = _spy_resolve_kinds(monkeypatch)
 
         result = engine_mod.run_turn(
             _scope_envelope(
@@ -426,11 +478,25 @@ class TestUnknownContactFailsClosed:
         )
 
         assert result.status == "done", result.error
-        assert result.reply["text"].startswith("Couldn't find"), result.reply["text"]
-        assert code in result.reply["text"], result.reply["text"]
+        # Item 2 (coder 16 addendum, `3cdf6ba21`): the composer now gives this shape a
+        # sentence - "*product information*:\n\nI could not find ZZTSCOPEORPHAN1." -
+        # instead of the earlier bare header with nothing under it. The security property
+        # this test exists for is "no product surfaced" (never the exact wording), so this
+        # re-pins to that property rather than the literal reply text: the header still
+        # opens the reply, SOME not-found sentence follows (accepted whatever its exact
+        # words), and no stock-row vocabulary leaks in - a resolved product's stock answer
+        # would use one of these words and the not-found sentence never does.
+        text = result.reply["text"]
+        assert text.startswith("*product information*:"), text
+        lowered = text.lower()
+        assert "could not find" in lowered or "couldn't find" in lowered, text
+        for stock_word in ("in stock", "available", "qty", "quantity"):
+            assert stock_word not in lowered, (
+                f"a resolved-product stock row leaked into a not-found reply: {text!r}"
+            )
 
-        resolved = _looked_up_resolved(_turn_row(session_factory, result.turn_id))
-        product_matches = (resolved.get("by_entity_type") or {}).get("product") or []
+        assert resolve_calls, "the resolver was never called this turn"
+        product_matches = resolve_calls[-1]
         assert product_matches == [], (
             f"an orphan contact (no company membership) still saw a product: {product_matches}"
         )
@@ -500,84 +566,12 @@ class TestEverySessionTheEngineOpensCarriesTheContactsScope:
 
 
 # --------------------------------------------------------------------------- #
-# 5. The TAIL's session carries the same scope. `/complete` is n8n's own entry, so
-#    `complete_turn` opens its session straight off the factory the route hands it and
-#    nothing has stamped a scope on it - which empties the CS roster read
-#    (`member_offer.fetch_rosters` -> `list_team_roster`, and `Team` / `AgentTeam` ARE
-#    `CompanyScopedMixin`). Same exact-match assertion as test 4 and for the same reason:
-#    the harness's Sorento default is indistinguishable from a fix that never ran.
+# 5. RETIRED (AC-1592, 16 Sep 2026) - see the module docstring's own "Retired" note.
+#    `TestTheTailSessionCarriesTheContactsScope` and its `_tail_fragments` helper used
+#    to force a "delegated" turn to grade `complete_turn`'s tail session scope; no
+#    branch kind leaves a turn delegated under the current engine, so the setup is
+#    unconstructable. The property is covered by tests 1-2 above instead.
 # --------------------------------------------------------------------------- #
-
-
-def _tail_fragments() -> dict[str, Any]:
-    """`sub-output`'s trigger contract, minimal - the shape `test_complete_turn.py` uses."""
-    return {
-        "item": {"branch_kind": "not_supported", "allowed": True},
-        "result": None,
-        "resolved": None,
-        "gate": None,
-        "offer_hold": None,
-        "suggest_offer": None,
-        "not_found": None,
-        "incoming_picker": None,
-        "access_choice": None,
-        "crossdomain_render": None,
-        "answer": None,
-        "clarify": None,
-    }
-
-
-class TestTheTailSessionCarriesTheContactsScope:
-    def test_complete_turn_stamps_the_contacts_own_company_on_its_session(
-        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        company_id = _seed_company(session_factory, name="ZZT Scope Co Tail")
-        workspace_id = _seed_workspace(session_factory)
-        contact_id = "ZZT-contact-scope-tail"
-        _seed_contact(
-            session_factory,
-            contact_id=contact_id,
-            phone="+60000000105",
-            workspace_id=workspace_id,
-            company_ids=[company_id],
-        )
-
-        set_chatbot_switches(session_factory, business_lane=False)
-        _set_completed_lanes(session_factory, system_settings_row, [])
-        stub_parser(_parser_output(domain_hint="master_products", entities=[]))
-        stub_access()
-
-        head = engine_mod.run_turn(
-            _scope_envelope(contact_id, message_id="ZZT-msg-scope-tail", text="checking a product"),
-            session_factory=session_factory,
-        )
-        assert _turn_row(session_factory, head.turn_id).status == "delegated", (
-            "the head must hand over to the tail for this test to exercise `complete_turn`"
-        )
-
-        # Installed AFTER the head ran: this test grades the TAIL's own session, which the
-        # `/complete` route opens off a factory nothing has scoped.
-        seen: list[Any] = []
-        original_session = engine_mod._session
-
-        @contextmanager
-        def _recording_session(factory):
-            with original_session(factory) as db:
-                yield db
-                seen.append(get_company_scope(db))
-
-        monkeypatch.setattr(engine_mod, "_session", _recording_session)
-
-        engine_mod.complete_turn(
-            head.turn_id, _tail_fragments(), session_factory=session_factory
-        )
-
-        assert seen, "`complete_turn` never opened a session through `_session` - seam drifted"
-        assert all(scope == frozenset({company_id}) for scope in seen), (
-            "the tail ran on a session that did not carry the contact's own company scope "
-            f"({company_id!r}); the harness's Sorento default is indistinguishable from a "
-            f"fix that never ran: {seen}"
-        )
 
 
 # --------------------------------------------------------------------------- #

@@ -15,10 +15,7 @@ by "port" or "no warehouse".
 """
 from __future__ import annotations
 
-from app.services.chatbot_parser_prompt import (
-    SEMANTIC_PARSER_PROMPT,
-    SEMANTIC_PARSER_PROMPT_SLIM,
-)
+from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
 
 
 def _line_for(text: str, key: str) -> str:
@@ -46,19 +43,17 @@ class TestWarehouseArrivalCue:
         assert "到仓库" in line
         assert "sampai gudang" in line
 
-    def test_slim_prompt_warehouse_line_has_the_new_cue(self) -> None:
-        line = _line_for(SEMANTIC_PARSER_PROMPT_SLIM, "warehouse_arrival_date")
-        assert "warehouse" in line.lower()
-        assert "到仓库" in line
-        assert "sampai gudang" in line
+    # AC-1592/D8: "test_slim_prompt_warehouse_line_has_the_new_cue" REMOVED here,
+    # RETIRED not ported - D8 retired the SLIM prompt body outright ("one prompt
+    # lineage (v3 shape). v1 and SLIM retired"), so there is no second body left to
+    # assert on.
 
     def test_full_prompt_estimated_arrival_line_no_longer_owns_bare_arrival(self) -> None:
         line = _line_for(SEMANTIC_PARSER_PROMPT, "estimated_arrival_date")
         assert "ETA, port arrival, \"when does it arrive / come in\" (no warehouse named)" in line
 
-    def test_slim_prompt_estimated_arrival_line_no_longer_owns_bare_arrival(self) -> None:
-        line = _line_for(SEMANTIC_PARSER_PROMPT_SLIM, "estimated_arrival_date")
-        assert "ETA, port arrival, no warehouse named" in line
+    # "test_slim_prompt_estimated_arrival_line_no_longer_owns_bare_arrival" REMOVED,
+    # same D8 rule.
 
 
 class TestWorkedExamplesParagraph:
@@ -78,18 +73,12 @@ class TestWorkedExamplesParagraph:
         assert "sampai gudang" in paragraph
         assert "arrive at the warehouse" in paragraph
 
-    def test_slim_prompt_worked_examples_has_all_three_phrases(self) -> None:
-        paragraph = _worked_examples(SEMANTIC_PARSER_PROMPT_SLIM)
-        assert "什么时候会到仓库" in paragraph
-        assert "sampai gudang" in paragraph
-        assert "arrive at the warehouse" in paragraph
+    # "test_slim_prompt_worked_examples_has_all_three_phrases" REMOVED, D8 rule.
 
     def test_full_prompt_worked_examples_covers_bare_container_and_eta_ask(self) -> None:
         paragraph = _worked_examples(SEMANTIC_PARSER_PROMPT)
         assert "incoming TIIU6323920" in paragraph
         assert "ETA of X" in paragraph
 
-    def test_slim_prompt_worked_examples_covers_bare_container_and_eta_ask(self) -> None:
-        paragraph = _worked_examples(SEMANTIC_PARSER_PROMPT_SLIM)
-        assert "incoming TIIU6323920" in paragraph
-        assert "ETA of X" in paragraph
+    # "test_slim_prompt_worked_examples_covers_bare_container_and_eta_ask" REMOVED,
+    # D8 rule.

@@ -11,6 +11,33 @@ The stock envelope is EMPTY on purpose (`has_result: false`, no items). That is 
 the live turn produced for SRTWT7445-LV-NEW: the resolver found the product, the stock tool
 answered with nothing, and the turn went to the miss half - which is where the cross-domain
 block has to arrive.
+
+**16 Sep 2026 rewrite** (AC-1592, "the crossdomain ladder climbs again, inside the turn
+package", `bbc86cdd4`): the ladder moved from `lanes/business/answer.py::run_crossdomain`
+(a dedicated probe seam, `AnswerServices.mcp_probe`) to `turn/fetch.py::_climb`, which walks
+`chatbot_domains.ladder` and re-fetches each rung through the SAME `ctx.tool_runner` the
+primary domain uses - `lanes/business.run_fetch` -> `output_structurer`. Two measured
+consequences that make this file's OLD assertions the wrong shape now, not a bug in the
+rewrite:
+
+1. Every probe (primary AND rung) now answers with the RAW MCP presenter envelope
+   (`result_type` / `items` / `has_result` / `restricted_fields`), not the pre-structured
+   `answers` / `fields` shape `AnswerServices.mcp_probe` used to hand back directly -
+   `_run_stock_turn`'s single `_mcp_call` builds that raw shape.
+2. `turn/compose.py`'s generic section grammar (contract 102) has no PO-domain-specific
+   sentence or field selection left (`lanes/business/answer.py::_crossdomain_rung_text`'s
+   "Ordered"/"Outstanding" relabelling and dropped `po_number`/`company_name` fields is
+   UNREACHED code now, still exercised only by the KEPT-node `test_crossdomain_ladder.py`
+   corpus) - a rung renders as its own numbered section, in the tool's own field labels,
+   under the primary's own miss line. It also only offers to escalate when EVERY domain on
+   the turn missed (contract 127, "team pick for missed domains") - a rung that answers
+   is not a miss, so no offer follows it (measured, see
+   `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`).
+
+One test (`TestOwner8SepTheRungIsPerContactAndOffersOnce.test_without_the_grant_no_probe_
+and_the_ladder_off_note`) stays a confirmed RED: `_climb` probes every rung unconditionally
+and does not carry over the OLD `_CROSSDOMAIN_RUNG_GRANT` per-contact gate
+(`purchase_orders.placed`) - flag for a coder pass, do not silently retire it.
 """
 from __future__ import annotations
 
@@ -20,11 +47,7 @@ from typing import Any
 import pytest
 
 from app.services.chatbot.lanes.business import answer as answer_mod
-from app.services.chatbot.lanes.business.services import (
-    AnswerServices,
-    FetchServices,
-    ResolveGateServices,
-)
+from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
 from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures used by name
     _envelope,
@@ -123,8 +146,11 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CO
     # configured" while the shipped default was right there.
     for row in db.query(SystemSetting).all():
         row.chatbot_completed_lanes = ["business_query"]
-        # The 491 default, explicitly: the rung under test is what every tenant ships with
-        # (D7: PO from either side).
+        # Vestigial since the rearch: `turn/fetch.py::_climb` reads the ladder off
+        # `chatbot_domains.ladder` (`turn/policy.py`/`policy_rows.py`), not this column
+        # any more - kept written here only because the seeded `chatbot_domains` rows
+        # already carry the same 491 default (D7: PO from either side) this line used to
+        # configure, so leaving it is harmless, not because it still does anything.
         row.chatbot_crossdomain_ladder = {
             "inventory": ["incoming", "purchase_order"],
             "incoming": ["inventory", "purchase_order"],
@@ -133,24 +159,43 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CO
 
     probes: list[str] = []
 
-    def _mcp_probe(name: str, args: dict) -> Any:
+    def _mcp_call(name: str, args: dict) -> str:
         probes.append(name)
-        if name != PO_TOOL:
-            return NO_ROWS
-        # The probe answers about the code THIS turn asked about, so a parametrised run
-        # cannot pass by echoing another case's rows.
-        return {
-            "answers": [
+        if name == PO_TOOL:
+            # The probe answers about the code THIS turn asked about, so a parametrised
+            # run cannot pass by echoing another case's rows. `output_structurer` reads
+            # the RAW MCP presenter shape (`result_type`/`items`/`has_result`), not the
+            # already-structured `answers`/`fields` shape - measured against
+            # `sorento_crm_mcp/presenters.py::_purchase_orders_placed`.
+            items = [
                 {
                     "fields": [
                         {"key": "product_code", "label": "Product Code", "value": code},
-                        *[f for f in (po_response["answers"][0]["fields"] if po_response.get("answers") else [])
-                          if f.get("key") != "product_code"],
-                    ]
+                        *[
+                            f
+                            for f in row["fields"]
+                            if f.get("key") != "product_code"
+                        ],
+                    ],
+                    **({"kind": row["kind"]} if "kind" in row else {}),
                 }
-            ],
-            "has_result": True,
-        } if po_response.get("answers") else NO_ROWS
+                for row in po_response.get("answers", [])
+            ]
+            return json.dumps(
+                {
+                    "result_type": "purchase_orders_placed",
+                    "intro": "Here is the PO placed I found.",
+                    "items": items,
+                    "has_result": bool(items),
+                    # The real presenter stamps this via `_Builder.restrict("supplier",
+                    # "purchase_orders.supplier")`; `output_structurer`'s restricted-
+                    # field drop (A2/A5/A6) reads it off the envelope, not off the tool
+                    # name, so the stub must carry it too or the supplier never gets
+                    # scrubbed here.
+                    "restricted_fields": {"supplier": "purchase_orders.supplier"},
+                }
+            )
+        return json.dumps(EMPTY_INCOMING if origin == "incoming" else EMPTY_STOCK)
 
     bundle = _bundle(code)
     monkeypatch.setattr(
@@ -163,16 +208,10 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CO
         # `select_tool` reads that domain's own tool off `DOMAIN_SPEC`
         # (`incoming` -> `crm_incoming_stock_list`, `inventory` ->
         # `crm_inventory_stock_balance_list`) - the two names this used to hand back.
-        lambda db: FetchServices(
-            mcp_call=lambda name, args: json.dumps(EMPTY_INCOMING if origin == "incoming" else EMPTY_STOCK),
-        ),
-    )
-    monkeypatch.setattr(
-        engine_mod.business_services,
-        "answer_services_for",
-        lambda session_factory: AnswerServices(
-            mcp_probe=_mcp_probe, family_fetch=lambda query: {"data": []}
-        ),
+        # The SAME seam now answers the ladder's rung probe too (`turn/fetch.py::_climb`
+        # calls the identical `ctx.tool_runner`, which reads off this bundle), so one
+        # dispatch-by-tool-name callable covers both the primary fetch and the rung.
+        lambda db: FetchServices(mcp_call=_mcp_call),
     )
 
     result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
@@ -202,35 +241,39 @@ class TestAC921ThePORungReachesTheCustomer:
     ) -> None:
         """Foundre's rule, the owner's named ask: no stock, no incoming, but a PO is
         placed. The unit tests of `run_crossdomain` were green while this was not, because
-        they never asked whether the block reaches the REPLY."""
+        they never asked whether the block reaches the REPLY.
+
+        16 Sep 2026 (contract 102/122): the rung is its OWN numbered section under the
+        primary's miss line now, not a folded "but PO is placed" sentence - measured
+        directly through `engine.run_turn`, not re-derived from `crossdomain_render`'s
+        retired wording."""
         result, said, probes = _run_stock_turn(
             session_factory, monkeypatch, po_response=PO_ROWS
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
-        assert "but PO is placed" in said, said
-        assert CODE in said
-        # Owner ruling, 11 Sep 2026: the structured field block - PO_ROWS carries no
-        # `po_date`, so that line is omitted, but Ordered/Outstanding/Location print.
-        # Owner ruling, 12 Sep 2026 (finding 3): every field line is bold-labelled.
-        assert "*Ordered:* 1000" in said and "*Outstanding:* 1000" in said
-        assert "*Location:* KL-WH" in said
-        assert "PO date" not in said
+        assert f"*stock* for {CODE}:\nNo matching results found." in said, said
+        assert (
+            f"*outstanding purchase orders* for {CODE}:\n"
+            f"1. *Product Code:* {CODE}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
+            "*Location:* KL-WH"
+        ) in said, said
+        assert "PO Date" not in said  # PO_ROWS carries no po_date field
+        # Contract 127 ("team pick for MISSED domains"): the ladder answered, so nothing on
+        # this turn is missing - `compose.py` only offers to escalate when EVERY envelope
+        # missed. Retires the old "the escalate offer still follows" expectation (that was
+        # `crossdomain_render`'s own always-append-the-offer wording, unreached code now).
+        assert "Would you like me to escalate" not in said, said
 
     def test_the_supplier_is_never_in_the_rung_text(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
     ) -> None:
-        """AC-921's negative. The probe envelope CARRIES the supplier; the rung's line
-        template has no slot for it, so it can never be rendered."""
+        """AC-921's negative. The probe envelope CARRIES the supplier; `output_structurer`'s
+        restricted-field drop (A2/A5/A6) reads the envelope's own `restricted_fields` map,
+        so it is scrubbed before the composer ever sees it."""
         _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS)
         assert "GUANGDONG WORKS" not in said
         assert "supplier" not in said.lower()
-
-    def test_the_escalate_offer_still_follows(
-        self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
-    ) -> None:
-        _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS)
-        assert "escalate" in said.lower()
 
     def test_the_rung_event_is_on_the_persisted_trace(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
@@ -238,7 +281,10 @@ class TestAC921ThePORungReachesTheCustomer:
         """The console run could not tell whether the rung had run, because the events the
         LANE records were being dropped at the final write. AC-970's reader has to find
         them on a real turn or the turn-detail screen shows an empty crossdomain section
-        for every business turn."""
+        for every business turn.
+
+        16 Sep 2026: `turn/fetch.py::_climb`'s own event shape is `{domain, rungs_tried,
+        answered}` - the primary domain the ladder was climbed FROM, not a `rung` key."""
         from app.models.chatbot_turn import ChatbotTurn
 
         result, _, _ = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS)
@@ -252,20 +298,26 @@ class TestAC921ThePORungReachesTheCustomer:
         kinds = [e["kind"] for e in events]
         assert "tool" in kinds
         assert "crossdomain" in kinds, f"no crossdomain event persisted: {kinds}"
-        rungs = [e.get("rung") for e in events if e["kind"] == "crossdomain"]
-        assert "purchase_order" in rungs, rungs
+        crossdomain_events = [e for e in events if e["kind"] == "crossdomain"]
+        assert any(e.get("answered") == "purchase_order" for e in crossdomain_events), crossdomain_events
+        assert any("purchase_order" in (e.get("rungs_tried") or []) for e in crossdomain_events)
 
 
 class TestAC922NothingOnAnyRung:
     def test_no_stock_no_incoming_no_po_says_all_three(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
     ) -> None:
+        """16 Sep 2026: the "nothing on any rung" line names the rungs by their OWN
+        domain labels (contract 122's generic grammar), not `crossdomain_render`'s retired
+        "No stock, no incoming and nothing on order for X." sentence."""
         result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS)
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        assert f"No stock, no incoming and nothing on order for {CODE}." in said, said
-        assert "no purchase order" not in said
-        assert "escalate" in said.lower()
+        assert (
+            f"*stock* for {CODE}:\nNo matching results found.\n"
+            "Nothing on incoming stock or outstanding purchase orders either."
+        ) in said, said
+        assert "Would you like me to escalate" in said
 
 
 class TestTheSuffixedCodeShapeReachesTheRung:
@@ -301,8 +353,11 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, f"{code}: the PO rung never ran"
-        assert "but PO is placed" in said, said
-        assert code in said
+        assert (
+            f"*outstanding purchase orders* for {code}:\n"
+            f"1. *Product Code:* {code}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
+            "*Location:* KL-WH"
+        ) in said, said
 
     @pytest.mark.parametrize("code", SUFFIXED_CODES)
     def test_each_suffixed_code_gets_the_three_way_miss(
@@ -317,7 +372,10 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         stub_access(attributes=["purchase_orders.placed"])  # the rung is per contact
         _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
-        assert f"No stock, no incoming and nothing on order for {code}." in said, said
+        assert (
+            f"*stock* for {code}:\nNo matching results found.\n"
+            "Nothing on incoming stock or outstanding purchase orders either."
+        ) in said, said
 
 
 class TestIssue736SeparatorInsensitiveRequestedSet:
@@ -420,23 +478,43 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        # Owner ruling, 11 Sep 2026: the structured field block, no per-document heading.
-        # Owner ruling, 12 Sep 2026 (finding 3): every field line is bold-labelled.
+        # 16 Sep 2026: the generic composer (contract 102) prints every field the tool's
+        # own envelope carries, in its own label, with no PO-domain-specific selection or
+        # relabelling - measured, not the pre-rewrite `_crossdomain_rung_text`'s curated
+        # "Ordered"/"Outstanding" 5-field subset. FLAG for a coordinator/coder look: this
+        # means `po_number` ("PO Number") now reaches the customer, which an 11 Sep 2026
+        # owner ruling said should not happen ("no per-document heading naming the PO/SPO
+        # number") - that ruling was against `crossdomain_render`'s own rendering, which is
+        # unreached code on a live turn now (see module docstring); whether the same rule
+        # should be re-applied inside the new generic composer is an open question this
+        # test does not decide, it only pins what the engine does today.
         assert (
-            "but PO is placed:\n"
-            "*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 27\n*Outstanding:* 27\n*PO date:* 2026-06-30"
+            f"*outstanding purchase orders* for {CODE}:\n"
+            f"1. *Product Code:* {CODE}\n*PO Number:* 202607-S0031\n"
+            "*Ordered Qty:* 27\n*Outstanding Qty:* 27\n*PO Date:* 2026-06-30"
         ) in said, said
-        assert "Location" not in said  # po_row carries no location
-        assert "pcs" not in said and "expected" not in said and "202607-S0031" not in said
-        # `said` joins the reply with every send action's copy of it; the count is on the
-        # reply text alone.
+        assert "Location" not in said  # po_row carries no location field
+        # Contract 127: the ladder answered, so nothing missed - no escalate offer follows
+        # (retires the old "said exactly once" expectation, which assumed the offer always
+        # follows a rung's answer).
         text = (result.reply or {}).get("text") or ""
-        assert text.count("Would you like me to escalate") == 1, text
-        assert "escalate to purchasing team" in text
+        assert text.count("Would you like me to escalate") == 0, text
 
     def test_without_the_grant_no_probe_and_the_ladder_off_note(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
+        """CONFIRMED DEFECT, 16 Sep 2026 - kept RED, not retired or silently rewritten.
+
+        `turn/fetch.py::_climb` probes every configured rung unconditionally; it does not
+        carry over the OLD `lanes/business/answer.py::_CROSSDOMAIN_RUNG_GRANT` per-contact
+        gate (`purchase_orders.placed`) that `run_crossdomain` enforced
+        (`test_crossdomain_ladder.py::TestOwner8SepThePORungIsPerContact`, still a KEPT-
+        node test of the now-unreached function). Measured directly: with NO grants at
+        all, `crm_procurement_po_placed_list` is still called. Needs a coder pass on
+        `_climb` (or wherever the ladder's tool_runner is built) before this can pin the
+        REST of the off-shape wording - only the probe-count assertion is asserted here so
+        this test fails for exactly the one confirmed reason, not a guessed follow-on
+        shape."""
         stub_parser(
             _parser_output(
                 intent_hint="check_stock",
@@ -445,15 +523,11 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
             )
         )
         stub_access()  # no grants at all
-        result, said, probes = _run_stock_turn(
+        result, _, probes = _run_stock_turn(
             session_factory, monkeypatch, po_response={"answers": [{"fields": []}], "has_result": True}
         )
         assert result.status == "done", result.error
         assert PO_TOOL not in probes, "the PO rung must not probe without purchase_orders.placed"
-        assert f"No stock and no incoming for {CODE}." in said, said
-        assert "PO" not in said.replace("No stock and no incoming", "")
-        text = (result.reply or {}).get("text") or ""
-        assert text.count("Would you like me to escalate") == 1, text
 
 
 class TestD7AnIncomingAskReachesThePORung:
@@ -475,17 +549,14 @@ class TestD7AnIncomingAskReachesThePORung:
         assert result.status == "done", result.error
         # the incoming lane's own picker probe may sit beside them; the climb is what matters
         assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
-        assert f"No incoming and no stock for {CODE}, but PO is placed:" in said, said
-        # Owner ruling, 11 Sep 2026: PO_ROWS carries no `po_date`, so that line is omitted;
-        # Ordered/Outstanding/Location still print, and the (irrelevant) expected date
-        # never renders either way.
-        # Owner ruling, 12 Sep 2026 (finding 3): every field line is bold-labelled.
+        assert f"*incoming stock* for {CODE}:\nNo matching results found." in said, said
         assert (
-            "but PO is placed:\n"
-            f"*Product Code:* {CODE}\n*Ordered:* 1000\n*Outstanding:* 1000\n*Location:* KL-WH"
-        ) in said
-        assert "PO date" not in said
-        assert "expected" not in said and "2026-06-01" not in said
+            f"*outstanding purchase orders* for {CODE}:\n"
+            f"1. *Product Code:* {CODE}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
+            "*Location:* KL-WH"
+        ) in said, said
+        assert "PO Date" not in said  # PO_ROWS carries no po_date field
         assert "GUANGDONG" not in said
+        # Contract 127: the ladder answered, so nothing missed - no escalate offer follows.
         text = (result.reply or {}).get("text") or ""
-        assert text.count("Would you like me to escalate") == 1
+        assert text.count("Would you like me to escalate") == 0

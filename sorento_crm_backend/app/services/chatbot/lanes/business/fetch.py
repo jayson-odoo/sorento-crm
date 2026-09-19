@@ -7,7 +7,7 @@ JavaScript, with the same `jsc` shim S6a uses for JS truthiness / `String()` / `
 Three hazards are fixed here rather than reproduced, and each says so at its own site:
 
 * **H53** - `sub-get-rag` is GONE, SQL and vector alike. The tool is read straight off
-  `contracts.DOMAIN_SPEC[domain].tools[0]` (`select_tool` below), so this module names no
+  the domain row's own first tool (`select_tool` below), so this module names no
   table, writes no SQL, and makes no provider call. Measured over the 740 business turns
   in the 7 Sep 2026 prod copy, the embedding pick WAS the domain's first-listed tool on
   every turn, and the seeding chain the search depended on cannot run in the deployed
@@ -23,7 +23,7 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
   tools (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
   `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the single
   candidate with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list, and
-  since the candidate is now `DOMAIN_SPEC`'s own first tool the hazard is structural
+  since the candidate is now the domain row's own first tool the hazard is structural
   rather than scored: nothing outside that table can be named, and `ensure_read_only`
   refuses anything off the list at both call seams anyway. The embedded POOL keeps the
   write tools, on purpose - the in-app AI assistant retrieves them and confirms with a
@@ -54,12 +54,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import (
-    DOMAIN_CLAIMED_TOOLS,
-    DOMAIN_SPEC,
-    UNDOMAINED_CHATBOT_TOOLS,
-)
-from app.services.chatbot.contracts import is_timeline
+from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline
+from app.services.chatbot.turn.policy import default_policy
+from app.services.chatbot.turn import policy_rows
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +103,7 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
 
     The BODY is n8n's, unchanged and graded byte for byte against 38 captures (D8), which
     is why the ranking is still here after the pick stopped being a ranking. `select_tool`
-    now hands it exactly one candidate off `DOMAIN_SPEC` (similarity 1.0), so the sort has
+    now hands it exactly one candidate off the domain row (similarity 1.0), so the sort has
     one element and the argmax is the identity - the node keeps working the way its
     captures say it does, and nothing about how the candidate was chosen leaked into it.
 
@@ -150,10 +147,13 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
 
 
 def select_tool(domain: str | None) -> list[dict[str, Any]]:
-    """The domain's tool, read off `DOMAIN_SPEC`. No embedding, no database, no network.
+    """The domain's tool, read off `turn.policy.default_policy()` (AC-1594: was
+    `contracts.DOMAIN_SPEC`, now the frozen seed `chatbot_domains` is migrated from). No
+    embedding, no database, no network.
 
-    `[{"name": DOMAIN_SPEC[domain].tools[0], "similarity": 1.0}]` for a domain with a
-    non-empty `tools` tuple, `[]` for everything else: no domain, a domain outside the
+    `[{"name": default_policy().domain(domain).tools[0], "similarity": 1.0}]` for a
+    domain with a non-empty `tools` tuple, `[]` for everything else: no domain, a domain
+    outside the
     table, and the two domains that answer from nothing (`goods_receive`, `ideate`). The
     empty list reaches `tool_filter` and ends the turn `not_found`, exactly as a zero-row
     search did (H11).
@@ -197,17 +197,15 @@ def select_tool(domain: str | None) -> list[dict[str, Any]]:
     name, and ended `not_found`; one that got past both guards would end the same way here,
     by falling off the table rather than by zeroing a `LIKE` filter.
     """
-    spec = DOMAIN_SPEC.get(domain) if domain else None
-    if spec is None or not spec.tools:
+    row = default_policy().domain(domain) if domain else None
+    if row is None or not row.tools:
         return []
-    return [{"name": spec.tools[0], "similarity": 1.0}]
+    return [{"name": row.tools[0], "similarity": 1.0}]
 
 
 # --------------------------------------------------------------------------- #
 # tier-probe-plan / tier-probe-collect
 # --------------------------------------------------------------------------- #
-
-TIER_ORDER = ("dealer", "office", "end_user")
 
 
 def tier_probe_plan(tier_gate: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -290,7 +288,9 @@ def tier_probe_collect(
         **base,
         "tier_availability": availability,
         "tier_available_list": (
-            [t for t in TIER_ORDER if availability.get(t)] if availability is not None else None
+            [t for t in default_policy().tier_order if availability.get(t)]
+            if availability is not None
+            else None
         ),
         "tier_any_available": any_available,
         "_tier_probe_count": len(results),
@@ -345,9 +345,11 @@ _UUID_RE = re.compile(
 # would fall through to the service's UNSCOPED branch: every product's cost at that
 # warehouse, or across the whole table, none of them named by the customer. Refused as an
 # absence instead, same as an unfiltered document ask.
-ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset(
-    {"crm_resource_attachments_list", "crm_procurement_po_last_cost_list"}
-)
+# `ENTITY_FILTER_REQUIRED_TOOLS` and `PRODUCT_ID_REQUIRED_TOOLS` moved to
+# `turn/policy_rows.py` (AC-1594, S6): hand-curated per-TOOL exceptions, not domain or
+# kind data, so they have no row in either policy table - see that module's own comment
+# for why they live there instead. Referenced here as `policy_rows.X` (not imported by
+# name) so this module keeps no attribute of either name.
 
 # What counts as narrowing on those tools: every entity-id param the transformer can emit,
 # plus the document-type filters the tool takes by name.
@@ -361,25 +363,17 @@ NARROWING_PARAMS: frozenset[str] = frozenset(TYPE_TO_PARAM.values()) | frozenset
     }
 )
 
-# SF6: tools in `ENTITY_FILTER_REQUIRED_TOOLS` for which `warehouse_ids` alone is NOT
-# enough narrowing. `NARROWING_PARAMS` above treats `warehouse_ids` as a valid filter
-# for `crm_resource_attachments_list` (a warehouse-scoped document list is a real
-# answer), but `crm_procurement_po_last_cost_list`'s unscoped branch is a plain top_n
-# cap over EVERY product at that warehouse - a warehouse named with no product is still
-# an unnamed-product leak, so this tool needs `product_ids` specifically.
-PRODUCT_ID_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_procurement_po_last_cost_list"})
-
 
 def has_narrowing_filter(args: Any, *, tool_name: str | None = None) -> bool:
     """True when the built args carry at least one non-empty narrowing key.
 
-    `tool_name` in `PRODUCT_ID_REQUIRED_TOOLS` narrows the bar to `product_ids`
-    specifically (SF6) - every other `ENTITY_FILTER_REQUIRED_TOOLS` member keeps the
-    generic "any narrowing param" rule.
+    `tool_name` in `policy_rows.PRODUCT_ID_REQUIRED_TOOLS` narrows the bar to
+    `product_ids` specifically (SF6) - every other `policy_rows.
+    ENTITY_FILTER_REQUIRED_TOOLS` member keeps the generic "any narrowing param" rule.
     """
     if not isinstance(args, dict):
         return False
-    if tool_name in PRODUCT_ID_REQUIRED_TOOLS:
+    if tool_name in policy_rows.PRODUCT_ID_REQUIRED_TOOLS:
         return jsc.truthy(args.get("product_ids"))
     return any(jsc.truthy(args.get(key)) for key in NARROWING_PARAMS)
 
@@ -585,10 +579,15 @@ def entity_ids_transformer(
         out.pop("product_ids", None)
         out.pop("warehouse_ids", None)
         # AC-1119: one rule for which code this report is about, shared with both filter
-        # builders (`outstanding_product_code`).
-        picked_code = outstanding_product_code(entities, semantic_input)
-        if jsc.truthy(picked_code):
-            out["product_code"] = picked_code
+        # builders (`outstanding_product_codes`).
+        picked_codes = outstanding_product_codes(entities, semantic_input)
+        if len(picked_codes) == 1:
+            out["product_code"] = picked_codes[0]
+        elif picked_codes:
+            # The SEVERAL-code form, only when there are several: one code keeps the
+            # argument it has always travelled under, so an ordinary outstanding ask is
+            # byte-identical to before.
+            out["product_codes"] = picked_codes
         scope = jsc.get(semantic_input, "outstanding_scope")
         if jsc.truthy(scope):
             out["scope"] = jsc.js_string(scope)
@@ -629,7 +628,7 @@ def entity_ids_transformer(
     if tool_name == "crm_sales_report":
         out.pop("product_ids", None)
         out.pop("warehouse_ids", None)
-        picked_code = outstanding_product_code(entities, semantic_input)
+        picked_code = sales_report_product_code(entities, semantic_input)
         if jsc.truthy(picked_code):
             out["product_code"] = picked_code
         warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
@@ -824,6 +823,31 @@ def entity_ids_transformer(
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
 
+    # E1 (attribute-first asks, fix round 11 Sep): a HAS turn - the resolver's
+    # `predicate` block rode through the gate untouched - shows the first FIVE
+    # qualifying PRODUCTS, never five ROWS: `limit` is the tool's own ROW cap
+    # (a stock answer can carry several warehouse rows per product, a cert
+    # answer several files per product), so setting `limit=5` there cut a
+    # 7-product answer down to 5 rows spanning 4 products under a header that
+    # said "Showing 5" - `limit` is left at the tool's own default entirely,
+    # and the PAGE is built by slicing `product_ids` itself. "more" (E3) pages
+    # the next five ids from the carried offer the same way.
+    if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
+        out["product_ids"] = out["product_ids"][:5]
+
+    # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
+    # ride the SAME predicate block, straight through under the SAME arg
+    # name `TYPE_TO_PARAM["certificate"]` already maps to (`certificate_ids`)
+    # - so `crm_master_product_attachments_list` narrows to those files
+    # alone (a product certified under both PPS and WCM must not have its
+    # WCM file rendered for a PPS question). Absent on a bare certificate
+    # leg - `predicate.certificate_ids` itself is present only on the scheme
+    # form, so nothing extra is sent and every certificate file still
+    # renders, exactly as it does today.
+    predicate = trig.get("predicate")
+    if isinstance(predicate, dict) and predicate.get("certificate_ids"):
+        out["certificate_ids"] = predicate["certificate_ids"]
+
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number
@@ -904,18 +928,22 @@ class ToolNotAllowed(RuntimeError):
 # behind a user confirmation and a permission check. The chatbot has no user to confirm
 # with, which is the whole difference.
 #
-# **Where the names live (D9, AC-931).** Still a frozen literal, for every reason above -
-# it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
-# (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
-# as claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
+# **Where the names live (D9, AC-931, AC-1594).** Still a frozen set, for every reason
+# above - it is simply no longer a THIRD list. Each name is either claimed by exactly one
+# domain (`turn.policy.default_policy().domains[*].tools`, the frozen seed
+# `chatbot_domains` is migrated from) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS` as
+# claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
 # for every seam a tool name can reach the MCP client through (the probes and the
 # cross-domain rung name their tool directly); the one tool a turn is ANSWERED from is
-# `DOMAIN_SPEC[domain].tools[0]`, read by `select_tool`.
+# `default_policy().domain(domain).tools[0]`, read by `select_tool`. A STATIC allow-list
+# on purpose, not a live per-turn `Policy` read: this is a security boundary
+# (`ensure_read_only` below), and an owner editing `chatbot_domains.tools` must not
+# silently widen what the chatbot may call without a deliberate migration/review.
 # `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union against the MCP
 # catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS
-)
+    tool for row in default_policy().domains for tool in row.tools
+) | frozenset(UNDOMAINED_CHATBOT_TOOLS)
 
 
 def ensure_read_only(name: Any) -> None:
@@ -944,8 +972,8 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
     **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
     The tool used to be chosen by cosine similarity over a pool that contains write tools,
     so the only thing standing between a customer's phrasing and `crm_order_cancel` was
-    that no phrasing had scored it first. `select_tool` now reads the name off
-    `DOMAIN_SPEC`, so a write tool cannot be PICKED at all; this is what stops one being
+    that no phrasing had scored it first. `select_tool` now reads the name off the
+    domain row, so a write tool cannot be PICKED at all; this is what stops one being
     CALLED however else it was named - the tier probe, and any tool name that arrived on a
     payload rather than from the domain table.
     """
@@ -1065,12 +1093,18 @@ def group_axis(ctx: Any) -> str:
     return jsc.js_string(si.get("group_by") or "").strip()
 
 
+#: What an answer says when the tool found nothing. Named so a caller that decides NOT to
+#: call a tool (`turn_runtime.make_tool_runner`'s unfiltered-fetch guard) says it in the
+#: same words, rather than printing a header with nothing under it.
+NO_RESULT_INTRO = "No matching results found."
+
+
 def _extract_envelope(j: Any) -> dict[str, Any]:
     empty = {
         "items": [],
         "attachments": [],
         "action_links": [],
-        "intro": "No matching results found.",
+        "intro": NO_RESULT_INTRO,
         "has_result": False,
     }
     p = _find_payload(j)
@@ -1334,17 +1368,14 @@ def _normalize_spec_word(v: Any) -> str:
 #: only the one multi-token entry ("list price") may be contained in a longer ask -
 #: same discipline as item 8's own matching, kept for the same reason ("seat size"
 #: must not read as a hit on "size").
-_BASE_PROPERTY_WORDS: frozenset[str] = frozenset(
-    {
-        "price", "list price", "harga", "cost",
-        "dimension", "dimensions", "size", "ukuran", "saiz",
-        "description", "name",
-    }
-)
-
-
+#:
+#: Was a module-level frozenset here (AC-1594, S6): the words are `chatbot_entity_kinds`.
+#: `base_property_words`' KEYS now, read through `Policy` (AC-1535) - which is a superset
+#: of the old literal (also "discontinued" and "brand", the S0 migration's own seed), a
+#: deliberate widening: a "discontinued" ask no longer needs its own miss line either.
 def _names_a_base_property(norm: str) -> bool:
-    for w in _BASE_PROPERTY_WORDS:
+    words = default_policy().kind("product")
+    for w in (words.base_property_words if words is not None else {}):
         if norm == w or (" " in w and w in norm):
             return True
     return False
@@ -1640,24 +1671,33 @@ def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
     return rows
 
 
-def outstanding_product_code(entities: Any, semantic_input: Any) -> Any:
-    """WHICH product this report is about, in one place (AC-1119, reviewer N5 +
+def outstanding_product_codes(entities: Any, semantic_input: Any) -> list[str]:
+    """WHICH products this report is about, in one place (AC-1119, reviewer N5 +
     console run 4 finding 5).
 
     `run_fetch` matches the gate's products against the codes the customer TYPED and
-    stamps the winner as `semantic_input.outstanding_product_code`; that one wins.
+    stamps the winner as `semantic_input.outstanding_product_code`; that one wins, alone.
     Only when no candidate equalled a typed code (a prefix or spec-search hit, where the
-    family member is the only answer there is) does the first product entity stand.
+    family member is the only answer there is) do the product entities themselves stand.
+
+    A LIST, since hand pass 3: "all" over a ten-variant product roster picks ten codes,
+    and the old rule took the FIRST entity and reported on one of them under a header
+    that named it (turn 0a6f0379, 16 Sep 2026). One entity gives a list of one and
+    behaves exactly as before.
 
     Every caller that names the product goes through here - the tool arguments, the
     detail offer's stored filters and the scope question's stored filters - so the
-    question, the answer and the header can never disagree about which code was asked
+    question, the answer and the header can never disagree about which codes were asked
     about, which is exactly what console run 4 read on the scope-question arm.
     """
     si = semantic_input if isinstance(semantic_input, dict) else {}
+    carried = [jsc.js_string(c) for c in jsc.array(si.get("outstanding_product_codes")) if jsc.truthy(c)]
+    if carried:
+        return carried
     typed = si.get("outstanding_product_code")
     if jsc.truthy(typed):
-        return jsc.js_string(typed)
+        return [jsc.js_string(typed)]
+    codes: list[str] = []
     for e in jsc.array(entities):
         if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
             continue
@@ -1665,8 +1705,40 @@ def outstanding_product_code(entities: Any, semantic_input: Any) -> Any:
         # `compatible_entities`; a caller that hands entities straight in (this module's
         # own tests) still spells it `canonical_code`.
         code = e.get("code") or e.get("canonical_code")
-        return jsc.js_string(code) if jsc.truthy(code) else None
-    return None
+        if jsc.truthy(code) and jsc.js_string(code) not in codes:
+            codes.append(jsc.js_string(code))
+    return codes
+
+
+#: The shortest a `crm_sales_report` `product_code` may be - the route 422s
+#: `product_code_too_short` under it (AC-1627, S19).
+_SALES_REPORT_MIN_PREFIX = 3
+
+
+def sales_report_product_code(entities: Any, semantic_input: Any) -> str:
+    """WHICH product the SALES report is about, as ONE string.
+
+    `outstanding_product_codes` is the shared rule for which codes are in play (AC-1119);
+    this route's own parameter is different in kind, because `crm_sales_report`'s
+    `product_code` is a PREFIX that covers a family (S19), not an exact code, and the
+    route declares no `product_codes` list at all.
+
+    So a carry of SEVERAL codes - "all" over a product roster, `outstanding_carried_
+    product_codes` - travels as the longest prefix they share, which covers exactly them
+    (and any sibling sitting between them) rather than reporting on the first alone under
+    a header naming it (the outstanding report's own turn 0a6f0379, 16 Sep 2026). One
+    code, which is every ordinary ask, is returned verbatim and this is a no-op.
+    """
+    codes = outstanding_product_codes(entities, semantic_input)
+    if not codes:
+        return ""
+    if len(codes) == 1:
+        return codes[0]
+    shared = codes[0]
+    for code in codes[1:]:
+        while shared and not code.upper().startswith(shared.upper()):
+            shared = shared[:-1]
+    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
 
 
 #: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
@@ -1698,7 +1770,7 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     if isinstance(semantic_input, str):
         semantic_input = _safe_json(semantic_input)
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    product_code = outstanding_product_code(ctx.get("entities"), semantic_input)
+    product_codes = outstanding_product_codes(ctx.get("entities"), semantic_input)
     customer_ids: list[Any] = []
     for e in jsc.array(ctx.get("entities")):
         if not isinstance(e, dict):
@@ -1715,7 +1787,10 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
             uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
         ]
     return {
-        "product_code": product_code,
+        "product_code": product_codes[0] if product_codes else None,
+        # Only when there are SEVERAL: one code keeps the single key every reader
+        # already speaks, so an ordinary ask's stored filters are unchanged.
+        **({"product_codes": product_codes} if len(product_codes) > 1 else {}),
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
@@ -1807,7 +1882,7 @@ def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     if isinstance(semantic_input, str):
         semantic_input = _safe_json(semantic_input)
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    product_code = outstanding_product_code(ctx.get("entities"), semantic_input)
+    product_code = sales_report_product_code(ctx.get("entities"), semantic_input)
     customer_ids: list[Any] = []
     for e in jsc.array(ctx.get("entities")):
         if not isinstance(e, dict):
@@ -1946,6 +2021,42 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
         "field_access": None,
         "requested_attributes": [],
         "keys_served": False,
+    }
+
+
+#: `chatbot_domains.forms.tools[0]` (`policy_rows.py`) - the one tool this domain calls.
+_FORMS_LIST_TOOL = "crm_forms_management_forms_list"
+
+
+def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """Item 1 (17 Sep 2026): a forms BROWSE that found several forms arms a `form_pick`
+    roster beside the numbered list it already prints, so "1" can answer it - the same
+    `outstanding_ask` shape `_outstanding_report_output` hands `envelope_of` (read there
+    as `lane_ask`), built off the MCP presenter's own `id` (`sorento_crm_mcp.presenters.
+    _forms`, `_FORMS_LIST_KEEP_BROWSE`).
+
+    Never when this call already NAMED a form: `ctx["entities"]` carrying a `form` entity
+    means the pick already resolved (the customer's own "1", or the resolver matched a
+    name) and this is the narrowed lookup that answer runs, not a fresh browse to arm
+    another roster over.
+    """
+    if any(
+        isinstance(ent, dict) and ent.get("entity_type") == "form"
+        for ent in jsc.array(ctx.get("entities"))
+    ):
+        return None
+    items = [it for it in (e.get("items") or []) if isinstance(it, dict) and jsc.truthy(it.get("id"))]
+    if len(items) < 2:
+        # One form, or none: nothing to choose between (`narrow.decide`'s own
+        # `_choices() <= 1` rule for a roster policy, read here for the same reason).
+        return None
+    return {
+        "kind": "form_pick",
+        "last_result_set": [
+            {"idx": i + 1, "label": it.get("title"), "value": it["id"]}
+            for i, it in enumerate(items)
+        ],
+        "filters": {},
     }
 
 
@@ -2405,6 +2516,81 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if ts:
         msg += f"_Data last updated: {ts}_"
 
+    # E2 (attribute-first asks, AC-1316): a HAS turn's set-answer header, PREPENDED
+    # as its own line ahead of everything above - the block itself (intro, items,
+    # summaries, ...) is untouched. Deferred-import: `answer.py` imports FROM this
+    # module (`DATE_PARAMS`, `space_id_or_default`), so a module-level import here
+    # would be circular.
+    #
+    # `set_header` also travels out as its OWN key (below, `out["set_header"]`), not
+    # only baked into `response` - the turn re-architecture's `compose.py` renders its
+    # OWN per-row grammar from `figures`/`entities` rather than reusing this arm's
+    # `response` string wholesale (`lane_text` there is read only when a tool has NO
+    # rows to hand over), so without a header of its own a counted-set answer's rows
+    # would render with no leading count/attribute line at all.
+    predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    set_header: str | None = None
+    if predicate is not None:
+        from app.services.chatbot.lanes.business.answer import (
+            build_set_header,
+            build_set_page_header,
+            set_noun_for,
+        )
+
+        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
+        require = jsc.get(predicate, "require") or {}
+        # E3/AC-1317: a "more" continuation page carries its OWN pre-known
+        # `set_noun` and page bounds (`page`) - a "more" turn runs no resolver
+        # call, so there are no fresh `class_labels` to re-derive one from.
+        page = jsc.get(predicate, "page")
+        if isinstance(page, dict):
+            header = build_set_page_header(
+                qualifying_total,
+                jsc.get(page, "start"),
+                jsc.get(page, "end"),
+                jsc.js_string(jsc.get(page, "set_noun")) or "products",
+                require,
+            )
+        else:
+            # R8 (console fix round 2, AC-1330): `shown` is distinct PRODUCTS
+            # rendered, never tool rows - a stock/cert answer carries one row per
+            # warehouse/certificate, so five products across three warehouses is
+            # fifteen rows and would have overstated "Showing 15" for a five-page
+            # answer. Falls back to the row count when no row carries a product
+            # code at all (a result type this header never fires for today).
+            items0 = e.get("items") or []
+
+            def _product_code_of_row(it: Any) -> str:
+                fields = jsc.get(it, "fields")
+                if not isinstance(fields, list):
+                    return ""
+                for f in fields:
+                    if isinstance(f, dict) and f.get("label") == "Product Code":
+                        return jsc.nullish_str(f.get("value")).strip()
+                return ""
+
+            shown_codes = {c for c in (_product_code_of_row(it) for it in items0) if c}
+            shown = len(shown_codes) if shown_codes else len(items0)
+            class_labels = jsc.array(jsc.get(predicate, "class_labels"))
+            set_noun = set_noun_for(class_labels)
+            # `set_noun_for` is always plural (its own contract, AC-1316) - singular
+            # only for the ONE-qualifying-product header ("1 tap has ...", never
+            # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
+            # naive "-1 char" strip of the pluralised noun: that guess turned
+            # "bathroom accessories" into "bathroom accessorie", not the real
+            # singular "bathroom accessory". Only the single-label case has one to
+            # use; the "products" fallback (zero or blended labels) has no
+            # singular of its own and keeps its old strip.
+            if qualifying_total == 1:
+                single_labels = [label for label in class_labels if label and label.strip()]
+                if len(single_labels) == 1:
+                    set_noun = single_labels[0].strip().lower()
+                elif set_noun.endswith("s"):
+                    set_noun = set_noun[:-1]
+            header = build_set_header(qualifying_total, shown, set_noun, require)
+        set_header = header
+        msg = f"{header}\n{msg}"
+
     final_response = msg.strip()
     if so_bucket_refusal:
         final_response = f"{so_bucket_refusal}\n\n{final_response}"
@@ -2412,6 +2598,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     out: dict[str, Any] = {
         "response": final_response,
         "response_intro": e.get("intro"),
+        # The counted-set header alone (AC-1316/AC-1317), so a reader that renders its
+        # own rows can still prefix the right line - see the note above `predicate`.
+        "set_header": set_header,
         # GROUPED: the flat `items` order and the NUMBERED order the customer just read
         # are two different orders, and `answers` is what a positional pick ("2") resolves
         # against - so a grouped answer used to hand back a different record than the one
@@ -2443,6 +2632,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     )
     if len(lookup_cos) > 1:
         out["lookup_companies"] = lookup_cos
+    if jsc.js_string(ctx.get("tool") or "") == _FORMS_LIST_TOOL:
+        # Beside `out["answers"]`, never instead of it: the numbered list still prints
+        # through the generic per-row grammar, and `forms_ask` only gives `envelope_of`
+        # something to arm a pick from (item 1).
+        out["forms_ask"] = _forms_browse_ask(e, ctx)
     return out
 
 

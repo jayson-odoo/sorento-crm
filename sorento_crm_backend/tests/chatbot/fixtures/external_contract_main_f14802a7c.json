@@ -1,0 +1,475 @@
+{
+  "ACTION_KINDS": [
+    "send_message",
+    "send_attachments",
+    "assign_conversation",
+    "add_comment",
+    "update_contact_fields"
+  ],
+  "CompleteRequest": {
+    "additionalProperties": false,
+    "description": "`POST /api/v1/external/chat/turn/{turn_id}/complete` body (AC-201).\n\nThe `sub-output` trigger contract, unchanged: `item` plus the eleven nullable\nproducer outputs the sub's RS-9 carrier stubs re-emit today. Each value is a\nproducer's WHOLE output, verbatim, because the tail's by-name reads dig into it\n(`result.result.xd.block`, `answer.outcome_fragment['central-exchange']`) and\nreshaping it here would move the very bytes the replay corpus grades.\n\n`ctx` is optional: `/turn` already persisted it on the row, which is where the tail\nreads it from. Accepting it anyway means the n8n node can keep sending exactly what\nit sends today - a caller that has to DELETE a field to be accepted is a caller that\nbreaks on the next deploy.",
+    "properties": {
+      "access_choice": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Access Choice"
+      },
+      "answer": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Answer"
+      },
+      "clarify": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Clarify"
+      },
+      "crossdomain_render": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Crossdomain Render"
+      },
+      "ctx": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ctx"
+      },
+      "gate": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Gate"
+      },
+      "incoming_picker": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Incoming Picker"
+      },
+      "item": {
+        "additionalProperties": true,
+        "title": "Item",
+        "type": "object"
+      },
+      "not_found": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Not Found"
+      },
+      "offer_hold": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Offer Hold"
+      },
+      "resolved": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Resolved"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Result"
+      },
+      "suggest_offer": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Suggest Offer"
+      }
+    },
+    "required": [
+      "item"
+    ],
+    "title": "CompleteRequest",
+    "type": "object"
+  },
+  "CompleteResponse": {
+    "additionalProperties": false,
+    "description": "`POST .../complete` 200 body.\n\n`reply` is `{text, quick_replies, result_set, attachments_src}` - the four values\n`sub-sendmsg` and `send-attachments` reach for by name today, so each of their\nexpressions becomes one read (AC-207). A plain dict for the same reason `Reply` is\nnot modelled above: `result_set` is whatever the lane produced, and `response_model`\nsilently DROPS anything a model does not declare.",
+    "properties": {
+      "actions": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Actions",
+        "type": "array"
+      },
+      "is_test": {
+        "default": false,
+        "title": "Is Test",
+        "type": "boolean"
+      },
+      "reply": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Reply"
+      },
+      "session_patch": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Session Patch"
+      },
+      "turn_id": {
+        "title": "Turn Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "turn_id"
+    ],
+    "title": "CompleteResponse",
+    "type": "object"
+  },
+  "TurnRequest": {
+    "$defs": {
+      "Envelope": {
+        "additionalProperties": true,
+        "description": "The redis queue item `A` the two injectors both post, unchanged (D15).\n\n`message` is the respond.io webhook body; `contact` is the respond.io contact record\nn8n already looked up. Everything else is optional metadata about HOW the turn\narrived, and the engine's behaviour depends on none of it except `is_test` /\n`test_run_id` (D14).",
+        "properties": {
+          "contact": {
+            "additionalProperties": true,
+            "title": "Contact",
+            "type": "object"
+          },
+          "ingress": {
+            "default": "webhook",
+            "enum": [
+              "webhook",
+              "poller",
+              "retry",
+              "console"
+            ],
+            "title": "Ingress",
+            "type": "string"
+          },
+          "is_test": {
+            "default": false,
+            "title": "Is Test",
+            "type": "boolean"
+          },
+          "message": {
+            "additionalProperties": true,
+            "title": "Message",
+            "type": "object"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
+          },
+          "shadow_of": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shadow Of"
+          },
+          "test_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Test Run Id"
+          }
+        },
+        "required": [
+          "message",
+          "contact"
+        ],
+        "title": "Envelope",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "`POST /api/v1/external/chat/turn` body.",
+    "properties": {
+      "envelope": {
+        "$ref": "#/$defs/Envelope"
+      }
+    },
+    "required": [
+      "envelope"
+    ],
+    "title": "TurnRequest",
+    "type": "object"
+  },
+  "TurnResponse": {
+    "additionalProperties": false,
+    "description": "`POST /api/v1/external/chat/turn` 200 body.\n\n`delegate` names the n8n lane that must still run; `null` means the CRM finished the\nturn and the caller only sends. `session_patch` is populated on a dry run only, so a\nconsole or clone turn can be inspected without anything having been written.",
+    "properties": {
+      "actions": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Actions",
+        "type": "array"
+      },
+      "branch_kind": {
+        "anyOf": [
+          {
+            "enum": [
+              "access_denied",
+              "escalate_offer",
+              "out_of_scope",
+              "ideate",
+              "offer_hold",
+              "escalation_declined",
+              "check_promotion",
+              "low_signal",
+              "clarify_menu",
+              "not_supported",
+              "stock_denied",
+              "demand_qty",
+              "business_query"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Branch Kind"
+      },
+      "ctx": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ctx"
+      },
+      "delegate": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Delegate"
+      },
+      "delegate_payload": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Delegate Payload"
+      },
+      "duplicate": {
+        "default": false,
+        "title": "Duplicate",
+        "type": "boolean"
+      },
+      "is_test": {
+        "default": false,
+        "title": "Is Test",
+        "type": "boolean"
+      },
+      "item": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Item"
+      },
+      "reply": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Reply"
+      },
+      "session_patch": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Session Patch"
+      },
+      "turn_id": {
+        "title": "Turn Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "turn_id"
+    ],
+    "title": "TurnResponse",
+    "type": "object"
+  }
+}

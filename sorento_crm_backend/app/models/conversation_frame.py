@@ -28,14 +28,25 @@ class ConversationFrame(Base):
     contact_id = Column(String(128), nullable=False)
     space_id = Column(String(32), nullable=False)
     channel = Column(String(32), nullable=False)
+    # Chatbot turn re-architecture (AC-1505): the episode store's own contact key,
+    # `respond_contacts.id` - a SEPARATE column from `contact_id` above (that one is
+    # the Phase-1-2026 n8n identity, still read by nothing this rearch writes) so the
+    # two eras of this table never collide on one column's meaning.
+    contact_respond_id = Column(String(128), nullable=True, index=True)
 
     domain = Column(String(64), nullable=True)
     intent = Column(String(64), nullable=True)
     active_entities = Column(JSONB, nullable=False, server_default="{}")
+    # AC-1505's own name for the same shape `active_entities` carries - kinds and ids,
+    # JSONB. A second column rather than a rename: `active_entities` is read by the
+    # parked Phase 1 (2026) code path this rearch does not touch.
+    entities = Column(JSONB, nullable=False, server_default="{}")
     access_levels_used = Column(ARRAY(Text), nullable=False, server_default="{}")
     tools_used = Column(ARRAY(Text), nullable=False, server_default="{}")
     result_refs = Column(JSONB, nullable=False, server_default="[]")
     pending_request = Column(JSONB, nullable=False, server_default="{}")
+    # The `chatbot.turns.id`s this frame's topic spans (AC-1505).
+    turn_ids = Column(ARRAY(Text), nullable=False, server_default="{}")
 
     summary = Column(Text, nullable=True)
     last_user_message = Column(Text, nullable=True)
@@ -45,6 +56,9 @@ class ConversationFrame(Base):
     close_reason = Column(String(32), nullable=True)
 
     started_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    # AC-1505's own name for `started_at` - a second column, same reason `entities` is:
+    # `started_at` stays for the parked Phase 1 (2026) reader.
+    opened_at = Column(DateTime(timezone=False), nullable=True)
     last_activity_at = Column(
         DateTime(timezone=False),
         nullable=False,

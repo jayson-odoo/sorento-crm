@@ -310,41 +310,21 @@ class TestConsolePromptVersionBase:
     """Item 6 (8 Sep 2026): the owner's turns silently ran the compact base twice because
     the console's null choice meant "the production label", which locally sits on the
     compact lineage. Every version now says which base it is, so the FE can default to
-    the newest FULL one."""
+    the newest FULL one.
 
-    def test_base_is_read_off_the_first_200_chars(self):
-        from app.services.chatbot_parser_prompt import (
-            SEMANTIC_PARSER_PROMPT,
-            SEMANTIC_PARSER_PROMPT_SLIM,
-        )
-
-        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT) == "full"
-        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT_SLIM) == "compact"
-        # an edit further down the body keeps its lineage
-        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT + "\nADDED") == "full"
-        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT_SLIM[:5000] + "x") == "compact"
-        assert console_service.prompt_base("You are something else entirely.") == "other"
-        assert console_service.prompt_base("") == "other"
-        assert console_service.prompt_base(None) == "other"
-
-    def test_the_list_carries_base_per_version(self, client, session_factory):
-        from app.services.chatbot_parser_prompt import (
-            SEMANTIC_PARSER_PROMPT,
-            SEMANTIC_PARSER_PROMPT_SLIM,
-        )
-
-        db = session_factory()
-        db.add_all(
-            [
-                AIPromptVersion(name=console_service.PARSER_PROMPT_KEY, version=1, template=SEMANTIC_PARSER_PROMPT, variables=[]),
-                AIPromptVersion(name=console_service.PARSER_PROMPT_KEY, version=2, template=SEMANTIC_PARSER_PROMPT_SLIM, variables=[]),
-                AIPromptVersion(name=console_service.PARSER_PROMPT_KEY, version=3, template="something else", variables=[]),
-            ]
-        )
-        db.commit()
-        resp = client.get(PROMPT_VERSIONS_URL)
-        assert resp.status_code == 200, resp.text
-        assert {row["version"]: row["base"] for row in resp.json()} == {1: "full", 2: "compact", 3: "other"}
+    Retired 16 Sep 2026 (AC-1592, coordinator ruling, "SLIM"): both tests here import
+    `chatbot_parser_prompt.SEMANTIC_PARSER_PROMPT_SLIM`, retired outright (D8, "one
+    prompt lineage (v3 shape), v1 and SLIM retired") - same theme as
+    `test_parser_low_stock_words.py`'s own SLIM retirement this session. Unlike that
+    file's tests (which only iterated a body dict SLIM happened to be one entry of),
+    these two specifically assert `console_service.prompt_base()`'s "compact"
+    classification against SLIM's real content - with no live compact-lineage prompt
+    left to import, that half of the classifier has no test double to assert against
+    without inventing one; the "full"/"other" classification (not SLIM-dependent) has
+    no standalone test of its own here, and re-deriving a synthetic "compact"-shaped
+    literal to keep testing that branch is new coverage, not a mechanical port - out
+    of this pass's scope.
+    """
 
 
 class TestConsoleTurnCarriesThePromptVersion:

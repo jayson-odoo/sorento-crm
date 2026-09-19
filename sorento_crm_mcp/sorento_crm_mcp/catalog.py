@@ -688,6 +688,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "returns `so_by_location` only; a group the subject does not want is ABSENT from the "
             "body. Rows always carry both `customer_name` and `product_code`.\n\n"
             "FILTERS: `product_code` (exact, case-insensitive - no sibling-code expansion). "
+            "`product_codes` - the SEVERAL-code form of it (csv/JSON/repeated), for one question "
+            "about a whole family; the rendered header then names every code. "
             "`customer_query` - partial match on customer NAME only (never debtor/customer code). "
             "`customer_ids` - canonical customer UUIDs (csv/JSON/repeated); intersects with "
             "`customer_query` when both are given. "
@@ -710,7 +712,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/outstanding-report",
         (),
         (
-            "product_code", "scope", "customer_query", "customer_ids", "warehouse_codes",
+            "product_code", "product_codes", "scope", "customer_query", "customer_ids",
+            "warehouse_codes",
             "order_date_from", "order_date_to", "detail", "location_token", "so_refused",
             "contact_id", "space_id",
         ),

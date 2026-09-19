@@ -1,0 +1,405 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT2634 outstanding",
+              "type": "text"
+            },
+            "messageId": "console-check-468dc4d7981a",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT2634\nCustomer: all\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT2634"
+          }
+        ],
+        "tokens": [
+          "SRTWT2634"
+        ],
+        "unresolved_tokens": [
+          "SRTWT2634"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:38:12.950295+09:00",
+        "turn_id": "4f1a28b6-b7c9-4ca3-bb26-43c032985459"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT2634"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the outstanding order for SRTWT2634"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-ecc1cc9fcfba",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 33,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 33,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 33,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT2634"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 33,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": "SRTWT2634",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT2634\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 32\nOrdered: 134\nTransferred to DO: 0\nOutstanding: 134\nOrder date range: 31/03/2026 to 27/08/2026\n*_By location_*\nBRW: 126 (O/S: 126)\nBRW-BB: 6 (O/S: 6)\nBRW-SYNT: 2 (O/S: 2)\n*_By customer_*\nSYNTALUN MARKETING (EM) SDN BHD: 25 (O/S: 25)\nTOTAL HOME DIY SDN BHD: 16 (O/S: 16)\nMODERNMED SDN BHD: 11 (O/S: 11)\nFULLSHUN SANITARYWARE SDN BHD: 9 (O/S: 9)\nHOOI CHUAN SANITARY WARES SDN BHD: 7 (O/S: 7)\nLSTC HARDWARE SDN BHD: 7 (O/S: 7)\nSuper Ceramic Tiles (Balakong): 7 (O/S: 7)\nUNIMAX LIVINGMART (M) SDN BHD: 7 (O/S: 7)\nKIM SENG JAYA SDN BHD: 6 (O/S: 6)\nCHIN CHUN HOMEMART SDN BHD [A/C I]: 5 (O/S: 5)\nMODERN HOME TRADING: 5 (O/S: 5)\nASIANEKA JAYA SDN BHD: 4 (O/S: 4)\nCHIN HOO SDN BHD (PROJECT): 4 (O/S: 4)\nPSM HOME CENTRE SDN BHD: 3 (O/S: 3)\nSANIMART SDN BHD: 3 (O/S: 3)\nDEPARAMAX SDN BHD: 2 (O/S: 2)\nEUROTAN ENTERPRISE SDN BHD: 2 (O/S: 2)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 2 (O/S: 2)\nSERI MURNI JASA SDN BHD [A/C I]: 2 (O/S: 2)\nBEST LIGHT CITY SDN BHD [A/C I]: 1 (O/S: 1)\nBFO MEGASTORE (KUCHAI LAMA) SDN BHD: 1 (O/S: 1)\nBINA WAREHOUSE SDN BHD [A/C I]: 1 (O/S: 1)\nCHIN CHUN HOMEMART SDN BHD: 1 (O/S: 1)\nSKY PURE WATER SOLUTIONS & ENTERPRISE: 1 (O/S: 1)\nU BATH & KITCHEN SDN BHD [A/C I]: 1 (O/S: 1)\nZHIN HENG HOMEMART SDN BHD [A/C I]: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:38:30.101808+09:00",
+        "turn_id": "320b8170-1fd3-4fef-93a3-6ec2a732d9bc"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_code": "SRTWT2634",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT2634\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 32\nOrdered: 134\nTransferred to DO: 0\nOutstanding: 134\nOrder date range: 31/03/2026 to 27/08/2026\n*_By location_*\nBRW: 126 (O/S: 126)\nBRW-BB: 6 (O/S: 6)\nBRW-SYNT: 2 (O/S: 2)\n*_By customer_*\nSYNTALUN MARKETING (EM) SDN BHD: 25 (O/S: 25)\nTOTAL HOME DIY SDN BHD: 16 (O/S: 16)\nMODERNMED SDN BHD: 11 (O/S: 11)\nFULLSHUN SANITARYWARE SDN BHD: 9 (O/S: 9)\nHOOI CHUAN SANITARY WARES SDN BHD: 7 (O/S: 7)\nLSTC HARDWARE SDN BHD: 7 (O/S: 7)\nSuper Ceramic Tiles (Balakong): 7 (O/S: 7)\nUNIMAX LIVINGMART (M) SDN BHD: 7 (O/S: 7)\nKIM SENG JAYA SDN BHD: 6 (O/S: 6)\nCHIN CHUN HOMEMART SDN BHD [A/C I]: 5 (O/S: 5)\nMODERN HOME TRADING: 5 (O/S: 5)\nASIANEKA JAYA SDN BHD: 4 (O/S: 4)\nCHIN HOO SDN BHD (PROJECT): 4 (O/S: 4)\nPSM HOME CENTRE SDN BHD: 3 (O/S: 3)\nSANIMART SDN BHD: 3 (O/S: 3)\nDEPARAMAX SDN BHD: 2 (O/S: 2)\nEUROTAN ENTERPRISE SDN BHD: 2 (O/S: 2)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 2 (O/S: 2)\nSERI MURNI JASA SDN BHD [A/C I]: 2 (O/S: 2)\nBEST LIGHT CITY SDN BHD [A/C I]: 1 (O/S: 1)\nBFO MEGASTORE (KUCHAI LAMA) SDN BHD: 1 (O/S: 1)\nBINA WAREHOUSE SDN BHD [A/C I]: 1 (O/S: 1)\nCHIN CHUN HOMEMART SDN BHD: 1 (O/S: 1)\nSKY PURE WATER SOLUTIONS & ENTERPRISE: 1 (O/S: 1)\nU BATH & KITCHEN SDN BHD [A/C I]: 1 (O/S: 1)\nZHIN HENG HOMEMART SDN BHD [A/C I]: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose sales orders"
+      }
+    }
+  ]
+}

@@ -1,0 +1,613 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTKT71SS product details",
+              "type": "text"
+            },
+            "messageId": "console-check-244d36817c0c",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473473"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "192f418d-49f8-4ece-8c18-6854648c6096",
+          "252081cb-80a1-4f06-837d-9e52799806d9",
+          "2e0c9746-85f5-4a62-8f15-0267c918f94e",
+          "5cc806a1-cb91-450b-9a33-23252f2c4150",
+          "d193c75a-918b-4949-80cc-866f73e03b56"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Here are the matching products.\n\n1. *Product Code:* SRTKT71SS\n*Description:* SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS\n*List Price:* MYR 440.00\n*Dimensions:* Not defined\n*Specs:* Product class: Tap, Type: kitchen_tap, Pull-out shower: True, Steel grade: 304, Water supply: mixer, Material: stainless_steel, Mounting: pillar_mounted, Spout: pull_out, Brand: SORENTO, Finish or colour: black\n\n2. *Product Code:* SRTKT71SS-BL\n*Description:* SORENTO S/STEEL PILLAR MOUNTED SINK MIXER TAP WITH PULL OUT SHOWER  SRTKT71SS-BL\n*List Price:* MYR 530.00\n*Dimensions:* Not defined\n*Specs:* Product class: Tap, Type: mixer_tap, Pull-out shower: True, Water supply: mixer, Material: stainless_steel, Mounting: pillar_mounted, Spout: pull_out, Brand: SORENTO, Finish or colour: black\n\n3. *Product Code:* SRTKT71SS-GY\n*Description:* SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS-GY\n*List Price:* MYR 650.00\n*Dimensions:* Not defined\n*Specs:* Product class: Tap, Type: kitchen_tap, Pull-out shower: True, Water supply: mixer, Material: stainless_steel, Mounting: pillar_mounted, Spout: pull_out, Brand: SORENTO, Finish or colour: grey\n\n4. *Product Code:* SRTKT71SS-FRG\n*Description:* SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS-FRG\n*List Price:* MYR 650.00\n*Dimensions:* Not defined\n*Specs:* Product class: Tap, Type: kitchen_tap, Pull-out shower: True, Water supply: mixer, Material: stainless_steel, Mounting: pillar_mounted, Spout: pull_out, Brand: SORENTO, Finish or colour: french_gold\n\n5. *Product Code:* SRTKT71SS-GM\n*Description:* SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS-GM\n*List Price:* MYR 650.00\n*Dimensions:* Not defined\n*Specs:* Product class: Tap, Type: kitchen_tap, Pull-out shower: True, Water supply: mixer, Material: stainless_steel, Mounting: pillar_mounted, Spout: pull_out, Brand: SORENTO, Finish or colour: gunmetal, Has a drainer: True\n\n_Data last updated: 04/09/2026 18:58:41_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_specs",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_master_products_list"
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "variables": {}
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "SRTKT71SS",
+                "entity_type": "product",
+                "uuid": "192f418d-49f8-4ece-8c18-6854648c6096"
+              }
+            ],
+            "resolved": true,
+            "token": "SRTKT71SS"
+          }
+        ],
+        "tokens": [
+          "SRTKT71SS"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:58:22.933068+09:00",
+        "turn_id": "044edb69-a78e-4f6a-ab0e-ca25b9e687c5"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 5,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 5,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "include_specs": true,
+            "is_active": null,
+            "product_ids": [
+              "2e0c9746-85f5-4a62-8f15-0267c918f94e",
+              "d193c75a-918b-4949-80cc-866f73e03b56",
+              "192f418d-49f8-4ece-8c18-6854648c6096",
+              "252081cb-80a1-4f06-837d-9e52799806d9",
+              "5cc806a1-cb91-450b-9a33-23252f2c4150"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "Here are the matching products.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTKT71SS"
+                  },
+                  {
+                    "label": "Description",
+                    "value": "SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS"
+                  },
+                  {
+                    "label": "List Price",
+                    "value": "MYR 440.00"
+                  },
+                  {
+                    "label": "Dimensions",
+                    "value": "Not defined"
+                  },
+                  {
+                    "key": "spec:class",
+                    "label": "Product class",
+                    "value": "Tap"
+                  },
+                  {
+                    "key": "spec:product_type",
+                    "label": "Type",
+                    "value": "kitchen_tap"
+                  },
+                  {
+                    "key": "spec:has_pull_out_shower",
+                    "label": "Pull-out shower",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:steel_grade",
+                    "label": "Steel grade",
+                    "value": "304"
+                  },
+                  {
+                    "key": "spec:water_supply",
+                    "label": "Water supply",
+                    "value": "mixer"
+                  },
+                  {
+                    "key": "spec:material",
+                    "label": "Material",
+                    "value": "stainless_steel"
+                  },
+                  {
+                    "key": "spec:mounting",
+                    "label": "Mounting",
+                    "value": "pillar_mounted"
+                  },
+                  {
+                    "key": "spec:spout_type",
+                    "label": "Spout",
+                    "value": "pull_out"
+                  },
+                  {
+                    "key": "spec:brand",
+                    "label": "Brand",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "key": "spec:finish",
+                    "label": "Finish or colour",
+                    "value": "black"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTKT71SS"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTKT71SS-BL"
+                  },
+                  {
+                    "label": "Description",
+                    "value": "SORENTO S/STEEL PILLAR MOUNTED SINK MIXER TAP WITH PULL OUT SHOWER  SRTKT71SS-BL"
+                  },
+                  {
+                    "label": "List Price",
+                    "value": "MYR 530.00"
+                  },
+                  {
+                    "label": "Dimensions",
+                    "value": "Not defined"
+                  },
+                  {
+                    "key": "spec:class",
+                    "label": "Product class",
+                    "value": "Tap"
+                  },
+                  {
+                    "key": "spec:product_type",
+                    "label": "Type",
+                    "value": "mixer_tap"
+                  },
+                  {
+                    "key": "spec:has_pull_out_shower",
+                    "label": "Pull-out shower",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:water_supply",
+                    "label": "Water supply",
+                    "value": "mixer"
+                  },
+                  {
+                    "key": "spec:material",
+                    "label": "Material",
+                    "value": "stainless_steel"
+                  },
+                  {
+                    "key": "spec:mounting",
+                    "label": "Mounting",
+                    "value": "pillar_mounted"
+                  },
+                  {
+                    "key": "spec:spout_type",
+                    "label": "Spout",
+                    "value": "pull_out"
+                  },
+                  {
+                    "key": "spec:brand",
+                    "label": "Brand",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "key": "spec:finish",
+                    "label": "Finish or colour",
+                    "value": "black"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTKT71SS-BL"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTKT71SS-GY"
+                  },
+                  {
+                    "label": "Description",
+                    "value": "SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS-GY"
+                  },
+                  {
+                    "label": "List Price",
+                    "value": "MYR 650.00"
+                  },
+                  {
+                    "label": "Dimensions",
+                    "value": "Not defined"
+                  },
+                  {
+                    "key": "spec:class",
+                    "label": "Product class",
+                    "value": "Tap"
+                  },
+                  {
+                    "key": "spec:product_type",
+                    "label": "Type",
+                    "value": "kitchen_tap"
+                  },
+                  {
+                    "key": "spec:has_pull_out_shower",
+                    "label": "Pull-out shower",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:water_supply",
+                    "label": "Water supply",
+                    "value": "mixer"
+                  },
+                  {
+                    "key": "spec:material",
+                    "label": "Material",
+                    "value": "stainless_steel"
+                  },
+                  {
+                    "key": "spec:mounting",
+                    "label": "Mounting",
+                    "value": "pillar_mounted"
+                  },
+                  {
+                    "key": "spec:spout_type",
+                    "label": "Spout",
+                    "value": "pull_out"
+                  },
+                  {
+                    "key": "spec:brand",
+                    "label": "Brand",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "key": "spec:finish",
+                    "label": "Finish or colour",
+                    "value": "grey"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTKT71SS-GY"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTKT71SS-FRG"
+                  },
+                  {
+                    "label": "Description",
+                    "value": "SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS-FRG"
+                  },
+                  {
+                    "label": "List Price",
+                    "value": "MYR 650.00"
+                  },
+                  {
+                    "label": "Dimensions",
+                    "value": "Not defined"
+                  },
+                  {
+                    "key": "spec:class",
+                    "label": "Product class",
+                    "value": "Tap"
+                  },
+                  {
+                    "key": "spec:product_type",
+                    "label": "Type",
+                    "value": "kitchen_tap"
+                  },
+                  {
+                    "key": "spec:has_pull_out_shower",
+                    "label": "Pull-out shower",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:water_supply",
+                    "label": "Water supply",
+                    "value": "mixer"
+                  },
+                  {
+                    "key": "spec:material",
+                    "label": "Material",
+                    "value": "stainless_steel"
+                  },
+                  {
+                    "key": "spec:mounting",
+                    "label": "Mounting",
+                    "value": "pillar_mounted"
+                  },
+                  {
+                    "key": "spec:spout_type",
+                    "label": "Spout",
+                    "value": "pull_out"
+                  },
+                  {
+                    "key": "spec:brand",
+                    "label": "Brand",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "key": "spec:finish",
+                    "label": "Finish or colour",
+                    "value": "french_gold"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTKT71SS-FRG"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTKT71SS-GM"
+                  },
+                  {
+                    "label": "Description",
+                    "value": "SORENTO S/STEEL PILLAR MOUNTED SINK TAP WITH PULL OUT SHOWER  SRTKT71SS-GM"
+                  },
+                  {
+                    "label": "List Price",
+                    "value": "MYR 650.00"
+                  },
+                  {
+                    "label": "Dimensions",
+                    "value": "Not defined"
+                  },
+                  {
+                    "key": "spec:class",
+                    "label": "Product class",
+                    "value": "Tap"
+                  },
+                  {
+                    "key": "spec:product_type",
+                    "label": "Type",
+                    "value": "kitchen_tap"
+                  },
+                  {
+                    "key": "spec:has_pull_out_shower",
+                    "label": "Pull-out shower",
+                    "value": true
+                  },
+                  {
+                    "key": "spec:water_supply",
+                    "label": "Water supply",
+                    "value": "mixer"
+                  },
+                  {
+                    "key": "spec:material",
+                    "label": "Material",
+                    "value": "stainless_steel"
+                  },
+                  {
+                    "key": "spec:mounting",
+                    "label": "Mounting",
+                    "value": "pillar_mounted"
+                  },
+                  {
+                    "key": "spec:spout_type",
+                    "label": "Spout",
+                    "value": "pull_out"
+                  },
+                  {
+                    "key": "spec:brand",
+                    "label": "Brand",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "key": "spec:finish",
+                    "label": "Finish or colour",
+                    "value": "gunmetal"
+                  },
+                  {
+                    "key": "spec:has_drainer",
+                    "label": "Has a drainer",
+                    "value": true
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTKT71SS-GM"
+              }
+            ],
+            "last_updated_at": "2026-09-04T18:58:41.209835",
+            "result_type": "products",
+            "spec_vocabulary": {
+              "brand": "Brand",
+              "class": "Product class",
+              "finish": "Finish or colour",
+              "has_drainer": "Has a drainer",
+              "has_pull_out_shower": "Pull-out shower",
+              "material": "Material",
+              "mounting": "Mounting",
+              "product_type": "Type",
+              "spout_type": "Spout",
+              "steel_grade": "Steel grade",
+              "water_supply": "Water supply"
+            }
+          },
+          "tool": "crm_master_products_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTKT71SS"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to get product details for SRTKT71SS"
+      }
+    }
+  ]
+}

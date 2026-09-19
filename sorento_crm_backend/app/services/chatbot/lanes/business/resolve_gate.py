@@ -42,6 +42,7 @@ from app.services.chatbot.contracts import EXIT_CONTRACT_FIELDS
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import pickers
 from app.services.chatbot.lanes.business.gate import run_gate
+from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
 
@@ -50,10 +51,27 @@ logger = logging.getLogger(__name__)
 # `v.replace(/[-\s]+/g, '')` from the resolve-entity body's product-token fold.
 _PRODUCT_FOLD = re.compile(r"[-\s]+")
 
+# exec 12053189: a product code typed with a MINUS SIGN (U+2212, what Excel/Sheets emit
+# on paste) or an EN DASH (U+2013, what Word autocorrect emits) missed the resolver's
+# exact match, because `_PRODUCT_FOLD` is an ASCII-only, byte-graded port of n8n's own
+# `[-\s]+` and must stay that way (it is checked against real captures). The fold that
+# used to catch this ran in `head/output_exchange.py` before the resolver ever saw the
+# token; deleted in the S3 rewrite with no equivalent (AC-1592 test triage). Folded to
+# ASCII hyphen HERE, one step ahead of `_PRODUCT_FOLD`, so the graded regex still only
+# ever runs against what it was captured against.
+_UNICODE_DASH_FOLD: dict[str, str] = {
+    "\u2212": "-",  # MINUS SIGN
+    "\u2013": "-",  # EN DASH
+}
+
 # The two `sub-get-results` tools the pickers probe with, from the probe nodes' own
 # `tool` parameters. Not a registry: two literals, named where they are used.
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
+# The per-PRODUCT reads behind the promotion and purchase-order roster stamps
+# (owner hand pass 3, rows 1 and 7).
+PROMOTION_PROBE_TOOL = "crm_marketing_promotion_products_list"
+PURCHASE_ORDER_PROBE_TOOL = "crm_procurement_po_placed_list"
 
 #: R20 (owner round 7, 13 Sep 2026), extended by PLAN-chatbot-sales-report.md S4
 #: wiring point 8: the `order_status` values whose customer picker must not offer a
@@ -166,20 +184,20 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 def _incoming_named_in_message(message: Any) -> bool:
     """Did the customer's OWN words say incoming this turn?
 
-    `contracts.DOMAIN_SWITCH_WORDS` is the table, imported rather than copied: it is
-    already the inventoried vocabulary that decides a this-turn domain switch, and a second
-    list of the same words is how two readers of one question start disagreeing. Since D9
-    it is inverted out of `DOMAIN_SPEC[domain].switch_words` rather than hand-maintained,
-    so this reader is now two hops from the one declaration instead of one hop from a copy.
+    `turn.policy.domain_switch_words(default_policy())` is the table (AC-1594: was
+    `contracts.DOMAIN_SWITCH_WORDS`), read rather than copied: it is already the
+    inventoried vocabulary that decides a this-turn domain switch, and a second list of
+    the same words is how two readers of one question start disagreeing.
     """
-    from app.services.chatbot.contracts import DOMAIN_SWITCH_WORDS
+    from app.services.chatbot.turn.policy import default_policy, domain_switch_words
 
+    switch_words = domain_switch_words(default_policy())
     # ANY token, where `output_exchange`'s switch reader (its ~line 1125) demands EVERY
     # remaining content token name the same domain. Different questions: the switch asks
     # "is this message nothing but a domain word", this asks "did the customer say incoming
     # at all", and one incoming word anywhere is enough to keep the domain theirs.
     text = jsc.nullish_str(message).lower()
-    return any(DOMAIN_SWITCH_WORDS.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
+    return any(switch_words.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
 
 
 def retype_shipment_miss(
@@ -334,7 +352,7 @@ def resolve_bare_reply_under_member_offer(
     arms. Never restricted to a single-word CODE SHAPE: the customer's own words decide
     nothing here, the resolver does.
     """
-    from app.services.chatbot.head.output_exchange import offer_is_open
+    from app.services.chatbot.session_state import offer_is_open
 
     prev = _prev_variables(ctx)
     if jsc.get(prev, "selection_context") != "member_offer" or not offer_is_open(prev):
@@ -446,6 +464,125 @@ def _query_text(ctx: dict[str, Any]) -> str:
         return ""
 
 
+def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, Any] | None:
+    """E3 (attribute-first asks, AC-1317): a bare "more" / "next" / "lagi" reply
+    under a carried `set_page` selection answers from the CARRY ALONE - no
+    resolver call runs, and for the two terminal arms below, no MCP call either.
+    `None` when this turn is not one of these, so every existing caller of
+    `run()` is unaffected.
+
+    Three arms:
+
+    * **the next page** - a `continue` exit whose `gate` is FABRICATED from the
+      carry (`compatible_entities` = the next slice of ids, `predicate.page` =
+      the bounds `fetch.output_structurer` renders "Showing X to Y" from and
+      `compile_state._set_page_carry` advances the offset from). The parser's
+      OWN `domain_hint` is overridden to the carry's - a bare "more" names no
+      domain of its own, and `run_fetch`'s tool pick reads it.
+    * **exhausted** (past the carried ids AND the true count): "That was all N
+      noun." - reuses the SAME `offer` exit mechanism the incoming/customer
+      PICKER already answers straight from its own `escalate_message`, with no
+      roster of its own to arm.
+    * **capped** (past the carried ids, but real qualifying products remain
+      beyond `answer.SET_PAGE_ID_CAP`): a "narrow the ask" reply, same
+      mechanism.
+    """
+    prev = _prev_variables(ctx)
+    carry = prev.get("last_result_set") if isinstance(prev, dict) else None
+    if not isinstance(prev, dict) or prev.get("selection_context") != "set_page":
+        return None
+    if not isinstance(carry, dict) or not carry:
+        return None
+
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    if not answer_mod.is_more_reply(_query_text(ctx)):
+        return None
+
+    ids = list(carry.get("qualifying_ids") or [])
+    offset = int(carry.get("offset") or 0)
+    qualifying_total = int(carry.get("qualifying_total") or 0)
+    set_noun = jsc.js_string(carry.get("set_noun")) or "products"
+    require = carry.get("require") or {}
+    domain = carry.get("domain")
+
+    if offset >= len(ids):
+        message = (
+            answer_mod.build_set_page_narrow_message(set_noun)
+            if qualifying_total > len(ids)
+            else answer_mod.build_set_page_exhausted_message(qualifying_total, set_noun)
+        )
+        return exit_item(
+            {"escalate_message": message, "is_clarification": True},
+            exit_kind="offer",
+            fields={
+                "resolved": {},
+                # `set_page_terminal` (not `None`): the tail needs to SEE this
+                # turn ran, so it can positively CLEAR the set-page carry rather
+                # than silently no-op and re-arm the very state this reply just
+                # closed.
+                "gate": {"set_page_terminal": True},
+                "ctx_resolved": {},
+                "aggregate": None,
+                "tier_gate": None,
+            },
+        )
+
+    next_ids = ids[offset : offset + 5]
+    new_offset = offset + len(next_ids)
+    page_predicate: dict[str, Any] = {
+        "require": require,
+        "qualifying_total": qualifying_total,
+        "truncated": False,
+        "unrecognized_terms": [],
+        "class_labels": [],
+        "page": {
+            "start": offset + 1,
+            "end": new_offset,
+            "new_offset": new_offset,
+            "set_noun": set_noun,
+        },
+    }
+    # R29/AC-1354: the FIRST page's own scheme-narrowed certificate ids,
+    # carried straight through - `fetch.entity_ids_transformer` reads
+    # `predicate.certificate_ids` off THIS block exactly as it does off a
+    # real resolver call, so every later "more" page keeps narrowing to the
+    # same files. Absent when the carry never had them (a bare leg).
+    carried_certificate_ids = carry.get("certificate_ids")
+    if isinstance(carried_certificate_ids, list) and carried_certificate_ids:
+        page_predicate["certificate_ids"] = list(carried_certificate_ids)
+    gate_item: dict[str, Any] = {
+        "compatible_entities": [
+            {"uuid": pid, "entity_type": "product", "canonical_code": None} for pid in next_ids
+        ],
+        "gate_passed": True,
+        "predicate": page_predicate,
+    }
+    mutated_parser = {**parser, "domain_hint": domain}
+    mutated_ctx = {**ctx, "parse": {**(ctx.get("parse") or {}), "output": mutated_parser}}
+    item_out = {
+        **gate_item,
+        "ctx": {**mutated_ctx, "resolved": {}, "entities": None, "gate": gate_item},
+    }
+    # SEC-B1/AC-1333: a `tier_gate` dict carrying the FIRST page's own recomposed
+    # access_levels - never `None` - so `_fetch_semantic_input` reads it the same
+    # way it does off a real tier gate, instead of falling to the bare "more"
+    # parser output's own (empty) `access_levels` and silently dropping the tier
+    # filter from a promotion page.
+    page_tier_gate = {"access_levels_recomposed": list(carry.get("access_levels") or [])}
+    return exit_item(
+        item_out,
+        exit_kind="continue",
+        fields={
+            "resolved": {},
+            "gate": gate_item,
+            "ctx_resolved": item_out,
+            "aggregate": None,
+            "tier_gate": page_tier_gate,
+        },
+    )
+
+
 def _token_of(entity: Any) -> Any:
     """`String(x.canonical_code ?? '').trim() || (x.raw ?? '')`, product-folded.
 
@@ -458,12 +595,18 @@ def _token_of(entity: Any) -> Any:
         raw = jsc.get(entity, "raw")
         value = raw if raw is not None else ""
     if jsc.lower_or_empty(jsc.get(entity, "hint")) == "product":
+        for bad, good in _UNICODE_DASH_FOLD.items():
+            value = value.replace(bad, good)
         return _PRODUCT_FOLD.sub("", value)
     return value
 
 
 def resolve_entity_body(
-    ctx: dict[str, Any], *, space_id: str | None = None, dry_run: bool = False
+    ctx: dict[str, Any],
+    *,
+    space_id: str | None = None,
+    dry_run: bool = False,
+    tier_gate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
@@ -476,6 +619,19 @@ def resolve_entity_body(
     write a D14 test turn could otherwise reach through this lane. The resolution is
     identical either way, so shadow parity is unaffected; it is omitted entirely on a live
     turn so the body stays byte-equal to n8n's there.
+
+    R25/AC-1349 (round 3 re-check, security count-level): `tier_gate` is `run()`'s own
+    `tier_gate_out` (the `entry == "access_check"` step's output) - when it carries a
+    NON-EMPTY `access_levels_recomposed`, the body's `access_levels` is that list, never
+    the parser's bare tokens. `needs_tier_ask` only fires for a contact entitled to MORE
+    than one tier, so a single-tier contact never gets asked and reaches here with the
+    tier gate having run and recomposed exactly one name - without this, the promotion
+    leg counted whatever `_access_level_codes` made of the parser's own RAW token
+    (which a brand-qualified code can translate wrong), running effectively unrestricted
+    rather than the contact's actual, single entitled tier. `tier_gate=None` (it never
+    ran) or an empty recomposed list (nothing to state) both fall back to today's
+    behaviour unchanged - the `set_page` reply path keeps its own carry-based tiers and
+    never reaches this function at all.
     """
     parse_output = _parser_output(ctx)
     entities = parse_output.get("entities")
@@ -490,14 +646,24 @@ def resolve_entity_body(
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
+    tier_gate_dict = tier_gate if isinstance(tier_gate, dict) else None
+    recomposed_access_levels = (
+        tier_gate_dict.get("access_levels_recomposed") if tier_gate_dict is not None else None
+    )
     body: dict[str, Any] = {
         "query": _query_text(ctx),
         "match_mode": match_mode,
         "tokens": [_token_of(x) for x in entities],
         "allowed_entity_types": [jsc.get(x, "hint") for x in entities],
-        "access_levels": parse_output.get("access_levels")
-        if jsc.truthy(parse_output.get("access_levels"))
-        else [],
+        "access_levels": (
+            recomposed_access_levels
+            if isinstance(recomposed_access_levels, list) and recomposed_access_levels
+            else (
+                parse_output.get("access_levels")
+                if jsc.truthy(parse_output.get("access_levels"))
+                else []
+            )
+        ),
         "domain": parse_output.get("domain_hint") if jsc.truthy(parse_output.get("domain_hint")) else "",
         "fallback_to_all_types": True,
         "limit": 15,
@@ -520,6 +686,42 @@ def resolve_entity_body(
                     pins[token] = jsc.get(x, "uuid")
         if pins:
             body["entity_pins"] = pins
+
+    # Shape B (attribute-first asks, work item B2, AC-1304): a `require` predicate
+    # derived mechanically from what the parser already emitted, never from a second
+    # read of the message text. Added ONLY when there is one - every other key above
+    # is untouched, so a turn with no leg stays byte-identical to today.
+    #
+    # Gated on `REQUIRE_LEGS` (imported, never a second copy of the leg list): S1
+    # ships four legs, `check_incoming` -> `{"incoming": true}` (AC-1303) is a real
+    # `derive_require` mapping today even though the `incoming` leg itself is S2
+    # (work item D1). Sending it anyway 422s `resolve_product_set` on "Unknown
+    # require key(s): incoming" for every ordinary incoming turn - the exact
+    # AC-1322 invariant this lane must not break. A leg lands the day its
+    # `REQUIRE_LEGS` entry does, with no change needed here.
+    from app.services.product_predicate_service import REQUIRE_LEGS
+
+    require = derive_require(parse_output, message_text=_query_text(ctx))
+    if require is not None and not set(require) <= set(REQUIRE_LEGS):
+        require = None
+    if require is not None:
+        body["require"] = require
+        body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
+        # The class word the PARSER named, forwarded as a value (turn re-architecture,
+        # D11): a `product_type` / `category` entity IS "which taps", and reading it off
+        # the verdict is what lets a HAS turn be described by something other than this
+        # turn's own raw text.
+        scope_terms: list[str] = []
+        for entity in parse_output.get("entities") or []:
+            if not isinstance(entity, dict):
+                continue
+            if jsc.nullish_str(entity.get("hint")).strip().lower() not in ("product_type", "category"):
+                continue
+            raw = jsc.nullish_str(entity.get("raw")).strip()
+            if raw and raw not in scope_terms:
+                scope_terms.append(raw)
+        if scope_terms:
+            body["scope_terms"] = scope_terms
     return body
 
 
@@ -776,6 +978,14 @@ def run(
         )
     parser = _parser_output(ctx)
 
+    # E3 (attribute-first asks, AC-1317): a bare "more" reply under a carried
+    # `set_page` selection is answered from that carry alone, before anything
+    # else in this walk runs - in particular, before `resolve-entity`, so a
+    # "more" turn makes NO resolver call.
+    set_page = _set_page_reply(ctx, parser)
+    if set_page is not None:
+        return set_page
+
     aggregate: dict[str, Any] | None = None
     tier_gate_out: dict[str, Any] | None = None
 
@@ -810,7 +1020,11 @@ def run(
     )
 
     # ── resolve-entity ──────────────────────────────────────────────────────
-    resolved = services.resolve_entity(resolve_entity_body(ctx, space_id=space_id, dry_run=dry_run))
+    # R25/AC-1349: the tier gate's own recomposed access_levels, when it ran
+    # and produced any - see `resolve_entity_body`'s own docstring.
+    resolved = services.resolve_entity(
+        resolve_entity_body(ctx, space_id=space_id, dry_run=dry_run, tier_gate=tier_gate_out)
+    )
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
     # Placed HERE, between the resolver and the gate, because this is the first point in
@@ -927,6 +1141,116 @@ def run(
         return exit_item(_snapshot(annotated), exit_kind="offer", fields=base_fields)
 
     return exit_item(_snapshot(ctx_resolved_item), exit_kind="not_found", fields=base_fields)
+
+
+def probe_incoming(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """The incoming picker's own probe, for a caller outside the miss arm.
+
+    The arm above runs it only when the gate could not pin a single product
+    (`if_incoming_picker`: `require_specific`), which is the only way the n8n graph could
+    ever reach a picker. The re-architected narrower asks the same roster from the other
+    side - a domain switch that CARRIES ten settled variants ("incoming", after a stock
+    answer about them) is not ambiguous to the gate at all, so it never reached this
+    probe and the roster printed without the has/no-incoming stamps the same roster shows
+    when the customer names the family themselves (browser pass 3, turn 2). One probe,
+    one builder for its inputs, two callers.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=INCOMING_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
+
+
+def probe_customer(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    default_start: str | None,
+    space_id: str | None,
+) -> Any:
+    """The customer picker's own probe, for a caller outside the miss arm.
+
+    The `if_customer_picker` arm above runs it only when the gate could not pin a single
+    customer. The re-architected narrower builds the same roster from the other side (a
+    settled carry, a family widened by the resolver), so it never reached this probe and
+    printed a roster with no has/no-DO stamps at all - the owner's hand pass 2, item 2.
+    Same shape, and the same reason, as `probe_incoming` below.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=CUSTOMER_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=default_start,
+        space_id=space_id,
+    )
+
+
+def probe_promotion(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """"Does this product have a promotion?", per candidate - the promotion roster's own
+    probe (owner hand pass 3, row 1).
+
+    A twin of `probe_incoming`, for a roster the n8n graph never had a picker for at all:
+    the promotion domain narrows on TIER, so a product family under it was printed bare
+    while the same family under incoming carried has/no incoming. `crm_marketing_
+    promotion_products_list` is the per-PRODUCT read (`crm_marketing_promotions_list`
+    returns promotions, which cannot be attributed back to a candidate).
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=PROMOTION_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
+
+
+def probe_purchase_order(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """"Does this product have a PO placed?", per candidate (owner hand pass 3, row 7).
+
+    The same shape and the same reason as `probe_promotion` above. The picker stays: the
+    owner keeps the roster and wants the stamp on it, not the roster replaced.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=PURCHASE_ORDER_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
 
 
 def _run_probe(

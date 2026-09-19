@@ -1,0 +1,57 @@
+{
+  "name": "handpass5-outstanding-domain",
+  "source": "hand pass 5 owner console turns 32-35 (contact_respond_id 437264483, 2026-09-17 05:25-05:26 +09) / ruling R3: 'Total outstanding <code>' / 'outstanding quantity <code>' is the outstanding report (a 'Product: ... / Customer: all / Location: all / Order date: all' header, or the scope question), never a *stock* answer. Recorded (pre-fix) behaviour for both phrasings is a plain *stock* for <code> reply, which is the defect this pins.",
+  "cases": [
+    {
+      "name": "total-outstanding-srtwc8518-sh-is-the-outstanding-report",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Total outstanding SRTWC8518-SH",
+          "expect": {
+            "reply_not_contains": ["*stock* for"],
+            "reply_contains_any": [
+              "Customer: all",
+              "sales order or delivery order",
+              "Which outstanding"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "outstanding-quantity-cb2805a-is-the-outstanding-report",
+      "cold": true,
+      "turns": [
+        {
+          "text": "outstanding quantity cb2805a",
+          "expect": {
+            "reply_not_contains": ["*stock* for"],
+            "reply_contains_any": [
+              "Customer: all",
+              "sales order or delivery order",
+              "Which outstanding"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "total-outstanding-cb2805a-same-phrasing-family",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Total outstanding cb2805a",
+          "expect": {
+            "reply_not_contains": ["*stock* for"],
+            "reply_contains_any": [
+              "Customer: all",
+              "sales order or delivery order",
+              "Which outstanding"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

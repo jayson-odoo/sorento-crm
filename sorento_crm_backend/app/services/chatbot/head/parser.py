@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, render
+from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,21 @@ def _build_json_schema() -> dict[str, Any]:
             "scope_intent": string_or_null,
             "is_affirmative": {"type": ["boolean", "null"]},
             "user_goal": string_or_null,
+            # AC-1317: true when the message asks for more of the set the LAST answer
+            # counted ("more", "next", "lagi", ...) - a dedicated boolean rather than a
+            # free-text `user_goal` word the code matches against a list, which was
+            # still a text rule wearing the parser's clothes (captain ruling, 16 Sep
+            # 2026). `turn/apply.py::_is_continuation` reads this key only.
+            "continuation": {"type": ["boolean", "null"]},
             "access_levels": {"type": "array", "items": {"type": "string"}},
             "broaden_axis": string_or_null,
+            # HOW FAR that axis is widened (owner ruling, 17 Sep 2026): "family" widens
+            # the picked variant to every variant of its family, "all" drops the axis
+            # altogether, null is no widening asked. The axis alone could not tell "all
+            # variants of 286" from "for all products", and the engine read it as
+            # neither - "okay nvm for all products" was answered for the one variant the
+            # question already carried (turns 6095ce66 / d8ab659e).
+            "broaden_to": string_or_null,
             "date_mode": string_or_null,
             "date_filter_start": string_or_null,
             "date_filter_end": string_or_null,
@@ -122,12 +136,32 @@ def _build_json_schema() -> dict[str, Any]:
                         "canonical_code": string_or_null,
                         "current_message": {"type": ["boolean", "null"]},
                         "confident": {"type": ["boolean", "null"]},
+                        # Turn re-architecture (AC-1506): the entity KIND hint's own
+                        # confidence, separate from `confident` above (the entity's
+                        # identity). Reconciliation (S2) asks the resolver for the
+                        # hinted kind FIRST only when this is true; a low-confidence
+                        # kind hint goes straight to reconciliation instead.
+                        "hint_confident": {"type": ["boolean", "null"]},
                     },
-                    "required": ["raw", "hint", "canonical_code", "current_message", "confident"],
+                    "required": [
+                        "raw",
+                        "hint",
+                        "canonical_code",
+                        "current_message",
+                        "confident",
+                        "hint_confident",
+                    ],
                 },
             },
             "entity_op": string_or_null,
-            "scope_exclusive": {"type": ["boolean", "null"]},
+            # Does THIS message name a domain or a status word of its own (owner ruling,
+            # 17 Sep 2026)? It is the discriminator between a NEW ASK and a REFINEMENT,
+            # and it replaces `scope_exclusive` (item 2, captain ruling, 17 Sep 2026:
+            # removed from the schema, the prompt and this parser entirely - it asked
+            # the wrong question of the two turns it was written for: "outstanding DO
+            # for 7445" and "for 7445" both name a product under an order subject, and
+            # only the first is a new question).
+            "domain_in_message": {"type": ["boolean", "null"]},
             "requested_attributes": {"type": "array", "items": {"type": "string"}},
             "contains_flyer": {"type": ["boolean", "null"]},
             "reference_positions": {"type": "array", "items": {"type": "number"}},
@@ -207,6 +241,68 @@ def _build_json_schema() -> dict[str, Any]:
                 },
                 "required": ["is_escalation_confirmation", "company_pick"],
             },
+            # Turn re-architecture (AC-1506): the v3 shape's three new top-level keys.
+            # `document` is a LIST of document kinds ("DO", "SO") or null/empty for
+            # "no document named" - never a third "both" value (PLAN's own framing).
+            # The papers the message named, from a CLOSED set: `turn/apply.py::
+            # DOMAIN_BY_DOCUMENT` and `turn_runtime._DOCUMENT_STATUS_TO_ORDER_STATUS`
+            # both key off these exact five codes, so a free string here is a document
+            # nothing downstream can read. Declared as an enum so the provider cannot
+            # emit one (hand pass 2 item 12: "Outstsnding DO for 7445" came back with
+            # `document: []` and the CRM asked which document the message had named).
+            "document": {
+                "type": ["array", "null"],
+                "items": {"type": "string", "enum": ["SO", "DO", "PO", "SPO", "GRN"]},
+            },
+            # The delivery/order status axis - "outstanding", "delivered", or null.
+            # Replaces the old flat `order_status` key on the OUTPUT side too, kept
+            # above only because live emissions before this prompt version still carry
+            # it (`output_exchange._EXEMPT_FROM_REQUIRED`-style tolerance).
+            "status": string_or_null,
+            # The SECOND domain a message names, and every one after it (AC-1522,
+            # contract 122). Declared as a list of ASK OBJECTS rather than bare domain
+            # codes because that is the shape every reader already speaks -
+            # `turn/apply.py` reads `a["domain"]` at three sites and the committed S2/S3
+            # fixtures build `[{"domain": ..., "intent": ...}]` - and one wire shape for
+            # one fact is worth more than a shorter one nothing reads.
+            #
+            # `domain` is a free string for the same reason `domain_hint` is: the domain
+            # set lives in `chatbot_domains`, the owner edits it through the Chatbot
+            # Domains screen, and the closed set is taught by the rendered domain block in
+            # the prompt body - an enum here would freeze the schema against that table.
+            #
+            # `null` (or []) for the ordinary one-domain message, which is nearly every
+            # message: this key exists for "incoming and stock for 7445", where answering
+            # one half is answering half the question.
+            "asks": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "intent": string_or_null,
+                    },
+                    "required": ["domain", "intent"],
+                },
+            },
+            # The customer changed subject (AC-1525, AC-1546): `turn/apply._focus_rules`
+            # empties every focus axis but the contact's own tier and brand, and
+            # `engine.run_turn` closes the conversation episode on it. Both readers shipped
+            # with no way for the model to set it, so no live turn has ever reset a topic
+            # or written an episode.
+            "topic_reset": {"type": ["boolean", "null"]},
+            "anaphora": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    # True when the message refers BACKWARD to something outside this
+                    # turn's own focus/pending (AC-1547) - the ONE signal that arms a
+                    # recall re-parse behind the contact's `chatbot_recall_enabled` flag.
+                    "backward_reference": {"type": ["boolean", "null"]},
+                },
+                "required": ["backward_reference"],
+            },
         },
         "required": [
             "message_type",
@@ -215,8 +311,10 @@ def _build_json_schema() -> dict[str, Any]:
             "scope_intent",
             "is_affirmative",
             "user_goal",
+            "continuation",
             "access_levels",
             "broaden_axis",
+            "broaden_to",
             "date_mode",
             "date_filter_start",
             "date_filter_end",
@@ -224,7 +322,7 @@ def _build_json_schema() -> dict[str, Any]:
             "demand_qty",
             "entities",
             "entity_op",
-            "scope_exclusive",
+            "domain_in_message",
             "requested_attributes",
             "contains_flyer",
             "reference_positions",
@@ -238,6 +336,11 @@ def _build_json_schema() -> dict[str, Any]:
             "correction",
             "routing",
             "escalation",
+            "document",
+            "status",
+            "asks",
+            "topic_reset",
+            "anaphora",
         ],
     }
 
@@ -248,6 +351,14 @@ PARSE_OUTPUT_SCHEMA_NAME = "chatbot_parse_output"
 # unknown kept" - unknown keys are IGNORED (the risk the plan names: a model that
 # occasionally adds one must not fail a turn), missing ones are REJECTED.
 DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
+
+#: Declared keys a RECORDED emission may lack. The live parser always emits every
+#: declared key (structured output with `additionalProperties: false` requires it), but
+#: the replay corpus and the console cases were captured BEFORE these keys existed, and
+#: a harness value is held to the same check a provider answer is (`assert_emission`).
+#: Absent reads as null everywhere, so an old recording behaves exactly as it did.
+#: A key leaves this set when the corpus has been re-recorded with it.
+TOLERATED_ABSENT: frozenset[str] = frozenset({"broaden_to", "domain_in_message"})
 
 
 def resolve_config(
@@ -289,12 +400,72 @@ def resolve_config(
     )
 
 
+def _subject_names(rows: Any) -> list[str]:
+    """The human names on one focus axis, in order, deduped.
+
+    A focus row is either an entity dict (products, customers) or a bare code (document,
+    tier). The NAME is what a customer would recognise, the raw token is what they typed,
+    and the canonical code is the last resort: a subject line saying "300-H030" tells the
+    model less about the conversation than "hanlim" does.
+    """
+    names: list[str] = []
+    for row in rows or []:
+        value = (
+            (row.get("name") or row.get("raw") or row.get("canonical_code"))
+            if isinstance(row, dict)
+            else row
+        )
+        text = str(value).strip() if value is not None else ""
+        if text and text not in names:
+            names.append(text)
+    return names
+
+
+def current_subject_line(focus: Any) -> str | None:
+    """"Current subject: ..." - what the conversation is about, on one line, or None.
+
+    Owner ruling, hand pass 3 (17 Sep 2026): the parser judged a refinement ("For
+    srtwc286 only") and a domain switch ("promo") against the previous REPLY alone, which
+    says what was answered and not what it was answered about, so a message naming an
+    entity of a kind the open roster was not about re-asked the roster. The focus is the
+    one place that fact lives, so it is stated.
+
+    Absent for an empty focus, which keeps every other turn's block byte-identical.
+    """
+    if focus is None:
+        return None
+    parts: list[str] = []
+    for label, rows in (
+        ("domain", getattr(focus, "domains", None)),
+        ("customer", getattr(focus, "customers", None)),
+        ("product", getattr(focus, "products", None)),
+        ("document", getattr(focus, "document", None)),
+    ):
+        names = _subject_names(rows)
+        if names:
+            parts.append(f"{label} {', '.join(names)}")
+    status = getattr(focus, "status", None)
+    if isinstance(status, str) and status.strip():
+        parts.append(f"status {status.strip()}")
+    window = getattr(focus, "date_window", None)
+    if isinstance(window, dict):
+        bounds = [str(window.get(key)).strip() for key in ("start", "end") if window.get(key)]
+        if bounds:
+            parts.append("dates " + " to ".join(bounds))
+    if not parts:
+        return None
+    return "Current subject: " + "; ".join(parts) + "."
+
+
 def build_user_block(
     *,
     previous_response: Any,
     latest_user_message: Any,
     pending_kind: str | None,
     pending_options: list[str] | None = None,
+    profile_block: str | None = None,
+    episodes_block: str | None = None,
+    focus: Any = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -307,6 +478,10 @@ def build_user_block(
     `pending_options` is the second (D17, 13 Sep 2026): the numbered options of an open
     question whose answer is a POSITION, so the parser can resolve a worded answer
     against what was actually offered. Omitted, and the block is unchanged.
+
+    `focus` is the third (hand pass 3, 17 Sep 2026): the "Current subject" line, so a
+    refinement and a domain switch are read against what the conversation is about rather
+    than against the previous reply alone.
     """
     import re
 
@@ -317,6 +492,12 @@ def build_user_block(
         f"Previous response: {previous}",
         f"Current user message: {latest_user_message}",
     ]
+    subject = current_subject_line(focus)
+    if subject:
+        # Hand pass 3, ruling 2: the subject the conversation already has, so a refinement
+        # and a domain switch are judged against something. One line, omitted whole when
+        # the focus is empty.
+        lines.append(subject)
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
     if pending_options:
@@ -326,6 +507,15 @@ def build_user_block(
         # assistant actually offered - and so the head only ever has to map the number
         # back. Absent for every other turn, which keeps their block byte-identical.
         lines.append("Open question options: " + "; ".join(pending_options))
+    if profile_block:
+        # AC-1548: what the system already knows about this contact - tier, language,
+        # default ledgers - stated on EVERY parse, so the model never asks for a fact the
+        # profile already holds (journey A's own rule: nothing already known is re-asked).
+        lines.append(profile_block)
+    if episodes_block:
+        # AC-1547: the recalled frames, on the SECOND parse of a turn that pointed
+        # backwards. Absent on every other turn, which keeps their block unchanged.
+        lines.append(episodes_block)
     return "\n".join(lines)
 
 
@@ -344,6 +534,30 @@ class ParsedOutput(dict):
     def __init__(self, parsed: dict[str, Any], usage: dict[str, Any] | None = None) -> None:
         super().__init__(parsed)
         self.usage = usage or {}
+
+
+def assert_emission(emission: dict) -> None:
+    """Every key the schema declares is present, or this is not an emission.
+
+    ONE rule, TWO callers, because a verdict reaches the engine two ways and both of them
+    used to answer this question differently: `parse` below, for what a provider returned,
+    and `engine.run_turn`'s harness bypass, for what an operator's
+    `mock_reformulator_output` supplied. The bypass had no check at all beyond "is a
+    non-empty dict", so `{"nope": true}` - the real 5 Sep 2026 production case - routed a
+    whole turn off defaults and came back `done`, with entity resolution running on a
+    token nobody typed. R5 / H44: a failed understanding is a FAILED TURN at `understood`,
+    never a soft default.
+
+    The message names every missing key at once (wording kept from `_assert_emission`, the
+    fix this restores: a bare `KeyError: 'reference_positions'` read as a CRM fault and
+    said nothing about what the model got wrong), so a bad mock or a prompt regression is
+    fixed in one pass instead of one key per run.
+    """
+    missing = sorted(DECLARED_KEYS - TOLERATED_ABSENT - set(emission))
+    if missing:
+        raise ParserError(
+            "parser emission missing " + ", ".join(repr(key) for key in missing)
+        )
 
 
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
@@ -395,11 +609,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             raise ParserError(f"parser returned non-JSON content: {exc}") from exc
         if not isinstance(parsed, dict):
             raise ParserError("parser returned a non-object")
-        missing = DECLARED_KEYS - set(parsed)
-        if missing:
-            raise ParserError(
-                f"parser output missing required key(s): {', '.join(sorted(missing))}"
-            )
+        assert_emission(parsed)
     except ParserError as exc:
         # The provider answered, so it billed. The turn fails either way; the spend is
         # still real and still has to reach `ai_assistant_usage_logs`.

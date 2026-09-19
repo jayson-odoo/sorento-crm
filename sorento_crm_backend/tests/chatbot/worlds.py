@@ -571,7 +571,11 @@ def body_difference(
         # Deliberately unable to excuse anything else: `routing` must be the ONLY key that
         # moved, and the CAPTURE's own team must be the non-catalogue one. A capture whose
         # team is a real member, or one that also differs elsewhere, still falls through.
-        from app.services.chatbot.contracts import SUGGESTED_TEAMS
+        # AC-1594: moved out of contracts.py to lanes/escalation.py (tester 5's port,
+        # same commit family - test_contracts.py, test_s5_escalation_lane.py,
+        # test_pass4_item1b_marketing_ambiguous_clarify.py and siblings already use
+        # this import).
+        from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
 
         captured_team = (
             (captured_parse_output.get("routing") or {}).get("suggested_team")
@@ -579,11 +583,12 @@ def body_difference(
             else None
         )
         if differing == ["routing"] and isinstance(captured_team, str) and (
-            captured_team.strip().lower() not in SUGGESTED_TEAMS
+            captured_team.strip().lower() not in ESCALATION_TEAMS
         ):
             return (
                 f"the capture's own `routing.suggested_team` is {captured_team!r}, which is "
-                "not one of the eight teams in `contracts.SUGGESTED_TEAMS`. AC-821 / review "
+                "not one of the eight teams in `lanes.escalation.ESCALATION_TEAMS` (was "
+                "`contracts.SUGGESTED_TEAMS`, AC-1594). AC-821 / review "
                 "of #713 B2: a team word the router cannot act on must never reach the "
                 "persisted routing, because the NEXT turn assigns whatever is there "
                 "(measured: 'escalate to marketing' then 'I need a human' called "

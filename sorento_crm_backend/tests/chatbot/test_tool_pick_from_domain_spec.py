@@ -21,8 +21,13 @@ from typing import Any
 
 import pytest
 
-from app.services.chatbot.contracts import DOMAIN_SPEC
 from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.turn.policy import default_policy
+
+# AC-1594: contracts.DOMAIN_SPEC is deleted; fetch.select_tool itself already reads
+# turn.policy.default_policy() (see its own docstring) - this file's remaining direct
+# references port to the same real seam, not a hand-built stand-in.
+_POLICY_DOMAINS = {row.name: row for row in default_policy().domains}
 
 
 # The measured historic pick, per domain, pinned by hand (UAC AC-1). This table is
@@ -90,7 +95,7 @@ class TestDeterministicPick:
 
     def test_the_pinned_table_covers_every_answerable_domain(self) -> None:
         """A new domain with tools must be pinned here, or its pick is unmeasured."""
-        answerable = {d for d, spec in DOMAIN_SPEC.items() if spec.tools}
+        answerable = {d for d, spec in _POLICY_DOMAINS.items() if spec.tools}
         assert answerable == set(PINNED_PICK), (
             "every DOMAIN_SPEC domain with a non-empty `tools` tuple needs a row in "
             "PINNED_PICK naming the tool production actually chose"
@@ -98,11 +103,11 @@ class TestDeterministicPick:
 
     def test_the_pinned_tool_is_the_first_listed_one(self) -> None:
         """The FIRST entry of each `tools` tuple is now a contract, not an ordering."""
-        assert {d: spec.tools[0] for d, spec in DOMAIN_SPEC.items() if spec.tools} == PINNED_PICK
+        assert {d: spec.tools[0] for d, spec in _POLICY_DOMAINS.items() if spec.tools} == PINNED_PICK
 
     @pytest.mark.parametrize("domain", EMPTY_TOOL_DOMAINS)
     def test_a_domain_with_no_tools_picks_nothing(self, domain: str) -> None:
-        assert DOMAIN_SPEC[domain].tools == ()
+        assert _POLICY_DOMAINS[domain].tools == ()
         assert fetch_mod.select_tool(domain) == []
 
     def test_no_domain_and_an_unknown_domain_pick_nothing(self) -> None:

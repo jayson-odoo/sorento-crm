@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
-from app.services.chatbot.tail.compile_state import EM_DASH
+from app.services.chatbot.tail.reply_ladder import EM_DASH
 from app.services.chatbot.contracts import (
     CRM_COMPLETED_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
@@ -75,6 +75,24 @@ def field_grant_denied_text(copy: CannedCopy, subject: str) -> str:
     `access_denied` key.
     """
     return copy.render("access_denied", team=subject)
+
+
+#: Contract 61's subject: the FEATURE the stock-denial switch refuses, named in the
+#: customer's own plain language rather than by a domain key, exactly as
+#: `answer.DOMAIN_GRANT_SUBJECT` names the one it pairs with.
+STOCK_DENIED_SUBJECT = "stock"
+
+
+def stock_denied_text(copy: CannedCopy) -> str:
+    """Contract 61: the contact is not allowed stock checks and asked for one anyway.
+
+    The SAME registered `access_denied` template every other refusal renders, with the
+    feature as its subject (`field_grant_denied_text`) - a denied stock check is the
+    same class of answer as a denied field reveal, and inventing a second wording for it
+    is how the two drift. A refusal is also the whole reply: the rows are never fetched
+    on this arm, so there is nothing else to say and nothing to leak.
+    """
+    return field_grant_denied_text(copy, STOCK_DENIED_SUBJECT)
 
 
 def offer_hold_clarify_text(

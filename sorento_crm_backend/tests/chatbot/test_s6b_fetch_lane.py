@@ -165,7 +165,12 @@ class TestToolSearch:
         (0.4537). The shipments tool's header carries no clearance checkpoints and no
         `field_access` block, so it can never render the container timeline - only the
         list tool can, and only the list tool is `tools[0]`."""
-        from app.services.chatbot.contracts import DOMAIN_SPEC
+        # Re-pinned 17 Sep 2026 (tester): `DOMAIN_SPEC` moved to the DB-backed
+        # `turn.policy.Policy` at S0/S6 (AC-1594) - `contracts.py`'s own comment names
+        # `turn.policy.default_policy()` as the frozen-seed reader that replaces it,
+        # same data (`turn.policy_rows.DEFAULT_DOMAIN_ROWS`), one copy. `DomainPolicy.
+        # tools` is the same tuple `DOMAIN_SPEC[name].tools` used to be.
+        from app.services.chatbot.turn.policy import default_policy
 
         fetch = _import_fetch()
 
@@ -175,7 +180,7 @@ class TestToolSearch:
         # Both other incoming tools stay in the tuple as allow-list members (a probe may
         # name `crm_incoming_stock_by_product`, which renders batch numbers on purpose)
         # and neither can be selected.
-        assert DOMAIN_SPEC["incoming"].tools[1:] == (
+        assert default_policy().domain("incoming").tools[1:] == (
             "crm_incoming_stock_by_product",
             "crm_incoming_stock_shipments",
         )

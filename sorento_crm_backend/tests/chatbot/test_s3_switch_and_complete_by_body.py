@@ -15,6 +15,34 @@ two things that decide whether a lane runs at all and how n8n reaches the tail:
 Postgres only, through the blank schema; the parser, the access check and (for ideate) the
 MCP call are stubbed at their own seams, so nothing here reaches an LLM, n8n or a live MCP
 server.
+
+Retired 16 Sep 2026 (AC-1592, tester ruling, this session) - three methods in
+`TestTheCompletedLaneSwitch` predate the S3 rearch's own D9 decision, documented in
+`engine.py`'s own comment right above where `completes_here` is computed: "no engine
+switch. The re-architected turn IS the engine, so a lane the CODE can complete is
+completed here - `system_settings.chatbot_completed_lanes` no longer gates it" (contract
+line 73 superseded, `delegate.py`'s own module docstring says the same). Measured directly:
+`chatbot_completed_lanes` is read into `enabled_lanes_from(...)` and NEVER passed to
+`delegate_for` or consulted anywhere in `run_turn` - `completes_here = branch_kind in
+CRM_COMPLETED_BRANCH_KINDS` alone decides, and that frozenset now covers all 13
+`BRANCH_KINDS` (S6c's own business-arm addition reached full coverage), so `result.delegate`
+is `None` unconditionally today, whatever the switch is set to. Retired, not ported:
+- `test_a_lane_the_owner_has_not_switched_on_still_delegates` - asserted the switch OFF
+  still delegates `clarify_menu`; it does not, `clarify_menu` is CRM-completed regardless.
+- `test_a_lane_the_code_cannot_finish_is_never_completed_however_it_is_configured` - same
+  theme for `business_query`; the docstring's own premise (a second `chatbot_business_lane_
+  enabled` switch still gates the business arms) does not hold either - `_business_lane_
+  enabled` is defined in `engine.py` but never called from `run_turn` (grep-confirmed), so
+  that switch is dead code too, not a replacement gate.
+- `test_switching_a_lane_off_again_is_the_rollback` - same theme, the "rollback by editing
+  the list" mechanism this pins no longer exists; a rollback is a blue/green redeploy now
+  (S7's own D9 note).
+No replacement is named: the property these three protected (a lane can be held back from
+answering) is gone by design, not moved elsewhere - `test_the_column_ships_empty_so_nothing_
+completes_on_deploy` (the column's own default) and `test_a_lane_the_owner_switched_on_is_
+completed` (still green, does not depend on the OFF case) and `test_the_two_halves_are_
+declared_once_each` (still green, `delegate_for` as a pure function is unchanged, only its
+caller stopped consulting `enabled_lanes`) are the surviving coverage of this class.
 """
 from __future__ import annotations
 
@@ -30,6 +58,7 @@ from app.models.user import SystemSetting
 from app.services.chatbot import engine as engine_mod
 from app.api.v1.external.chat import TAIL_ERROR_REPLY
 from app.services.chatbot.lanes import canned as canned_lanes
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures reused by name
     CONTACT_ID,
@@ -61,6 +90,21 @@ def _session_vars_raw(session_factory) -> Any:
     ).scalar()
 
 
+def _seed_session_variables(session_factory, variables: dict[str, Any]) -> None:
+    """Legacy nested `{"variables": {...}}` shape - `session_state.py` still falls back to
+    it once (S3 ruling), and this is the shape `_setup_escalate_offer`'s own precedent in
+    `test_s3_canned_and_ideate.py` seeds with, reused verbatim rather than re-derived."""
+    db = session_factory()
+    db.execute(
+        text(
+            "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+            "WHERE respond_io_id = :c"
+        ),
+        {"c": str(CONTACT_ID), "sv": json.dumps({"variables": variables})},
+    )
+    db.commit()
+
+
 class TestTheCompletedLaneSwitch:
     """BOTH halves, and neither alone is enough."""
 
@@ -74,19 +118,6 @@ class TestTheCompletedLaneSwitch:
             "the CRM must ship inert: a lane that completed the moment the code landed "
             "would change what a customer reads before anyone decided to"
         )
-
-    def test_a_lane_the_owner_has_not_switched_on_still_delegates(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        _set_completed_lanes(session_factory, [])
-        stub_parser(_parser_output(message_type="clarification", domain_hint=None))
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "clarify_menu"
-        assert result.delegate == "clarify_menu", "the switch is off, so n8n still answers"
-        assert result.reply is None
 
     def test_a_lane_the_owner_switched_on_is_completed(
         self, session_factory, seeded, stub_parser, stub_access
@@ -105,25 +136,6 @@ class TestTheCompletedLaneSwitch:
         assert result.delegate is None
         assert result.reply["text"].startswith("I see you're checking stock, Let me understand more.")
         assert result.actions[-1]["kind"] == "send_message"
-
-    def test_a_lane_the_code_cannot_finish_is_never_completed_however_it_is_configured(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        """The CODE half is a wall, and after S6c the wall is the DEPLOYMENT switch.
-
-        `business_query` is now in `CRM_COMPLETED_BRANCH_KINDS` - the lane shipped - but it
-        only runs when `chatbot_business_lane_enabled` is on, and that is off by default
-        (and off here). Naming the arm in `chatbot_completed_lanes` first must therefore
-        still delegate, not close a turn nothing composed.
-        """
-        _set_completed_lanes(session_factory, ["business_query", "check_promotion"])
-        stub_parser(_parser_output())
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate == "business_query"
 
     def test_the_two_halves_are_declared_once_each(self):
         """ONE place answers "does this turn complete here": `delegate_for`, reading the
@@ -168,23 +180,6 @@ class TestTheCompletedLaneSwitch:
         assert delegate_for("clarify_menu", frozenset()) == "clarify_menu"
         assert delegate_for("clarify_menu", frozenset({"clarify_menu"})) is None
 
-    def test_switching_a_lane_off_again_is_the_rollback(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        """No deploy: the same turn delegates again the moment the list is edited."""
-        _set_completed_lanes(session_factory, ["clarify_menu"])
-        stub_parser(_parser_output(message_type="clarification", domain_hint=None))
-        stub_access()
-        first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        assert first.delegate is None
-
-        _set_completed_lanes(session_factory, [])
-        envelope = _envelope()
-        envelope.message["message"]["messageId"] = "ZZT-msg-rollback"
-        second = engine_mod.run_turn(envelope, session_factory=session_factory)
-        assert second.delegate == "clarify_menu"
-
-
 class TestAccessDeniedNeverWritesTheSession:
     """The one completed lane that answers WITHOUT the tail (and so without a write)."""
 
@@ -206,15 +201,30 @@ class TestAccessDeniedNeverWritesTheSession:
         )
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).one()
         assert row.status == "done"
-        assert [r["stage"] for r in row.trace][-1] == "sent"
+        # A sub-event row in `row.trace` has no `stage` key at all (only `kind`) -
+        # `Trace.persisted()` interleaves them with stage records now; `.get(...)`
+        # skips them instead of raising (trace-shape theme, same fix as
+        # `test_harness_injections.py`, tester 11).
+        assert [r["stage"] for r in row.trace if r.get("stage")][-1] == "sent"
 
 
 class TestCompleteByBody:
     """`/turn/complete`: same tail, turn identified from the body."""
 
     @pytest.fixture()
-    def delegated_turn(self, session_factory, seeded, stub_parser, stub_access):
-        _set_completed_lanes(session_factory, [])
+    def delegated_turn(self, session_factory, seeded, stub_parser, stub_access, monkeypatch):
+        """`CRM_COMPLETED_BRANCH_KINDS` covers all 13 branch kinds today (S6c reached full
+        coverage), so no real branch kind `run_turn` can route to is ever left delegated -
+        `chatbot_completed_lanes` plays no part (see the file header's retirement note).
+        `/turn/complete` itself is still live code (`delegate` stays on the response "for
+        the kinds no lane here can finish", AC-1507) - a future 14th branch kind, or a
+        rollback that shrinks the frozenset - so this fixture forces exactly that seam
+        directly, the same way the file's OWN `test_the_two_halves_are_declared_once_each`
+        already exercises `delegate_for` on `"a_lane_from_the_future"`. This grades
+        `/turn/complete`'s OWN mechanics (identify by body, 404/409, replay, retry-wins),
+        not the routing/completion decision, which the rest of this file already covers.
+        """
+        monkeypatch.setattr(engine_mod, "CRM_COMPLETED_BRANCH_KINDS", frozenset())
         stub_parser(_parser_output(message_type="business_query", domain_hint="master_products"))
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
@@ -549,9 +559,16 @@ class TestCompleteByBody:
         The caller executes `actions` and nothing else, so an answer whose words live only
         on `reply.text` is a customer left in silence. The row is still `failed` at
         `remembered` with the reason on it - the failure is recorded, not swallowed.
+
+        `CRM_COMPLETED_BRANCH_KINDS` is forced empty (same seam as `delegated_turn`
+        above): `business_query` completes in-process today, so an un-forced turn is
+        already `status="done"` with a stored reply by the time `/turn/complete` is
+        posted, and B3's own replay rule (`test_a_finished_turn_replays_instead_of_409`)
+        would hand back the ORIGINAL composed answer instead of ever calling `run_tail` -
+        which is what this test needs to fail.
         """
         monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
-        _set_completed_lanes(session_factory, [])
+        monkeypatch.setattr(engine_mod, "CRM_COMPLETED_BRANCH_KINDS", frozenset())
         stub_parser(_parser_output(message_type="business_query", domain_hint="master_products"))
         stub_access()
         overrides: dict[str, Any] = {"test_run_id": "ZZT-run-tail-fail"} if dry_run else {}
@@ -608,27 +625,59 @@ class TestSendActionShape:
     def test_a_canned_lane_action_carries_the_sealed_values_not_a_normalised_copy(
         self, session_factory, seeded, stub_parser, stub_access
     ):
-        _set_completed_lanes(session_factory, ["escalate_offer"])
+        # Ported (AC-1592): the OLD `is_explicit_correction()` / `output_exchange.
+        # derive_routing` route to `escalate_offer` is gone (that whole module deleted,
+        # AC-1594) - measured directly, `correction`/`routing.suggested_team` are not
+        # read anywhere `apply.py` builds a plan.
+        #
+        # Re-pinned again (owner ruling, hand pass 3, 17 Sep 2026 - `answers_open_
+        # question` retired): the OLD `resolved is False` re-ask branch this test
+        # exercised is gone with the key. A message naming nothing over an open
+        # `team_pick` offer is now simply "not an answer" - `_picked_positions` returns
+        # None, the pending is carried untouched (not re-printed), and the message runs
+        # as itself, which for an unrouted `message_type: "unknown"` with no entities
+        # falls through to the casual/`low_signal` lane rather than re-surfacing the
+        # offer as `escalate_offer`. Measured directly: `result.branch_kind ==
+        # "low_signal"`, the stubbed casual reply, one `send_message` action, no
+        # `quick_replies`.
         stub_parser(
             _parser_output(
                 message_type="unknown",
                 domain_hint=None,
-                correction=True,
+                is_affirmative=None,
+                answers_open_question={"resolved": False, "picks": None, "answer": None},
                 escalation={"is_escalation_confirmation": False, "company_pick": None},
             )
+        )
+        _seed_session_variables(
+            session_factory,
+            {
+                "open_question": {
+                    "kind": "team_pick",
+                    "options": [{"position": 1, "label": "purchasing", "team": "purchasing"}],
+                    "team": "purchasing",
+                    "expects": "pick",
+                }
+            },
         )
         stub_access()
 
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert result.branch_kind == "escalate_offer"
+        assert result.branch_kind == "low_signal"
+        assert result.status == "done"
         send = result.actions[-1]
         assert send["kind"] == "send_message"
         assert send["text"] == result.reply["text"]
         # IDENTITY with the sealed value, not `[]`: this lane seals no quick replies, and
         # an action that invented an empty list would be hiding that from the sender.
         assert send["quick_replies"] == result.reply.get("quick_replies")
-        assert send["result_set"] == result.reply.get("result_set")
+        # The low_signal lane's OWN hand-built action (`_run_casual_lane`, the mid-flight
+        # list appended before the clarifier call resolves) never carries a `result_set`
+        # key at all - measured directly, not the `_send_actions` shape the docstring
+        # above describes for the canned lanes. There is nothing to number on a casual
+        # reply, so there is no key pretending there might be.
+        assert "result_set" not in send
         assert send["dry_run"] is False
         # Nothing to attach, so there is no second action.
         assert [a["kind"] for a in result.actions] == ["send_message"]
@@ -806,34 +855,35 @@ class TestSendActionShape:
         assert result.status == "failed"
         all_actions.extend(result.actions)
 
-        # The three business arms (S6c), on the path where the lane apologises. The
-        # answer half is faked at its own seam for the same reason the escalation lane is:
-        # the shape under test is the ACTION the engine hands the caller, not the lane's
-        # own rendering. `run_until_exit` returns a non-`continue` exit so the fetch step
-        # is skipped (those three exits are answers in their own right), and
-        # `complete_answer` raises so `_run_business_answer`'s except arm is what builds
-        # the reply.
-        monkeypatch.setattr(engine_mod, "_business_lane_enabled", lambda *a, **k: True)
+        # The business arms that FETCH (S6c), on the FETCH-RAISES failure path.
+        # `engine.decide` and `lanes.business.run_until_exit` / `complete_answer` are gone
+        # (S3 rewired the dispatcher into `run_turn`'s own inline flow); the shape under
+        # test is still the ACTION the engine hands the caller when the lane cannot
+        # finish, not the lane's own rendering, so the fake seam moves to where a lane
+        # failure is produced today - `lanes.business.run_fetch` (the ONE seam
+        # `turn_runtime.make_tool_runner` still calls, confirmed by
+        # `test_engine_failure_paths.py`'s own `TestTheBusinessLaneOnFetchFailure`, tester
+        # 11, this session): a RAISED exception is what still reaches `run_turn`'s fetch
+        # try/except and produces `status="failed"` at `looked_up` with
+        # `GENERIC_ERROR_REPLY`; a RETURNED error fragment does not raise and is answered
+        # as an ordinary miss instead, which is why this walk needs the raise, not a
+        # returned `_error_fragment(...)`. `_business_lane_enabled` is dropped: defined in
+        # `engine.py` but never called from `run_turn` (grep-confirmed) - the arms
+        # complete unconditionally today, the same as every other CRM-completed kind.
+        # `stock_denied` is NOT in this walk: measured directly (scratch probe) that it
+        # never reaches the fetch step at all (`branch_kind in ("business_query",
+        # "check_promotion")` gates the fetch block, `stock_denied` is deliberately
+        # excluded), so `lanes.business.run_fetch` raising can never reach it - see the
+        # dedicated `test_stock_denied_answers_something_instead_of_silence` below for
+        # what a real `stock_denied` turn does instead (a confirmed defect, kept red).
+        set_chatbot_switches(session_factory, business_lane=True)
         monkeypatch.setattr(
             engine_mod.business,
-            "run_until_exit",
-            lambda ctx, item, **kwargs: {
-                "delegate": "business_query",
-                "payload": {"_exit_kind": "not_found", "gate": {"gate_passed": True}},
-            },
-        )
-        monkeypatch.setattr(
-            engine_mod.business,
-            "complete_answer",
+            "run_fetch",
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("the answer half fell over")),
-            raising=False,
         )
-        for kind in ("business_query", "check_promotion", "stock_denied"):
-            monkeypatch.setattr(
-                engine_mod,
-                "decide",
-                lambda ctx, *, stock_denial_enabled, _kind=kind, **_: (_kind, {}),
-            )
+        for kind in ("business_query", "check_promotion"):
+            monkeypatch.setattr(engine_mod, "turn_route", lambda plan, _kind=kind: _kind)
             stub_parser(_parser_output())
             stub_access()
             business_envelope = _envelope()
@@ -854,7 +904,7 @@ class TestSendActionShape:
             all_actions.extend(result.actions)
 
         send_messages = [a for a in all_actions if a.get("kind") == "send_message"]
-        assert len(send_messages) >= 14, (
+        assert len(send_messages) >= 13, (
             f"only {len(send_messages)} send_message actions collected - one lane's setup "
             "did not run, so this is not the full walk the test name promises"
         )
@@ -867,3 +917,41 @@ class TestSendActionShape:
             assert isinstance(action.get("dry_run"), bool), (
                 f"dry_run must be a bool, got {action.get('dry_run')!r} (action: {action})"
             )
+
+    def test_stock_denied_answers_something_instead_of_silence(
+        self,
+        session_factory,
+        seeded,
+        system_settings_row,
+        stub_parser,
+        stub_access,
+        monkeypatch,
+    ):
+        """FIXED (coder 11, `2453e64d0`) - was a CONFIRMED ENGINE DEFECT: a real
+        `stock_denied` turn used to close `status="done"` with `reply=None` and
+        `actions=[]` (`stock_denied` reaches neither the fetch block, `canned_lanes.
+        COMPLETED_BRANCH_KINDS`, nor `_ASK_BRANCH_KINDS`, deliberately). `engine.py`'s
+        own "the REFUSAL: a denied stock check is an answer, not silence" block now
+        composes contract 61's refusal sentence whenever nothing else answered the
+        turn - this test's own assertions were already forward-looking (`reply is not
+        None`, a `send_message` action) and pass unchanged against the fix; only this
+        docstring needed updating (queue item 2's coordinator message, 16 Sep 2026).
+        """
+        from tests.chatbot.test_s3_canned_and_ideate import _enable_stock_denial
+
+        _enable_stock_denial(session_factory, system_settings_row)
+        monkeypatch.setattr(engine_mod, "_stock_check_denied", lambda *a, **k: True)
+        monkeypatch.setattr(engine_mod, "_demand_qty_missing", lambda *a, **k: False)
+        stub_parser(_parser_output())
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "stock_denied"
+        assert result.status == "done"
+        assert result.reply is not None, (
+            "a customer denied a stock check must be told so, not answered with nothing"
+        )
+        assert any(a.get("kind") == "send_message" for a in result.actions), (
+            "no send_message action was produced for a completed stock_denied turn"
+        )
