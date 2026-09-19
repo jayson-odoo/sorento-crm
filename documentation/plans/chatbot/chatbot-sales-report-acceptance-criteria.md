@@ -72,7 +72,7 @@ Other stakeholders: nobody is notified; this is a read.
 | S6 | Breakdown under a month: customer subject = By product; product subject = By customer; both named = no breakdown. Ranked by ordered value descending, ties by ordered quantity descending, then name ascending. Sorted in the route; the presenter never re-sorts. |
 | S7 | Subject rule: at least one of customer or product (422 `subject_required` otherwise). |
 | S8 | Channel is a filter the PARSER reads: "dealer" = `demand_class = 'retail'`, "project" = `demand_class = 'project'`, neither word = all, including the null-class SOs, which appear under `all` only. Header line `Channel: Dealer / Project / all`. The outstanding report is unchanged: "dealer" binds nothing there. |
-| S9 | Location filters like the outstanding report (same warehouse resolver, exact code or `-suffix`), header line `Location:`. |
+| S9 | Location filters like the outstanding report (same warehouse resolver, exact code or `-suffix`), header line `Location:` printed the way the outstanding header prints it: `IB (BRW-IB, MWH-IB)`. The route echoes `location_token` for that and never filters on it. |
 | S10 | Access: one new per-contact field-reveal key `sales_orders.sales_report`, default deny, ticked on Contacts > Access. Without it: `Sales report is not enabled for your account.` and no fetch. Company scope per contact applies as on every route. |
 | S11 | The detail offer reuses the sticky offer mechanism under its own kind `sales_report_detail`. No new arm in the head: the existing detail-offer arms accept the second kind. |
 | S12 | The parser decides the ask (`order_status: "sales_report"`) and the channel. No word table in deterministic code. |
@@ -89,7 +89,7 @@ Other stakeholders: nobody is notified; this is a read.
   the breakdown sub-heading, then breakdown lines `name: RM v (Qty: n) (Confirmed: RM v,
   Qty: n)`. Evidence: golden fixture.
 - **AC-1603 [FE][T]** Any header axis absent from the body prints `all`, never an omitted
-  line. `Channel` prints `Dealer`, `Project` or `all`. Evidence: pytest, presenter.
+  line. `Channel` prints `Dealer`, `Project` or `all`. `Location` prints `IB (BRW-IB, MWH-IB)` when the body carries a `location_token`, the codes alone when it does not. Evidence: pytest, presenter.
 - **AC-1604 [FE][T]** Product subject prints `*_By customer_*`; customer subject prints
   `*_By product_*`; both named prints no breakdown heading at all. Evidence: three goldens.
 - **AC-1605 [FE][T]** A hit ends with `Reply 1 for the sales order list.` and nothing after

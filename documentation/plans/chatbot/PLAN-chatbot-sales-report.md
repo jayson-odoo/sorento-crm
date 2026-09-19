@@ -60,6 +60,10 @@ Detail (`detail=so`), one item per SO, latest first:
 Miss: header, blank line, `No sales found.`, no offer. Denied: `Sales report is not enabled
 for your account.` and nothing else.
 
+`Location:` prints exactly as the outstanding header does, through the same
+`_outstanding_location_header` rule: `IB (BRW-IB, MWH-IB)` when a token was typed, the codes
+alone when not, `all` when no location filter (captain ruling 19 Sep, parity with S9).
+
 ## Backend contract
 
 `GET /api/v1/order-management/sales-report` on the no-prefix router beside
@@ -73,6 +77,7 @@ view permission as that route.
 | `customer_query` | str | `customer_name ILIKE %q%`, for n8n / the in-app assistant |
 | `channel` | `dealer` / `project` | absent = all; else 422 |
 | `warehouse_codes` | csv | exact codes; token resolution stays in the lane |
+| `location_token` | str | echo only, the word the customer typed (`IB`); never filters. Same as the outstanding route |
 | `date_from`, `date_to` | flex date | on the bucket date, `_parse_flex_date` |
 | `detail` | `so` | adds `so_rows[]` |
 
@@ -84,7 +89,7 @@ Response (`SalesReportResponse`, every field declared):
 ```
 {
   "customer_name": str | null, "product_code": str | null, "channel": "dealer"|"project"|null,
-  "warehouse_codes": [str], "date_from": date|null, "date_to": date|null,
+  "location_token": str | null, "warehouse_codes": [str], "date_from": date|null, "date_to": date|null,
   "months": [ { "month": "2026-09", "so_count": int,
                 "ordered_value", "ordered_qty", "confirmed_value", "confirmed_qty",
                 "outstanding_value", "outstanding_qty",

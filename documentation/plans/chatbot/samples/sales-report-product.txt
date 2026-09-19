@@ -1,7 +1,7 @@
 Customer: all
 Product: SRTWT7445
 Channel: all
-Location: BRW-IB
+Location: all
 Delivery date: 01/01/2026 to 31/12/2026
 
 *_Sep 2026_*

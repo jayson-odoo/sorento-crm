@@ -22,6 +22,7 @@ skips harmlessly when it is not (the CI container).
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -101,6 +102,28 @@ def test_channel_prints_dealer_project_or_all():
     assert "Channel: Dealer" in _sales_report(_mock("customer"))
     assert "Channel: Project" in _sales_report(_mock("both"))
     assert "Channel: all" in _sales_report(_mock("product"))
+
+
+def test_location_header_matches_the_outstanding_header():
+    """S9 (captain ruling 19 Sep 2026): `Location:` prints exactly as
+    `_outstanding_location_header` does - reused directly, not copied. A typed
+    token that resolved to more than one code brackets the codes; a token that
+    IS the single resolved code (the "codes alone" case AC-1603 names) prints
+    just that code, no brackets."""
+    report = copy.deepcopy(_mock("product"))
+    report["location_token"] = "IB"
+    report["warehouse_codes"] = ["BRW-IB", "MWH-IB"]
+    assert "Location: IB (BRW-IB, MWH-IB)" in _sales_report(report)
+
+    report["location_token"] = "BRW-IB"
+    report["warehouse_codes"] = ["BRW-IB"]
+    rendered = _sales_report(report)
+    assert "Location: BRW-IB" in rendered
+    assert "Location: BRW-IB (BRW-IB)" not in rendered
+
+    # No token at all (this lane's own five mocks): "all", even with resolved
+    # codes present - the same rule the outstanding header applies.
+    assert "Location: all" in _sales_report(_mock("product"))
 
 
 # --------------------------------------------------------------------------

@@ -2,6 +2,7 @@
   "customer_name": "HANLIM TRADING SDN BHD",
   "product_code": null,
   "channel": null,
+  "location_token": null,
   "warehouse_codes": [],
   "date_from": null,
   "date_to": null,

@@ -2175,19 +2175,20 @@ def _outstanding_detail(report: dict, scope: str) -> str:
 #
 # `report` is the shape `GET /api/v1/order-management/sales-report` will return
 # (S2, "Backend contract"): `customer_name` / `product_code` / `channel` echoed
-# back from the caller's own query, `warehouse_codes` the resolved codes (never a
-# token - the sales report response carries no location token to bracket, unlike
-# the outstanding report's `location_token` + `warehouse_codes` pair, so its
-# header is the plain resolved-codes join, "all" when none), `date_from` /
-# `date_to` the bucket-date window, `months[]` latest first with `by_product[]`
-# XOR `by_customer[]` XOR neither (S6/AC-1628 - the ROUTE decides which, this
-# presenter only renders whichever key the month carries), and `so_rows[]` for
-# `detail=so`.
+# back from the caller's own query, `location_token` + `warehouse_codes` the
+# same echo-token/resolved-codes pair the outstanding report carries (S9,
+# captain ruling 19 Sep 2026: "Location:" prints exactly as the outstanding
+# header does), `date_from` / `date_to` the bucket-date window, `months[]`
+# latest first with `by_product[]` XOR `by_customer[]` XOR neither (S6/AC-1628
+# - the ROUTE decides which, this presenter only renders whichever key the
+# month carries), and `so_rows[]` for `detail=so`.
 #
 # Reused verbatim from the outstanding section above, no re-import needed
 # (same module): `_outstanding_fmt_int` (thousands-separated quantities, S13),
 # `_outstanding_ddmmyyyy` / `_outstanding_date_range` (the same two date forms),
-# `_outstanding_label` (a missing name prints "Unassigned", never Python's None).
+# `_outstanding_label` (a missing name prints "Unassigned", never Python's
+# None), `_outstanding_location_header` (token + resolved codes -> the bracketed
+# form, S9 - called directly, not copied).
 
 
 def _rm_money(v: Any) -> str:
@@ -2229,14 +2230,6 @@ def _sales_channel_header(channel: Any) -> str:
     if s == "project":
         return "Project"
     return "all"
-
-
-def _sales_location_header(codes: Any) -> str:
-    """The resolved warehouse codes, comma-joined, or ``"all"`` when none (S9).
-    No token to bracket here (see the module note above) - just the codes the
-    route already filtered on."""
-    resolved = [str(c) for c in (codes or []) if _filled(c)]
-    return ", ".join(resolved) if resolved else "all"
 
 
 def _sales_breakdown(month: dict) -> tuple[str, str, list]:
@@ -2300,7 +2293,7 @@ def _sales_report(report: dict) -> str:
             f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
             f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
             f"Channel: {_sales_channel_header(report.get('channel'))}",
-            f"Location: {_sales_location_header(report.get('warehouse_codes'))}",
+            f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
             f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}",
         )
     )
