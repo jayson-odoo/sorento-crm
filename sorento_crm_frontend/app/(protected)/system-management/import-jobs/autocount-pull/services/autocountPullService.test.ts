@@ -243,7 +243,9 @@ describe('SR2 DoD: the Phase 1 mock is gone (AC item 1)', () => {
           walk(full);
           continue;
         }
-        if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+        // Test files legitimately name these strings in prose/mocks (this file's own FORBIDDEN
+        // list included) - the DoD is about the app's shipped source, not its tests.
+        if (!/\.(ts|tsx)$/.test(entry.name) || /\.test\.(ts|tsx)$/.test(entry.name)) continue;
         const contents = fs.readFileSync(full, 'utf-8');
         for (const needle of FORBIDDEN) {
           if (contents.includes(needle)) offenders.push(`${full}: ${needle}`);
