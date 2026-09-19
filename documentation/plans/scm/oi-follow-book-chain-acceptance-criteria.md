@@ -1,6 +1,6 @@
 # UAC - Order inquiry rows follow the AutoCount book, through the PO to SPO chain, closed or not
 
-Plan: `PLAN-oi-follow-book-chain.md`. Status: D1, D2, D4 RULED by the owner 18 Sep 2026. D3 built on the recommendation, owner to confirm before merge.
+Plan: `PLAN-oi-follow-book-chain.md`. Status: D1 to D4 all RULED by the owner (18 and 19 Sep 2026). Ready for Phase 2.
 
 Owner ruling, 18 Sep 2026: "doesn't matter it is closed or not, if autocount has that
 linking, we must use and follow that."
@@ -110,7 +110,7 @@ Every AC is seeded on `tests/_pg_fixture.py` with its own chain. `[BE][T]` unles
   removed with the note `AutoCount states <X> is for <SO of L>, <date>`, the holder's link state
   is refreshed, the row of L is linked, and the holder is offered to the cascade again.
 * **AC-FB-31** Given the holder's link is MANUAL, then the same happens (ruling 16 Sep:
-  "manual links follow too"). Owner to confirm in the grill.
+  "manual links follow too", confirmed by the owner 19 Sep: option 1).
 * **AC-FB-32** Given the holder is a row of a DIFFERENT sales order line on a fully received
   document, then it is displaced like any other holder and carries the note (D4: always follow).
   A row of the SAME sales order line is never displaced (AC-FB-6).

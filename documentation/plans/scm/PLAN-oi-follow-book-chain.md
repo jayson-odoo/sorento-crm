@@ -1,6 +1,6 @@
 # PLAN - Order inquiry rows follow the AutoCount book, through the PO to SPO chain
 
-Status: DRAFT 18 Sep 2026. D1 and D2 RULED by the owner on the review page 18 Sep ("we must follow autocount link always"). D4 RULED: lift fully. D3 was left unanswered when he closed the page; S3 is built on the recommendation (book wins, manual links too), which is the only option consistent with his two rulings, and is flagged for his confirmation before merge. No code written.
+Status: DRAFT 18 Sep 2026. D1 and D2 RULED by the owner on the review page 18 Sep ("we must follow autocount link always"). D4 RULED: lift fully. D3 RULED 19 Sep in chat: option 1, AutoCount wins always, manual links too. All four decisions ruled.
 UAC: `oi-follow-book-chain-acceptance-criteria.md`. Branch `lane/oi-follow-book-chain`.
 Domain: SCM, order inquiries. Owner ruling 18 Sep 2026: "doesn't matter it is closed or not,
 if autocount has that linking, we must use and follow that."
@@ -59,7 +59,7 @@ this). The PO line takes only what did not ship. This is the importer's rule and
 14 Sep ruling on double counting.
 
 **D3. The book names a document another sales order's row already holds (19 rows today).**
-Recommend the book wins: the holder's link is removed with a note naming the document, the
+RULED 19 Sep: the book wins, always, manual links too. Recommended: the book wins: the holder's link is removed with a note naming the document, the
 sales order it went to and the date; the holder is offered to the cascade again; manual links
 follow too (ruling 16 Sep). Never displaced: a row of the same sales order line, and a
 redirected row holding a received document. The alternative, leaving the holder and the book
