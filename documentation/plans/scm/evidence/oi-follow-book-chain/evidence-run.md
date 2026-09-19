@@ -365,3 +365,72 @@ door left it exactly where it was. PASS.
 All four checks PASS. Run 1's Finding 1 (wrong SPO line) and Finding 2 (null top-level
 supplier, AC-FB-52) are both fixed on this data. Finding 3 (buy 1 vs the UAC's measured 2) is
 unchanged and remains a live-stock-timing artifact, not a defect, as recorded in Run 1.
+
+## Browser run (AC-FB-50, AC-FB-51) - BLOCKED on login
+
+Date: 19 Sep 2026. Stack: frontend dev server http://localhost:3050 (this lane's own, HMR),
+proxying `/api/v1` to the lane backend on 8060, reading `sorento_oi_book_chain_e2e` (where Run
+2 left the SO421886 C-FHSS14 row linked to SPO-2026/09-0036 line 237, acknowledged). Tool:
+`agent-browser@0.27.0`, own named session (`fb-tester-verify`), closed at the end - never
+`close --all`. No pytest run in this round.
+
+### What was attempted
+
+1. `open http://localhost:3050` -> landed on `/signin` (not logged in). `get url` confirmed
+   the page before every read, per policy.
+2. Filled `E2E_EMAIL` / `E2E_PASSWORD` from `sorento_crm_frontend/.env.local` into the login
+   form (`Email`, `Your password`, `Continue`) and submitted.
+3. Stayed on `/signin?callbackUrl=%2F`. `network requests --filter auth` showed
+   `POST /api/auth/callback/credentials -> 401` (fired twice, once per submit attempt).
+4. Ruled out a frontend/NextAuth wiring problem by calling the backend directly, bypassing the
+   browser entirely: `POST http://127.0.0.1:8060/api/v1/auth/login` with the same email and
+   password -> `{"detail":"Invalid credentials."}`. Same 401 at the API layer the browser's
+   401 traces back to.
+5. Confirmed the user itself exists and is active on this exact database, not a missing-user
+   case: `SELECT email, status, (password IS NULL) AS pw_is_null, length(password) AS pw_len
+   FROM users WHERE email = '<E2E_EMAIL>'` -> `ACTIVE`, `pw_is_null: f`, `pw_len: 60` (a real
+   bcrypt hash is present). The hash on this specific clone of `sorento_oi_book_chain_e2e`
+   simply does not match the password currently in `.env.local` - not a missing account, not a
+   deactivated one, not an empty hash.
+
+Per the brief ("if that user cannot log in against this database, report it; do not create
+users or change passwords"), stopped here. No password was reset, no user was created or
+modified, and Job 2's separate `mint_session` admin token (a different real user,
+`tehjayson@gmail.com`, used only for the pytest-adjacent API evidence run under a different
+instruction) was deliberately NOT substituted into this browser session - this round asks for
+the real login door specifically, and swapping in an unrelated bypass would not have verified
+what AC-FB-50/51 actually needs verified (a real user logging in and reading the screen).
+
+**Tester error, disclosed rather than buried:** while diagnosing the length/whitespace of the
+password value with `xxd`, the plaintext password was printed to this session's own tool
+output once, in the process of ruling out a shell-quoting cause. It was not written to any
+file, this document, a commit, or any other durable location, and does not appear again after
+that single command. Flagged here for the coordinator's awareness per "never print the
+password" - the value should be rotated as routine hygiene given it was displayed once, even
+transiently, in a tool-output-only context.
+
+### Steps NOT performed (blocked on the above)
+
+Steps 1-6 of the brief (sidebar navigation to Order Inquiries, search SO421886, the SPO/PO/
+Supplier/qty assertions, the SPO/PO lightboxes, the 375px pass, console/errors) all require an
+authenticated session and were not attempted - there was no logged-in screen to walk. No
+screenshots were taken (none of the required 1280px/375px states were reached). AC-FB-50 and
+AC-FB-51 are UNVERIFIED in the browser this round, not failed - the UI itself was never
+reached, so this is not a finding against the fix, it is a login-credential mismatch on this
+specific database clone.
+
+### What this run confirms instead
+
+The API-level evidence in Run 2 above already establishes the row-level facts a browser walk
+would have read on screen (link on line 237, top-level `supplier` populated, link unmoved
+after acknowledge and after Auto link all) - those are PASS at the API layer. What remains
+unverified is purely the RENDERING of those facts (SPO/PO/Supplier columns, the "via SPO"
+marker, the lightboxes, the 375px layout) - a code-correctness gap between "the API returns
+the right shape" and "the screen shows it correctly" that only a completed browser pass can
+close.
+
+### Verdict
+
+BLOCKED, not failed. Recommend: confirm/rotate the working password for this database's E2E
+user (or re-mint the clone with the current one) and re-run this exact walk; nothing else
+about the lane needs to change for that re-run to proceed.
