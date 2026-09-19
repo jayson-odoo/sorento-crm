@@ -41,6 +41,10 @@ copy before sizing the prod repair (section 4).
   the sheet remark at all"): the sheet's PO still PAIRS nothing, the link stays the book's own.
 - **R3** Same month before PO order: 04-01 lands on 04-02; 02-02 and 03-02 then take 05-01 and
   05-02.
+- **R4** (19 Sep, prod C-FH14): the sheet's PO outranks the month when they disagree; pass order
+  is exact, month and PO, PO, month, fallback.
+- **R5** (19 Sep, prod CB1178A-SS-NEW): a restatement is only ever across tabs; two identical
+  rows inside one tab are two separate instructions, and a later tab restates them by position.
 
 ## 2. Design
 

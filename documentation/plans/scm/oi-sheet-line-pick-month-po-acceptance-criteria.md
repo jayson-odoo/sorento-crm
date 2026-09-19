@@ -1,6 +1,6 @@
 # UAC - order inquiry sheet: line pick by exact date, then same month, then the sheet's PO
 
-Plan: `PLAN-oi-sheet-line-pick-month-po.md`. Owner rulings 19 Sep 2026 (R1 to R3 in the plan).
+Plan: `PLAN-oi-sheet-line-pick-month-po.md`. Owner rulings 19 Sep 2026 (R1 to R5 in the plan).
 
 Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod, 19 Sep):
 
@@ -47,6 +47,10 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   taken when it is the only line that fits (D1 kept).
 - **AC-LP-9** An ORDER BACK row (no delivery date) takes part in no date pass and no month pass;
   it may land through the PO pass or the fallback.
+- **AC-LP-14** (R4, prod C-FH14 / SO324265, 19 Sep 2026) The sheet's own PO outranks the month
+  when they disagree: a row whose citation names a DIFFERENT purchase order than the only line
+  in its own month does not take that line, even stated first in the file - the citation-alone
+  pass settles it (or the fallback, if nothing free cites it), never the month pass.
 
 ## Citation lending
 
@@ -54,6 +58,13 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   carries none (05-04 and 06-01 in the fixture end up citing 202603-S0033 for the line pick). A
   first statement that already cites a PO keeps its own. Lending never changes the duplicate
   count, the ledger or the note.
+- **AC-LP-15** (R5, prod CB1178A-SS-NEW / SO324265, 19 Sep 2026) A restatement is only ever
+  ACROSS tabs. Two identical rows inside the SAME tab are two separate instructions, not one
+  restated: each raises its own line. On a LATER tab, the n-th row carrying that same key
+  restates the n-th instruction by POSITION - not just the first one ever seen - so a roll-up
+  that repeats a key fewer times than the month tab did still restates only that many of them,
+  and a roll-up that carries a different citation on each repeat lends each one to the
+  matching-position instruction, never to the wrong one or to only the first.
 
 ## Re-upload
 

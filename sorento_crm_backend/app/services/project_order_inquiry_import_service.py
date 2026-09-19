@@ -34,14 +34,17 @@ documents AutoCount stated only by NUMBER: a claim is one row per
 order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep prod copy the
 August `po_history` extract already held the claim key for 28,397 pairings the column states
 exactly, which is why `po_history` pairs nothing any more. The same column also decides WHICH
-line of the order a row lands on when several fit, through four passes in order
-(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R3, 19 Sep 2026,
-`_match_in_passes`): the line whose required date IS the sheet's date; failing that, any
-line in the sheet's own month, the sheet's own cited purchase order deciding between several
-(R2: the sheet's PO may pick the LINE even though it still pairs nothing); failing that, a
-line among the book's own documents that the sheet ALSO cites; and only then the line the
-book bought for at all, unchanged from before. A cancelled August-extract ghost line ranks
-behind any real line that fits in every one of the four.
+line of the order a row lands on when several fit, through five passes in order
+(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R4, 19 Sep 2026,
+`_match_in_passes`): the line whose required date IS the sheet's date; failing that, a line
+in the sheet's own month whose book document the sheet ALSO cites (R4, prod C-FH14: the
+sheet's PO outranks the month when they disagree, or an April row citing one purchase order
+steals the month's only line from a row that actually cites it); failing that, any line
+among the book's own documents the sheet cites, whichever month it falls in (R2: the sheet's
+PO may pick the LINE even though it still pairs nothing); failing that, any line left in the
+sheet's own month with no PO to decide it; and only then the line the book bought for at
+all, unchanged from before. A cancelled August-extract ghost line ranks behind any real line
+that fits in every one of the five.
 
 Two honest limits, each counted and named rather than smoothed over.
 
@@ -347,12 +350,30 @@ def _restates(row) -> tuple:
     The remark, the documents parsed out of it and the ORDER BACK flag are all OUT of the
     key. Which tab carries the purchase order number is an accident of how the book is kept,
     so a roll-up row that names one is the same instruction as the month row that left it
-    blank - and `_plan` lends that citation onto the FIRST statement of the pair (`stated`
-    keeps one match per key, not a bare set, exactly so this has somewhere to land) when that
+    blank - and `_plan` lends that citation onto the FIRST statement of the pair when that
     one carries none, before either row ever reaches the line pick. A first statement that
     already cites its own purchase order keeps it - lending never overwrites a citation, only
     fills the gap the blank tab left. An ORDER BACK row carries no delivery date at all, so
     the date still tells it apart from a dated row.
+
+    R3's "the remark doesn't matter" was about ONE delivery written on a month tab, a
+    roll-up tab and a dated snapshot - never about two IDENTICAL rows inside the SAME tab.
+    Measured, 19 Sep 2026 (R5, prod CB1178A-SS-NEW / SO324265): the order holds two lines of
+    qty 25 on the same delivery date (two unit types), and the sheet states that delivery
+    TWICE inside one tab, then twice again on the roll-up. Reading `_restates`' key alone
+    per row, as `_plan` used to, collapsed all four into ONE instruction and raised only one
+    of the two lines; book-wide, 517 keys are stated more than once inside a single tab, 650
+    deliveries are dropped as restatements, across 90 sales orders.
+
+    A restatement is only ever ACROSS tabs. Inside one tab, the n-th row carrying a given key
+    is its own instruction, distinct from every other row that shares the key on that SAME
+    tab; on a LATER tab, the n-th row carrying that key restates the n-th instruction (first
+    tab's first occurrence, second tab's first occurrence, and so on by position) rather than
+    every occurrence on the later tab piling onto the first. The number of instructions a key
+    holds is therefore the MAX count that key reaches on any single tab, not the count summed
+    across every tab in the file. `_plan` keeps this by pairing `_restates`' key with the
+    row's own `sheet` in a per-(sheet, key) counter, so two identical rows in one tab are two
+    instructions and a later tab's own identical rows restate them positionally.
     """
     return (
         (row.so_number or "").strip(),
@@ -421,15 +442,20 @@ def _unambiguous_refs(db: Session, refs: set) -> set:
 def _rank_for(row, bought: set) -> Callable[[tuple], tuple]:
     """The line this row means, when several fit (D1, AC-S1-8, as section 8 leaves it).
 
-    Read by two of the four passes the line pick now runs (`_match_in_passes`,
+    Read by two of the five passes the line pick now runs (`_match_in_passes`,
     `PLAN-oi-sheet-line-pick-month-po.md` section 2): pass 1, exact date, where every term
     below the first is moot because the candidates already share the row's own date; and
-    pass 4, the fallback, over every line of the order once passes 1 to 3 have placed what
+    pass 5, the fallback, over every line of the order once passes 1 to 4 have placed what
     they can - which is the only place the "date matches no line" and "book bought for it"
-    stories below still happen. Passes 2 and 3 read their OWN rank instead (`_rank_for_month`,
-    `_rank_for_po`, just below `_match_row`): the month pass needs the row's own cited
-    purchase order ahead of "earliest date", and the PO pass needs no date term at all, since
-    `_narrow_sheet_po` already means every candidate it sees is one the row itself cites.
+    stories below still happen. Passes 2, 3 and 4 read their OWN rank instead
+    (`_rank_for_month`, `_rank_for_po`, just below `_match_row`): the month passes need the
+    row's own cited purchase order ahead of "earliest date", and the PO pass needs no date
+    term at all, since `_narrow_sheet_po` already means every candidate it sees is one the
+    row itself cites. There is no plain "same month, no citation to break the tie" pass left
+    for this function to rank any more either: R4 (19 Sep 2026, prod C-FH14, SO324265) split
+    the old single month pass into pass 2 (month AND the sheet's own citation) and pass 4
+    (month alone, after the PO pass), precisely so a row's citation always outranks the
+    month rather than losing a tie inside it.
 
     A real line before a cancelled one, first of all - 10,499 cancelled August-extract ghosts
     are still in the book, and a ghost is never what a live sheet row means while a real line
@@ -489,9 +515,9 @@ def _match_row(
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, against `candidates` exactly as given, or the FIRST filter
     that refused it. `candidates` and `rank` are the caller's to narrow: `_run_pass`, the only
-    caller, hands over a NARROWED list and the pass's own rank for passes 1 to 3 of the
-    four-pass line pick (PLAN section 2), and every line of the order, unnarrowed, with
-    `_rank_for(row, plan.bought_refs)` built fresh, for pass 4, the fallback.
+    caller, hands over a NARROWED list and the pass's own rank for passes 1 to 4 of the
+    five-pass line pick (PLAN section 2), and every line of the order, unnarrowed, with
+    `_rank_for(row, plan.bought_refs)` built fresh, for pass 5, the fallback.
 
     Item, then location, then quantity - reported in that order because that is the order a
     person checks them in, and "no line for this item" and "location differs" send them to
@@ -504,7 +530,7 @@ def _match_row(
     The ledger is charged for whatever line a row lands on, ALREADY RAISED or not - reversing
     review finding 9 (14 Sep) on purpose (PLAN section 2, "Ledger"). Finding 9 had this skip
     the charge on an already-raised line so the NEXT row of the same file would not read
-    `qty_exceeds_ordered` for quantity nobody used, but the four-pass pick runs the identical
+    `qty_exceeds_ordered` for quantity nobody used, but the five-pass pick runs the identical
     ledger on a fresh upload and on every re-upload of the same file (a line raised by an
     EARLIER run is "already raised" on both), so a charge that only happens sometimes is a
     charge that lets the two runs place a later row on two different lines (AC-LP-11,
@@ -543,7 +569,7 @@ def _match_row(
 
 
 # --------------------------------------------------------------------------- #
-# the four-pass line pick: exact date, same month, the sheet's own PO, fallback #
+# the five-pass line pick: exact date, month and PO, PO, month, fallback      #
 # --------------------------------------------------------------------------- #
 
 
@@ -616,8 +642,11 @@ def _narrow_exact_date(row) -> Callable[[tuple], bool]:
 
 
 def _narrow_same_month(row) -> Callable[[tuple], bool]:
-    """Pass 2: keep candidates in the row's own year and month, whatever the day. The same
-    `wanted is not None` guard keeps an ORDER BACK row out of this pass too (AC-LP-9)."""
+    """Keep candidates in the row's own year and month, whatever the day. Read alone by
+    pass 4 (a row whose citation named no free line, or named nothing at all, still gets the
+    month's own terms before the blanket fallback) and, composed with `_narrow_sheet_po`
+    (`_narrow_month_and_po`), by pass 2. The same `wanted is not None` guard keeps an ORDER
+    BACK row out of both (AC-LP-9)."""
     wanted = row.delivery_date
 
     def keep(candidate: tuple) -> bool:
@@ -632,10 +661,11 @@ def _narrow_same_month(row) -> Callable[[tuple], bool]:
 
 
 def _narrow_sheet_po(row, documents: Dict[tuple, set]) -> Callable[[tuple], bool]:
-    """Pass 3: keep candidates whose OWN book document (`_bought_documents`) is one the row
-    itself cites (R2, 19 Sep 2026: the sheet's PO may pick the line). A row that cites nothing
-    keeps no candidate at all - which is exactly what sends it on to the fallback rather than
-    reporting a reason here (AC-LP-6)."""
+    """Keep candidates whose OWN book document (`_bought_documents`) is one the row itself
+    cites (R2, 19 Sep 2026: the sheet's PO may pick the line). Read alone by pass 3, and
+    composed with `_narrow_same_month` (`_narrow_month_and_po`) by pass 2. A row that cites
+    nothing keeps no candidate at all in either shape - which is exactly what sends it on to
+    the next pass rather than reporting a reason here (AC-LP-6)."""
     cited = {_document_key(number) for number in row.po_numbers}
 
     def keep(candidate: tuple) -> bool:
@@ -651,11 +681,34 @@ def _narrow_sheet_po(row, documents: Dict[tuple, set]) -> Callable[[tuple], bool
     return keep
 
 
+def _narrow_month_and_po(row, documents: Dict[tuple, set]) -> Callable[[tuple], bool]:
+    """Pass 2's own narrow (R4, 19 Sep 2026, prod C-FH14, SO324265): a candidate must clear
+    BOTH `_narrow_same_month` and `_narrow_sheet_po`, composed rather than duplicated, so a
+    row only lands here when the month and its own citation agree. On C-FH14 the sheet's
+    04-01 row cited PO B while the only line in its month books PO A: under the old single
+    month pass that line still ranked first (nothing else in the month outranked it), which
+    stole it from the row that actually cited A and cascaded every later row onto the wrong
+    line. Splitting the narrow in two lets pass 3 (the citation alone) catch a row like this
+    one BEFORE pass 4, the plain month test the single pass used to be, ever gets a chance to
+    rank the wrong line back in for it."""
+    same_month = _narrow_same_month(row)
+    same_po = _narrow_sheet_po(row, documents)
+
+    def keep(candidate: tuple) -> bool:
+        return same_month(candidate) and same_po(candidate)
+
+    return keep
+
+
 def _rank_for_month(row, documents: Dict[tuple, set]) -> Callable[[tuple], tuple]:
-    """Pass 2's own tie-break (AC-LP-4): live before cancelled, then a candidate whose own
-    book document the row also cites, then the NEAREST date rather than the earliest - every
-    candidate here already shares the row's month, so "earliest" would only ever prefer the
-    first of the month - then the terms `_rank_for` always closes a tie on."""
+    """Passes 2 and 4's own tie-break (AC-LP-4): live before cancelled, then a candidate
+    whose own book document the row also cites, then the NEAREST date rather than the
+    earliest - every candidate here already shares the row's month, so "earliest" would only
+    ever prefer the first of the month - then the terms `_rank_for` always closes a tie on.
+    The citation term only ever matters in pass 4 now (pass 2's own narrow already means
+    every candidate it sees cites the row, so the term ties there) - kept rather than
+    dropped, because a plain month tie in pass 4 with one cited candidate among several
+    uncited ones should still prefer it."""
     wanted = row.delivery_date
     cited = {_document_key(number) for number in row.po_numbers}
 
@@ -709,7 +762,7 @@ def _run_pass(
     order: Sequence[_Match],
 ) -> List[_Match]:
     """Attempt every match in `order` once, against candidates `narrow` allows - every line
-    of the row's own order, unnarrowed, when `narrow` is `None` (pass 4, the fallback). A
+    of the row's own order, unnarrowed, when `narrow` is `None` (pass 5, the fallback). A
     match this places is mutated in place (`core_line`, `line_location`, `already_raised`); a
     REASON is kept only for the fallback, because a narrowed pass that finds nothing has said
     nothing about the row - the fallback's own unnarrowed read is the first filter that
@@ -745,16 +798,26 @@ def _match_in_passes(
     raised_already: set,
     pending: List[_Match],
 ) -> None:
-    """The four passes (PLAN-oi-sheet-line-pick-month-po.md section 2, owner rulings R1 to
-    R3, 19 Sep 2026): exact date, same month, the sheet's own purchase order, then today's
-    fallback rank - over the ONE `taken` ledger the caller built, so a row placed in an
-    earlier pass takes no further part in a later one.
+    """The five passes (PLAN-oi-sheet-line-pick-month-po.md section 2, owner rulings R1 to
+    R4, 19 Sep 2026): exact date; same month AND the sheet's own citation agreeing; the
+    sheet's own citation alone; same month alone; then today's fallback rank - over the ONE
+    `taken` ledger the caller built, so a row placed in an earlier pass takes no further
+    part in a later one.
 
-    Passes 1, 2 and 4 attempt `pending` in FILE order, exactly as the single pass used to.
-    Pass 3 attempts its own leftovers by the row's OWN delivery date instead (AC-LP-5, the
-    earliest row to the earliest free line), undated rows last, ties broken by file order -
-    but it still RETURNS what is left in `pending`'s own order, so pass 4 reads FILE order
-    too.
+    R4 (prod C-FH14, SO324265): the sheet's own citation outranks the month when they
+    disagree. Under the old single month pass, a row whose citation named a DIFFERENT
+    purchase order than the only line in its month could still steal that line from a row
+    whose citation actually named it, because nothing in that pass's own rank read the
+    citation ahead of the month itself; splitting it into "month AND citation" (pass 2,
+    ahead of the citation-alone pass) and "month alone" (pass 4, behind it) means a row only
+    ever wins a month-mate's line on citation grounds when its OWN citation is the one that
+    line's book document actually names.
+
+    Passes 1, 2, 4 and 5 attempt `pending` in FILE order, exactly as before. Pass 3 (the
+    citation alone) attempts its own leftovers by the row's OWN delivery date instead
+    (AC-LP-5, the earliest row to the earliest free line), undated rows last, ties broken by
+    file order - but it still RETURNS what is left in `pending`'s own order, so passes 4 and
+    5 read FILE order too.
     """
     remaining = _run_pass(
         pending, plan, lines, taken, raised_already,
@@ -764,7 +827,7 @@ def _match_in_passes(
     )
     remaining = _run_pass(
         remaining, plan, lines, taken, raised_already,
-        narrow=_narrow_same_month,
+        narrow=lambda row: _narrow_month_and_po(row, plan.bought_documents),
         rank=lambda row: _rank_for_month(row, plan.bought_documents),
         order=remaining,
     )
@@ -784,6 +847,12 @@ def _match_in_passes(
         narrow=lambda row: _narrow_sheet_po(row, plan.bought_documents),
         rank=lambda row: _rank_for_po,
         order=po_order,
+    )
+    remaining = _run_pass(
+        remaining, plan, lines, taken, raised_already,
+        narrow=_narrow_same_month,
+        rank=lambda row: _rank_for_month(row, plan.bought_documents),
+        order=remaining,
     )
     _run_pass(
         remaining, plan, lines, taken, raised_already,
@@ -1371,33 +1440,49 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     #: line").
     plan.bought_documents = _bought_documents(db, plan.bought_rows)
     #: How much of each line this FILE has already spoken for, in file order - shared by all
-    #: four passes of the line pick below, so a row placed by an earlier pass is unavailable
+    #: five passes of the line pick below, so a row placed by an earlier pass is unavailable
     #: to a later one, and a re-upload charges exactly what the first upload charged
     #: (`_match_row`, "Ledger", reversing review finding 9 of 14 Sep on purpose).
     taken: Dict[str, Decimal] = {}
 
-    #: The FIRST match that stated each instruction (D7), keyed by `_restates`. A duplicate
-    #: is marked and dropped as before, but when it carries a purchase order the first
-    #: statement does not, it lends it onto that first match's own row (`_restates`,
-    #: "Lending") before either one ever reaches a pass below.
-    stated: Dict[tuple, _Match] = {}
+    #: The instructions stated for each `_restates` key so far, in the order they were
+    #: first stated (D7). A restatement is only ever ACROSS tabs (R5, 19 Sep 2026,
+    #: `_restates`): the n-th row carrying a key on ONE tab is its OWN instruction, distinct
+    #: from the key's other rows on that same tab, so a key can hold several entries here
+    #: before any tab restates even the first of them.
+    stated: Dict[tuple, List[_Match]] = {}
+    #: How many rows carrying each `(sheet, key)` pair have been seen so far - the position
+    #: `stated[key]` is read at. Keyed on the SHEET as well as the key, because the count
+    #: resets to zero on every new tab: a tab's own first row is always position 0, whether
+    #: or not an earlier tab already stated the key twice.
+    seen: Dict[tuple, int] = {}
 
-    #: Rows that cleared the file-level checks below and are left for the four passes to
+    #: Rows that cleared the file-level checks below and are left for the five passes to
     #: place (`_match_in_passes`).
     pending: List[_Match] = []
 
     for match in plan.matches:
         row = match.row
         key = _restates(row)
-        first = stated.get(key)
-        if first is not None:
-            # Counted, never matched: a restatement must not take the line's quantity from
-            # the row it restates, or the second tab would read `qty_exceeds_ordered`.
+        instructions = stated.setdefault(key, [])
+        position = seen.get((row.sheet, key), 0)
+        seen[(row.sheet, key)] = position + 1
+        if position < len(instructions):
+            # This tab has already stated this key `position` times before this row, and an
+            # EARLIER tab stated it at least `position + 1` times - so this row restates the
+            # instruction an earlier tab put at that same position, not merely "the first
+            # one ever seen" (D7, R5). Counted, never matched: a restatement must not take
+            # the line's quantity from the row it restates, or the second tab would read
+            # `qty_exceeds_ordered`.
+            first = instructions[position]
             match.duplicate = True
             if row.po_numbers and not first.row.po_numbers:
                 first.row = replace(first.row, po_numbers=row.po_numbers)
             continue
-        stated[key] = match
+        # `position == len(instructions)`: no earlier tab reached this many rows of this key,
+        # so this row is a NEW instruction - whether or not this same tab already stated the
+        # key at an earlier position (R5: two identical rows on one tab are two instructions).
+        instructions.append(match)
         if _dec(row.qty) <= _ZERO:
             # Never matched and never charged to the ledger (security review N2, 14 Sep):
             # a negative cell would otherwise hand capacity BACK to the line and let a later

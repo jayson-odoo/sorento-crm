@@ -931,3 +931,185 @@ def test_serial_dated_rows_are_not_restatements():
         assert {str(row.so_line_id) for row in rows} == {
             str(mirror_first.id), str(mirror_second.id),
         }, "one row per line, not both stacked onto one"
+
+
+# --------------------------------------------------------------------------- #
+# AC-LP-14: the sheet's PO outranks the month when they disagree (R4)         #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_lp_14_sheet_po_outranks_same_month():
+    """AC-LP-14 (R4, 19 Sep 2026, prod C-FH14 / SO324265). The 04-01 row cites PO B while
+    the only line in its own month books PO A - under the old single month pass that line
+    still won it (nothing outranked "same month" for a citation-less tie), stealing it from
+    the row that actually cites A and cascading every later row onto the wrong line: 02-02
+    finds its A line taken and slides to 05-02, 03-02 finds NOTHING free and falls all the
+    way back to the 2025-12-01 line the sheet never cites. Stating the 04-01 row FIRST in
+    the file, ahead of the exact-date rows it could otherwise starve, proves the outcome is
+    the pass order, not file order (AC-LP-2/3's own point, restated for this defect)."""
+    with world() as w:
+        order = w.order()
+        line_dec = _with_ref(
+            w, w.line(order, qty_ordered="130", required_date=date(2025, 12, 1)), _ref(),
+        )
+        line_jan = _with_ref(
+            w, w.line(order, qty_ordered="130", required_date=date(2026, 1, 2)), _ref(),
+        )
+        line_apr = _with_ref(
+            w, w.line(order, qty_ordered="130", required_date=date(2026, 4, 2)), _ref(),
+        )
+        line_may_2 = _with_ref(
+            w, w.line(order, qty_ordered="130", required_date=date(2026, 5, 2)), _ref(),
+        )
+        line_may_1 = _with_ref(
+            w, w.line(order, qty_ordered="130", required_date=date(2026, 5, 1)), _ref(),
+        )
+
+        po_x, po_line_x = w.po_line(qty_ordered="130", number=_po_number("202508"))
+        _names(w, po_line_x, line_dec.source_ref)
+
+        po_a, po_line_a = w.po_line(qty_ordered="130", number=_po_number("202509"))
+        _names(w, po_line_a, line_jan.source_ref)
+        _sibling_po_line(w, po_a, qty_ordered="130", from_so_line_ref=line_apr.source_ref)
+        _sibling_po_line(w, po_a, qty_ordered="130", from_so_line_ref=line_may_2.source_ref)
+
+        po_b, po_line_b = w.po_line(qty_ordered="130", number=_po_number("202510"))
+        _names(w, po_line_b, line_may_1.source_ref)
+
+        p, loc, so = w.product.product_code, w.warehouse.warehouse_code, order.so_number
+        # The 04-01 row stated FIRST, ahead of the three exact-date rows it could otherwise
+        # starve if the outcome depended on file order rather than the pass order.
+        data = sheet([
+            (so, p, 130, date(2026, 4, 1), loc, po_b.po_number),
+            (so, p, 130, date(2026, 1, 2), loc, po_a.po_number),
+            (so, p, 130, date(2026, 2, 2), loc, po_a.po_number),
+            (so, p, 130, date(2026, 3, 2), loc, po_a.po_number),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 4, result
+        assert result["rows_line_not_found"] == 0, result
+        rows_by_date = _rows_by_date(w)
+        _assert_lands_on(w, rows_by_date, date(2026, 1, 2), line_jan)
+        _assert_lands_on(w, rows_by_date, date(2026, 2, 2), line_apr)
+        _assert_lands_on(w, rows_by_date, date(2026, 3, 2), line_may_2)
+        _assert_lands_on(w, rows_by_date, date(2026, 4, 1), line_may_1)
+        december_mirror = w.mirror_of(line_dec)
+        assert december_mirror is None or not any(
+            str(row.so_line_id) == str(december_mirror.id) for row in w.rows()
+        ), "a row landed on the 2025-12-01 line the sheet never cites"
+
+
+# --------------------------------------------------------------------------- #
+# AC-LP-15: a restatement is only ever ACROSS tabs (R5)                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_lp_15_identical_rows_inside_one_tab_are_separate_deliveries():
+    """AC-LP-15 (R5, 19 Sep 2026, prod CB1178A-SS-NEW / SO324265). Two lines of the same
+    order, item and date - two unit types delivered together - and the sheet states the
+    delivery TWICE inside the SAME month tab, then twice again on the roll-up: four rows on
+    the sheet, but only TWO real instructions (measured book-wide: 517 keys stated more than
+    once inside one tab, 650 deliveries dropped as restatements, across 90 sales orders).
+    `_restates` must not collapse the two identical rows within ONE tab into one instruction
+    - only a LATER tab restates what an earlier tab already said."""
+    with world() as w:
+        order = w.order()
+        line_a = w.line(order, qty_ordered="25", required_date=date(2026, 1, 2))
+        line_b = w.line(order, qty_ordered="25", required_date=date(2026, 1, 2))
+        row = (
+            order.so_number, w.product.product_code, 25, date(2026, 1, 2),
+            w.warehouse.warehouse_code, "",
+        )
+        data = book(MONTH=[row, row], ROLLUP=[row, row])
+        outcome = ImportOutcome(None, persist=False)
+
+        result = w.apply(data, outcome=outcome)
+
+        assert result["rows_raised"] == 2, result
+        assert outcome.count_of("restates_an_instalment") == 2, outcome.breakdown()
+        rows = w.rows()
+        assert len(rows) == 2, [str(r.qty) for r in rows]
+        mirror_a, mirror_b = w.mirror_of(line_a), w.mirror_of(line_b)
+        assert {str(r.so_line_id) for r in rows} == {str(mirror_a.id), str(mirror_b.id)}
+
+
+def test_ac_lp_15_roll_up_with_fewer_repeats_adds_nothing():
+    """AC-LP-15. The roll-up need not repeat every count the month tab does: the month tab
+    states the delivery TWICE (two real instructions), the roll-up restates it only ONCE -
+    the roll-up's single row restates the FIRST month instruction by position, nothing
+    restates the second one again, and both still raise."""
+    with world() as w:
+        order = w.order()
+        line_a = w.line(order, qty_ordered="25", required_date=date(2026, 1, 2))
+        line_b = w.line(order, qty_ordered="25", required_date=date(2026, 1, 2))
+        row = (
+            order.so_number, w.product.product_code, 25, date(2026, 1, 2),
+            w.warehouse.warehouse_code, "",
+        )
+        data = book(MONTH=[row, row], ROLLUP=[row])
+        outcome = ImportOutcome(None, persist=False)
+
+        result = w.apply(data, outcome=outcome)
+
+        assert result["rows_raised"] == 2, result
+        assert outcome.count_of("restates_an_instalment") == 1, outcome.breakdown()
+        rows = w.rows()
+        assert len(rows) == 2, [str(r.qty) for r in rows]
+        mirror_a, mirror_b = w.mirror_of(line_a), w.mirror_of(line_b)
+        assert {str(r.so_line_id) for r in rows} == {str(mirror_a.id), str(mirror_b.id)}
+
+
+def test_ac_lp_15_lending_goes_to_the_matching_repeat():
+    """AC-LP-15 (lending). The month tab's two identical rows are two SEPARATE instructions
+    (this criterion's own point) - so when the roll-up restates them with two DIFFERENT
+    purchase orders, each lent citation must reach the SAME-POSITION month instruction, not
+    either one at random or both landing on the first. Neither line is an exact-date or
+    same-month match for the row's own date, so only the PO pass can settle either - proving
+    the lending, not a date tie, decided it. A THIRD, decoy line the book also bought for
+    stands ready to catch a citation-less instruction via the plain fallback (earliest date
+    among bought lines): if either lending went to the wrong position, the row it starved
+    would land on the decoy instead of its own line, which the closing assertion catches."""
+    with world() as w:
+        order = w.order()
+        line_x = _with_ref(
+            w, w.line(order, qty_ordered="25", required_date=date(2026, 7, 1)), _ref(),
+        )
+        line_y = _with_ref(
+            w, w.line(order, qty_ordered="25", required_date=date(2026, 9, 1)), _ref(),
+        )
+        decoy = _with_ref(
+            w, w.line(order, qty_ordered="25", required_date=date(2026, 1, 1)), _ref(),
+        )
+        po_x, po_line_x = w.po_line(qty_ordered="25", number=_po_number("202508"))
+        _names(w, po_line_x, line_x.source_ref)
+        po_y, po_line_y = w.po_line(qty_ordered="25", number=_po_number("202509"))
+        _names(w, po_line_y, line_y.source_ref)
+        po_decoy, po_line_decoy = w.po_line(qty_ordered="25", number=_po_number("202510"))
+        _names(w, po_line_decoy, decoy.source_ref)
+
+        stated = (
+            order.so_number, w.product.product_code, 25, date(2026, 2, 1),
+            w.warehouse.warehouse_code, "",
+        )
+        restated_x = (
+            order.so_number, w.product.product_code, 25, date(2026, 2, 1),
+            w.warehouse.warehouse_code, po_x.po_number,
+        )
+        restated_y = (
+            order.so_number, w.product.product_code, 25, date(2026, 2, 1),
+            w.warehouse.warehouse_code, po_y.po_number,
+        )
+        data = book(MONTH=[stated, stated], ROLLUP=[restated_x, restated_y])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 2, result
+        rows = w.rows()
+        assert len(rows) == 2, [str(r.qty) for r in rows]
+        mirror_x, mirror_y = w.mirror_of(line_x), w.mirror_of(line_y)
+        assert {str(r.so_line_id) for r in rows} == {str(mirror_x.id), str(mirror_y.id)}, (
+            "a citation lent to the wrong position starved one instruction, which fell to "
+            "the plain fallback and landed on the decoy line instead of its own"
+        )
