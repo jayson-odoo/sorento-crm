@@ -23,8 +23,8 @@ _ATTACHED_SENTENCE = "I have attached the file(s) below."
 def _pretty_team(team: str) -> str:
     """DISPLAY ONLY, underscores to spaces - the same rule `tail.outcome.pretty_team`
     applies, duplicated as one line rather than imported: the `turn` package may not
-    import `chatbot.tail` (`test_rearch_s2_apply_is_pure.py::
-    test_turn_package_imports_nothing_from_the_old_seams`)."""
+    import `chatbot.tail` (see `test_turn_package_imports_nothing_from_the_old_seams`
+    in the S2 purity tests)."""
     return team.replace("_", " ").strip()
 
 
