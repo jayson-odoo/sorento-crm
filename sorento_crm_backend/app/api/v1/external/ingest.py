@@ -542,6 +542,7 @@ def _run_follow_book_po_hook(db: Session, service, *, actor: Optional[str]) -> i
                 book_follow_rows_dropped = ProjectOrderInquiryService(db).follow_book_for_rows(
                     row_ids, trigger="autocount_ingest",
                     company_id=service.company_id, actor_user_id=actor,
+                    max_rows=ProjectOrderInquiryService.FOLLOW_BOOK_FOR_ROWS_MAX_ROWS,
                 )
         db.commit()
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
@@ -625,6 +626,7 @@ def _run_follow_book_spo_hook(db: Session, service, *, actor: Optional[str]) -> 
                 book_follow_rows_dropped = ProjectOrderInquiryService(db).follow_book_for_rows(
                     row_ids, trigger="autocount_ingest",
                     company_id=service.company_id, actor_user_id=actor,
+                    max_rows=ProjectOrderInquiryService.FOLLOW_BOOK_FOR_ROWS_MAX_ROWS,
                 )
         db.commit()
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded

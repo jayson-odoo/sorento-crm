@@ -2024,6 +2024,7 @@ class ProjectOrderInquiryService:
         trigger: str,
         company_id: str,
         actor_user_id: Optional[str] = None,
+        max_rows: Optional[int] = None,
     ) -> int:
         """S1/S3 (`PLAN-oi-follow-book-chain.md`, AC-FB-1 to AC-FB-12, AC-FB-20,
         AC-FB-30 to AC-FB-33): a row follows the document AutoCount's own book
@@ -2061,23 +2062,29 @@ class ProjectOrderInquiryService:
         as the importer's own `apply` calls it) with `auto_trigger=trigger`, and
         `refresh_link_state` runs once for every row this call actually touched.
 
-        Capped at `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` rows per call (AC-FB-24,
-        `follow_book_repairing`'s own sibling cap and shape): the rest are
-        skipped, logged, and this returns how many were dropped - 0 on every
-        ordinary push, whatever this call itself actually linked or displaced.
+        `max_rows` is a CALLER decision, not a standing rule (fix round, 19 Sep):
+        AC-FB-24's cap guards the external ingest surface, where one ESB batch
+        can name arbitrarily many rows in a single request - the two ingest
+        hooks pass `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` explicitly. The cascade
+        caller (`auto_place_for_products`) and the backfill script pass
+        nothing, so an ordinary company-wide Confirm/Link now/Auto link all
+        press honours the book for every eligible row, not an arbitrary 200 of
+        it (measured on the prod copy: capped at 200 of 4,588 rows named).
+        `None` (the default) means uncapped. Returns how many rows this call
+        dropped past `max_rows` - 0 whenever `max_rows` is `None` or nothing
+        was dropped, whatever this call itself actually linked or displaced.
         """
         wanted = [str(row_id) for row_id in row_ids if row_id]
         if not wanted:
             return 0
 
-        cap = self.FOLLOW_BOOK_FOR_ROWS_MAX_ROWS
         dropped = 0
-        if cap is not None and len(wanted) > cap:
-            dropped = len(wanted) - cap
-            wanted = wanted[:cap]
+        if max_rows is not None and len(wanted) > max_rows:
+            dropped = len(wanted) - max_rows
+            wanted = wanted[:max_rows]
             logger.warning(
                 "follow_book_for_rows: capped at %s rows, skipped %s of %s",
-                cap, dropped, len(row_ids),
+                max_rows, dropped, len(row_ids),
             )
 
         from app.services.project_order_inquiry_import_service import (
@@ -2088,6 +2095,27 @@ class ProjectOrderInquiryService:
 
         with company_scope(self.db, frozenset({company_id})):
             rows_by_id, core_line_by_row = self._linkable_rows_with_core_line(wanted)
+            if not core_line_by_row:
+                return dropped
+
+            # Fix round, 19 Sep: a coarse, cheap pre-filter BEFORE the per-row
+            # `_unlinked_need` query below - on the prod copy this narrows
+            # 4,588 linkable rows down to the 191 whose ref the book actually
+            # states anywhere, so an uncapped company-wide pass never pays a
+            # per-row query for the other 4,397. Safe: a row whose ref the
+            # book never states would take nothing from `pair_needs` either
+            # way (AC-FB-1 to 33 are all about a book-stated ref).
+            candidate_refs = {
+                (core_line.source_ref or "").strip()
+                for core_line in core_line_by_row.values()
+                if (core_line.source_ref or "").strip()
+            }
+            named_refs = self._refs_named_by_book(candidate_refs)
+            core_line_by_row = {
+                row_id: core_line
+                for row_id, core_line in core_line_by_row.items()
+                if (core_line.source_ref or "").strip() in named_refs
+            }
             if not core_line_by_row:
                 return dropped
 
@@ -2177,6 +2205,31 @@ class ProjectOrderInquiryService:
         held = links_by_key.get(need.key)
         taken = sum((_dec(t["qty"]) for t in held.takes), _ZERO) if held else _ZERO
         return max(need.need_qty - taken, _ZERO)
+
+    def _refs_named_by_book(self, refs: set) -> set:
+        """Fix round, 19 Sep: of these candidate `source_ref`s, which ones a
+        LIVE purchase-order line or SPO allocation states in its own
+        `from_so_line_ref` - a cheap, coarse existence check (no product or
+        visibility matching; `_bought_rows`/`pair_needs` does that precisely
+        once the row set is already narrowed to this), so an uncapped
+        company-wide `follow_book_for_rows` call never runs `_unlinked_need`
+        for a row the book has nothing to say about."""
+        wanted = sorted({str(r).strip() for r in refs if str(r or "").strip()})
+        if not wanted:
+            return set()
+        po_refs = {
+            ref
+            for (ref,) in self.db.query(PurchaseOrderLine.from_so_line_ref)
+            .filter(PurchaseOrderLine.from_so_line_ref.in_(wanted))
+            .distinct()
+        }
+        spo_refs = {
+            ref
+            for (ref,) in self.db.query(SPOAllocation.from_so_line_ref)
+            .filter(SPOAllocation.from_so_line_ref.in_(wanted))
+            .distinct()
+        }
+        return po_refs | spo_refs
 
     def _book_targets_map(
         self, core_lines: Sequence[SalesOrderLine], bought_rows
@@ -2307,6 +2360,18 @@ class ProjectOrderInquiryService:
         collision. A manual link is taken exactly like an automatic one
         (AC-FB-31, owner ruling 19 Sep). Partial: only what the book row needs
         comes off (AC-FB-30b) - the holder keeps the rest.
+
+        AC-FB-30c (fix round, 19 Sep): sized off the shortfall against FREE
+        capacity, not off `amount_needed` alone - a target already OVER-held
+        (two legacy links of 81 each on an 81-capacity line, 162 vs 81) has
+        `capacity - used` already negative, and `pair_needs`'s own `take()`
+        reads that exact figure (`fact["capacity"] - used.get(target_id)`,
+        `used` from `_claimed_capacity`/`_linked_by_target`, an unfiltered sum
+        of every link on the target). Stopping at `freed >= amount_needed`
+        left the second over-holding link in place, so the target was still
+        fully claimed and the book row got nothing. `to_free` is exactly the
+        quantity that makes `capacity - used_after == amount_needed` once
+        this returns - never more, never less.
         """
         if amount_needed <= _ZERO:
             return _ZERO, []
@@ -2322,11 +2387,25 @@ class ProjectOrderInquiryService:
         )
         if not links:
             return _ZERO, []
+        is_po_line = links[0].po_line_id == target_id
+        capacity = _dec(
+            self.db.query(PurchaseOrderLine.qty_ordered)
+            .filter(PurchaseOrderLine.id == target_id)
+            .scalar()
+            if is_po_line
+            else self.db.query(SPOAllocation.allocated_quantity)
+            .filter(SPOAllocation.id == target_id)
+            .scalar()
+        )
+        used_now = sum((_dec(link.qty) for link in links), _ZERO)
+        to_free = amount_needed - (capacity - used_now)
+        if to_free <= _ZERO:
+            return _ZERO, []
         when = date.today().strftime("%d/%m/%Y")
         freed = _ZERO
         displaced: List[OrderInquiryRow] = []
         for link in links:
-            if freed >= amount_needed:
+            if freed >= to_free:
                 break
             row = (
                 self.db.query(OrderInquiryRow)
@@ -2347,7 +2426,7 @@ class ProjectOrderInquiryService:
                 # AC-FB-33: the book names this SAME target for the holder's own
                 # line too - it is not wrongly held, so nothing is displaced.
                 continue
-            take = min(amount_needed - freed, _dec(link.qty))
+            take = min(to_free - freed, _dec(link.qty))
             if take <= _ZERO:
                 continue
             document = link.document
