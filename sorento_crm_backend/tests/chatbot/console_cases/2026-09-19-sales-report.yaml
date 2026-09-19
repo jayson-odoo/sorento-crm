@@ -234,7 +234,7 @@ cases:
   - name: "DENIAL - a contact without sales_orders.sales_report is refused before any fetch"
     # AC-1651/Journey step 7. Replace the contact id below (see the header PREREQUISITES note)
     # with a real, stored contact that has never been granted the key.
-    contact: "REPLACE_WITH_UNGRANTED_CONTACT_ID"
+    contact: "445239415"
     cold: true
     turns:
       - text: "give me the dealer sales report for hanlim"

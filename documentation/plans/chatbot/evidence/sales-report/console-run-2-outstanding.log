@@ -1,0 +1,32 @@
+console-check-1789821184  4 cases against http://127.0.0.1:8080  parser prompt pinned to version d5d88144-9371-47a8-9cae-d2dc943bf0c0
+lane switches before: enabled=True lanes=['out_of_scope', 'access_denied', 'demand_qty', 'clarify_menu', 'escalate_offer', 'escalation_declined', 'ideate', 'low_signal', 'not_supported', 'offer_hold', 'stock_denied', 'check_promotion', 'business_query']
+lane switches for the run: enabled=True lanes=13
+FAIL  outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss branch=business_query  'Product: SRTWT02 Customer: all Location: all Order date: all  *Sales order outstanding* Sales orders: 1 Ordered: 4 Trans'
+      - turn 1: reply does not contain '1. Sales order list'
+      - turn 6: reply does not contain 'No open sales order'
+PASS  D17 - parser-driven word answers to the open scope/detail questions, and a new ask mid-offer branch=business_query  'Product: SRTWT7445 Customer: all Location: all Order date: all  *Sales order outstanding* Sales orders: 1 Ordered: 3 Tra'
+PASS  R12 - a scope word embedded inside a longer sentence still decides the scope branch=business_query  'Product: SRTWC8518-SH Customer: all Location: BRW Order date: all  *Delivery order outstanding* Delivery orders: 10 DO q'
+PASS  R13 - a customer-only ask reaches the same report, By product instead of By customer branch=business_query  'Product: all Customer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III]'
+lane switches restored: enabled=True lanes=['out_of_scope', 'access_denied', 'demand_qty', 'clarify_menu', 'escalate_offer', 'escalation_declined', 'ideate', 'low_signal', 'not_supported', 'offer_hold', 'stock_denied', 'check_promotion', 'business_query']
+
+3 passed, 1 failed  (console-check-1789821184)
+console-check-1789821514  12 cases against http://127.0.0.1:8080  parser prompt pinned to version d5d88144-9371-47a8-9cae-d2dc943bf0c0
+lane switches before: enabled=True lanes=['out_of_scope', 'access_denied', 'demand_qty', 'clarify_menu', 'escalate_offer', 'escalation_declined', 'ideate', 'low_signal', 'not_supported', 'offer_hold', 'stock_denied', 'check_promotion', 'business_query']
+lane switches for the run: enabled=True lanes=13
+PASS  R15 - refinement by date and location stacked branch=business_query  'Product: all Customer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD Location: BRW Order date: 01/09/2026 to 30/0'
+PASS  R16 - picker answer keeps the outstanding ask (fullshun names) branch=business_query  'Product: all Customer: FULLSHUN SANITARYWARE SDN BHD, FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN '
+PASS  R19 - scope question header shows customer names (chin chun on SRTKT39SS 2026) branch=business_query  'Product: SRTKT39SS Customer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWAR'
+PASS  R19b - full header on scope question lists all distinct customer names (SRTWT7445 fullshun) branch=business_query  'Product: SRTWT7445 Customer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARY'
+FAIL  R20 - no DO hint on the customer picker of an outstanding ask branch=business_query  'Product: SRTKT39SS Customer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWAR'
+      - turn 3: reply does not contain 'Outstanding: 5'
+PASS  R20 guard - plain DO ask keeps the picker hint branch=business_query  'Which customer do you mean? Please choose: 1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT) - has DO 2. CHIN CHUN HOMEMART SDN B'
+FAIL  R21 - all on the picker keeps the outstanding ask, lists all families (chin chun SRTKT39SS) branch=business_query  'Product: SRTKT39SS Customer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HOMEMART SDN BHD - [A/C I], CHIN CHUN HARDW'
+      - turn 3: reply does not contain 'Outstanding: 5'
+PASS  R21 guard - all on picker under a plain DO ask still lists every family branch=business_query  'Customer: CHIN CHUN HARDWARE SDN BHD (MCH, SRT), CHIN CHUN HOMEMART SDN BHD (MCH, SRT), CHIN CHUN HARDWARE AND TIMBER TR'
+PASS  R22a - decline answer leaves the offer, one-line ack branch=business_query  'Okay, noted. Okay, noted.'
+PASS  R22b - second unreadable turn leaves the offer after greeting branch=low_signal  'Hi there! How can I help today? Hi there! How can I help today?'
+PASS  R23 - SO detail list shows latest order date first branch=business_query  '1. *SO Number:* SO422058 *Customer:* MENTARI BERSERI SDN BHD (PROJECT) *Product:* SRTWT7443 *Location:* BRW-BB *Ordered:'
+PASS  R24 - a business query under an open offer is a new ask (hanlim delivery) branch=business_query  'Customer: hanlim Product: all products Dates: all dates  Here are the orders I found.  1. *Order Number:* 202609-2638 *C'
+lane switches restored: enabled=True lanes=['out_of_scope', 'access_denied', 'demand_qty', 'clarify_menu', 'escalate_offer', 'escalation_declined', 'ideate', 'low_signal', 'not_supported', 'offer_hold', 'stock_denied', 'check_promotion', 'business_query']
+
+10 passed, 2 failed  (console-check-1789821514)
