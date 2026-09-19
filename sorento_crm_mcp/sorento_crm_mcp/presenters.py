@@ -2242,23 +2242,23 @@ def _sales_channel_header(channel: Any) -> str:
 
 
 def _sales_product_header(typed_code: Any, codes: Any) -> str:
-    """S19/AC-1633: the Product line follows the SAME shape the Location line
-    already uses (`_outstanding_location_header`) - a typed prefix that
-    matched several codes prints bracketed (``"SRT5674 (SRT5674,
-    SRT5674-N)"``), a prefix that matched only itself prints bare, more than
-    10 matches collapses to a count (the header would otherwise run to a
-    whole family, e.g. HANLIM's 80 products a month), and no product at all
-    prints ``"all"``. A typed code with NO matched rows in the report (a
-    genuine miss) also prints bare - there is nothing to bracket."""
+    """S19 second fix round (owner ruling, 19 Sep 2026 live testing: "why it says
+    SRT5674 (SRT5674-N) so weird, it should just be comma separated"), replacing
+    AC-1633's original bracket form: the Product line is the COMMA-SEPARATED list
+    of every code the typed stem COVERS - the same family `product_codes` already
+    carries (S19's prefix match), sorted ascending. One covered code prints bare
+    (there is nothing to list); more than 10 collapses to a count (the header
+    would otherwise run to a whole family, e.g. HANLIM's 80 products a month);
+    no product at all prints ``"all"``. An empty list with a typed code (an old
+    body, or a typed code with no covered rows at all) falls back to the bare
+    typed code - there is nothing to list either."""
     if not _filled(typed_code):
         return "all"
     resolved = [c for c in (codes or []) if _filled(c)]
     if len(resolved) > 10:
         return f"{typed_code} ({len(resolved)} products)"
-    if len(resolved) >= 2 or (
-        len(resolved) == 1 and str(resolved[0]).casefold() != str(typed_code).casefold()
-    ):
-        return f"{typed_code} ({', '.join(str(c) for c in resolved)})"
+    if len(resolved) >= 1:
+        return ", ".join(str(c) for c in resolved)
     return str(typed_code)
 
 

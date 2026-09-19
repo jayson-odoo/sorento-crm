@@ -49,8 +49,8 @@ when one was, or the word plus every code it resolved to in brackets when it was
 **A product code also covers every code that starts with it.** Typing "SRT5674" matches the
 product `SRT5674` itself and every sibling code that starts with it, such as `SRT5674-N` - so
 the report never comes back empty just because the sales actually sat on a variant of the code
-typed. When more than one code matched, the header shows the family: `Product: SRT5674 (SRT5674,
-SRT5674-N)`. A code that only ever matches itself prints bare, and a very wide prefix (more than
+typed. When more than one code matched, the header lists them comma separated: `Product: SRT5674,
+SRT5674-N`. A code that only ever matches itself prints bare, and a very wide prefix (more than
 10 matching codes) collapses to a count, e.g. `Product: SRT56 (37 products)`.
 
 Then one block per month, latest month first:

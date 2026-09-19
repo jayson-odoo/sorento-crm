@@ -65,6 +65,13 @@ for your account.` and nothing else.
 `_outstanding_location_header` rule: `IB (BRW-IB, MWH-IB)` when a token was typed, the bare code when the token IS the one code
 (`BRW-IB`), `all` when no token. The lane always sends the token with the codes (captain ruling 19 Sep, parity with S9).
 
+`Product:` is the COMMA-SEPARATED list of every code the typed stem covers (S19 second fix
+round, owner ruling from live testing, 19 Sep 2026 - the earlier bracket form
+`SRT5674 (SRT5674, SRT5674-N)` read "weird"): `SRT5674, SRT5674-N` when the family has 2+
+codes, the bare code when the family is just one, `SRT56 (37 products)` past 10, `all` with
+no product. `product_codes` (the field this renders) is every code the prefix COVERS, not
+only codes with a row in this filtered report - a covered code with zero sales still counts.
+
 ## Backend contract
 
 `GET /api/v1/order-management/sales-report` on the no-prefix router beside

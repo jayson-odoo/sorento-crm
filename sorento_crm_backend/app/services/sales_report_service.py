@@ -394,25 +394,18 @@ def sales_report(
             entry["by_customer"] = _rank_breakdown(rows, name_key="customer_name")
         months.append(entry)
 
-    # ------------------------------------------------------- product_codes (S19)
-    # ONE small grouped query, the DISTINCT matched codes THAT HAVE ROWS in the
-    # filtered report (never the whole prefix family - a code that resolved but
-    # carries no line in scope must not appear on the header or in a detail
-    # row). `filters` already carries the `product_id IN (...)` predicate, so
-    # this join only pulls the CODE back for what already passed every other
-    # filter.
-    product_codes: list[str] = []
-    if has_product:
-        q_codes = (
-            db.query(Product.product_code)
-            .select_from(SalesOrderLine)
-            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
-            .join(Product, Product.id == SalesOrderLine.product_id)
-            .filter(*filters)
-            .distinct()
-        )
-        product_codes = sorted(r[0] for r in q_codes.all())
+    # ------------------------------------------------------- product_codes (S19,
+    # second fix round: owner ruling from live testing, 19 Sep 2026 - "why it says
+    # SRT5674 (SRT5674-N) so weird, it should just be comma separated"). The header
+    # echoes every code the typed stem COVERS - the family `_resolve_products`
+    # already found, still company-scoped by that query's own scope listener -
+    # NOT only the codes that happen to have a row in this filtered report. A
+    # covered code with zero rows in this window (e.g. no sales at all, or none
+    # inside a narrowed date/channel/warehouse filter) still belongs to the
+    # family the customer's typed prefix names, so it still appears here; the
+    # per-SO `product_codes` on a `so_rows` row (below) is a DIFFERENT thing -
+    # the codes actually on that one SO - and is unaffected.
+    product_codes: list[str] = sorted(p.product_code for p in matched_products)
 
     # ----------------------------------------------------------------- so_rows (detail=so)
     so_rows: Optional[list[dict]] = None

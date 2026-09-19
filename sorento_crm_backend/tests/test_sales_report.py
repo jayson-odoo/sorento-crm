@@ -522,15 +522,22 @@ def test_subject_required(client, db):
 def test_product_exact_and_warehouse_filter(client, db):
     """`product_code=abc1` (lowercase) matches `ABC1`, `ABC10` and `ABC1-N`
     case-insensitively (S19's prefix rule) but NEVER `XABC1` - the prefix must
-    anchor at the START of the code. `product_codes` echoes the DISTINCT
-    matched codes that have rows in the filtered report, sorted ascending.
-    `warehouse_codes` still filters lines to those exact codes (S9, untouched
-    by S19)."""
+    anchor at the START of the code. `product_codes` echoes every code the
+    PREFIX COVERS (S19 second fix round, owner ruling from live testing, 19 Sep
+    2026: "why it says SRT5674 (SRT5674-N) so weird, it should just be comma
+    separated" - the header no longer brackets, and the echo is no longer
+    filtered down to codes that happen to have a row in this report), sorted
+    ascending - a covered code with NO sales at all still appears; a
+    non-covered code never does. `warehouse_codes` still filters lines to
+    those exact codes (S9, untouched by S19)."""
     w1_code = "ZZT-SR-W1"
     abc1 = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC1")
     abc10 = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC10")
     abc1n = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC1-N")
     xabc1 = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-XABC1")
+    # Covered by the prefix (starts with "ZZT-ABC1") but NEVER given a sales
+    # order line - must still appear in `product_codes` under the new rule.
+    abc1_nosale = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-ABC1-NOSALE")
     wh1 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=w1_code)
     wh2 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SR-W2")
 
@@ -560,7 +567,9 @@ def test_product_exact_and_warehouse_filter(client, db):
     assert unfiltered.status_code == 200, unfiltered.text
     ubody = unfiltered.json()
     assert ubody["product_code"] == "ZZT-ABC1", ubody
-    assert ubody["product_codes"] == ["ZZT-ABC1", "ZZT-ABC1-N", "ZZT-ABC10"], ubody
+    assert ubody["product_codes"] == [
+        "ZZT-ABC1", "ZZT-ABC1-N", "ZZT-ABC1-NOSALE", "ZZT-ABC10",
+    ], ubody
     # 10 + 20 + 5 + 7 - XABC1 (99) excluded, its prefix does not START with abc1
     assert sum(m["ordered_qty"] for m in ubody["months"]) == 42, ubody
 
@@ -568,6 +577,11 @@ def test_product_exact_and_warehouse_filter(client, db):
     assert filtered.status_code == 200, filtered.text
     fbody = filtered.json()
     assert sum(m["ordered_qty"] for m in fbody["months"]) == 22, fbody  # 10 + 5 + 7
+    # product_codes echoes the WHOLE covered family regardless of this warehouse
+    # narrow (S9: warehouse filters LINES, never the product-code family).
+    assert fbody["product_codes"] == [
+        "ZZT-ABC1", "ZZT-ABC1-N", "ZZT-ABC1-NOSALE", "ZZT-ABC10",
+    ], fbody
 
 
 def test_product_code_needs_three_characters(client, db):

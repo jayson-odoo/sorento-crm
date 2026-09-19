@@ -127,9 +127,10 @@ def test_location_header_matches_the_outstanding_header():
 
 
 # --------------------------------------------------------------------------
-# AC-1633: the Product header line follows the S19 prefix rule the same way
-# Location follows the warehouse-token rule - family form, single-equal bare
-# form, a >10-match count form, and "all" with no product at all.
+# S19 second fix round / AC-1633 (revised): the Product header line is a
+# COMMA-SEPARATED list of every code the typed stem covers, sorted ascending -
+# a bare code when the family is one code, a >10-match count form, and "all"
+# with no product at all.
 # --------------------------------------------------------------------------
 
 
@@ -138,7 +139,8 @@ def test_location_header_matches_the_outstanding_header():
     [
         (None, [], "all"),
         ("SRT5674", ["SRT5674"], "SRT5674"),
-        ("SRT5674", ["SRT5674", "SRT5674-N"], "SRT5674 (SRT5674, SRT5674-N)"),
+        ("SRT5674", ["SRT5674", "SRT5674-N"], "SRT5674, SRT5674-N"),
+        ("SRT5674", ["SRT5674", "SRT5674-N", "SRT5674-NL"], "SRT5674, SRT5674-N, SRT5674-NL"),
         ("SRT56", [f"SRT56{i:02d}" for i in range(11)], "SRT56 (11 products)"),
     ],
 )
@@ -150,10 +152,10 @@ def test_product_header_family_and_count_forms(product_code, product_codes, expe
     assert f"Product: {expected}" in rendered
 
 
-def test_product_header_bare_when_no_rows_matched_in_the_report():
-    """A typed code that resolved (against the product master) but has NO rows
-    in this filtered report - a genuine miss - prints bare, the same as the
-    single-equal case: there is nothing to bracket."""
+def test_product_header_bare_when_the_list_is_empty():
+    """An empty `product_codes` beside a typed code - an OLD body, or a typed
+    code the service found no covered rows for at all - falls back to the bare
+    typed code: there is nothing to list."""
     report = copy.deepcopy(_mock("miss"))
     report["product_code"] = "SRTWT9999"
     report["product_codes"] = []
