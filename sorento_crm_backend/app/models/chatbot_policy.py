@@ -68,6 +68,10 @@ class ChatbotEntityKind(Base):
     default_narrowing = Column(Text, nullable=False)
     family_grouping = Column(Text, nullable=True)
     base_property_words = Column(JSONB, nullable=False, server_default="{}")
+    # Owner ruling 20 Sep 2026 (PLAN-chatbot-answer-half-reattach.md "Roster cap"):
+    # "configurable, actually I prefer 10" - the ceiling on any roster this kind is
+    # asked in (the gate's customer/product picker arms, the did-you-mean list).
+    roster_cap = Column(Integer, nullable=False, server_default="10")
     sort_order = Column(Integer, nullable=False, server_default="0")
     created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updated_at = Column(

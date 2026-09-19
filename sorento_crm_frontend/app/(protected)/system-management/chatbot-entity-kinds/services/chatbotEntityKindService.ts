@@ -30,6 +30,7 @@ interface ChatbotEntityKindWire {
   default_narrowing: ChatbotEntityKind['default_narrowing'];
   family_grouping: string | null;
   base_property_words: Record<string, string>;
+  roster_cap: number;
 }
 
 function fromWire(row: ChatbotEntityKindWire): ChatbotEntityKind {
@@ -41,6 +42,7 @@ function fromWire(row: ChatbotEntityKindWire): ChatbotEntityKind {
     default_narrowing: row.default_narrowing,
     family_grouping: row.family_grouping,
     base_property_words: row.base_property_words ?? {},
+    roster_cap: row.roster_cap,
   };
 }
 
@@ -53,6 +55,7 @@ function toWire(input: ChatbotEntityKindInput): ChatbotEntityKindWire {
     default_narrowing: input.default_narrowing,
     family_grouping: input.family_grouping,
     base_property_words: input.base_property_words,
+    roster_cap: input.roster_cap ?? 10,
   };
 }
 

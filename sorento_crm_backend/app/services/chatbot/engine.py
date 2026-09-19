@@ -1177,6 +1177,12 @@ def _run_stages(  # noqa: PLR0915
         latest_user_message = build_latest_user_message(envelope, session_block)
         # -- stage A's three shelves (PLAN "State: three shelves, one writer each") --- #
         policy = load_policy(db)
+        # Roster cap (PLAN-chatbot-answer-half-reattach.md, owner ruling 20 Sep 2026):
+        # `{entity kind: chatbot_entity_kinds.roster_cap}`, read off the SAME policy
+        # object every other per-kind fact (`did_you_mean`, `default_narrowing`) comes
+        # from, and handed down to `resolve_kinds` -> `resolve_gate.run` -> `gate.run_gate`
+        # - the one place a roster is actually cut.
+        roster_caps = {row.kind: row.roster_cap for row in policy.kinds}
         profile, recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
@@ -1408,6 +1414,18 @@ def _run_stages(  # noqa: PLR0915
             jsc.js_string(verdict.get("order_status") or "").strip() == "sales_report"
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
+        if sales_report_grant_refused:
+            # Same event shape `lanes.business.run_fetch`'s own sales-report grant
+            # check emits (`__init__.py:1216`), so an operator reading the trace sees
+            # one denial shape regardless of which seam refused it.
+            turn_trace.add(
+                "domain_grant",
+                {
+                    "domain": verdict.get("domain_hint"),
+                    "skipped": "not_granted",
+                    "needs": _SALES_REPORT_GRANT,
+                },
+            )
 
         stage[0] = "routed"
         settings_row = switches
@@ -1528,6 +1546,7 @@ def _run_stages(  # noqa: PLR0915
                     stamp_purchase_order=(
                         plan.ask is not None and "purchase_order" in plan.domains
                     ),
+                    roster_caps=roster_caps,
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
@@ -1641,11 +1660,91 @@ def _run_stages(  # noqa: PLR0915
                 )
                 clarifier_setup_error = str(exc)
 
-        # -- E FETCH + F COMPOSE, for the turn that has something to look up --- #
+        # -- BRIDGE: a single-domain resolver exit answers via production's own
+        #    composers, before any fetch runs (PLAN-chatbot-answer-half-reattach.md
+        #    slice R3, AC-1683). `access_ask` (the resolver's own exit for a contact
+        #    with no access rows at all) and `offer` (the gate's own ambiguous
+        #    customer/product picker) are both decided by `resolve_gate.run` itself,
+        #    so nothing here needs a fetch to answer them. Precedence: where this and
+        #    `narrow.decide`'s own roster arms would both ask, the bridge wins for a
+        #    single-domain plan - `plan.ask` is left standing (R4/R6 delete the
+        #    now-shadowed `narrow` arms and `_ASK_HEADERS` entries) but never reaches
+        #    `turn_compose.compose_question` while `answer` is already set here.
         answer: Any = None
+        # Set the moment the bridge itself answers (either arm) - the FETCH section
+        # below always assigns `answer` too (even `turn_compose.compose([])`'s own
+        # empty Answer, for a plan with nothing to fetch), so `answer is None` alone
+        # cannot tell "the bridge already answered" from "nothing has answered yet" by
+        # the time the ASK section runs.
+        bridge_answered = False
         lane_error_text: str | None = None
         if (
             branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+            and len(plan.domains) <= 1
+            and isinstance(resolver_payload, dict)
+            and resolver_payload.get("_exit_kind") in ("access_ask", "offer")
+        ):
+            from app.services.chatbot import answer_bridge
+            from app.services.chatbot import copy as copy_mod
+
+            answer = answer_bridge.question_for(
+                resolver_payload,
+                parser=(ctx.get("parse") or {}).get("output"),
+                ctx=ctx,
+                canned=copy_mod.resolve(db),
+                asked_at_turn=turn_no,
+            )
+            bridge_answered = True
+
+        # R3's second access_ask trigger (`fetch_arm == "tier-ask"`) is discovered only
+        # once `lanes.business.run_fetch` has actually run the per-tier promotion probe -
+        # but `narrow.decide`'s own `narrow_by_tier` policy (untouched this slice) treats
+        # an unsettled tier as something to ASK about BEFORE fetching, so `plan.fetch` is
+        # empty for exactly the turn that needs this arm (measured live: a two-tier
+        # promotion ask). The SAME override also covers the coordinator's add-on
+        # (`tier_proceed is True`): exactly ONE entitled tier needs no ask at all -
+        # `needs_tier_ask` is false, `run_fetch`'s tool-selection path (not its tier_ask
+        # arm) reads `tier_gate.access_levels_recomposed` and fetches straight away
+        # (`lanes/business/__init__.py:637-649`) - so the SAME forced fetch, with no
+        # bridge Answer at all, naturally wins over `narrow_by_tier`'s stale
+        # entitlement-blind ask via `bridge_answered` alone. The bridge wins here too
+        # (same precedence as access_ask/offer above): the resolver's OWN `tier_gate`
+        # already says whether a pick is needed or a tier settles automatically, so this
+        # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
+        # `narrow.py`'s now-shadowed ask.
+        fetch_plan = plan
+        if (
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+            and not plan.fetch
+            and len(plan.domains) == 1
+            and isinstance(resolver_payload, dict)
+            and resolver_payload.get("_exit_kind") == "continue"
+            and isinstance(resolver_payload.get("tier_gate"), dict)
+            and (
+                resolver_payload["tier_gate"].get("tier_ask") is True
+                or resolver_payload["tier_gate"].get("tier_proceed") is True
+            )
+        ):
+            import dataclasses
+
+            from app.services.chatbot.turn.plan import FetchSpec as _FetchSpec
+
+            bridge_answered = True
+
+            fetch_plan = dataclasses.replace(
+                plan,
+                fetch=[_FetchSpec(domain=plan.domains[0], entities=[], filters={}, date_window=None)],
+            )
+
+        # -- E FETCH + F COMPOSE, for the turn that has something to look up --- #
+        if (
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
             and completes_here
             and not sales_report_grant_refused
         ):
@@ -1674,14 +1773,43 @@ def _run_stages(  # noqa: PLR0915
                         if isinstance(resolver_payload, dict)
                         else None
                     ),
+                    resolver_tier_gate=(
+                        resolver_payload.get("tier_gate")
+                        if isinstance(resolver_payload, dict)
+                        else None
+                    ),
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
                 contains_flyer=bool(verdict.get("contains_flyer")),
             )
             try:
-                envelopes = run_fetch_mod.run_fetch(plan, turn_ctx)
-                answer = turn_compose.compose(envelopes, state_out, policy, turn_ctx)
+                envelopes = run_fetch_mod.run_fetch(fetch_plan, turn_ctx)
+                # BRIDGE (R3): the tier-ask arm is discovered only once the fetch has
+                # actually run the per-tier promotion probe (`lanes.business.run_fetch`'s
+                # own tier_ask arm) - `envelope_of` carries its fetch fragment through as
+                # `tier_ask_fetch`, `None` on every other fetch. Single-domain only, same
+                # precedence as the access_ask/offer bridge above.
+                tier_fetch = (
+                    envelopes[0].get("tier_ask_fetch")
+                    if len(fetch_plan.fetch) == 1 and envelopes
+                    else None
+                )
+                if tier_fetch is not None:
+                    from app.services.chatbot import answer_bridge
+                    from app.services.chatbot import copy as copy_mod
+
+                    answer = answer_bridge.question_for(
+                        {"_exit_kind": "continue"},
+                        fetch=tier_fetch,
+                        parser=(ctx.get("parse") or {}).get("output"),
+                        ctx=ctx,
+                        canned=copy_mod.resolve(db),
+                        asked_at_turn=turn_no,
+                    )
+                    bridge_answered = True
+                if answer is None:
+                    answer = turn_compose.compose(envelopes, state_out, policy, turn_ctx)
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
                 lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
@@ -1690,7 +1818,7 @@ def _run_stages(  # noqa: PLR0915
                     status="failed",
                     summary="Could not look an answer up.",
                     why="The read the answer needs did not come back.",
-                    facts={"lane": "business", "domains": [s.domain for s in plan.fetch]},
+                    facts={"lane": "business", "domains": [s.domain for s in fetch_plan.fetch]},
                     error=lane_error_text,
                     raw=None,
                 )
@@ -1720,7 +1848,7 @@ def _run_stages(  # noqa: PLR0915
                         "rendered from what they returned."
                     ),
                     facts={
-                        "domains": [s.domain for s in plan.fetch],
+                        "domains": [s.domain for s in fetch_plan.fetch],
                         "sections": len(answer.sections),
                         "missed": [s.domain for s in answer.sections if s.miss and not s.figures],
                     },
@@ -1729,7 +1857,17 @@ def _run_stages(  # noqa: PLR0915
             stage[0] = "routed"
 
         # -- the ASK: the composer's question IS the answer on this turn ------ #
-        if plan.ask is not None and completes_here and branch_kind in _ASK_BRANCH_KINDS:
+        # `not bridge_answered`, never `answer is None`: the FETCH section above always
+        # assigns `answer` (even `turn_compose.compose([])`'s own empty Answer, for a
+        # plan with nothing to fetch), so `answer is None` cannot tell "the bridge
+        # already answered" from "nothing has answered yet" - `bridge_answered` is the
+        # one flag that means the former (R3).
+        if (
+            not bridge_answered
+            and plan.ask is not None
+            and completes_here
+            and branch_kind in _ASK_BRANCH_KINDS
+        ):
             answer = turn_compose.compose_question(plan.ask, state_out)
 
         # -- the REFUSAL: a denied stock check is an answer, not silence ------- #

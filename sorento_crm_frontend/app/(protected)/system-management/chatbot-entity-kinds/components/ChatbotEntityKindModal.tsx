@@ -24,6 +24,7 @@ const BLANK: ChatbotEntityKindInput = {
   default_narrowing: 'optional_filter',
   family_grouping: null,
   base_property_words: {},
+  roster_cap: 10,
 };
 
 export interface ChatbotEntityKindModalProps {
@@ -154,6 +155,16 @@ export default function ChatbotEntityKindModal({
               value={draft.family_grouping ?? ''}
               onChange={(e) => set('family_grouping', e.target.value || null)}
               placeholder="by base code"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="kind-roster-cap">Roster cap</Label>
+            <Input
+              id="kind-roster-cap"
+              type="number"
+              min={2}
+              value={draft.roster_cap ?? 10}
+              onChange={(e) => set('roster_cap', Number(e.target.value))}
             />
           </div>
           <div className="space-y-1.5">

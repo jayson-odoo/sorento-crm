@@ -10,7 +10,7 @@
           "text": "Promo for srtwc286",
           "expect": {
             "branch_kind": "check_promotion",
-            "reply_contains": ["price tier"]
+            "reply_contains": ["access level"]
           }
         },
         {

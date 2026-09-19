@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -689,6 +690,7 @@ def resolve_kinds(
     stamp_customer: bool = False,
     stamp_promotion: bool = False,
     stamp_purchase_order: bool = False,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
@@ -723,6 +725,13 @@ def resolve_kinds(
     (`lanes.business.ENTRY_BY_BRANCH_KIND`, R2) - a real, computed branch_kind, not a
     literal, so a promotion ask reaches the tier-gate arm ("access_check") instead of
     the generic "resolve" every branch used to share.
+
+    `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap") is
+    `{entity kind: chatbot_entity_kinds.roster_cap}`. The engine passes its own read
+    of the already-loaded `Policy` object (no second query); a caller with no policy
+    of its own leaves it `None` and this function reads `chatbot_entity_kinds`
+    directly - either way it is forwarded to `resolve_gate.run` -> `gate.run_gate`,
+    the one place a roster is actually cut.
     """
     from app.services.chatbot.lanes.business import ENTRY_BY_BRANCH_KIND
     from app.services.chatbot.lanes.business import pickers
@@ -732,6 +741,19 @@ def resolve_kinds(
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
         return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
+    if roster_caps is None:
+        from app.models.chatbot_policy import ChatbotEntityKind
+
+        try:
+            roster_caps = {
+                row.kind: row.roster_cap for row in db.query(ChatbotEntityKind).all()
+            }
+        except Exception:  # noqa: BLE001 - a caller handing over a test double with no
+            # real session (every `resolve_kinds` test that stubs `resolve_gate.run`
+            # entirely) has no opinion on roster caps either; `gate.run_gate`'s own
+            # `legacy_default` then stands, exactly as it does for any other caller
+            # that never adopted this column.
+            roster_caps = None
     services = business_services.production_services(db)
     entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
     try:
@@ -743,6 +765,7 @@ def resolve_kinds(
             space_id=space_id,
             probe_default_start=resolve_gate.default_probe_start(),
             dry_run=dry_run,
+            roster_caps=roster_caps,
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
@@ -1108,6 +1131,7 @@ def make_tool_runner(
     counted_set: bool = False,
     unplaced_alternatives: dict[str, list[dict[str, Any]]] | None = None,
     resolver_gate: dict[str, Any] | None = None,
+    resolver_tier_gate: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1125,6 +1149,16 @@ def make_tool_runner(
     overriding whatever `resolver_gate` itself carried under those two keys.
     `resolver_gate=None` (no resolver ran) reproduces today's synthetic gate exactly -
     a bare `compatible_entities` key and nothing else.
+
+    `resolver_tier_gate` (PLAN-chatbot-answer-half-reattach.md slice R3, captain ruling
+    20 Sep 2026) is the resolver's OWN `tier_gate` output (`ResolveOutcome.
+    payload["tier_gate"]`) - the entitled-tiers-and-availability read from the real
+    `access_check` entry, the source of the has/no-promotion stamps. It reaches
+    `lanes.business.run_fetch` only when NO tier has been settled yet
+    (`spec.filters.get("tier")` falsy - no pick has happened): once a tier IS settled,
+    today's synthetic `_tier_gate(spec, verdict, focus)` recompose stands, unchanged -
+    that is the KEPT lane's own tier x brand entitlement recomposition, not something
+    the resolver's raw read replaces.
     """
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
@@ -1173,7 +1207,14 @@ def make_tool_runner(
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
             gate["predicate"] = block
-        payload = {"gate": gate, "tier_gate": _tier_gate(spec, verdict, focus), "ctx": lane_ctx}
+        # R3: a tier already settled by a pick keeps today's synthetic recompose; an
+        # UNSETTLED tier hands the resolver's own real tier_gate through instead, so the
+        # per-tier promotion probe (`lanes.business.run_fetch`'s own tier_ask arm) sees
+        # what the contact actually holds rather than nothing at all.
+        tier_gate_value = (
+            _tier_gate(spec, verdict, focus) if spec.filters.get("tier") else resolver_tier_gate
+        )
+        payload = {"gate": gate, "tier_gate": tier_gate_value, "ctx": lane_ctx}
         fragment = business.run_fetch(
             payload,
             services=business_services.fetch_services(db),
@@ -1854,6 +1895,14 @@ def envelope_of(
         # fetch had no window - the header then says nothing rather than "all", which is
         # the report's own line and belongs with the other three.
         "date_line": _date_line(ran_with),
+        # R3 (PLAN-chatbot-answer-half-reattach.md): `lanes.business.run_fetch`'s own
+        # tier-ask arm - the REAL "entitled, must pick a tier" path, discovered only
+        # once the fetch actually ran the per-tier promotion probe. `fragment` (not
+        # `fetched`) carries the top-level `_fetch_arm` marker `fetch_result` sets;
+        # `fetched` (== `fragment["fetch"]`) is the item `answer_bridge.question_for`'s
+        # own `fetch=` kwarg expects. `None` on every other fetch, which is the ONLY
+        # value `turn/compose.py` (which never reads this key) will ever see.
+        "tier_ask_fetch": fetched if fragment.get("_fetch_arm") == "tier-ask" else None,
     }
 
 

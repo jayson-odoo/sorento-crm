@@ -32,10 +32,37 @@ aliasing is behaviourally inert: the only reader downstream of the mutation
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from functools import cmp_to_key
 from typing import Any
 
 from app.services.chatbot import jsc
+
+# PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
+# `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
+# `chatbot_entity_kinds.roster_cap` entirely - a raw `disallowed-entity-gate` port-
+# replay fixture (`tests/chatbot/test_replay.py`) or a hand-built low-level test with
+# no opinion on the feature - and gets `legacy_default` back: 10 for the customer
+# picker (`test_rearch_r3_roster_cap.py::test_a_missing_customer_key_or_none_means_10`
+# - a widening from the old literal 8, never a narrowing, so no recorded capture with
+# 8 or fewer real matches moves), uncapped for the product/attachment one (that arm
+# had NO ceiling at all before this column existed, and one port-replay capture in
+# the corpus - `exec-14213018` - genuinely has 13 real candidates; capping it by
+# default would be a port-fidelity regression `test_replay.py` has no signed
+# divergence for). A caller that DOES supply a mapping - `resolve_gate.run`, reached
+# from the real turn engine, which always builds one from every seeded
+# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the
+# column's own server default) for any kind missing from it.
+_DEFAULT_ROSTER_CAP = 10
+
+
+def _roster_cap(
+    roster_caps: Mapping[str, int] | None, kind: str, *, legacy_default: int | None
+) -> int | None:
+    if roster_caps is None:
+        return legacy_default
+    value = roster_caps.get(kind)
+    return int(value) if isinstance(value, int) and value > 0 else _DEFAULT_ROSTER_CAP
 
 # --------------------------------------------------------------------------- #
 # The matrices, verbatim.
@@ -314,8 +341,16 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     session: Any = None,
     tier_gate: dict[str, Any] | None = None,
     aggregate: dict[str, Any] | None = None,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS."""
+    """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS.
+
+    `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap", owner ruling
+    20 Sep 2026) is `{entity kind: chatbot_entity_kinds.roster_cap}`, read at the two
+    rosters this gate builds: the ambiguous-customer picker (kind "customer") and the
+    ambiguous-product/attachment picker (kind "product"). A missing kind or `None`
+    means 10, the column's own server default.
+    """
     parser = parser if isinstance(parser, dict) else {}
     # Annotated `Any` deliberately: `domain` indexes the matrices above, and every one of
     # those lookups is `ALLOWED[domain]` in the JS, where a null key is a plain miss.
@@ -838,6 +873,23 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     }
                     for o in specific_options
                 ]
+            # Roster cap (owner ruling 20 Sep 2026): trimmed HERE, on `specific_options`
+            # itself, so the printed roster and the `compatible_entities` the FIX A block
+            # below derives from the SAME `specific_options` never disagree on which
+            # candidates are actually pickable. `legacy_default=None`: this arm was
+            # UNCAPPED before the column existed, so a caller with no `roster_caps`
+            # opinion (the raw port-replay corpus) keeps that exactly.
+            product_cap = _roster_cap(roster_caps, "product", legacy_default=None)
+            if product_cap is not None:
+                capped_options: list[dict[str, Any]] = []
+                kept = 0
+                for o in specific_options:
+                    if kept >= product_cap:
+                        break
+                    candidates = o["candidates"][: product_cap - kept]
+                    kept += len(candidates)
+                    capped_options.append({**o, "candidates": candidates})
+                specific_options = capped_options
             flat_labels = [c["label"] for o in specific_options for c in o["candidates"]]
             numbered = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(flat_labels))
             # mc-prefix-collapse: say what DID resolve. A header line, never a numbered
@@ -935,7 +987,9 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if cust_pinned:
             cust_pin_kept = True
         if not pick_applied and not cust_pinned and len(bases) > 1:
-            reps = list(bases.values())[:8]  # cap the list; 8 lines is already a lot
+            # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
+            # per `test_a_missing_customer_key_or_none_means_10`.
+            reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
             # matching delivery?" under the SAME filters. Send the WHOLE ACCOUNT FAMILY,

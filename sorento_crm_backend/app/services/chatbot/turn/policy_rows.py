@@ -315,6 +315,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="list_all",
         family_grouping="base_code",
         base_property_words=PRODUCT_BASE_PROPERTY_WORDS,
+        roster_cap=10,
     ),
     dict(
         kind="promotion",
@@ -324,6 +325,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="optional_filter",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="customer",
@@ -333,6 +335,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="must_narrow_one",
         family_grouping="ledger_family",
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="transporter",
@@ -342,6 +345,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="optional_filter",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="inbound_shipment",
@@ -351,6 +355,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="optional_filter",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="warehouse",
@@ -360,6 +365,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="optional_filter",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="attachment",
@@ -369,6 +375,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="not_applicable",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="form",
@@ -378,6 +385,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="not_applicable",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="order",
@@ -387,6 +395,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="not_applicable",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="category",
@@ -396,6 +405,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="optional_filter",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="brand",
@@ -405,6 +415,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="optional_filter",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
     dict(
         kind="attachment_type",
@@ -414,6 +425,7 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         default_narrowing="narrow_by_type",
         family_grouping=None,
         base_property_words={},
+        roster_cap=10,
     ),
 ]
 
