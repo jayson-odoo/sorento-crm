@@ -62,6 +62,15 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   at all still reports its row `no_line_for_item`, never an exception that rolls the whole
   upload back.
 
+- **AC-LP-17** (R7, prod comparison workbook, 19 Sep 2026) A cancelled line may only be taken
+  by the fallback pass. Passes 1 to 4 never offer a cancelled candidate, even when it is the
+  ONLY candidate a narrowed pass would otherwise have found - a cancelled line dated exactly
+  the row's own date, or sharing its month, or named by its own citation, is invisible to
+  those four passes, not merely ranked last inside them. A live line elsewhere in the order
+  that a later pass can reach, through its own citation or the fallback, is landed on instead.
+  With no live line anywhere in the order, the fallback still takes the cancelled one rather
+  than refusing the row (D1 kept).
+
 ## Citation lending
 
 - **AC-LP-10** A restatement that carries a PO lends it to the first statement when that one

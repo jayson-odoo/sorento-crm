@@ -50,6 +50,8 @@ copy before sizing the prod repair (section 4).
   `test_single_sheet_variant_never_dedupes_a_repeat`.
 - **R6** (19 Sep, prod CB2805A-DIY): inside every pass an equal-quantity line is tried before a
   bigger one.
+- **R7** (19 Sep, prod comparison workbook): a cancelled line may only be taken by the fallback
+  pass.
 
 ## 2. Design
 
@@ -80,6 +82,18 @@ Inside every pass the existing filters (item, location, quantity against the led
 existing rank terms (live before cancelled, open, earliest, oldest, id) still apply, so D1 and
 determinism are kept. A failure reason is reported only after pass 5, and it is still the first
 filter that refused the row.
+
+**R7** (19 Sep, prod comparison workbook): passes 1 to 4 never offer a cancelled candidate at
+all any more - dropped from the candidate list before either of `_run_pass`'s own two steps
+(the equal-quantity one and the ordinary one) runs, not merely ranked last inside them. Only
+pass 5, the fallback, may still hand a row a cancelled line, exactly as D1 always has. A
+cancelled August-extract ghost carries its line's ORIGINAL delivery date, so it was routinely
+the only exact-date candidate a row had and won pass 1 outright before a live line the row's
+own citation named was ever offered in a later pass. Measured read-only on the 18 Sep prod
+copy against the owner's book (SO324265 / CB2807-DIY): rows on a cancelled line fell 1,028 to
+299, landed rows held at 9,307, `qty_exceeds_ordered` held at 572, equal-quantity landings rose
+8,196 to 8,473, exact-date landings fell 7,410 to 6,647 (those were ghost dates), 817 rows
+moved line and 736 of them moved off a cancelled line onto a live one.
 
 **Book PO per line.** `_bought_rows` already loads the `PurchaseOrderLine` and `SPOAllocation`
 rows that name each line. Add one map beside `_bought_refs`: `(ref, product) -> {document
@@ -113,8 +127,10 @@ position rather than always the first.
 `tests/test_oi_sheet_line_pick_month_po.py`, one fixture builder for the UAC table:
 AC-LP-1 to AC-LP-13. Then run the whole inquiry import family before push (lesson 18 Sep: a
 confirm-seam change went red in four untouched files): `tests/test_*order_inquiry*import*`,
-`test_*oi_sheet*`. Two later small-fix slices, coder-owned tests both times (R4, R5): AC-LP-14
-(the sheet's PO outranks the month) and AC-LP-15 (a restatement is only ever across tabs).
+`test_*oi_sheet*`. Later small-fix slices, coder-owned tests every time (R4, R5, R6, R7):
+AC-LP-14 (the sheet's PO outranks the month), AC-LP-15 (a restatement is only ever across
+tabs), AC-LP-16 (an equal-quantity line first) and AC-LP-17 (a cancelled line may only be
+taken by the fallback).
 
 Expected to change: any existing test that asserts finding 9's no-charge behaviour. Rewrite it to
 AC-LP-12, do not delete it.
