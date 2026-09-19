@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.services.chatbot.tail.outcome import pretty_team
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
@@ -19,6 +18,14 @@ from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, State
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
+
+
+def _pretty_team(team: str) -> str:
+    """DISPLAY ONLY, underscores to spaces - the same rule `tail.outcome.pretty_team`
+    applies, duplicated as one line rather than imported: the `turn` package may not
+    import `chatbot.tail` (`test_rearch_s2_apply_is_pure.py::
+    test_turn_package_imports_nothing_from_the_old_seams`)."""
+    return team.replace("_", " ").strip()
 
 
 @dataclass
@@ -341,11 +348,11 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             offer = Offer(teams=teams)
             # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in the
             # offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER` sends
-            # ("...to {{team}} team?"), ported via `tail.outcome.pretty_team` rather
-            # than a second underscore-to-space rule. Several teams keep the bare
-            # question because the roster right below it is what names them.
+            # ("...to {{team}} team?"), via this module's own `_pretty_team` (the
+            # `turn` package may not import `chatbot.tail`). Several teams keep the
+            # bare question because the roster right below it is what names them.
             text += (
-                f"\n\nWould you like me to escalate to {pretty_team(teams[0])} team?"
+                f"\n\nWould you like me to escalate to {_pretty_team(teams[0])} team?"
                 if len(teams) == 1
                 else "\n\nWould you like me to escalate?"
             )
