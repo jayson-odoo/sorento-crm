@@ -34,7 +34,14 @@ from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
 from app.services.chatbot.turn.plan import FetchSpec
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile, State, focus_from_wire
+from app.services.chatbot.turn.state import (
+    KIND_FIELD_MAP,
+    Focus,
+    Profile,
+    State,
+    focus_from_wire,
+    fold_token,
+)
 from app.services.chatbot import session_state
 
 logger = logging.getLogger(__name__)
@@ -500,12 +507,6 @@ def lane_parse_output(
 # --------------------------------------------------------------------------- #
 
 
-#: The resolver's own product-token fold, `resolve_gate._PRODUCT_FOLD`'s ASCII `[-\s]+`.
-#: Spelled here rather than imported so this module keeps its one-way dependency on the
-#: kept lane, and byte-identical to it on purpose (see `_token_key`).
-_TOKEN_FOLD = re.compile(r"[-\s]+")
-
-
 def _token_key(value: Any) -> str:
     r"""The key the resolver's OWN answer is filed under, for a join against it.
 
@@ -519,8 +520,12 @@ def _token_key(value: Any) -> str:
     sentence, R-c's did-you-mean roster (`unplaced_alternatives`) and the
     unfiltered-catalogue guard (`_without_guesses`) were all dead for exactly the codes
     that need them most. Sorento product codes are hyphenated far more often than not.
+
+    The fold itself is `turn.state.fold_token` - the ONE copy, also used by
+    `turn.narrow._token_of` (R1), so the two sides of an unplaced-token join can never
+    disagree about what a hyphen or a space folds to again.
     """
-    return _TOKEN_FOLD.sub("", jsc.nullish_str(value).strip().casefold())
+    return fold_token(jsc.nullish_str(value).strip().casefold())
 
 
 def _entity_token_key(entity: dict[str, Any]) -> str:
@@ -1558,10 +1563,16 @@ def _answered_unfiltered(
     therefore narrowed by exactly the token in question (`case-071`, `case-058`, whose
     recorded tool args carry `product_code` for a token their own resolver stub reports
     as unresolved).
+
+    An EMPTY entity list is the MOST unfiltered a fetch can be (R1, security review
+    N-1): the subject never resolved at all, so there was nothing to narrow BY, whatever
+    `unplaced` still names. `entities and not all(...)` is what actually gates the
+    non-empty case below - an empty `entities` is falsy and skips that check rather than
+    returning False for it, so this one guard clause covers both shapes.
     """
-    if not entities or not unplaced:
+    if not unplaced:
         return False
-    if not all(_entity_token_key(e) in unplaced for e in entities):
+    if entities and not all(_entity_token_key(e) in unplaced for e in entities):
         return False
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
     if fetched.get("outstanding_report"):

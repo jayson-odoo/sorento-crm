@@ -5,6 +5,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+
+def fold_token(value: str) -> str:
+    """Strip the resolver's own separator fold (hyphens and whitespace) from `value` -
+    case is untouched, the caller casefolds around this the way it already does. ONE
+    copy, in the lowest module both `narrow.py` and `turn_runtime.py` already import
+    from, so the two sides of any join against the resolver's own `unresolved_tokens`
+    keys can never fold differently again (R1, PLAN-chatbot-answer-half-reattach.md:
+    `narrow._token_of` folding one way and `turn_runtime._token_key` folding another
+    let a hyphenated or spaced code the resolver could not place come back as a
+    one-option roster echoing the customer's own typed token).
+
+    Plain string iteration, not the `re` module (`resolve_gate._PRODUCT_FOLD`'s own
+    `[-\\s]+`, reproduced without a regex call - this package may not use one,
+    `narrow.py::_without_brackets`'s own rule, AC-1520's no-regex-in-the-pure-core
+    guard, pinned by a source scan in the S2 apply-is-pure suite). Character
+    deletion, not substitution, so a RUN of separators folds identically to one
+    deleted individually.
+    """
+    return "".join(ch for ch in value if ch != "-" and not ch.isspace())
+
+
 # Entity kinds that get their own plural Focus field. Anything else lands in
 # `Focus.extra`, keyed by kind - a kind this turn's tests never exercise on Focus
 # directly still has somewhere safe to sit rather than being silently dropped.
