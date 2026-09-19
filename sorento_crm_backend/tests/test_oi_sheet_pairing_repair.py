@@ -1564,15 +1564,16 @@ def test_ac_r_34_po_line_capacity_excludes_what_its_own_spo_carries():
         assert str(links[1].po_line_id) == str(po_line.id)
 
 
-def test_ac_r_37_row_takes_the_sales_order_lines_delivery_date():
-    """AC-R-37. The raised row carries the SALES ORDER LINE's required date, not the
-    sheet's (7.4, owner: "we need to follow the sales order delivery date").
+def test_ac_r_37_row_takes_the_sheets_own_delivery_date():
+    """AC-R-37. The raised row carries the SHEET's own date, and the sales order line's
+    only when the sheet states none (18 Sep 2026, reversing 7.4's rule - owner: "we should
+    have followed the sheet's date").
 
-    SO325661 / SRTWT167 on prod: the line is required 01/01/2030 and the sheet row said
-    05/01/2026, and the inquiry showed the sheet's - so the worklist, the month grouping and
-    the export all read a delivery the book does not promise. The sheet's date still decides
-    which line the row matches and whether two rows restate one instruction; it just stops
-    being what the row REPORTS.
+    SO314593 on prod: the sheet said 182 @ 1.9.2026 and the line's own open AutoCount lines
+    are 220 @ 01/03/2027; 7.4 wrote the line's date onto every migrated row, so the
+    worklist, the month grouping and the export all read a delivery purchasing was not
+    actually working to. The sheet's date still decides which line the row matches and
+    whether two rows restate one instruction; that reading is unchanged.
     """
     sheet_date = date(2026, 1, 5)
     line_date = date(2030, 1, 1)
@@ -1589,15 +1590,14 @@ def test_ac_r_37_row_takes_the_sales_order_lines_delivery_date():
         assert result["rows_raised"] == 1, result
         row = w.one_row()
         assert str(row.so_line_id) == str(w.mirror_of(line).id)
-        assert row.delivery_date == line_date, (
-            "the row reports a delivery the sales order line does not promise"
+        assert row.delivery_date == sheet_date, (
+            "the row reports a delivery the sheet did not state"
         )
 
     with world() as w:
-        # An ORDER BACK row too (reviewer round on #904): the words in the date cell are
-        # still never a date, and `verb` is what says the quantity is owed against something
-        # already ordered - so there is no reason for it to report a different delivery from
-        # any other row on the same line.
+        # An ORDER BACK row takes the LINE's date (unaffected by this reversal): the words
+        # in the date cell are still never a date, so the sheet states none, and `verb` is
+        # what says the quantity is owed against something already ordered.
         order = w.order()
         w.line(order, qty_ordered="50", required_date=line_date)
         data = sheet([
@@ -1613,7 +1613,8 @@ def test_ac_r_37_row_takes_the_sales_order_lines_delivery_date():
         assert row.delivery_date == line_date
 
     with world() as w:
-        # A line with no required date has nothing to lend, so the sheet's date stands.
+        # The sheet states a date and the line has none to fall back to anyway: the
+        # sheet's date stands either way.
         order = w.order()
         w.line(order, qty_ordered="50", required_date=None)
         data = sheet([

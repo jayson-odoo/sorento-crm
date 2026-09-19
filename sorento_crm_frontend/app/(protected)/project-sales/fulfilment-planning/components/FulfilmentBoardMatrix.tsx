@@ -10,6 +10,7 @@ import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardChangeTable } from './BoardChangeTable';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { isPreMarkOnly } from './BoardDecisionPill';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   COLOURS,
@@ -479,7 +480,14 @@ function BoardCellQuickAction({
   onUndoMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
 }) {
   const eligible = cell.contributions.filter((entry) => canQuickSave(entry, draft));
-  const drafted = cell.contributions.filter((entry) => Boolean(draft[entry.key]));
+  // No pre-mark in this count (PLAN-board-change-proposed-pill, fix round): a pre-mark has
+  // nothing saved on the server yet, so `onUndoMany` -> `deleteLineDraft` on it is a DELETE
+  // against a row that was never written - it tolerates the 404, but the pre-mark's own key
+  // never gets re-seeded (`preMarkedBatchIds` already saw this batch), so the line silently
+  // drops out of Confirm (N) until the page reloads.
+  const drafted = cell.contributions.filter(
+    (entry) => Boolean(draft[entry.key]) && !isPreMarkOnly(entry, draft[entry.key] ?? null),
+  );
 
   if (eligible.length > 0) {
     const keys = eligible.map((entry) => entry.key);

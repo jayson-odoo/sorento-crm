@@ -1417,6 +1417,11 @@ class SupplierInventory(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
     )
     item_code = Column(String(100), nullable=False)
+    #: The 型号 exactly as the supplier wrote it (S1, `PLAN-stock-list-bare-model-codes.md`) -
+    #: `item_code` may be a COMPOSED guess for a bare 型号 (`SRTWC8613-250`), and "Supplier
+    #: says" (the Supplier codes tab) has to lead with what the sheet actually printed, not
+    #: our own derivation of it. Nullable: every row before this column existed has none.
+    model_no = Column(String(120), nullable=True)
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )

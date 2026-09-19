@@ -105,6 +105,7 @@ const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
 const acknowledgeOrderInquiryRows = vi.fn();
 const acknowledgeOrderInquiryRowsByFilter = vi.fn();
+const unacknowledgeOrderInquiryRows = vi.fn();
 const rejectOrderInquiryRows = vi.fn();
 const linkNowOrderInquiryRows = vi.fn();
 const getOrderInquiryPoCandidates = vi.fn();
@@ -131,6 +132,10 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
   // instant `selectAllMatchingActive` is taken.
   acknowledgeOrderInquiryRowsByFilter: (...args: unknown[]) =>
     acknowledgeOrderInquiryRowsByFilter(...args),
+  // PLAN-oi-worklist-split-customer-project.md: required or the real `useOrderInquiryHandshake`
+  // throws on an undefined import the instant Unconfirm is pressed.
+  unacknowledgeOrderInquiryRows: (...args: unknown[]) =>
+    unacknowledgeOrderInquiryRows(...args),
   rejectOrderInquiryRows: (...args: unknown[]) =>
     rejectOrderInquiryRows(...args),
   linkNowOrderInquiryRows: (...args: unknown[]) =>
@@ -301,6 +306,7 @@ beforeEach(() => {
     links: 0,
     after_horizon: 0,
   });
+  unacknowledgeOrderInquiryRows.mockResolvedValue({ updated: 0, skipped: 0 });
 });
 
 describe('AC-CF-5: Confirm (N) is the primary press', () => {
@@ -801,5 +807,103 @@ describe('AC-CF-23: Choose document (1) is offered for any ticked row that is no
 
     const item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+describe('Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026)', () => {
+  it('reads the ticked acknowledged/changed count, calls the service with those ids, and toasts', async () => {
+    const acknowledgedRow = ackRow({
+      id: 'row-ack',
+      item_code: 'ZZT-ACK',
+      so_number: 'SO-ACK',
+      ack_state: 'acknowledged',
+      state: 'raised',
+    });
+    const changedRow = ackRow({
+      id: 'row-changed-uc',
+      item_code: 'ZZT-CHANGED-UC',
+      so_number: 'SO-CHANGED-UC',
+      ack_state: 'changed',
+      state: 'raised',
+    });
+    const awaitingRow = ackRow({
+      id: 'row-await-uc',
+      item_code: 'ZZT-AWAIT-UC',
+      so_number: 'SO-AWAIT-UC',
+      ack_state: 'awaiting',
+      state: 'raised',
+    });
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([acknowledgedRow, changedRow, awaitingRow]),
+    );
+    unacknowledgeOrderInquiryRows.mockResolvedValue({ updated: 2, skipped: 0 });
+    renderClient();
+    await screen.findByText('SO-ACK');
+
+    openActionsMenu();
+    // Disabled at 0 ticked, with a reason (same D3 pattern the sibling actions use).
+    expect(screen.getByRole('menuitem', { name: 'Unconfirm (0)' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-ACK on SO-ACK'));
+    fireEvent.click(screen.getByLabelText('Select ZZT-CHANGED-UC on SO-CHANGED-UC'));
+    fireEvent.click(screen.getByLabelText('Select ZZT-AWAIT-UC on SO-AWAIT-UC'));
+
+    openActionsMenu();
+    // Only the acknowledged + changed rows count - the awaiting one is already there.
+    const item = screen.getByRole('menuitem', { name: 'Unconfirm (2 of 3)' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+
+    await waitFor(() =>
+      expect(unacknowledgeOrderInquiryRows).toHaveBeenCalledWith([
+        'row-ack',
+        'row-changed-uc',
+      ]),
+    );
+    expect(toast.success).toHaveBeenCalledWith('2 rows back to To confirm');
+  });
+
+  it('is not offered at all without the acknowledge grant', async () => {
+    granted = new Set(['projects.order_inquiry.action']);
+    const acknowledgedRow = ackRow({
+      id: 'row-ack-2',
+      item_code: 'ZZT-ACK-2',
+      so_number: 'SO-ACK-2',
+      ack_state: 'acknowledged',
+      state: 'raised',
+    });
+    listOrderInquiryWorklist.mockResolvedValue(envelope([acknowledgedRow]));
+    renderClient();
+    await screen.findByText('SO-ACK-2');
+
+    openActionsMenu();
+    expect(screen.queryByRole('menuitem', { name: /Unconfirm/ })).toBeNull();
+  });
+
+  it('N4 (review round 1): a result with skipped > 0 warns instead of a plain success', async () => {
+    const acknowledgedRow = ackRow({
+      id: 'row-ack-3',
+      item_code: 'ZZT-ACK-3',
+      so_number: 'SO-ACK-3',
+      ack_state: 'acknowledged',
+      state: 'raised',
+    });
+    listOrderInquiryWorklist.mockResolvedValue(envelope([acknowledgedRow]));
+    unacknowledgeOrderInquiryRows.mockResolvedValue({ updated: 1, skipped: 1 });
+    renderClient();
+    await screen.findByText('SO-ACK-3');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-ACK-3 on SO-ACK-3'));
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Unconfirm (1)' }));
+
+    await waitFor(() => expect(unacknowledgeOrderInquiryRows).toHaveBeenCalled());
+    expect(toast.warning).toHaveBeenCalledWith('1 row back to To confirm, 1 skipped');
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

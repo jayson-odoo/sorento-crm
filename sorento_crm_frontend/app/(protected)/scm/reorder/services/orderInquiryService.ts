@@ -74,6 +74,10 @@ export interface OrderInquiryPreview {
   rows_raised: number;
   /** Rows whose matched line already carries a non-cancelled row: skipped, untouched. */
   rows_already_raised: number;
+  /** Of those, rows that corrected a migrated row's delivery date to the sheet's own
+   * (18 Sep 2026 reversal of the line-date rule). Never a new row, never a link/qty/state
+   * change - only the date, and its sibling's Was/Now where one exists. */
+  rows_delivery_date_updated: number;
   /** Count of `line_not_found` below - named separately because the list is capped. */
   rows_line_not_found: number;
   /** Named rows with no matching line, capped at 200. */

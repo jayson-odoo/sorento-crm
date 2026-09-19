@@ -36,7 +36,8 @@ from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, case, cast, func, or_, select
+from sqlalchemy import Date, String, case, cast, func, or_, select, text
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
 from app.models.base import get_company_scope
@@ -86,6 +87,7 @@ from app.services.project_order_inquiry_service import (
     arrives_outside_window,
     derived_spo_open_clauses,
     project_customer_label,
+    project_title_with_note,
 )
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
@@ -138,6 +140,8 @@ SORTABLE_FIELDS = frozenset(
         "qty",
         "delivery_date",
         "project_customer",
+        "customer_name",
+        "project_title",
         "supplier",
         "po_number",
         "state",
@@ -145,6 +149,13 @@ SORTABLE_FIELDS = frozenset(
         "raised_by_name",
         "location",
         "agent",
+        # The three columns the worklist grid draws a sort arrow on under a DIFFERENT
+        # id than an existing key, or under no key at all (18 Sep 2026 bug report): the
+        # FE sends its own column id verbatim as `sort`, so the id is what has to be
+        # accepted, not a renaming of it.
+        "spo_number",
+        "agent_code",
+        "verb",
     }
 )
 
@@ -250,6 +261,34 @@ _SPO_REF_PLACED_PO_ID = (
 _PLACED_PO_ID = func.coalesce(
     _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
 )
+
+# The row's OWN first linked SPO number - a REAL link only
+# (`OrderInquiryLink.spo_allocation_id`), ordered the same way every other "first link"
+# reader here is: earliest `linked_at` then `id`. The sort key for `spo_number` (18 Sep
+# 2026 bug report).
+#
+# This does NOT match what the SPO cell itself prints (measured against a prod copy, 18
+# Sep 2026: 33 rows differ one way, 10 the other). The cell also shows a SYNTHETIC
+# `derived: true` entry - a PO link whose PO carries its own open SPO allocation for the
+# same product, marked "via PO" (`OrderInquiryLinkOut.derived`, S5/R-E) - which this key
+# ignores, and the cell never reads a bare `spo_ref` at all, which this key falls back to
+# when the row has no own link. Both are ACCEPTED, KNOWN differences, not a bug to fix
+# here: folding the derived leg in would sort the row by a placement never actually made
+# ON it (`_SPO_LINKED_PO_ID`'s sibling reasoning), and dropping the `spo_ref` fallback
+# would sort a row raised before links existed as blank. The rule is "own SPO link
+# first, then `spo_ref`, blanks last" - stated on its own terms, not as a match to the
+# cell.
+_OWN_LINKED_SPO_NUMBER = (
+    select(SPOAllocation.spo_number)
+    .select_from(OrderInquiryLink)
+    .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+    .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_SPO_SORT_KEY = func.coalesce(_OWN_LINKED_SPO_NUMBER, OrderInquiryRow.spo_ref)
 
 #: Does this row hold a link of each kind? The "Linked" filter's own predicates (AC-I5),
 #: stated once so the filter and the column cannot disagree about what "linked to a PO"
@@ -459,6 +498,70 @@ _RAISED_BY_ID = func.coalesce(
     SOSupplyDecision.confirmed_by, OrderInquiryRow.acknowledged_by, OrderInquiry.raised_by
 )
 _RAISED_BY_NAME = User.name
+
+# `raise_history` (PLAN-oi-worklist-split-customer-project.md, Slice 2, owner 18 Sep): on
+# a re-confirm the carry site cancels the old row and raises a fresh one under the SAME
+# `order_inquiry_id` (`project_order_inquiry_service._write`, "the inquiry is deliberately
+# reused") - so Raised at jumps to the re-confirm time and the row that actually carries
+# the FIRST raise is the one this call just cancelled. ONLY a CANCELLED predecessor is
+# history (Opus review round 1, B1): an OPEN sibling row on the same SO line is a second
+# LIVE instruction, not a superseded one, and reading it as history marked 168 live
+# duplicates as "previously raised" against 1 genuine supersede on a look at prod data.
+# So this is the cancelled carry-predecessor today, and whatever IT in turn cancelled
+# before that - never an open row. Each entry's raiser reads the same rule `_RAISED_BY_ID`
+# reads for the row itself, aliased so it is answered per HISTORICAL row rather than the
+# page row.
+_RAISE_HISTORY_ROW = aliased(OrderInquiryRow)
+_RAISE_HISTORY_INQUIRY = aliased(OrderInquiry)
+_RAISE_HISTORY_DECISION = aliased(SOSupplyDecision)
+_RAISE_HISTORY_USER = aliased(User)
+_RAISE_HISTORY_RAISED_BY_ID = func.coalesce(
+    _RAISE_HISTORY_DECISION.confirmed_by,
+    _RAISE_HISTORY_ROW.acknowledged_by,
+    _RAISE_HISTORY_INQUIRY.raised_by,
+)
+# One correlated `json_agg` per page row (never N+1): a row with no SO line (`so_line_id`
+# IS NULL) matches nothing on either side of that equality - not even another null, SQL's
+# usual rule - so it answers `[]` for free, with no separate branch needed.
+_RAISE_HISTORY = (
+    select(
+        func.coalesce(
+            func.json_agg(
+                aggregate_order_by(
+                    func.json_build_object(
+                        "raised_at",
+                        _RAISE_HISTORY_ROW.created_at,
+                        "raised_by_name",
+                        _RAISE_HISTORY_USER.name,
+                    ),
+                    _RAISE_HISTORY_ROW.created_at.desc(),
+                )
+            ),
+            text("'[]'::json"),
+        )
+    )
+    .select_from(_RAISE_HISTORY_ROW)
+    .join(
+        _RAISE_HISTORY_INQUIRY,
+        _RAISE_HISTORY_INQUIRY.id == _RAISE_HISTORY_ROW.order_inquiry_id,
+    )
+    .outerjoin(
+        _RAISE_HISTORY_DECISION,
+        _RAISE_HISTORY_DECISION.id == _RAISE_HISTORY_ROW.supply_decision_id,
+    )
+    .outerjoin(
+        _RAISE_HISTORY_USER, _RAISE_HISTORY_USER.id == _RAISE_HISTORY_RAISED_BY_ID
+    )
+    .where(
+        _RAISE_HISTORY_ROW.order_inquiry_id == OrderInquiryRow.order_inquiry_id,
+        _RAISE_HISTORY_ROW.so_line_id == OrderInquiryRow.so_line_id,
+        _RAISE_HISTORY_ROW.created_at < OrderInquiryRow.created_at,
+        _RAISE_HISTORY_ROW.state == INQUIRY_CANCELLED,
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_RAISE_HISTORY_COLUMN = _RAISE_HISTORY.label("raise_history")
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
 # row, or the confirmed allocation's warehouse for a plan/confirmed row
@@ -485,6 +588,8 @@ _SORT_EXPRESSIONS = {
     "qty": OrderInquiryRow.qty,
     "delivery_date": OrderInquiryRow.delivery_date,
     "project_customer": _PROJECT_CUSTOMER,
+    "customer_name": _CUSTOMER_NAME,
+    "project_title": Project.title,
     "supplier": Supplier.supplier_name,
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
@@ -492,6 +597,11 @@ _SORT_EXPRESSIONS = {
     "raised_by_name": _RAISED_BY_NAME,
     "location": _LOCATION,
     "agent": SalesAgent.sales_agent,
+    # The FE column ids these three sort as - `agent_code` reads the same column
+    # `agent` already does, `verb` and `spo_number` are new (18 Sep 2026 bug report).
+    "agent_code": SalesAgent.sales_agent,
+    "verb": OrderInquiryRow.verb,
+    "spo_number": _SPO_SORT_KEY,
 }
 
 _COLUMNS = (
@@ -500,6 +610,9 @@ _COLUMNS = (
     # second opinion about which inquiry a row belongs to. The S/O no cannot stand in for
     # it: an amendment raises a SECOND inquiry on the same sales order.
     OrderInquiry.inquiry_no.label("inquiry_no"),
+    # PLAN-oi-bundled-row-host-change.md: the key `_host_changes_for_rows` groups a
+    # bundled row's HOST rows by, on the SAME order inquiry header.
+    OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
     OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
     OrderInquiryRow.qty.label("qty"),
@@ -553,6 +666,18 @@ _COLUMNS = (
     OrderInquiryRow.redirected_to_pool.label("redirected_to_pool"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
+    # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
+    # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
+    # label outright (S2, review round 1) - the export runs this `json_agg` for every row
+    # of the whole unpaged set otherwise, a cost nobody behind that column asked for.
+    _RAISE_HISTORY_COLUMN,
+)
+# The export's own column set (S2, review round 1): everything `_COLUMNS` selects EXCEPT
+# `raise_history` - `_write_sheet` never reads that key, so the export ran a `json_agg`
+# per row of the whole unpaged set for nothing. Identity comparison (`is not`), not `!=`:
+# a `Label` has no meaningful equality of its own to compare by value.
+_EXPORT_COLUMNS = tuple(
+    column for column in _COLUMNS if column is not _RAISE_HISTORY_COLUMN
 )
 
 
@@ -1194,6 +1319,7 @@ class OrderInquiryWorklistService:
         self._attach_link_suggestions(rows, links, product_by_row)
         bundle_map = self._bundle_map_for_rows(rows)
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
+        host_changes_by_row_id = self._host_changes_for_rows(rows, bundle_map)
         return {
             "data": [
                 self._serialize(
@@ -1204,6 +1330,7 @@ class OrderInquiryWorklistService:
                     links,
                     bundle_map,
                     anchor_headline_by_id,
+                    host_changes_by_row_id,
                 )
                 for row in rows
             ],
@@ -1577,6 +1704,133 @@ class OrderInquiryWorklistService:
             )
         return merged
 
+    def _host_changes_for_rows(
+        self, rows, bundle_map: Dict[str, List[str]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """`bundled_host_changes` (`PLAN-oi-bundled-row-host-change.md`): for a bundled
+        row, one entry per host item code, IN RULE ORDER, read from that HOST's own
+        LIVE row on the SAME order inquiry header - never written onto the companion
+        row itself (owner ruling, 19 Sep 2026: "it comes with the X and Y, so it should
+        follow them, to have the same delay"). A host with no live row still gets an
+        entry, with every row field null, so the (i) always names every host the rule
+        requires.
+
+        A host's own LIVE row (review round 1 BLOCKER, 19 Sep 2026): state not
+        cancelled, `redirected_to_pool` false, AND `verb` in `(IV_ORDER, IV_ORDER_BACK)`
+        - the SAME set `_settle_row_in_place` treats as a line's real instruction,
+        never an ADVANCE/DELAY exception row that happens to share the host's item
+        code and would otherwise read as the host's own change. When a host carries
+        MORE than one live ORDER row, the OLDEST wins (`created_at`, then `id`) - and
+        that choice is made the SAME WAY whichever page the row happened to load on:
+        the in-page pass collects every page candidate for a key and picks the oldest
+        exactly as the fallback query's own `ORDER BY` does, so `sort=item_code&dir=
+        desc` (or any other sort) can never answer differently from the default.
+
+        Built from rows already on THIS page where possible; the rest costs ONE extra
+        query for the whole page (never per row), keyed by `(order_inquiry_id,
+        item_code)`.
+        """
+        hosts_by_row: Dict[str, Tuple[str, List[str]]] = {}
+        wanted: set = set()
+        for row in rows:
+            if not row.bundled_with_row_id:
+                continue
+            codes = resolve_bundled_item_codes(
+                bundle_map or {},
+                companion_item_code=row.item_code,
+                anchor_item_code=row.bundled_with_item_code,
+            )
+            if not codes:
+                continue
+            hosts_by_row[row.id] = (row.order_inquiry_id, codes)
+            for code in codes:
+                wanted.add((row.order_inquiry_id, code))
+        if not hosts_by_row:
+            return {}
+
+        def _live_host_row(candidate) -> bool:
+            return (
+                candidate.state != INQUIRY_CANCELLED
+                and not candidate.redirected_to_pool
+                and candidate.verb in (IV_ORDER, IV_ORDER_BACK)
+            )
+
+        def _created_key(candidate) -> Tuple[Any, str]:
+            return (candidate.raised_at, candidate.id)
+
+        # Every page candidate per key, not just the first ENCOUNTERED - `rows` is in
+        # the page's own sort order (whatever column the caller sorted by), so "first
+        # in the list" used to answer a different host row depending on the sort.
+        page_candidates: Dict[Tuple[str, str], List[Any]] = {}
+        for row in rows:
+            key = (row.order_inquiry_id, row.item_code)
+            if key in wanted and _live_host_row(row):
+                page_candidates.setdefault(key, []).append(row)
+
+        values_by_key: Dict[Tuple[str, str], Any] = {
+            key: min(candidates, key=_created_key)
+            for key, candidates in page_candidates.items()
+        }
+
+        missing = wanted - set(values_by_key)
+        if missing:
+            inquiry_ids = {key[0] for key in missing}
+            item_codes = {key[1] for key in missing}
+            extra_rows = (
+                self.db.query(
+                    OrderInquiryRow.id,
+                    OrderInquiryRow.order_inquiry_id,
+                    OrderInquiryRow.item_code,
+                    OrderInquiryRow.qty,
+                    OrderInquiryRow.delivery_date,
+                    OrderInquiryRow.previous_qty,
+                    OrderInquiryRow.previous_delivery_date,
+                    OrderInquiryRow.created_at,
+                )
+                .filter(
+                    OrderInquiryRow.order_inquiry_id.in_(inquiry_ids),
+                    OrderInquiryRow.item_code.in_(item_codes),
+                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                    OrderInquiryRow.redirected_to_pool.is_(False),
+                    OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+                )
+                .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+                .all()
+            )
+            for candidate in extra_rows:
+                key = (candidate.order_inquiry_id, candidate.item_code)
+                if key in missing and key not in values_by_key:
+                    values_by_key[key] = candidate
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for row_id, (order_inquiry_id, codes) in hosts_by_row.items():
+            entries = []
+            for code in codes:
+                source = values_by_key.get((order_inquiry_id, code))
+                entries.append(
+                    {
+                        "item_code": code,
+                        "qty": (
+                            _qty_str(_dec(source.qty)) if source is not None else None
+                        ),
+                        "delivery_date": (
+                            source.delivery_date if source is not None else None
+                        ),
+                        "previous_qty": (
+                            _qty_str(_dec(source.previous_qty))
+                            if source is not None and source.previous_qty is not None
+                            else None
+                        ),
+                        "previous_delivery_date": (
+                            source.previous_delivery_date
+                            if source is not None
+                            else None
+                        ),
+                    }
+                )
+            result[row_id] = entries
+        return result
+
     def _anchor_headline_by_id(
         self, rows, links: Dict[str, List[Dict[str, Any]]]
     ) -> Dict[str, str]:
@@ -1624,6 +1878,7 @@ class OrderInquiryWorklistService:
         links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         bundle_map: Optional[Dict[str, List[str]]] = None,
         anchor_headline_by_id: Optional[Dict[str, str]] = None,
+        host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -1640,6 +1895,13 @@ class OrderInquiryWorklistService:
             "project_customer": project_customer_label(
                 row.customer_name, row.project_title, row.is_pre_order
             ),
+            # PLAN-oi-worklist-split-customer-project.md: the two columns Customer and
+            # Project print from now on, `project_customer` staying on the row for the
+            # Excel export and search that still read it. Project carries the PRE-ORDER
+            # note the combined label appends, so a pre-order row still reads as one
+            # once the two are apart.
+            "customer_name": row.customer_name,
+            "project_title": project_title_with_note(row.project_title, row.is_pre_order),
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
             # D8: a bundled row with no document of its own names its anchor instead of
@@ -1676,6 +1938,14 @@ class OrderInquiryWorklistService:
                 if row.bundled_with_row_id
                 else None
             ),
+            # PLAN-oi-bundled-row-host-change.md: each HOST's own change, read from the
+            # host rows at display time - null on a non-bundled row, never an empty
+            # list. `response_model` drops what it is not told about.
+            "bundled_host_changes": (
+                (host_changes_by_row_id or {}).get(row.id)
+                if row.bundled_with_row_id
+                else None
+            ),
             "has_link_candidate": (
                 ProjectOrderInquiryService.has_link_candidate(
                     row.verb, product_by_row.get(row.id), link_candidates
@@ -1702,6 +1972,13 @@ class OrderInquiryWorklistService:
             "redirected_to_pool": bool(row.redirected_to_pool),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
+            # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at cell's
+            # own tooltip - the CANCELLED predecessor(s) of this row on the same SO line,
+            # newest first. `[]` on a row with no SO line, or nothing prior. `getattr`,
+            # not `row.raise_history`: `_all_rows` (the export) selects `_EXPORT_COLUMNS`,
+            # which drops this column outright, so the export's own `row` namedtuple
+            # never carries the attribute at all.
+            "raise_history": getattr(row, "raise_history", None) or [],
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
@@ -2553,10 +2830,15 @@ class OrderInquiryWorklistService:
         return filename, buffer.getvalue()
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
-        """The same set the list serves, unpaged, in the workbook's own order."""
+        """The same set the list serves, unpaged, in the workbook's own order.
+
+        `_EXPORT_COLUMNS`, not `_COLUMNS` (S2, review round 1): the sheet never prints
+        `raise_history`, so there is no reason to run that `json_agg` for the whole
+        unpaged set here.
+        """
         rows = (
             self._base(**filters)
-            .with_entities(*_COLUMNS)
+            .with_entities(*_EXPORT_COLUMNS)
             .order_by(
                 OrderInquiryRow.delivery_date.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),

@@ -812,6 +812,9 @@ export function StockDocumentsPanel({
           // The live book tops out at 501 rows for one product and location, which is one page:
           // paging it would hide the total that makes the header checkable.
           pageSize={1000}
+          // No `pageResetKey` for `filterText`: one page already holds every row this panel
+          // can ever hold, so there is no second page for a filter change to strand the
+          // reader on. Wire it if `pageSize` above is ever lowered.
           // NO scrollport of its own, at any of the three places this panel opens: all three
           // put it inside a dialog body that already scrolls. Stated here rather than left to
           // `DataGrid`'s nested-grid default, because the outer table on the fulfilment board's

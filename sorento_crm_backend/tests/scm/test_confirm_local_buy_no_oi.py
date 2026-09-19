@@ -106,6 +106,10 @@ def test_board_and_supply_carry_buy_origin():
     from app.schemas.project_board import BoardContribution
     from app.schemas.project_supply import SupplyLine
 
+    # The column itself (default false) is pinned by
+    # test_local_buy_routing_toggle.py::test_setting_column_defaults_false. This test's
+    # own dicts are hand-built and never read the setting, so there is nothing to gate
+    # here - it only pins that both schemas still carry the `buy_origin` field.
     assert "buy_origin" in BoardContribution.model_fields
     assert "buy_origin" in SupplyLine.model_fields
 
@@ -476,6 +480,23 @@ def test_scm_demand_sees_no_local_buy():
     with pg_session() as db:
         company_id, owner, project, product = _world(db)
         from tests.scm.test_project_supply_service_ladder import _group_sites
+
+        # PLAN-local-buy-routing-toggle.md (18 Sep 2026): this test's `buy_lines` origin
+        # is hand-built, not resolved through `buy_origin_by_product`, so this flag write
+        # is NOT a gate on the test - flipping it back to False would not change the
+        # result. It is left here purely as documentation that this test's assertions
+        # describe the ON state (a local Buy is skipped), for a reader who lands here
+        # while auditing which tests pin ON versus OFF behaviour.
+        from app.models.user import SystemSetting
+
+        setting_row = db.query(SystemSetting).first()
+        if setting_row is None:
+            setting_row = SystemSetting(id=str(uuid.uuid4()))
+            db.add(setting_row)
+            db.flush()
+        db.query(SystemSetting).filter(SystemSetting.id == setting_row.id).update(
+            {SystemSetting.local_buy_routing_enabled: True}
+        )
 
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]

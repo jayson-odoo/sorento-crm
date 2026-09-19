@@ -18,6 +18,7 @@ file, and one sample file is better than three copies drifting apart.
 """
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -121,3 +122,42 @@ def test_a_sheet_that_is_not_order_inquiry_is_named_rather_than_ignored():
     assert out.ok is False
     assert "SUMMARY" in out.sheets_skipped
     assert out.problems
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Real text shapes measured across all 38 tabs of `JAN - DEC 2026 ORDERabc.xlsx`
+        # (round 4, 19 Sep 2026): d.m.yyyy, d.mm.yyyy, dd-mm-yyyy, and one `//` typo.
+        ("1.3.2026", date(2026, 3, 1)),
+        ("1.12.2026", date(2026, 12, 1)),
+        ("30-04-2026", date(2026, 4, 30)),
+        ("27/10//2026", date(2026, 10, 27)),
+        # Prose that must stay unparsed, same as before this change.
+        ("MARCH - APRIL 2026", None),
+        ("ASAP", None),
+        ("WAREHOUSE MISSING", None),
+        ("STOCK TAKE ADJUST", None),
+        # An impossible date (month 13) - the shape matches, the value does not exist.
+        ("13.13.2026", None),
+    ],
+)
+def test_ac_17_a_text_date_cell_is_read_day_first(text, expected):
+    """AC-17 (round 4, 19 Sep 2026). SO314593's own JUNE rows write the DELIVERY DATE cell
+    as the literal text `1.6.2026`, day first - not an Excel date at all, which is why
+    `_as_date` answered `None` for them regardless of anything 7.4 or its reversal did. A
+    range (`MARCH - APRIL 2026`), a plain word (`ASAP`, `WAREHOUSE MISSING`) and an
+    impossible date (`13.13.2026`, month 13) all still answer `None`."""
+    from app.services.project_order_inquiry_reader import _as_date
+
+    assert _as_date(text) == expected
+
+
+def test_ac_17b_order_back_as_text_still_carries_no_date():
+    """AC-17. `ORDER BACK BRW-BB` is still words, not a date - `_as_date` answers `None`,
+    and the ORDER BACK detection (a separate regex over the raw cell, in the importer's own
+    read loop) is untouched by this change."""
+    from app.services.project_order_inquiry_reader import _ORDER_BACK, _as_date
+
+    assert _as_date("ORDER BACK BRW-BB") is None
+    assert _ORDER_BACK.search("ORDER BACK BRW-BB")

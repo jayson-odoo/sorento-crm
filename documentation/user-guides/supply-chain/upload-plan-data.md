@@ -108,6 +108,11 @@ A cancelled row no longer shows on the list by default. Filters > State = Cancel
 Confirm on the sales order. A row raised well before the order's last confirm still names its own
 original raiser.
 
+When the same sales order line was raised before, an info icon sits beside its **Raised at**
+date - a re-confirm cancels the earlier row and raises a new one, so the date you see moved on
+too. Hover the icon for **Previously raised**, listing each earlier raise with its time and who
+confirmed it, newest first. A row raised for the first time shows no icon.
+
 **Confirmed** is the sign-off filter: **To confirm**, **Confirmed**, **Changed**, **Rejected**,
 **All**. **To confirm** is what the page opens on; see "Confirming a row" below for what each
 value means.
@@ -125,11 +130,12 @@ you open the page. Page number and the search box always start fresh.
 ### Columns
 
 The default column order mirrors the Excel order book: **SO date**, **S/O no**, **Item code**,
-**Qty**, **Delivery date**, **Project / customer**, **Supplier**, **PO**, **SPO**, **Agent**,
-**Location**, **Order inquiry**, then the rest. Every row of one sales order now sits under one
-order inquiry number, so the **Order inquiry** column is hidden by default - open **Columns** in
-the toolbar and tick it to show it. If you have already personalised your own column order or
-visibility, yours is kept.
+**Qty**, **Delivery date**, **Customer**, **Project**, **Supplier**, **PO**, **SPO**, **Agent**,
+**Location**, **Order inquiry**, then the rest. **Customer** and **Project** sort independently
+of each other. A pre-order shows **PRE-ORDER** in the **Project** cell. Every row of one sales
+order now sits under one order inquiry number, so the **Order inquiry** column is hidden by
+default - open **Columns** in the toolbar and tick it to show it. If you have already
+personalised your own column order or visibility, yours is kept.
 
 ### The PO and SPO columns
 
@@ -175,6 +181,11 @@ Nothing needs deciding on either row - the old one is just kept for the record, 
 reads as a plain buy. See [Sales order changes after planning](sales-order-changes.md) for how
 this comes about on the Fulfilment Planning board.
 
+A row **Included with** another item (a "supplied with" companion, like a seat cover that ships
+inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i) lists each of
+those items' own change instead - hover it for one line per item, e.g. "with SRTWCX8605-S-RL-PJ:
+Was 182 on 01/06/2026, now 280 on 01/03/2027".
+
 ### When a link moves on its own
 
 After AutoCount re-keys a PO line or an SPO line to a different sales order and the book is
@@ -198,8 +209,9 @@ do; each item counts only the rows it applies to, for example **Link selected (2
 * **Link selected** auto-links the ticked rows that still have something left to link.
 * **Unlink selected** takes a link off the ticked rows, including a row that is already fully
   linked.
-* **Reject selected**, **Unlink all...**, **Upload purchase orders** and **Export Excel** round
-  out the menu.
+* **Reject selected**, **Unconfirm**, **Unlink all...**, **Upload purchase orders** and
+  **Export Excel** round out the menu. See "Unconfirming a row" below for what **Unconfirm**
+  does.
 
 Use **Auto link all...**, **Choose document (1)**, **Link selected** and **Unlink selected** to
 review and fix a row's PO/SPO link before you confirm it - the cascade already linked what it
@@ -229,6 +241,17 @@ The first time this confirm step went live, rows that had already come in from t
 sheet Excel started out already confirmed; only rows raised from Fulfilment Planning needed your
 first confirm.
 
+### Unconfirming a row
+
+Took on a row by mistake, or want to hold it until a reconfirm CS has not actually made yet? Tick
+**Confirmed** or **Changed** rows and open **Actions → Unconfirm** to put them back on **To
+confirm**. The confirmer's name and time are cleared, no email goes out, and a plain **Confirm**
+reverses it. A row still on **To confirm**, or one already **Rejected** or cancelled, is skipped
+even if ticked, and the toast counts how many rows went back and how many were skipped.
+**Unconfirm** needs the same permission as **Confirm**.
+
+An unconfirmed row is not counted by reorder planning until it is confirmed again.
+
 ### Schedule view
 
 Switch to **Schedule** for the same search box, **Filters** and month tabs, above a matrix of
@@ -257,7 +280,8 @@ on. Completed history migrates too, so you can load the whole workbook, not just
   with.
 * The **DELIVERY DATE** cell may read `ORDER BACK` instead of a date. Both kinds of row are
   raised; the words only decide whether the row reads **ORDER BACK** or **ORDER** on the
-  worklist.
+  worklist. The row carries the sheet's own delivery date, and the sales order line's only
+  when the sheet gives none. A date typed as text such as `1.6.2026` counts too, day first.
 * The **REMARK** cell may name the PO or SPO the line waits on, several joined with `&`, for
   example `202606-S0024 & 202607-S0043`. `ORDER` on its own means nothing was ordered yet.
 * Every tab with a recognisable header row is read. The same row restated on several tabs
@@ -274,13 +298,14 @@ on. Completed history migrates too, so you can load the whole workbook, not just
 
 ### What the preview tells you
 
-Seven tiles:
+Eight tiles:
 
 | Tile | Reads |
 | --- | --- |
 | **Rows** | Every row read off every tab. |
 | **Will raise** | Rows that will become an order inquiry. |
 | **Already raised** | Rows whose sales order line already carries an order inquiry. Those lines are left exactly as they are, links included. |
+| **Dates corrected** | Of those, rows that will correct a migrated row's delivery date to the sheet's own - never a new row, and never a line CS or purchasing has since amended. |
 | **No SO line** | Rows no sales order line could be found for. |
 | **Orders adopted** | Sales orders this upload brings into planning for the first time. |
 | **Rows linked** | Rows that will be placed on at least one PO or SPO. |
@@ -313,7 +338,13 @@ that writes nothing.
 * **The upload never creates a sales order or a sales order line**, and never writes a location
   onto one. AutoCount owns the order book.
 * **A line that already carries an order inquiry is skipped**, whoever raised it. So
-  re-uploading the same sheet writes nothing new: every row comes back under **Already raised**.
+  re-uploading the same sheet writes nothing new: every row comes back under **Already
+  raised**, except that a corrected delivery date still fixes a migrated row's date and the
+  Was/Now of the row raised beside it, on any later sheet, not only the one that first
+  migrated it - including when a planning change already amended the row itself, in which
+  case it is the row's own Was date that is corrected, never its current one, and including
+  the row that replaced a migrated row a later reconfirm superseded, where the sheet's own
+  row becomes the Was it never got.
 * Each raised row carries the note **Migrated from order inquiry sheet** followed by the file
   name, so you can tell it from a row the board raised. Read it from the info icon in the
   **Instruction** column.

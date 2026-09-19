@@ -884,6 +884,51 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
 });
 
 /**
+ * PLAN-board-change-proposed-pill (AC-1/AC-2/AC-3): a line the board pre-marked itself -
+ * `preMarkedKeys` seeding `{ verdict: 'approved', preMarked: true }` into the session draft,
+ * with nothing yet saved on the server - reads "Change proposed" and offers no Undo (nothing
+ * here has actually been saved to undo). A real saved draft on the same shape still reads
+ * "Saved" with its Undo.
+ */
+describe('FulfilmentBoardListView: a pre-marked row (PLAN-board-change-proposed-pill)', () => {
+  it('reads "Change proposed" and shows no Undo for a pre-mark with no server-saved draft', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved', preMarked: true } },
+    });
+
+    expect(
+      await screen.findByTestId(`decision-pill-${row.key}`),
+    ).toHaveTextContent('Change proposed');
+    expect(
+      screen.queryByRole('button', { name: `Undo ${row.so_number} line ${row.line_no}` }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('still reads "Saved" with its Undo once the line carries a real server-saved draft', async () => {
+    const row = contribution({
+      draft: {
+        decision: { verdict: 'approved' },
+        saved_by: 'Eling',
+        saved_at: '2026-09-03T01:00:00',
+      },
+    });
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved', preMarked: true } },
+    });
+
+    expect(
+      await screen.findByTestId(`decision-pill-${row.key}`),
+    ).toHaveTextContent('Saved');
+    expect(
+      screen.getByRole('button', { name: `Undo ${row.so_number} line ${row.line_no}` }),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
  * D15: a one-click save on the row itself, beside the pill - a planner who agrees with the
  * engine no longer has to open the row and press Save inside it. Exactly one of the two icons
  * (this one, or D14's Undo) ever shows for a given row, since `canQuickSave` already excludes
@@ -1000,6 +1045,14 @@ describe('FulfilmentBoardListView: the Local pill', () => {
   it('shows no Local pill for an overseas line', async () => {
     const overseas = contribution({ key: 'so-1:line-10', buy_origin: 'overseas' });
     renderView({ contributions: [overseas] });
+
+    await screen.findByText('SO397450');
+    expect(screen.queryByText('Local')).not.toBeInTheDocument();
+  });
+
+  it('shows no Local pill when buy_origin is undefined (PLAN-local-buy-routing-toggle.md: the setting off, `dict.get` answers None/undefined for every Buy)', async () => {
+    const noOrigin = contribution({ key: 'so-1:line-10', buy_origin: undefined });
+    renderView({ contributions: [noOrigin] });
 
     await screen.findByText('SO397450');
     expect(screen.queryByText('Local')).not.toBeInTheDocument();

@@ -868,6 +868,61 @@ def test_the_unknown_codes_queue_is_scoped_to_the_plan():
         assert _codes(rows) == [f"{MARKER}-MINE"]
 
 
+# --------------------------------------------------------------------------- #
+# AC-R4b (owner feedback round 5) - the queue carries the sheet's own 型号 too
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_r4b_the_plan_queue_carries_model_no_alongside_item_code():
+    """Owner feedback round 5: the Supplier codes tab's "Supplier says" showed the
+    translated words (品名/商标/规格) but never the sheet's own 型号 - `unmatched_for_plan`
+    has to hand the FE that raw text too, not only the (possibly composed) `item_code`."""
+    with pg_session() as db:
+        w = World(db)
+        mine = w.plan("stock_list")
+        db.add(
+            SupplierInventory(
+                id=_uid(),
+                supplier_id=w.supplier.id,
+                item_code=f"{MARKER}-COMPOSED",
+                model_no="8613",
+                qty_packed=1,
+                qty_unfinished=0,
+                as_of=date(2026, 7, 31),
+                loading_plan_id=str(mine.id),
+            )
+        )
+        db.flush()
+
+        rows = alias_svc.unmatched_for_plan(db, str(mine.id))
+
+        assert rows[0]["item_code"] == f"{MARKER}-COMPOSED"
+        assert rows[0]["model_no"] == "8613"
+
+
+def test_ac_r4b_the_supplier_wide_queue_carries_model_no_alongside_item_code():
+    with pg_session() as db:
+        w = World(db)
+        db.add(
+            SupplierInventory(
+                id=_uid(),
+                supplier_id=w.supplier.id,
+                item_code=f"{MARKER}-LETTERLED",
+                model_no=f"{MARKER}-LETTERLED",
+                qty_packed=1,
+                qty_unfinished=0,
+                as_of=date(2026, 7, 31),
+                loading_plan_id=None,
+            )
+        )
+        db.flush()
+
+        rows = alias_svc.unmatched_for_supplier(db, str(w.supplier.id))
+
+        assert rows[0]["item_code"] == f"{MARKER}-LETTERLED"
+        assert rows[0]["model_no"] == f"{MARKER}-LETTERLED"
+
+
 def test_a_no_file_plan_has_no_codes_to_answer_even_when_the_supplier_does():
     """AC-C7's ROYAL MIRROR case, exactly as measured: no file, 79 codes, all somebody
     else's."""

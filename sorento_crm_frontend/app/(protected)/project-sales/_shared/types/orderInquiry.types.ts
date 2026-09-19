@@ -71,6 +71,29 @@ export interface OrderInquiryBundledWith {
 }
 
 /**
+ * One HOST's own change (`PLAN-oi-bundled-row-host-change.md`), read from that host's
+ * own live row at display time - a bundled companion has no sheet row, no PO and no Was
+ * of its own, so the (i) reads each host's instead. `qty`/`delivery_date`/`previous_qty`/
+ * `previous_delivery_date` are all null when the host has no open row on the same order
+ * inquiry header.
+ */
+export interface OrderInquiryBundledHostChange {
+  item_code: string;
+  qty: string | null;
+  delivery_date: string | null;
+  previous_qty: string | null;
+  previous_delivery_date: string | null;
+}
+
+/** One PRIOR raise of the same SO line under the same inquiry
+ * (PLAN-oi-worklist-split-customer-project.md, Slice 2) - the Raised at cell's own
+ * tooltip. */
+export interface OrderInquiryRaiseHistoryEntry {
+  raised_at?: string | null;
+  raised_by_name?: string | null;
+}
+
+/**
  * One placement: this row's quantity, or part of it, sitting on ONE purchase order line
  * or ONE SPO allocation (`projects.order_inquiry_links`, PLAN section 3.I). A row keeps
  * its FULL quantity and carries many links - never the split rows the cascade used to
@@ -340,8 +363,16 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   product_name?: string | null;
   qty: string;
   delivery_date?: string | null;
-  /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project. */
+  /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project.
+   * Stays for the Excel export and the search box; the worklist screen itself prints
+   * `customer_name` and `project_title` below as two columns instead. */
   project_customer?: string | null;
+  /** The Customer column, split out of `project_customer` (PLAN-oi-worklist-split-
+   * customer-project.md). */
+  customer_name?: string | null;
+  /** The Project column, split out of `project_customer`. Carries the same PRE-ORDER
+   * note the combined field does. */
+  project_title?: string | null;
   /** Blank until a purchase order the row can be traced to exists. Never a guess. */
   supplier?: string | null;
   supplier_id?: string | null;
@@ -377,6 +408,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   bundled_qty?: string;
   bundled_with?: OrderInquiryBundledWith | null;
+  /**
+   * PLAN-oi-bundled-row-host-change.md. One entry per host item code, in rule order,
+   * for a bundled row - null on a non-bundled row. The companion has no Was of its own
+   * (no sheet row, no PO), so the (i) reads each host's OWN change instead.
+   */
+  bundled_host_changes?: OrderInquiryBundledHostChange[] | null;
   /** The document CS cited on an order back. Named on the row so the walk can honour it. */
   cited_document?: string | null;
   /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
@@ -408,6 +445,14 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * Never an id: the cell prints this as it comes. Null when nobody was recorded.
    */
   raised_by_name?: string | null;
+  /**
+   * The Raised at cell's own tooltip (PLAN-oi-worklist-split-customer-project.md): a re-confirm
+   * cancels a carried line's row and raises a fresh one, so `raised_at` above moves on
+   * to that re-confirm's own time - this is where the earlier raise(s) still live.
+   * Newest first. Empty on a row with no SO line, or nothing prior. Never on the Excel
+   * export.
+   */
+  raise_history?: OrderInquiryRaiseHistoryEntry[];
   verb: OrderInquiryVerb | string;
   note?: string | null;
 
@@ -642,6 +687,19 @@ export interface AcknowledgeResult {
    * older answer still reads; the FE reads `undefined` as 0 rather than hiding the count.
    */
   skipped?: number;
+}
+
+/**
+ * What one Unconfirm press did (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026) - the
+ * Actions menu's own reverse of Confirm. No linking figures: unlike Confirm, nothing
+ * else moves.
+ */
+export interface UnacknowledgeResult {
+  /** Rows that were `acknowledged`/`changed` and are now back to `awaiting`. */
+  updated: number;
+  /** Rows named that were already `awaiting`/`rejected`, cancelled, or not this
+   * company's to touch - never an error, always just left alone. */
+  skipped: number;
 }
 
 /* --------------------------------------------------------- the schedule matrix

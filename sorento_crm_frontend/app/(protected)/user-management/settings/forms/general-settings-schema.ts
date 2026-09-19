@@ -56,6 +56,9 @@ export const GeneralSettingsSchema = z.object({
   priceTagAutoCollectDays: z.coerce.number().int().min(0).max(90),
   /** SCM front planning: the grain new plans are decided at (AC-F01). */
   planGrain: z.enum(['product', 'location']),
+  /** Local-supplier Buy routing (PLAN-local-buy-routing-toggle.md), off by default. Off
+   *  means the whole local rule does not run: no pill, every Buy reaches Order Inquiries. */
+  localBuyRoutingEnabled: z.boolean(),
   /** Price tag packages (D2): the product classes a line is warned about when it
    *  reaches marketing without its catalogue package. Empty warns nobody, which
    *  is a legitimate answer, so there is no minimum. */

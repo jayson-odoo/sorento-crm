@@ -624,7 +624,7 @@ class FulfilmentBoardService:
             str(i) for i in (exclude_covered_line_ids or [])
         }
         self._locations_by_row = {}
-        self._buy_origin: Dict[str, str] = {}
+        self._buy_origin: Dict[str, Optional[str]] = {}
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,

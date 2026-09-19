@@ -87,6 +87,7 @@ function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPr
     rows: 105,
     rows_raised: 71,
     rows_already_raised: 17,
+    rows_delivery_date_updated: 6,
     rows_line_not_found: 12,
     line_not_found: [
       { so_number: 'SO414040', item_code: 'C-FH14', qty: 30, reason: 'location_differs' },
@@ -428,25 +429,27 @@ describe('OrderInquiryUploadDialog - an unreadable file', () => {
 // ── 4. the order inquiry sheet ──────────────────────────────────────────────
 
 describe('OrderInquiryUploadDialog - the migration preview', () => {
-  it('renders seven tiles from the preview', async () => {
+  it('renders eight tiles from the preview', async () => {
     // AC-S2-1 and AC-S2-8. What the operator has to decide before Confirm, and nothing else:
-    // how many rows, how many will be raised, how many are already raised, how many found no
-    // line, how many PLANNING RECORDS this opens, how many rows get linked, and the
-    // documents it could not link. No tile for scheduled deliveries, matched lines, PO links
-    // or not-ordered - the sheet no longer means any of them.
+    // how many rows, how many will be raised, how many are already raised, how many of
+    // those correct a migrated row's date (19 Sep 2026), how many found no line, how many
+    // PLANNING RECORDS this opens, how many rows get linked, and the documents it could not
+    // link. No tile for scheduled deliveries, matched lines, PO links or not-ordered - the
+    // sheet no longer means any of them.
     renderDialog();
     await choose('inquiry.xlsx');
 
     expect(within(tile('Rows')).getByText('105')).toBeInTheDocument();
     expect(within(tile('Will raise')).getByText('71')).toBeInTheDocument();
     expect(within(tile('Already raised')).getByText('17')).toBeInTheDocument();
+    expect(within(tile('Dates corrected')).getByText('6')).toBeInTheDocument();
     expect(within(tile('No SO line')).getByText('12')).toBeInTheDocument();
     expect(within(tile('Orders adopted')).getByText('9')).toBeInTheDocument();
     // Per ROW, and labelled as one: 62 rows gained a link, which is not a count of
     // documents (review finding 6, 14 Sep).
     expect(within(tile('Rows linked')).getByText('62')).toBeInTheDocument();
     expect(within(tile('Documents not found')).getByText('1')).toBeInTheDocument();
-    expect(document.querySelectorAll('[data-slot="count-tile"]')).toHaveLength(7);
+    expect(document.querySelectorAll('[data-slot="count-tile"]')).toHaveLength(8);
     expect(screen.queryByText('Documents found')).toBeNull();
     for (const retired of ['Matched', 'PO links', 'Not ordered yet', 'Scheduled deliveries']) {
       expect(screen.queryByText(retired)).toBeNull();

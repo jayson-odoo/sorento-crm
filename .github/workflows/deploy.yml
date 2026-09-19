@@ -407,11 +407,12 @@ jobs:
       # rather than a scratch schema, because that is the only way to exercise a
       # migration's own frozen `upgrade()` body: `scm` is schema-qualified in
       # that SQL, so it ignores the search_path `blank_session` pins and lands on
-      # the live view. `DROP VIEW IF EXISTS scm.committed_v CASCADE` then holds an
+      # the live relation. That used to be `DROP VIEW IF EXISTS scm.committed_v
+      # CASCADE` in tests/scm/test_committed_v_migration_chain.py, which held an
       # AccessExclusiveLock on `committed_v` and on every view CASCADE reaches
-      # (`net_position_v` first) until the test's transaction rolls back, while
-      # another worker's reorder run reads those same views in the opposite
-      # order. That is a lock cycle and Postgres kills one side of it.
+      # (`net_position_v` first) until the test's transaction rolled back, while
+      # another worker's reorder run read those same views in the opposite
+      # order - a lock cycle, and Postgres kills one side of it.
       #
       # Four hits, issue #987: PR #973 run 35150767560, PR #985 run 35176172055
       # (twice) - all three inside `reorder_run_service._planning_rows`, killed on
@@ -421,8 +422,12 @@ jobs:
       # cycle. `--dist loadfile` serializes the tests of ONE file and can do
       # nothing about two files on two workers.
       #
-      # The marked set is a few seconds of test time, so it runs in a second pass
-      # with the pool drained and nothing else on the database.
+      # #1013 moved that file's round trips onto a scratch schema instead, so it
+      # no longer carries this marker. The SCM members of the marked set today
+      # are the ALTER TABLE test in test_description_translation.py and the 273
+      # downgrade (a real `DROP SCHEMA scm CASCADE`) in test_m0_cp1_schema.py -
+      # a few seconds of test time, so it runs in a second pass with the pool
+      # drained and nothing else on the database.
       - name: Run SCM backend suite (executing gate)
         working-directory: sorento_crm_backend
         run: |
@@ -431,7 +436,7 @@ jobs:
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             -m "not serial_ddl" $IGNORES tests/scm/
 
-      - name: Run SCM view-DDL tests serially (executing gate)
+      - name: Run SCM serial_ddl tests serially (executing gate)
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')

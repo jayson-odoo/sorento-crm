@@ -78,6 +78,8 @@ D_NOV = date(2026, 11, 1)
 #: (AC-S1-25) and the frontend type carries both (AC-S2-5). `orders_adopted` and
 #: `orders_stamped` joined them on 14 Sep (security review SF2): what the upload does to
 #: the book's neighbours is said before Confirm, not discovered afterwards.
+#: `rows_delivery_date_updated` joined them 18 Sep 2026 (`PLAN-oi-sheet-date-follow-sheet.md`):
+#: how many already-raised rows a re-upload corrected to the sheet's own date.
 RESULT_KEYS = {
     "ok",
     "problems",
@@ -86,6 +88,7 @@ RESULT_KEYS = {
     "rows",
     "rows_raised",
     "rows_already_raised",
+    "rows_delivery_date_updated",
     "rows_line_not_found",
     "line_not_found",
     "sales_orders_not_found",
