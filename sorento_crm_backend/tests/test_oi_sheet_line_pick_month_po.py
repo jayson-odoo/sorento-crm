@@ -1393,6 +1393,44 @@ def test_ac_lp_17_live_line_in_a_later_pass_beats_a_cancelled_exact_date():
         )
 
 
+def test_ac_lp_17_cancelled_line_never_wins_the_po_passes():
+    """AC-LP-17 (R7, guards passes 2 and 3 specifically). A cancelled line in the row's own
+    month, named by the row's own citation, sits beside a LIVE line in the SAME month that
+    nothing names, on a different day than either the cancelled line or the row itself - so
+    only the month-and-PO pass (2) or the PO-alone pass (3) could ever offer the cancelled
+    line, and only the month-alone pass (4) can ever offer the live one. Before R7 dropped
+    cancelled candidates from those two passes as well as the exact-date and month-alone
+    ones, the cancelled line's citation match won it pass 2 outright, since the live line
+    cites nothing to tie on there at all - this is exactly the gap a fix that only guards
+    passes 1 and 4 would leave open."""
+    with world() as w:
+        order = w.order()
+        cancelled = _with_ref(
+            w,
+            w.line(
+                order, qty_ordered="40", required_date=date(2026, 6, 10),
+                line_status="cancelled",
+            ),
+            _ref(),
+        )
+        live = w.line(order, qty_ordered="40", required_date=date(2026, 6, 20))
+        po, po_line = w.po_line(qty_ordered="40")
+        _names(w, po_line, cancelled.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 40, date(2026, 6, 1),
+             w.warehouse.warehouse_code, po.po_number),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(live)
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "a PO pass (2 or 3) took the cancelled line it cites over the live line "
+            "nothing names"
+        )
+
+
 def test_ac_lp_17_no_citation_still_prefers_the_live_line():
     """AC-LP-17 (R7). Same two lines, but the row cites nothing at all: passes 1 to 4 never
     offer the cancelled line (R7) and never offer the live one either (neither its date nor

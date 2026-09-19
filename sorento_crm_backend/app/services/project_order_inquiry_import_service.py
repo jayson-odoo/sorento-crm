@@ -838,12 +838,15 @@ def _run_pass(
     one the row's own citation named - was ever offered in a later pass (measured,
     18 Sep prod copy, SO324265 / CB2807-DIY read off the owner's comparison workbook: rows
     sitting on a cancelled line fell 1,028 to 299; 817 rows moved line, 736 of them off a
-    cancelled line onto a live one; landed rows held steady at 9,307 and `qty_exceeds_ordered`
-    at 572, so nothing that used to land stopped landing). The equal step still never offers
-    a cancelled line either (review round 2, 19 Sep 2026, blocker 2), but that term now only
-    ever bites in the fallback, since a narrowed pass has nothing cancelled left to filter by
-    the time it gets there - a lone cancelled line still matches through the fallback's
-    second step, exactly as it always has (D1 kept).
+    cancelled line onto a live one; the net landed-row count held at 9,307 and
+    `qty_exceeds_ordered` at 572, but the SET underneath is not the same one - 30 rows that
+    used to land lost their line and 30 others gained one, an accepted cost of running each
+    row through one narrowed pass at a time rather than a global best assignment (PLAN
+    section 5, "Trigger for more machinery")). The equal step still never offers a cancelled
+    line either (review round 2, 19 Sep 2026, blocker 2), but that term now only ever bites
+    in the fallback, since a narrowed pass has nothing cancelled left to filter by the time
+    it gets there - a lone cancelled line still matches through the fallback's second step,
+    exactly as it always has (D1 kept).
 
     An EMPTY candidate list skips only a NARROWED attempt (review round 2, blocker 1): the
     equal step is narrowed by definition, and a genuinely narrowed pass finding nothing has

@@ -71,6 +71,15 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   With no live line anywhere in the order, the fallback still takes the cancelled one rather
   than refusing the row (D1 kept).
 
+  Accepted cost: R7 settles each row against the ledger as it stands when that row's own pass
+  reaches it, not against the order's lines as a set, so a row that would have taken a ghost
+  under the old behaviour can now take a live line another row of the same file needed, and
+  strand that other row (`qty_exceeds_ordered`) where a global best assignment would have
+  placed both. Measured net-neutral on the 18 Sep prod copy (landed rows held at 9,307), with
+  30 rows losing their landing and 30 others gaining one underneath that net figure. Not
+  fixed here (PLAN section 5); re-measured on the next prod copy before this is judged big
+  enough to need one.
+
 ## Citation lending
 
 - **AC-LP-10** A restatement that carries a PO lends it to the first statement when that one

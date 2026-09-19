@@ -91,9 +91,29 @@ cancelled August-extract ghost carries its line's ORIGINAL delivery date, so it 
 the only exact-date candidate a row had and won pass 1 outright before a live line the row's
 own citation named was ever offered in a later pass. Measured read-only on the 18 Sep prod
 copy against the owner's book (SO324265 / CB2807-DIY): rows on a cancelled line fell 1,028 to
-299, landed rows held at 9,307, `qty_exceeds_ordered` held at 572, equal-quantity landings rose
-8,196 to 8,473, exact-date landings fell 7,410 to 6,647 (those were ghost dates), 817 rows
-moved line and 736 of them moved off a cancelled line onto a live one.
+299, the net landed-row count held at 9,307 and `qty_exceeds_ordered` at 572, equal-quantity
+landings rose 8,196 to 8,473, exact-date landings fell 7,410 to 6,647 (those were ghost dates),
+817 rows moved line and 736 of them moved off a cancelled line onto a live one. The net holding
+is not the SET holding: underneath it, 30 rows that used to land lost their line and 30 others
+gained one - the stranding mechanism is one honest cost of this fix, not a wash, see "Honest
+limits" below and section 5.
+
+**Honest limits.** R7 decides each row against the ledger as it stands when that row's own
+pass reaches it, not against the order's lines as a set - so a row that used to take the
+ghost can now take a live line another row needed, and strand that other row instead. Example
+reproduced by review: a cancelled ghost, qty 10, required 2026-03-02; a live line, qty 30,
+required 2026-05-02, named by PO X. The sheet states two rows citing X: 10 @ 2026-03-02 and
+25 @ 2026-04-02. On `main`, the 10 row's exact date is the ghost's own, so it lands there
+(pass 1); the 25 row cites X and only the live line does too, so it lands there (pass 3) -
+both rows raised, `10 -> ghost, 25 -> live`. Under R7 the ghost is invisible to pass 1, so the
+10 row falls to pass 3 too and takes 10 of the live line's 30 first (file order); the 25 row
+then finds only 20 left on the live line and nothing else that fits, and reads
+`qty_exceeds_ordered` - though `10 -> ghost, 25 -> live` would still place both. Accepted with
+R7: the net landed count stays flat (measured above), and a per-row global best assignment
+that would place both stays deferred (section 5) unless the prod measurement says otherwise.
+An ORDER BACK row bumped off a ghost this way also picks up a different stored delivery date:
+`apply` writes `row.delivery_date or match.core_line.required_date`, so a row with no date of
+its own now stores the LIVE line's `required_date` where it used to store the ghost's.
 
 **Book PO per line.** `_bought_rows` already loads the `PurchaseOrderLine` and `SPOAllocation`
 rows that name each line. Add one map beside `_bought_refs`: `(ref, product) -> {document
@@ -150,4 +170,6 @@ AC-LP-12, do not delete it.
 
 A global best-assignment (minimum total date distance per item) is NOT built. Build it only if
 the measurement in 4.4 shows rows still landing on a line outside their PO group after these
-passes.
+passes, or if the R7 stranding mechanism (section 2, "Honest limits") is costing more than the
+30 rows it cost on the 18 Sep prod copy - re-measure that count on the next prod copy alongside
+4.4 and treat a materially bigger number as the trigger.
