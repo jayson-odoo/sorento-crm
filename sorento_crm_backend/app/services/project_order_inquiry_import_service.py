@@ -1327,6 +1327,8 @@ def pair_needs(
     db: Session,
     needs: Sequence[_Need],
     bought_rows: Optional[Tuple[List[Any], List[Any]]],
+    *,
+    book_targets_out: Optional[Dict[str, List[Tuple[str, dict]]]] = None,
 ) -> Tuple[Dict[Any, _RowLinks], List[str]]:
     """What each need would be linked to, in the order the two sources rank.
 
@@ -1361,6 +1363,16 @@ def pair_needs(
     Nothing is written here. `apply` writes exactly what this returns, and `preview` counts
     it, so the two can never answer differently. `follow_book_for_rows` is the third caller
     that keeps that same promise: nothing is written until it decides to write it.
+
+    `book_targets_out` (review round item 4, security B1 / reviewer blocker 3): when given a
+    dict, this fills it with `{core_line_id: [(target_id, fact), ...]}` for SOURCE-1 (the
+    ref, direct or through the PO -> SPO chain) ONLY - never a claim - in the exact rank this
+    walk reads them, `fact` already netted (`_target_facts` + `_less_own_shipments`), whether
+    or not `take()` could actually place anything on it. This is the one list of "what the
+    book names for this line" `follow_book_for_rows`'s own displacement reads (`_book_targets_
+    map` and its own re-derived, un-netted capacity query are retired in favour of it -
+    PRINCIPLES "one copy"): a second walk of the same primitives could only ever answer the
+    same question differently by accident.
     """
     links: Dict[Any, _RowLinks] = {}
     not_linkable: List[str] = []
@@ -1419,6 +1431,12 @@ def pair_needs(
     for need in needs:
         held = _RowLinks(need_left=_dec(need.need_qty))
         seen: set = set()
+        book_targets: List[Tuple[str, dict]] = []
+
+        def _record_book_target(target_id: str) -> None:
+            fact = facts.get(str(target_id))
+            if fact is not None:
+                book_targets.append((str(target_id), fact))
 
         def take(target_id: str, *, from_book: bool) -> bool:
             fact = facts.get(str(target_id))
@@ -1447,7 +1465,7 @@ def pair_needs(
 
         product = str(need.core_line.product_id or "")
 
-        def _through_po(po_line_id: str) -> None:
+        def _through_po(po_line_id: str, *, record: bool = False) -> None:
             """A purchase order line the book named: its shipping orders first (D10), the
             purchase order line itself only for what they cannot cover.
 
@@ -1455,6 +1473,10 @@ def pair_needs(
             the ones the whole document became: one purchase order can carry five lines of
             the same item for five different sales order lines, and the quantity is owed
             against the container that holds this one.
+
+            `record` is `book_targets_out`'s own ask (source-1 only): true only when THIS
+            call came from the ref walk below, never from a claim - `_through_po` is the
+            same primitive either way, `record` is the only difference.
             """
             fact = facts.get(str(po_line_id))
             if fact is None:
@@ -1463,22 +1485,27 @@ def pair_needs(
                 (str(fact["document"]), str(fact.get("source_ref") or ""), product)
             )
             for allocation_id in (exact or chain.get((str(fact["document"]), product), [])):
+                if record:
+                    _record_book_target(allocation_id)
                 if held.need_left <= _ZERO:
                     break
                 take(allocation_id, from_book=True)
+            if record:
+                _record_book_target(po_line_id)
             if held.need_left > _ZERO:
                 take(str(po_line_id), from_book=True)
 
         ref = (need.core_line.source_ref or "").strip()
         if ref:
             for allocation_id in ref_allocations.get((ref, product), []):
+                _record_book_target(allocation_id)
                 if held.need_left <= _ZERO:
                     break
                 take(allocation_id, from_book=True)
             for po_line_id in ref_po_lines.get((ref, product), []):
                 if held.need_left <= _ZERO:
                     break
-                _through_po(po_line_id)
+                _through_po(po_line_id, record=True)
 
         line_claims = by_line.get(str(need.core_line.id)) or []
         for claim in sorted(line_claims, key=_claim_order(facts)):
@@ -1492,6 +1519,8 @@ def pair_needs(
                 continue
             _through_po(claim["target_id"])
 
+        if book_targets_out is not None:
+            book_targets_out[str(need.core_line.id)] = book_targets
         if held.takes:
             links[need.key] = held
     return links, not_linkable

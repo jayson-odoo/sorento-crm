@@ -490,9 +490,17 @@ def _rows_for_core_line_refs(
     """Order-inquiry row ids whose reconciled core sales-order line carries one
     of these `source_ref`s - what `follow_book_for_rows` (S1) already resolves
     for a row it holds, only starting from the ref instead. Company-scoped by
-    hand: the ESB `X-API-Key` principal's ambient session scope is not
-    necessarily narrowed to one company, and `follow_book_for_rows` re-scopes
-    internally too, so this is belt only, never the sole guard."""
+    hand on BOTH sides (review round item 6): the ESB `X-API-Key` principal's
+    ambient session scope is not necessarily narrowed to one company, and
+    `follow_book_for_rows` re-scopes internally too, so this is belt only,
+    never the sole guard - but the row's OWN `company_id` is checked here too,
+    not only the core line's, since a data anomaly could otherwise let a row
+    from one company resolve through a core line record another owns.
+
+    Ordered by `(created_at, id)` (review round item 6): `follow_book_for_rows`
+    caps AFTER narrowing to these rows, over this exact order, so which row a
+    tight cap admits does not depend on Postgres's own scan order either.
+    """
     wanted = sorted({str(r) for r in refs if r})
     if not wanted:
         return []
@@ -509,7 +517,9 @@ def _rows_for_core_line_refs(
         .filter(
             SalesOrderLine.source_ref.in_(wanted),
             SalesOrderLine.company_id == company_id,
+            OrderInquiryRow.company_id == company_id,
         )
+        .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
         .all()
     )
     return [str(row_id) for (row_id,) in rows]
@@ -559,7 +569,12 @@ def _refs_from_written_spo_allocations(
     line's own `from_so_line_ref` (matched on `from_po_number` AND the line's
     own `source_ref` - `_chain_allocations`'s exact-key reasoning:
     `purchase_order_lines.source_ref` is not unique, the August extract wrote
-    bare ordinals onto hundreds of lines each)."""
+    bare ordinals onto hundreds of lines each).
+
+    `from_po_line_ref` is stripped before it becomes part of the key (review
+    round item 6), the same way `_chain_allocations` itself strips it: a
+    trailing/leading space on either side of the match would otherwise miss
+    silently rather than resolve."""
     wanted = sorted({str(i) for i in allocation_ids if i})
     if not wanted:
         return set()
@@ -573,7 +588,9 @@ def _refs_from_written_spo_allocations(
         .all()
     )
     refs = {r[0] for r in rows if r[0]}
-    chain_keys = {(r[2], r[1]) for r in rows if not r[0] and r[1] and r[2]}
+    chain_keys = {
+        (r[2], (r[1] or "").strip()) for r in rows if not r[0] and (r[1] or "").strip() and r[2]
+    }
     if not chain_keys:
         return refs
     po_numbers = sorted({key[0] for key in chain_keys})
