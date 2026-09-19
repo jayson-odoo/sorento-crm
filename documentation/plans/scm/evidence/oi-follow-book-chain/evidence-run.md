@@ -1,5 +1,7 @@
 # Evidence run - oi-follow-book-chain, API level (AC-FB-42, data half of AC-FB-50)
 
+## Run 1 (found the awaiting-row defect)
+
 Date: 19 Sep 2026. Backend under test: lane backend at http://127.0.0.1:8060, database
 `sorento_oi_book_chain_e2e` (scrubbed clone of the 18 Sep prod backup at alembic head, plus
 the two documents the coordinator inserted ahead of the backup date). No pytest run in this
@@ -243,3 +245,123 @@ this document quotes; it expires in 8 hours (`remember=False` short TTL) and was
 revoked, matching an ordinary un-logged-out staff session - no additional cleanup performed
 per the "all writes go through the API" instruction (the mint went through the same function
 the login route calls, not a raw INSERT).
+
+## Run 2 (after the review round)
+
+Date: 19 Sep 2026, same day, after commits dca987c28 and 4a95c24e4 (the review-round fix)
+landed and the lane backend at http://127.0.0.1:8060 was restarted on that code, no reload.
+Database `sorento_oi_book_chain_e2e` re-cloned fresh from the clean lane copy and the same two
+SO421886 documents re-inserted (PO line `AED_SORENTO:45391885:45820014` closed 2 of 2 naming
+SO line `AED_SORENTO:45810027:45810033`; SPO-2026/09-0036 line 237, source_ref
+`AED_SORENTO:45728035:45820113`, open 2, `from_po_line_ref` = that PO line). No order inquiry
+row for SO421886 in the fresh clone, same as Run 1's starting state. Same auth mechanism as
+Run 1 (a minted session for the same real admin, `tehjayson@gmail.com`); ids below differ from
+Run 1's because of the fresh clone, same real sequence otherwise: adopt, read supply, confirm,
+worklist read, acknowledge, SQL read-back, then the Auto link all check Run 1 did not cover.
+
+### Sequence
+
+1. `POST /fulfilment-planning/adopt` `{"sales_order_id": "533c4570-..."}` -> 200,
+   `project_sales_order_id: 47e8bacb-03a2-4e67-86ac-4a6f316e9a30`, `already_adopted: false`.
+2. `GET /sales-orders/47e8bacb-.../supply` -> same shape as Run 1: line 1 (C-FHSS14,
+   `project_line_id 4cc44bf1-c45b-44c8-856b-7dd3be363a6c`) proposes reserve 1 + buy 1; lines
+   2-5 propose reserve only; line 6 (TPE-9201) unplannable. Same live-stock note as Run 1
+   applies (buy 1, not the UAC's measured 2 - current pool stock, not a defect).
+3. `POST /sales-orders/47e8bacb-.../confirm`, the 5 decidable lines taken as proposed (line 6
+   left undecided) -> 200, `inquiry_rows_created: 1, lines_decided: 5, lines_undecided: 1`.
+   Exactly one row raised, for the one line with an actual buy.
+
+### Check 1: the link lands on line 237, not 228, already at raise time, row still awaiting
+
+`GET /order-inquiries?query=SO421886` immediately after confirm (before acknowledge). Trimmed:
+
+```json
+{
+  "id": "fa68e82b-1bc5-46d5-ac0e-c60f1431fdc6",
+  "so_number": "SO421886",
+  "item_code": "C-FHSS14",
+  "qty": "1",
+  "state": "placed",
+  "supplier": "XIAMEN TAIYANG TECHNOLOGY CO.,LTD",
+  "po_number": null,
+  "note": "Linked to SPO-2026/09-0036 (XIAMEN TAIYANG TECHNOLOGY CO.,LTD), expected 2026-09-02; auto: raise",
+  "links": [{
+    "id": "23fdfe41-4937-48bd-967b-0f37e65b8002",
+    "kind": "spo",
+    "document": "SPO-2026/09-0036",
+    "line_label": "L237",
+    "qty": "1",
+    "auto": true,
+    "source_po_number": "202607-S0110",
+    "derived_po": true
+  }],
+  "linked_qty": "1",
+  "ack_state": "awaiting"
+}
+```
+
+SQL read-back, joined to `spo_allocations` for the line number:
+
+```
+psql -d sorento_oi_book_chain_e2e -At -c "SELECT oil.id, oil.spo_allocation_id, sa.spo_line_number, sa.source_ref, oil.qty, oil.auto FROM projects.order_inquiry_links oil JOIN spo_allocations sa ON sa.id = oil.spo_allocation_id WHERE oil.row_id = 'fa68e82b-...';"
+-- 23fdfe41-... | 7e449d77-fdfb-43aa-bd7a-6d12fb1955cf | 237 | AED_SORENTO:45728035:45820113 | 1.0000 | t
+```
+
+PASS. Line 237 (`source_ref AED_SORENTO:45728035:45820113`, the exact seeded book target), not
+228, `ack_state: "awaiting"` at the moment the link was written - Run 1's Finding 1 is fixed.
+
+### Check 2: worklist top-level `supplier` is no longer null, PO still marked via SPO
+
+Same row above: top-level `supplier: "XIAMEN TAIYANG TECHNOLOGY CO.,LTD"` (Run 1 had `null`
+here despite the note and link already carrying it - AC-FB-52). Top-level `po_number` stays
+`null` by design (the row has no direct PO link); the PO is marked through the SPO link's own
+`source_po_number: "202607-S0110"` / `derived_po: true`, unchanged from Run 1's shape. PASS.
+
+### Check 3: acknowledge leaves the link where it is
+
+`POST /order-inquiries/acknowledge` `{"row_ids":["fa68e82b-..."]}` -> 200,
+`{"acknowledged":1,"linked_rows":0,"links":0,...}`.
+
+SQL read-back:
+
+```
+psql -d sorento_oi_book_chain_e2e -At -c "SELECT oil.id, oil.spo_allocation_id, sa.spo_line_number, oil.qty, oil.auto, oir.ack_state, oir.note FROM projects.order_inquiry_links oil JOIN spo_allocations sa ON sa.id = oil.spo_allocation_id JOIN projects.order_inquiry_rows oir ON oir.id = oil.row_id WHERE oil.row_id = 'fa68e82b-...';"
+-- 23fdfe41-... | 7e449d77-... | 237 | 1.0000 | t | acknowledged | "Linked to SPO-2026/09-0036 (...); auto: raise"
+```
+
+Same link id, same target (line 237), same qty, same note; `ack_state` now `acknowledged`.
+PASS.
+
+### Check 4: Auto link all (redeal_drafts=True) does not move the SO421886 link (AC-FB-54)
+
+`POST /order-inquiries/auto-place` (`app/api/v1/projects/order_inquiries.py` ~997,
+`redeal_drafts=True, include_awaiting=True`), scoped to the product (the endpoint takes
+`product_ids`, not a per-document scope) rather than company-wide:
+
+```
+time curl -s -X POST ... -d '{"product_ids": ["2df9a2f9-dc99-4689-97b4-4d93722622d5"]}' \
+  http://127.0.0.1:8060/api/v1/project-sales/order-inquiries/auto-place
+-- {"placed_rows":21,"allocations":21,"products_touched":1,"after_horizon":0,...}
+-- wall time: 1.835s total
+```
+
+`placed_rows: 21` - every other raised/draft row of this product across the company the
+cascade touched, not only SO421886's (expected: this is a company-wide-per-product sweep, and
+the product carries other open rows). SQL read-back on SO421886's row specifically:
+
+```
+psql -d sorento_oi_book_chain_e2e -At -c "SELECT oil.id, oil.spo_allocation_id, sa.spo_line_number, oil.qty, oil.auto, oir.ack_state, oir.state, oir.note FROM projects.order_inquiry_links oil JOIN spo_allocations sa ON sa.id = oil.spo_allocation_id JOIN projects.order_inquiry_rows oir ON oir.id = oil.row_id WHERE oil.row_id = 'fa68e82b-...';"
+-- 23fdfe41-... | 7e449d77-... | 237 | 1.0000 | t | acknowledged | placed | "Linked to SPO-2026/09-0036 (...); auto: raise"
+```
+
+Identical link id (`23fdfe41-...`), same target (line 237), same qty, same `linked_at`
+(`2026-09-19T06:23:55.995165` before and after the call - confirmed by re-reading the full
+worklist row), same note. The acknowledged link was never a draft (D3/D2: a link the book
+names for the row's own line is never redealt, in the same call or a later one) and the redeal
+door left it exactly where it was. PASS.
+
+### Verdict
+
+All four checks PASS. Run 1's Finding 1 (wrong SPO line) and Finding 2 (null top-level
+supplier, AC-FB-52) are both fixed on this data. Finding 3 (buy 1 vs the UAC's measured 2) is
+unchanged and remains a live-stock-timing artifact, not a defect, as recorded in Run 1.
