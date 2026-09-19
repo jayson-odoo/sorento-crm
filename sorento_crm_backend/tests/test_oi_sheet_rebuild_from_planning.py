@@ -253,13 +253,19 @@ def _stamped_row(w: World, *, file_name: str, trait: str | None):
         file_name=file_name,
     )
     assert result["rows_raised"] == 1, result
-    row = _rows_of(w, file_name)[0]
+    # `_rows_of` carries no ORDER BY, and this helper is called more than once with the
+    # SAME `file_name` in one world (`test_rollback_keeps_planning_rows`) - `[0]` is not
+    # this call's own row, it is whichever row postgres happens to return first. Picked by
+    # THIS call's own line instead, which is unambiguous.
+    mirror = w.mirror_of(line)
+    matches = [r for r in _rows_of(w, file_name) if str(r.so_line_id) == str(mirror.id)]
+    assert len(matches) == 1, matches
+    row = matches[0]
     if trait == "redirected_to_pool":
         row.redirected_to_pool = True
     elif trait == "changed_at":
         row.changed_at = datetime(2026, 9, 19, 9, 0, 0)
     elif trait == "supply_decision_id":
-        mirror = w.mirror_of(line)
         decision = _decision(w, mirror, line, buy_qty="30", required_date=D_OCT)
         row.supply_decision_id = decision.id
     elif trait is not None:
