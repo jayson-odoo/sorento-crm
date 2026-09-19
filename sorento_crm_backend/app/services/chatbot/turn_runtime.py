@@ -1131,6 +1131,7 @@ def make_tool_runner(
     counted_set: bool = False,
     unplaced_alternatives: dict[str, list[dict[str, Any]]] | None = None,
     resolver_gate: dict[str, Any] | None = None,
+    resolver_tier_gate: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1148,6 +1149,16 @@ def make_tool_runner(
     overriding whatever `resolver_gate` itself carried under those two keys.
     `resolver_gate=None` (no resolver ran) reproduces today's synthetic gate exactly -
     a bare `compatible_entities` key and nothing else.
+
+    `resolver_tier_gate` (PLAN-chatbot-answer-half-reattach.md slice R3, captain ruling
+    20 Sep 2026) is the resolver's OWN `tier_gate` output (`ResolveOutcome.
+    payload["tier_gate"]`) - the entitled-tiers-and-availability read from the real
+    `access_check` entry, the source of the has/no-promotion stamps. It reaches
+    `lanes.business.run_fetch` only when NO tier has been settled yet
+    (`spec.filters.get("tier")` falsy - no pick has happened): once a tier IS settled,
+    today's synthetic `_tier_gate(spec, verdict, focus)` recompose stands, unchanged -
+    that is the KEPT lane's own tier x brand entitlement recomposition, not something
+    the resolver's raw read replaces.
     """
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
@@ -1196,7 +1207,14 @@ def make_tool_runner(
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
             gate["predicate"] = block
-        payload = {"gate": gate, "tier_gate": _tier_gate(spec, verdict, focus), "ctx": lane_ctx}
+        # R3: a tier already settled by a pick keeps today's synthetic recompose; an
+        # UNSETTLED tier hands the resolver's own real tier_gate through instead, so the
+        # per-tier promotion probe (`lanes.business.run_fetch`'s own tier_ask arm) sees
+        # what the contact actually holds rather than nothing at all.
+        tier_gate_value = (
+            _tier_gate(spec, verdict, focus) if spec.filters.get("tier") else resolver_tier_gate
+        )
+        payload = {"gate": gate, "tier_gate": tier_gate_value, "ctx": lane_ctx}
         fragment = business.run_fetch(
             payload,
             services=business_services.fetch_services(db),
@@ -1877,6 +1895,14 @@ def envelope_of(
         # fetch had no window - the header then says nothing rather than "all", which is
         # the report's own line and belongs with the other three.
         "date_line": _date_line(ran_with),
+        # R3 (PLAN-chatbot-answer-half-reattach.md): `lanes.business.run_fetch`'s own
+        # tier-ask arm - the REAL "entitled, must pick a tier" path, discovered only
+        # once the fetch actually ran the per-tier promotion probe. `fragment` (not
+        # `fetched`) carries the top-level `_fetch_arm` marker `fetch_result` sets;
+        # `fetched` (== `fragment["fetch"]`) is the item `answer_bridge.question_for`'s
+        # own `fetch=` kwarg expects. `None` on every other fetch, which is the ONLY
+        # value `turn/compose.py` (which never reads this key) will ever see.
+        "tier_ask_fetch": fetched if fragment.get("_fetch_arm") == "tier-ask" else None,
     }
 
 
