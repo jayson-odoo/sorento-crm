@@ -1,5 +1,7 @@
 """AutoCount pull + review (PLAN-autocount-pull-review.md). SR1: start / current / status.
-SR3 adds the review data (rows, download, compare) and Confirm.
+SR3 added the review data (rows, download, compare) and Confirm for `products`; SR4 adds
+the `stock_balances` half of every one of those routes - same routes, dispatched by the
+pull's own entity, never a separate endpoint.
 
 Every route resolves the pull first (owner-only, P12) and checks the PERMISSION OF ITS
 OWN ENTITY (AC-PM-2) - a user holding only the products permission gets 403 on a stock
@@ -12,11 +14,6 @@ answered identically, so a pull's existence is never revealed to anyone but its 
 company + entity + open pulls, and answers "no open pull" (404) rather than "no permission"
 (403) for an entity the caller cannot pull - there is nothing to find either way, and this
 route reveals nothing about a pull the caller does not already own.
-
-SR3 covers `products` only - `stock_balances` rows/download/compare/confirm are SR4
-(AC-SP-*, AC-SC-*); a stock pull that somehow reached `review` (it cannot yet - SR1's
-preview task refuses any entity but `products`) answers `NOT_IMPLEMENTED` rather than
-guessing at a stock shape.
 """
 from __future__ import annotations
 
@@ -30,7 +27,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.job import ImportJob
 from app.services import autocount_pull_service as pull_service
-from app.services.autocount_pull_compare import compare_products
+from app.services.autocount_pull_compare import compare_products, compare_stock
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxPullError
 from app.services.job_service import active_company_id_from_scope
@@ -85,16 +82,6 @@ def _resolve_pull(db: Session, current_user: dict, job_id: str) -> ImportJob:
         )
     _require_entity_permission(db, current_user, pull_service.entity_of(job))
     return job
-
-
-def _require_products_entity(job: ImportJob) -> None:
-    """SR3 covers `products` only - see module docstring."""
-    if pull_service.entity_of(job) != "products":
-        raise AppException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            message="Stock pull review is not available yet.",
-            code="NOT_IMPLEMENTED",
-        )
 
 
 def _require_rows_available(job: ImportJob) -> None:
@@ -185,15 +172,19 @@ def get_pull_rows(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """AC-RV-3: the Excel-view rows, mapped from the FoundryX snapshot."""
+    """AC-RV-3: the Excel-view rows, mapped from the FoundryX snapshot. Products: every
+    row. Stock: FED rows only (AC-SP-2)."""
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
-    _require_products_entity(job)
     try:
         rows = pull_service.fetch_snapshot_rows(job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    mapped = [pull_service.map_product_row(r) for r in rows]
+    if pull_service.entity_of(job) == "products":
+        mapped = [pull_service.map_product_row(r) for r in rows]
+    else:
+        fed = pull_service.classify_stock_rows(db, str(job.company_id), rows)["fed"]
+        mapped = [pull_service.map_stock_row(r) for r in fed]
     return pull_service.paginate_rows(mapped, page=page, limit=limit, query=query)
 
 
@@ -203,16 +194,20 @@ def download_pull(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """AC-RV-5: the same rows as one workbook, the template's own header row."""
+    """AC-RV-5: the same rows as one workbook, the template's own header row. Stock's
+    file is the Stock List file (AC-SC-4) - FED rows only."""
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
-    _require_products_entity(job)
     try:
         rows = pull_service.fetch_snapshot_rows(job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    mapped = [pull_service.map_product_row(r) for r in rows]
-    body = pull_service.build_products_workbook(mapped)
+    if pull_service.entity_of(job) == "products":
+        mapped = [pull_service.map_product_row(r) for r in rows]
+        body = pull_service.build_products_workbook(mapped)
+    else:
+        fed = pull_service.classify_stock_rows(db, str(job.company_id), rows)["fed"]
+        body = pull_service.build_stock_workbook(fed)
     return Response(
         content=body,
         media_type=_XLSX_MEDIA_TYPE,
@@ -228,15 +223,19 @@ def compare_pull(
     db: Session = Depends(get_db),
 ):
     """AC-CM-1..5: advisory compare against the checker's own file - the summary is
-    stored on the job, the rows and the difference list are returned but never kept."""
+    stored on the job, the rows and the difference list are returned but never kept.
+    Stock compares against the FED rows only (AC-CM-3)."""
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
-    _require_products_entity(job)
     try:
         pull_rows = pull_service.fetch_snapshot_rows(job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
-    result = compare_products(body.rows, pull_rows)
+    if pull_service.entity_of(job) == "products":
+        result = compare_products(body.rows, pull_rows)
+    else:
+        fed = pull_service.classify_stock_rows(db, str(job.company_id), pull_rows)["fed"]
+        result = compare_stock(body.rows, fed)
     pull_service.store_compare_summary(db, job, filename=body.filename, result=result)
     return result
 
@@ -247,9 +246,10 @@ def confirm_pull(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """AC-PC-1: creates + enqueues the apply job once, marks the pull confirmed."""
+    """AC-PC-1/AC-SC-1: creates + enqueues the apply job once, marks the pull confirmed.
+    AC-SP-1: also refused (409) when the pull's own `confirm_blocked_reason` is set -
+    entity-agnostic, products never sets it."""
     job = _resolve_pull(db, current_user, job_id)
-    _require_products_entity(job)
     try:
         return pull_service.confirm_pull(db, job, user_id=current_user["id"])
     except pull_service.PullNotReadyForConfirm as exc:

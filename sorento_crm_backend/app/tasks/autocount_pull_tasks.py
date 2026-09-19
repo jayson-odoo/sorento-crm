@@ -2,9 +2,9 @@
 
 `preview_autocount_pull` runs the SAME `import_jobs` row the `POST /autocount/pulls`
 route created, once `autocount_pull_service._claim_and_enqueue_preview` enqueues it
-(queue `imports`, `job_timeout=3600`). SR1 previews `products` only; a `stock_balances`
-pull fails loudly with `UnsupportedPullEntity` rather than doing nothing - stock preview
-is SR4 (`PLAN-autocount-pull-review.md` Slices table).
+(queue `imports`, `job_timeout=3600`). SR1 built the `products` half; SR4 adds
+`stock_balances` (`_preview_stock` / `_apply_stock`) - same dispatch, same shared
+`fetch_verified_snapshot` guard.
 
 `from app.database import SessionLocal` at module top, not a lazy import - the repo
 convention every other `app/tasks/*.py` module follows (see `import_tasks.py`), and what
@@ -20,6 +20,16 @@ check and `excludedRows` itself all read from the FRESH fetch instead, so a page
 never loaded still gets a task that decides correctly. `fetch_verified_snapshot` is the
 one function that does this - SR3's apply task reuses it unchanged (AC-PC-2 re-checks the
 same guards against the same snapshot before it writes anything for real).
+
+**Stock needs an ambient company scope the products path never did** (AC-SP-2/AC-SC-2):
+`MasterIngestService` wraps every DB op of its own in `company_scope(...)`, but
+`StockService.bulk_import_stock` relies on the SESSION's ambient scope for its internal
+Product/Warehouse/Stock lookups (same as the manual stock-import job,
+`import_tasks.process_stock_import` + `_apply_import_job_scope`) - a worker session starts
+`UNSET` (fail-closed, reads return 0 rows), so `_preview_stock`/`_apply_stock` wrap the
+`bulk_import_stock` call in `company_scope(db, frozenset({company_id}))` themselves.
+`classify_stock_rows`'s own warehouse query is raw SQL with an explicit `company_id`
+argument (AC-SP-2's own point) and needs no ambient scope at all.
 """
 from __future__ import annotations
 
@@ -30,11 +40,20 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
+from sqlalchemy import text
+
 from app.database import SessionLocal
+from app.models.base import company_scope
 from app.models.job import ImportJob, JobStatus
 from app.services import import_outcome_codes as codes
+from app.services.autocount_pull_service import (
+    build_stock_workbook,
+    classify_stock_rows,
+    download_filename,
+)
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.import_outcome import ImportOutcome
+from app.services.inventory_service import StockService
 from app.services.master_ingest_service import IngestOutcome, MasterIngestService
 
 logger = logging.getLogger(__name__)
@@ -65,10 +84,10 @@ def preview_autocount_pull(db_job_id: str) -> None:
         try:
             if entity == "products":
                 counts = _preview_products(db, job, pull)
+            elif entity == "stock_balances":
+                counts = _preview_stock(db, job, pull)
             else:
-                raise UnsupportedPullEntity(
-                    f"Stock preview is not implemented yet (SR4); entity={entity!r}."
-                )
+                raise UnsupportedPullEntity(f"Unknown pull entity {entity!r}.")
         except Exception as exc:  # noqa: BLE001 - one job's failure, reported on the job
             db.rollback()
             logger.warning(
@@ -114,10 +133,10 @@ def apply_autocount_pull(db_job_id: str) -> None:
         try:
             if entity == "products":
                 summary = _apply_products(db, job, snapshot_id)
+            elif entity == "stock_balances":
+                summary = _apply_stock(db, job, snapshot_id)
             else:
-                raise UnsupportedPullEntity(
-                    f"Stock apply is not implemented yet (SR4); entity={entity!r}."
-                )
+                raise UnsupportedPullEntity(f"Unknown pull entity {entity!r}.")
         except Exception as exc:  # noqa: BLE001 - one job's failure, reported on the job
             db.rollback()
             logger.warning(
@@ -170,6 +189,62 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
     outcome_writer.flush()
 
     return result.as_dict()["summary"]
+
+
+def _apply_stock(db, job: ImportJob, snapshot_id: str) -> dict:
+    """AC-SC-2: re-verifies the SAME snapshot, refuses (AC-SC-2/AC-SP-1's own guard,
+    re-checked here) when the FETCHED header still reports `excludedNonzeroCount > 0`,
+    then runs `bulk_import_stock` for real and archives the Stock List from the FED rows
+    - only once the import has committed (AC-SC-4c); a failed import archives nothing."""
+    client = FoundryxAutocountClient()
+    header, rows, warnings = fetch_verified_snapshot(
+        client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
+    )
+
+    excluded_nonzero = header.get("excludedNonzeroCount") or 0
+    if excluded_nonzero > 0:
+        raise ValueError(
+            f"AutoCount reports {excluded_nonzero} non-zero excluded pair(s); pull again."
+        )
+
+    company_id = str(job.company_id) if job.company_id else None
+    fed_rows = classify_stock_rows(db, company_id, rows)["fed"]
+
+    outcome_writer = ImportOutcome(job.id)
+    scope = frozenset({company_id}) if company_id else None
+    with company_scope(db, scope):
+        result = StockService(db).bulk_import_stock(
+            fed_rows, str(job.user_id), outcome=outcome_writer,
+        )
+    outcome_writer.flush()
+
+    # The archive happens only after `bulk_import_stock` has committed for real
+    # (it commits internally on success) - built from the SAME fed rows the import
+    # just ran, every one of them, including a row the import itself skipped.
+    # Best-effort, like the manual route's own webhook step: the STOCK IMPORT is
+    # what Confirm promised, and a missing/misconfigured Stock_List attachment type
+    # must not turn an otherwise-successful apply into a failed job.
+    try:
+        import app.services.stock_list_archive_service as stock_list_archive_service
+
+        workbook_bytes = build_stock_workbook(fed_rows)
+        stock_list_archive_service.replace_latest_stock_list(
+            db, file_bytes=workbook_bytes, filename=download_filename(job),
+            user_id=str(job.user_id),
+        )
+    except Exception:
+        logger.warning(
+            "autocount pull apply: stock import committed but the Stock List archive "
+            "failed (job=%s)", job.id, exc_info=True,
+        )
+
+    return {
+        "created": result.get("created", 0),
+        "updated": result.get("updated", 0),
+        "skipped": result.get("skipped", 0),
+        "system_adjusted_to_zero": result.get("system_adjusted_to_zero", 0),
+        "errors": result.get("errors", []),
+    }
 
 
 def _company_code(db, company_id) -> str:
@@ -245,6 +320,155 @@ def _preview_products(db, job: ImportJob, pull: dict) -> dict:
 
     outcome_writer.flush()
     return counts
+
+
+def _preview_stock(db, job: ImportJob, pull: dict) -> dict:
+    """AC-SP-1..5: classify every row, `validate_only` the FED ones, write the not-
+    applied / would-skip / negative-pair / quantity-change rows, store all eight
+    counters, and set `confirm_blocked_reason` when the header itself says Confirm
+    cannot run yet - the preview still finishes in `review` either way (AC-SP-1)."""
+    client = FoundryxAutocountClient()
+    header, rows, warnings = fetch_verified_snapshot(
+        client, snapshot_id=pull.get("snapshot_id"), company_code=pull.get("company_code")
+    )
+    pull["warnings"] = warnings
+
+    company_id = str(job.company_id) if job.company_id else None
+    classification = classify_stock_rows(db, company_id, rows)
+    fed_rows = classification["fed"]
+    inactive_rows = classification["inactive"]
+    unknown_rows = classification["unknown"]
+
+    outcome_writer = ImportOutcome(job.id)
+    scope = frozenset({company_id}) if company_id else None
+    with company_scope(db, scope):
+        # `outcome_writer` passed straight in: `bulk_import_stock`'s own PRODUCT_NOT_FOUND
+        # skip fires unconditionally (before the `validate_only` branch), so the pull's
+        # own "skipped, product not found" rows come from the ONE place that already
+        # knows how to say that, never a second re-derivation here.
+        validate_result = StockService(db).bulk_import_stock(
+            fed_rows, str(job.user_id), validate_only=True, outcome=outcome_writer,
+        )
+
+    current_by_pair = _current_stock_by_pair(db, company_id, fed_rows)
+    qty_changes = 0
+    for row in fed_rows:
+        current = current_by_pair.get(_stock_pair_key(row))
+        if current is None:
+            # No existing stock row for this pair - a brand new pair, nothing to
+            # diff against, and the eight counters name no slot for it (AC-SP-4).
+            continue
+        incoming = row.get("On Hand Qty")
+        if current == incoming:
+            continue
+        qty_changes += 1
+        outcome_writer.updated(
+            message=(
+                f"Quantity change: {row.get('Item Code')} at {row.get('Location')}: "
+                f"{current} -> {incoming}"
+            ),
+            value=row.get("Item Code"),
+            identity={
+                "item_code": row.get("Item Code"), "location": row.get("Location"),
+                "current": current, "incoming": incoming,
+            },
+        )
+
+    for row in inactive_rows:
+        outcome_writer.skip(
+            code=codes.AUTOCOUNT_NOT_APPLIED_INACTIVE,
+            message=(
+                f"Not applied, inactive warehouse: {row.get('Item Code')} at "
+                f"{row.get('Location')}"
+            ),
+            value=row.get("Item Code"),
+            identity={"item_code": row.get("Item Code"), "location": row.get("Location")},
+        )
+    for row in unknown_rows:
+        outcome_writer.skip(
+            code=codes.AUTOCOUNT_NOT_APPLIED_UNKNOWN,
+            message=(
+                f"Not applied, unknown location: {row.get('Item Code')} at {row.get('Location')}"
+            ),
+            value=row.get("Item Code"),
+            identity={"item_code": row.get("Item Code"), "location": row.get("Location")},
+        )
+
+    # Header-only, display: FoundryX's own record of a negative on-hand pair. Never
+    # reaches `bulk_import_stock` - it never rode in `rows` to begin with.
+    negative_pairs = header.get("negativePairList") or []
+    for entry in negative_pairs:
+        item_code = entry.get("item_code")
+        location = entry.get("location_code")
+        outcome_writer.skip(
+            code=codes.AUTOCOUNT_NEGATIVE,
+            message=(
+                f"AutoCount reports a negative on-hand quantity: {item_code} at "
+                f"{location} ({entry.get('qty')})"
+            ),
+            value=item_code,
+            identity={"item_code": item_code, "location": location, "qty": entry.get("qty")},
+        )
+
+    outcome_writer.flush()
+
+    summary = validate_result.get("summary") or {}
+    counts = {
+        "received": len(rows),
+        "fed": len(fed_rows),
+        "not_applied_inactive": len(inactive_rows),
+        "not_applied_unknown": len(unknown_rows),
+        "qty_changes": qty_changes,
+        "set_to_zero": summary.get("would_system_adjust_to_zero", 0),
+        "skipped_product_not_found": outcome_writer.count_of(codes.PRODUCT_NOT_FOUND),
+        "negative_in_autocount": len(negative_pairs),
+    }
+
+    excluded_nonzero = header.get("excludedNonzeroCount") or 0
+    pull["confirm_blocked_reason"] = (
+        f"AutoCount reports {excluded_nonzero} non-zero excluded pair(s); pull again."
+        if excluded_nonzero > 0 else None
+    )
+    return counts
+
+
+def _stock_pair_key(row: dict) -> tuple[str, str]:
+    return (
+        str(row.get("Item Code") or "").strip().upper(),
+        str(row.get("Location") or "").strip().upper(),
+    )
+
+
+def _current_stock_by_pair(db, company_id: Optional[str], fed_rows: list[dict]) -> dict:
+    """AC-SP-4: ONE query of current on-hand for the FED pairs, keyed the same way
+    `_stock_pair_key` reads a fed row - so a preview never queries per row."""
+    if not fed_rows or not company_id:
+        return {}
+    item_codes = list({
+        str(r.get("Item Code") or "").strip().upper() for r in fed_rows if r.get("Item Code")
+    })
+    locations = list({
+        str(r.get("Location") or "").strip().upper() for r in fed_rows if r.get("Location")
+    })
+    if not item_codes or not locations:
+        return {}
+    rows = db.execute(
+        text(
+            "SELECT p.product_code, w.warehouse_code, s.quantity_on_hand "
+            "FROM stock s "
+            "JOIN products p ON p.id = s.product_id "
+            "JOIN warehouses w ON w.id = s.warehouse_id "
+            "WHERE p.company_id = :cid AND w.company_id = :cid "
+            "AND upper(btrim(p.product_code)) = ANY(:codes) "
+            "AND upper(btrim(w.warehouse_code)) = ANY(:locs)"
+        ),
+        {"cid": company_id, "codes": item_codes, "locs": locations},
+    ).mappings().all()
+    return {
+        (str(r["product_code"]).strip().upper(), str(r["warehouse_code"]).strip().upper()):
+            r["quantity_on_hand"]
+        for r in rows
+    }
 
 
 def _write_created_outcome(outcome_writer: ImportOutcome, item_code, record) -> None:

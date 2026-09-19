@@ -144,21 +144,33 @@ guard input, comes from the fresh fetch. FoundryX answering anything other than 
 snapshot (including 404 `UNKNOWN_SNAPSHOT` / 410 `SNAPSHOT_EXPIRED`) fails the job with a "pull again"
 message, the same as a failed guard.
 
-- `preview_autocount_pull(db_job_id)`: company scope from the job (`_apply_import_job_scope`),
-  `fetch_verified_snapshot`, then
+- `preview_autocount_pull(db_job_id)`: `fetch_verified_snapshot`, then
   - products: `MasterIngestService(db, company_id=...).ingest("products", rows, dry_run=True)`; map
     records to `import_job_rows` through `ImportOutcome` (updated + empty diff = unchanged = no row);
     excluded rows from the FETCHED header become `skipped` / `AUTOCOUNT_EXCLUDED`.
-  - stock: classify rows by warehouse (one query for the company's warehouses, match on
-    `upper(btrim(code))`), `bulk_import_stock(fed, user_id, validate_only=True)`, plus one query of
-    current on hand for the fed pairs to list quantity changes.
+  - stock: `classify_stock_rows(db, company_id, rows)` (one query for the company's warehouses, match
+    on `upper(btrim(code))`, `company_id` an explicit argument - never ambient session scope), then
+    `StockService(db).bulk_import_stock(fed, user_id, validate_only=True, outcome=...)` INSIDE
+    `company_scope(db, frozenset({company_id}))` (built as SR4: `bulk_import_stock`'s own internal
+    Product/Warehouse/Stock lookups need it - unlike `MasterIngestService`, which wraps its own scope
+    per-operation, it relies on ambient session scope, same as the manual stock-import job), plus one
+    query of current on hand for the fed pairs to list quantity changes (a pair with no existing stock
+    row is a new pair - no row, no counter). `confirm_blocked_reason` is set (a message naming the
+    excluded-pair count) whenever the FETCHED header's `excludedNonzeroCount > 0`; the preview still
+    finishes `review` either way (AC-SP-1).
 - `apply_autocount_pull(db_job_id)`: `fetch_verified_snapshot` again (AC-PC-2: same guards, same
   snapshot), then
   - products: `MasterIngestService(db, company_id=..., stamp_user_id=<confirming user>)
     .ingest("products", rows)`.
-  - stock: `bulk_import_stock(fed, user_id, outcome=...)`, then build the Stock List xlsx from the
-    fed rows and archive it through the shared service function. The archive happens only after the
-    import committed.
+  - stock: refuses first (job failed, nothing written) when the FETCHED header's
+    `excludedNonzeroCount > 0` - the same check Confirm's own guard names, re-checked here per
+    AC-PC-2's pattern; else `classify_stock_rows` + `bulk_import_stock(fed, user_id, outcome=...)`
+    inside `company_scope(...)`, then build the Stock List xlsx from the fed rows (every one, including
+    a row the import itself skipped as product-not-found) and archive it through the shared service
+    function. The archive happens only after the import committed, and is BEST-EFFORT: a missing or
+    misconfigured `Stock_List` attachment type logs a warning but does not fail an apply whose stock
+    import already committed - built as SR4, the "nothing seeded" case is a company that has simply
+    never used the attachment yet, not a reason to lose an otherwise-successful sync.
 
 `stamp_user_id` is ONE optional keyword on `MasterIngestService.__init__`; when set, `_insert` for
 products sets `created_by` + `updated_by` and `_update` sets `updated_by`. Push passes nothing.
@@ -168,7 +180,10 @@ products sets `created_by` + `updated_by` and `_update` sets `updated_by`. Push 
 Move the body of `replace_latest_stock_list` (archive every live Stock List attachment, upload the new
 one through the storage router) into `app/services/stock_list_archive_service.py
 replace_latest_stock_list(db, *, file_bytes, filename, user_id)`. The route keeps its macro-strip step
-and calls it; the apply task calls it with the generated xlsx. No behaviour change on the route.
+and calls it; the apply task calls it with the generated xlsx. No behaviour change on the route - built
+as SR4, the mime type is fixed (`.../spreadsheetml.sheet`) inside the service rather than threaded
+through as a parameter, since every caller (the manual route post-macro-strip, the apply task's own
+generated workbook) is always handing over genuine `.xlsx` bytes by the time this function runs.
 
 ### Compare (P11)
 

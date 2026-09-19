@@ -1150,41 +1150,10 @@ async def replace_latest_stock_list(
     db: Session = Depends(get_db),
 ):
     """Replace the Stock_List attachment. Only one non-archived attachment with type Stock_List allowed; archives any existing, then creates new. For n8n AI agent."""
-    from datetime import datetime
-
     if not file or not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is required")
 
     try:
-        from app.models.resources import Attachment, AttachmentType
-
-        service = AttachmentService(db)
-
-        # Resolve attachment type by name "Stock List" (UI) or "Stock_List"
-        attachment_type = db.query(AttachmentType).filter(AttachmentType.type_name.in_(STOCK_LIST_TYPE_NAMES)).first()
-        if not attachment_type:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Attachment type 'Stock List' not found. Create an attachment type with name 'Stock List' first.",
-            )
-
-        # Archive any existing non-archived attachment with this type (only 1 allowed)
-        existing = (
-            db.query(Attachment)
-            .filter(
-                Attachment.attachment_type_id == str(attachment_type.id),
-                Attachment.is_deleted == False,
-            )
-            .all()
-        )
-        now = datetime.utcnow()
-        for att in existing:
-            setattr(att, "is_deleted", True)
-            setattr(att, "deleted_at", now)
-            setattr(att, "deleted_by", current_user["id"])
-        if existing:
-            db.commit()
-
         # Upload file (same flow as create_attachment); use sanitized original filename only (no UUID prefix)
         file_content = await file.read()
         upload_filename = file.filename
@@ -1203,68 +1172,19 @@ async def replace_latest_stock_list(
                 detail=str(exc),
             )
 
-        file_size = len(file_content)
-        file_hash = await run_in_threadpool(lambda: hashlib.sha256(file_content).hexdigest())
-        original_filename = upload_filename or "stock_list.xlsx"
-        safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")).strip() or "stock_list.xlsx"
-        stored_filename = safe_filename
-        entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
-        s3_file_path = f"{entity_type}/{stored_filename}"
+        # Archive-and-upload: PLAN-autocount-pull-review.md P7 - shared with the pull
+        # Confirm's stock Apply (SR4), so both write the same attachment the same way.
+        import app.services.stock_list_archive_service as stock_list_archive_service
 
-        from app.services.storage_router import (
-            cdn_base_url,
-            default_provider,
-            get_backend,
+        attachment = await run_in_threadpool(
+            stock_list_archive_service.replace_latest_stock_list,
+            db,
+            file_bytes=file_content,
+            filename=upload_filename,
+            user_id=current_user["id"],
         )
-        provider = default_provider()
-        backend = get_backend(provider)
-        try:
-            s3_key, _ = await run_in_threadpool(
-                backend.upload_file,
-                file_content=file_content,
-                file_path=s3_file_path,
-                content_type=upload_mime,
-            )
-        except Exception as s3_error:
-            logger.error(
-                "Storage upload failed for replace-latest-stock-list (provider=%s): %s",
-                provider,
-                s3_error,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to upload file to storage: {str(s3_error)}",
-            )
 
-        stored_file_path = cdn_base_url(provider, s3_key)
-        from app.services.contact_access_type_service import ContactAccessTypeService
-        access_svc = ContactAccessTypeService(db)
-        access_levels_payload = access_svc.get_default_access_levels()
-        attachment_data = AttachmentCreate(
-            attachment_type_id=str(attachment_type.id),
-            original_filename=original_filename,
-            stored_filename=stored_filename,
-            file_path=stored_file_path,
-            file_size_bytes=file_size,
-            mime_type=upload_mime or "application/octet-stream",
-            file_hash=file_hash,
-            entity_type=entity_type,
-            entity_id=None,
-            directory_id=None,
-            description="Latest stock list",
-            access_levels=access_levels_payload,
-            storage_provider=provider,
-        )
-        attachment = service.create_attachment(attachment_data, current_user["id"])
-        try:
-            _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user["id"])
-        except Exception as e:
-            logger.warning(
-                "Webhook failed for replace-latest-stock-list attachment %s: %s",
-                getattr(attachment, "id", None),
-                e,
-            )
-
+        service = AttachmentService(db)
         data = AttachmentResponse.model_validate(attachment).model_dump()
         _stamp_company(data, attachment, service.company_name_map([attachment]))
         user_info = _enrich_uploaded_by_user(db, attachment)

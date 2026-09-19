@@ -139,3 +139,83 @@ def compare_products(excel_rows: list[dict], pull_rows: list[dict]) -> dict:
         "only_in_excel": only_in_excel,
         "only_in_pull": only_in_pull,
     }
+
+
+# ============================================================================== stock
+
+
+def _stock_key(row: dict) -> tuple[str, str]:
+    return (
+        str(row.get("Item Code") or "").strip().upper(),
+        str(row.get("Location") or "").strip().upper(),
+    )
+
+
+def _stock_pair_label(row: dict) -> str:
+    code = str(row.get("Item Code") or "").strip()
+    location = str(row.get("Location") or "").strip()
+    return f"{code}|{location}"
+
+
+def _stock_qty(row: dict) -> int:
+    try:
+        return int(float(str(row.get("On Hand Qty"))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def compare_stock(excel_rows: list[dict], fed_rows: list[dict]) -> dict:
+    """AC-CM-3: both sides in the manual-template shape (`Item Code`/`Item
+    Description`/`Location`/`On Hand Qty`), keyed by (Item Code, Location) trimmed
+    and case-insensitive, against the FED rows only. On Hand Qty compared as
+    integers. `summary` additionally carries `qty_total_excel`/`qty_total_pull` -
+    the sum of On Hand Qty over ALL rows of each side, not just the common pairs.
+    """
+    excel_by_key: dict[tuple[str, str], dict] = {}
+    for row in excel_rows:
+        key = _stock_key(row)
+        if key[0]:
+            excel_by_key[key] = row
+
+    pull_by_key: dict[tuple[str, str], dict] = {}
+    for row in fed_rows:
+        key = _stock_key(row)
+        if key[0]:
+            pull_by_key[key] = row
+
+    only_in_excel = sorted(
+        _stock_pair_label(excel_by_key[k]) for k in excel_by_key if k not in pull_by_key
+    )
+    only_in_pull = sorted(
+        _stock_pair_label(pull_by_key[k]) for k in pull_by_key if k not in excel_by_key
+    )
+
+    common_keys = [k for k in excel_by_key if k in pull_by_key]
+    differences: list[dict] = []
+    matched = 0
+
+    for key in common_keys:
+        excel_row = excel_by_key[key]
+        pull_row = pull_by_key[key]
+        excel_qty = _stock_qty(excel_row)
+        pull_qty = _stock_qty(pull_row)
+        if excel_qty != pull_qty:
+            differences.append({
+                "item_code": str(excel_row.get("Item Code") or "").strip(),
+                "location": str(excel_row.get("Location") or "").strip(),
+                "field": "on_hand_qty", "excel": excel_qty, "pull": pull_qty,
+            })
+        else:
+            matched += 1
+
+    total = len(common_keys)
+    return {
+        "summary": {
+            "total": total, "matched": matched, "different": total - matched,
+            "qty_total_excel": sum(_stock_qty(r) for r in excel_rows),
+            "qty_total_pull": sum(_stock_qty(r) for r in fed_rows),
+        },
+        "differences": differences,
+        "only_in_excel": only_in_excel,
+        "only_in_pull": only_in_pull,
+    }

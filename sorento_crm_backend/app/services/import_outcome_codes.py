@@ -156,6 +156,15 @@ DB_ERROR = "db_error"
 #: vocabulary rather than one of ours, so it is spelled the way FoundryX's own
 #: `excludedRows[].reason` codes are (see the cross-repo contract, Appendix A).
 AUTOCOUNT_EXCLUDED = "AUTOCOUNT_EXCLUDED"
+#: A stock row whose `location_code` matched a warehouse that exists but is inactive
+#: (AC-SP-2) - never reaches `bulk_import_stock`, FED or otherwise.
+AUTOCOUNT_NOT_APPLIED_INACTIVE = "AUTOCOUNT_NOT_APPLIED_INACTIVE"
+#: A stock row whose `location_code` matched no warehouse in this company at all.
+AUTOCOUNT_NOT_APPLIED_UNKNOWN = "AUTOCOUNT_NOT_APPLIED_UNKNOWN"
+#: A header `negativePairList` entry - FoundryX's own record of an (item, location) it
+#: read as negative on-hand. Display only, from the fetched header, never `bulk_import_
+#: stock`'s input (AC-SP-4).
+AUTOCOUNT_NEGATIVE = "AUTOCOUNT_NEGATIVE"
 
 LABELS: dict[str, str] = {
     CREATED: "Created",
@@ -206,6 +215,9 @@ LABELS: dict[str, str] = {
     ROW_ERROR: "Row could not be written",
     DB_ERROR: "Database error",
     AUTOCOUNT_EXCLUDED: "Left out by AutoCount",
+    AUTOCOUNT_NOT_APPLIED_INACTIVE: "Not applied: warehouse is inactive",
+    AUTOCOUNT_NOT_APPLIED_UNKNOWN: "Not applied: unknown location",
+    AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
 }
 
 

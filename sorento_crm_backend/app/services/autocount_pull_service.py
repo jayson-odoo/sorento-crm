@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import update
+from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 
 from app.models.job import ImportJob, JobStatus
@@ -402,9 +402,97 @@ def build_products_workbook(mapped_rows: list[dict]) -> bytes:
     return buffer.getvalue()
 
 
+# =================================================================== SR4 - stock rows
+
+
+def _stock_template_row(row: dict) -> dict:
+    """The manual-template shape for one raw snapshot stock row - what a checker's own
+    Excel file, `StockService.bulk_import_stock` and `compare_stock` all speak. The ONE
+    shape every `classify_stock_rows` bucket uses (fed, inactive, unknown alike)."""
+    return {
+        "Item Code": row.get("item_code"),
+        "Item Description": row.get("item_description") or "",
+        "Location": row.get("location_code"),
+        "On Hand Qty": row.get("qty"),
+    }
+
+
+def classify_stock_rows(db: Session, company_id: str, rows: list[dict]) -> dict:
+    """AC-SP-2: classifies every pulled stock row by its `location_code`, matched to
+    `warehouses.warehouse_code` trimmed + case-insensitive, WITHIN `company_id` - an
+    EXPLICIT argument, never ambient session scope (sp_2a proves this on purpose: it
+    sets ambient scope to two companies at once and still expects the right answer).
+    ONE query for the company's warehouses. Returns `{"fed", "inactive", "unknown"}`,
+    every bucket in the same manual-template shape."""
+    warehouse_rows = db.execute(
+        text("SELECT warehouse_code, is_active FROM warehouses WHERE company_id = :cid"),
+        {"cid": company_id},
+    ).mappings().all()
+    active_codes = {
+        str(w["warehouse_code"]).strip().upper() for w in warehouse_rows if w["is_active"]
+    }
+    known_codes = {str(w["warehouse_code"]).strip().upper() for w in warehouse_rows}
+
+    fed: list[dict] = []
+    inactive: list[dict] = []
+    unknown: list[dict] = []
+    for row in rows:
+        location = str(row.get("location_code") or "").strip().upper()
+        template = _stock_template_row(row)
+        if location in active_codes:
+            fed.append(template)
+        elif location in known_codes:
+            inactive.append(template)
+        else:
+            unknown.append(template)
+    return {"fed": fed, "inactive": inactive, "unknown": unknown}
+
+
+def map_stock_row(template_row: dict) -> dict:
+    """AC-RV-3 (stock half): the `/rows` view shape, built from a `classify_stock_rows`
+    FED-bucket template row - one source of truth for what counts as FED, never a
+    second re-derivation."""
+    return {
+        "item_code": template_row.get("Item Code"),
+        "item_description": template_row.get("Item Description"),
+        "location": template_row.get("Location"),
+        "on_hand_qty": template_row.get("On Hand Qty"),
+    }
+
+
+_STOCK_TEMPLATE_HEADER = ("Item Code", "Item Description", "Location", "On Hand Qty")
+
+
+def build_stock_workbook(template_rows: list[dict]) -> bytes:
+    """AC-RV-5 (stock half) / AC-SC-4: ONE builder, used by `/download.xlsx` AND the
+    apply task's Stock List archive - the template's own header row, no trailing
+    column (unlike products, which adds a blank UOM)."""
+    import io
+
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Stock List"
+    sheet.append(list(_STOCK_TEMPLATE_HEADER))
+    for row in template_rows:
+        sheet.append([
+            row.get("Item Code"), row.get("Item Description"),
+            row.get("Location"), row.get("On Hand Qty"),
+        ])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 def store_compare_summary(db: Session, job: ImportJob, *, filename: str, result: dict) -> ImportJob:
     """AC-CM-5: only the summary is kept on the job - the uploaded rows and the
-    difference list are returned to the browser and never stored."""
+    difference list are returned to the browser and never stored.
+
+    `qty_total_excel`/`qty_total_pull` (AC-CM-3, stock only) come straight through from
+    `compare_stock`'s own summary; absent (products) they stay `None`, matching the
+    plan's metadata shape.
+    """
     pull = _pull_meta(job)
     summary = result.get("summary") or {}
     pull["compare"] = {
@@ -415,6 +503,8 @@ def store_compare_summary(db: Session, job: ImportJob, *, filename: str, result:
         "different": summary.get("different", 0),
         "only_in_excel": len(result.get("only_in_excel") or []),
         "only_in_pull": len(result.get("only_in_pull") or []),
+        "qty_total_excel": summary.get("qty_total_excel"),
+        "qty_total_pull": summary.get("qty_total_pull"),
     }
     job.job_metadata = _with_pull(job, pull)
     job.updated_at = datetime.utcnow()
@@ -442,6 +532,10 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         raise PullNotReadyForConfirm(
             f"Pull is in phase {pull.get('phase')!r}; only a pull in review can be confirmed."
         )
+    if pull.get("confirm_blocked_reason"):
+        # AC-SP-1: entity-agnostic - products never sets this, stock does when the
+        # fetched header reports excludedNonzeroCount > 0.
+        raise PullNotReadyForConfirm(str(pull["confirm_blocked_reason"]))
 
     entity = pull.get("entity")
     apply_job = ImportJob(
