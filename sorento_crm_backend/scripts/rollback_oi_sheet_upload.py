@@ -81,7 +81,10 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.models.scm import OrderLinkClaim
-from app.services.project_order_inquiry_import_service import _MIGRATION_STAMP
+from app.services.project_order_inquiry_import_service import (
+    _LINE_OWN_ROW_VERBS,
+    _MIGRATION_STAMP,
+)
 from app.services.scm import order_link_service
 from scripts.delete_empty_order_inquiries import _no_rows_clause, _no_task_clause
 
@@ -90,11 +93,6 @@ from scripts.delete_empty_order_inquiries import _no_rows_clause, _no_task_claus
 #: unconditionally, or the exact `set(counts)` a pre-existing rollback caller may still
 #: check would grow keys it never asked for.
 COUNT_KEYS = ("rows", "links", "claims", "inquiries")
-
-#: The three traits `rows_of` reads to decide a row is planning's, not the sheet's alone
-#: (`PLAN-oi-rollback-recover-planning-rows.md`, section 2.3, ruling R3), checked in this
-#: order so a row carrying more than one still reports the first that applies.
-KEPT_TRAITS = ("redirected_to_pool", "changed_at", "supply_decision_id")
 
 
 def _kept_trait(row: OrderInquiryRow) -> Optional[str]:
@@ -139,17 +137,16 @@ def _has_planning_sibling(
     """AC-RB-29: this row's LINE carries some OTHER live row planning made - one with
     `supply_decision_id` set (a top-up or a restated row), a `Replaces N used` row (note
     starting `"Replaces "`, R6's own shape), or a notice row (a live row whose verb is
-    neither ORDER nor ORDER BACK - R7's own split, `_settle_row_in_place`'s own two verbs).
+    outside `_LINE_OWN_ROW_VERBS` - R7/AC-RB-35's own split, ORDER, ORDER BACK and RESERVE
+    AND ORDER, the SAME set `_settle_row_in_place` settles).
     """
-    from app.models.project_so import IV_ORDER, IV_ORDER_BACK
-
     for sibling in by_line.get(str(row.so_line_id), []):
         if str(sibling.id) == str(row.id):
             continue
         if (
             sibling.supply_decision_id is not None
             or (sibling.note or "").startswith("Replaces ")
-            or sibling.verb not in (IV_ORDER, IV_ORDER_BACK)
+            or sibling.verb not in _LINE_OWN_ROW_VERBS
         ):
             return True
     return False
@@ -207,6 +204,26 @@ def _stamped(db: Session, file_name: str) -> List[OrderInquiryRow]:
     )
 
 
+def _partition_stamped(
+    db: Session, file_name: str
+) -> Tuple[List[OrderInquiryRow], List[Tuple[OrderInquiryRow, str]]]:
+    """This file's stamped rows, split into `(removable, kept)` - ONE read of the rows
+    (`_stamped`) and ONE read of their lines' siblings (`_siblings_by_line`), AC-RB-40:
+    every caller derives both halves from that single pair of queries rather than reading
+    the table twice for two answers that must agree."""
+    stamped = _stamped(db, file_name)
+    by_line = _siblings_by_line(db, stamped)
+    removable: List[OrderInquiryRow] = []
+    kept: List[Tuple[OrderInquiryRow, str]] = []
+    for row in stamped:
+        trait = _trait_of(row, by_line)
+        if trait is None:
+            removable.append(row)
+        else:
+            kept.append((row, trait))
+    return removable, kept
+
+
 def rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
     """This file's rows the rollback actually REMOVES - the sheet's own, never a row
     planning has since worked on, on the row itself (section 2.3, ruling R3:
@@ -216,25 +233,18 @@ def rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
     """
     if not (file_name or "").strip():
         raise ValueError(BLANK_NAME)
-    stamped = _stamped(db, file_name)
-    by_line = _siblings_by_line(db, stamped)
-    return [row for row in stamped if _trait_of(row, by_line) is None]
+    removable, _kept = _partition_stamped(db, file_name)
+    return removable
 
 
 def _kept_rows_of(db: Session, file_name: str) -> List[Tuple[OrderInquiryRow, str]]:
     """`rows_of`'s complement: the stamped rows a trait keeps, paired with which one."""
-    stamped = _stamped(db, file_name)
-    by_line = _siblings_by_line(db, stamped)
-    kept: List[Tuple[OrderInquiryRow, str]] = []
-    for row in stamped:
-        trait = _trait_of(row, by_line)
-        if trait is not None:
-            kept.append((row, trait))
+    _removable, kept = _partition_stamped(db, file_name)
     return kept
 
 
 def _kept_row_info(db: Session, row: OrderInquiryRow, trait: str) -> Dict[str, Any]:
-    """What the dry run and `--apply` both name a kept row by (AC-R-19): its sales order,
+    """What the dry run and `--apply` both name a kept row by (AC-RB-19): its sales order,
     item, quantity, date and which trait kept it - the same read
     `project_order_inquiry_service.py::_row_core_so_number` uses for a row's own current
     order.
@@ -289,19 +299,16 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
     """Claims freed, then links, then the rows, then the headers left empty - a row
     planning has worked on since it was raised is never touched (section 2.3): `rows_of`
     already excludes it, and `kept` / `kept_rows` here are its own separate count and
-    listing (AC-R-19), added to the result only when there is something to say.
-    """
-    kept = _kept_rows_of(db, file_name)
-    rows = rows_of(db, file_name)
-    counts = {key: 0 for key in COUNT_KEYS}
-    if kept:
-        counts["kept"] = len(kept)
-        counts["kept_rows"] = [_kept_row_info(db, row, trait) for row, trait in kept]
-    if not rows:
-        print("  no rows carry that stamp" if not kept else "  every stamped row is kept")
-        return counts
+    listing (AC-RB-19), added to the result only when there is something to say.
 
-    companies = _companies_of(db, rows)
+    AC-RB-39: the more-than-one-company refusal is evaluated over EVERY stamped row, kept
+    ones included, and BEFORE anything about a kept row is printed, counted or returned -
+    a second company whose only stamped row happens to be a kept one must still trip it.
+    """
+    removable, kept = _partition_stamped(db, file_name)
+    stamped = removable + [row for row, _trait in kept]
+
+    companies = _companies_of(db, stamped)
     for code, company_id, count in companies:
         print(f"  {code} ({company_id}): {count} rows")
     if len(companies) > 1 and not all_companies:
@@ -311,6 +318,15 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
             f"--all-companies if that is really what the upload was"
         )
 
+    counts = {key: 0 for key in COUNT_KEYS}
+    if kept:
+        counts["kept"] = len(kept)
+        counts["kept_rows"] = [_kept_row_info(db, row, trait) for row, trait in kept]
+    if not removable:
+        print("  no rows carry that stamp" if not kept else "  every stamped row is kept")
+        return counts
+
+    rows = removable
     row_ids = [str(row.id) for row in rows]
     inquiry_ids = sorted({str(row.order_inquiry_id) for row in rows if row.order_inquiry_id})
 
@@ -337,9 +353,19 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
         .filter(OrderInquiryLink.row_id.in_(row_ids))
         .delete(synchronize_session=False)
     )
+    # AC-RB-40: self-guarding - the DELETE repeats the row's own three kept traits as
+    # predicates beside `id IN (...)`, so a row planning touched AFTER the read above
+    # (which is what decided it belonged in `removable`) is not deleted anyway. `counts
+    # ["rows"]` is the DELETE's own row count, so it always reflects what actually went,
+    # never what `removable` merely named a moment earlier.
     counts["rows"] = (
         db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.id.in_(row_ids))
+        .filter(
+            OrderInquiryRow.id.in_(row_ids),
+            OrderInquiryRow.redirected_to_pool.is_(False),
+            OrderInquiryRow.changed_at.is_(None),
+            OrderInquiryRow.supply_decision_id.is_(None),
+        )
         .delete(synchronize_session=False)
     )
     db.flush()
@@ -448,7 +474,7 @@ def main() -> int:
         print(f"claims removed:     {counts['claims']}")
         print(f"empty headers:      {counts['inquiries']}")
         if counts.get("kept"):
-            # AC-R-19: named, not only counted - purchasing and CS need to know WHICH row a
+            # AC-RB-19: named, not only counted - purchasing and CS need to know WHICH row a
             # planning trait kept, not merely how many.
             print(f"rows kept:          {counts['kept']}")
             for named in counts.get("kept_rows") or []:
