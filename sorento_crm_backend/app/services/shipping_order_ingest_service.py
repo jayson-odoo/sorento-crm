@@ -216,6 +216,14 @@ class ShippingOrderIngestService(MasterRefResolver):
         # survive a later failure in the SAME record's own rollback.
         self.ref_moves: list[dict[str, Optional[str]]] = []
         self._pending_ref_moves: list[dict[str, Optional[str]]] = []
+        # S2 (`PLAN-oi-follow-book-chain.md`, AC-FB-22/25): every allocation this
+        # push WROTE (created, updated or adopted - anything `_write_row` ran
+        # over), so the route's hook can resolve each one's own `from_so_line_
+        # ref`, or the ref of the purchase-order line its `from_po_line_ref`
+        # names, to an order-inquiry row. Same "stage per record, publish on
+        # success" rule as `ref_moves` above, for the same reason.
+        self.written_spo_allocation_ids: set[str] = set()
+        self._pending_spo_allocation_ids: list[str] = []
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -374,6 +382,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         # this method returns successfully, never a previous (possibly failed)
         # record's leftover.
         self._pending_ref_moves = []
+        self._pending_spo_allocation_ids = []
         # S2 review fix: refused before anything else - a conflicting OPEN
         # claim on this spo_number is a fact about the DOCUMENT, not about
         # any one reference on it, so it is checked before the ladder runs.
@@ -577,6 +586,9 @@ class ShippingOrderIngestService(MasterRefResolver):
         if self._pending_ref_moves:
             self.ref_moves.extend(self._pending_ref_moves)
             self._pending_ref_moves = []
+        if self._pending_spo_allocation_ids:
+            self.written_spo_allocation_ids.update(self._pending_spo_allocation_ids)
+            self._pending_spo_allocation_ids = []
         return _Verdict(outcome=outcome, warnings=dedupe_warnings(warnings), line_counts=counts)
 
     def _write_order_link_claims(self, payload: CanonicalShippingOrder) -> None:
@@ -963,6 +975,11 @@ class ShippingOrderIngestService(MasterRefResolver):
         container_number: Optional[str] = None,
         warnings: Optional[list[str]] = None,
     ) -> None:
+        # S2 (`PLAN-oi-follow-book-chain.md`): every call here is this push
+        # writing (creating, updating or adopting) one allocation, whatever
+        # branch of `_apply_scoped` reached it - staged, not published, same
+        # rule as `_pending_ref_moves`.
+        self._pending_spo_allocation_ids.append(str(row.id))
         values = dict(values)
         values.pop("line_number", None)
         if "quantity_received" in values:

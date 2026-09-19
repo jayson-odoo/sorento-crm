@@ -215,6 +215,11 @@ class IngestResult:
     # has no `result` to write into), never mutated by the ingest write path itself.
     # Zero and omitted from `as_dict()`'s summary on every ordinary push.
     book_repair_moves_dropped: int = 0
+    # S2 (`PLAN-oi-follow-book-chain.md`, AC-FB-24): `follow_book_for_rows`' own
+    # sibling cap, set by the ingest route the same way and for the same reason
+    # as `book_repair_moves_dropped` above. Zero and omitted from `as_dict()`'s
+    # summary on every ordinary push.
+    book_follow_rows_dropped: int = 0
 
     @property
     def created(self) -> int:
@@ -247,6 +252,11 @@ class IngestResult:
                 **(
                     {"book_repair_moves_dropped": self.book_repair_moves_dropped}
                     if self.book_repair_moves_dropped
+                    else {}
+                ),
+                **(
+                    {"book_follow_rows_dropped": self.book_follow_rows_dropped}
+                    if self.book_follow_rows_dropped
                     else {}
                 ),
             },
