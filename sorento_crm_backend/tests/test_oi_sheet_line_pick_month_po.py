@@ -1260,3 +1260,96 @@ def test_ac_lp_16_equal_quantity_wins_the_po_pass_too():
         assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
             w.mirror_of(line_230).id
         ), "the 230 row did not land on the 230 line"
+
+
+# --------------------------------------------------------------------------- #
+# AC-LP-16 round 2 (review): zero lines, a cancelled ghost, the fallback step #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_lp_16_zero_lines_reports_no_line_for_item():
+    """AC-LP-16 (blocker 1, review round 2, 19 Sep 2026). A plannable order that holds NO
+    lines at all (44 such project-class orders on the 18 Sep prod copy - `_lines_of` inner-
+    joins `Product`, and a line whose product is gone falls out the same way) must still
+    report the row as `no_line_for_item`, not silently drop the reason.
+
+    `if not candidates: continue` used to sit inside `if narrow is not None:`, so the
+    fallback's own final, UNNARROWED step always reached `_match_row` even against an empty
+    candidate list and got a real reason back. R6's two-step `_attempt` moved that check to
+    the loop's own top level, so it also skipped that final step here, leaving
+    `match.reason` `None` forever - and `apply` unconditionally calls `raiser.raise_row`,
+    which dereferences `match.core_line.id`: AttributeError, the whole upload rolled back,
+    where main only ever reported `no_line_for_item`."""
+    with world() as w:
+        order = w.order()
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_line_not_found"] == 1, result
+        assert [entry["reason"] for entry in result["line_not_found"]] == [
+            "no_line_for_item"
+        ], result["line_not_found"]
+
+
+def test_ac_lp_16_equal_quantity_never_prefers_a_cancelled_line():
+    """AC-LP-16 (blocker 2, review round 2, 19 Sep 2026). The equal-quantity step must not
+    offer a CANCELLED line ahead of a bigger LIVE one that also fits: 412 such August-extract
+    ghosts share a date with a bigger live sibling on the prod copy. D1 (a cancelled line
+    ranks behind any live line that fits, in every pass) has to hold inside the equal step
+    too, not just the ordinary one - a lone cancelled line still matches through the SECOND
+    step exactly as today (AC-LP-8's third arm, kept green)."""
+    with world() as w:
+        order = w.order()
+        w.line(
+            order, qty_ordered="30", required_date=date(2026, 10, 1),
+            line_status="cancelled",
+        )
+        live = w.line(order, qty_ordered="50", required_date=date(2026, 10, 1))
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, date(2026, 10, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        mirror = w.mirror_of(live)
+        assert str(w.one_row().so_line_id) == str(mirror.id), (
+            "the equal-quantity step offered the cancelled line ahead of the live one"
+        )
+
+
+def test_ac_lp_16_equal_quantity_in_the_fallback():
+    """AC-LP-16 (should-fix, review round 2, 19 Sep 2026). The fallback pass runs the SAME
+    two-step `_attempt` every other pass does: neither line shares the row's date or month,
+    and neither row cites anything, so only pass 5 can ever place either. Pinned here so a
+    future change that scopes the equal-quantity step OUT of the fallback specifically has
+    somewhere to go red - every other test in this file stays green with it removed from
+    pass 5 alone."""
+    with world() as w:
+        order = w.order()
+        line_230 = w.line(order, qty_ordered="230", required_date=date(2026, 3, 1))
+        line_150 = w.line(order, qty_ordered="150", required_date=date(2026, 4, 1))
+        data = sheet([
+            (order.so_number, w.product.product_code, 150, date(2026, 7, 5),
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 230, date(2026, 7, 5),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 2, result
+        rows_by_qty = {Decimal(str(row.qty)): row for row in w.rows()}
+        assert len(rows_by_qty) == 2, [str(r.qty) for r in w.rows()]
+        assert str(rows_by_qty[Decimal("150")].so_line_id) == str(
+            w.mirror_of(line_150).id
+        ), "the 150 row did not land on the 150 line"
+        assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
+            w.mirror_of(line_230).id
+        ), "the 230 row did not land on the 230 line"

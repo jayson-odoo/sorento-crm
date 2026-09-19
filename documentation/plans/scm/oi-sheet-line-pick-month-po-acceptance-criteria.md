@@ -54,9 +54,13 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
 - **AC-LP-16** (R6, prod CB2805A-DIY / SO324265, 19 Sep 2026) Inside EVERY pass, a line whose
   `qty_ordered` EQUALS the row's own quantity is tried before any bigger line, even one that
   would otherwise win the pass's own tie-break (created-at, or earliest date). Reached through
-  the exact-date pass or the citation-alone pass alike. A row that splits a line (its own
-  quantity smaller than every candidate) is unaffected and still lands as AC-S1-2 and AC-LP-12
-  describe.
+  the exact-date pass, the citation-alone pass, or the fallback alike. A row that splits a line
+  (its own quantity smaller than every candidate) is unaffected and still lands as AC-S1-2 and
+  AC-LP-12 describe. The equal-quantity step never offers a CANCELLED line ahead of a bigger
+  LIVE one that also fits (D1 holds inside it too, not only the ordinary rank); a lone cancelled
+  line still matches through the ordinary step, unchanged. A plannable order that holds NO lines
+  at all still reports its row `no_line_for_item`, never an exception that rolls the whole
+  upload back.
 
 ## Citation lending
 

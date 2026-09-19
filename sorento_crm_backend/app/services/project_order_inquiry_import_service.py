@@ -797,6 +797,22 @@ def _run_pass(
     line (its own quantity smaller than every candidate, AC-S1-2) never matches the first
     step and is unaffected, landing in the second exactly as it does today.
 
+    The equal step never offers a CANCELLED line (review round 2, 19 Sep 2026, blocker 2):
+    D1 still ranks a cancelled line behind any live one that fits in EVERY step, not only
+    the ordinary one, so it is filtered out of the first step's own candidates rather than
+    merely ranked last there - a lone cancelled line still matches through the second step,
+    exactly as it always has.
+
+    An EMPTY candidate list skips only a NARROWED attempt (review round 2, blocker 1): the
+    equal step is narrowed by definition, and a genuinely narrowed pass finding nothing has
+    said nothing about the row either - but the fallback's own final, UNNARROWED step must
+    still reach `_match_row` even against an empty list, or an order with no lines at all
+    (44 such project-class orders on the 18 Sep prod copy; a line whose product is gone
+    falls out of `_lines_of`'s own inner join the same way) leaves `match.reason` `None`
+    forever, and `apply` unconditionally calls `raiser.raise_row`, which dereferences
+    `match.core_line.id` on a match nothing ever set: an AttributeError that rolls back the
+    whole upload, where the row should simply read `no_line_for_item`.
+
     Returns the matches from `matches` still unplaced, in `matches`' OWN order - `order` may
     attempt them in a different sequence (pass 3, AC-LP-5) without disturbing the file order
     the later passes, and the final reason, rely on.
@@ -814,8 +830,12 @@ def _run_pass(
                 candidates = [c for c in candidates if keep(c)]
             if equal_qty_only:
                 wanted = _dec(row.qty)
-                candidates = [c for c in candidates if _dec(c[0].qty_ordered) == wanted]
-            if not candidates:
+                candidates = [
+                    c for c in candidates
+                    if _dec(c[0].qty_ordered) == wanted
+                    and (c[0].line_status or "open") != "cancelled"
+                ]
+            if (narrow is not None or equal_qty_only) and not candidates:
                 continue
             found, reason = _match_row(row, candidates, taken, rank=rank(row))
             if found is not None:
