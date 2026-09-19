@@ -43,8 +43,8 @@
         {
           "text": "incomign?",
           "expect": {
-            "reply_contains": ["Here is the incoming stock I found.", "*Incoming Quantity:*"],
-            "reply_not_contains": ["*incoming stock* for"]
+            "reply_contains": ["I have attached the file(s) below.", "*Incoming Quantity:*"],
+            "reply_not_contains": ["*incoming stock* for", "Here is the incoming stock I found."]
           }
         }
       ]
@@ -100,12 +100,12 @@
           "expect": {
             "reply_contains": [
               "Stock summary for the requested products.",
-              "Here is the incoming stock I found.",
+              "I have attached the file(s) below.",
               "Here is the PO placed I found."
             ],
             "max_occurrences": {
               "Stock summary for the requested products.": 1,
-              "Here is the incoming stock I found.": 1,
+              "I have attached the file(s) below.": 1,
               "Here is the PO placed I found.": 1,
               "*stock* for": 0
             }

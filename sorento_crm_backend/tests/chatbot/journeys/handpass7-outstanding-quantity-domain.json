@@ -9,7 +9,7 @@
       "turns": [
         {
           "text": "CB88SS\nSRT2313-HP\nCB447-BL\nCSS8803-BL\nCB88SS-BL\nCB447-GM\nCB88SS-GM\nCB6408-RG\nstock",
-          "expect": {"reply_contains": ["*stock*"]}
+          "expect": {"reply_contains": ["Stock details found for the requested products."]}
         },
         {
           "text": "oustaning quantity for CB88SS",
@@ -28,7 +28,7 @@
       "turns": [
         {
           "text": "CB88SS\nSRT2313-HP\nCB447-BL\nCSS8803-BL\nCB88SS-BL\nCB447-GM\nCB88SS-GM\nCB6408-RG\nstock",
-          "expect": {"reply_contains": ["*stock*"]}
+          "expect": {"reply_contains": ["Stock details found for the requested products."]}
         },
         {
           "text": "oustangind dealer quantiyt for CB88SS",
@@ -47,7 +47,7 @@
       "turns": [
         {
           "text": "CB88SS\nSRT2313-HP\nCB447-BL\nCSS8803-BL\nCB88SS-BL\nCB447-GM\nCB88SS-GM\nCB6408-RG\nstock",
-          "expect": {"reply_contains": ["*stock*"]}
+          "expect": {"reply_contains": ["Stock details found for the requested products."]}
         },
         {
           "text": "oustangind dealer quantiyt report for CB88SS",

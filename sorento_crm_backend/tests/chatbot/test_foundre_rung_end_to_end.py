@@ -252,9 +252,13 @@ class TestAC921ThePORungReachesTheCustomer:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
-        assert f"*stock* for {CODE}:\nNo matching results found." in said, said
+        # 20 Sep 2026 (R-d, hand pass 7): `turn/compose.py` now reuses the fetch lane's
+        # own `lane_text` for the WHOLE section, header included, instead of a synthetic
+        # `*{label}* for {code}:` header - the miss line is the primary domain's own
+        # production wording with no domain-name prefix.
+        assert "No matching results found." in said, said
         assert (
-            f"*outstanding purchase orders* for {CODE}:\n"
+            "Here is the PO placed I found.\n\n"
             f"1. *Product Code:* {CODE}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
             "*Location:* KL-WH"
         ) in said, said
@@ -313,11 +317,14 @@ class TestAC922NothingOnAnyRung:
         result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS)
         assert result.status == "done", result.error
         assert PO_TOOL in probes
+        # 20 Sep 2026 (R-d): no `*stock* for {code}:` header any more - the primary
+        # domain's own miss wording, unprefixed.
         assert (
-            f"*stock* for {CODE}:\nNo matching results found.\n"
+            "No matching results found.\n"
             "Nothing on incoming stock or outstanding purchase orders either."
         ) in said, said
-        assert "Would you like me to escalate" in said
+        # 20 Sep 2026 (R-f): the generic escalate offer now names a single team.
+        assert "Would you like me to escalate to warehouse team?" in said, said
 
 
 class TestTheSuffixedCodeShapeReachesTheRung:
@@ -353,8 +360,10 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, f"{code}: the PO rung never ran"
+        # 20 Sep 2026 (R-d): no `*outstanding purchase orders* for {code}:` header - the
+        # rung's own `lane_text`, header included.
         assert (
-            f"*outstanding purchase orders* for {code}:\n"
+            "Here is the PO placed I found.\n\n"
             f"1. *Product Code:* {code}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
             "*Location:* KL-WH"
         ) in said, said
@@ -372,8 +381,10 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         stub_access(attributes=["purchase_orders.placed"])  # the rung is per contact
         _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
+        # 20 Sep 2026 (R-d): no `*stock* for {code}:` header - the primary domain's own
+        # miss wording, unprefixed.
         assert (
-            f"*stock* for {code}:\nNo matching results found.\n"
+            "No matching results found.\n"
             "Nothing on incoming stock or outstanding purchase orders either."
         ) in said, said
 
@@ -488,8 +499,10 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         # unreached code on a live turn now (see module docstring); whether the same rule
         # should be re-applied inside the new generic composer is an open question this
         # test does not decide, it only pins what the engine does today.
+        # 20 Sep 2026 (R-d): no `*outstanding purchase orders* for {code}:` header - the
+        # rung's own `lane_text`, header included.
         assert (
-            f"*outstanding purchase orders* for {CODE}:\n"
+            "Here is the PO placed I found.\n\n"
             f"1. *Product Code:* {CODE}\n*PO Number:* 202607-S0031\n"
             "*Ordered Qty:* 27\n*Outstanding Qty:* 27\n*PO Date:* 2026-06-30"
         ) in said, said
@@ -549,9 +562,12 @@ class TestD7AnIncomingAskReachesThePORung:
         assert result.status == "done", result.error
         # the incoming lane's own picker probe may sit beside them; the climb is what matters
         assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
-        assert f"*incoming stock* for {CODE}:\nNo matching results found." in said, said
+        # 20 Sep 2026 (R-d): no `*incoming stock*`/`*outstanding purchase orders*` for
+        # {code}: headers - the primary domain's own miss wording, then the rung's own
+        # `lane_text`, header included.
+        assert "No matching results found." in said, said
         assert (
-            f"*outstanding purchase orders* for {CODE}:\n"
+            "Here is the PO placed I found.\n\n"
             f"1. *Product Code:* {CODE}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
             "*Location:* KL-WH"
         ) in said, said

@@ -333,7 +333,17 @@ class TestR1DemandQuantityAnswerEndToEnd:
         message routes `business_query`, not `stock_denied` (`route.decide` cannot even
         pick the arm), the resolve+gate output carries no `not_allowed_check_stock`
         stamp, and the reply is the fetched response UNCHANGED - the switch is what
-        gates the rewrite, not the contact's `is_allowed_stock` field alone."""
+        gates the rewrite, not the contact's `is_allowed_stock` field alone.
+
+        20 Sep 2026 (R-d, hand pass 7): this test's own docstring used to name the
+        property AC-1592/1594 retired ("the composer never passes a tool's raw response
+        string through verbatim") as the reason no rows render - the owner's hand pass 7
+        ruling is the OPPOSITE (reply copy = production copy), and `turn/compose.py` now
+        reuses the fetch lane's own `lane_text` (`_run_fetch`'s `delegate_payload
+        ["fetch"]["response"]` here) for the WHOLE section whenever it is present and
+        non-empty. The stub's own `_ANSWERS["response"]` is what now surfaces verbatim -
+        this is the "fetched response UNCHANGED" property the docstring already claimed,
+        just via a different mechanism than the one AC-1592 assumed."""
         from app.models.user import SystemSetting
         from app.services.chatbot import engine as engine_mod
 
@@ -360,16 +370,11 @@ class TestR1DemandQuantityAnswerEndToEnd:
 
         assert result.branch_kind == "business_query"
         assert result.delegate is None
-        # Ported (AC-1592): the composer renders its OWN text from structured
-        # `figures`/`sections` now (#930's grammar, contract 102) - it never passes a
-        # tool's raw `response` string through verbatim, so "the fetched response
-        # untouched" is not a property this architecture has anymore (measured; the OLD
-        # `output_exchange`-era pass-through is gone with that module, AC-1594). No rows
-        # render because the stub's own `answers` dicts (`{"product", "stock_qty"}`)
-        # carry no field the composer's row-renderer recognises - a real MCP tool's
-        # presenter shape would; this cell is not about that renderer, so the header
-        # alone is enough to prove the R1 rewrite did NOT run.
-        assert result.reply["text"] == "*stock* for SRTWC8517:\n"
+        # 20 Sep 2026 (R-d): `compose.py` reuses the fetch lane's own `lane_text` - the
+        # stub's `_ANSWERS["response"]` - as the WHOLE reply, verbatim, with no synthetic
+        # `*stock* for {code}:` header. This is the "fetched response UNCHANGED" property
+        # the docstring names, just measured against the field that actually carries it.
+        assert result.reply["text"] == self._ANSWERS["response"]
         assert "cannot be fulfilled" not in result.reply["text"], (
             "with R1 off the demand-quantity rewrite must never run"
         )

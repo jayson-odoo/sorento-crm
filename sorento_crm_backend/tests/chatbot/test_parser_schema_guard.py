@@ -86,10 +86,16 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # `domain_in_message`/`broaden_to` pair joins the schema.
     "broaden_to": "app/services/chatbot/turn/apply.py",
     "domain_in_message": "app/services/chatbot/turn/decide.py",
+    # 20 Sep 2026 (coder 25's sales report port, `2682a0bd6`): `sales_channel` joins the
+    # schema so the sales report's Dealer/Project filter answer is a structured parser
+    # field, never a message-text guess - `apply.py` reads it both to seed `Focus.
+    # sales_channel` when a filter answer names a channel and to settle a fresh channel
+    # word onto the focus directly. 35 declared keys -> 36.
+    "sales_channel": "app/services/chatbot/turn/apply.py",
 }
 
 
-def test_measured_read_set_matches_the_35_declared_keys():
+def test_measured_read_set_matches_the_36_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

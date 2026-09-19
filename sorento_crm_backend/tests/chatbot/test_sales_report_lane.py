@@ -239,9 +239,13 @@ class TestNoKeyDeniesBeforeFetch:
         )
         reply = (result.reply or {}).get("text") or ""
         assert reply.strip() == SALES_REPORT_DENIAL, reply
-        stored = _session_of(session_factory)["variables"]
-        assert not stored.get("pending"), stored.get("pending")
-        assert stored.get("selection_context") != "sales_report_detail", stored.get("selection_context")
+        # Session-shape port (AC-1592, 16-17 Sep 2026, see test_outstanding_lane.py's
+        # module docstring): `pending`/`selection_context` are this file's OLD names -
+        # `_session_of` now returns the flat session_vars dict directly (no `variables`
+        # nesting) and an armed offer lives at `open_question`. A total denial before
+        # any fetch must leave NO open question at all.
+        stored = _session_of(session_factory)
+        assert not stored.get("open_question"), stored.get("open_question")
 
     def test_with_the_key_the_fetch_runs_once(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})

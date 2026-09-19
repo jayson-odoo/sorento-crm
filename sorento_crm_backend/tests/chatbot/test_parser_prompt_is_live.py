@@ -129,7 +129,13 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # only set when a numbered list is open" (defect 7b / defect 4's prompt half), and the
 # "also"/"as well"/"too" union rule (defect 7c). Net +2431. Measured against the coder's
 # landed change (`str.replace` count-verified edits on the raw source), not derived.
-CONSTANT_CHARS = 61284
+# 61284 -> 62981 (20 Sep 2026, hand pass 7 B2, coders 24/25, `c338cd525`): a general
+# READING THE CURRENT MESSAGE IN CONTEXT rule - the current subject's own domain is the
+# weakest signal there is, a continuing subject does not carry a continuing domain -
+# plus coder 24's earlier typo-tolerance bullets for a garbled "outstanding"/"quantity"
+# spelling. Measured via `_without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)`, not
+# derived; full prompt (all four addenda included) is 84160 chars.
+CONSTANT_CHARS = 62981
 
 
 def _without_growth_r1_addendum(text: str) -> str:

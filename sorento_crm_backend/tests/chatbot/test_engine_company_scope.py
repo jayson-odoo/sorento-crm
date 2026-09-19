@@ -450,7 +450,8 @@ class TestUnknownContactFailsClosed:
     def test_a_contact_with_no_company_membership_never_resolves_the_product(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
-        company_id = _seed_company(session_factory, name="ZZT Scope Co Orphan")
+        company_name = "ZZT Scope Co Orphan"
+        company_id = _seed_company(session_factory, name=company_name)
         code = "ZZTSCOPEORPHAN1"
         _seed_product(session_factory, company_id=company_id, code=code)
         workspace_id = _seed_workspace(session_factory)
@@ -478,28 +479,41 @@ class TestUnknownContactFailsClosed:
         )
 
         assert result.status == "done", result.error
-        # Item 2 (coder 16 addendum, `3cdf6ba21`): the composer now gives this shape a
-        # sentence - "*product information*:\n\nI could not find ZZTSCOPEORPHAN1." -
-        # instead of the earlier bare header with nothing under it. The security property
-        # this test exists for is "no product surfaced" (never the exact wording), so this
-        # re-pins to that property rather than the literal reply text: the header still
-        # opens the reply, SOME not-found sentence follows (accepted whatever its exact
-        # words), and no stock-row vocabulary leaks in - a resolved product's stock answer
-        # would use one of these words and the not-found sentence never does.
-        text = result.reply["text"]
-        assert text.startswith("*product information*:"), text
-        lowered = text.lower()
-        assert "could not find" in lowered or "couldn't find" in lowered, text
-        for stock_word in ("in stock", "available", "qty", "quantity"):
-            assert stock_word not in lowered, (
-                f"a resolved-product stock row leaked into a not-found reply: {text!r}"
-            )
 
+        # 20 Sep 2026 (R-d, hand pass 7 - flagged for the security-reviewer, not just
+        # the tester): this test used to prove "no product data reaches an orphan
+        # contact" by checking that the COMPOSER discards a tool's raw response text -
+        # that mechanism is retired on purpose (the owner's hand pass 7 ruling is the
+        # opposite: reply copy IS production copy, `turn/compose.py` now reuses the
+        # fetch lane's own `lane_text` verbatim). Measured directly (a temporary spy on
+        # `engine_mod.business.run_fetch`): `run_fetch` DOES run for this turn and its
+        # canned "Yes, we have that in stock." text DOES reach the reply - `master_
+        # products`' own `product` entity kind narrows `optional_filter` (no override
+        # in `chatbot_domains.narrowing`, so the entity-kind default applies), so an
+        # unresolved product does not block the domain's own (company-scoped) generic
+        # fetch. That is a DIFFERENT, legitimate property (a catalogue domain still
+        # answers when the named product does not resolve) and not what this test
+        # polices. The real invariant - a contact with no company membership gets no
+        # REAL row for the product it asked about - lives one layer down, at entity
+        # resolution, and is proven directly against the resolver's own output below,
+        # never inferred from the composed text.
         assert resolve_calls, "the resolver was never called this turn"
         product_matches = resolve_calls[-1]
         assert product_matches == [], (
             f"an orphan contact (no company membership) still saw a product: {product_matches}"
         )
+
+        # And the reply carries no TRACE of the orphan's own (never-resolved) product or
+        # company - the seeded product's own name and its company's own name are both
+        # values a REAL fetch of this exact row would have to carry; their absence is
+        # the actual "no product data reached the reply" property, independent of
+        # whatever generic boilerplate the (stubbed) catalogue fetch also says.
+        text = result.reply["text"]
+        lowered = text.lower()
+        assert "could not find" in lowered or "couldn't find" in lowered, text
+        assert code in text, f"the unresolved code must still be named honestly: {text!r}"
+        assert f"ZZT scope product {code}" not in text, text
+        assert company_name not in text, text
 
 
 # --------------------------------------------------------------------------- #
