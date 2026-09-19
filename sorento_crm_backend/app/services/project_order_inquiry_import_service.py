@@ -240,6 +240,11 @@ class _Match:
     settle_decision_id: Optional[str] = None
     settle_buy_qty: Optional[Decimal] = None
     settle_required_date: Optional[date] = None
+    #: R8 (`PLAN-oi-rollback-recover-planning-rows.md`, AC-RB-27): this line's live ORDER /
+    #: ORDER BACK rows all carry the ACTIVE decision, but the sheet row's own quantity plus
+    #: theirs does not equal the decision's `buy_qty` - nothing is guessed, reported under
+    #: its own code (`TOP_UP_SUM_MISMATCH`) rather than the ordinary `ALREADY_RAISED`.
+    top_up_sum_mismatch: bool = False
 
     @property
     def raisable(self) -> bool:
@@ -1005,13 +1010,20 @@ def _match_in_passes(
 def _already_raised(
     db: Session, core_lines: Sequence[SalesOrderLine]
 ) -> Tuple[set, Dict[str, str], Dict[str, List[Any]]]:
-    """The core lines whose MIRROR already carries a non-cancelled order inquiry row (D2),
-    the core-line-id -> mirror-id map that answer was read off (S3, 19 Sep 2026):
-    `_resolve_delivery_date_repairs` needs the same map and must not re-query it, and the
-    mirror-id -> its own LIVE rows map `_resolve_recovery_matches` (2.1(a)) reads its used-
-    row candidates off - the SAME query, extended to keep the full rows rather than only
+    """The core lines whose MIRROR already carries a non-cancelled ORDER / ORDER BACK row
+    (D2, R7 as of 20 Sep 2026), the core-line-id -> mirror-id map that answer was read off
+    (S3, 19 Sep 2026): `_resolve_delivery_date_repairs` needs the same map and must not
+    re-query it, and the mirror-id -> its own LIVE rows map (every verb, not only ORDER /
+    ORDER BACK) `_resolve_recovery_matches` (2.1(a), R8) reads its used-row and top-up
+    candidates off - the SAME query, extended to keep the full rows rather than only
     `so_line_id`, so the recovery rule costs no second pass over this table (plan section
     3.1: "one query for the whole plan, not one per row").
+
+    R7, 20 Sep 2026: a NOTICE row (DELAY and the other non-buy verbs) never stands for the
+    line's own row - only a live ORDER or ORDER BACK row counts as "already raised", the
+    same two verbs `_settle_row_in_place` settles. `rows_by_mirror` still carries the
+    notice row (2.1(b)'s settle path reads nothing off it, but `_resolve_recovery_matches`
+    must never mistake its ABSENCE from `raised` for its absence from the mirror).
 
     Read off the state BEFORE this upload, once, and for every line the named orders carry
     rather than only the matched ones, because the matcher consults it as it goes: the
@@ -1020,7 +1032,13 @@ def _already_raised(
     Two rows of the same file may still both land on one line - nothing here changes as the
     file is read - while a re-upload of that file raises nothing new.
     """
-    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow, ProjectSalesOrderLine
+    from app.models.project_so import (
+        INQUIRY_CANCELLED,
+        IV_ORDER,
+        IV_ORDER_BACK,
+        OrderInquiryRow,
+        ProjectSalesOrderLine,
+    )
 
     if not core_lines:
         return set(), {}, {}
@@ -1046,6 +1064,7 @@ def _already_raised(
         core_by_mirror[str(row.so_line_id)]
         for row in held
         if str(row.so_line_id) in core_by_mirror
+        and row.verb in (IV_ORDER, IV_ORDER_BACK)
     }
     rows_by_mirror: Dict[str, List[Any]] = {}
     for row in held:
@@ -1106,6 +1125,36 @@ def _used_row_candidate(
     return None, True
 
 
+def _top_up_status(
+    mirror_rows: Sequence[Any], row: Any, decision: Any, snapshot: dict
+) -> Optional[bool]:
+    """R8 (AC-RB-26/27/28), the SRTWC8605-SC-RL shape: this mirror's live ORDER / ORDER
+    BACK rows are a TOP-UP of the ACTIVE decision for the line.
+
+    `True` when every live ORDER / ORDER BACK row carries THIS decision's own id and the
+    sheet row's quantity plus theirs equals the decision's `buy_qty` (AC-RB-26: raise the
+    sheet row plain). `False` when they all carry it but the sum does not match (AC-RB-27:
+    raise nothing, report). `None` when the shape does not even apply - any live ORDER /
+    ORDER BACK row that carries NO decision id, or one from a DIFFERENT (stale or
+    superseded) revision (AC-RB-28): the ordinary `already_raised` skip stands, unreported.
+
+    Only ever called once `_used_row_candidate` has already said this mirror carries no
+    `Replaces N used` shape at all - a fresh row that DOES carry this decision's id (the
+    writer sets one, `project_order_inquiry_service.py` ~1104-1185) is a 2.1(a) candidate
+    first, never a top-up row, so R6's exact match always gets first refusal.
+    """
+    from app.models.project_so import IV_ORDER, IV_ORDER_BACK
+
+    order_rows = [r for r in mirror_rows if r.verb in (IV_ORDER, IV_ORDER_BACK)]
+    if not order_rows:
+        return None
+    if any(str(r.supply_decision_id) != str(decision.id) for r in order_rows):
+        return None
+    buy_qty = _dec(snapshot.get("buy_qty"))
+    total = _dec(row.qty) + sum((_dec(r.qty) for r in order_rows), _ZERO)
+    return total == buy_qty
+
+
 def _active_decision_snapshots(
     db: Session, order_ids: set
 ) -> Dict[str, Tuple[Any, dict]]:
@@ -1152,8 +1201,8 @@ def _snapshot_date(value: Optional[str]) -> Optional[date]:
 def _resolve_recovery_matches(
     db: Session, plan: _Plan, rows_by_mirror: Dict[str, List[Any]]
 ) -> None:
-    """2.1(a) and 2.1(b) (`PLAN-oi-rollback-recover-planning-rows.md`): decide, for every
-    matched row, whether it is recovering a planning trait rather than being skipped
+    """2.1(a), 2.1(b) and R8 (`PLAN-oi-rollback-recover-planning-rows.md`): decide, for
+    every matched row, whether it is recovering a planning trait rather than being skipped
     (already raised) or raised plain - read here, before `_pair` and
     `_matched_lines_by_order` decide what this run links and adopts, since both key off
     `match.raisable` / `match.already_raised`.
@@ -1177,6 +1226,19 @@ def _resolve_recovery_matches(
                 claimed.add(str(candidate.id))
             elif report:
                 match.no_used_delivery_match = True
+            else:
+                # R8: no `Replaces N used` shape at all on this mirror - try the top-up
+                # shape before leaving the ordinary `already_raised` skip to stand.
+                decision, snapshot = decision_snapshots.get(mirror_id, (None, None))
+                if decision is not None:
+                    status = _top_up_status(
+                        rows_by_mirror.get(mirror_id, []), match.row, decision, snapshot
+                    )
+                    if status is True:
+                        match.already_raised = False
+                    elif status is False:
+                        match.top_up_sum_mismatch = True
+                    # `status is None`: AC-RB-28, the plain `already_raised` skip stands.
             continue
         decision, snapshot = decision_snapshots.get(mirror_id, (None, None))
         if decision is None:
@@ -3087,6 +3149,12 @@ def apply(
                 # guessed at, and named under its own code rather than the ordinary
                 # ALREADY_RAISED so purchasing and CS know which delivery to look at by hand.
                 outcome.skip(row=row.source_row, code=oc.NO_USED_DELIVERY_MATCH,
+                             identity=identity, value=row.so_number)
+            elif match.top_up_sum_mismatch:
+                # AC-RB-27 (R8): the line's live ORDER rows all carry the active decision,
+                # but the sheet row's quantity plus theirs does not equal its `buy_qty` -
+                # never guessed at, named under its own code for the same reason as above.
+                outcome.skip(row=row.source_row, code=oc.TOP_UP_SUM_MISMATCH,
                              identity=identity, value=row.so_number)
             else:
                 outcome.skip(row=row.source_row, code=oc.ALREADY_RAISED,
