@@ -1,0 +1,21 @@
+{
+  "name": "parity-incoming-miss-no-foreign-products",
+  "source": "PLAN-chatbot-answer-half-reattach.md slice R1 / AC-1688 (F9, hand pass 8/9): an incoming miss for a code the resolver could not place leaked stock rows for the WHOLE catalogue instead of staying scoped to the asked code (turn_runtime._answered_unfiltered returning False for an empty entity list; turn/fetch.py::_climb re-running the primary [now empty] spec against the inventory ladder rung - security review N-1). The UAC's own literal example text ('Incoming SRTWT165-NL') is measured live (this session, :8081 @ 484c79d92) to NOT currently reproduce the leak - SRTWT165-NL resolves to a real product and every ladder rung genuinely misses, so the reply is the plain 'No matching results found. Nothing on stock or outstanding purchase orders either.' with no dump at all. 'Incoming srtwt7202-new' (one of hand pass 8's own three F8 texts) IS measured live, twice, identically, to reproduce the SAME style of leak the UAC names ('incoming miss' -> an unfiltered stock dump), so it is pinned here instead, under AC-1688, rather than left in parity-single-option-never-rostered.json where it does not reproduce that chain's own defect. Production's full miss copy ('Here's what you want:' breakdown + ladder sentence + purchasing team offer, R4/R5) is a LATER slice - this chain pins only the R1 half: the reply never leaks another product's row into an incoming miss for an unplaced code.",
+  "cases": [
+    {
+      "name": "incoming-miss-stays-scoped-to-the-asked-code",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "Incoming srtwt7202-new",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": ["srtwt7202-new"],
+            "reply_not_contains": ["*Company:* Mocha", "1/2\" ULTRA CIRCULAR"]
+          }
+        }
+      ]
+    }
+  ]
+}
