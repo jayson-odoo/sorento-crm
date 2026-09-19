@@ -9,28 +9,20 @@ head), exposed on `ChatbotEntityKindBody`/`ChatbotEntityKindResponse`/`_kind_out
 (`gate.py`'s `specific_options` build, today UNCAPPED). The did-you-mean list cap is
 slice R4, out of this file's scope (per the captain's brief).
 
-**MEASURED, flagged, not resolved here: no config seam reaches `gate.run_gate` or
-`resolve_gate.run` today, at all.** `did_you_mean`'s own path
-(`chatbot_entity_kinds.did_you_mean` -> `turn/policy.py::Policy` ->
-`turn/apply.py::_did_you_mean`) is a COMPLETELY SEPARATE system from
-`lanes/business/gate.py` - `run_gate`'s signature
-(`item, *, parser, resolver, session, tier_gate, aggregate`) carries no `db`, no
-config object, nothing `did_you_mean` could be read off. `resolve_gate.run`'s own
-signature (`ctx, entry, item, *, services: ResolveGateServices, space_id,
-probe_default_start, dry_run`) is the same story - `ResolveGateServices` is three
-callables (`access_types`, `resolve_entity`, `probe`), not a config carrier. So
-"the existing did_you_mean flag's own path is the precedent" (the plan's own words)
-does not hold as a literal code seam to reuse; `roster_cap` needs a NEW plumbing
-path from `chatbot_entity_kinds` to `gate.py`, not a rewire of an existing one.
+**Captain ruling, 20 Sep 2026, on the plumbing gap this file's first pass measured
+and flagged (no config seam reaches `gate.run_gate` or `resolve_gate.run` today -
+`did_you_mean`'s own path never touches either): the name is now PINNED, not
+guessed.** `gate.run_gate(..., roster_caps: Mapping[str, int] | None = None)` and
+the same keyword on `resolve_gate.run`; keys are entity kinds (`"customer"`,
+`"product"`), a missing key or `None` means 10. `turn_runtime.resolve_kinds` reads
+the caps off `chatbot_entity_kinds` rows and passes them down - `TestResolveKinds
+PassesRosterCapsFromSeededRows` pins that seam directly.
 
-Given that gap, the functional cap tests below thread a `roster_cap` keyword
-straight onto `run_gate` (this session's own guess at the name, following the R2
-tester's precedent for an unnamed seam - a coder naming it differently only needs
-to update the CALL SITE these tests make, not what they assert about the returned
-roster's SIZE) via a small shim (`_call_run_gate`) that falls back to a call with no
-`roster_cap` kwarg if `run_gate` does not accept one yet - so every cap test is red
-today via a SIZE assertion (today's literal `[:8]`, or no cap at all), never via a
-`TypeError` on an unknown keyword.
+Because the name is now pinned, the cap tests below call `run_gate(...,
+roster_caps=...)` DIRECTLY - no graceful-degrade shim, no `inspect.signature`
+fallback: a coder who names the parameter differently gets a `TypeError` naming the
+wrong keyword, which is the correct failure now that the contract is fixed rather
+than guessed.
 """
 from __future__ import annotations
 
@@ -47,6 +39,7 @@ import app.main  # noqa: F401  isort:skip - registers every model before any que
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.main import app
 from app.services.chatbot.lanes.business import gate as gate_mod
+from app.services.chatbot.lanes.business import resolve_gate as resolve_gate_mod
 from app.services.user_service import UserPermissionService
 from tests._pg_fixture import blank_session, pg_session, unique_code
 
@@ -213,15 +206,9 @@ class TestApiRoundTrip:
 
 
 # --------------------------------------------------------------------------- #
-# gate.py - the two rosters it cuts, cap threaded straight onto run_gate
+# gate.py - the two rosters it cuts, cap threaded straight onto run_gate as
+# roster_caps: Mapping[str, int] | None (pinned name; no shim - see module docstring)
 # --------------------------------------------------------------------------- #
-
-
-def _call_run_gate(item: dict[str, Any], *, parser: dict[str, Any], resolver: dict[str, Any], roster_cap: int):
-    sig = inspect.signature(gate_mod.run_gate)
-    if "roster_cap" in sig.parameters:
-        return gate_mod.run_gate(dict(item), parser=parser, resolver=resolver, roster_cap=roster_cap)
-    return gate_mod.run_gate(dict(item), parser=parser, resolver=resolver)
 
 
 def _many_customer_matches(n: int) -> list[dict[str, Any]]:
@@ -252,10 +239,11 @@ def _many_product_matches(n: int) -> list[dict[str, Any]]:
 class TestCustomerRosterCap:
     @pytest.mark.parametrize("cap", [3, 10])
     def test_customer_roster_never_exceeds_the_cap(self, cap: int) -> None:
-        """cap=10 is a MEASURED GREEN CONTROL today: the literal `[:8]` happens to
-        satisfy `<= 10` vacuously (8 <= 10) without honouring config at all -
-        `TestNoLiteralCapRemainsInGate` is what actually pins the literal's removal.
-        cap=3 is genuinely red (8 > 3)."""
+        """cap=10 is a MEASURED GREEN CONTROL today (before roster_caps even exists
+        as a parameter, this call raises TypeError - see the file docstring): once
+        it exists, cap=10 is vacuously satisfied by today's literal `[:8]` (8 <= 10)
+        without honouring config at all - `TestNoLiteralCapRemainsInGate` is what
+        actually pins the literal's removal. cap=3 is genuinely red (8 > 3)."""
         parser = {
             "domain_hint": "order",
             "entities": [{"raw": "zzt", "hint": "customer", "current_message": True}],
@@ -266,12 +254,33 @@ class TestCustomerRosterCap:
             ],
             "unresolved_tokens": [],
         }
-        gate = _call_run_gate({}, parser=parser, resolver=resolver, roster_cap=cap)
+        gate = gate_mod.run_gate(
+            {}, parser=parser, resolver=resolver, roster_caps={"customer": cap}
+        )
         assert gate.get("require_specific") is True, gate
         entities = gate.get("compatible_entities") or []
         assert len(entities) <= cap, (
             f"customer roster held {len(entities)} options, cap was {cap}: {entities}"
         )
+
+    def test_a_missing_customer_key_or_none_means_10(self) -> None:
+        parser = {
+            "domain_hint": "order",
+            "entities": [{"raw": "zzt", "hint": "customer", "current_message": True}],
+        }
+        resolver = {
+            "resolutions": [{"token": "zzt", "matches": _many_customer_matches(12)}],
+            "unresolved_tokens": [],
+        }
+        gate_missing_key = gate_mod.run_gate(
+            {}, parser=parser, resolver=resolver, roster_caps={"product": 3}
+        )
+        gate_none = gate_mod.run_gate(
+            {}, parser=parser, resolver=resolver, roster_caps=None
+        )
+        for label, gate in (("missing key", gate_missing_key), ("roster_caps=None", gate_none)):
+            entities = gate.get("compatible_entities") or []
+            assert len(entities) <= 10, f"{label}: default must be 10, got {len(entities)}"
 
 
 class TestProductRosterCap:
@@ -287,7 +296,9 @@ class TestProductRosterCap:
             ],
             "unresolved_tokens": [],
         }
-        gate = _call_run_gate({}, parser=parser, resolver=resolver, roster_cap=cap)
+        gate = gate_mod.run_gate(
+            {}, parser=parser, resolver=resolver, roster_caps={"product": cap}
+        )
         assert gate.get("require_specific") is True, gate
         clarification = gate.get("gate_clarification") or ""
         numbered_lines = re.findall(r"^\d+\.", clarification, re.MULTILINE)
@@ -306,3 +317,99 @@ class TestNoLiteralCapRemainsInGate:
             if "[:8]" in line
         ]
         assert hits == [], f"a literal [:8] still cuts a roster in gate.py: {hits}"
+
+
+# --------------------------------------------------------------------------- #
+# resolve_gate.run accepts the same roster_caps keyword
+# --------------------------------------------------------------------------- #
+
+
+class TestResolveGateRunAcceptsRosterCaps:
+    def test_signature_has_roster_caps(self) -> None:
+        sig = inspect.signature(resolve_gate_mod.run)
+        assert "roster_caps" in sig.parameters, (
+            "resolve_gate.run has no roster_caps: Mapping[str, int] | None parameter yet"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# turn_runtime.resolve_kinds reads roster_caps off the seeded chatbot_entity_kinds
+# rows and passes them down to resolve_gate.run (customer=3, product=7)
+# --------------------------------------------------------------------------- #
+
+
+class TestResolveKindsPassesRosterCapsFromSeededRows:
+    def test_resolve_kinds_builds_roster_caps_from_the_kind_rows(self, monkeypatch) -> None:
+        """Depends on the model already carrying `roster_cap` (`TestModelColumn`) -
+        seeding fails with the SAME missing-column reason until that lands; once it
+        does, this test exercises its own real target: does `resolve_kinds` read the
+        seeded caps and pass them to `resolve_gate.run`. Not a duplicate of
+        `TestModelColumn` - that test pins the column, this one pins the wiring."""
+        from app.models.chatbot_policy import ChatbotEntityKind
+        from app.services.chatbot import turn_runtime as turn_runtime_mod
+        from app.services.chatbot.lanes.business import services as business_services_mod
+
+        with blank_session() as db:
+            db.add(
+                ChatbotEntityKind(
+                    id=str(uuid.uuid4()),
+                    kind="customer",
+                    label="ZZT customer",
+                    resolver_source="zzt_customers",
+                    default_narrowing="must_narrow_one",
+                    roster_cap=3,
+                )
+            )
+            db.add(
+                ChatbotEntityKind(
+                    id=str(uuid.uuid4()),
+                    kind="product",
+                    label="ZZT product",
+                    resolver_source="zzt_products",
+                    default_narrowing="narrow_to_code",
+                    roster_cap=7,
+                )
+            )
+            db.commit()
+
+            calls: list[dict[str, Any]] = []
+            real_run = resolve_gate_mod.run
+
+            def _spy_run(ctx, entry, item, **kwargs):
+                calls.append(kwargs)
+                return real_run(ctx, entry, item, **kwargs)
+
+            monkeypatch.setattr(resolve_gate_mod, "run", _spy_run)
+            monkeypatch.setattr(
+                business_services_mod,
+                "production_services",
+                lambda db, *, space_id=None: business_services_mod.ResolveGateServices(
+                    access_types=lambda **_: [],
+                    resolve_entity=lambda body: {
+                        "tokens": list(body.get("tokens") or []),
+                        "resolutions": [],
+                        "unresolved_tokens": list(body.get("tokens") or []),
+                    },
+                    probe=lambda **_: None,
+                ),
+            )
+
+            ctx = {
+                "parse": {
+                    "output": {
+                        "entities": [
+                            {"raw": "zzt", "hint": "customer", "current_message": True}
+                        ]
+                    }
+                },
+                "contact": {"id": "zzt-contact"},
+            }
+            turn_runtime_mod.resolve_kinds(
+                db, ctx=ctx, branch_kind="business_query", space_id=None, dry_run=True
+            )
+
+        assert calls, "resolve_gate.run was never called"
+        roster_caps = calls[0].get("roster_caps")
+        assert roster_caps is not None, "resolve_kinds did not pass roster_caps at all"
+        assert roster_caps.get("customer") == 3, roster_caps
+        assert roster_caps.get("product") == 7, roster_caps

@@ -1,12 +1,54 @@
-"""R3 RED tests - `app/services/chatbot/turn/answer_bridge.py`'s `question_for` seam
+"""R3 RED tests - `app/services/chatbot/answer_bridge.py`'s `question_for` seam
 (PLAN-chatbot-answer-half-reattach.md slice R3; UAC AC-1683, AC-1684, AC-1691's own
 "no roster under two options" umbrella, AC-1694 pytest half, AC-1697/AC-1698's shape).
 
-`answer_bridge.py` does not exist on this branch (measured: no such file under
-`app/services/chatbot/turn/`). Every test below imports it lazily inside the test body
-via `_bridge()` and asserts non-None first, so a missing module fails with a clean
-`AssertionError` naming the gap rather than aborting collection for the whole file
-(the R1/R2 tester convention this file follows).
+**Captain rulings, 20 Sep 2026, adjusting this file from its first red pass:**
+
+1. **Bridge home.** The purity guard wins, no carve-out: the bridge lives OUTSIDE
+   `turn/`, as `app/services/chatbot/answer_bridge.py` (sibling of `turn_runtime.py`,
+   already the impure adaptor between the pure core and the old seams). Import path
+   `app.services.chatbot.answer_bridge`. It may import `tail.outcome`,
+   `tail.reply_ladder`, `lanes.business.answer`, `session_state`, `turn.pending`,
+   `turn.compose.Answer`. `TestTurnPackagePurity` below adds the missing direction
+   (no file under `turn/` imports `answer_bridge` or `tail`) - the `tail` half is
+   already covered by `test_rearch_s2_apply_is_pure.py`'s own parametrize, so this
+   file's own guard is scoped to `answer_bridge` (not a duplicate of that test).
+2. **Access arm has TWO triggers, exactly as production `complete_answer:1578-1588`**:
+   `if exit_kind == "access_ask" or fetch_arm == "tier-ask"`, with
+   `tier_source = fetch if fetch_arm == "tier-ask" else payload`. Public surface:
+   `answer_bridge.question_for(payload, *, fetch=None, parser, ctx, canned,
+   asked_at_turn)`. `fetch` is the `run_fetch` fragment's own `fetch` item - measured:
+   `lanes/business/__init__.py::run_fetch`'s `tier_ask` arm builds
+   `item = fetch_mod.fetch_result({**payload, **collected})` (which carries `name`,
+   `entitled_tiers`, `tier_availability` AND its own `_fetch_arm: "tier-ask"` at its
+   OWN top level - `fetch_result` returns `{**j, "_fetch_arm": "tier-ask"}` when
+   `tier_any_available` is a bool), then returns `{"kind": "tier_ask", "_fetch_arm":
+   item["_fetch_arm"], "tier_probe": collected, "fetch": item}` - so `fetch` handed to
+   the bridge IS `item` (the run_fetch wrapper's own `"fetch"` key), not the wrapper
+   itself. `TestAccessAskArm` keeps the original hand-built `_exit_kind="access_ask"`
+   cases (the "no access configured at all" arm - `resolve_gate.run`'s own exit fires
+   only when the aggregate is EMPTY, see the class's own docstring) and ADDS the
+   `fetch`-carried `tier-ask` variant, which is the real "entitled, must pick a tier"
+   path production actually uses (`_exit_kind="continue"` + `tier_gate.tier_ask is
+   True` upstream, then `run_fetch`'s own tier_ask arm probes each entitled tier -
+   this is where the has/no promotion stamps come from).
+   `TestMakeToolRunnerCarriesTheRealTierGate` pins the OTHER half of this: for that
+   arm to fire live, `turn_runtime.make_tool_runner` must hand `lanes.business.
+   run_fetch` the RESOLVER's real `tier_gate` (from `ResolveOutcome.payload
+   ["tier_gate"]`) rather than today's synthetic `_tier_gate(spec, verdict, focus)`.
+   Measured: `_tier_gate` returns `None` whenever `spec.filters.get("tier")` is falsy
+   (no pick has happened yet) - PRECISELY the "no settled tier" case the general rule
+   below covers; a pick already made (`spec.filters["tier"]` set) keeps today's
+   `_tier_gate` recompose untouched. Not more subtle than that, as measured.
+3. **AC-1701/F6 (attachment roster) moves to R4.** Confirmed: production never
+   reaches the `offer` exit for `product_attachment` - `if_incoming_picker(gate)`
+   checks `gate_debug.domain == "incoming"` literally, so `product_attachment` falls
+   through to `not_found` and its roster + "has/no Product Photos" stamps come from
+   the miss half (`miss_suggest`), R4's territory. This file's "offer/product" case
+   stays pinned to `incoming` (the one `if_incoming_picker` + `annotate_incoming`
+   actually implement today) - no test here expects an attachment `offer`.
+4. `roster_cap` moved to `test_rearch_r3_roster_cap.py` with the pinned name
+   `roster_caps: Mapping[str, int]` - not this file's concern.
 
 **Pure, stubbed payloads.** No DB session anywhere in this file: `copy.fallback_copy()`
 is the canned-copy object node replay itself grades against, and every payload below is
@@ -15,67 +57,37 @@ the REAL production functions the plan names (`answer.access_level_choice_messag
 `pickers.annotate_customer`, `pickers.annotate_incoming`, `tail.outcome.escalate_catalog`,
 `tail.outcome.build_outcome`, `tail.reply_ladder.compose_reply`) so the "expected" text in
 every assertion is computed, never retyped by hand.
-
-**MEASURED, flagged to the captain/coder, not resolved here:**
-
-1. **Purity boundary conflict.** `tests/chatbot/test_rearch_s2_apply_is_pure.py::
-   test_turn_package_imports_nothing_from_the_old_seams` is an EXISTING, already-green,
-   parametrized test asserting NO file under `app/services/chatbot/turn/` imports from
-   `chatbot.tail` (also `head`, `dialogue`, `engine`). The plan's own R3 design requires
-   `turn/answer_bridge.py` to import `tail.outcome.escalate_catalog` and
-   `tail.reply_ladder.compose_reply` verbatim. Writing `answer_bridge.py` at the path the
-   captain's brief names, importing what the brief says it must, WILL fail that
-   parametrized case for `forbidden_root == "tail"`. Not fixed here (out of a tester's
-   remit and that file is not on this session's touch list) - the coder needs either a
-   documented carve-out in that purity test or a different home for the bridge module
-   (e.g. `lanes/business/answer_bridge.py`, which already imports `tail` freely via
-   `lanes/business/__init__.py::complete_answer`).
-2. **`resolve_gate.run`'s own `exit_kind="access_ask"` fires ONLY when the entry-gate's
-   aggregate is EMPTY** (`tier_gate_out.get("name") == []`, i.e. the contact holds no
-   access-type row at all) - `access_level_choice_message`'s OWN first branch
-   ("You have no access levels configured..."), never the per-tier stamped picker
-   AC-1697 wants. The stamped picker (non-empty `entitled_tiers`, `tier_last_result_set`)
-   is only ever built once `fetch_mod.tier_probe_plan` + a probe per tier +
-   `fetch_mod.tier_probe_collect` have run (today: `lanes/business/__init__.py`
-   lines ~1026-1052, the "dead code" arm the plan's own Hazards section says R3
-   "re-enables"). This file therefore does not try to derive an `access_ask` payload from
-   a live `resolve_gate.run()` call - it hand-builds the tier_gate-shaped item the ALREADY
-   PROBED lane item would carry (`name`, `entitled_tiers`, `tier_availability`), matching
-   what `answer.access_level_choice_message` itself declares it reads. The engine-level
-   file (`test_rearch_r3_bridge_engine.py`) documents this same gap again where it bites
-   harder (a live promo ask has no route to a probed tier item yet).
-3. **`if_incoming_picker(gate)` (`resolve_gate.py`) checks `gate_debug.domain ==
-   "incoming"` literally** - `product_attachment` (the OTHER `REQUIRE_SPECIFIC_DOMAINS`
-   member, AC-1701's own F6) never satisfies it, so a `product_attachment` roster falls
-   through to the `not_found` exit today, not `offer`. `annotate_incoming`'s own suffix
-   text is also hardcoded "- has incoming" / "- no incoming", never "- has Product
-   Photos" / "- no Product Photos" (AC-1701's literal wording) for any domain. This file's
-   "offer/product" case therefore pins the INCOMING domain specifically (the one
-   `if_incoming_picker` + `annotate_incoming` actually implement today), not
-   `product_attachment`/AC-1701's exact stamp text - a second gap between the plan's own
-   claim ("R3 closes ... F6") and what the code can produce today, flagged rather than
-   invented around.
 """
 from __future__ import annotations
 
+import ast
 import importlib
+import inspect
+import pathlib
 from typing import Any
 
 import pytest
 
 from app.services.chatbot import copy as copy_mod
 from app.services.chatbot import session_state
+from app.services.chatbot import turn_runtime
 from app.services.chatbot.lanes.business import answer as answer_mod
 from app.services.chatbot.lanes.business import pickers
 from app.services.chatbot.tail import outcome as outcome_mod
 from app.services.chatbot.tail import reply_ladder
 from app.services.chatbot.turn import pending as pending_mod
+from app.services.chatbot.turn.plan import FetchSpec
+from app.services.chatbot.turn.state import Focus
 
 
 def _bridge():
-    """`app.services.chatbot.turn.answer_bridge`, or `None` if it does not exist yet."""
+    """`app.services.chatbot.answer_bridge`, or `None` if it does not exist yet.
+
+    Captain ruling 20 Sep 2026: the purity guard wins, no carve-out - the bridge
+    lives OUTSIDE `turn/`, at this path (sibling of `turn_runtime.py`).
+    """
     try:
-        return importlib.import_module("app.services.chatbot.turn.answer_bridge")
+        return importlib.import_module("app.services.chatbot.answer_bridge")
     except ModuleNotFoundError:
         return None
 
@@ -83,12 +95,12 @@ def _bridge():
 def _require_bridge():
     bridge = _bridge()
     assert bridge is not None, (
-        "app.services.chatbot.turn.answer_bridge does not exist yet (R3 slice, "
+        "app.services.chatbot.answer_bridge does not exist yet (R3 slice, "
         "PLAN-chatbot-answer-half-reattach.md)"
     )
     assert hasattr(bridge, "question_for"), (
-        "answer_bridge module exists but has no question_for(payload, *, parser, ctx, "
-        "canned, asked_at_turn) function yet"
+        "answer_bridge module exists but has no question_for(payload, *, fetch=None, "
+        "parser, ctx, canned, asked_at_turn) function yet"
     )
     return bridge
 
@@ -140,13 +152,20 @@ def _expected_access_ask(item: dict[str, Any], parser: dict[str, Any], *, availa
 
 
 class TestAccessAskArm:
-    """AC-1697's shape, AC-1683 (produced by escalate_catalog + compose_reply, not
-    turn/compose), AC-1684 (a Pending minted by pending.ask), and the MEASURED TRAP:
-    `tier_last_result_set` rows carry `entity_type: "access_tier"`
+    """The FIRST of the two `access_ask` triggers (production `complete_answer:1578`):
+    `_exit_kind == "access_ask"`, `fetch=None` - `resolve_gate.run`'s own exit for an
+    entry-gate aggregate that is EMPTY (the contact holds no access-type row at all,
+    `answer.access_level_choice_message`'s "You have no access levels configured..."
+    branch). AC-1697's shape, AC-1683 (produced by escalate_catalog + compose_reply,
+    not turn/compose), AC-1684 (a Pending minted by pending.ask), and the MEASURED
+    TRAP: `tier_last_result_set` rows carry `entity_type: "access_tier"`
     (`answer.py:324`), which `apply._set_kind_field`/`_CODE_ONLY_FIELDS` does not
     recognise - only `"tier"` reaches `focus.tier` (`turn/apply.py:107`). Every option
     the bridge mints for this arm must carry `entity_type == "tier"`, not the row's own
     literal value.
+
+    `TestAccessAskArmViaTierAskFetch` below is the SECOND trigger
+    (`fetch_arm == "tier-ask"`) - the real "entitled, must pick a tier" path.
     """
 
     @pytest.mark.parametrize(
@@ -243,6 +262,82 @@ class TestAccessAskArm:
             assert len(answer.question.options) != 1, (
                 "a one-tier entitlement must not be rendered as a one-option roster pick"
             )
+
+
+def _tier_ask_fetch_item(
+    entitled_tiers: list[str], *, names: list[str] | None = None, availability: Any = None
+) -> dict[str, Any]:
+    """The `run_fetch` tier_ask arm's own `fetch` item - `fetch.fetch_result`'s output,
+    which carries the tier_gate's own keys (`name`, `entitled_tiers`, `tier_ask`) PLUS
+    the per-tier probe fields PLUS its own `_fetch_arm`, all at ONE level
+    (`lanes/business/__init__.py::run_fetch` ~1026-1053; `fetch_result` returns
+    `{**j, "_fetch_arm": "tier-ask"}` whenever its input carries a boolean
+    `tier_any_available`, which `tier_probe_collect` always sets)."""
+    any_available = any(availability.values()) if availability is not None else True
+    return {
+        "name": names if names is not None else ["Sorento Office", "Sorento Dealer"],
+        "entitled_tiers": entitled_tiers,
+        "tier_ask": True,
+        "tier_availability": availability,
+        "tier_available_list": (
+            [t for t in entitled_tiers if availability.get(t)] if availability is not None else None
+        ),
+        "tier_any_available": any_available,
+        "_tier_probe_count": len(entitled_tiers) if availability is not None else 0,
+        "_tier_probe_planned": len(entitled_tiers),
+        "_fetch_arm": "tier-ask",
+    }
+
+
+class TestAccessAskArmViaTierAskFetch:
+    """The SECOND `access_ask` trigger (production `complete_answer:1578-1588`):
+    `fetch_arm == "tier-ask"`, `tier_source = fetch` (the item `_tier_ask_fetch_item`
+    builds above). This is the REAL "entitled, must pick a tier" path production
+    takes - the resolver's own `_exit_kind` is `"continue"` here (the resolver did
+    not exit `access_ask`; the ASK is decided one step later, inside `run_fetch`'s
+    own tier_ask arm, once the per-tier probe has run). See the module docstring's
+    ruling 2 for the measured shape of `fetch`.
+    """
+
+    def test_text_matches_the_production_chain_via_fetch(self) -> None:
+        bridge = _require_bridge()
+        entitled = ["office", "dealer"]
+        availability = {"office": True, "dealer": False}
+        fetch_item = _tier_ask_fetch_item(entitled, availability=availability)
+        parser = _promo_parser()
+        expected_text, _lane_item = _expected_access_ask(fetch_item, parser, availability=availability)
+
+        answer = bridge.question_for(
+            {"_exit_kind": "continue"},
+            fetch=fetch_item,
+            parser=parser,
+            ctx=_ctx_for(parser),
+            canned=_canned(),
+            asked_at_turn=4,
+        )
+        assert answer is not None, "question_for returned None for a tier-ask fetch arm"
+        assert answer.text == expected_text
+
+    def test_fetch_arm_alone_is_enough_even_when_exit_kind_is_continue(self) -> None:
+        """The OR condition: `fetch_arm == "tier-ask"` triggers this arm on its own -
+        the resolver's own `_exit_kind` being `"continue"` (not `"access_ask"`) must
+        not block it, exactly as production's `if exit_kind == "access_ask" or
+        fetch_arm == "tier-ask":` reads."""
+        bridge = _require_bridge()
+        fetch_item = _tier_ask_fetch_item(["dealer", "office"])
+        parser = _promo_parser()
+        answer = bridge.question_for(
+            {"_exit_kind": "continue"},
+            fetch=fetch_item,
+            parser=parser,
+            ctx=_ctx_for(parser),
+            canned=_canned(),
+            asked_at_turn=1,
+        )
+        assert answer is not None and answer.question is not None
+        assert answer.question.kind == "tier_pick"
+        # the same MEASURED TRAP as TestAccessAskArm - entity_type must be "tier"
+        assert [o.get("entity_type") for o in answer.question.options] == ["tier", "tier"]
 
 
 # --------------------------------------------------------------------------- #
@@ -470,3 +565,164 @@ class TestStickyRosterContract36:
         way a roster's does. One turn's "1 and 2" is settled by `decision.positions`
         alone (AC-1698's multi-select), not by a carried `answered_positions` list."""
         assert pending_mod.is_roster("tier_pick") is False
+
+
+# --------------------------------------------------------------------------- #
+# Captain ruling 2's other half: make_tool_runner must carry the RESOLVER's real
+# tier_gate to lanes.business.run_fetch, not today's synthetic _tier_gate(...)
+# --------------------------------------------------------------------------- #
+
+TURN_RUNTIME_PY = pathlib.Path(
+    inspect.getfile(turn_runtime)
+)
+
+
+class TestMakeToolRunnerCarriesTheRealTierGate:
+    """Mirrors `test_rearch_r2_resolve_outcome_and_grant.py::
+    TestMakeToolRunnerCarriesTheRealGate`'s own convention for `resolver_gate`, one
+    level over: `make_tool_runner` has no parameter today that carries the
+    resolver's own `tier_gate` (`ResolveOutcome.payload["tier_gate"]`) to
+    `lanes.business.run_fetch` - only the synthetic `_tier_gate(spec, verdict,
+    focus)` (`turn_runtime.py:1392`) does, and it returns `None` whenever
+    `spec.filters.get("tier")` is falsy, i.e. exactly the "no tier settled yet"
+    case this general rule covers. This test's own chosen name for the new
+    parameter (`resolver_tier_gate`) is a guess, not read off any committed source -
+    a coder naming it differently only needs to update this test's CALL SITE, not
+    the assertions about what `lanes.business.run_fetch` must receive.
+
+    MEASURED, not more subtle than the captain's own framing: a tier ALREADY
+    settled by a pick (`spec.filters["tier"]` set) keeps TODAY'S `_tier_gate`
+    recompose untouched - that arm's own test below computes its expectation by
+    calling the real `turn_runtime._tier_gate` function, never retyping its
+    recompose logic.
+    """
+
+    def test_no_settled_tier_passes_the_resolvers_real_tier_gate(self, monkeypatch) -> None:
+        from app.services.chatbot.lanes import business
+
+        calls: list[dict[str, Any]] = []
+
+        def stub_run_fetch(payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(payload)
+            return {"has_result": False}
+
+        monkeypatch.setattr(business, "run_fetch", stub_run_fetch)
+
+        sig = inspect.signature(turn_runtime.make_tool_runner)
+        assert "resolver_tier_gate" in sig.parameters, (
+            "make_tool_runner has no parameter carrying the resolver's own tier_gate "
+            "through to lanes.business.run_fetch yet (checked via inspect.signature) - "
+            "this tester's own chosen name is 'resolver_tier_gate'"
+        )
+
+        resolver_tier_gate = {
+            "name": ["Sorento Office", "Sorento Dealer"],
+            "entitled_tiers": ["office", "dealer"],
+            "tier_ask": True,
+        }
+        runner = turn_runtime.make_tool_runner(
+            object(),
+            ctx={"parse": {"output": {}}},
+            verdict={"access_levels": []},
+            focus=Focus(),
+            compatible_entities=[
+                {"raw": "SRTWC286", "entity_type": "product", "canonical_code": "SRTWC286"}
+            ],
+            predicate=None,
+            unplaced={},
+            space_id=None,
+            dry_run=True,
+            turn_trace=None,
+            resolver_tier_gate=resolver_tier_gate,
+        )
+        # NO "tier" filter - unsettled: the resolver's own tier_gate must reach run_fetch.
+        spec = FetchSpec(domain="promotion", entities=[], filters={}, date_window=None)
+        runner("promotion", spec)
+        assert calls, "lanes.business.run_fetch was never called"
+        assert calls[0]["tier_gate"] == resolver_tier_gate, (
+            f"expected the resolver's real tier_gate, got {calls[0].get('tier_gate')!r}"
+        )
+
+    def test_a_settled_tier_pick_keeps_todays_synthetic_recompose(self, monkeypatch) -> None:
+        from app.services.chatbot.lanes import business
+
+        calls: list[dict[str, Any]] = []
+
+        def stub_run_fetch(payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(payload)
+            return {"has_result": False}
+
+        monkeypatch.setattr(business, "run_fetch", stub_run_fetch)
+
+        sig = inspect.signature(turn_runtime.make_tool_runner)
+        assert "resolver_tier_gate" in sig.parameters, (
+            "make_tool_runner has no resolver_tier_gate parameter yet"
+        )
+
+        verdict = {"access_levels": ["Sorento Dealer"]}
+        focus = Focus()
+        spec = FetchSpec(domain="promotion", entities=[], filters={"tier": "dealer"}, date_window=None)
+        expected = turn_runtime._tier_gate(spec, verdict, focus)
+
+        runner = turn_runtime.make_tool_runner(
+            object(),
+            ctx={"parse": {"output": {}}},
+            verdict=verdict,
+            focus=focus,
+            compatible_entities=[
+                {"raw": "SRTWC286", "entity_type": "product", "canonical_code": "SRTWC286"}
+            ],
+            predicate=None,
+            unplaced={},
+            space_id=None,
+            dry_run=True,
+            turn_trace=None,
+            resolver_tier_gate={
+                "name": ["Sorento Dealer"], "entitled_tiers": ["dealer"], "tier_ask": True
+            },
+        )
+        runner("promotion", spec)
+        assert calls, "lanes.business.run_fetch was never called"
+        assert calls[0]["tier_gate"] == expected, (
+            f"a settled tier pick must keep today's synthetic recompose: "
+            f"expected {expected!r}, got {calls[0].get('tier_gate')!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Captain ruling 1 - the missing purity direction: no file under turn/ imports
+# answer_bridge (the `tail` direction is already covered by
+# test_rearch_s2_apply_is_pure.py's own parametrize, not duplicated here).
+# --------------------------------------------------------------------------- #
+
+
+class TestTurnPackagePurity:
+    def test_no_file_under_turn_imports_answer_bridge(self) -> None:
+        turn_dir = TURN_RUNTIME_PY.parent / "turn"
+        assert turn_dir.is_dir(), f"app/services/chatbot/turn/ does not exist: {turn_dir}"
+        files = sorted(turn_dir.glob("*.py"))
+        assert files, f"app/services/chatbot/turn/ has no .py files: {turn_dir}"
+        hits: list[str] = []
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    parts = node.module.split(".")
+                    if "chatbot" in parts:
+                        idx = parts.index("chatbot")
+                        # `from app.services.chatbot import answer_bridge`
+                        if len(parts) == idx + 1 and any(
+                            alias.name == "answer_bridge" for alias in node.names
+                        ):
+                            hits.append(f"{path.name}: from {node.module} import answer_bridge")
+                        # `from app.services.chatbot.answer_bridge import X`
+                        if len(parts) > idx + 1 and parts[idx + 1] == "answer_bridge":
+                            hits.append(f"{path.name}: {node.module}")
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "app.services.chatbot.answer_bridge" or (
+                            alias.name.endswith(".answer_bridge")
+                            and "chatbot" in alias.name.split(".")
+                        ):
+                            hits.append(f"{path.name}: import {alias.name}")
+        assert hits == [], f"turn/ imports answer_bridge (the impure bridge home): {hits}"
