@@ -48,6 +48,8 @@ copy before sizing the prod repair (section 4).
   The single-sheet variant (`Order Inquiry Form.xlsx`) has no second tab at all, so restatement
   dedup never applies there - every row of that file is its own instruction, pinned by
   `test_single_sheet_variant_never_dedupes_a_repeat`.
+- **R6** (19 Sep, prod CB2805A-DIY): inside every pass an equal-quantity line is tried before a
+  bigger one.
 
 ## 2. Design
 

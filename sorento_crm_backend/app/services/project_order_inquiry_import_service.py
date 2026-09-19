@@ -35,7 +35,7 @@ order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep 
 August `po_history` extract already held the claim key for 28,397 pairings the column states
 exactly, which is why `po_history` pairs nothing any more. The same column also decides WHICH
 line of the order a row lands on when several fit, through five passes in order
-(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R4, 19 Sep 2026,
+(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R6, 19 Sep 2026,
 `_match_in_passes`): the line whose required date IS the sheet's date; failing that, a line
 in the sheet's own month whose book document the sheet ALSO cites (R4, prod C-FH14: the
 sheet's PO outranks the month when they disagree, or an April row citing one purchase order
@@ -43,8 +43,11 @@ steals the month's only line from a row that actually cites it); failing that, a
 among the book's own documents the sheet cites, whichever month it falls in (R2: the sheet's
 PO may pick the LINE even though it still pairs nothing); failing that, any line left in the
 sheet's own month with no PO to decide it; and only then the line the book bought for at
-all, unchanged from before. A cancelled August-extract ghost line ranks behind any real line
-that fits in every one of the five.
+all, unchanged from before. Inside every one of the five, a line whose own `qty_ordered`
+equals the row's quantity is tried before a bigger one (R6, prod CB2805A-DIY: two same-date
+lines with nothing else to tell them apart otherwise left the smaller row taking the bigger
+line on a bare created-at tie-break). A cancelled August-extract ghost line ranks behind any
+real line that fits in every one of the five.
 
 Three honest limits, each counted and named rather than smoothed over.
 
@@ -791,33 +794,77 @@ def _run_pass(
     rank: Callable[[Any], Callable[[tuple], tuple]],
     order: Sequence[_Match],
 ) -> List[_Match]:
-    """Attempt every match in `order` once, against candidates `narrow` allows - every line
-    of the row's own order, unnarrowed, when `narrow` is `None` (pass 5, the fallback). A
-    match this places is mutated in place (`core_line`, `line_location`, `already_raised`); a
-    REASON is kept only for the fallback, because a narrowed pass that finds nothing has said
-    nothing about the row - the fallback's own unnarrowed read is the first filter that
-    actually refused it (PLAN section 2).
+    """Attempt every match in `order`, against candidates `narrow` allows - every line of
+    the row's own order, unnarrowed, when `narrow` is `None` (pass 5, the fallback). A match
+    this places is mutated in place (`core_line`, `line_location`, `already_raised`); a
+    REASON is kept only for the fallback's own final step, because a narrowed attempt that
+    finds nothing has said nothing about the row - the fallback's own unnarrowed read is the
+    first filter that actually refused it (PLAN section 2).
+
+    TWO steps over the same `order`, in every pass including the fallback (R6, 19 Sep 2026,
+    prod CB2805A-DIY / SO324265): first with candidates further narrowed to a line whose
+    `qty_ordered` EQUALS the row's own quantity, then - for whatever is still unplaced - with
+    the pass's ordinary candidates, unnarrowed by quantity, exactly as before. Today's single
+    step carries no quantity term at all, so a sheet row for the SMALLER of two same-date
+    lines could take the BIGGER one on nothing but a created-at tie-break, leaving the
+    bigger row's own line too small or already spent - CB2805A-DIY's own 150-line and
+    230-line, on the SAME date, landed exactly that way; book-wide, 490 rows across 97 sales
+    orders land differently once the equal-quantity line is tried first. A row that splits a
+    line (its own quantity smaller than every candidate, AC-S1-2) never matches the first
+    step and is unaffected, landing in the second exactly as it does today.
+
+    The equal step never offers a CANCELLED line (review round 2, 19 Sep 2026, blocker 2):
+    D1 still ranks a cancelled line behind any live one that fits in EVERY step, not only
+    the ordinary one, so it is filtered out of the first step's own candidates rather than
+    merely ranked last there - a lone cancelled line still matches through the second step,
+    exactly as it always has.
+
+    An EMPTY candidate list skips only a NARROWED attempt (review round 2, blocker 1): the
+    equal step is narrowed by definition, and a genuinely narrowed pass finding nothing has
+    said nothing about the row either - but the fallback's own final, UNNARROWED step must
+    still reach `_match_row` even against an empty list, or an order with no lines at all
+    (44 such project-class orders on the 18 Sep prod copy; a line whose product is gone
+    falls out of `_lines_of`'s own inner join the same way) leaves `match.reason` `None`
+    forever, and `apply` unconditionally calls `raiser.raise_row`, which dereferences
+    `match.core_line.id` on a match nothing ever set: an AttributeError that rolls back the
+    whole upload, where the row should simply read `no_line_for_item`.
 
     Returns the matches from `matches` still unplaced, in `matches`' OWN order - `order` may
     attempt them in a different sequence (pass 3, AC-LP-5) without disturbing the file order
     the later passes, and the final reason, rely on.
     """
-    placed: set = set()
-    for match in order:
-        row = match.row
-        candidates = lines.get(str(plan.orders[row.so_number].id)) or []
-        if narrow is not None:
-            keep = narrow(row)
-            candidates = [c for c in candidates if keep(c)]
-            if not candidates:
+
+    def _attempt(
+        attempt_order: Sequence[_Match], *, equal_qty_only: bool, may_set_reason: bool,
+    ) -> set:
+        placed_ids: set = set()
+        for match in attempt_order:
+            row = match.row
+            candidates = lines.get(str(plan.orders[row.so_number].id)) or []
+            if narrow is not None:
+                keep = narrow(row)
+                candidates = [c for c in candidates if keep(c)]
+            if equal_qty_only:
+                wanted = _dec(row.qty)
+                candidates = [
+                    c for c in candidates
+                    if _dec(c[0].qty_ordered) == wanted
+                    and (c[0].line_status or "open") != "cancelled"
+                ]
+            if (narrow is not None or equal_qty_only) and not candidates:
                 continue
-        found, reason = _match_row(row, candidates, taken, rank=rank(row))
-        if found is not None:
-            match.core_line, match.line_location = found[0], found[2] or None
-            match.already_raised = str(found[0].id) in raised_already
-            placed.add(id(match))
-        elif narrow is None:
-            match.reason = reason
+            found, reason = _match_row(row, candidates, taken, rank=rank(row))
+            if found is not None:
+                match.core_line, match.line_location = found[0], found[2] or None
+                match.already_raised = str(found[0].id) in raised_already
+                placed_ids.add(id(match))
+            elif may_set_reason:
+                match.reason = reason
+        return placed_ids
+
+    placed = _attempt(order, equal_qty_only=True, may_set_reason=False)
+    still_pending = [m for m in order if id(m) not in placed]
+    placed |= _attempt(still_pending, equal_qty_only=False, may_set_reason=narrow is None)
     return [m for m in matches if id(m) not in placed]
 
 
@@ -829,10 +876,12 @@ def _match_in_passes(
     pending: List[_Match],
 ) -> None:
     """The five passes (PLAN-oi-sheet-line-pick-month-po.md section 2, owner rulings R1 to
-    R4, 19 Sep 2026): exact date; same month AND the sheet's own citation agreeing; the
+    R6, 19 Sep 2026): exact date; same month AND the sheet's own citation agreeing; the
     sheet's own citation alone; same month alone; then today's fallback rank - over the ONE
     `taken` ledger the caller built, so a row placed in an earlier pass takes no further
-    part in a later one.
+    part in a later one. Every one of the five runs its OWN candidate whose `qty_ordered`
+    equals the row's quantity before it ever falls back to its ordinary rank (R6, prod
+    CB2805A-DIY / SO324265: see `_run_pass`, which is the one seam all five passes share).
 
     R4 (prod C-FH14, SO324265): the sheet's own citation outranks the month when they
     disagree. Under the old single month pass, a row whose citation named a DIFFERENT
