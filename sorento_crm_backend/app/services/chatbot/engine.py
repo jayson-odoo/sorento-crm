@@ -1177,6 +1177,12 @@ def _run_stages(  # noqa: PLR0915
         latest_user_message = build_latest_user_message(envelope, session_block)
         # -- stage A's three shelves (PLAN "State: three shelves, one writer each") --- #
         policy = load_policy(db)
+        # Roster cap (PLAN-chatbot-answer-half-reattach.md, owner ruling 20 Sep 2026):
+        # `{entity kind: chatbot_entity_kinds.roster_cap}`, read off the SAME policy
+        # object every other per-kind fact (`did_you_mean`, `default_narrowing`) comes
+        # from, and handed down to `resolve_kinds` -> `resolve_gate.run` -> `gate.run_gate`
+        # - the one place a roster is actually cut.
+        roster_caps = {row.kind: row.roster_cap for row in policy.kinds}
         profile, recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
@@ -1540,6 +1546,7 @@ def _run_stages(  # noqa: PLR0915
                     stamp_purchase_order=(
                         plan.ask is not None and "purchase_order" in plan.domains
                     ),
+                    roster_caps=roster_caps,
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds

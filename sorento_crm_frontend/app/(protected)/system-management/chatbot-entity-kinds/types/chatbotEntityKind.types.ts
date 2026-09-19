@@ -22,6 +22,11 @@ export interface ChatbotEntityKind {
   /** Product-only: word -> `products` column it reads as asking about, e.g.
    * `{ "discontinued": "is_discontinued", "brand": "brand" }`. */
   base_property_words: Record<string, string>;
+  /** The ceiling on any roster this kind is asked in (owner ruling 20 Sep 2026,
+   * PLAN-chatbot-answer-half-reattach.md "Roster cap"). Min 2, default 10. Optional
+   * on the TYPE only so a row built before this field existed still type-checks;
+   * every real row the backend returns carries it. */
+  roster_cap?: number;
 }
 
 export type ChatbotEntityKindInput = ChatbotEntityKind;

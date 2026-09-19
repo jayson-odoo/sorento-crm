@@ -92,6 +92,11 @@ class ChatbotEntityKindBody(BaseModel):
     default_narrowing: NarrowingPolicy = "optional_filter"
     family_grouping: str | None = None
     base_property_words: dict[str, str] = Field(default_factory=dict)
+    # Owner ruling 20 Sep 2026 (PLAN-chatbot-answer-half-reattach.md "Roster cap"):
+    # the ceiling on any roster this kind is asked in. `ge=2` because a one-option
+    # roster is never a real choice (AC-1691) - a 422 names the field rather than the
+    # gate silently asking with one option.
+    roster_cap: int = Field(default=10, ge=2)
 
 
 class ChatbotEntityKindResponse(ChatbotEntityKindBody):
@@ -238,6 +243,7 @@ def _kind_out(row: ChatbotEntityKind) -> ChatbotEntityKindResponse:
         default_narrowing=row.default_narrowing,
         family_grouping=row.family_grouping,
         base_property_words=dict(row.base_property_words or {}),
+        roster_cap=int(row.roster_cap or 10),
     )
 
 

@@ -38,6 +38,10 @@ class EntityKindPolicy:
     default_narrowing: str = "optional_filter"
     family_grouping: str | None = None
     base_property_words: dict[str, str] = field(default_factory=dict)
+    # Owner ruling 20 Sep 2026 (PLAN-chatbot-answer-half-reattach.md "Roster cap"):
+    # the ceiling on any roster this kind is asked in. `engine.py` reads this off
+    # every kind row and hands the mapping down to `resolve_gate.run` / `gate.run_gate`.
+    roster_cap: int = 10
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,7 @@ class Policy:
                 default_narrowing=row.get("default_narrowing", "optional_filter"),
                 family_grouping=row.get("family_grouping"),
                 base_property_words=dict(row.get("base_property_words") or {}),
+                roster_cap=int(row.get("roster_cap") or 10),
             )
             for row in kinds
         )

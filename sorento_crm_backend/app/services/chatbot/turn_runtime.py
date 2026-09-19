@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -689,6 +690,7 @@ def resolve_kinds(
     stamp_customer: bool = False,
     stamp_promotion: bool = False,
     stamp_purchase_order: bool = False,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
@@ -723,6 +725,11 @@ def resolve_kinds(
     (`lanes.business.ENTRY_BY_BRANCH_KIND`, R2) - a real, computed branch_kind, not a
     literal, so a promotion ask reaches the tier-gate arm ("access_check") instead of
     the generic "resolve" every branch used to share.
+
+    `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap") is
+    `{entity kind: chatbot_entity_kinds.roster_cap}`, the caller's own read of the
+    policy rows - this function has no policy of its own, it only forwards the mapping
+    to `resolve_gate.run` -> `gate.run_gate`, the one place a roster is actually cut.
     """
     from app.services.chatbot.lanes.business import ENTRY_BY_BRANCH_KIND
     from app.services.chatbot.lanes.business import pickers
@@ -743,6 +750,7 @@ def resolve_kinds(
             space_id=space_id,
             probe_default_start=resolve_gate.default_probe_start(),
             dry_run=dry_run,
+            roster_caps=roster_caps,
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)

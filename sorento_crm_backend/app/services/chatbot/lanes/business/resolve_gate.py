@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -957,13 +958,15 @@ def run(
     space_id: str | None = None,
     probe_default_start: str | None = None,
     dry_run: bool = False,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
 
     `space_id` is the default respond workspace's (D5), and it reaches the probes' own
     `semantic_input` where n8n hard-codes `364817`. `probe_default_start` is the
     `$now.minus({days: 90})` the customer probe injects, passed in rather than computed so
-    a replay is deterministic.
+    a replay is deterministic. `roster_caps` (PLAN-chatbot-answer-half-reattach.md
+    "Roster cap") is handed straight through to `gate.run_gate`.
     """
     # The two carriers' contract throws, against the values this function was handed.
     # `build_ctx` / `carry_item` themselves take the TRIGGER and are what `run_from_trigger`
@@ -1052,6 +1055,7 @@ def run(
         session=jsc.get(ctx, "session"),
         tier_gate=tier_gate_out,
         aggregate=aggregate,
+        roster_caps=roster_caps,
     )
     gate_snapshot = _snapshot(gate_item)
 
