@@ -35,7 +35,7 @@ order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep 
 August `po_history` extract already held the claim key for 28,397 pairings the column states
 exactly, which is why `po_history` pairs nothing any more. The same column also decides WHICH
 line of the order a row lands on when several fit, through five passes in order
-(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R6, 19 Sep 2026,
+(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R7, 19 Sep 2026,
 `_match_in_passes`): the line whose required date IS the sheet's date; failing that, a line
 in the sheet's own month whose book document the sheet ALSO cites (R4, prod C-FH14: the
 sheet's PO outranks the month when they disagree, or an April row citing one purchase order
@@ -46,8 +46,12 @@ sheet's own month with no PO to decide it; and only then the line the book bough
 all, unchanged from before. Inside every one of the five, a line whose own `qty_ordered`
 equals the row's quantity is tried before a bigger one (R6, prod CB2805A-DIY: two same-date
 lines with nothing else to tell them apart otherwise left the smaller row taking the bigger
-line on a bare created-at tie-break). A cancelled August-extract ghost line ranks behind any
-real line that fits in every one of the five.
+line on a bare created-at tie-break). A cancelled August-extract ghost line is never offered
+by the first four passes at all and ranks last in the fifth, the fallback, where it is still
+taken when it is the only line that fits (R7, 19 Sep 2026, prod comparison workbook: a ghost
+carries its line's ORIGINAL date, so it was routinely the only exact-date candidate a row
+had, and used to win pass 1 outright before a live line the row's own citation named was
+ever offered in a later pass).
 
 Three honest limits, each counted and named rather than smoothed over.
 
@@ -493,8 +497,11 @@ def _rank_for(row, bought: set) -> Callable[[tuple], tuple]:
 
     A real line before a cancelled one, first of all - 10,499 cancelled August-extract ghosts
     are still in the book, and a ghost is never what a live sheet row means while a real line
-    fits. A cancelled line is ranked last, never excluded: when it is the only line that fits
-    it is still where the history is (D1 kept).
+    fits. This term only ever has anything to rank in pass 5, the fallback (R7, 19 Sep 2026):
+    `_run_pass` now drops a cancelled candidate before pass 1 ever reaches this function, so a
+    ghost that happens to carry the row's own exact date no longer wins on that account -
+    only the fallback, where every line of the order is still offered, can still hand a row a
+    cancelled one, and only when it is the only line that fits (D1 kept).
 
     Then the line whose required date IS the sheet's date. The sheet states a delivery, and a
     line carrying that very date is the delivery it states - section 7 had put "the book
@@ -740,6 +747,12 @@ def _rank_for_month(row) -> Callable[[tuple], tuple]:
     "earliest" would only ever prefer the first of the month - then the terms `_rank_for`
     always closes a tie on.
 
+    The live-before-cancelled term never actually has a cancelled candidate to rank against
+    any more (R7, 19 Sep 2026): both passes are narrowed (`narrow is not None`), so
+    `_run_pass` has already dropped every cancelled line before either ever reaches this
+    function. Kept rather than removed - a defensive term costs nothing and the passes'
+    own narrow, not this rank, is what R7 actually leans on.
+
     NO citation term (review round 2, 19 Sep 2026 - dropped, 106 tests stayed green): pass
     2's own narrow (`_narrow_month_and_po`) already means every candidate it sees cites the
     row, so the term would only ever tie there; pass 4's candidates are a SUPERSET of pass
@@ -771,7 +784,11 @@ def _rank_for_month(row) -> Callable[[tuple], tuple]:
 def _rank_for_po(candidate: tuple) -> tuple:
     """Pass 3's own tie-break (AC-LP-5): live before cancelled, open before closed, the
     earliest required date, the oldest line, the id - `_narrow_sheet_po` already decided
-    WHICH candidates reached this pass, so nothing about the row itself is read here."""
+    WHICH candidates reached this pass, so nothing about the row itself is read here.
+
+    Pass 3 is narrowed too, so the live-before-cancelled term here is likewise moot in
+    practice (R7, 19 Sep 2026): `_run_pass` never hands this function a cancelled
+    candidate. Kept for the same reason `_rank_for_month`'s does."""
     line = candidate[0]
     return (
         0 if (line.line_status or "open") != "cancelled" else 1,
@@ -813,11 +830,23 @@ def _run_pass(
     line (its own quantity smaller than every candidate, AC-S1-2) never matches the first
     step and is unaffected, landing in the second exactly as it does today.
 
-    The equal step never offers a CANCELLED line (review round 2, 19 Sep 2026, blocker 2):
-    D1 still ranks a cancelled line behind any live one that fits in EVERY step, not only
-    the ordinary one, so it is filtered out of the first step's own candidates rather than
-    merely ranked last there - a lone cancelled line still matches through the second step,
-    exactly as it always has.
+    A CANCELLED line may only be taken by the fallback (R7, 19 Sep 2026, prod comparison
+    workbook): dropped from `candidates` before either step of a narrowed pass (`narrow is
+    not None`) ever runs, not merely ranked last inside them. The August-extract ghosts
+    carry their line's ORIGINAL delivery date, so a ghost was routinely the only exact-date
+    candidate a row had, and won pass 1 outright before a live line elsewhere in the order -
+    one the row's own citation named - was ever offered in a later pass (measured,
+    18 Sep prod copy, SO324265 / CB2807-DIY read off the owner's comparison workbook: rows
+    sitting on a cancelled line fell 1,028 to 299; 817 rows moved line, 736 of them off a
+    cancelled line onto a live one; the net landed-row count held at 9,307 and
+    `qty_exceeds_ordered` at 572, but the SET underneath is not the same one - 30 rows that
+    used to land lost their line and 30 others gained one, an accepted cost of running each
+    row through one narrowed pass at a time rather than a global best assignment (PLAN
+    section 5, "Trigger for more machinery")). The equal step still never offers a cancelled
+    line either (review round 2, 19 Sep 2026, blocker 2), but that term now only ever bites
+    in the fallback, since a narrowed pass has nothing cancelled left to filter by the time
+    it gets there - a lone cancelled line still matches through the fallback's second step,
+    exactly as it always has (D1 kept).
 
     An EMPTY candidate list skips only a NARROWED attempt (review round 2, blocker 1): the
     equal step is narrowed by definition, and a genuinely narrowed pass finding nothing has
@@ -842,9 +871,22 @@ def _run_pass(
             row = match.row
             candidates = lines.get(str(plan.orders[row.so_number].id)) or []
             if narrow is not None:
+                # R7 (19 Sep 2026, prod comparison workbook): a cancelled line may only be
+                # taken by the fallback (`narrow is None`). Dropped before the pass's own
+                # narrow runs, so a cancelled line that happens to be the only exact-date
+                # or same-month candidate never wins passes 1 to 4 on that account alone -
+                # it is invisible to them, not merely ranked last inside them.
+                candidates = [
+                    c for c in candidates if (c[0].line_status or "open") != "cancelled"
+                ]
                 keep = narrow(row)
                 candidates = [c for c in candidates if keep(c)]
             if equal_qty_only:
+                # The `cancelled` term here now only ever bites in the fallback
+                # (`narrow is None`): a narrowed pass has already dropped every cancelled
+                # candidate above (R7), so this is a no-op there and kept only because
+                # duplicating the branch on `narrow` to skip it would cost more than it
+                # saves.
                 wanted = _dec(row.qty)
                 candidates = [
                     c for c in candidates
@@ -876,12 +918,14 @@ def _match_in_passes(
     pending: List[_Match],
 ) -> None:
     """The five passes (PLAN-oi-sheet-line-pick-month-po.md section 2, owner rulings R1 to
-    R6, 19 Sep 2026): exact date; same month AND the sheet's own citation agreeing; the
+    R7, 19 Sep 2026): exact date; same month AND the sheet's own citation agreeing; the
     sheet's own citation alone; same month alone; then today's fallback rank - over the ONE
     `taken` ledger the caller built, so a row placed in an earlier pass takes no further
     part in a later one. Every one of the five runs its OWN candidate whose `qty_ordered`
     equals the row's quantity before it ever falls back to its ordinary rank (R6, prod
     CB2805A-DIY / SO324265: see `_run_pass`, which is the one seam all five passes share).
+    The first four never offer a CANCELLED candidate at all (R7: see `_run_pass`) - only
+    the fifth, the fallback, may still take one.
 
     R4 (prod C-FH14, SO324265): the sheet's own citation outranks the month when they
     disagree. Under the old single month pass, a row whose citation named a DIFFERENT

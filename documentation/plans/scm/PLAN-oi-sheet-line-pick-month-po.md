@@ -50,6 +50,8 @@ copy before sizing the prod repair (section 4).
   `test_single_sheet_variant_never_dedupes_a_repeat`.
 - **R6** (19 Sep, prod CB2805A-DIY): inside every pass an equal-quantity line is tried before a
   bigger one.
+- **R7** (19 Sep, prod comparison workbook): a cancelled line may only be taken by the fallback
+  pass.
 
 ## 2. Design
 
@@ -80,6 +82,38 @@ Inside every pass the existing filters (item, location, quantity against the led
 existing rank terms (live before cancelled, open, earliest, oldest, id) still apply, so D1 and
 determinism are kept. A failure reason is reported only after pass 5, and it is still the first
 filter that refused the row.
+
+**R7** (19 Sep, prod comparison workbook): passes 1 to 4 never offer a cancelled candidate at
+all any more - dropped from the candidate list before either of `_run_pass`'s own two steps
+(the equal-quantity one and the ordinary one) runs, not merely ranked last inside them. Only
+pass 5, the fallback, may still hand a row a cancelled line, exactly as D1 always has. A
+cancelled August-extract ghost carries its line's ORIGINAL delivery date, so it was routinely
+the only exact-date candidate a row had and won pass 1 outright before a live line the row's
+own citation named was ever offered in a later pass. Measured read-only on the 18 Sep prod
+copy against the owner's book (SO324265 / CB2807-DIY): rows on a cancelled line fell 1,028 to
+299, the net landed-row count held at 9,307 and `qty_exceeds_ordered` at 572, equal-quantity
+landings rose 8,196 to 8,473, exact-date landings fell 7,410 to 6,647 (those were ghost dates),
+817 rows moved line and 736 of them moved off a cancelled line onto a live one. The net holding
+is not the SET holding: underneath it, 30 rows that used to land lost their line and 30 others
+gained one - the stranding mechanism is one honest cost of this fix, not a wash, see "Honest
+limits" below and section 5.
+
+**Honest limits.** R7 decides each row against the ledger as it stands when that row's own
+pass reaches it, not against the order's lines as a set - so a row that used to take the
+ghost can now take a live line another row needed, and strand that other row instead. Example
+reproduced by review: a cancelled ghost, qty 10, required 2026-03-02; a live line, qty 30,
+required 2026-05-02, named by PO X. The sheet states two rows citing X: 10 @ 2026-03-02 and
+25 @ 2026-04-02. On `main`, the 10 row's exact date is the ghost's own, so it lands there
+(pass 1); the 25 row cites X and only the live line does too, so it lands there (pass 3) -
+both rows raised, `10 -> ghost, 25 -> live`. Under R7 the ghost is invisible to pass 1, so the
+10 row falls to pass 3 too and takes 10 of the live line's 30 first (file order); the 25 row
+then finds only 20 left on the live line and nothing else that fits, and reads
+`qty_exceeds_ordered` - though `10 -> ghost, 25 -> live` would still place both. Accepted with
+R7: the net landed count stays flat (measured above), and a per-row global best assignment
+that would place both stays deferred (section 5) unless the prod measurement says otherwise.
+An ORDER BACK row bumped off a ghost this way also picks up a different stored delivery date:
+`apply` writes `row.delivery_date or match.core_line.required_date`, so a row with no date of
+its own now stores the LIVE line's `required_date` where it used to store the ghost's.
 
 **Book PO per line.** `_bought_rows` already loads the `PurchaseOrderLine` and `SPOAllocation`
 rows that name each line. Add one map beside `_bought_refs`: `(ref, product) -> {document
@@ -113,8 +147,10 @@ position rather than always the first.
 `tests/test_oi_sheet_line_pick_month_po.py`, one fixture builder for the UAC table:
 AC-LP-1 to AC-LP-13. Then run the whole inquiry import family before push (lesson 18 Sep: a
 confirm-seam change went red in four untouched files): `tests/test_*order_inquiry*import*`,
-`test_*oi_sheet*`. Two later small-fix slices, coder-owned tests both times (R4, R5): AC-LP-14
-(the sheet's PO outranks the month) and AC-LP-15 (a restatement is only ever across tabs).
+`test_*oi_sheet*`. Later small-fix slices, coder-owned tests every time (R4, R5, R6, R7):
+AC-LP-14 (the sheet's PO outranks the month), AC-LP-15 (a restatement is only ever across
+tabs), AC-LP-16 (an equal-quantity line first) and AC-LP-17 (a cancelled line may only be
+taken by the fallback).
 
 Expected to change: any existing test that asserts finding 9's no-charge behaviour. Rewrite it to
 AC-LP-12, do not delete it.
@@ -134,4 +170,6 @@ AC-LP-12, do not delete it.
 
 A global best-assignment (minimum total date distance per item) is NOT built. Build it only if
 the measurement in 4.4 shows rows still landing on a line outside their PO group after these
-passes.
+passes, or if the R7 stranding mechanism (section 2, "Honest limits") is costing more than the
+30 rows it cost on the 18 Sep prod copy - re-measure that count on the next prod copy alongside
+4.4 and treat a materially bigger number as the trigger.
