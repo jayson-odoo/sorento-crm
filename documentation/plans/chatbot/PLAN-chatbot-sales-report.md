@@ -61,8 +61,8 @@ Miss: header, blank line, `No sales found.`, no offer. Denied: `Sales report is 
 for your account.` and nothing else.
 
 `Location:` prints exactly as the outstanding header does, through the same
-`_outstanding_location_header` rule: `IB (BRW-IB, MWH-IB)` when a token was typed, the codes
-alone when not, `all` when no location filter (captain ruling 19 Sep, parity with S9).
+`_outstanding_location_header` rule: `IB (BRW-IB, MWH-IB)` when a token was typed, the bare code when the token IS the one code
+(`BRW-IB`), `all` when no token. The lane always sends the token with the codes (captain ruling 19 Sep, parity with S9).
 
 ## Backend contract
 

@@ -89,7 +89,7 @@ Other stakeholders: nobody is notified; this is a read.
   the breakdown sub-heading, then breakdown lines `name: RM v (Qty: n) (Confirmed: RM v,
   Qty: n)`. Evidence: golden fixture.
 - **AC-1603 [FE][T]** Any header axis absent from the body prints `all`, never an omitted
-  line. `Channel` prints `Dealer`, `Project` or `all`. `Location` prints `IB (BRW-IB, MWH-IB)` when the body carries a `location_token`, the codes alone when it does not. Evidence: pytest, presenter.
+  line. `Channel` prints `Dealer`, `Project` or `all`. `Location` prints `IB (BRW-IB, MWH-IB)` when the body carries a `location_token`, the bare code when the token is itself the one code, `all` with no token. Evidence: pytest, presenter.
 - **AC-1604 [FE][T]** Product subject prints `*_By customer_*`; customer subject prints
   `*_By product_*`; both named prints no breakdown heading at all. Evidence: three goldens.
 - **AC-1605 [FE][T]** A hit ends with `Reply 1 for the sales order list.` and nothing after
