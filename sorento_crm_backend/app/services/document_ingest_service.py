@@ -349,6 +349,14 @@ class DocumentIngestService(MasterRefResolver):
         self.touched_product_ids: set[str] = set()
         self.so_numbers: set[str] = set()
         self.written_header_ids: set[str] = set()
+        # S2 (`PLAN-oi-follow-book-chain.md`, AC-FB-21/25): every `from_so_line_ref`
+        # a purchase-order LINE carried on a line this push CREATED or UPDATED -
+        # `ref_moves` only ever captures a ref that CHANGED, so a freshly created
+        # line, or an existing line that names a sales-order line for the FIRST
+        # time, is invisible to it. Read off `line_values` in `_record_hook_state`
+        # (below), which already holds the resolved value for every line this
+        # record wrote, so no second capture site is needed inside `_sync_lines`.
+        self.written_po_line_refs: set[str] = set()
         # (product_id, supplier_id, po_number) triples, purchase_orders only -
         # what `supersede_crm_raised_pos` (the extracted shared function) wants.
         self.po_supersede_triples: set[tuple[str, str, str]] = set()
@@ -772,6 +780,10 @@ class DocumentIngestService(MasterRefResolver):
                         self.po_supersede_triples.add(
                             (str(product_id), str(supplier_id), payload.po_number)
                         )
+            for values in line_values:
+                ref = values.get("from_so_line_ref")
+                if ref:
+                    self.written_po_line_refs.add(str(ref))
 
     def _write_order_link_claims(self, header: Any, payload: Any) -> None:
         """V4 (plan section 2.5): a PO line dedicating its purchase against

@@ -139,6 +139,15 @@ personalised your own column order or visibility, yours is kept.
 
 ### The PO and SPO columns
 
+The PO and SPO on a row follow AutoCount's own linkage: the purchase order line AutoCount raised
+for that sales order line, and the shipping order that purchase order line became, whatever state
+the document is in, open, closed or already received. There is nothing to click for this to
+happen. This runs as soon as AutoCount's purchase order or shipping order reaches the CRM, when a
+row is raised or confirmed, and first on every **Auto link all...**. A row still on **To confirm**
+gets the link as a draft, the same as any other draft link. Confirming a purchase order and
+**Auto link all...** never move a link AutoCount states. If AutoCount covers only part of the
+row's quantity, the normal automatic linking on this page covers the rest.
+
 * A number in the **SPO** column tagged **via PO** means the shipment was found through the
   purchase order the row is linked to, not linked to the row itself.
 * A number in the **PO** column tagged **via SPO** means the purchase order was read off the
@@ -146,6 +155,10 @@ personalised your own column order or visibility, yours is kept.
 * **awaiting shipment** in the **SPO** column means the row is bought, on a purchase order, with
   no container booked yet.
 * A row with neither link shows a hyphen in both columns.
+* The **Supplier** column reads the shipping order's supplier when the row's only link is a
+  shipping order - for example, the C-FHSS14 row on SO421886 reads supplier XIAMEN TAIYANG
+  TECHNOLOGY CO.,LTD. once its only link is SPO-2026/09-0036. It used to read **Not linked** in
+  that case; a row with a purchase order link reads as it always has.
 * Click the number to open **Backing documents**, listing every PO and SPO behind the row with its
   quantity, location and expected date.
 * A word next to the number tells you more about that document, in plain words rather than an
@@ -155,12 +168,14 @@ personalised your own column order or visibility, yours is kept.
   * **reallocate** - the document lands well before this row needs it, and another inquiry
     for the same item needs it sooner. Click the word for the candidate list, earliest need
     first, with the top candidate marked **Reallocate to**, and the instruction to re-key the
-    line to the chosen sales order in AutoCount - the link moves by itself at the next upload
-    (see "When a link moves on its own" below). Nothing is changed from the lightbox.
+    line to the chosen sales order in AutoCount - the link moves by itself at the next push
+    (see "When AutoCount's linkage overrides this page" below). Nothing is changed from the
+    lightbox.
   * **unlink** - the document is early and no other inquiry needs the item sooner. Click the
     word; the lightbox reads "Unlink - no sooner inquiry needs this item".
-  * **note** - the link on this row moved or was cleared by an AutoCount upload. Click the
-    word to read what happened, on which document, and when.
+  * **note** - the link on this row moved, was cleared, or was taken by AutoCount for another
+    sales order. Click the word to read what happened, on which document, which sales order (if
+    any), and when.
 
 ### A row already covered by stock
 
@@ -186,17 +201,51 @@ inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i
 those items' own change instead - hover it for one line per item, e.g. "with SRTWCX8605-S-RL-PJ:
 Was 182 on 01/06/2026, now 280 on 01/03/2027".
 
-### When a link moves on its own
+### When AutoCount's linkage overrides this page
 
-After AutoCount re-keys a PO line or an SPO line to a different sales order and the book is
-uploaded, the row's link moves with it - nobody has to relink anything on Order Inquiries:
+AutoCount's own linkage is always followed, including over a link made by hand and even when
+another sales order's row is already holding that document.
 
-* The old row's quantity carries the word **note**, and the note records the move.
-* The document itself now appears on the new sales order's own inquiry row.
-* If AutoCount clears the reference instead of moving it, the link is removed the same way,
-  with the same **note** mark.
-* A received document never moves this way - once a document is fully received, its link is
-  left exactly where it is.
+* **If a buyer re-points a purchase order line to another sales order in AutoCount**, the link
+  follows on the next push - nobody has to relink anything on Order Inquiries. This happens even
+  when the goods have already arrived: a document that is already fully received still moves if
+  AutoCount now states it belongs to a different sales order line.
+  * The old row's quantity carries the word **note**, and the note records the move: which
+    document, which sales order it went to, and the date.
+  * The document itself now appears on the new sales order's own inquiry row, showing as
+    received if it already was.
+  * If AutoCount clears the reference instead of moving it, the link is removed the same way,
+    with the same **note** mark.
+* **If AutoCount's linkage for a row points at a document another sales order's row is already
+  holding**, that other row loses only the part of the document it does not need to keep,
+  whether its own link was made automatically or by hand. It gets a **note** naming the
+  document, the sales order the document went to, the date and what triggered the move, and it
+  is offered other supply automatically so it is not left empty. A row of the same sales order
+  line is never touched this way - if another row of SO421886's own C-FHSS14 line already holds
+  SPO-2026/09-0036, nothing moves.
+
+### A row that is already fully linked
+
+AutoCount's linkage fills in a row's PO/SPO only where it still has need left. A row that is
+already linked for its whole quantity is left exactly as it is, even if the document it names is
+not the one AutoCount now states for that sales order line. To correct such a row, use
+**Unlink selected** (or **Unlink all...**) to take the link off; the next automatic pass links it
+to AutoCount's own document.
+
+### Frequently asked
+
+* **Why did my row lose its PO/SPO?** Read the **note** beside the quantity. It names the
+  document and the sales order AutoCount moved it to, and the date. AutoCount stated that
+  document is now for another sales order's line, and AutoCount's own linkage is always
+  followed.
+* **Why does the PO say "via SPO"?** The purchase order was turned into a shipping order in
+  AutoCount, so the row now shows the shipping order in the SPO column with the purchase order
+  beside it marked **via SPO**.
+* **The Supplier column used to say "Not linked" on an SPO row.** It now shows that shipping
+  order's supplier instead, for any row whose only link is a shipping order.
+* **I linked it by hand and it moved.** AutoCount's own linkage always wins, including over a
+  link you made by hand. If AutoCount states that document is for another sales order's row,
+  your row's link moves and carries a note saying so.
 
 ### Ticking rows and Actions
 
@@ -214,10 +263,11 @@ do; each item counts only the rows it applies to, for example **Link selected (2
   does.
 
 Use **Auto link all...**, **Choose document (1)**, **Link selected** and **Unlink selected** to
-review and fix a row's PO/SPO link before you confirm it - the cascade already linked what it
-could when the row was raised, so most of what is left is a wrong pick to correct by hand. Once
-you have placed or linked the documents directly in AutoCount, **Upload purchase orders** reads
-the purchase-order book back in and syncs that linkage onto these rows.
+review and fix a row's PO/SPO link before you confirm it - AutoCount's own linkage and the
+cascade already linked what they could when the row was raised, so most of what is left is a
+wrong pick to correct by hand. Once you have placed or linked the documents directly in
+AutoCount, the linkage reaches this page on its own within a minute; **Upload purchase orders**
+and **Auto link all...** are there for re-syncing a whole file or the whole list in one go.
 
 ### Confirming a row
 

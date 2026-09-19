@@ -261,6 +261,27 @@ _SPO_REF_PLACED_PO_ID = (
 _PLACED_PO_ID = func.coalesce(
     _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
 )
+# AC-FB-52: the row's OWN first SPO link's own `supplier_id` - a genuine book-chain SPO
+# allocation the ESB raised straight off the shipping-order feed (`follow_book_for_rows`,
+# S1-S3) never resolves back to a `po_line_id` at all, so `_PLACED_PO_ID` (and through it
+# the Supplier join below) comes back NULL for it even though the allocation states its
+# own supplier - measured at 5,156 such rows on the prod copy, every one reading "Not
+# linked" under Supplier. Same "first link, ordered by when it was made" rule as
+# `_SPO_LINKED_PO_ID` above, read directly off the allocation rather than through a
+# purchase order line that, for this shape, does not exist.
+_SPO_LINKED_SUPPLIER_ID = (
+    select(SPOAllocation.supplier_id)
+    .select_from(OrderInquiryLink)
+    .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        SPOAllocation.supplier_id.isnot(None),
+    )
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
 
 # The row's OWN first linked SPO number - a REAL link only
 # (`OrderInquiryLink.spo_allocation_id`), ordered the same way every other "first link"
@@ -978,7 +999,17 @@ class OrderInquiryWorklistService:
             )
             .outerjoin(Customer, Customer.id == _CUSTOMER_ID)
             .outerjoin(PurchaseOrder, PurchaseOrder.id == _PLACED_PO_ID)
-            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            # AC-FB-52: the purchase order's own supplier first, the row's first SPO
+            # link's own supplier when there is no purchase order to read one off -
+            # the SAME fallback shape `_PLACED_PO_ID` itself is built from. The
+            # Supplier filter and sort read `Supplier.id`/`Supplier.supplier_name`
+            # off this ONE join, so both keep working unchanged.
+            .outerjoin(
+                Supplier,
+                Supplier.id == func.coalesce(
+                    PurchaseOrder.supplier_id, _SPO_LINKED_SUPPLIER_ID
+                ),
+            )
         )
         if delivery_month:
             first, following = _month_bounds(delivery_month)
