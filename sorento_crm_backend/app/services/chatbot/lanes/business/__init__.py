@@ -28,6 +28,7 @@ from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
+from app.services.chatbot.lanes.business import services as business_services
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
@@ -543,6 +544,25 @@ def run_until_exit(
         if jsc.truthy(e)
     )
     carried_subject_answer = carried_subject and names_only_the_carried_subject
+
+    # R-S3 (reviewer finding, Phase 3 fix round, item 7): an ungranted contact's
+    # sales-report ask is refused HERE, before resolve+gate ever runs - `order_status`
+    # and `ctx.access` are both already known at this entry, the earliest single seam
+    # that has both. Skipping resolve+gate means the ambiguous-customer PICKER never
+    # renders for a contact who could not read the answer anyway (it is an interactive,
+    # multi-choice prompt that names real customer matches - showing it first and
+    # refusing only once the customer picks leaks that enumeration for nothing).
+    # `run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
+    # defence, for a re-entry path that calls it directly (this module's own tests).
+    access_ctx_peek = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+    granted_raw_peek = access_ctx_peek.get("attributes")
+    granted_peek = (
+        set(granted_raw_peek) if isinstance(granted_raw_peek, (list, tuple, set, frozenset)) else set()
+    )
+    sales_report_ungranted = (
+        jsc.js_string(parse_output_peek.get("order_status") or "") == "sales_report"
+        and _SALES_REPORT_GRANT not in granted_peek
+    )
     if (
         isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
         or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
@@ -550,6 +570,7 @@ def run_until_exit(
         # and answer with the order lane's miss text instead of the acknowledgement.
         or jsc.truthy(parse_output_peek.get("outstanding_offer_declined"))
         or carried_subject_answer
+        or sales_report_ungranted
     ):
         return {
             "delegate": DELEGATE,
@@ -636,6 +657,16 @@ def _fetch_semantic_input(
         # channel value, never the message text - passed straight through to
         # `crm_sales_report`'s own `channel` param.
         "sales_channel": parse_output.get("sales_channel"),
+        # R-B3 (reviewer finding, Phase 3 fix round): the sales_report_detail
+        # offer's stored channel, restored by `head/output_exchange.py::
+        # _apply_outstanding_pending` - `fetch.py` reads this ONLY when THIS
+        # turn's own `sales_channel` above is absent (the turn's own value wins).
+        "outstanding_carried_channel": parse_output.get("outstanding_carried_channel"),
+        # S18 (owner ruling, mid-lane): `fetch.py`'s crm_sales_report arg builder
+        # reads this to tell "no date window at all" apart from "the customer said
+        # 'all dates'" - `broaden_axis` lives on the full parser output, not this
+        # object's other twelve fields, so it has to be named explicitly here too.
+        "broaden_axis": parse_output.get("broaden_axis"),
     }
 
 
@@ -692,6 +723,47 @@ def _fetch_failure_outcome(tool_name: Any, exc: BaseException) -> str | None:
     return None
 
 
+def _refinement_product_resolves(db: Any, token: str) -> bool:
+    """Whether a refinement's own raw product-hint TOKEN resolves to a REAL
+    product (R-S4, Phase 3 fix round) - through the SAME in-process resolver
+    `resolve_gate` calls for a typed entity (`business_services.production_
+    services(db).resolve_entity`, the route behind `POST /api/v1/system/
+    references/resolve`), for this ONE token alone. The gate itself is skipped
+    on a refinement turn (see `_resolve_report_product_and_location`'s own
+    docstring), so there is no OTHER live resolution this seam can read off
+    `entities` - re-calling the resolver directly is the only way to tell a
+    real code ("SRTWT7445") from a word that merely LOOKS like a refinement
+    ("cheaper") apart, without guessing from its shape.
+
+    `db is None` (this module's own direct `run_fetch` tests, per the sibling
+    docstring) resolves nothing, the same no-op the warehouse loop below has
+    for the identical reason."""
+    if db is None or not token:
+        return False
+    resolve_entity = business_services.production_services(db).resolve_entity
+    body = {
+        "query": token,
+        "tokens": [token],
+        "match_mode": "or",
+        "allowed_entity_types": ["product"],
+        "limit": 1,
+    }
+    try:
+        result = resolve_entity(body)
+    except Exception:  # noqa: BLE001 - an unresolvable token is a miss, not a hard failure
+        logger.warning(
+            "sales/outstanding report: refinement product resolve failed for %r",
+            token, exc_info=True,
+        )
+        return False
+    resolutions = jsc.array(jsc.get(result, "resolutions"))
+    matches = jsc.array(jsc.get(resolutions[0], "matches")) if resolutions else []
+    return any(
+        jsc.truthy(m) and jsc.js_string(jsc.get(m, "entity_type")).lower() == "product"
+        for m in matches
+    )
+
+
 def _resolve_report_product_and_location(
     parse_output: dict[str, Any],
     entities: Any,
@@ -724,6 +796,14 @@ def _resolve_report_product_and_location(
     loop below already reads for a location word, and for the same reason: this
     report matches its subject EXACTLY (AC-1119), so no gate resolution is needed.
 
+    R-S4 (Phase 3 fix round): a refinement entity is used ONLY if it actually
+    RESOLVES to a real product (`_refinement_product_resolves`) - unlike the
+    warehouse loop, which reads a token against a closed, small vocabulary
+    (`resolve_warehouse_token`'s own `warehouses` query), a product-hint word the
+    resolver cannot match ("cheaper") used to be sent straight through as
+    `product_code=cheaper`, silently dropping the customer's actual (carried)
+    subject in the tool call instead of leaving it alone.
+
     -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- Read
     off the RAW parsed entities (`parse_output`), never the gated `entities` above -
     those only ever carry what the GENERIC resolver matched, and D5's
@@ -755,7 +835,7 @@ def _resolve_report_product_and_location(
                 if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "product":
                     continue
                 token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
-                if token:
+                if token and _refinement_product_resolves(db, token):
                     semantic_input["outstanding_product_code"] = token
                 break
 
@@ -1067,6 +1147,27 @@ def run_fetch(
         ]
 
     order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+
+    # R-S3 (reviewer finding, Phase 3 fix round, item 7): checked here, regardless of
+    # whether a subject resolved - `run_until_exit`'s OWN bypass (above this module,
+    # the earliest seam that knows both `order_status` and `ctx.access`) already stops
+    # resolve+gate from ever running for an ungranted sales-report ask, so `entities`
+    # arrives empty and the subject-gated branch below would never fire at all. This
+    # is what still answers the refusal on that path, and is the SECOND line of
+    # defence (mirrors `DOMAIN_GRANT_REQUIRED`'s own trace shape above) for a
+    # re-entry path that calls `run_fetch` directly (this module's own tests).
+    if order_status_raw == "sales_report":
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _SALES_REPORT_GRANT not in granted:
+            if trace is not None:
+                trace.add(
+                    "domain_grant",
+                    {"domain": domain, "skipped": "not_granted", "needs": _SALES_REPORT_GRANT},
+                )
+            return _sales_report_not_enabled()
+
     has_customer = (
         any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
         if isinstance(entities, list)

@@ -636,9 +636,12 @@ PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 # own offer has exactly the shape `outstanding_detail`'s already has (a roster of one
 # or more scopes, re-run with `detail=...`, sticky across a pick/casual turn, closes
 # on a decline or a second unreadable reply) - so every arm that reads
-# `kind in DETAIL_OFFER_KINDS` handles both, and the re-run reads WHICH tool to call
-# off the stored filter set (`outstanding_filters["tool"]`, absent =
-# `crm_outstanding_report`, so a session open at deploy keeps working).
+# `kind in DETAIL_OFFER_KINDS` handles both. The KIND itself decides which tool the
+# re-run calls (`head/output_exchange.py::_apply_outstanding_pending` stamps
+# `order_status: "sales_report"` when `kind == "sales_report_detail"`, the outstanding
+# scope's own word otherwise) - `outstanding_filters["tool"]` rides along on the
+# stored filter set too, but nothing in this package reads it back; it exists for a
+# caller inspecting the stored session state, not for this re-run decision.
 DETAIL_OFFER_KINDS: tuple[str, ...] = ("outstanding_detail", "sales_report_detail")
 
 # --------------------------------------------------------------------------- #

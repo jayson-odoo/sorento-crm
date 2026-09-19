@@ -1270,6 +1270,13 @@ def test_auth_401_403_apikey_and_company_scope(db, monkeypatch):
             id=str(uuid.uuid4()), respond_contact_id=contact.id, company_id=DEFAULT_COMPANY_ID,
         )
     )
+    # SEED CHANGED BY THE CODER (SEC-S1/ruling S14, Phase 3 fix round): this test's own
+    # contact now carries the per-contact `sales_orders.sales_report` reveal key, or the
+    # route's new SEC-S1 gate would refuse this AC-1118/B1-style company-scope check with
+    # its own 403 before company scoping is ever exercised - no assertion below changed.
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, ["sales_orders.sales_report"], actor_id=None)
 
     superadmin = _seed_superadmin(db)
     scope_integration = Integration(

@@ -1451,6 +1451,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
     o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
     o["outstanding_carried_location_token"] = filters.get("location_token")
+    # R-B3 (reviewer finding, Phase 3 fix round): the SAME restore, for the
+    # sales-report offer's own `channel` - `fetch.py`'s crm_sales_report arg
+    # builder reads this ONLY when the turn's own `sales_channel` is absent
+    # (the turn's own value always wins, S4 point 2's existing rule).
+    o["outstanding_carried_channel"] = filters.get("channel")
 
     if kind == "outstanding_scope":
         if refining:

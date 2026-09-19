@@ -1610,6 +1610,19 @@ async def get_sales_report(
         None,
         description="so - adds so_rows[], one row per SO rolled up over the whole filtered window.",
     ),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id (SEC-S1/S2, ruling S14). Both-or-neither with "
+            "space_id - one without the other is 422. When both are given the route "
+            "re-checks the per-contact `sales_orders.sales_report` reveal key itself "
+            "(not just the chatbot lane's own gate, which a direct MCP/n8n caller "
+            "bypasses): no grant is 403 `sales_report_not_enabled`."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db),
 ):
@@ -1636,6 +1649,49 @@ async def get_sales_report(
             detail="product_code, customer_ids, customer_query",
             code="subject_required",
         )
+
+    # SEC-B2 (security review, Phase 3 fix round, ruling S17): a customer_query given
+    # (non-blank - blank already 422s above as subject_required) needs at least 3
+    # characters after stripping, or a single-letter ILIKE scans and returns every
+    # customer whose name contains it, company-wide.
+    _customer_query_stripped = (customer_query or "").strip()
+    if _customer_query_stripped and len(_customer_query_stripped) < 3:
+        raise AppException(
+            422,
+            "customer_query must be at least 3 characters",
+            detail=_customer_query_stripped,
+            code="customer_query_too_short",
+        )
+
+    # SEC-S2 (security review, Phase 3 fix round, ruling S14): contact_id and space_id
+    # are both-or-neither on this route - one without the other is never silently
+    # treated as "no contact at all" (which would skip the SEC-S1 gate below).
+    if bool(contact_id) != bool(space_id):
+        raise AppException(
+            422,
+            "contact_id and space_id must both be given, or neither",
+            detail="contact_id, space_id",
+            code="contact_identity_required",
+        )
+
+    # SEC-S1 (security review, Phase 3 fix round, ruling S14): a contact_id/space_id
+    # caller - a direct MCP/n8n call, which bypasses the chatbot lane's own gate
+    # entirely - is re-checked against the per-contact reveal key here, the same shape
+    # `app/api/v1/scm/low_stock_report.py` uses for its own second gate.
+    if contact_id and space_id:
+        from app.services.contact_field_reveal_service import granted_keys
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_id, space_id=space_id
+        )
+        keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
+        if "sales_orders.sales_report" not in keys:
+            raise AppException(
+                403,
+                "Sales report is not enabled for your account.",
+                code="sales_report_not_enabled",
+            )
 
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None and channel_norm not in ("dealer", "project"):
@@ -1691,4 +1747,13 @@ async def get_sales_report(
             month.pop("by_product", None)
         if month.get("by_customer") is None:
             month.pop("by_customer", None)
+    # R-B2 (reviewer finding, Phase 3 fix round): echo `detail` onto the body the
+    # SAME way `get_outstanding_report` above echoes its own (`if detail in
+    # ("so", "do"): body["detail"] = detail`) - the MCP presenter's dispatcher
+    # reads `data.get("detail") == "so"` to pick `_sales_report_detail` over
+    # `_sales_report` without re-deriving it from `so_rows`'s mere presence.
+    # Only "so" is a valid value on this route (unlike the outstanding report's
+    # "so" / "do" scopes), so the key is absent, never `null`, when unset.
+    if detail == "so":
+        body["detail"] = detail
     return JSONResponse(content=body)

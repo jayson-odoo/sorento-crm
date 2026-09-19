@@ -2,32 +2,47 @@
 
 `documentation/plans/chatbot/PLAN-chatbot-sales-report.md` ("Backend contract");
 `documentation/plans/chatbot/chatbot-sales-report-acceptance-criteria.md`
-AC-1620 to AC-1632.
+AC-1620 to AC-1632, rulings S15 to S17 (Phase 3 fix round).
 
-ONE base query over `sales_order_lines` (joined to `sales_orders`, `customers`,
-`products`, `warehouses`), excluding only cancelled headers/lines - everything
-else (the month bucket, the confirmed/outstanding split, the breakdown ranks,
-`so_rows`) is rolled up from that SAME result set in Python, so a total can
-never drift from the rows that made it (the same reason
-`outstanding_report_service.py` gives for its own two base queries).
+AGGREGATED IN SQL, not rolled up from raw rows in Python (SEC-B2/ruling S17): a
+big dealer is 1,230 SOs over 37 months (UAC "Measured"), thousands of lines - too
+many to read into the request process for one WhatsApp reply. THREE grouped
+queries, each `GROUP BY`, so a total can never drift from the SAME per-line SQL
+expressions:
 
-Per line (S2 rulings):
+* `_months_and_breakdown_query` - one row per (month, breakdown key), or per
+  month alone when neither breakdown is wanted (both subjects named). Month
+  TOTALS are the Python sum of that month's breakdown rows - summing already-
+  computed SQL sums, not re-deriving them from raw lines.
+* `_so_count_query` - one row per month, `COUNT(DISTINCT sales_order_id)`. A
+  SEPARATE query because a DISTINCT count cannot be summed from the breakdown
+  rows above (the same SO can carry lines under more than one product/customer
+  in the same month, and `so_count` must still count it once).
+* `_so_rows_query` - one row per SO, computed ONLY when `detail == "so"`
+  (a big dealer is 1,230 SOs, never built unasked).
 
-* `bucket` = `required_date`, else the SO's `order_date` (S3).
-* `confirmed_qty = min(qty_delivered, qty_ordered)` - never more than ordered.
-* `confirmed_value = line_total * confirmed_qty / qty_ordered`, 0 when
-  `qty_ordered` is 0 (never a division error).
+Per line (S2, S15, S16 rulings), expressed as SQL so every aggregate is a SUM of
+figures already at cent precision, never an exact fraction rounded once at the
+end:
+
+* `bucket` = `required_date`, else the SO's `order_date` (S3). A line with
+  NEITHER is excluded from EVERYTHING - not just `months[]` but `so_rows[]` too
+  (S16) - via a `WHERE bucket IS NOT NULL`, no further fallback to `created_at`.
+* `confirmed_qty = LEAST(qty_delivered, qty_ordered)` - never more than ordered.
+* `confirmed_value = ROUND(line_total * confirmed_qty / NULLIF(qty_ordered, 0), 2)`,
+  0 when `qty_ordered` is 0 or `line_total` is NULL (never a division error) -
+  rounded to the cent PER LINE (S15), so every total is a SUM of cents.
 * `outstanding_qty` / `outstanding_value` are the REST of the line, counted
   ONLY while the header is `status='open'` AND the line is `line_status='open'`
   - a closed-but-underdelivered line (a data anomaly, not a real one in this
   schema) simply reports less than its `line_total`, rather than raising.
 * `ordered = confirmed + outstanding`, by construction (S2).
 
-A line with no bucket at all (neither `required_date` nor its SO's
-`order_date`) cannot be placed in any month, so it is excluded from
-EVERYTHING - not just `months[]` but also `so_rows[]` - which is what keeps
-"row sums equal month sums" (AC-1629) true unconditionally rather than only on
-the cases a test happens to cover.
+Company scoping still applies: every query below is a plain ORM query over the
+mapped, company-scoped classes (`SalesOrder`, `SalesOrderLine`, ...), so the
+`do_orm_execute` scope listener injects its own criteria the same way a raw
+Python-rollup query would have - never raw text SQL, which that listener cannot
+see.
 """
 from __future__ import annotations
 
@@ -35,7 +50,8 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, case, func, literal_column
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -71,22 +87,24 @@ def _dec(v: Any) -> Decimal:
         return Decimal(0)
 
 
-def _qty(v: Decimal) -> int:
+def _qty(v: Any) -> int:
     """Every quantity on this report is a WHOLE unit (the schema declares `int`
     and the reply prints thousands-separated units), but `qty_ordered` /
     `qty_delivered` are `Numeric(15,4)`, so a fraction is storable. Rounded HALF
     UP - never Python's `round`, whose bankers' rounding would print 2 for 2.5
     and 4 for 3.5 in the same reply."""
-    return int(v.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    return int(_dec(v).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
-def _money_edge(v: Decimal) -> float:
+def _money_edge(v: Any) -> float:
     """Quantise to 2 places AT THE RESPONSE EDGE and hand back a `float`, so it
     serialises as a JSON NUMBER (captain ruling, S2 fix round) - a `Decimal`
     field serialises as a STRING through `model_dump(mode="json")`, which is
     not the contract. Every internal accumulation before this point stays
-    `Decimal`."""
-    return float(v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    `Decimal` (SEC-B2/S15: the SQL layer already rounded `confirmed_value` to
+    the cent PER LINE, so this is only ever formatting a SUM of already-quantised
+    cents, never a fresh rounding decision)."""
+    return float(_dec(v).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _as_date(v: DateLike) -> Optional[date]:
@@ -128,14 +146,15 @@ def _new_figures() -> dict:
     }
 
 
-def _accumulate(acc: dict, *, ordered_qty, ordered_value, confirmed_qty, confirmed_value,
-                outstanding_qty, outstanding_value) -> None:
-    acc["ordered_qty"] += ordered_qty
-    acc["ordered_value"] += ordered_value
-    acc["confirmed_qty"] += confirmed_qty
-    acc["confirmed_value"] += confirmed_value
-    acc["outstanding_qty"] += outstanding_qty
-    acc["outstanding_value"] += outstanding_value
+def _accumulate(acc: dict, row) -> None:
+    """Sums figures that are ALREADY SQL sums of per-line, cent-rounded values
+    (S15) - never a fresh rounding decision, only Decimal addition."""
+    acc["ordered_qty"] += _dec(row.ordered_qty)
+    acc["ordered_value"] += _dec(row.ordered_value)
+    acc["confirmed_qty"] += _dec(row.confirmed_qty)
+    acc["confirmed_value"] += _dec(row.confirmed_value)
+    acc["outstanding_qty"] += _dec(row.outstanding_qty)
+    acc["outstanding_value"] += _dec(row.outstanding_value)
 
 
 def _quantised_figures(acc: dict) -> dict:
@@ -144,6 +163,91 @@ def _quantised_figures(acc: dict) -> dict:
         "confirmed_qty": _qty(acc["confirmed_qty"]), "confirmed_value": _money_edge(acc["confirmed_value"]),
         "outstanding_qty": _qty(acc["outstanding_qty"]), "outstanding_value": _money_edge(acc["outstanding_value"]),
     }
+
+
+def _month_key(dt) -> str:
+    d = _as_date(dt)
+    return f"{d.year:04d}-{d.month:02d}"
+
+
+def _bucket_expr():
+    """S3/S16: a line's own `required_date`, else its SO's `order_date`. NO
+    further fallback to `created_at` - a line with neither is excluded from
+    everything by the `IS NOT NULL` filter this expression feeds."""
+    return func.coalesce(SalesOrderLine.required_date, SalesOrder.order_date)
+
+
+def _per_line_exprs():
+    """The S2/S15 per-line figures, as SQL expressions - `confirmed_value`
+    rounded to the cent HERE, per line, so every aggregate downstream is a SUM
+    of cents rather than an exact fraction rounded once at the end."""
+    confirmed_qty = func.least(SalesOrderLine.qty_delivered, SalesOrderLine.qty_ordered)
+    line_total = func.coalesce(SalesOrderLine.line_total, 0)
+    confirmed_value = func.coalesce(
+        func.round(
+            (line_total * confirmed_qty) / func.nullif(SalesOrderLine.qty_ordered, 0),
+            2,
+        ),
+        0,
+    )
+    is_open = and_(SalesOrder.status == "open", SalesOrderLine.line_status == "open")
+    outstanding_qty = case((is_open, SalesOrderLine.qty_ordered - confirmed_qty), else_=0)
+    outstanding_value = case((is_open, line_total - confirmed_value), else_=0)
+    ordered_qty = confirmed_qty + outstanding_qty
+    ordered_value = confirmed_value + outstanding_value
+    return {
+        "confirmed_qty": confirmed_qty, "confirmed_value": confirmed_value,
+        "outstanding_qty": outstanding_qty, "outstanding_value": outstanding_value,
+        "ordered_qty": ordered_qty, "ordered_value": ordered_value,
+    }
+
+
+def _figure_sum_labels(exprs: dict) -> list:
+    """`func.sum(...)` over each per-line expression - every aggregate below is a
+    SUM of figures already at cent precision (S15), computed by the database."""
+    return [
+        func.sum(exprs["ordered_qty"]).label("ordered_qty"),
+        func.sum(exprs["ordered_value"]).label("ordered_value"),
+        func.sum(exprs["confirmed_qty"]).label("confirmed_qty"),
+        func.sum(exprs["confirmed_value"]).label("confirmed_value"),
+        func.sum(exprs["outstanding_qty"]).label("outstanding_qty"),
+        func.sum(exprs["outstanding_value"]).label("outstanding_value"),
+    ]
+
+
+def _common_filters(
+    *, product, customer_query, customer_ids, channel, warehouse_ids, date_from, date_to,
+    bucket_expr,
+) -> list:
+    filters = [
+        SalesOrder.status != "cancelled",
+        SalesOrderLine.line_status != "cancelled",
+        # S16: a line bucketed by neither required_date nor order_date is
+        # excluded from EVERYTHING, not just months[] - never falls back to
+        # created_at.
+        bucket_expr.isnot(None),
+    ]
+    if product is not None:
+        filters.append(SalesOrderLine.product_id == product.id)
+    if customer_query:
+        filters.append(
+            Customer.customer_name.ilike(
+                f"%{_escape_like(customer_query)}%", escape=_LIKE_ESCAPE
+            )
+        )
+    if customer_ids is not None:
+        filters.append(SalesOrder.customer_id.in_(customer_ids))
+    if warehouse_ids is not None:
+        filters.append(SalesOrderLine.warehouse_id.in_(warehouse_ids))
+    if channel == "dealer":
+        filters.append(SalesOrder.demand_class == "retail")
+    elif channel == "project":
+        filters.append(SalesOrder.demand_class == "project")
+    if date_from is not None:
+        filters.append(bucket_expr >= _as_date(date_from))
+    if date_to is not None:
+        filters.append(bucket_expr <= _as_date(date_to))
+    return filters
 
 
 def sales_report(
@@ -177,170 +281,136 @@ def sales_report(
     want_by_customer = has_product and not has_customer
     want_so_rows = (detail or "").strip().lower() == "so"
 
-    q = (
-        db.query(
-            SalesOrder.id.label("so_id"),
-            SalesOrder.so_number,
-            SalesOrder.order_date,
-            SalesOrder.created_at,
-            SalesOrder.status.label("so_status"),
-            SalesOrder.demand_class,
-            Customer.customer_name,
-            Warehouse.warehouse_code,
-            Product.product_code,
-            SalesOrderLine.qty_ordered,
-            SalesOrderLine.qty_delivered,
-            SalesOrderLine.line_total,
-            SalesOrderLine.line_status,
-            SalesOrderLine.required_date,
-        )
-        .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
-        .join(Product, Product.id == SalesOrderLine.product_id)
-        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
-        .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
-        .filter(
-            SalesOrder.status != "cancelled",
-            SalesOrderLine.line_status != "cancelled",
-        )
+    bucket_expr = _bucket_expr()
+    filters = _common_filters(
+        product=product, customer_query=customer_query, customer_ids=customer_ids,
+        channel=channel, warehouse_ids=warehouse_ids, date_from=date_from, date_to=date_to,
+        bucket_expr=bucket_expr,
     )
-    if product is not None:
-        q = q.filter(SalesOrderLine.product_id == product.id)
-    if customer_query:
-        q = q.filter(
-            Customer.customer_name.ilike(
-                f"%{_escape_like(customer_query)}%", escape=_LIKE_ESCAPE
-            )
-        )
-    if customer_ids is not None:
-        q = q.filter(SalesOrder.customer_id.in_(customer_ids))
-    if warehouse_ids is not None:
-        q = q.filter(SalesOrderLine.warehouse_id.in_(warehouse_ids))
-    if channel == "dealer":
-        q = q.filter(SalesOrder.demand_class == "retail")
-    elif channel == "project":
-        q = q.filter(SalesOrder.demand_class == "project")
-    if date_from is not None or date_to is not None:
-        # S3/AC-1623: the window filters on the SAME bucket date each row uses
-        # below (required_date, else order_date) - never order_date alone, or a
-        # July-only window would keep a June-order/July-required line's SIBLING
-        # row (same SO, a June-required line) too. Expressed as SQL so a line
-        # whose bucket falls outside the window is dropped before Python ever
-        # sees it, matching the identical predicate the Python loop bucket uses.
-        bucket_expr = func.coalesce(SalesOrderLine.required_date, SalesOrder.order_date)
-        if date_from is not None:
-            q = q.filter(bucket_expr >= _as_date(date_from))
-        if date_to is not None:
-            q = q.filter(bucket_expr <= _as_date(date_to))
+    figure_exprs = _per_line_exprs()
+    month_expr = func.date_trunc("month", bucket_expr)
+
+    # ----------------------------------------------------------------- months + breakdown
+    # ONE grouped query: GROUP BY month and the breakdown key (product_code, customer_name,
+    # or nothing when both subjects are named) - month TOTALS are the Python sum of a
+    # month's own breakdown rows below (summing SQL sums, not raw lines).
+    select_cols: list = [month_expr.label("month_dt")]
+    group_cols: list = [month_expr]
+    breakdown_col = None
+    if want_by_product:
+        breakdown_col = Product.product_code
+        select_cols.append(Product.product_code.label("breakdown_key"))
+        group_cols.append(Product.product_code)
+    elif want_by_customer:
+        breakdown_col = Customer.customer_name
+        select_cols.append(Customer.customer_name.label("breakdown_key"))
+        group_cols.append(Customer.customer_name)
+
+    q1 = (
+        db.query(*select_cols, *_figure_sum_labels(figure_exprs))
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+    )
+    if want_by_product:
+        q1 = q1.join(Product, Product.id == SalesOrderLine.product_id)
+    q1 = q1.filter(*filters).group_by(*group_cols)
 
     months_acc: dict[str, dict] = {}
-    month_so_ids: dict[str, set] = {}
-    month_product_acc: dict[str, dict[str, dict]] = {}
-    month_customer_acc: dict[str, dict[str, dict]] = {}
-    so_acc: dict[str, dict] = {}
-
-    for r in q.all():
-        # S3's bucket is `required_date`, else `order_date` - both are nullable
-        # in this schema, so a line with NEITHER (no plan/UAC case covers this)
-        # falls back a third time to its SO's `created_at`, which the model
-        # declares NOT NULL (`server_default=func.now()`), so a row is never
-        # silently dropped from every total for want of a date to bucket it by.
-        bucket_date = r.required_date or r.order_date or r.created_at.date()
-        month_key = f"{bucket_date.year:04d}-{bucket_date.month:02d}"
-
-        qty_ordered = _dec(r.qty_ordered)
-        qty_delivered = _dec(r.qty_delivered)
-        line_total = _dec(r.line_total)
-        confirmed_qty = min(qty_delivered, qty_ordered)
-        if qty_ordered != 0:
-            confirmed_value = (line_total * confirmed_qty / qty_ordered)
+    breakdown_acc: dict[str, dict[str, dict]] = {}
+    for row in q1.all():
+        month_key = _month_key(row.month_dt)
+        if breakdown_col is not None:
+            key = row.breakdown_key
+            fig = breakdown_acc.setdefault(month_key, {}).setdefault(key, _new_figures())
+            _accumulate(fig, row)
         else:
-            confirmed_value = Decimal(0)
-        is_open = r.so_status == "open" and r.line_status == "open"
-        if is_open:
-            outstanding_qty = qty_ordered - confirmed_qty
-            outstanding_value = line_total - confirmed_value
-        else:
-            outstanding_qty = Decimal(0)
-            outstanding_value = Decimal(0)
-        ordered_qty = confirmed_qty + outstanding_qty
-        ordered_value = confirmed_value + outstanding_value
+            fig = months_acc.setdefault(month_key, _new_figures())
+            _accumulate(fig, row)
 
-        m = months_acc.setdefault(month_key, _new_figures())
-        _accumulate(
-            m, ordered_qty=ordered_qty, ordered_value=ordered_value,
-            confirmed_qty=confirmed_qty, confirmed_value=confirmed_value,
-            outstanding_qty=outstanding_qty, outstanding_value=outstanding_value,
-        )
-        month_so_ids.setdefault(month_key, set()).add(r.so_id)
+    if breakdown_col is not None:
+        for month_key, keyed in breakdown_acc.items():
+            totals = months_acc.setdefault(month_key, _new_figures())
+            for fig in keyed.values():
+                for k in totals:
+                    totals[k] += fig[k]
 
-        if want_by_product:
-            prod_acc = month_product_acc.setdefault(month_key, {}).setdefault(
-                r.product_code, _new_figures()
-            )
-            _accumulate(
-                prod_acc, ordered_qty=ordered_qty, ordered_value=ordered_value,
-                confirmed_qty=confirmed_qty, confirmed_value=confirmed_value,
-                outstanding_qty=outstanding_qty, outstanding_value=outstanding_value,
-            )
-        if want_by_customer:
-            cust_acc = month_customer_acc.setdefault(month_key, {}).setdefault(
-                r.customer_name, _new_figures()
-            )
-            _accumulate(
-                cust_acc, ordered_qty=ordered_qty, ordered_value=ordered_value,
-                confirmed_qty=confirmed_qty, confirmed_value=confirmed_value,
-                outstanding_qty=outstanding_qty, outstanding_value=outstanding_value,
-            )
-
-        if want_so_rows:
-            so = so_acc.setdefault(
-                r.so_id,
-                {
-                    "so_number": r.so_number, "customer_name": r.customer_name,
-                    "order_date": r.order_date, "_locations": set(),
-                    **_new_figures(),
-                },
-            )
-            _accumulate(
-                so, ordered_qty=ordered_qty, ordered_value=ordered_value,
-                confirmed_qty=confirmed_qty, confirmed_value=confirmed_value,
-                outstanding_qty=outstanding_qty, outstanding_value=outstanding_value,
-            )
-            if r.warehouse_code:
-                so["_locations"].add(r.warehouse_code)
+    # ----------------------------------------------------------------- so_count per month
+    # A SEPARATE query (a DISTINCT count cannot be summed from the breakdown rows
+    # above: the same SO can carry lines under more than one product/customer in
+    # the same month, and so_count must still count it once).
+    q2 = (
+        db.query(month_expr.label("month_dt"), func.count(func.distinct(SalesOrder.id)).label("so_count"))
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+    )
+    if want_by_product:
+        q2 = q2.join(Product, Product.id == SalesOrderLine.product_id)
+    q2 = q2.filter(*filters).group_by(month_expr)
+    so_counts = {_month_key(r.month_dt): int(r.so_count or 0) for r in q2.all()}
 
     months: list[dict] = []
     for month_key in sorted(months_acc.keys(), reverse=True):
         entry = {
             "month": month_key,
-            "so_count": len(month_so_ids.get(month_key, ())),
+            "so_count": so_counts.get(month_key, 0),
             **_quantised_figures(months_acc[month_key]),
         }
         if want_by_product:
             rows = [
-                {"product_code": code, **_quantised_figures(acc)}
-                for code, acc in month_product_acc.get(month_key, {}).items()
+                {"product_code": code, **_quantised_figures(fig)}
+                for code, fig in breakdown_acc.get(month_key, {}).items()
             ]
             entry["by_product"] = _rank_breakdown(rows, name_key="product_code")
         if want_by_customer:
             rows = [
-                {"customer_name": name, **_quantised_figures(acc)}
-                for name, acc in month_customer_acc.get(month_key, {}).items()
+                {"customer_name": name, **_quantised_figures(fig)}
+                for name, fig in breakdown_acc.get(month_key, {}).items()
             ]
             entry["by_customer"] = _rank_breakdown(rows, name_key="customer_name")
         months.append(entry)
 
+    # ----------------------------------------------------------------- so_rows (detail=so)
     so_rows: Optional[list[dict]] = None
     if want_so_rows:
+        # S9-shaped, S15's own instruction: distinct warehouse codes, comma joined,
+        # ORDERED - `string_agg(DISTINCT col, sep ORDER BY col)` renders correctly
+        # only with the ORDER BY wrapping the SEPARATOR argument (Postgres syntax
+        # places ORDER BY after every value argument, not between DISTINCT and the
+        # separator).
+        location_expr = func.string_agg(
+            Warehouse.warehouse_code.distinct(),
+            aggregate_order_by(literal_column("', '"), Warehouse.warehouse_code),
+        )
+        q3 = (
+            db.query(
+                SalesOrder.so_number,
+                SalesOrder.order_date,
+                Customer.customer_name,
+                location_expr.label("location"),
+                *_figure_sum_labels(figure_exprs),
+            )
+            .select_from(SalesOrderLine)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+            .filter(*filters)
+            .group_by(SalesOrder.id, SalesOrder.so_number, SalesOrder.order_date, Customer.customer_name)
+        )
         rows = [
             {
-                "so_number": v["so_number"],
-                "customer_name": v["customer_name"],
-                "location": ", ".join(sorted(v["_locations"])) if v["_locations"] else None,
-                "order_date": v["order_date"],
-                **_quantised_figures(v),
+                "so_number": r.so_number,
+                "customer_name": r.customer_name,
+                "location": r.location,
+                "order_date": r.order_date,
+                **_quantised_figures({
+                    "ordered_qty": _dec(r.ordered_qty), "ordered_value": _dec(r.ordered_value),
+                    "confirmed_qty": _dec(r.confirmed_qty), "confirmed_value": _dec(r.confirmed_value),
+                    "outstanding_qty": _dec(r.outstanding_qty), "outstanding_value": _dec(r.outstanding_value),
+                }),
             }
-            for v in so_acc.values()
+            for r in q3.all()
         ]
         # AC-1629: order_date descending, ties by so_number descending, undated
         # last - the same two-step stable-sort idiom

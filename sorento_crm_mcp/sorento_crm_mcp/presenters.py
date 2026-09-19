@@ -56,6 +56,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_procurement_po_last_cost_list",
         "crm_outstanding_report",
         "crm_low_stock_report",
+        "crm_sales_report",
     }
 )
 
