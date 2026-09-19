@@ -92,6 +92,24 @@ def _is_company_scoped(table: str) -> bool:
 DEFAULT_SOURCE_SYSTEM = "autocount"
 
 
+def is_same_source_system(
+    origin: Optional[IntegrationReference], source_system: str = DEFAULT_SOURCE_SYSTEM
+) -> bool:
+    """Whether an already-fetched ``origin_of()`` result is missing entirely,
+    or claims the row under ``source_system`` already.
+
+    The one predicate the code-wins seams (`MasterIngestService._apply_scoped`'s
+    adopt branch, `DeletionService`'s code fallback - ingest-products-code-wins,
+    SR0) share: a product AutoCount already claims resolves by code instead of
+    conflicting, but a row another source system claims still refuses - only
+    the SAME source gets to say "this is the same thing, just under a
+    different key". Takes the origin rather than re-resolving it, since both
+    call sites already hold one from their own `origin_of()`/`resolve()` call
+    and this runs on a batch that pushes thousands of records.
+    """
+    return origin is None or origin.source_system == source_system
+
+
 def _require_supported(entity_type: str) -> str:
     if entity_type not in SUPPORTED_ENTITY_TYPES:
         raise UnsupportedEntityType(
