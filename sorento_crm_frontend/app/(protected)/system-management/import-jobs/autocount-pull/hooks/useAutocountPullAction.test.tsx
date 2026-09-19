@@ -163,3 +163,35 @@ describe('useAutocountPullAction - Stock Balance (AC-PL-1, AC-PL-5, inventory.st
     expect(push).toHaveBeenCalledWith('/system-management/import-jobs/open-job-2');
   });
 });
+
+describe('useAutocountPullAction - getCurrentPull gated on the permission (captain ruling, Phase 3 fix round, V-2)', () => {
+  it('never calls getCurrentPull when the caller lacks the permission', async () => {
+    useHasPermission.mockReturnValue(false);
+    getCurrentPull.mockResolvedValue(null);
+
+    renderHook(
+      () => useAutocountPullAction('products', 'master_data.products.autocount_pull'),
+      { wrapper },
+    );
+
+    // Give react-query a tick to have fired the query if it were going to.
+    await waitFor(() => expect(useHasPermission).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(getCurrentPull).not.toHaveBeenCalled();
+  });
+
+  it('calls getCurrentPull once the caller holds the permission', async () => {
+    useHasPermission.mockReturnValue(true);
+    getCurrentPull.mockResolvedValue(null);
+
+    renderHook(
+      () => useAutocountPullAction('products', 'master_data.products.autocount_pull'),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(getCurrentPull).toHaveBeenCalledWith('products'));
+  });
+});

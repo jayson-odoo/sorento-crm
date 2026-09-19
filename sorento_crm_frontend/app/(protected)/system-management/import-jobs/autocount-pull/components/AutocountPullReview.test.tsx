@@ -262,3 +262,22 @@ describe('AutocountPullReview - warnings (captain ruling, SR4 fix round)', () =>
     expect(screen.getByText('Stock List file was not replaced')).toBeInTheDocument();
   });
 });
+
+describe('AutocountPullReview - confirmed phase actions (captain ruling, Phase 3 fix round, V-4)', () => {
+  it('Download is available once confirmed too; Confirm is not', () => {
+    usePull.mockReturnValue({
+      data: basePull({
+        phase: 'confirmed',
+        header: PRODUCTS_HEADER,
+        counts: PRODUCT_COUNTS,
+        apply_job_id: 'b2c3d4e5-f6a7-4890-b123-456789abcdef',
+      }),
+      isLoading: false,
+    });
+
+    render(<AutocountPullReview jobId="job-1" />);
+
+    expect(screen.getByRole('button', { name: /Download/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Confirm$/ })).not.toBeInTheDocument();
+  });
+});

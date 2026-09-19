@@ -21,7 +21,7 @@
  * the right method/url/body, fails - not because of a typo in the test, but because the mock
  * branch runs instead of the real one. S6 fails because the mock and its fixtures still exist.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
@@ -33,6 +33,7 @@ import {
   getPullRows,
   confirmPull,
   comparePull,
+  downloadPullXlsx,
   startPullErrorMessage,
 } from './autocountPullService';
 
@@ -204,6 +205,59 @@ describe('getPullRows / confirmPull / comparePull wire shapes (AC-RV-3, AC-PC-1,
     const init = lastInit();
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({ filename: 'my.xlsx', rows });
+  });
+});
+
+describe('downloadPullXlsx filename (captain ruling, Phase 3 fix round, V-3)', () => {
+  function blobResponse(headers: Record<string, string> = {}) {
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => headers[k.toLowerCase()] ?? headers[k] ?? null },
+      blob: async () => new Blob(['x']),
+    } as unknown as Response;
+  }
+
+  /** Captures the `<a download>` element the function creates, appends, clicks and removes -
+   *  all synchronously, so there is nothing left in the DOM to query afterwards. */
+  function captureDownloadAnchor(): { get: () => HTMLAnchorElement | null } {
+    let captured: HTMLAnchorElement | null = null;
+    const realCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = realCreateElement(tag);
+      if (tag === 'a') captured = el as HTMLAnchorElement;
+      return el;
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => 'blob:mock';
+    (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
+    return { get: () => captured };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('V-3a: the saved filename never contains the job id (no entity known at this layer)', async () => {
+    apiFetch.mockResolvedValue(blobResponse());
+    const anchor = captureDownloadAnchor();
+
+    await downloadPullXlsx(REVIEW_PULL.job_id);
+
+    const el = anchor.get();
+    expect(el).not.toBeNull();
+    expect(el!.download).not.toContain(REVIEW_PULL.job_id);
+  });
+
+  it('V-3b: uses the server\'s Content-Disposition filename when present', async () => {
+    apiFetch.mockResolvedValue(
+      blobResponse({ 'content-disposition': 'attachment; filename="autocount-products-pull.xlsx"' }),
+    );
+    const anchor = captureDownloadAnchor();
+
+    await downloadPullXlsx(REVIEW_PULL.job_id);
+
+    expect(anchor.get()!.download).toBe('autocount-products-pull.xlsx');
   });
 });
 

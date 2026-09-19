@@ -184,6 +184,10 @@ class TestRowsRoute:
             assert got["desc_2"] == expected["desc_2"]
             assert got["item_group"] == expected["item_group"]
             assert got["item_brand"] == expected["item_brand"]
+            # Captain ruling (Phase 3 fix round, F-9): `price` must be a real number, not a
+            # string the FE has to parse - the string-blind `_num()` compare alone would not
+            # catch a type regression here.
+            assert isinstance(got["price"], (int, float)), got["price"]
             assert _num(got["price"]) == _num(expected["price"])
             assert got["is_active"] == expected["is_active"]
 
