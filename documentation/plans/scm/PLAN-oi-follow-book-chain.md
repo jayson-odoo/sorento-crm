@@ -164,5 +164,20 @@ Reviewer, security reviewer and the API evidence run all reported. Every blocker
 
 ## 8. Rollout
 
-Deploy, run the backfill dry run on prod, read the displaced count with the owner, then
-apply. Until the backfill runs, only rows touched by a new push or a cascade pass change.
+Owner ruling 19 Sep 2026: no backfill run on prod. He wants to watch the automation do it.
+
+1. Deploy.
+2. The owner runs a purchase order reconcile from the shared service, which re-pushes every
+   purchase order through the ingest. Every pushed PO line that carries `from_so_line_ref`
+   triggers the book step, whether or not the line changed (`written_po_line_refs` is filled
+   from every line of the push, there is no unchanged-skip). The pairing walks from the PO line
+   to the shipping order lines already held, so a PO reconcile alone covers the chain; an SPO
+   reconcile is not required.
+3. Bound to know: each ingest request follows at most `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` (200)
+   rows and reports the rest as `book_follow_rows_dropped` on its response. Anything dropped,
+   and any row whose purchase order the reconcile did not re-push, is picked up by the next
+   linking pass: Order Inquiries, Auto link all runs the book step over every open row,
+   uncapped (measured 30 s company-wide on the prod copy).
+4. Displacements happen live during the reconcile, each with its note. The backfill script
+   stays in the repo as a DRY-RUN preview tool for a prod copy only (expected linked and
+   displaced counts before the reconcile); it is not a rollout step.
