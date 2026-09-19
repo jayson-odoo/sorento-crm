@@ -30,7 +30,8 @@ transferred to DO, unit price, discount, line total, required date).
 4. They type "only SRTWT7445" or "june 2026 only". The same report re-runs narrowed, the header
    shows the new filter, and the offer is re-armed over the narrower set.
 5. They type "sales report for SRTWT7445" (product only). Same shape; the list under each
-   month is By customer instead of By product.
+   month is By customer instead of By product. With no date named, this prints the current
+   year, not all dates; "all dates" said in words gives everything (S18).
 6. They type "project sales report for hanlim". Same report, `Channel: Project`, counting only
    sales orders classed project.
 7. A contact without the grant asking any of the above gets one line, `Sales report is not
@@ -77,6 +78,11 @@ Other stakeholders: nobody is notified; this is a read.
 | S11 | The detail offer reuses the sticky offer mechanism under its own kind `sales_report_detail`. No new arm in the head: the existing detail-offer arms accept the second kind. |
 | S12 | The parser decides the ask (`order_status: "sales_report"`) and the channel. No word table in deterministic code. |
 | S13 | Amounts print `RM 1,234.50` (two decimals, thousands separators). Quantities print as the outstanding report prints them. |
+| S14 | The route re-checks the per-contact `sales_orders.sales_report` reveal key when `contact_id` is present (not just the lane's own gate, which a direct MCP/n8n caller bypasses): no grant is 403 `sales_report_not_enabled`. `contact_id` and `space_id` are both-or-neither on this route - one without the other is 422. |
+| S15 | The pro-rated confirmed value rounds to the cent PER LINE, not once at the end of an aggregate; every total (month, breakdown, `so_rows`) is a SUM of those already-rounded cents. |
+| S16 | A line with neither `required_date` nor its SO's `order_date` is excluded from EVERYTHING (no further fallback to `created_at`) - not just absent from `months[]` but from `so_rows` too, under every date window including none. |
+| S17 | `customer_query` needs at least 3 characters (after strip) - shorter is 422. The report is aggregated in SQL, not rolled up from raw rows in Python. |
+| S18 | A PRODUCT-ONLY ask (a resolved product, no customer) with no date window defaults to the CURRENT CALENDAR YEAR (Malaysia time); a customer ask, or a customer+product ask, with no date stays all dates. The default is built in the lane, never the route - `date_from`/`date_to` absent still means all dates when the route is called directly. "All dates" said in words turns the default off. |
 
 ## Phase 1 - the reply (presenter over mock JSON)
 
@@ -154,8 +160,10 @@ Other stakeholders: nobody is notified; this is a read.
   `restricted_fields = (("sales_orders.sales_report", "Sales report"),)`. Evidence: pytest, MCP.
 - **AC-1641 [BE][T]** `sales_orders.sales_report` is in `FIELD_REVEAL_KEYS`, the pinning
   tests pass, and the key is listed on Contacts > Access. Evidence: pytest plus AC-1670.
-- **AC-1642 [BE][T]** The in-app AI assistant bootstrap enables `crm_sales_report`
-  idempotently (second run changes nothing). Evidence: pytest.
+- **AC-1642 [BE][T]** STRUCK 19 Sep, security B1: no bootstrap - the in-app AI assistant must
+  never carry `crm_sales_report`, or a staff member 403 on the route (no
+  `order_management.orders.view`) could read the money through the assistant instead, across
+  every company (the same reason `crm_low_stock_report` is kept off it, N4).
 
 ## Phase 2 - the lane
 

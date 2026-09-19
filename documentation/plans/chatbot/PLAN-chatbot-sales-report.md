@@ -1,6 +1,6 @@
 # PLAN - Chatbot sales report: confirmed vs outstanding sales, by month, one shape
 
-Status: APPROVED by owner 19 Sep 2026 on the lavish page ("ok good to go") after three grill rounds; lane `feat/chatbot-sales-report` (worktree `.claude/worktrees/chatbot-sales-report`); S1 in progress.
+Status: BUILT, Phase 3 fix round in progress 19 Sep 2026; DRAFT PR #1034.
 UAC: `chatbot-sales-report-acceptance-criteria.md` (AC-16xx, rulings S1 to S13).
 Base: origin/main. The turn re-architecture (#952, #863) is on hold by owner ruling and this
 lane does not wait for it. Branch `feat/chatbot-sales-report`, one lane, one PR.
@@ -126,7 +126,7 @@ No migration for data. One migration publishes the parser prompt text (S4 below)
 |---|---|---|---|
 | S1 | 1 | Presenter over mock JSON; goldens for customer / product / both / miss / detail; dash guard | `sorento_crm_mcp/sorento_crm_mcp/presenters.py` (`_sales_report`, `_sales_report_detail`, shared money formatter), `documentation/plans/chatbot/samples/sales-report-*.txt` + `.json`, `sorento_crm_mcp/tests/test_presenters_sales_report.py` |
 | S2 | 2 | Route + service + response model | `app/api/v1/order_management/orders.py`, `app/services/sales_report_service.py`, `app/schemas/order_management.py`, `tests/test_sales_report.py` |
-| S3 | 2 | MCP tool + reveal key + assistant bootstrap | `sorento_crm_mcp/sorento_crm_mcp/catalog.py` (`crm_sales_report`), `app/services/contact_field_reveal_service.py` (`FIELD_REVEAL_KEYS`), `app/services/sales_report_bootstrap.py` + `app/main.py`, `app/services/mcp_tool_domains.py`, `sorento_crm_mcp/tests/test_catalog_sales_report.py`, `tests/test_sales_report_bootstrap.py` |
+| S3 | 2 | MCP tool + reveal key (NO assistant bootstrap - struck 19 Sep, security B1: the in-app assistant must never carry `crm_sales_report`, same reason as `crm_low_stock_report`, N4) | `sorento_crm_mcp/sorento_crm_mcp/catalog.py` (`crm_sales_report`), `app/services/contact_field_reveal_service.py` (`FIELD_REVEAL_KEYS`), `app/services/mcp_tool_domains.py`, `sorento_crm_mcp/tests/test_catalog_sales_report.py` |
 | S4 | 2 | Lane wiring, see below | `chatbot_parser_prompt.py` + one alembic migration publishing it, `contracts.py`, `head/parser.py`, `lanes/business/fetch.py`, `lanes/business/__init__.py`, `lanes/business/answer.py`, `lanes/business/resolve_gate.py`, `tail/pending.py`, `tail/compile_state.py`, `head/output_exchange.py`, `tests/chatbot/test_sales_report_lane.py`, `tests/chatbot/console_cases/2026-09-19-sales-report.yaml` |
 | S5 | 3 | reviewer + security-reviewer (new route, per-contact key, company scope) + console check + one browser pass on Contacts > Access, in parallel; then guide-writer | `documentation/plans/chatbot/evidence/sales-report/`, `documentation/user-guides/system-management/chatbot-sales-report.md` |
 

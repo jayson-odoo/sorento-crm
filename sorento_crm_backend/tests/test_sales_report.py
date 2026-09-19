@@ -684,6 +684,89 @@ def test_detail_rows_roll_up_sorted_and_tally(client, db):
     )
 
 
+# --------------------------------------------------------------------- R-B2
+# reviewer finding, Phase 3 fix round: the outstanding-report route echoes its
+# own `detail` query param onto the response body (`if detail in ("so", "do"):
+# body["detail"] = detail`, right before its own `return JSONResponse(...)`) so
+# the MCP presenter can tell a month-block body from a detail body without
+# re-deriving it from `so_rows`'s mere presence. `get_sales_report` never does
+# this - `so_rows`/`detail` are both silently dropped from the echo, so the
+# presenter has no wire signal at all for which shape it was handed.
+
+
+def test_detail_so_is_echoed_on_the_body(client, db):
+    """`detail=so` echoes `"detail": "so"` onto the body; without `detail` the
+    key is absent entirely (never `null`) - the same "declared but present only
+    when asked" contract `so_rows` already gets on this response."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(
+        db, product_id=prod.id, ordered=1, delivered=0, line_total=Decimal("10.00"),
+        order_date=date(2026, 6, 1),
+    )
+    db.commit()
+
+    with_detail = client.get(BASE, params={"product_code": prod.product_code, "detail": "so"})
+    assert with_detail.status_code == 200, with_detail.text
+    assert with_detail.json().get("detail") == "so", with_detail.json()
+
+    without_detail = client.get(BASE, params={"product_code": prod.product_code})
+    assert without_detail.status_code == 200, without_detail.text
+    assert "detail" not in without_detail.json(), without_detail.json()
+
+
+def test_a_real_so_detail_body_renders_through_the_real_presenter(client, db):
+    """R-B2's end-to-end seam (this file's own choice - it needs the real HTTP
+    route, which only the backend TestClient can call): a REAL route body
+    obtained with `detail=so` (not a hand-set key, unlike
+    `test_catalog_sales_report.py`'s own pure-presenter test at its lines
+    90-93, whose `body["detail"] = "so"` is a deliberate hand-set kept there
+    for a presenter-only unit test - noted in ITS docstring too) fed through
+    `sorento_crm_mcp.presenters.present_response("crm_sales_report", ...)` must
+    render the SO detail text, not the month-block text: `*SO Number:*` present,
+    `*_By product_*` absent. This only ever renders correctly once the route
+    echoes `detail` (R-B2 above) - `present_response`'s own dispatcher reads
+    `data.get("detail") == "so"` to choose `_sales_report_detail` over
+    `_sales_report` (S3, already wired)."""
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    mcp_root = repo_root / "sorento_crm_mcp"
+    if str(mcp_root) not in sys.path:
+        sys.path.append(str(mcp_root))
+    try:
+        from sorento_crm_mcp.presenters import present_response
+    except ImportError:  # pragma: no cover - only where the package is not on disk
+        pytest.skip("sorento_crm_mcp is not importable in this environment")
+
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT SR Presenter Customer")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(
+        db, product_id=prod.id, ordered=10, delivered=4, line_total=Decimal("100.00"),
+        customer_id=cust.id, order_date=date(2026, 6, 1), so_number="ZZT-SR-PRESENTER-SO",
+    )
+    db.commit()
+
+    resp = client.get(BASE, params={"customer_ids": cust.id, "detail": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("detail") == "so", (
+        "the route must echo detail=so (R-B2) before the presenter has any wire "
+        f"signal to dispatch on: {body}"
+    )
+
+    rendered = present_response("crm_sales_report", resp.text)
+    import json as _json
+
+    envelope = _json.loads(rendered)
+    text = envelope.get("response") or ""
+    assert "*SO Number:*" in text, (
+        f"a real detail=so body must render through the detail presenter, not the "
+        f"month-block one: {text!r}"
+    )
+    assert "*_By product_*" not in text, text
+
+
 # --------------------------------------------------------------------- AC-1630
 
 
@@ -750,6 +833,324 @@ def test_response_model_keeps_every_field(client, db):
         "confirmed_qty", "confirmed_value", "outstanding_qty", "outstanding_value",
     ):
         assert key in month, f"missing months[].{key}: {month}"
+
+
+# --------------------------------------------------------------------- R-B4
+# reviewer finding, Phase 3 fix round: AC-1620's own fixture mixes a cancelled
+# LINE into a multi-line SO alongside open ones, and never isolates a whole
+# CANCELLED SO on its own. This extends it with both cases on their own SOs -
+# a cancelled line beside an open one on an OPEN header, and an open line
+# under a CANCELLED header - so neither is masked by the other contributing
+# something real to the same totals.
+
+
+def test_cancelled_lines_and_cancelled_sos_never_count(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _lines_on_one_so(
+        db, product_id=prod.id, order_date=date(2026, 6, 1), so_number="ZZT-SR-CANCEL-OPEN",
+        lines=[
+            {"ordered": 5, "delivered": 2, "line_total": Decimal("50.00"), "line_status": "open"},
+            {"ordered": 9, "delivered": 4, "line_total": Decimal("90.00"), "line_status": "cancelled"},
+        ],
+    )
+    _lines_on_one_so(
+        db, product_id=prod.id, order_date=date(2026, 6, 1), so_number="ZZT-SR-CANCEL-SO",
+        header_status="cancelled",
+        lines=[{"ordered": 6, "delivered": 6, "line_total": Decimal("60.00"), "line_status": "open"}],
+    )
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "detail": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["months"]) == 1, body["months"]
+    month = body["months"][0]
+    assert month["ordered_qty"] == 5, month
+    assert month["confirmed_qty"] == 2, month
+    assert month["outstanding_qty"] == 3, month
+    assert _money(month["ordered_value"]) == Decimal("50.00"), month
+    assert month["so_count"] == 1, (
+        "the CANCELLED SO's own line must not count towards so_count at all", month,
+    )
+    so_numbers = [r["so_number"] for r in body["so_rows"]]
+    assert so_numbers == ["ZZT-SR-CANCEL-OPEN"], (
+        "neither the cancelled LINE nor the cancelled SO's line may surface in "
+        f"so_rows: {so_numbers}"
+    )
+
+
+# --------------------------------------------------------------------- R-S3
+# reviewer finding, Phase 3 fix round (captain ruling S15): the pro-rated
+# confirmed value rounds to the cent PER LINE, and every total (month,
+# breakdown, so_rows) is a SUM of those already-rounded cents - never an exact
+# Decimal accumulated across many lines and rounded once at the end. The
+# service today accumulates exact fractions (`_new_figures`/`_accumulate`) and
+# only calls `_money_edge` once, at the very end, per aggregate
+# (`_quantised_figures`) - so three lines whose exact confirmed value is
+# 10/3 = 3.333... repeating sum to a total that rounds differently from three
+# separately-rounded 3.33s.
+
+
+def test_rounding_tallies_to_the_cent(client, db):
+    """Three lines, one month, two products: qty 3 delivered 1 line_total
+    10.00 each (10/3 = 3.333... repeating). Rounded PER LINE: confirmed 3.33,
+    outstanding 6.67, each summed three times = 9.99 / 20.01 / 30.00. The
+    CURRENT service instead accumulates the exact fraction across all three
+    lines before rounding once, which rounds to 10.00 / 20.00 / 30.00 - the
+    identity still holds arithmetically, but the CENTS ruling (S15) does not."""
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust"))
+    prod_a = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKUA"))
+    prod_b = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKUB"))
+    for prod in (prod_a, prod_a, prod_b):
+        _so_line(
+            db, product_id=prod.id, ordered=3, delivered=1, line_total=Decimal("10.00"),
+            customer_id=cust.id, order_date=date(2026, 6, 1),
+        )
+    db.commit()
+
+    resp = client.get(BASE, params={"customer_ids": cust.id})
+    assert resp.status_code == 200, resp.text
+    month = resp.json()["months"][0]
+    assert _money(month["confirmed_value"]) == Decimal("9.99"), month
+    assert _money(month["outstanding_value"]) == Decimal("20.01"), month
+    assert _money(month["ordered_value"]) == Decimal("30.00"), month
+
+    for figure in ("ordered_value", "confirmed_value", "outstanding_value"):
+        total = sum((_money(r[figure]) for r in month["by_product"]), Decimal("0"))
+        assert total == _money(month[figure]), (figure, month["by_product"], month)
+
+    detail = client.get(BASE, params={"customer_ids": cust.id, "detail": "so"})
+    assert detail.status_code == 200, detail.text
+    dbody = detail.json()
+    for figure in ("ordered_value", "confirmed_value", "outstanding_value"):
+        row_total = sum((_money(r[figure]) for r in dbody["so_rows"]), Decimal("0"))
+        month_total = sum((_money(m[figure]) for m in dbody["months"]), Decimal("0"))
+        assert row_total == month_total, (figure, dbody["so_rows"], dbody["months"])
+
+
+# --------------------------------------------------------------------- R-S2
+# reviewer finding, Phase 3 fix round (captain ruling S16): a line with NEITHER
+# `required_date` NOR its SO's `order_date` is excluded from EVERYTHING - the
+# service's own module docstring already states this as the intended rule
+# ("A line with no bucket at all... cannot be placed in any month, so it is
+# excluded from EVERYTHING"), but the code falls back a THIRD time to the SO's
+# `created_at` (`bucket_date = r.required_date or r.order_date or
+# r.created_at.date()`), so such a line is never actually excluded - it lands
+# in whatever month `created_at` (today, at seed time) falls in instead.
+
+
+def test_a_line_with_no_dates_is_excluded_everywhere(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _lines_on_one_so(
+        db, product_id=prod.id, order_date=None, so_number="ZZT-SR-NO-DATE-SO",
+        lines=[
+            {"ordered": 4, "delivered": 0, "line_total": Decimal("40.00"), "required_date": None},
+            # A sibling line on the SAME SO with a real bucket, so the SO itself is not
+            # absent from the response - only the undated LINE must be missing.
+            {"ordered": 2, "delivered": 0, "line_total": Decimal("20.00"), "required_date": date(2026, 6, 1)},
+        ],
+    )
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "detail": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["months"]) == 1, body["months"]
+    month = body["months"][0]
+    assert month["month"] == "2026-06", month
+    assert month["ordered_qty"] == 2, (
+        "the undated line (qty 4) must not land in ANY month, including the "
+        f"one its SO's sibling line and its own created_at share: {month}"
+    )
+    row = next(r for r in body["so_rows"] if r["so_number"] == "ZZT-SR-NO-DATE-SO")
+    assert row["ordered_qty"] == 2, (
+        "the undated line must not surface in so_rows either - a row sum that "
+        f"included it would silently disagree with the month total: {row}"
+    )
+
+    windowed = client.get(
+        BASE,
+        params={
+            "product_code": prod.product_code, "detail": "so",
+            "date_from": "1900-01-01", "date_to": "2100-01-01",
+        },
+    )
+    assert windowed.status_code == 200, windowed.text
+    wrow = next(r for r in windowed.json()["so_rows"] if r["so_number"] == "ZZT-SR-NO-DATE-SO")
+    assert wrow["ordered_qty"] == 2, (
+        "an all-encompassing window must not surface the undated line under "
+        f"today's created_at either: {wrow}"
+    )
+
+
+# --------------------------------------------------------------------- SEC-B2
+# security review, Phase 3 fix round (captain ruling S17): `customer_query`
+# needs at least 3 characters (after strip) - the route today only checks it
+# is non-empty (`subject_required`), so a single letter ILIKE scans and returns
+# every customer whose name contains it, company-wide.
+
+
+@pytest.mark.parametrize("query", ["a", "ab", " a "])
+def test_customer_query_needs_three_characters(client, db, query):
+    """A WHOLLY BLANK query ("  ") is deliberately excluded from this
+    parametrization: it strips to "" and already 422s as `subject_required`
+    (no subject named at all) - a pre-existing, unrelated check this test must
+    not conflate with the NEW minimum-length rule."""
+    resp = client.get(BASE, params={"customer_query": query})
+    assert resp.status_code == 422, (query, resp.text)
+
+
+def test_customer_query_of_three_characters_is_accepted(client, db):
+    resp = client.get(BASE, params={"customer_query": "abc"})
+    assert resp.status_code == 200, resp.text
+
+
+# --------------------------------------------------------------------- SEC-B2
+# security review, Phase 3 fix round: the report is rolled up from raw ROWS in
+# Python (`sales_report_service.py`'s own module docstring: "ONE base query...
+# everything else... is rolled up from that SAME result set in Python"). For a
+# big dealer (HANLIM: ~80 products/month over 37 months, UAC "Measured") that
+# is thousands of rows read into the request process for one WhatsApp reply.
+# This does not (and, honestly, cannot from outside the service without
+# instrumenting row-fetch counts) prove Python never sees a raw row - it proves
+# the report's OWN SELECT never aggregates in SQL (no GROUP BY at all), which
+# is the necessary condition for "rolled up in Python" to be true, and is the
+# strongest assertion available without a fetch-counting cursor wrapper. See
+# the report to the captain for what this test does and does not prove.
+
+
+def test_report_is_aggregated_in_sql(client, db):
+    from sqlalchemy import event
+
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=unique_code("Cust"))
+    prods = [product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code(f"SKU{i}")) for i in range(2)]
+    for i in range(40):
+        _so_line(
+            db, product_id=prods[i % 2].id, ordered=1, delivered=0, line_total=Decimal("10.00"),
+            customer_id=cust.id, order_date=date(2026, 6, 1),
+        )
+    db.commit()
+
+    connection = db.get_bind()
+    calls: list[str] = []
+
+    def _capture(conn, cursor, statement, *_a, **_kw):
+        if statement.strip().upper().startswith("SELECT"):
+            calls.append(statement)
+
+    event.listen(connection, "before_cursor_execute", _capture)
+    try:
+        resp = client.get(BASE, params={"customer_ids": cust.id})
+    finally:
+        event.remove(connection, "before_cursor_execute", _capture)
+    assert resp.status_code == 200, resp.text
+
+    report_calls = [c for c in calls if "sales_order_lines" in c.lower()]
+    assert report_calls, "no SELECT touched sales_order_lines at all"
+    assert any("group by" in c.lower() for c in report_calls), (
+        "the report's own SELECT never aggregates in SQL - it reads every raw "
+        f"line into Python instead: {report_calls}"
+    )
+
+
+# --------------------------------------------------------------------- SEC-S1
+# security review, Phase 3 fix round (captain ruling S14): the route re-checks
+# the per-contact `sales_orders.sales_report` reveal key WHEN a contact_id is
+# present - unlike the outstanding-report route, which only ever has the LANE
+# withhold scope (`so_refused`), this route has no such caller today at all:
+# an n8n workflow or a console session calling the MCP tool directly with a
+# contact's own contact_id/space_id bypasses the chatbot lane's own gate
+# entirely (`lanes/business/__init__.py`'s `_SALES_REPORT_GRANT` check), so the
+# only gate that ever runs is the route's - and today there is none.
+
+
+def test_contact_without_the_key_is_refused_by_the_route(client, db):
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(
+        db, product_id=prod.id, ordered=1, delivered=0, line_total=Decimal("10.00"),
+        order_date=date(2026, 6, 1),
+    )
+    contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')[:10]}")
+    db.add(contact)
+    db.flush()
+    db.add(
+        RespondContactCompany(
+            id=str(uuid.uuid4()), respond_contact_id=contact.id, company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+    db.commit()
+
+    refused = client.get(
+        BASE,
+        params={"product_code": prod.product_code, "contact_id": contact.id, "space_id": "zzt-space"},
+    )
+    assert refused.status_code == 403, refused.text
+    assert "sales_report_not_enabled" in refused.text, refused.text
+
+    set_granted_keys(db, contact.id, ["sales_orders.sales_report"], actor_id=None)
+    db.commit()
+
+    granted = client.get(
+        BASE,
+        params={"product_code": prod.product_code, "contact_id": contact.id, "space_id": "zzt-space"},
+    )
+    assert granted.status_code == 200, granted.text
+
+    plain = client.get(BASE, params={"product_code": prod.product_code})
+    assert plain.status_code == 200, plain.text
+
+
+# --------------------------------------------------------------------- SEC-S2
+# security review, Phase 3 fix round (captain ruling S14): contact_id and
+# space_id are both-or-neither on THIS route - one without the other is 422,
+# never silently treated as "no contact at all" (which would skip the SEC-S1
+# gate above entirely) or as "no space at all" (which the generic company-scope
+# resolver already treats as neither given, per its own `if not contact_id or
+# not space_id: return` - the SAME silent-skip this route's own reveal gate
+# must not inherit).
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"contact_id": "11111111-1111-1111-1111-111111111111"},
+        {"space_id": "zzt-space"},
+    ],
+)
+def test_contact_identity_is_both_or_neither(client, db, params):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(db, product_id=prod.id, ordered=1, delivered=0, line_total=Decimal("10.00"))
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, **params})
+    assert resp.status_code == 422, (params, resp.text)
+
+
+# --------------------------------------------------------------------- SEC-B1
+# security review, Phase 3 fix round (captain ruling): AC-1642 struck - the
+# in-app AI assistant must NEVER carry `crm_sales_report` on its enabled tools
+# list, the same reason `crm_low_stock_report` is kept off it (N4, app/main.py,
+# above): a staff member who is 403 on the ROUTE (no
+# order_management.orders.view permission) could otherwise read the money
+# figures through the in-app assistant instead, across every company - the
+# assistant is a DIFFERENT auth boundary from the route's RBAC permission.
+
+
+def test_sales_report_is_not_enabled_for_the_in_app_assistant():
+    import importlib
+    from pathlib import Path
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.services.sales_report_bootstrap")
+
+    import app.main as main_mod
+
+    source = Path(main_mod.__file__).read_text()
+    assert "sales_report_bootstrap" not in source, (
+        "app/main.py must not wire the struck bootstrap at all (AC-1642 STRUCK)"
+    )
 
 
 # --------------------------------------------------------------------- AC-1632
@@ -839,7 +1240,15 @@ def test_auth_401_403_apikey_and_company_scope(db, monkeypatch):
     prod_a = product(db, company_id=DEFAULT_COMPANY_ID, code=shared_code)
     prod_b = product(db, company_id=mocha.id, code=shared_code)
 
-    _so_line(db, product_id=prod_a.id, ordered=10, delivered=0, line_total=Decimal("100.00"))
+    # R-S2 (Phase 3 fix round, captain ruling S16): the created_at fallback is
+    # REMOVED, so a line bucketed by neither required_date nor order_date is
+    # now excluded from every total - this seed must carry a real order_date
+    # or `total_ordered == 10` below would silently see 0 instead. Assertions
+    # unchanged; only this seed's own date is added.
+    _so_line(
+        db, product_id=prod_a.id, ordered=10, delivered=0, line_total=Decimal("100.00"),
+        order_date=date(2026, 6, 1),
+    )
     so_b = SalesOrder(
         id=str(uuid.uuid4()), so_number=unique_code("SO"), status="open", company_id=mocha.id,
     )

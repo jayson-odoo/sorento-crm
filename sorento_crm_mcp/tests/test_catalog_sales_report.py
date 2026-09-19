@@ -21,11 +21,13 @@ below fails on a `None == <golden text>` comparison, not a crash.
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 from pathlib import Path
 
 from sorento_crm_mcp.catalog import CATALOG
-from sorento_crm_mcp.presenters import present_response
+from sorento_crm_mcp.presenters import PRESENTER_TOOLS, present_response
+from sorento_crm_mcp.server import _compile_tool
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sales_report"
 
@@ -94,6 +96,30 @@ def test_present_response_wires_crm_sales_report_detail() -> None:
         f"got envelope keys {sorted(envelope)}, response={envelope.get('response')!r}"
     )
     assert envelope.get("has_result") is True, envelope
+
+
+# --------------------------------------------------------------------- R-B1
+# reviewer finding, Phase 3 fix round: `crm_sales_report` is wired into
+# `present_response` (S1/S3 already shipped) but was never added to
+# `PRESENTER_TOOLS` - the frozenset `server._compile_tool` reads to decide
+# whether to inject the `view` parameter into the compiled tool's signature
+# (see that module's own comment, and `test_catalog_low_stock.py`'s sibling
+# test for `crm_low_stock_report`, lines 96-111, which this test mirrors
+# exactly). Without it the LLM has no `view` argument to send, `view=render`
+# never reaches the dispatcher, and every call falls through to the raw route
+# body - the same bug class AC-62 pins for the low stock report.
+
+
+def test_sales_report_is_a_presenter_tool() -> None:
+    spec = next(s for s in CATALOG if s.name == "crm_sales_report")
+    assert "crm_sales_report" in PRESENTER_TOOLS, (
+        "crm_sales_report must be a presenter tool or `view` is never injected "
+        f"into its compiled signature: {sorted(PRESENTER_TOOLS)}"
+    )
+    params = inspect.signature(_compile_tool(spec)).parameters
+    assert "view" in params, (
+        f"the compiled tool must accept `view`: {sorted(params)}"
+    )
 
 
 def test_present_response_wires_crm_sales_report_miss() -> None:
