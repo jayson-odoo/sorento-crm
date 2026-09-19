@@ -111,6 +111,68 @@ the 22 rows on prod must match it (quantity, Was/Now, greyed, which document sit
 5. Owner on prod: deploy, rollback dry run + apply, re-upload, then `compare.py` for SO314592 to
    SO314595.
 
+## 3.1 Seams (read off origin/main 1316bcd77, 20 Sep)
+
+- Importer `app/services/project_order_inquiry_import_service.py`: `_already_raised` (988) returns
+  only a SET of core line ids with any non-cancelled row, used rows included, and never loads the
+  rows. `_run_pass` sets `match.already_raised` (901). `apply` skips `ALREADY_RAISED` at 2718-2801,
+  else `_Raiser.raise_row` (2529) then links through `service._write_link`. 2.1(a) and 2.1(b) both
+  sit at this one branch: 2.1(a) inside `already_raised`, 2.1(b) just before `raise_row`.
+- A `Replaces N used` row: written in `project_order_inquiry_service.py` ~1104-1185; recognised by
+  `previous_qty` / `previous_delivery_date` set, `redirected_to_pool` false, note starting
+  `Replaces`.
+- Snapshot entry: `line_snapshots[]` from `project_supply_service._snapshot` (6517); keys
+  `project_line_id` (= the row's `so_line_id`, the mirror line), `core_line_id`, `buy_qty`,
+  `required_date`. Active decision per order: `ProjectSupplyService.active_decision(pso_id)` (1082).
+- Settle fields: `_settle_row_in_place` (`project_order_inquiry_service.py` 1383): `qty`,
+  `delivery_date`, `supply_decision_id`, note `; Was {qty} on {date}`, `previous_qty`,
+  `previous_delivery_date`, `changed_at`, `ack_state = changed`.
+- Links: `_write_link` (6808) is the one writer; `_remove_links` frees; received test is
+  `_received_documents_for` (1664). `_linkable_row_clauses` (2007) never offers a used row, so the
+  move to the used row calls `_write_link` directly, as the importer's history path already does.
+- `follow_book_for_rows` (2056) / `_displace_other_line_holders` (2391): a holder on the SAME core
+  line is protected (AC-FB-6), which is why AC-RB-9 may pass with no new code.
+- Rollback `scripts/rollback_oi_sheet_upload.py`: `rows_of` (100), `_remove` (150), `main` summary
+  (253-308).
+- New report code for AC-RB-3 in `app/services/import_outcome_codes.py`, constant + `LABELS` entry,
+  riding on the existing skip outcome.
+
+## 3.2 Captain's test list (tester writes these RED, before any implementation)
+
+New file `tests/test_oi_sheet_rebuild_from_planning.py`, on the `World` / `world()` harness of
+`tests/test_project_order_inquiry_import_migration.py` with `_apply`, `_rollback`, `_uploaded`,
+`_rows_of` as `tests/test_oi_sheet_pairing_repair.py` defines them. CI's database is empty: every
+test seeds its own order, lines, PO / SPO chain, fresh row and decision. A `Replaces N used` row and
+an active decision are seeded DIRECTLY (rows + a `line_snapshots` dict in `_snapshot`'s real
+shape), because that is prod's state today; only AC-RB-21 drives the real confirm.
+
+| AC | test name | asserts, in words |
+| --- | --- | --- |
+| RB-1 | `test_sheet_row_beside_replaces_row_is_raised_used` | one new row, `redirected_to_pool` true, qty 182, date 2026-06-01, note starts with the file stamp; outcome is not `already_raised` |
+| RB-2 | `test_two_same_qty_deliveries_pair_by_date` (parametrized over both file orders) | two used rows, each date pairs with the fresh row whose `previous_delivery_date` it equals |
+| RB-3 | `test_no_exact_match_raises_nothing_and_is_reported` (parametrized: qty off, date off) | row count on the line unchanged; outcome carries the new code and names item, qty, date, SO |
+| RB-4 | `test_second_upload_leaves_used_pair_alone` | second apply raises 0; every column of both rows equal before and after |
+| RB-5 | `test_rebuilt_used_row_is_outside_demand` | the read the existing used-row tests assert on (find it in `test_oi_one_header.py` / `test_order_inquiry_draft_links.py`) treats the rebuilt row as it treats a confirm-made used row |
+| RB-6 | `test_received_link_moves_from_fresh_row_to_used_row` | after apply: used row holds the received SPO link + its claim; fresh row holds none; claim count unchanged |
+| RB-7 | `test_received_link_move_is_capped_at_used_qty` | link 200 received, used row 182: used row holds 182, fresh row keeps 18 |
+| RB-8 | `test_open_link_on_fresh_row_never_moves` | open PO link stays on the fresh row untouched |
+| RB-9 | `test_follow_book_leaves_received_link_on_used_row` | after RB-6 state, `follow_book_for_rows` over the line: link still on the used row, none on the fresh row. MAY BE GREEN ALREADY once RB-6 is green: report which |
+| RB-10 | `test_rebuilt_links_are_autocounts_not_the_sheets` | sheet row cites a different PO than the book: no link to the sheet's PO anywhere |
+| RB-11 | `test_row_on_decided_line_is_raised_settled` | qty 280, date 2027-03-01, previous 182 / 2026-06-01, `supply_decision_id`, `changed_at` set, `ack_state` changed, note has the stamp and `Was 182 on 2026-06-01`; book link written |
+| RB-12 | `test_decision_equal_to_sheet_raises_plain` | no previous_*, no changed_at |
+| RB-13 | `test_buy_zero_decision_raises_plain` | qty 36 as the sheet states, no previous_*, not used |
+| RB-14 | `test_superseded_decision_is_ignored` + `test_order_without_decision_unchanged` | plain row in both |
+| RB-15 | `test_line_with_live_row_is_never_restated` | live plain row + active differing decision: `already_raised`, row unchanged |
+| RB-16 | `test_second_upload_leaves_settled_row_alone` | every column equal before and after |
+| RB-17 | `test_rollback_keeps_planning_rows` (parametrized over the three traits) | row, links, claims all present after apply |
+| RB-18 | `test_rollback_still_deletes_plain_rows` | as today |
+| RB-19 | `test_rollback_names_kept_rows` | dry run and apply output: kept count, and per kept row SO, item, qty, date, trait; removed count excludes them |
+| RB-20 | `test_rollback_then_reupload_changes_nothing_kept` | no duplicate, no column change |
+| RB-21 | `test_journey_upload_confirm_old_delete_rollback_reupload` | snapshot of used, fresh, restated, plain rows + links before the old-style delete equals the snapshot after rollback + re-upload (ids and timestamps aside) |
+
+Each test must fail for the RIGHT reason (an assertion on behaviour, or the missing outcome code),
+never an import error or a fixture typo. AC-RB-22 and AC-RB-23 are captain-run, not tester files.
+
 ## 4. Not in scope
 
 - The Raised at history icon not showing on prod (suspected column width, 190 px does not fit

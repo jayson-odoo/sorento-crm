@@ -77,7 +77,9 @@ Fixture shape, measured on prod copy `sorento_ai_automation_0918_1900` (SO314593
   182 @ 2026-06-01 for that line, then ONE row is raised already settled: quantity 280, delivery
   date 2027-03-01, `previous_qty` 182, `previous_delivery_date` 2026-06-01, `changed_at` and
   `supply_decision_id` from the decision, the file's stamp kept, and the same Was fragment in the
-  note that `_settle_row_in_place` writes.
+  note that `_settle_row_in_place` writes. Its `ack_state` is `changed`, which is what a confirm
+  leaves on an acknowledged row it restates (the importer raises rows acknowledged). The row then
+  takes AutoCount's links for the line exactly as any freshly raised row does (R1).
 - **AC-RB-12** Decision equals the sheet (same quantity and date): the row is raised plain, no
   Was, no `changed_at`.
 - **AC-RB-13** (R4) Decision buy quantity 0 for the line (all from stock, the CSA150 shape): the
