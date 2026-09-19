@@ -22,10 +22,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import uuid
+
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
+    IV_ORDER,
     OrderInquiryLink,
     OrderInquiryRow,
 )
@@ -305,10 +308,14 @@ def test_company_isolation(ctx):
     companies) - the per-company `company_scope` the script's own `run()`
     enters must hold even though the STRING is identical.
 
-    Break line to see this red: `run()`'s `with company_scope(db,
-    frozenset({company_id})):` - widen it to `with company_scope(db, None):`
-    and company B's row would resolve company A's document as confidently as
-    its own.
+    Widening the SCRIPT's own `run()` `company_scope` line to `company_scope(db,
+    None)` does NOT turn this test red (reviewer's kill test, review round item
+    12b) - `ProjectOrderInquiryService.follow_book_for_rows` re-pins its own
+    scope via `company_id=company_id` regardless of what scope it is called
+    under, so the script's `with company_scope(...)` line is redundant belt,
+    not the guard. The real guard is that service-level scope pin; a test that
+    would actually go red is a defect INSIDE `follow_book_for_rows` itself
+    that ignores or widens its own `company_id` argument.
     """
     db = ctx.db
     shared_ref = _ref("SHARED")
@@ -371,3 +378,121 @@ def test_pages_by_keyset(ctx):
     for row in rows:
         links = _links_of(db, row.id)
         assert len(links) == 1, (row.id, links)
+
+
+# ============================================================== review round item 3
+def test_redirected_row_never_linked_by_backfill(ctx):
+    """Review round item 3: `follow_book_for_rows`'s own row-narrowing carries
+    no `redirected_to_pool` filter, so the backfill script - which drives that
+    same narrowing over every existing row - links a REDIRECTED row too. A
+    fresh sibling row of the same mirror line must get the document instead."""
+    db = ctx.db
+    product = _seed_product(db, company_id=ctx.company_a)
+    row_redirected, spo = _seed_free_row(db, company_id=ctx.company_a, product_id=product.id, qty="2")
+    row_redirected.redirected_to_pool = True
+    db.add(row_redirected)
+
+    fresh_row = OrderInquiryRow(
+        company_id=ctx.company_a, order_inquiry_id=row_redirected.order_inquiry_id,
+        so_line_id=row_redirected.so_line_id, qty=Decimal("2"), verb=IV_ORDER,
+        state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED,
+    )
+    db.add(fresh_row)
+    db.commit()
+
+    out = backfill.main(["--apply"], db=db)
+    assert out == 0
+
+    assert _links_of(db, row_redirected.id) == [], _links_of(db, row_redirected.id)
+    fresh_links = _links_of(db, fresh_row.id)
+    assert len(fresh_links) == 1 and fresh_links[0].spo_allocation_id == spo.id, fresh_links
+
+
+# ============================================================== review round item 9
+def test_backfill_displacement_note_names_the_backfill_trigger(ctx):
+    """Review round item 9 (security S6): the displaced holder's note must name
+    the TRIGGER the call ran under, not only the document and SO number - the
+    backfill script passes through the exact same `_displace_other_line_
+    holders` path with `trigger="backfill"` hardcoded
+    (`scripts/backfill_oi_follow_book.py` line 160), and the fragment written
+    today (`f"AutoCount states {document} is for {so_number}, {when}"`) never
+    embeds the trigger at all. Keeps the existing "AutoCount states" substring
+    assertions (`test_apply_writes_what_dry_run_printed`) valid - this only
+    ADDS the trigger assertion, on the same note."""
+    world = _seed_world(ctx)
+    db = ctx.db
+
+    out = backfill.main(["--apply"], db=db)
+    assert out == 0
+
+    holder_row = _refresh(db, world["holder_row"])
+    note = holder_row.note or ""
+    assert "AutoCount states" in note, note
+    assert "backfill" in note, note
+
+
+# ============================================================== review round item 10
+def test_backfill_counts_displacement_even_when_recascade_nets_to_the_same_total(ctx, capsys):
+    """Review round item 10 (reviewer finding 10): `rows_linked` / `quantity_
+    linked` must count only what the BOOK placed, not what the trailing
+    cascade re-links for a displaced holder - and a displaced row the cascade
+    re-links to the SAME total quantity must still count as displaced.
+
+    Seeded here (not in `_seed_world`, so the other three tests reusing it are
+    untouched): the same D3 displacement pair as `_seed_displacement_pair`,
+    PLUS a second OPEN document naming the holder's own line directly - free
+    capacity the ordinary cascade can hand straight back to the holder, for
+    the SAME quantity it just lost, inside the SAME `follow_book_for_rows`
+    call (AC-FB-30's own "offered to the cascade once" nested pass).
+
+    Break line to see this red: `run_company`'s snapshot diff, `if now > was:
+    rows_linked... elif now < was: rows_displaced...` - a same-row link SET
+    change (different target id) that leaves the TOTAL quantity unchanged
+    (`now == was`) falls into neither bucket, so the book's own displacement
+    of the holder vanishes from the report entirely.
+    """
+    db = ctx.db
+    product = _seed_product(db, company_id=ctx.company_a)
+
+    ref_disp = _ref("SOL")
+    _so_disp, core_line_disp = _seed_so_line(
+        db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_disp, qty="5",
+    )
+    spo_disp = _seed_spo_line(
+        db, company_id=ctx.company_a, product_id=product.id,
+        from_so_line_ref=ref_disp, allocated_quantity=5,
+    )
+    _pso_disp, _mirror_disp, _inquiry_disp, row_disp = _seed_row_and_mirror(
+        db, company_id=ctx.company_a, core_line=core_line_disp, product_id=product.id, qty="5",
+    )
+
+    ref_holder = _ref("SOL")
+    _so_holder, core_line_holder = _seed_so_line(
+        db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_holder, qty="5",
+    )
+    _pso_holder, mirror_holder, inquiry_holder = _seed_mirror(
+        db, company_id=ctx.company_a, core_line=core_line_holder, product_id=product.id, qty="5",
+    )
+    holder_row = _seed_row(
+        db, company_id=ctx.company_a, inquiry_id=inquiry_holder.id, so_line_id=mirror_holder.id,
+        qty="5", state=INQUIRY_PLACED, ack_state=ACK_ACKNOWLEDGED,
+    )
+    _existing_link(
+        db, company_id=ctx.company_a, row_id=holder_row.id, document=spo_disp.spo_number,
+        qty="5", spo_allocation_id=spo_disp.id, auto=True,
+    )
+    # The rebound capacity: an OPEN document naming the HOLDER's own line, free
+    # for the ordinary cascade to give straight back once the book takes
+    # spo_disp away, for the same total quantity (5).
+    spo_rebound = _seed_spo_line(
+        db, company_id=ctx.company_a, product_id=product.id,
+        from_so_line_ref=ref_holder, allocated_quantity=5,
+    )
+    db.commit()
+
+    out = backfill.main(["--dry-run"], db=db)
+    assert out == 0
+    captured = capsys.readouterr()
+    per_company_out = captured.out.split("=== summary")[0]
+
+    assert per_company_out.count("rows displaced:         1") == 1, per_company_out

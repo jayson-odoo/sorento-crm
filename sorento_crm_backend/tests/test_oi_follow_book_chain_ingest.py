@@ -392,3 +392,43 @@ class TestCapAndDroppedCount:
         links_b = _links_of(env, row_b.id)
         linked_count = (1 if links_a else 0) + (1 if links_b else 0)
         assert linked_count == 1, (links_a, links_b)
+
+
+# ============================================================== review round item 3
+class TestRedirectedRowNeverLinkedThroughPoHook:
+    def test_redirected_row_skipped_via_po_ingest_hook(self, env):
+        """Review round item 3: `follow_book_for_rows`'s own row-narrowing has no
+        `redirected_to_pool` filter at all (unlike the ordinary cascade, which
+        filters `redirected_to_pool.is_(False)`) - so a PO push whose new line
+        names a row's ref still links a REDIRECTED row through this hook. A fresh
+        sibling row of the SAME mirror line must get the document instead."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            env, so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref,
+        )
+        _pso, mirror_line, inquiry, redirected_row = _mirror_row(
+            env, core_line=core_line, product_id=product_id, qty="2",
+        )
+        redirected_row.redirected_to_pool = True
+        env.db.add(redirected_row)
+        env.db.commit()
+
+        fresh_row = OrderInquiryRow(
+            id=str(uuid.uuid4()), company_id=env.company_a, order_inquiry_id=inquiry.id,
+            so_line_id=mirror_line.id, qty=Decimal("2"), verb=IV_ORDER, state=INQUIRY_RAISED,
+            ack_state=ACK_ACKNOWLEDGED,
+        )
+        env.db.add(fresh_row)
+        env.db.commit()
+
+        line = _po_line(env, from_so_line_ref=ref, qty_ordered=2)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.status_code == 200, res.text
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+
+        env.db.expire_all()
+        assert _links_of(env, redirected_row.id) == [], _links_of(env, redirected_row.id)
+        assert len(_links_of(env, fresh_row.id)) == 1, _links_of(env, fresh_row.id)

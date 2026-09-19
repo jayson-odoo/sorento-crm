@@ -1733,15 +1733,18 @@ class TestLinkFollowsBookPairing:
 
         Five lines (more than either cap alone), `FOLLOW_BOOK_REPAIRING_MAX_
         MOVES=2` and `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS=1` monkeypatched together.
-        `_rows_for_core_line_refs` (the hook's own row resolution) carries no
-        `ORDER BY`, so WHICH of the up-to-five candidate rows its size-1 cap
-        admits is not guaranteed by Postgres - this test does not pin that
-        identity. It asserts the bound instead: both dropped-counts read
-        exactly what their own cap arithmetic predicts (deterministic - each
-        is a candidate-set SIZE, never an ordering), and the total number of
-        lines this push actually completed end to end is capped at the sum of
-        the two caps, never all five - the concrete "cannot fan out into
-        unbounded work" property AC-RL-50 asks for."""
+        Tightened (review round item 6, captain's ruling): AC-FB-24's cap
+        applies AFTER narrowing to linkable rows the book names, over a
+        DETERMINISTIC order (`created_at`, `id`) - so once that lands, the
+        rows cap's one admitted slot is the EARLIEST-created of the five
+        candidates, which is `rows_a[0]` (created first in the loop below),
+        the very same row `follow_book_repairing`'s own move cap (submission
+        order, first 2 of 5) already completed. The hook's one allowance is
+        then spent on a row with nothing left to do - a no-op - so the total
+        number of rows this push actually completes stays at exactly 2,
+        never 3. Measured today: `_rows_for_core_line_refs` carries no
+        `ORDER BY` at all, so the rows cap's one slot lands on a DIFFERENT,
+        not-yet-covered row instead, and completed reads 3."""
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         monkeypatch.setattr(
@@ -1797,22 +1800,21 @@ class TestLinkFollowsBookPairing:
         assert summary.get("book_repair_moves_dropped") == 3, summary
         assert summary.get("book_follow_rows_dropped") == 4, summary
 
-        # The bound itself: `follow_book_repairing`'s cap ALONE guarantees 2
-        # lines move (deterministic - `ref_moves` is built in submission
-        # order, so the cap keeps exactly the first 2 of 5). The hook's own
-        # cap of 1 may ALSO complete one more of the remaining 3 (D3/D4), or
-        # may spend its one allowance on a row already satisfied by the move
-        # above (a no-op) - genuinely not pinned by row order. Either way the
-        # number of lines this push actually finished is bounded at 2 + 1 = 3,
-        # never all 5 - the property under test.
+        # Pinned identity (review round item 6): `follow_book_repairing`'s
+        # move cap guarantees `rows_a[0]` and `rows_a[1]` move (submission
+        # order, first 2 of 5). Once the rows cap narrows to linkable rows
+        # FIRST and orders by (`created_at`, `id`), its one slot is
+        # `rows_a[0]` too - already moved, so a no-op - and the total number
+        # of rows this push actually completes is exactly 2, never 3.
         env.db.expire_all()
         completed = sum(
             1 for row_a in rows_a
             if env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).count() == 0
         )
-        assert 2 <= completed <= 3, (
-            f"completed={completed}: at least the 2 moves the repairing cap always applies, "
-            "never more than that plus the ONE extra the rows cap allows"
+        assert completed == 2, (
+            f"completed={completed}: the rows cap's one slot must land on the SAME "
+            "earliest row the moves cap already covered, a no-op, once both walk "
+            "the same deterministic (created_at, id) order"
         )
 
     def test_ambiguous_ref_two_lines_same_source_ref_is_refused(self, env, caplog):
@@ -1891,7 +1893,7 @@ class TestLinkFollowsBookPairing:
         assert str(links_a[0].po_line_id) == str(po_line["id"])
         assert len(caplog.records) >= 1, "an ambiguous ref must log a warning"
 
-    def test_ref_moved_from_an_unresolvable_old_ref_is_a_no_op(self, env):
+    def test_ref_moved_from_an_unresolvable_old_ref_is_a_no_op(self, env, caplog):
         """AC-RL-52 (S3, code review 17 Sep): a NON-null `old_ref` that resolves to
         no line is not the same fact as NO old ref at all (the genuine xlsx-
         supersede case, where the superseded row truly never carried one) -
@@ -1953,16 +1955,23 @@ class TestLinkFollowsBookPairing:
             auto=True,
         ))
         env.db.commit()
-        link_id_before = str(
-            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
-        )
 
         repush_line = _po_line(
             env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=16,
         )
         repush = dict(record, lines=[repush_line])
-        res2 = env.post(INGEST_PO, [repush])
+        with caplog.at_level(logging.WARNING, logger="app.services.project_order_inquiry_service"):
+            res2 = env.post(INGEST_PO, [repush])
         assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        # The caplog assertion this test's own docstring promises: AC-RL-52's
+        # guard is `_follow_one_move`'s own early return on the unresolvable
+        # OLD ref, proven by its warning line, not merely inferred from the
+        # note's wording below.
+        assert any(
+            "did not resolve" in record.getMessage() and "no-op" in record.getMessage()
+            for record in caplog.records
+        ), [record.getMessage() for record in caplog.records]
 
         env.db.expire_all()
         links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
@@ -1976,6 +1985,11 @@ class TestLinkFollowsBookPairing:
         # ruling D3, 19 Sep 2026: "the book wins, always").
         assert links_a == [], "row A's link is displaced by the book naming po_line for row B"
         row_a_db = env.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_a.id).one()
-        assert "AutoCount states" in (row_a_db.note or ""), row_a_db.note
+        note = row_a_db.note or ""
+        assert "AutoCount states" in note, note
+        # Never `_follow_one_move`'s own vocabulary - that mechanism never
+        # touched this link at all, proven above by the caplog no-op.
+        assert "AutoCount moved" not in note, note
+        assert "AutoCount removed" not in note, note
         assert len(links_b) == 1, links_b
         assert str(links_b[0].po_line_id) == str(po_line["id"])

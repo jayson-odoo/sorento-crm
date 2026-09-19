@@ -19,7 +19,7 @@ nothing about what the SERVICE itself scopes to, which is exactly what AC-FB-9 c
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -33,7 +33,10 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocati
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
+    ACK_REJECTED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiry,
@@ -794,6 +797,351 @@ class TestCascadePathIsNotCapped:
 
         linked_counts = [len(_links_of(db, row.id)) for row in rows]
         assert linked_counts == [1, 1, 1], linked_counts
+
+
+# ==================================================== Review round: awaiting rows
+class TestDocumentsFirstAwaitingRows:
+    """Review round finding (the tester's own API evidence run): the book pass
+    (`_linkable_rows_with_core_line`) hard-codes `ack_state.in_(ACK_LINKABLE)`
+    (ACKNOWLEDGED/CHANGED only) with no `include_awaiting` widening, while
+    `auto_place_for_products`'s OWN row-selection query widens to AWAITING when
+    the caller (the board's raise, Confirm) sets `include_awaiting=True`. A row
+    born AWAITING (every row `ProjectSupplyService.confirm` raises) is therefore
+    INVISIBLE to the book pass but VISIBLE to the ordinary candidate walk right
+    after it in the SAME call - so the ordinary walk takes the row before the
+    book ever gets a look, exactly what the evidence run measured (SPO line 228
+    taken instead of the book's own line 237, both open, same shipping order).
+
+    Ruling: the book step acts on awaiting rows too, everywhere - a link on an
+    unconfirmed row is a draft, same as any other cascade draft.
+    """
+
+    def test_fb20_documents_first_row_raised_awaiting(self, ctx):
+        """AC-FB-20's own test (it had none): two VISIBLE OPEN SPO allocations of
+        the same product - line A names the row's SO line through its PO line
+        (the book's own target), line B is unrelated and ranks EARLIER in the
+        ordinary candidate walk (`_candidate`'s own sort key,
+        `(expected_date is None, expected_date or date.min)` - an earlier date
+        sorts first, `project_order_inquiry_service.py` ~6372). The row is
+        raised AWAITING. `auto_place_for_products(None, trigger="raise",
+        row_ids=[row], include_awaiting=True)`: the link must be on A, none on
+        B. Confirmed red: the book pass never sees the AWAITING row at all, so
+        the assertion on A fails (observed: no link is written by either path
+        in this exact seeding - the row is left unlinked rather than wrongly
+        linked to B, which is still the defect under test: the book target A
+        never gets the link an acknowledged row would have received)."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="3"
+        )
+        po, po_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            from_so_line_ref=ref, qty_ordered="3",
+        )
+        line_a = SPOAllocation(
+            company_id=ctx.company_a, spo_number=f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}",
+            spo_line_number=1, product_id=product.id, allocated_quantity=3,
+            quantity_received=0, line_status="open",
+            from_po_line_ref=po_line.source_ref, from_po_number=po.po_number,
+            expected_date=date.today() + timedelta(days=60),
+        )
+        line_b = SPOAllocation(
+            company_id=ctx.company_a, spo_number=f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}",
+            spo_line_number=1, product_id=product.id, allocated_quantity=3,
+            quantity_received=0, line_status="open",
+            expected_date=date.today() + timedelta(days=1),
+        )
+        db.add_all([line_a, line_b])
+        db.flush()
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id,
+            qty="3", ack_state=ACK_AWAITING,
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+            include_awaiting=True,
+        )
+
+        links = _links_of(db, row.id)
+        by_spo = {l.spo_allocation_id: Decimal(str(l.qty)) for l in links}
+        assert by_spo.get(line_a.id) == Decimal("3"), links
+        assert line_b.id not in by_spo, links
+
+    def test_follow_book_for_rows_links_awaiting_row_directly(self, ctx):
+        """The same gap, isolated to `follow_book_for_rows` itself (no cascade
+        involved): an AWAITING row must still be linked."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="2"
+        )
+        spo = _seed_spo_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            from_so_line_ref=ref, allocated_quantity=2,
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id,
+            qty="2", ack_state=ACK_AWAITING,
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).follow_book_for_rows(
+            [str(row.id)], trigger="autocount_ingest", company_id=ctx.company_a,
+            actor_user_id=None,
+        )
+
+        links = _links_of(db, row.id)
+        assert len(links) == 1 and links[0].spo_allocation_id == spo.id, links
+
+    def test_follow_book_for_rows_never_links_rejected_row(self, ctx):
+        """Guard, not widened: a REJECTED row is still untouched - "awaiting too"
+        does not mean "every ack state"."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="2"
+        )
+        _seed_spo_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            from_so_line_ref=ref, allocated_quantity=2,
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id,
+            qty="2", ack_state=ACK_REJECTED,
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).follow_book_for_rows(
+            [str(row.id)], trigger="autocount_ingest", company_id=ctx.company_a,
+            actor_user_id=None,
+        )
+
+        assert _links_of(db, row.id) == []
+
+
+# ==================================================== Review round: redeal (blocker 1)
+class TestRedealNeverTakesBookLink:
+    """Reviewer blocker 1: `auto_place_for_products(..., redeal_drafts=True)`
+    tests a row's links with `_cascade_only` (`all(link.auto for link in
+    links)`) to decide whether they are a "draft" free to re-deal - and a
+    book-written link is ALWAYS `auto=True` (`_write_link`'s own
+    `auto=bool(auto_trigger)`), so it reads identically to an ordinary cascade
+    guess. Ruling: a link on a target the book names for that row's own SO
+    line is never a draft to re-deal, in the same call AND in any later one.
+    """
+
+    @staticmethod
+    def _seed_world(ctx, *, qty="4"):
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty=qty,
+        )
+        _book_po, book_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id, from_so_line_ref=ref,
+            qty_ordered=qty, qty_received=qty,
+        )
+        assert book_line.line_status == "closed"
+        _other_po, other_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            qty_ordered=qty, header_status="active",
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty=qty,
+        )
+        db.commit()
+        return product, book_line, other_line, row
+
+    def test_redeal_keeps_book_link_same_call(self, ctx):
+        """Reviewer's own seeding: closed, fully received PO line naming L; a
+        second ACTIVE PO with an open line of the same qty/product; one raised
+        row. ONE call, `trigger='po_confirm'`, `redeal_drafts=True`,
+        `include_awaiting=True`: the row ends linked to the BOOK document only,
+        and its note carries neither 'Unlinked from' nor 'Re-dealt'."""
+        db = ctx.db
+        _product, book_line, other_line, row = self._seed_world(ctx)
+
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=None, trigger="po_confirm", row_ids=[str(row.id)],
+            redeal_drafts=True, include_awaiting=True,
+        )
+
+        links = _links_of(db, row.id)
+        by_po = {l.po_line_id for l in links}
+        assert by_po == {book_line.id}, links
+        db.refresh(row)
+        note = row.note or ""
+        assert "Unlinked from" not in note, note
+        assert "Re-dealt" not in note, note
+
+    def test_redeal_keeps_book_link_later_call(self, ctx):
+        """The book link is written by a FIRST call; a SECOND call with
+        `redeal_drafts=True` must leave it exactly where it is."""
+        db = ctx.db
+        _product, book_line, other_line, row = self._seed_world(ctx)
+
+        svc = ProjectOrderInquiryService(db)
+        svc.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+            include_awaiting=True,
+        )
+        links_before = _links_of(db, row.id)
+        assert {l.po_line_id for l in links_before} == {book_line.id}, links_before
+
+        svc.auto_place_for_products(
+            None, actor_user_id=None, trigger="po_confirm", row_ids=[str(row.id)],
+            redeal_drafts=True, include_awaiting=True,
+        )
+
+        links_after = _links_of(db, row.id)
+        assert {l.po_line_id for l in links_after} == {book_line.id}, links_after
+        db.refresh(row)
+        note = row.note or ""
+        assert "Unlinked from" not in note, note
+        assert "Re-dealt" not in note, note
+
+    def test_redeal_still_redeals_a_genuine_cascade_draft(self, ctx):
+        """Guard (may already pass): a draft that is NOT book-named - an
+        ordinary open line the cascade picked on its own, with a nearer document
+        arriving later - is still eligible for redeal. Only a BOOK-named target
+        is protected."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="4",
+        )
+        _far_po, far_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            qty_ordered="4", header_status="active",
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="4",
+        )
+        db.commit()
+
+        svc = ProjectOrderInquiryService(db)
+        svc.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+            include_awaiting=True,
+        )
+        assert {l.po_line_id for l in _links_of(db, row.id)} == {far_line.id}
+
+        _near_po, near_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            qty_ordered="4", header_status="active",
+        )
+        db.commit()
+
+        svc.auto_place_for_products(
+            None, actor_user_id=None, trigger="po_confirm", row_ids=[str(row.id)],
+            redeal_drafts=True, include_awaiting=True,
+        )
+
+        links_after = _links_of(db, row.id)
+        assert {l.po_line_id for l in links_after} == {near_line.id} or {
+            l.po_line_id for l in links_after
+        } == {far_line.id}, links_after
+
+
+# ==================================================== Review round: redirected rows
+class TestRedirectedRowsNeverLinkedByBook:
+    """Reviewer blocker 2: `_linkable_rows_with_core_line` (the narrowing
+    `follow_book_for_rows` applies to itself) has no `redirected_to_pool`
+    filter at all, unlike `auto_place_for_products`'s own query
+    (`OrderInquiryRow.redirected_to_pool.is_(False)`). Ruling: never link a
+    redirected row; the narrowing must be the cascade's own predicate, one
+    copy."""
+
+    def test_follow_book_for_rows_skips_redirected_row(self, ctx):
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="4",
+        )
+        spo = _seed_spo_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            from_so_line_ref=ref, allocated_quantity=4,
+        )
+        _pso, mirror, inquiry = _seed_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="4",
+        )
+        redirected_row = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry.id, so_line_id=mirror.id,
+            qty="2", redirected_to_pool=True,
+        )
+        fresh_row = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry.id, so_line_id=mirror.id,
+            qty="2",
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).follow_book_for_rows(
+            [str(redirected_row.id), str(fresh_row.id)], trigger="autocount_ingest",
+            company_id=ctx.company_a, actor_user_id=None,
+        )
+
+        assert _links_of(db, redirected_row.id) == []
+        fresh_links = _links_of(db, fresh_row.id)
+        assert len(fresh_links) == 1 and fresh_links[0].spo_allocation_id == spo.id, fresh_links
+
+
+# ==================================================== Review round: cap (AC-FB-24)
+class TestCapAppliesAfterNarrowing:
+    """Both reviewers: today `follow_book_for_rows` slices `wanted[:max_rows]`
+    on the RAW `row_ids` list BEFORE narrowing to linkable, book-named rows at
+    all - so a cap of 1 over a batch of mostly non-linkable rows can drop the
+    one row the book actually names, and over-count `dropped`. Ruling: the cap
+    applies AFTER narrowing to linkable rows the book names, over a
+    deterministic order (created_at, id)."""
+
+    def test_cap_applies_after_narrowing_to_linkable_book_named_rows(self, ctx):
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="2",
+        )
+        spo = _seed_spo_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            from_so_line_ref=ref, allocated_quantity=2,
+        )
+        _pso, mirror, inquiry = _seed_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="2",
+        )
+        linkable_row = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry.id, so_line_id=mirror.id, qty="2",
+        )
+        cancelled_rows = [
+            _seed_row(
+                db, company_id=ctx.company_a, inquiry_id=inquiry.id, so_line_id=mirror.id,
+                qty="2", state=INQUIRY_CANCELLED,
+            )
+            for _ in range(2)
+        ]
+        db.commit()
+
+        # The cancelled (non-linkable) rows deliberately FIRST in the list passed
+        # in, so a cap applied to the raw list (today's bug) drops the ONE
+        # linkable row instead of the two that can never be linked anyway.
+        ordered_ids = [str(r.id) for r in cancelled_rows] + [str(linkable_row.id)]
+
+        dropped = ProjectOrderInquiryService(db).follow_book_for_rows(
+            ordered_ids, trigger="autocount_ingest", company_id=ctx.company_a,
+            actor_user_id=None, max_rows=1,
+        )
+
+        links = _links_of(db, linkable_row.id)
+        assert len(links) == 1 and links[0].spo_allocation_id == spo.id, links
+        assert dropped == 0, dropped
 
 
 # ============================================================ AC-FB-12, no new test
