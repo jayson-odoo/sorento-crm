@@ -14,6 +14,10 @@ router.include_router(orders.router, prefix="/orders", tags=["orders"])
 # a report over orders, not a row under `/orders/*` (`orders.py` docstring above
 # the router definition).
 router.include_router(orders.outstanding_report_router, tags=["orders"])
+# No prefix, same reason: the plan/UAC pin this path at
+# `/order-management/sales-report`, a report over orders, not a row under
+# `/orders/*`.
+router.include_router(orders.sales_report_router, tags=["orders"])
 # `customers_select` FIRST. Both mount at `/customers`, and `customers.router` carries
 # `GET /{customer_id}` - so mounted first it matches `/customers/select`, tries to read
 # "select" as a customer id and answers 404 "Customer not found. Someone might have deleted
