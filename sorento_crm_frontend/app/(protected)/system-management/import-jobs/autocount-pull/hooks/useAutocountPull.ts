@@ -1,5 +1,8 @@
+import { useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   comparePull,
@@ -9,6 +12,7 @@ import {
   getPull,
   getPullRows,
   startPull,
+  startPullErrorMessage,
 } from '../services/autocountPullService';
 import type { AutocountPull, AutocountPullEntity, AutocountPullRowsQuery } from '../types/autocountPull.types';
 
@@ -105,4 +109,46 @@ export function useConfirmPull() {
       toast.error(error instanceof Error ? error.message : 'Could not confirm the pull.');
     },
   });
+}
+
+export interface AutocountPullAction {
+  /** Gated on the permission alone (AC-PL-1) - never on whether the current-pull read has
+   *  resolved, so the button either exists or does not the moment permissions are known. */
+  visible: boolean;
+  /** "Pull from AutoCount" with no open pull, "Review pull" once one exists (AC-PL-5). */
+  label: string;
+  /** With an open pull: navigates straight to it, no `startPull` call. Otherwise: starts one
+   *  and navigates to the new job, or toasts the mapped refusal (AC-PL-6). */
+  onSelect: () => Promise<void>;
+}
+
+/**
+ * The Products list / Stock Balance grid's "Pull from AutoCount" secondary action, shared so
+ * both own one gate and one click behaviour instead of an inline copy each.
+ */
+export function useAutocountPullAction(
+  entity: AutocountPullEntity,
+  permissionSlug: string,
+): AutocountPullAction {
+  const visible = useHasPermission(permissionSlug);
+  const router = useRouter();
+  const { data: currentPull } = useCurrentPull(entity);
+  const startMutation = useStartPull();
+
+  const label = currentPull ? 'Review pull' : 'Pull from AutoCount';
+
+  const onSelect = useCallback(async () => {
+    if (currentPull) {
+      router.push(`/system-management/import-jobs/${currentPull.job_id}`);
+      return;
+    }
+    try {
+      const pull = await startMutation.mutateAsync(entity);
+      router.push(`/system-management/import-jobs/${pull.job_id}`);
+    } catch (error) {
+      toast.error(startPullErrorMessage(error));
+    }
+  }, [currentPull, entity, router, startMutation]);
+
+  return { visible, label, onSelect };
 }

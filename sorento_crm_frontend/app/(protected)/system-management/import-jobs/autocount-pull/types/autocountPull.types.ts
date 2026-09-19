@@ -26,6 +26,32 @@ export interface AutocountPullProgress {
   stage?: string | null;
 }
 
+/**
+ * The FoundryX ready header, as the pull route stores + returns it - camelCase, stripped of
+ * `excludedRows` / `negativePairList` (AC-BD-2; both can be large and are not needed on the
+ * page). Present once the snapshot has been read (`review` / `confirmed`), `null` before that.
+ */
+export interface AutocountPullHeader {
+  snapshotId: string;
+  entity: AutocountPullEntity;
+  companyCode: string;
+  extractedAt: string;
+  expiresAt: string;
+  recordCount: number;
+  complete: boolean;
+  contentHash: string;
+  sourcePageSize?: number;
+  /** Products only. */
+  zeroListPriceCount?: number;
+  negativeListPriceCount?: number;
+  /** Stock only (SR4). */
+  zeroPairs?: number;
+  negativePairs?: number;
+  fractionalPairs?: number;
+  excludedCount?: number;
+  excludedNonzeroCount?: number;
+}
+
 export interface ProductPullCounts {
   received: number;
   new: number;
@@ -83,17 +109,19 @@ export interface AutocountPull {
   company_code: string;
   phase: AutocountPullPhase;
   progress?: AutocountPullProgress | null;
-  /** FoundryX's `extractedAt` / `expiresAt`, once the snapshot is ready. */
-  extracted_at?: string | null;
-  expires_at?: string | null;
+  /** The FoundryX ready header (camelCase), once the snapshot has been read; `null` before. */
+  header?: AutocountPullHeader | null;
   counts?: AutocountPullCounts | null;
   /** Set only when Confirm is blocked (e.g. stock AC-SP-1); Confirm stays enabled otherwise. */
   confirm_blocked_reason?: string | null;
   compare?: AutocountPullCompareSummary | null;
   /** Set once Confirm has been clicked - the apply job the page links to. */
   apply_job_id?: string | null;
+  /** String warning codes (e.g. `content_hash_mismatch`) - never a refusal, absent or empty
+   *  means a clean match. */
+  warnings?: string[];
   /** Set on `failed` / `expired`. */
-  error_message?: string | null;
+  error?: string | null;
 }
 
 /** The Excel-view row shape for `products` - same columns, same order as the manual template. */

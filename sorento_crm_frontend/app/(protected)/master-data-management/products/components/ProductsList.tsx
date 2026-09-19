@@ -68,15 +68,7 @@ import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
-import { useHasPermission } from '@/hooks/usePermissions';
-import {
-  useCurrentPull,
-  useStartPull,
-} from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
-import {
-  hasAutocountPullPermissionMock,
-  startPullErrorMessage,
-} from '@/app/(protected)/system-management/import-jobs/autocount-pull/services/autocountPullService';
+import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -164,18 +156,7 @@ const ProductsList = () => {
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
 
   // AutoCount pull - one more secondary action beside Import (PLAN-autocount-pull-review.md).
-  const canPullAutocount =
-    useHasPermission('master_data.products.autocount_pull') || hasAutocountPullPermissionMock();
-  const { data: currentProductsPull } = useCurrentPull('products');
-  const startPullMutation = useStartPull();
-  const handlePullFromAutocount = async () => {
-    try {
-      const pull = await startPullMutation.mutateAsync('products');
-      router.push(`/system-management/import-jobs/${pull.job_id}`);
-    } catch (error) {
-      toast.error(startPullErrorMessage(error));
-    }
-  };
+  const autocountPull = useAutocountPullAction('products', 'master_data.products.autocount_pull');
 
   // Back hands the list its own query string back, and the pager keeps rewriting
   // it, so the list reads it (S3-01). One hook, every list.
@@ -925,13 +906,13 @@ const ProductsList = () => {
                 onClick: () => setUploadDialogOpen(true),
                 dataGuideTarget: 'master-data.products.upload-button',
               },
-              ...(canPullAutocount
+              ...(autocountPull.visible
                 ? [
                     {
                       key: 'autocount-pull',
-                      label: currentProductsPull ? 'Review pull' : 'Pull from AutoCount',
+                      label: autocountPull.label,
                       icon: CloudDownload,
-                      onClick: handlePullFromAutocount,
+                      onClick: autocountPull.onSelect,
                     },
                   ]
                 : []),

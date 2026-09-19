@@ -29,7 +29,7 @@ export interface PullExcelViewTabProps {
   entity: AutocountPullEntity;
 }
 
-const PRODUCT_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
+export const PRODUCT_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   {
     id: 'item_code',
     header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
@@ -115,7 +115,7 @@ const PRODUCT_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   },
 ];
 
-const STOCK_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
+export const STOCK_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   {
     id: 'item_code',
     header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,

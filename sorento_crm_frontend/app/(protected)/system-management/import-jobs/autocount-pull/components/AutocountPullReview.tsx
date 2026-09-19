@@ -143,8 +143,8 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
           </span>
           {inReview && (
             <span className="text-xs text-muted-foreground">
-              Snapshot {formatSnapshotTime(pull.extracted_at)}, valid until{' '}
-              {formatSnapshotTime(pull.expires_at)}
+              Snapshot {formatSnapshotTime(pull.header?.extractedAt)}, valid until{' '}
+              {formatSnapshotTime(pull.header?.expiresAt)}
             </span>
           )}
           <span className="grow" />
@@ -204,7 +204,7 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
 
         {isDead && (
           <p className="text-sm text-destructive">
-            {pull.error_message ?? 'The pull failed.'}
+            {pull.error ?? 'The pull failed.'}
           </p>
         )}
 

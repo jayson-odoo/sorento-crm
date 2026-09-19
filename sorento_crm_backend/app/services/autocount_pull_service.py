@@ -262,6 +262,8 @@ def serialize(job: ImportJob) -> dict:
     pull = _pull_meta(job)
     return {
         "job_id": str(job.id),
+        "entity": pull.get("entity"),
+        "company_code": pull.get("company_code"),
         "phase": pull.get("phase"),
         "progress": pull.get("progress"),
         "header": pull.get("header"),
@@ -270,4 +272,5 @@ def serialize(job: ImportJob) -> dict:
         "compare": pull.get("compare"),
         "apply_job_id": pull.get("apply_job_id"),
         "warnings": pull.get("warnings") or [],
+        "error": job.error,
     }

@@ -2,7 +2,6 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { ImportJob, ImportJobRow, ImportJobRowsQuery } from '../types/importJob.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
-import { mockImportJobShim } from '../autocount-pull/services/autocountPullService';
 
 /**
  * ── Row-outcome API contract (frozen in Phase 1, implemented in Phase 2) ──────────
@@ -38,28 +37,6 @@ export async function getImportJobs(
 }
 
 export async function getImportJob(jobId: string): Promise<ImportJob> {
-  // Phase 1 scaffolding for the AutoCount pull mock (autocountPullService's own USE_MOCK
-  // branch) - deleted along with it in SR2. A real job id never starts with this prefix, so
-  // `mockImportJobShim` returns null for one and this falls straight through to the fetch
-  // below, unchanged.
-  const shim = mockImportJobShim(jobId);
-  if (shim) {
-    return {
-      id: jobId,
-      job_id: jobId,
-      job_type: shim.job_type,
-      status: shim.status as ImportJob['status'],
-      user_id: 'me',
-      total_rows: 0,
-      processed_rows: 0,
-      successful_rows: 0,
-      failed_rows: 0,
-      skipped_rows: 0,
-      result: null,
-      error: null,
-      created_at: new Date(),
-    };
-  }
   const response = await apiFetch(`/api/v1/system/jobs/${jobId}`);
   if (!response.ok) throw new Error('Failed to fetch import job');
   return response.json();

@@ -40,14 +40,7 @@ import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useRouter } from 'next/navigation';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import {
-  useCurrentPull,
-  useStartPull,
-} from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
-import {
-  hasAutocountPullPermissionMock,
-  startPullErrorMessage,
-} from '@/app/(protected)/system-management/import-jobs/autocount-pull/services/autocountPullService';
+import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
 
 const EXPORT_FILENAME = 'stock_balance_export.xlsx';
 
@@ -96,18 +89,7 @@ export default function StockBalanceGrid() {
   const canDeleteStock = useHasPermission('inventory.stock.delete');
 
   // AutoCount pull - one more secondary action beside Import (PLAN-autocount-pull-review.md).
-  const canPullAutocount =
-    useHasPermission('inventory.stock.autocount_pull') || hasAutocountPullPermissionMock();
-  const { data: currentStockPull } = useCurrentPull('stock_balances');
-  const startPullMutation = useStartPull();
-  const handlePullFromAutocount = async () => {
-    try {
-      const pull = await startPullMutation.mutateAsync('stock_balances');
-      router.push(`/system-management/import-jobs/${pull.job_id}`);
-    } catch (error) {
-      toast.error(startPullErrorMessage(error));
-    }
-  };
+  const autocountPull = useAutocountPullAction('stock_balances', 'inventory.stock.autocount_pull');
 
   const { data: stockListAttachment } = useQuery({
     queryKey: ['current-stock-list-attachment'],
@@ -379,13 +361,13 @@ export default function StockBalanceGrid() {
                 icon: Upload,
                 onClick: () => setUploadDialogOpen(true),
               },
-              ...(canPullAutocount
+              ...(autocountPull.visible
                 ? [
                     {
                       key: 'autocount-pull',
-                      label: currentStockPull ? 'Review pull' : 'Pull from AutoCount',
+                      label: autocountPull.label,
                       icon: CloudDownload,
-                      onClick: handlePullFromAutocount,
+                      onClick: autocountPull.onSelect,
                     },
                   ]
                 : []),
