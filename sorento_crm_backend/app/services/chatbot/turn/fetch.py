@@ -143,7 +143,17 @@ def _climb(
     When every rung misses, nothing is appended: the rungs tried are recorded ON the
     primary envelope so the miss line can name them once, which is AC-922's "nothing on
     any rung" shape rather than three empty headers.
+
+    R1 (AC-1688, security review N-1): a rung never runs for a subject that did not
+    resolve. The primary fetch is allowed to run with an empty `spec.entities` (that is
+    how `_answered_unfiltered` recognises an unresolved-token miss and reports it as
+    one), but every rung reuses the SAME spec (`replace(spec, domain=rung)`) - an empty
+    entity list would climb the whole ladder and hand each rung's tool the same no-filter
+    spec, which is how "ETA cb2805q" once dumped 50 unrelated products under an
+    "Incoming" header. Nothing left to narrow BY is nothing to climb with.
     """
+    if not spec.entities:
+        return
     if not envelope_missed(primary):
         return
     rungs = [r for r in _ladder_of(ctx, spec.domain) if r not in (planned or set())]

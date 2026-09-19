@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile
+from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile, fold_token
 
 # Which suffix an ask carries, by policy value.
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
@@ -39,8 +39,17 @@ def _choices(candidates: list[dict[str, Any]], grouping: str | None) -> int:
 
 
 def _token_of(candidate: dict[str, Any]) -> str:
-    """The word the customer typed for this row."""
-    return str(candidate.get("raw") or candidate.get("canonical_code") or "").strip()
+    """The word the customer typed for this row, folded the resolver's OWN way.
+
+    R1 (AC-1692): `turn_runtime.unplaced`/`unplaced_tokens` is keyed by `_token_key`,
+    which folds `[-\\s]+` out of the token (`resolve_gate._PRODUCT_FOLD`) before the
+    resolver ever sees it - a customer typing `SRTWT165-FT` comes back unresolved as
+    `SRTWT165FT`. Not folding this side too silently failed the `unplaced` membership
+    check below for every hyphenated or spaced code, which is most Sorento codes, and
+    let the customer's own unresolved token come back as a one-option roster.
+    """
+    raw = str(candidate.get("raw") or candidate.get("canonical_code") or "").strip()
+    return fold_token(raw)
 
 
 def _code_of(candidate: dict[str, Any]) -> str:
@@ -298,8 +307,10 @@ def decide(
             for c in candidates
             if c.get("current_message") is True and not c.get("uuid")
         } - {""}
+        # `_token_of` folds (R1); `_code_of` is the resolver's own unfolded code, so the
+        # join folds this side too rather than silently stop matching a hyphenated one.
         typed_exactly = any(
-            _code_of(row).casefold() in typed_now for row in resolved_candidates
+            fold_token(_code_of(row).casefold()) in typed_now for row in resolved_candidates
         )
         # PLAN-chatbot-sales-report.md S19: on a SALES REPORT ask a product token is a
         # PREFIX that COVERS its whole family ("Srt5674" is SRT5674 and SRT5674-N and
@@ -355,7 +366,9 @@ def decide(
                 # anyway is what asked "which one?" about a code the customer had
                 # already named exactly.
                 exact_rows = [
-                    row for row in resolved_candidates if _code_of(row).casefold() in typed_now
+                    row
+                    for row in resolved_candidates
+                    if fold_token(_code_of(row).casefold()) in typed_now
                 ]
                 return NarrowOutcome(None, [], exact_rows, None, note="typed_exact_settles")
             if _choices(resolved_candidates, family_grouping) <= 1:
@@ -432,10 +445,19 @@ def decide(
         # IDENTITY: a candidate carrying a `uuid` is one the resolver matched or the
         # customer picked off this very roster, and asking again for a code you
         # already hold re-prints the same question forever (contract 36's own sticky
-        # roster is what feeds it back). `must_narrow_one` is handled above instead -
-        # this branch is `narrow_to_code` only now.
+        # roster is what feeds it back). Reached by `narrow_to_code` AND by
+        # `narrow_by_tier` on a kind other than `tier` (its own `kind == "tier"` branch
+        # is handled above, near the top of this `if policy_value in _ROSTER_POLICIES`
+        # block) - not "narrow_to_code only" (measured, R1).
         if candidates and not all(c.get("uuid") for c in candidates):
-            return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
+            # AC-1691: a roster never offers fewer than two choices - one ambiguous
+            # candidate is a settled thing to fetch, not a question, the same rule
+            # `must_narrow_one` already applies above for its own policy value.
+            if _choices(candidates, family_grouping) > 1:
+                return NarrowOutcome(
+                    f"{kind}_pick", _options(candidates, kind, family_grouping), [], None
+                )
+            return NarrowOutcome(None, [], candidates, None, note="settled_carry")
         # R-a (owner ruling, hand pass 6, 17 Sep 2026): re-roster on a domain switch
         # ONLY where the domain must narrow to ONE (`must_narrow_one`/`narrow_by_tier`
         # above). A SETTLED carry - every candidate holds a uuid, so an ambiguous typed
