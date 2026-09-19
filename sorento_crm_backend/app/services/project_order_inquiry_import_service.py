@@ -46,7 +46,7 @@ sheet's own month with no PO to decide it; and only then the line the book bough
 all, unchanged from before. A cancelled August-extract ghost line ranks behind any real line
 that fits in every one of the five.
 
-Two honest limits, each counted and named rather than smoothed over.
+Three honest limits, each counted and named rather than smoothed over.
 
 **A row can only be raised against a line that exists.** A sales order the CRM does not hold
 is named under `sales_orders_not_found` and nothing is invented for it; a row whose item,
@@ -55,6 +55,13 @@ location or quantity fits no line of that order is reported with the FIRST reaso
 **A line that already carries an order inquiry row is left exactly as it is** (D2). The sheet
 is a migration, not a source of truth about rows somebody has since worked on, so a re-upload
 writes nothing new.
+
+**A genuine typo inside one tab still raises twice** (R5, 19 Sep 2026: a restatement is only
+ever across tabs, never within one). A row a person mistyped rather than meant to split is
+indistinguishable here from a real second delivery, so it raises like one, and is only reported
+(`qty_exceeds_ordered`) once it overflows the line it and its twin both want. Measured on the
+owner's book, 18 Sep prod copy: lines holding more than one sheet row went from 183 to 285, and
+`qty_exceeds_ordered` from 531 to 619.
 
 `SOURCE_SYSTEM` below stays the literal `'scm_order_inquiry'`. The string is baked into raw
 SQL (`scm/demand.py`), into migration 346's backfill and into the `OrderLinkClaim` CHECK
@@ -403,14 +410,19 @@ def _members(row, line_codes: set) -> list:
     Split on `+` only, whitespace either side optional. An empty member from a stray
     leading, trailing or doubled `+` is dropped silently - no `""` item_code ever reaches
     the match loop or the result.
+
+    A cell naming the SAME code twice (`X + X`) is one statement, not two: de-duplicated,
+    order kept (`dict.fromkeys`), or the two members would share `row.sheet` and every
+    `_restates` term, and R5 (19 Sep 2026: a restatement is only ever across tabs) would read
+    them as two separate instructions inside the one cell that stated only one.
     """
     item_code = (row.item_code or "").strip()
     if "+" not in item_code or item_code in line_codes:
         return [row]
+    members = (m.strip() for m in re.split(r"\s*\+\s*", item_code))
     return [
         replace(row, item_code=member)
-        for member in (m.strip() for m in re.split(r"\s*\+\s*", item_code))
-        if member
+        for member in dict.fromkeys(m for m in members if m)
     ]
 
 
@@ -449,13 +461,16 @@ def _rank_for(row, bought: set) -> Callable[[tuple], tuple]:
     they can - which is the only place the "date matches no line" and "book bought for it"
     stories below still happen. Passes 2, 3 and 4 read their OWN rank instead
     (`_rank_for_month`, `_rank_for_po`, just below `_match_row`): the month passes need the
-    row's own cited purchase order ahead of "earliest date", and the PO pass needs no date
-    term at all, since `_narrow_sheet_po` already means every candidate it sees is one the
-    row itself cites. There is no plain "same month, no citation to break the tie" pass left
-    for this function to rank any more either: R4 (19 Sep 2026, prod C-FH14, SO324265) split
-    the old single month pass into pass 2 (month AND the sheet's own citation) and pass 4
-    (month alone, after the PO pass), precisely so a row's citation always outranks the
-    month rather than losing a tie inside it.
+    NEAREST date ahead of "earliest", since every candidate there already shares the row's
+    month, and carry no citation term of their own any more (review round 2, 19 Sep 2026:
+    pass 2's own narrow already guarantees every candidate it sees cites the row, and pass 4
+    can never still tie on one either, since pass 3 already tried every candidate that
+    could). The PO pass needs no date term at all, since `_narrow_sheet_po` already means
+    every candidate it sees is one the row itself cites. There is no plain "same month, no
+    citation to break the tie" pass left for this function to rank any more either: R4
+    (19 Sep 2026, prod C-FH14, SO324265) split the old single month pass into pass 2 (month
+    AND the sheet's own citation) and pass 4 (month alone, after the PO pass), precisely so
+    a row's citation always outranks the month rather than losing a tie inside it.
 
     A real line before a cancelled one, first of all - 10,499 cancelled August-extract ghosts
     are still in the book, and a ghost is never what a live sheet row means while a real line
@@ -597,9 +612,9 @@ def _bought_documents(
 
     def _add(ref: Any, product_id: Any, number: Any) -> None:
         # Stripped so a `from_so_line_ref` with stray whitespace still keys the same as the
-        # readers' own `(line.source_ref or "").strip()` (`_narrow_sheet_po`,
-        # `_rank_for_month`) - a mismatch here would silently drop the candidate from the
-        # month and PO passes rather than raise.
+        # reader's own `(line.source_ref or "").strip()` (`_narrow_sheet_po`) - a mismatch
+        # here would silently drop the candidate from the month-and-PO and PO passes rather
+        # than raise.
         ref = str(ref or "").strip()
         if not ref or not number:
             return
@@ -700,22 +715,22 @@ def _narrow_month_and_po(row, documents: Dict[tuple, set]) -> Callable[[tuple], 
     return keep
 
 
-def _rank_for_month(row, documents: Dict[tuple, set]) -> Callable[[tuple], tuple]:
-    """Passes 2 and 4's own tie-break (AC-LP-4): live before cancelled, then a candidate
-    whose own book document the row also cites, then the NEAREST date rather than the
-    earliest - every candidate here already shares the row's month, so "earliest" would only
-    ever prefer the first of the month - then the terms `_rank_for` always closes a tie on.
-    The citation term only ever matters in pass 4 now (pass 2's own narrow already means
-    every candidate it sees cites the row, so the term ties there) - kept rather than
-    dropped, because a plain month tie in pass 4 with one cited candidate among several
-    uncited ones should still prefer it."""
+def _rank_for_month(row) -> Callable[[tuple], tuple]:
+    """Passes 2 and 4's own tie-break (AC-LP-4): live before cancelled, then the NEAREST
+    date rather than the earliest - every candidate here already shares the row's month, so
+    "earliest" would only ever prefer the first of the month - then the terms `_rank_for`
+    always closes a tie on.
+
+    NO citation term (review round 2, 19 Sep 2026 - dropped, 106 tests stayed green): pass
+    2's own narrow (`_narrow_month_and_po`) already means every candidate it sees cites the
+    row, so the term would only ever tie there; pass 4's candidates are a SUPERSET of pass
+    2's, over the SAME ledger, which only ever GROWS between them, so any candidate that
+    could still satisfy the row's citation was already offered to this row in pass 2 - a
+    candidate reaching pass 4 that still ties on citation here can never exist."""
     wanted = row.delivery_date
-    cited = {_document_key(number) for number in row.po_numbers}
 
     def key(candidate: tuple) -> tuple:
         line = candidate[0]
-        ref = (line.source_ref or "").strip()
-        held = documents.get((ref, str(line.product_id or "")), set()) if ref else set()
         required = line.required_date
         # Unreachable in practice: `_narrow_same_month` only ever lets a candidate through
         # once both dates are known, so the distance below always has two real dates to
@@ -723,7 +738,6 @@ def _rank_for_month(row, documents: Dict[tuple, set]) -> Callable[[tuple], tuple
         distance = abs((required - wanted).days) if required and wanted else 10**6
         return (
             0 if (line.line_status or "open") != "cancelled" else 1,
-            0 if (cited and held & cited) else 1,
             distance,
             0 if (line.line_status or "open") == "open" else 1,
             required is None,
@@ -828,7 +842,7 @@ def _match_in_passes(
     remaining = _run_pass(
         remaining, plan, lines, taken, raised_already,
         narrow=lambda row: _narrow_month_and_po(row, plan.bought_documents),
-        rank=lambda row: _rank_for_month(row, plan.bought_documents),
+        rank=_rank_for_month,
         order=remaining,
     )
     po_order = [
@@ -851,7 +865,7 @@ def _match_in_passes(
     remaining = _run_pass(
         remaining, plan, lines, taken, raised_already,
         narrow=_narrow_same_month,
-        rank=lambda row: _rank_for_month(row, plan.bought_documents),
+        rank=_rank_for_month,
         order=remaining,
     )
     _run_pass(

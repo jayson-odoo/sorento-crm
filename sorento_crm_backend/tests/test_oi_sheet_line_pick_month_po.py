@@ -1,14 +1,18 @@
 """The order inquiry sheet's line pick: exact date, then same month, then the sheet's PO.
 
 Contract: `documentation/plans/scm/oi-sheet-line-pick-month-po-acceptance-criteria.md`,
-AC-LP-1 to AC-LP-13, with `PLAN-oi-sheet-line-pick-month-po.md` sections 0 to 3 for the
+AC-LP-1 to AC-LP-15, with `PLAN-oi-sheet-line-pick-month-po.md` sections 0 to 3 for the
 promised behaviour. One test per criterion, named for it; AC-LP-12 gets two (the ledger
-charge, and the legitimate split it must not break).
+charge, and the legitimate split it must not break). AC-LP-14 (R4) and AC-LP-15 (R5) are
+later small-fix slices, added after the pick's own tests below first went green, and moved
+it from four passes to the five it runs today.
 
-TEST-FIRST, written before the four-pass line pick exists. The red state is therefore
-TODAY's single-pass `_rank_for` behaviour on `origin/main` - a row landing on the wrong
-line, or the ledger NOT charging an already-raised line (review finding 9, 14 Sep, which
-this slice reverses on purpose) - never an import typo or a fixture bug.
+TEST-FIRST, written before the four-pass line pick exists (AC-LP-1 to AC-LP-13 below; the
+red state for those was TODAY's single-pass `_rank_for` behaviour on `origin/main` - a row
+landing on the wrong line, or the ledger NOT charging an already-raised line, review
+finding 9, 14 Sep, which this slice reverses on purpose - never an import typo or a fixture
+bug). AC-LP-14 and AC-LP-15 are each their own small red-then-green round against the
+FIVE-pass pick that resulted; their own docstrings say what was red for them.
 
 The fixture is the UAC's own measured shape, SO324265 / BT012-CR (prod, 19 Sep 2026): one
 project-class sales order, one product, seven lines. `_uac_book` seeds the book half
@@ -232,7 +236,7 @@ def _assert_uac_landing(w: World, lines: dict[str, SalesOrderLine]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AC-LP-1 to AC-LP-3: the four passes, and file order not deciding them        #
+# AC-LP-1 to AC-LP-3: the passes, and file order not deciding them            #
 # --------------------------------------------------------------------------- #
 
 
@@ -517,12 +521,12 @@ def test_ac_lp_7_link_follows_the_book_never_the_sheets_po():
 
 
 # --------------------------------------------------------------------------- #
-# AC-LP-8, AC-LP-9: D1 restated for the four passes; ORDER BACK skips two of them #
+# AC-LP-8/9: D1 restated for the passes; ORDER BACK skips three of them       #
 # --------------------------------------------------------------------------- #
 
 
 def test_ac_lp_8_cancelled_ranks_last_in_every_pass():
-    """AC-LP-8. D1, restated for the four-pass pick: a cancelled line loses to any live
+    """AC-LP-8. D1, restated for the five-pass pick: a cancelled line loses to any live
     line that fits - in the exact-date pass, in the PO pass - and, when it is the only
     line at all, is still taken rather than refusing the row."""
     with world() as w:
@@ -905,17 +909,29 @@ def test_serial_dated_rows_are_not_restatements():
     `_restates`' key - same SO, item, qty, and a now-identical `delivery_date=None` - and
     the SECOND is read as a restatement of the first: two real deliveries of 200 collapse
     into one raised row instead of two.
+
+    On TWO SEPARATE tabs on purpose (review round 2, 19 Sep 2026): R5 already makes two
+    identical rows on the SAME tab two instructions regardless of whether their dates ever
+    parse, which would leave this test green even with the serial branch of `_as_date`
+    removed. Across tabs, an unparsed serial still ties both rows to the SAME `_restates`
+    key (`delivery_date=None` on both), so the SECOND tab's row still reads as a genuine
+    cross-tab restatement of the first UNLESS the serial actually parses into two different
+    dates - which is the one thing this test is pinning.
     """
     with world() as w:
         order = w.order()
         line_first = w.line(order, qty_ordered="200", required_date=date(2026, 1, 2))
         line_second = w.line(order, qty_ordered="200", required_date=date(2026, 4, 2))
-        data = sheet([
-            (order.so_number, w.product.product_code, 200, 46024,
-             w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 200, 46113,
-             w.warehouse.warehouse_code, ""),
-        ])
+        data = book(
+            JAN=[(
+                order.so_number, w.product.product_code, 200, 46024,
+                w.warehouse.warehouse_code, "",
+            )],
+            APR=[(
+                order.so_number, w.product.product_code, 200, 46113,
+                w.warehouse.warehouse_code, "",
+            )],
+        )
 
         result = w.apply(data)
 
@@ -1113,3 +1129,30 @@ def test_ac_lp_15_lending_goes_to_the_matching_repeat():
             "a citation lent to the wrong position starved one instruction, which fell to "
             "the plain fallback and landed on the decoy line instead of its own"
         )
+
+
+def test_single_sheet_variant_never_dedupes_a_repeat():
+    """R5 (19 Sep 2026). The single-sheet variant (`Order Inquiry Form.xlsx`, `sheet()`
+    here) has no SECOND tab, so there is nothing left to restate anything - two identical
+    rows in this one file are two instructions from the first cell onward, exactly as they
+    are inside one tab of the monthly book (AC-LP-15's own point, pinned here for the shape
+    that has no tab at all to restate ACROSS)."""
+    with world() as w:
+        order = w.order()
+        line_a = w.line(order, qty_ordered="25", required_date=date(2026, 1, 2))
+        line_b = w.line(order, qty_ordered="25", required_date=date(2026, 1, 2))
+        data = sheet([
+            (order.so_number, w.product.product_code, 25, date(2026, 1, 2),
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 25, date(2026, 1, 2),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 2, result
+        rows = w.rows()
+        assert len(rows) == 2, [str(r.qty) for r in rows]
+        assert {str(r.so_line_id) for r in rows} == {
+            str(w.mirror_of(line_a).id), str(w.mirror_of(line_b).id),
+        }
