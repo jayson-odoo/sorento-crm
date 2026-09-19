@@ -1491,3 +1491,102 @@ class TestTypedStemWinsOverFamilySibling:
             f"typed stem - if this now reads 'SRT567' the gap has been closed "
             f"and this test's docstring/report line is stale: {args}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Second defect (captain brief, 19 Sep 2026, live testing after S19): "dealer
+# Srt5674-N August total sale quantity" answered the GENERIC "no order ...
+# matched" miss with NO TOOL CALL AT ALL, even though August sales existed.
+# The parser hinted "Srt5674-N" as a CUSTOMER (the word "dealer" sits in front
+# of it); the resolver's fallback then found it as a PRODUCT instead
+# (`fallback_to_all_types`); `resolve_gate.py::if3_miss` clause 3 ("the domain
+# accepts a customer, the parser named one, and nothing customer-shaped
+# survived the gate") declares this a miss regardless of the product that DID
+# resolve, so the turn never reaches `run_fetch` at all - the report is never
+# even attempted. Fix A: the fix is at that ONE seam - clause 3 must not fire
+# for a REPORT ask whose OWN subject rule (at least one of customer/product)
+# is already satisfied by the fallback match. Parametrized over
+# `order_status="sales_report"` and one legacy outstanding status
+# (`so_outstanding`) - both share `resolve_gate.OUTSTANDING_ORDER_STATUS` and
+# both share this same gate.
+# --------------------------------------------------------------------------- #
+
+
+def _customer_hinted_product_fallback_resolve_services() -> ResolveGateServices:
+    """The measured shape: ONE token ("Srt5674-N") the PARSER hinted "customer"
+    resolves to NOTHING of type customer - only a PRODUCT match, the resolver's
+    own `fallback_to_all_types` behaviour when the requested type misses."""
+
+    def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": ["Srt5674-N"],
+            "resolutions": [
+                {
+                    "token": "Srt5674-N",
+                    "matches": [
+                        {
+                            "entity_type": "product", "canonical_code": "SRT5674-N",
+                            "uuid": "77777777-7777-7777-7777-777777777777",
+                        },
+                    ],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve_entity),
+        probe=lambda **_: None,
+    )
+
+
+class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
+    @pytest.mark.parametrize(
+        "order_status,attributes,tool",
+        [
+            ("sales_report", ["sales_orders.sales_report"], "crm_sales_report"),
+            ("so_outstanding", ["sales_orders.outstanding"], "crm_outstanding_report"),
+        ],
+    )
+    def test_a_customer_hinted_token_that_resolves_as_a_product_still_runs_the_report(
+        self, session_factory, monkeypatch, order_status, attributes, tool
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", domain_hint="order", intent_hint="check_order",
+                order_status=order_status, sales_channel="dealer",
+                date_filter_start="2026-08-01", date_filter_end="2026-08-31",
+                entities=[
+                    {
+                        "raw": "Srt5674-N", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="dealer Srt5674-N August total sale quantity",
+            msg_id=f"ZZT-report-hint-mismatch-{order_status}-1",
+            attributes=attributes,
+            resolve_services=_customer_hinted_product_fallback_resolve_services(),
+            mcp_response=SALES_REPORT_HIT,
+        )
+        reply = (_result.reply or {}).get("text") or ""
+        assert captured, (
+            f"the {order_status} report must run off the fallback PRODUCT match, not "
+            f"answer a miss with no tool call at all: reply={reply!r}"
+        )
+        name, args = captured[0]
+        assert name == tool, (name, args)
+        if tool == "crm_sales_report":
+            assert args.get("product_code") == "SRT5674-N", (
+                "typed-code-wins must send the raw stem the customer typed, folded "
+                f"through the resolved match: {args}"
+            )
+            assert args.get("channel") == "dealer", args
+            assert args.get("date_from") == "2026-08-01", args
+            assert args.get("date_to") == "2026-08-31", args
+        assert "matched these" not in reply, (
+            f"the generic delivery-order miss probe text must not appear: {reply!r}"
+        )

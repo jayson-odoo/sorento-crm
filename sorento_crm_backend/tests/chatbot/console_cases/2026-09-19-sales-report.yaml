@@ -211,6 +211,26 @@ cases:
             - "*SO Number:*"
           no_uuid: true
 
+  - name: "SECOND DEFECT - dealer/project never turns a product-code token into a customer"
+    cold: true
+    turns:
+      # Second defect (owner live testing, 19 Sep 2026, after S19): "dealer Srt5674-N
+      # August total sale quantity" answered the GENERIC "no order ... matched" miss
+      # with NO TOOL CALL AT ALL - the parser hinted "Srt5674-N" as a CUSTOMER (the
+      # word "dealer" sits in front of it), the resolver's own fallback then found it
+      # as a PRODUCT, and a pre-fetch miss gate refused the turn before the report
+      # ever ran. Fix A (resolve_gate.py's if3_miss) plus fix B (the prompt wording)
+      # must both land: the report itself must run, Channel: Dealer, an Aug 2026
+      # block, never the generic miss text.
+      - text: "dealer Srt5674-N August total sale quantity"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "Channel: Dealer"
+            - "*_Aug 2026_*"
+          reply_not_contains: ["matched these", "No sales found."]
+          no_uuid: true
+
   - name: "S19 - a product family stem covers its siblings (Srt5674 also matches SRT5674-N)"
     cold: true
     turns:

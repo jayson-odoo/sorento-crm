@@ -556,12 +556,39 @@ def build_ctx_resolved(
 # --------------------------------------------------------------------------- #
 
 
+def _report_ask_has_product_subject(parser: dict[str, Any], compatible: Any) -> bool:
+    """Second-defect fix A (captain brief, 19 Sep 2026, general seam): a REPORT
+    ask (`order_status` in `OUTSTANDING_ORDER_STATUS` - both the outstanding
+    statuses and `sales_report` share this hole, the same population R20
+    already names for the customer-picker probe) accepts EITHER a customer OR
+    a product as its subject (AC-1119 / AC-1626 / S7). Clause 3 below exists
+    for an order-domain turn in general, where a customer that failed to
+    resolve really is nothing to answer with - but a report ask has an
+    ALTERNATE subject that clause does not know about: "dealer Srt5674-N
+    August total sale quantity" parsed "Srt5674-N" as a customer (the word
+    "dealer" sits in front of it), the resolver's own `fallback_to_all_types`
+    then found it as a PRODUCT instead, and clause 3 answered a miss with NO
+    TOOL CALL AT ALL even though the report was fully answerable off that
+    product. This is checked HERE, at the one seam that already knows both
+    `order_status` and `compatible_entities`, rather than teaching the tool-
+    pick dispatch (`run_fetch`) to re-derive a decision this gate already
+    made."""
+    order_status = jsc.js_string(parser.get("order_status") or "")
+    if order_status not in OUTSTANDING_ORDER_STATUS:
+        return False
+    return any(
+        jsc.truthy(c) and jsc.lower_or_empty(jsc.get(c, "entity_type")) == "product"
+        for c in jsc.array(compatible)
+    )
+
+
 def if3_miss(ctx_resolved_ctx: dict[str, Any], *, parser: dict[str, Any]) -> bool:
     """`If3` - the miss gate, three OR'd clauses, verbatim.
 
     Clause 3 is the "customer resolved to nothing" case the first two cannot see: the
     domain accepts a customer, the parser named one, and nothing customer-shaped survived
-    the gate.
+    the gate. `_report_ask_has_product_subject` (second-defect fix A, 19 Sep 2026) is a
+    FOURTH, AND'd exception on clause 3 alone - clauses 1 and 2 are untouched.
     """
     gate = jsc.get(ctx_resolved_ctx, "gate") or {}
     resolved = jsc.get(ctx_resolved_ctx, "resolved") or {}
@@ -592,6 +619,7 @@ def if3_miss(ctx_resolved_ctx: dict[str, Any], *, parser: dict[str, Any]) -> boo
             jsc.truthy(c) and jsc.lower_or_empty(jsc.get(c, "entity_type")) == "customer"
             for c in jsc.array(compatible)
         )
+        and not _report_ask_has_product_subject(parser, compatible)
     )
 
 
