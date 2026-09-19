@@ -654,6 +654,30 @@ def _without_guesses(
     return [e for e in compatible if jsc.nullish_str(e.get("uuid")).strip() not in drop]
 
 
+@dataclass(frozen=True)
+class ResolveOutcome:
+    """The resolver seam's own answer for this turn (AC-1681, PLAN-chatbot-answer-half-
+    reattach.md slice R2).
+
+    The first seven fields are `resolve_kinds`'s own long-standing 7-tuple, unchanged in
+    shape, order and meaning (see that function's own docstring for what each one is).
+    `payload` is new: the raw dict `resolve_gate.run` returned for this turn (`resolved`,
+    `gate`, `aggregate`, `tier_gate`, `_exit_kind`), carried through so a later slice can
+    read the resolver's REAL gate, its tier-gate outcome and its exit kind without a
+    second resolver call. `None` on `resolve_kinds`'s two existing early returns (no
+    entities named; the resolver raised) - there is no resolver answer to carry then.
+    """
+
+    resolved_kinds: dict[str, dict[str, int]]
+    compatible_entities: list[dict[str, Any]]
+    predicate: dict[str, Any] | None
+    resolved_candidates: dict[str, list[dict[str, Any]]]
+    unplaced_tokens: dict[str, str]
+    spec_tier: bool
+    unplaced_alternatives: dict[str, list[dict[str, Any]]]
+    payload: dict[str, Any] | None
+
+
 def resolve_kinds(
     db: Session,
     *,
@@ -665,18 +689,11 @@ def resolve_kinds(
     stamp_customer: bool = False,
     stamp_promotion: bool = False,
     stamp_purchase_order: bool = False,
-) -> tuple[
-    dict[str, dict[str, int]],
-    list[dict[str, Any]],
-    dict[str, Any] | None,
-    dict[str, list[dict[str, Any]]],
-    dict[str, str],
-    bool,
-    dict[str, list[dict[str, Any]]],
-]:
+) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
-    Returns `({raw: {kind: hits}}, compatible_entities, predicate, candidates_by_kind,
+    Returns a `ResolveOutcome` whose first seven fields are
+    `(resolved_kinds, compatible_entities, predicate, resolved_candidates,
     unplaced_tokens, spec_tier, unplaced_alternatives)`, where `unplaced_tokens` is
     `{folded token: the word the customer typed}` for every token this message named
     that the resolver could not place, `spec_tier` is `spec_tier_matched(resolved)` -
@@ -701,19 +718,26 @@ def resolve_kinds(
     `stamp_promotion` and `stamp_purchase_order` are the same seam for those two domains'
     product rosters (owner hand pass 3, rows 1 and 7): has promo / no promo, has PO / no
     PO, measured by the domain's own per-product read.
+
+    `branch_kind` decides which `entry` this call makes into `resolve_gate.run`
+    (`lanes.business.ENTRY_BY_BRANCH_KIND`, R2) - a real, computed branch_kind, not a
+    literal, so a promotion ask reaches the tier-gate arm ("access_check") instead of
+    the generic "resolve" every branch used to share.
     """
+    from app.services.chatbot.lanes.business import ENTRY_BY_BRANCH_KIND
     from app.services.chatbot.lanes.business import pickers
     from app.services.chatbot.lanes.business import resolve_gate
     from app.services.chatbot.lanes.business import services as business_services
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
-        return {}, [], None, {}, {}, False, {}
+        return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
     services = business_services.production_services(db)
+    entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
     try:
         payload = resolve_gate.run(
             ctx,
-            "resolve",
+            entry,
             {"branch_kind": branch_kind},
             services=services,
             space_id=space_id,
@@ -722,7 +746,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return {}, [], None, {}, {}, False, {}
+        return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -778,10 +802,21 @@ def resolve_kinds(
         # from the other side - nothing was ambiguous to the gate, so it never took its
         # picker arm and the lines went out bare. Same probe, same rule, one annotator
         # (`pickers.customer_bases_with_do`).
+        #
+        # F2 (R2): the gate's OWN `customer_probe_entities` (built at `gate.py:975-979`)
+        # carries the product alongside the customers when the picker arm actually ran
+        # and substituted a customer-only `compatible_entities` (`gate.py:864-866`,
+        # `1053-1061`) - probing `compatible` there measures every DO for the customer,
+        # not just this product's, and can stamp "no DO" on a customer who has DOs, just
+        # none for the product actually asked. Falls back to `compatible` when the gate
+        # never built one (this turn's own picker arm did not run).
+        probe_entities = [
+            e for e in jsc.array(gate.get("customer_probe_entities")) if isinstance(e, dict)
+        ] or compatible
         probe = resolve_gate.probe_customer(
             services,
             ctx=ctx,
-            entities=compatible,
+            entities=probe_entities,
             aggregate=payload.get("aggregate"),
             default_start=resolve_gate.default_probe_start(),
             space_id=space_id,
@@ -817,7 +852,7 @@ def resolve_kinds(
                 else (codes, "has PO", "no PO")
             )
 
-    return (
+    return ResolveOutcome(
         by_token,
         compatible,
         predicate,
@@ -827,6 +862,7 @@ def resolve_kinds(
         unplaced,
         spec_tier_matched(resolved),
         unplaced_alts,
+        payload,
     )
 
 
@@ -1071,6 +1107,7 @@ def make_tool_runner(
     turn_trace: Any,
     counted_set: bool = False,
     unplaced_alternatives: dict[str, list[dict[str, Any]]] | None = None,
+    resolver_gate: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1078,6 +1115,16 @@ def make_tool_runner(
     kept lane's (`lanes/business.run_fetch` -> `lanes/business/fetch.output_structurer`),
     so a domain answers with exactly the rows it answers with today; what is new is that
     the lane is asked once PER DOMAIN, from a plan, instead of once per turn.
+
+    `resolver_gate` is the resolver's OWN gate for this turn (R2, `ResolveOutcome.
+    payload["gate"]`) - `gate_reason`, `require_specific`, `customer_probe_entities`,
+    `company_team`, `gate_debug`, whatever it carries. The gate handed to
+    `lanes.business.run_fetch` starts from it, unchanged, so those fields reach the
+    lane for the first time; `compatible_entities` and `predicate` are still set
+    exactly as today (the per-domain narrowed spec entities, the counted-set block),
+    overriding whatever `resolver_gate` itself carried under those two keys.
+    `resolver_gate=None` (no resolver ran) reproduces today's synthetic gate exactly -
+    a bare `compatible_entities` key and nothing else.
     """
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
@@ -1117,7 +1164,12 @@ def make_tool_runner(
             # tool call so the one real call already runs scoped, no second call
             # needed.
             entities = _resolve_dominant_neighbours(entities, alts_by_token)
-        gate: dict[str, Any] = {"compatible_entities": entities}
+        # R2: start from the resolver's own gate (gate_reason, require_specific,
+        # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
+        # and `predicate` are still set exactly as today, below, overriding whatever
+        # `resolver_gate` itself carried under those two keys.
+        gate: dict[str, Any] = dict(resolver_gate) if isinstance(resolver_gate, dict) else {}
+        gate["compatible_entities"] = entities
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
             gate["predicate"] = block

@@ -1391,6 +1391,24 @@ def _run_stages(  # noqa: PLR0915
             raw=access,
         )
 
+        # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
+        # an ungranted contact's sales-report ask is refused HERE, before the resolver
+        # ever runs - `order_status` (the parser's own projected field) and this
+        # access read's granted reveals are both already known, the earliest single
+        # seam that has both. Mirrors main's own R-S3 check
+        # (`lanes.business.run_until_exit`'s bypass) for the same reason it exists
+        # there: the ambiguous-customer picker is an interactive, multi-choice prompt
+        # naming real customer matches, and showing it before refusing leaks that
+        # enumeration for nothing. `lanes.business.run_fetch`'s own
+        # `_SALES_REPORT_GRANT` check stays as the second line of defence, for a
+        # re-entry path that calls it directly.
+        from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
+
+        sales_report_grant_refused = (
+            jsc.js_string(verdict.get("order_status") or "").strip() == "sales_report"
+            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+        )
+
         stage[0] = "routed"
         settings_row = switches
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
@@ -1433,7 +1451,21 @@ def _run_stages(  # noqa: PLR0915
         unplaced_tokens: dict[str, str] = {}
         spec_tier = False
         unplaced_alternatives: dict[str, list[dict[str, Any]]] = {}
-        if plan.fetch or plan.ask is not None:
+        # R2 (PLAN-chatbot-answer-half-reattach.md): the raw `resolve_gate.run` payload
+        # (`resolved`, `gate`, `aggregate`, `tier_gate`, `_exit_kind`), carried through
+        # `ResolveOutcome.payload` - `None` until the resolver actually runs. Nothing
+        # consumes it yet beyond handing the real gate to `make_tool_runner` below.
+        resolver_payload: dict[str, Any] | None = None
+        # SF-1: a refused sales-report ask never reaches the resolver at all - no
+        # `resolve_gate.run` call, no roster built from what it would have found.
+        if not sales_report_grant_refused and (plan.fetch or plan.ask is not None):
+            # The REAL branch this plan belongs to, the SAME function "D ROUTE" below
+            # calls on the (possibly reconciled) plan - not a literal "business_query"
+            # for every turn, so a promotion ask reaches `resolve_gate.run` at
+            # "access_check" instead of the generic "resolve" entry
+            # (`lanes.business.ENTRY_BY_BRANCH_KIND`). One rule, one place: called twice
+            # on two plan snapshots, never duplicated.
+            provisional_branch_kind = turn_route(plan)
             # The RESOLVER's own ctx: a roster has to list things that exist, with the
             # stamps the picker probe measures ("SRTWC286-SH-NEW-P - has incoming"), and
             # a turn that named no product of its own ("incoming", after a stock answer
@@ -1459,19 +1491,11 @@ def _run_stages(  # noqa: PLR0915
                     ),
                 },
             }
-            (
-                resolved_kinds,
-                compatible_entities,
-                predicate,
-                resolved_candidates,
-                unplaced_tokens,
-                spec_tier,
-                unplaced_alternatives,
-            ) = (
+            resolve_outcome = (
                 turn_runtime.resolve_kinds(
                     db,
                     ctx=resolver_ctx,
-                    branch_kind="business_query",
+                    branch_kind=provisional_branch_kind,
                     space_id=space_id_for_turn,
                     dry_run=dry_run,
                     # The roster about to be printed is an INCOMING one: it carries the
@@ -1506,6 +1530,14 @@ def _run_stages(  # noqa: PLR0915
                     ),
                 )
             )
+            resolved_kinds = resolve_outcome.resolved_kinds
+            compatible_entities = resolve_outcome.compatible_entities
+            predicate = resolve_outcome.predicate
+            resolved_candidates = resolve_outcome.resolved_candidates
+            unplaced_tokens = resolve_outcome.unplaced_tokens
+            spec_tier = resolve_outcome.spec_tier
+            unplaced_alternatives = resolve_outcome.unplaced_alternatives
+            resolver_payload = resolve_outcome.payload
             if resolved_kinds or resolved_candidates:
                 # The ONE re-entry the plan allows: what the resolver found goes back
                 # into APPLY, so the narrower asks about things that exist and a
@@ -1612,7 +1644,11 @@ def _run_stages(  # noqa: PLR0915
         # -- E FETCH + F COMPOSE, for the turn that has something to look up --- #
         answer: Any = None
         lane_error_text: str | None = None
-        if branch_kind in ("business_query", "check_promotion") and completes_here:
+        if (
+            branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+        ):
             stage[0] = "looked_up"
             turn_ctx = turn_runtime.TurnContext(
                 db=db,
@@ -1633,6 +1669,11 @@ def _run_stages(  # noqa: PLR0915
                     turn_trace=turn_trace,
                     counted_set=spec_tier and bool(turn_runtime.class_scope_terms(verdict)),
                     unplaced_alternatives=unplaced_alternatives,
+                    resolver_gate=(
+                        resolver_payload.get("gate")
+                        if isinstance(resolver_payload, dict)
+                        else None
+                    ),
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
@@ -1707,6 +1748,18 @@ def _run_stages(  # noqa: PLR0915
             answer = turn_compose.Answer(
                 text=canned_lanes.stock_denied_text(copy_mod.resolve(db))
             )
+
+        # -- the REFUSAL: SF-1's grant-before-roster, same idiom as stock_denied ---- #
+        # No new branch kind: the resolver never ran (gated above), so `plan` is
+        # still the first, unreconciled pass and `branch_kind` reads as an ordinary
+        # `business_query` - the fetch gate above already excludes this turn, so
+        # nothing else composed it, exactly the shape `stock_denied` handles the
+        # same way just above.
+        if answer is None and sales_report_grant_refused and completes_here:
+            from app.services.chatbot.lanes.business import SALES_REPORT_NOT_ENABLED_MESSAGE
+
+            stage[0] = "replied"
+            answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
 
     if answer is not None and lane_error_text is None:
         return _run_answer(
