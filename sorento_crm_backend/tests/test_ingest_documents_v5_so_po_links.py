@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -1770,7 +1771,21 @@ class TestLinkFollowsBookPairing:
             _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
                 env, core_line=core_line_a, product_id=product_id, qty="9",
             )
-            _mirror_row(env, core_line=core_line_b, product_id=product_id, qty="11")
+            _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+                env, core_line=core_line_b, product_id=product_id, qty="11",
+            )
+            # Pin the CANDIDATE row's (row_b) creation order explicitly: within
+            # one open transaction Postgres's `now()` is transaction-start time,
+            # stable for every row this test seeds, so the `created_at` server
+            # default ties across all 5 and the (created_at, id) cap order falls
+            # back to a random UUID tiebreak - flaky between runs, not between
+            # queries within one. row_b is what `_rows_for_core_line_refs`
+            # actually orders (the rows-cap's candidate set, named by ref_b on
+            # this push); row_a's own move is ordered by submission order
+            # instead, so it needs no pin.
+            row_b.created_at = datetime.utcnow() + timedelta(seconds=i)
+            env.db.add(row_b)
+            env.db.commit()
 
             line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=9)
             record = _po_record(env, lines=[line])
