@@ -644,6 +644,19 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                         # checked codes straight off `resolved.resolutions`, not off this
                         # gate's own compatible-entities.
                         pass
+                    elif all(jsc.get(m, "match_tier") == "spec_search" for m in products):
+                        # B1 (owner hand pass 7, 19 Sep 2026, turn "SRTWT165-FT CERT"):
+                        # this token's ONLY matches are a class/described-set read
+                        # ("products with a certificate") rather than the customer's own
+                        # typed code, whatever the REST of the message turned out to be
+                        # (unlike the `predicate_bypass` branch above, `predicate_bypass`
+                        # is false here - the message never became a HAS question at
+                        # all). "CERT" fed a certificate-class match under ITS OWN token
+                        # and 200 unrelated codes rode into the SRTWT165-FT roster beside
+                        # the real (prefix-tier) SRTWT165 family, which is a SEPARATE `r`
+                        # in this loop and untouched. Contributes nothing, same as an
+                        # empty match list.
+                        pass
                     else:
                         still_ambiguous.append({"token": jsc.get(r, "token"), "products": products})
 
