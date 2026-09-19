@@ -1164,8 +1164,6 @@ def make_tool_runner(
     from app.services.chatbot.lanes.business import fetch as business_fetch
     from app.services.chatbot.lanes.business import services as business_services
 
-    alts_by_token = unplaced_alternatives or {}
-
     def runner(domain: str, spec: FetchSpec) -> dict[str, Any]:
         page_predicate: dict[str, Any] | None = None
         page_ids: list[str] = []
@@ -1191,13 +1189,6 @@ def make_tool_runner(
             if page_predicate is not None
             else _entities_for(spec, compatible_entities)
         )
-        if alts_by_token:
-            # R-c (owner hand pass 6, 17 Sep 2026): a token the resolver could not
-            # place at all, but whose trigram neighbours all name the SAME product, is
-            # corrected silently rather than fetched with no filter - done BEFORE the
-            # tool call so the one real call already runs scoped, no second call
-            # needed.
-            entities = _resolve_dominant_neighbours(entities, alts_by_token)
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
         # and `predicate` are still set exactly as today, below, overriding whatever
@@ -1223,7 +1214,6 @@ def make_tool_runner(
             trace=turn_trace,
             db=db,
         )
-        envelope_unplaced = unplaced
         if _answered_unfiltered(fragment, entities, unplaced):
             # Every subject this fetch had is a token the resolver could not place, so
             # there was nothing to filter by - and a tool called with no filter answers
@@ -1238,32 +1228,19 @@ def make_tool_runner(
             # the lane answers in more ways than by calling a tool - the gate's own
             # customer and incoming pickers come back from here with no tool at all, and
             # refusing to call it would have swallowed the picker too.
+            #
+            # PLAN-chatbot-answer-half-reattach.md R4 (Deleted table): this used to try a
+            # rearch-only trigram roster of its own (`_alternatives_ask`,
+            # `_resolve_dominant_neighbours`) before falling back to a flat miss. That
+            # machinery is retired - `outcome: "not_found"` is all this fragment states,
+            # so a single-domain business turn's `answer_bridge.answer_for` (via its own
+            # `raw_fragment` trigger) can answer it with PRODUCTION's own did-you-mean
+            # roster (`miss_suggest.dym_transform` / `dym_annotate`, off the resolver's
+            # OWN trigram alternatives on `resolved`), never a second, parallel one.
             fragment = {
-                "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO}
+                "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
+                "outcome": "not_found",
             }
-            # R-c's other half: several neighbours, no single dominant one (a lone
-            # neighbour was already substituted above, before the call, and never
-            # reaches here unfiltered) - offered as a roster instead of a flat miss.
-            # "srttwc286" only ever had the one, so this is the AMBIGUOUS case R-c
-            # also names. The roster's own text replaces the bare miss sentence (unlike
-            # outstanding/forms, whose own lane text is already a numbered list this
-            # fetch has none of), and the token comes OUT of this envelope's own
-            # `unplaced` - it is answered with a real roster now, not a word nobody
-            # could place (the "I could not find X" sentence is for the latter only).
-            ask = _alternatives_ask(entities, alts_by_token)
-            if ask is not None:
-                fragment["fetch"]["alternatives_ask"] = ask
-                fragment["fetch"]["response"] = _alternatives_ask_text(
-                    str(ask["kind"]).removesuffix("_pick"), ask["last_result_set"]
-                )
-                asked_codes = {
-                    _entity_token_key(e)
-                    for e in entities
-                    if alts_by_token.get(_entity_token_key(e))
-                }
-                envelope_unplaced = {
-                    k: v for k, v in unplaced.items() if k not in asked_codes
-                }
         return envelope_of(
             fragment,
             spec,
@@ -1278,7 +1255,8 @@ def make_tool_runner(
                 else None
             ),
             ran_with=lane_out,
-            unplaced=envelope_unplaced,
+            unplaced=unplaced,
+            raw_fragment=fragment,
         )
 
     return runner
@@ -1546,103 +1524,6 @@ def _code_of(entity: dict[str, Any]) -> str:
     return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
 
 
-def _hint_of(entity: dict[str, Any]) -> str:
-    """The KIND a row is, whichever of the two names it spells it under (`hint` on a
-    parser entity, `entity_type` on a resolver/compatible row) - the same split
-    `_code_of` reads three ways for the same reason."""
-    return jsc.js_string(entity.get("hint") or entity.get("entity_type")).strip().lower()
-
-
-def _distinct_alt_codes(alts: list[dict[str, Any]], hint: str) -> dict[str, dict[str, Any]]:
-    """`alts` narrowed to the entity's OWN kind, one row per distinct code (first/best
-    similarity wins - the resolver already sorts its hits best-first)."""
-    out: dict[str, dict[str, Any]] = {}
-    for a in alts:
-        if hint and jsc.js_string(jsc.get(a, "entity_type")).strip().lower() != hint:
-            continue
-        code = jsc.nullish_str(jsc.get(a, "canonical_code")).strip().casefold()
-        if code and code not in out:
-            out[code] = a
-    return out
-
-
-def _resolve_dominant_neighbours(
-    entities: list[dict[str, Any]], alts_by_token: dict[str, list[dict[str, Any]]]
-) -> list[dict[str, Any]]:
-    """R-c (owner hand pass 6, 17 Sep 2026): an unplaced token whose trigram
-    neighbours all name ONE code is corrected to it silently - "srttwc286" ->
-    SRTWC286-SH, no question asked. Two or more distinct codes are left unplaced for
-    `_alternatives_ask` to offer as a roster instead; a one-option roster naming the
-    customer's own typo back is no choice at all (the same rule `narrow.decide`'s
-    `unplaced_never_offered` already applies at the narrowing seam).
-    """
-    out: list[dict[str, Any]] = []
-    for entity in entities:
-        alts = alts_by_token.get(_entity_token_key(entity))
-        distinct = _distinct_alt_codes(alts, _hint_of(entity)) if alts else {}
-        if len(distinct) != 1:
-            out.append(entity)
-            continue
-        dominant = next(iter(distinct.values()))
-        out.append(
-            {
-                **entity,
-                "canonical_code": jsc.get(dominant, "canonical_code"),
-                "uuid": jsc.get(dominant, "uuid"),
-                "confident": True,
-            }
-        )
-    return out
-
-
-def _alternatives_ask(
-    entities: list[dict[str, Any]], alts_by_token: dict[str, list[dict[str, Any]]]
-) -> dict[str, Any] | None:
-    """A roster over the resolver's own trigram neighbours, for the FIRST unplaced
-    entity that has two or more of them (R-c). `envelope_of`'s `lane_ask` reads this
-    the same way it already reads `outstanding_ask` / `forms_ask` - one lane, one
-    question per turn.
-    """
-    for entity in entities:
-        alts = alts_by_token.get(_entity_token_key(entity))
-        if not alts:
-            continue
-        hint = _hint_of(entity) or "product"
-        distinct = _distinct_alt_codes(alts, hint)
-        if len(distinct) <= 1:
-            # Zero or one - a lone neighbour was already substituted before the call
-            # (`_resolve_dominant_neighbours`) and never reaches here unfiltered.
-            continue
-        rows = [
-            {
-                "idx": i + 1,
-                "label": jsc.get(a, "canonical_code"),
-                "value": jsc.get(a, "uuid") or jsc.get(a, "canonical_code"),
-            }
-            for i, a in enumerate(distinct.values())
-        ]
-        return {"kind": f"{hint}_pick", "last_result_set": rows, "filters": {}}
-    return None
-
-
-def _alternatives_ask_text(hint: str, rows: list[dict[str, Any]]) -> str:
-    """The roster's own printed text (R-c).
-
-    `outstanding_ask`/`forms_ask` never need this: their OWN lane already rendered a
-    numbered list as `response` (a report's detail lists, a forms browse), and
-    `_lane_question` only lifts the SAME rows into the structured pending. This fetch
-    has no such text - the response it is replacing is a flat miss - so the roster's
-    header and numbering are built here, the same wording `turn/compose.py`'s
-    `_ASK_HEADERS` uses for a `{kind}_pick`.
-    """
-    lines = [f"Which {hint} do you mean?"]
-    for row in rows:
-        label = row.get("label")
-        if label is not None:
-            lines.append(f"{row.get('idx')}. {label}")
-    return "\n".join(lines)
-
-
 def _answered_unfiltered(
     fragment: dict[str, Any], entities: list[dict[str, Any]], unplaced: dict[str, str]
 ) -> bool:
@@ -1798,6 +1679,7 @@ def envelope_of(
     ran_with: dict[str, Any] | None = None,
     unplaced: dict[str, str] | None = None,
     counted_set: bool = True,
+    raw_fragment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
 
@@ -1822,7 +1704,7 @@ def envelope_of(
     figures = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
     files = fetched.get("attachments")
     has_result = bool(fetched.get("has_result")) and bool(figures)
-    return {
+    envelope: dict[str, Any] = {
         "domain": spec.domain,
         "denied": refused,
         "entities": codes,
@@ -1904,6 +1786,16 @@ def envelope_of(
         # value `turn/compose.py` (which never reads this key) will ever see.
         "tier_ask_fetch": fetched if fragment.get("_fetch_arm") == "tier-ask" else None,
     }
+    if raw_fragment is not None:
+        # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`
+        # fragment itself, a general-purpose escape hatch - `answer_bridge.answer_for`
+        # reads `raw_fragment.get("outcome")` / `raw_fragment.get("fetch")` off it to
+        # discover a genuine absence (`outcome == "not_found"`) after a fetch has
+        # actually run, the same way `tier_ask_fetch` above discovers a tier-ask.
+        # `turn/compose.py` never reads this key. ABSENT (not merely `None`) unless the
+        # caller supplies one - `make_tool_runner.runner` is the one caller that does.
+        envelope["raw_fragment"] = raw_fragment
+    return envelope
 
 
 def _date_line(ran_with: dict[str, Any] | None) -> str | None:

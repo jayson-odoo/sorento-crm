@@ -1665,10 +1665,12 @@ def _run_stages(  # noqa: PLR0915
         #    slice R3, AC-1683). `access_ask` (the resolver's own exit for a contact
         #    with no access rows at all) and `offer` (the gate's own ambiguous
         #    customer/product picker) are both decided by `resolve_gate.run` itself,
-        #    so nothing here needs a fetch to answer them. Precedence: where this and
-        #    `narrow.decide`'s own roster arms would both ask, the bridge wins for a
-        #    single-domain plan - `plan.ask` is left standing (R4/R6 delete the
-        #    now-shadowed `narrow` arms and `_ASK_HEADERS` entries) but never reaches
+        #    so nothing here needs a fetch to answer them. `not_found` (R4, AC-1699 to
+        #    AC-1705) is the SAME early exit - "nothing resolved at all" (H11's
+        #    zero-tool case) - answered by the bridge's own miss arm instead.
+        #    Precedence: where this and `narrow.decide`'s own roster arms would both
+        #    ask, the bridge wins for a single-domain plan - `plan.ask` is left
+        #    standing (R6 deletes the now-shadowed `narrow` arms) but never reaches
         #    `turn_compose.compose_question` while `answer` is already set here.
         answer: Any = None
         # Set the moment the bridge itself answers (either arm) - the FETCH section
@@ -1694,7 +1696,33 @@ def _run_stages(  # noqa: PLR0915
                 parser=(ctx.get("parse") or {}).get("output"),
                 ctx=ctx,
                 canned=copy_mod.resolve(db),
+                db=db,
                 asked_at_turn=turn_no,
+            )
+            bridge_answered = True
+
+        if (
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+            and len(plan.domains) <= 1
+            and isinstance(resolver_payload, dict)
+            and resolver_payload.get("_exit_kind") == "not_found"
+        ):
+            from app.services.chatbot import answer_bridge
+            from app.services.chatbot import copy as copy_mod
+
+            answer = answer_bridge.answer_for(
+                resolver_payload,
+                envelope=None,
+                parser=(ctx.get("parse") or {}).get("output"),
+                ctx=ctx,
+                canned=copy_mod.resolve(db),
+                services=business_services.production_answer_services(db),
+                db=db,
+                asked_at_turn=turn_no,
+                roster_caps=roster_caps,
             )
             bridge_answered = True
 
@@ -1805,9 +1833,39 @@ def _run_stages(  # noqa: PLR0915
                         parser=(ctx.get("parse") or {}).get("output"),
                         ctx=ctx,
                         canned=copy_mod.resolve(db),
+                        db=db,
                         asked_at_turn=turn_no,
                     )
                     bridge_answered = True
+                # BRIDGE (R4): a genuine absence discovered only once the fetch has
+                # actually run - `make_tool_runner.runner`'s own "answered unfiltered"
+                # fallback marks the fragment `outcome: "not_found"`, carried through
+                # untouched as `raw_fragment`. Single-domain only, same precedence as
+                # every other bridge arm above; `resolver_payload` is still the
+                # resolver's own exit item (`_exit_kind`, `resolved`, `gate`), unrelated
+                # to what the fetch itself found.
+                if (
+                    answer is None
+                    and len(fetch_plan.fetch) == 1
+                    and envelopes
+                    and isinstance(resolver_payload, dict)
+                ):
+                    from app.services.chatbot import answer_bridge
+                    from app.services.chatbot import copy as copy_mod
+
+                    answer = answer_bridge.answer_for(
+                        resolver_payload,
+                        envelope=envelopes[0],
+                        parser=(ctx.get("parse") or {}).get("output"),
+                        ctx=ctx,
+                        canned=copy_mod.resolve(db),
+                        services=business_services.production_answer_services(db),
+                        db=db,
+                        asked_at_turn=turn_no,
+                        roster_caps=roster_caps,
+                    )
+                    if answer is not None:
+                        bridge_answered = True
                 if answer is None:
                     answer = turn_compose.compose(envelopes, state_out, policy, turn_ctx)
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash

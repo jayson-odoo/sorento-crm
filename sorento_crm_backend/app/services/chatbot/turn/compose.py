@@ -395,10 +395,18 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
 # The sentence each pending kind opens with. One wording per question, in one place, so
 # the ask a customer reads and the pending the tail stores can never describe different
 # questions (contract 29, 37, 50).
+#
+# PLAN-chatbot-answer-half-reattach.md R4 (Deleted table, AC-1680): the single-domain
+# product / customer / tier picker headers, the did-you-mean header and the
+# require-specific clarification header are RETIRED from here - a single-domain business
+# turn's roster/miss/tier question is answered by `answer_bridge.py` through production's
+# OWN composers (`gate.py`'s own clarification text, `answer.access_level_choice_message`,
+# `answer.not_found_error_message` / `miss_suggest`), never a second, parallel wording.
+# This table (and `compose_question` below) still serves the kinds those composers do not
+# own: the multi-domain team pick, the lane's own outstanding/forms/sales-report offers,
+# and the narrowing kinds `narrow.decide` still mints for domains outside the bridge's
+# reach (R6 lists and retires those still-shadowed asks).
 _ASK_HEADERS: dict[str, str] = {
-    "product_pick": "Which product do you mean?",
-    "customer_pick": "Which customer do you mean?",
-    "tier_pick": "Which price tier applies to you?",
     "team_pick": "Which team should take this?",
     "company_pick": "Which company do you mean?",
     "member_offer": "Who should take this?",
@@ -414,22 +422,7 @@ _ASK_HEADERS: dict[str, str] = {
     "sales_report_detail": "Which list would you like?",
     "kind_pick": "Which one do you mean?",
     "attachment_type_ask": "Which kind of file do you need?",
-    # Defect 6 (hand pass 6, 17 Sep 2026): `narrow_by_type` over an empty "product"
-    # axis (purchase_cost's own narrowing, `chatbot_rearch_s8`) mints a `product_ask`
-    # with no options - the same header `product_pick` uses, since it is the same
-    # question asked with nothing yet to number.
-    "product_ask": "Which product do you mean?",
 }
-
-#: R-g (owner hand pass 7, 19 Sep 2026): `lanes/business/gate.py::run_gate`'s OWN
-#: ambiguity picker, for the domains it still gates pre-fetch
-#: (`gate.REQUIRE_SPECIFIC_DOMAINS`), opens with this line rather than the generic
-#: `_ASK_HEADERS` question - "product_attachment search needs to be more specific.
-#: Multiple matches found. Please choose:", verbatim off `gate.py`'s own
-#: `gate_clarification` string. Scoped to `product_attachment` only: `incoming`'s own
-#: roster already reads `_ASK_HEADERS["product_pick"]` today and no hand pass has
-#: named it wrong, so widening this to `incoming` too is left alone rather than risked.
-_REQUIRE_SPECIFIC_HEADER_DOMAINS = frozenset({"product_attachment"})
 
 
 def _join_words(names: list[str]) -> str:
@@ -491,20 +484,7 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     A roster the customer can see is what a bare "1" answers next turn, so the options
     that are PRINTED here are exactly the options the tail stores - one list, never two.
     """
-    # A did-you-mean is its own question (contract 26): the customer named something the
-    # resolver could not place, so the ask offers what it DID find rather than asking them
-    # to choose from a roster they did not ask for.
-    did_you_mean = any((o.get("payload") or {}).get("did_you_mean") for o in pending.options)
-    ask_domain = str((pending.payload or {}).get("domain") or "")
-    if did_you_mean:
-        header = "Did you mean:"
-    elif ask_domain in _REQUIRE_SPECIFIC_HEADER_DOMAINS:
-        header = (
-            f"{ask_domain} search needs to be more specific. Multiple matches found. "
-            "Please choose:"
-        )
-    else:
-        header = _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
+    header = _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
     lines = [header]
     labels: list[str] = []
     for option in pending.options:
