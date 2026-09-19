@@ -284,7 +284,7 @@ from app.schemas.order import (
     BulkDeleteOrderLinesRequest,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, ValidateImportResponse
-from app.schemas.order_management import OutstandingReportResponse
+from app.schemas.order_management import OutstandingReportResponse, SalesReportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -1542,4 +1542,232 @@ async def get_outstanding_report(
         body["location_token"] = location_token.strip()
     if so_refused:
         body["so_refused"] = True
+    return JSONResponse(content=body)
+
+
+# ---------------------------------------------------------------------------
+# sales report - confirmed vs outstanding sales, by month. A SEPARATE router,
+# no prefix (mounted directly by `app/api/v1/order_management/__init__.py`),
+# the same reason `outstanding_report_router` above is one: the plan/UAC pin
+# the path at `/order-management/sales-report`, not
+# `/order-management/orders/sales-report` - this is a report, not an order row.
+# ---------------------------------------------------------------------------
+sales_report_router = APIRouter()
+
+
+@sales_report_router.get("/sales-report", response_model=SalesReportResponse)
+async def get_sales_report(
+    product_code: Optional[str] = Query(
+        None,
+        description=(
+            "PREFIX, case-insensitive (S19, 19 Sep 2026): matches the typed code AND "
+            "every product whose code STARTS WITH it, e.g. 'SRT5674' also matches "
+            "'SRT5674-N'. Must be at least 3 characters after stripping. "
+            "OPTIONAL: the report's subject may be a customer instead, or both - "
+            "but at least one of product_code / customer_ids / customer_query is required."
+        ),
+    ),
+    customer_query: Optional[str] = Query(
+        None,
+        description="Partial match on customers.customer_name (ILIKE) ONLY - never debtor/customer code.",
+    ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical customer UUIDs (csv/JSON/repeated) - the chatbot's resolved customer entity.",
+    ),
+    channel: Optional[str] = Query(
+        None,
+        description=(
+            "dealer | project - filters sales_orders.demand_class ('retail' / 'project'). "
+            "Absent = all, including null-class SOs. Any other value is 422."
+        ),
+    ),
+    warehouse_codes: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Exact warehouse codes (csv/JSON/repeated), case-insensitive. Location TOKEN "
+            "resolution happens in the caller, not here - this route only matches the "
+            "exact codes it is given."
+        ),
+    ),
+    location_token: Optional[str] = Query(
+        None,
+        max_length=32,
+        description=(
+            "The raw location word the caller resolved into warehouse_codes (e.g. 'IB'). "
+            "ECHO ONLY (S9): this route never resolves or filters on it - it rides back on "
+            "the body so the rendered header can read 'IB (BRW-IB, MWH-IB)' the same way "
+            "the outstanding report's header does."
+        ),
+    ),
+    date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Filters on the SAME bucket date each row uses (required_date, else the SO's "
+            "order_date). Same flexible formats as the orders list route."
+        ),
+    ),
+    date_to: Optional[str] = Query(None, description="Same flexible formats as date_from."),
+    detail: Optional[str] = Query(
+        None,
+        description="so - adds so_rows[], one row per SO rolled up over the whole filtered window.",
+    ),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io contact id (SEC-S1/S2, ruling S14). Both-or-neither with "
+            "space_id - one without the other is 422. When both are given the route "
+            "re-checks the per-contact `sales_orders.sales_report` reveal key itself "
+            "(not just the chatbot lane's own gate, which a direct MCP/n8n caller "
+            "bypasses): no grant is 403 `sales_report_not_enabled`."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, required together with contact_id.",
+    ),
+    current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
+    db: Session = Depends(get_db),
+):
+    """Confirmed vs outstanding sales, by month (`documentation/plans/chatbot/
+    PLAN-chatbot-sales-report.md`, AC-1620 to AC-1632).
+
+    `so_rows` is ABSENT from the body entirely unless `detail=so` was asked
+    (captain ruling, S2 fix round: a big dealer is 1,230 SOs, so the service
+    never computes or sends them unasked) - `response_model` is declared for
+    the OpenAPI schema and to validate every other declared field is present,
+    but the actual response is built by hand (bypassing FastAPI's automatic
+    serialization), the same pattern `get_outstanding_report` above uses for
+    its own `so`/`do`/breakdown keys, so that omission is possible.
+    """
+    from app.services.error_handler import AppException
+    from app.services.sales_report_service import sales_report
+
+    # S7: the SUBJECT is a product, a customer, or both - but never nothing.
+    if not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip():
+        raise AppException(
+            422,
+            "This report needs a subject: give at least one of product_code, customer_ids "
+            "or customer_query",
+            detail="product_code, customer_ids, customer_query",
+            code="subject_required",
+        )
+
+    # SEC-B2 (security review, Phase 3 fix round, ruling S17): a customer_query given
+    # (non-blank - blank already 422s above as subject_required) needs at least 3
+    # characters after stripping, or a single-letter ILIKE scans and returns every
+    # customer whose name contains it, company-wide.
+    _customer_query_stripped = (customer_query or "").strip()
+    if _customer_query_stripped and len(_customer_query_stripped) < 3:
+        raise AppException(
+            422,
+            "customer_query must be at least 3 characters",
+            detail=_customer_query_stripped,
+            code="customer_query_too_short",
+        )
+
+    # S19 (owner ruling, 19 Sep 2026): product_code is now a PREFIX, so the
+    # same reasoning as customer_query_too_short above applies - a 1-2
+    # character prefix would LIKE-scan the whole product master, company-wide.
+    _product_code_stripped = (product_code or "").strip()
+    if _product_code_stripped and len(_product_code_stripped) < 3:
+        raise AppException(
+            422,
+            "product_code must be at least 3 characters",
+            detail=_product_code_stripped,
+            code="product_code_too_short",
+        )
+
+    # SEC-S2 (security review, Phase 3 fix round, ruling S14): contact_id and space_id
+    # are both-or-neither on this route - one without the other is never silently
+    # treated as "no contact at all" (which would skip the SEC-S1 gate below).
+    if bool(contact_id) != bool(space_id):
+        raise AppException(
+            422,
+            "contact_id and space_id must both be given, or neither",
+            detail="contact_id, space_id",
+            code="contact_identity_required",
+        )
+
+    # SEC-S1 (security review, Phase 3 fix round, ruling S14): a contact_id/space_id
+    # caller - a direct MCP/n8n call, which bypasses the chatbot lane's own gate
+    # entirely - is re-checked against the per-contact reveal key here, the same shape
+    # `app/api/v1/scm/low_stock_report.py` uses for its own second gate.
+    if contact_id and space_id:
+        from app.services.contact_field_reveal_service import granted_keys
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_id, space_id=space_id
+        )
+        keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
+        if "sales_orders.sales_report" not in keys:
+            raise AppException(
+                403,
+                "Sales report is not enabled for your account.",
+                code="sales_report_not_enabled",
+            )
+
+    channel_norm = (channel or "").strip().lower() or None
+    if channel_norm is not None and channel_norm not in ("dealer", "project"):
+        raise AppException(
+            422,
+            f"Unknown channel value '{channel}'",
+            detail="allowed: dealer, project",
+            code="invalid_channel",
+        )
+
+    resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    resolved_warehouse_codes = _normalize_entities(warehouse_codes)
+    for values, name in (
+        (resolved_customer_ids, "customer_ids"),
+        (resolved_warehouse_codes, "warehouse_codes"),
+    ):
+        if values is not None and len(values) > 50:
+            raise AppException(
+                422,
+                f"Too many values for '{name}' (max 50)",
+                detail=f"got {len(values)}",
+                code="too_many_values",
+            )
+
+    data = sales_report(
+        db,
+        product_code=product_code,
+        customer_query=customer_query,
+        customer_ids=resolved_customer_ids,
+        channel=channel_norm,
+        warehouse_codes=resolved_warehouse_codes,
+        date_from=_parse_flex_date(date_from),
+        date_to=_parse_flex_date(date_to, end_of_day=True),
+        detail=detail,
+    )
+    # S9: echo only, never filters - added to the dict the SAME way the
+    # outstanding route tacks it onto its body, except this report's schema
+    # declares the field (AC-1631 wants it present on every response, not just
+    # when given), so it travels through `SalesReportResponse` normally instead
+    # of being appended to `body` after validation.
+    data["location_token"] = location_token.strip() if (location_token or "").strip() else None
+
+    validated = SalesReportResponse(**data)
+    body = validated.model_dump(mode="json")
+    if data.get("so_rows") is None:
+        body.pop("so_rows", None)
+    # R13/AC-1628's rule, applied per month rather than once at the top level
+    # (the outstanding report's subject never changes mid-response, but this
+    # report's breakdown key does the same "None here is not asked" job
+    # nested inside months[] instead of at the response root).
+    for month in body.get("months", []):
+        if month.get("by_product") is None:
+            month.pop("by_product", None)
+        if month.get("by_customer") is None:
+            month.pop("by_customer", None)
+    # R-B2 (reviewer finding, Phase 3 fix round): echo `detail` onto the body the
+    # SAME way `get_outstanding_report` above echoes its own (`if detail in
+    # ("so", "do"): body["detail"] = detail`) - the MCP presenter's dispatcher
+    # reads `data.get("detail") == "so"` to pick `_sales_report_detail` over
+    # `_sales_report` without re-deriving it from `so_rows`'s mere presence.
+    # Only "so" is a valid value on this route (unlike the outstanding report's
+    # "so" / "do" scopes), so the key is absent, never `null`, when unset.
+    if detail == "so":
+        body["detail"] = detail
     return JSONResponse(content=body)

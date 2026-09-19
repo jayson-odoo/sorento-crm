@@ -29,6 +29,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
+    SALES_REPORT_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -80,15 +81,19 @@ CONSTANT_CHARS = 49095
 def _without_growth_r1_addendum(text: str) -> str:
     """The body as it was before growth r1 appended its vocabulary block (migration 490).
 
-    `LAST_COST_ADDENDUM` (migration 511, 12 Sep 2026) and then `LOW_STOCK_ADDENDUM`
-    (PLAN-low-stock-report.md S7, 14 Sep 2026) now stack AFTER `GROWTH_R1_ADDENDUM` on
-    both bodies, the same way this one stacked after the live text - so they come off
+    `LAST_COST_ADDENDUM` (migration 511, 12 Sep 2026), then `LOW_STOCK_ADDENDUM`
+    (PLAN-low-stock-report.md S7, 14 Sep 2026), then `SALES_REPORT_ADDENDUM`
+    (PLAN-chatbot-sales-report.md S4 wiring point 1, migration
+    `519_chatbot_sales_report_vocab`) now stack AFTER `GROWTH_R1_ADDENDUM` on both
+    bodies, the same way this one stacked after the live text - so they come off
     FIRST, newest outermost, before the `removesuffix` this function has always done. Each addendum is an APPENDED block, so both come off by suffix rather than by
     the index slice the warehouse-arrival edit needs (that one sits INSIDE the
     requested-attributes section). The assertion that `GROWTH_R1_ADDENDUM` really is the
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
+    if text.endswith(SALES_REPORT_ADDENDUM):
+        text = text[: -len(SALES_REPORT_ADDENDUM)]
     if text.endswith(LOW_STOCK_ADDENDUM):
         text = text[: -len(LOW_STOCK_ADDENDUM)]
     if text.endswith(LAST_COST_ADDENDUM):

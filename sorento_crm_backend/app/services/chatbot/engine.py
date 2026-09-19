@@ -38,6 +38,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
+    DETAIL_OFFER_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
@@ -413,7 +414,9 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
 #: (D17, 13 Sep 2026). Only these surface their options to the parser: every other kind
 #: either has no roster (`escalation_offer`) or already has its own resolution path, and
 #: attaching options to those would change a prompt this ruling is not about.
-_OPTION_PENDING_KINDS = ("outstanding_scope", "outstanding_detail")
+#: `DETAIL_OFFER_KINDS` (PLAN-chatbot-sales-report.md S4 wiring point 7) folds in
+#: `sales_report_detail` beside `outstanding_detail` - the same shared roster mechanism.
+_OPTION_PENDING_KINDS = ("outstanding_scope", *DETAIL_OFFER_KINDS)
 
 
 def _pending_options(variables: dict[str, Any]) -> list[str] | None:

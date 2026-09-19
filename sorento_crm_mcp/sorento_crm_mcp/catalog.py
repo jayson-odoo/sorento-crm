@@ -720,6 +720,46 @@ CATALOG: tuple[ToolSpec, ...] = (
         restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
     ),
     ToolSpec(
+        "crm_sales_report",
+        (
+            "Confirmed (transferred to DO) vs OUTSTANDING sales, by month, for a customer, a "
+            "product, or both - reads sales_order_lines only (the DO table's own money is "
+            "unusable). Returns `months[]`, latest first, each with `so_count`, ordered / "
+            "confirmed / outstanding value and quantity, and a breakdown by the OTHER axis "
+            "(`by_product` on a customer subject, `by_customer` on a product subject, neither "
+            "when both are named).\n\n"
+            "SUBJECT: a product, a customer, or both - at least one of `product_code` / "
+            "`customer_ids` / `customer_query` is REQUIRED (422 `subject_required` otherwise). "
+            "`product_code` is exact, case-insensitive, no sibling-code expansion. "
+            "`customer_query` - partial match on customer NAME only. `customer_ids` - canonical "
+            "customer UUIDs (csv/JSON/repeated).\n\n"
+            "FILTERS: `channel` - dealer | project (sales_orders.demand_class 'retail' / "
+            "'project'); absent = all, including null-class SOs. `warehouse_codes` - exact "
+            "warehouse codes (csv/JSON/repeated); resolve a location TOKEN yourself first, this "
+            "tool does no suffix matching. `location_token` (max 32 chars) - the raw location "
+            "word, echoed back so the header reads 'IB (BRW-IB, MWH-IB)'. `date_from`/`date_to` "
+            "filter on the SAME bucket date each line uses (required_date, else the SO's own "
+            "order_date); omit both for every month. `detail` = so - render the numbered sales "
+            "order list instead of the month blocks (`view=render`), one row per SO rolled up "
+            "over the whole filtered window.\n\n"
+            "Use crm_outstanding_report instead for the SO-backlog / DO-pending question; this "
+            "tool is for a SALES REPORT / sales performance / 'how much did X buy' question.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/order-management/sales-report",
+        (),
+        (
+            "product_code", "customer_query", "customer_ids", "channel", "warehouse_codes",
+            "location_token", "date_from", "date_to", "detail",
+            "contact_id", "space_id",
+        ),
+        domain="orders",
+        related_tools=("crm_outstanding_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+    ),
+    ToolSpec(
         "crm_order_analytics",
         (
             "AGGREGATE / ANALYTICAL tool for customer sales orders - computes a single "

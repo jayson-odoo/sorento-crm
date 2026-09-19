@@ -56,6 +56,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_procurement_po_last_cost_list",
         "crm_outstanding_report",
         "crm_low_stock_report",
+        "crm_sales_report",
     }
 )
 
@@ -1557,6 +1558,14 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_outstanding_report":
         return json.dumps(_outstanding_envelope(data))
 
+    # S3 (PLAN-chatbot-sales-report.md): the SAME bypass, for the SAME reason - the
+    # report's shape (a month block per bucket, each with its own breakdown) has no
+    # row list the generic envelope could build items from. `detail` on the payload
+    # is the SAME "payload-keyed presenter swap" `crm_outstanding_report` uses above:
+    # present, it swaps in `_sales_report_detail`; absent, the month-block report.
+    if tool_name == "crm_sales_report":
+        return json.dumps(_sales_report_envelope(data))
+
     # The same bypass, for the same reason: the low stock report's payload is a STATUS
     # (ready / pending / busy) plus an attachment list, not a row collection the generic
     # item/field envelope could build items from. `attachments` rides through untouched -
@@ -2161,3 +2170,229 @@ def _outstanding_detail(report: dict, scope: str) -> str:
             field_lines.append(f"*{label}:* {value}")
         items.append(f"{i}. " + "\n".join(field_lines))
     return "\n\n".join(items)
+
+
+# --------------------------------------------------------------------------
+# sales report (confirmed vs outstanding sales, by month) - PLAN-chatbot-sales-report.md
+# --------------------------------------------------------------------------
+# Same shape of exception the outstanding report earned above: this reply (one
+# header, N month blocks each with its own breakdown, a closing offer sentence)
+# has no row list a generic item/field envelope could build items from, so these
+# two functions render the WHOLE WhatsApp text directly as a string and
+# `present_response` never dispatches to them (S1 only wires a directly callable
+# function - S2/S3 add the route and the tool that would call it).
+#
+# `report` is the shape `GET /api/v1/order-management/sales-report` will return
+# (S2, "Backend contract"): `customer_name` / `product_code` / `channel` echoed
+# back from the caller's own query, `location_token` + `warehouse_codes` the
+# same echo-token/resolved-codes pair the outstanding report carries (S9,
+# captain ruling 19 Sep 2026: "Location:" prints exactly as the outstanding
+# header does), `date_from` / `date_to` the bucket-date window, `months[]`
+# latest first with `by_product[]`, `by_customer[]`, both, or neither (S6/
+# AC-1628, extended S20 - the ROUTE decides which keys are present, this
+# presenter only renders whichever it was handed, `by_product` first when
+# both are there), and `so_rows[]` for `detail=so`.
+#
+# Reused verbatim from the outstanding section above, no re-import needed
+# (same module): `_outstanding_fmt_int` (thousands-separated quantities, S13),
+# `_outstanding_ddmmyyyy` / `_outstanding_date_range` (the same two date forms),
+# `_outstanding_label` (a missing name prints "Unassigned", never Python's
+# None), `_outstanding_location_header` (token + resolved codes -> the bracketed
+# form, S9 - called directly, not copied).
+
+
+def _rm_money(v: Any) -> str:
+    """``RM 1,234.50`` (AC-1609); zero prints ``RM 0.00``. Thousands-separated,
+    unlike ``_money()`` above (which prints ``MYR value`` with no separator for a
+    different tool) - this report's own money format, shared by the report and
+    the detail list so neither can drift from the other."""
+    try:
+        return f"RM {float(v):,.2f}"
+    except (TypeError, ValueError):
+        return f"RM {v}"
+
+
+_SALES_MONTH_ABBR = (
+    "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+
+def _sales_month_label(month_key: Any) -> str:
+    """``"2026-09"`` -> ``"Sep 2026"``. Hand-rolled rather than ``strftime("%b")``
+    so the abbreviation never depends on the process locale. An unparseable key
+    passes through as its plain string - a hostile mock must never crash the
+    reply."""
+    s = str(month_key or "").strip()
+    try:
+        year, month = s.split("-", 1)
+        return f"{_SALES_MONTH_ABBR[int(month)]} {year}"
+    except (ValueError, IndexError, TypeError):
+        return s
+
+
+def _sales_channel_header(channel: Any) -> str:
+    """``"dealer"`` -> ``"Dealer"``, ``"project"`` -> ``"Project"``, anything else
+    (absent, null-class) -> ``"all"`` (S8)."""
+    s = str(channel).strip().lower() if _filled(channel) else ""
+    if s == "dealer":
+        return "Dealer"
+    if s == "project":
+        return "Project"
+    return "all"
+
+
+def _sales_product_header(typed_code: Any, codes: Any) -> str:
+    """S19 second fix round (owner ruling, 19 Sep 2026 live testing: "why it says
+    SRT5674 (SRT5674-N) so weird, it should just be comma separated"), replacing
+    AC-1633's original bracket form: the Product line is the COMMA-SEPARATED list
+    of every code the typed stem COVERS - the same family `product_codes` already
+    carries (S19's prefix match), sorted ascending. One covered code prints bare
+    (there is nothing to list); more than 10 collapses to a count (the header
+    would otherwise run to a whole family, e.g. HANLIM's 80 products a month);
+    no product at all prints ``"all"``. An empty list with a typed code (an old
+    body, or a typed code with no covered rows at all) falls back to the bare
+    typed code - there is nothing to list either."""
+    if not _filled(typed_code):
+        return "all"
+    resolved = [c for c in (codes or []) if _filled(c)]
+    if len(resolved) > 10:
+        return f"{typed_code} ({len(resolved)} products)"
+    if len(resolved) >= 1:
+        return ", ".join(str(c) for c in resolved)
+    return str(typed_code)
+
+
+def _sales_breakdown_blocks(month: dict) -> list[tuple[str, str, list]]:
+    """Which breakdown(s) a month block carries (AC-1604/AC-1628, extended S20):
+    each present key becomes ``(heading, name_key, rows)`` - ``("*_By
+    product_*", "product_code", rows)`` when `by_product` is present,
+    ``("*_By customer_*", "customer_name", rows)`` when `by_customer` is
+    present. Both may be present at once (S20: a product filter covering 2+
+    codes, alone or alongside a named customer) - `by_product` prints FIRST,
+    then `by_customer`, in that order (S20 - not the dict/JSON key order,
+    this function's own return order). Neither present (both subjects named,
+    one covered code) returns an empty list. The route decides which keys are
+    present; this never re-derives the subject from `customer_name` /
+    `product_code` itself, and never sorts the rows themselves (S6/AC-1608)."""
+    blocks: list[tuple[str, str, list]] = []
+    by_product = month.get("by_product")
+    if isinstance(by_product, list):
+        blocks.append(("*_By product_*", "product_code", by_product))
+    by_customer = month.get("by_customer")
+    if isinstance(by_customer, list):
+        blocks.append(("*_By customer_*", "customer_name", by_customer))
+    return blocks
+
+
+def _sales_breakdown_lines(rows: list, name_key: str) -> list[str]:
+    """One breakdown line per row, in the order given (AC-1608, never re-sorted
+    here - S6 ranks in the route): ``name: RM v (Qty: n) (Confirmed: RM v, Qty:
+    n)``."""
+    return [
+        f"{_outstanding_label(row.get(name_key))}: "
+        f"{_rm_money(row.get('ordered_value'))} (Qty: {_outstanding_fmt_int(row.get('ordered_qty'))}) "
+        f"(Confirmed: {_rm_money(row.get('confirmed_value'))}, "
+        f"Qty: {_outstanding_fmt_int(row.get('confirmed_qty'))})"
+        for row in rows
+    ]
+
+
+def _sales_month_block(month: dict) -> str:
+    lines = [
+        f"*_{_sales_month_label(month.get('month'))}_*",
+        f"Sales orders: {_outstanding_fmt_int(month.get('so_count'))}",
+        f"Ordered: {_rm_money(month.get('ordered_value'))} "
+        f"(Qty: {_outstanding_fmt_int(month.get('ordered_qty'))})",
+        f"Confirmed (DO): {_rm_money(month.get('confirmed_value'))} "
+        f"(Qty: {_outstanding_fmt_int(month.get('confirmed_qty'))})",
+        f"Outstanding: {_rm_money(month.get('outstanding_value'))} "
+        f"(Qty: {_outstanding_fmt_int(month.get('outstanding_qty'))})",
+    ]
+    for heading, name_key, rows in _sales_breakdown_blocks(month):
+        lines.append(heading)
+        lines.extend(_sales_breakdown_lines(rows, name_key))
+    return "\n".join(lines)
+
+
+SALES_REPORT_MISS_MESSAGE = "No sales found."
+
+
+def _sales_report(report: dict) -> str:
+    """The full WhatsApp reply (PLAN-chatbot-sales-report.md, "The reply"): five
+    header lines, a blank line, then one block per month in the order given
+    (AC-1608 - the ROUTE sorts latest first, S6), then a single closing offer
+    sentence on a hit. A body with no months prints the header then
+    ``"No sales found."`` and no offer (AC-1607)."""
+    header = "\n".join(
+        (
+            f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
+            f"Product: {_sales_product_header(report.get('product_code'), report.get('product_codes'))}",
+            f"Channel: {_sales_channel_header(report.get('channel'))}",
+            f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
+            f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}",
+        )
+    )
+    months = report.get("months") if isinstance(report.get("months"), list) else []
+    if not months:
+        return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
+    blocks = [_sales_month_block(m) for m in months if isinstance(m, dict)]
+    text = header + "\n\n" + "\n\n".join(blocks)
+    # AC-1605: always this one sentence on a hit - unlike the outstanding report's
+    # two-scope offer, the sales report has exactly one detail list to offer.
+    text += "\n\nReply 1 for the sales order list."
+    return text
+
+
+def _sales_report_detail(report: dict) -> str:
+    """One numbered item per `so_rows[]` entry, in the order given (AC-1608, the
+    ROUTE sorts, S2 "so_rows"): SO Number, Customer, Location, Order Date,
+    Ordered, Confirmed (DO), Outstanding - each value/quantity pair as `RM v
+    (Qty: n)` (AC-1606). No header here - the header belongs to the report
+    reply, not this list."""
+    rows = report.get("so_rows") if isinstance(report.get("so_rows"), list) else []
+    items: list[str] = []
+    for i, row in enumerate(rows, start=1):
+        order_date = row.get("order_date")
+        field_lines = [
+            f"*SO Number:* {row.get('so_number')}",
+            f"*Customer:* {_outstanding_label(row.get('customer_name'))}",
+        ]
+        # AC-1633: absent-safe - an OLD body (rendered before this field
+        # existed) has no `product_codes` key at all, and a customer-subject
+        # report never gets one either; both print no Product line at all.
+        if _filled(row.get("product_codes")):
+            field_lines.append(f"*Product:* {row.get('product_codes')}")
+        field_lines.extend([
+            f"*Location:* {_outstanding_label(row.get('location'))}",
+            f"*Order Date:* {_outstanding_ddmmyyyy(order_date) if _filled(order_date) else _outstanding_label(order_date)}",
+            f"*Ordered:* {_rm_money(row.get('ordered_value'))} (Qty: {_outstanding_fmt_int(row.get('ordered_qty'))})",
+            f"*Confirmed (DO):* {_rm_money(row.get('confirmed_value'))} "
+            f"(Qty: {_outstanding_fmt_int(row.get('confirmed_qty'))})",
+            f"*Outstanding:* {_rm_money(row.get('outstanding_value'))} "
+            f"(Qty: {_outstanding_fmt_int(row.get('outstanding_qty'))})",
+        ])
+        items.append(f"{i}. " + "\n".join(field_lines))
+    return "\n\n".join(items)
+
+
+def _sales_report_envelope(report: dict) -> dict:
+    """What `present_response` returns for `crm_sales_report`: the rendered text plus
+    the one fact the text cannot carry.
+
+    `has_result` is "a month came back" (or, under `detail=so`, "the SO list is
+    non-empty") - the header renders on a total miss too (AC-1607), so reading the
+    TEXT would call a miss an answer and the chatbot lane's escalate offer
+    (AC-1658) would never fire. Mirrors `_outstanding_envelope` for the same reason."""
+    if report.get("detail") == "so":
+        return {
+            "result_type": "sales_report_detail",
+            "response": _sales_report_detail(report),
+            "has_result": bool(report.get("so_rows")),
+        }
+    months = report.get("months")
+    return {
+        "result_type": "sales_report",
+        "response": _sales_report(report),
+        "has_result": isinstance(months, list) and len(months) > 0,
+    }

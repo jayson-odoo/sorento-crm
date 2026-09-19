@@ -33,6 +33,7 @@ from app.services.chatbot import jsc, topic
 from app.services.chatbot.contracts import (
     BARE_ENTITY_TYPE_BY_DOMAIN,
     DEFAULT_SUGGESTED_TEAM,
+    DETAIL_OFFER_KINDS,
     DOMAIN_SPEC,
     DOMAIN_SWITCH_WORDS,
     ENTITY_HINTS,
@@ -945,7 +946,16 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 # `fetch.entity_ids_transformer` (`jsc.get`) - already read absence as null, and nothing
 # here WRITES either key, so an absent one cannot raise and never lands in the emission
 # (which is what keeps every captured `output_exchange` fixture byte-equal).
-_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis", "group_by", "top_n"})
+#
+# The sales report slice joins `sales_channel` to the exemption for the SAME reason,
+# corrected from an earlier ruling that left it out of the schema's `required` list
+# entirely: `additionalProperties: false` + the provider's strict-schema mode
+# (`llm_provider.py`'s `strict: True`) rejects a `properties` key that is not also
+# `required`, so the key HAS to be required at the wire - and, exactly like `group_by`
+# / `top_n`, no prompt version before the sales report addendum ever emits it, so it
+# is exempted here rather than enforced. `o.get("sales_channel")` is how every reader
+# already reads it, so an absent key still reads as null and no fixture changes shape.
+_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis", "group_by", "top_n", "sales_channel"})
 _EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
 _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 
@@ -1194,7 +1204,7 @@ def _outstanding_scope_ask_candidate(o: dict, prev_pending: Any) -> bool:
     """
     stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
         "outstanding_scope",
-        "outstanding_detail",
+        *DETAIL_OFFER_KINDS,
     ) and not jsc.truthy(o.get("outstanding_pending_dropped"))
     return (
         not stale_outstanding_ask_open
@@ -1233,7 +1243,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     only and stamped on `o`; the second pass re-asserts it.
     """
     kind = jsc.get(prev_pending, "kind")
-    if kind not in ("outstanding_scope", "outstanding_detail"):
+    if kind != "outstanding_scope" and kind not in DETAIL_OFFER_KINDS:
         return
 
     filters = jsc.get(prev_state, "outstanding_filters")
@@ -1319,7 +1329,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_refinement_entities"] = [
                 dict(e) for e in named_entities if isinstance(e, dict)
             ]
-        elif names_entity or (own_question and (kind == "outstanding_detail" or picked is None)):
+        elif names_entity or (own_question and (kind in DETAIL_OFFER_KINDS or picked is None)):
             # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask
             # is DROPPED here, and every later reader of `prev_pending` this turn has to
             # see that - the scope-ask signal below and the `outstanding_filters` carry in
@@ -1441,6 +1451,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
     o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
     o["outstanding_carried_location_token"] = filters.get("location_token")
+    # R-B3 (reviewer finding, Phase 3 fix round): the SAME restore, for the
+    # sales-report offer's own `channel` - `fetch.py`'s crm_sales_report arg
+    # builder reads this ONLY when the turn's own `sales_channel` is absent
+    # (the turn's own value always wins, S4 point 2's existing rule).
+    o["outstanding_carried_channel"] = filters.get("channel")
 
     if kind == "outstanding_scope":
         if refining:
@@ -1462,7 +1477,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_reask_filters"] = filters
         return
 
-    # kind == "outstanding_detail" (AC-1138; R14 added the third option)
+    # kind in DETAIL_OFFER_KINDS (AC-1138; R14 added the third option). PLAN-chatbot-
+    # sales-report.md S4 wiring point 7 folds `sales_report_detail` into this SAME
+    # membership test - its tool has no scope concept at all, so its `order_status`
+    # is the fixed word, never derived from a stored `scope` (which its own filter
+    # set does not carry).
     if refining:
         # AC-1157: the SAME report re-runs, for the SAME scope it was run for, with this
         # turn's filters overlaid - and with NO `detail` argument, because the customer
@@ -1471,11 +1490,13 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         # so a later "1" lists the narrowed set. The scope is read back off the stored
         # filters: the offer exists only because a report ran, so its scope is known, and
         # re-asking for it would be asking a question that has already been answered.
-        o["order_status"] = _ORDER_STATUS_BY_SCOPE.get(
-            jsc.js_string(filters.get("scope") or ""), "outstanding_both"
+        o["order_status"] = (
+            "sales_report"
+            if kind == "sales_report_detail"
+            else _ORDER_STATUS_BY_SCOPE.get(jsc.js_string(filters.get("scope") or ""), "outstanding_both")
         )
     elif picked in ("so", "do", "both"):
-        o["order_status"] = _ORDER_STATUS_BY_SCOPE[picked]
+        o["order_status"] = "sales_report" if kind == "sales_report_detail" else _ORDER_STATUS_BY_SCOPE[picked]
         o["outstanding_detail_pick"] = picked
     else:
         # AC-1143(c): the message answered nothing on offer - a number that named no
@@ -1492,7 +1513,12 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         #
         # `run_fetch` reads these rows directly, the way the scope question's own
         # out-of-range re-ask does, because this turn typed no product to resolve.
+        # `kind` rides along (PLAN-chatbot-sales-report.md ruling 2) so the re-print
+        # re-arms the SAME kind that was open - `outstanding_detail` and
+        # `sales_report_detail` share this one arm and must not stamp each other's
+        # literal.
         o["outstanding_detail_reask"] = {
+            "kind": kind,
             "filters": filters,
             "rows": [dict(row) for row in jsc.array(jsc.get(prev_state, "last_result_set"))
                      if jsc.truthy(row)],
@@ -1649,6 +1675,28 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["domain_hint"] = "product_attachment"
             o["intent_hint"] = "check_product_attachment"
             o["domain_corrected"] = "resource_attachment->product_attachment (product present)"
+
+    # -- A REPORT order_status ALWAYS ROUTES TO THE order DOMAIN ------------------------ #
+    # Finding 3(b) (owner live testing, 19 Sep 2026, PLAN-chatbot-sales-report.md): the
+    # measured emission for "Srt5674 August total sale quantity" (FULL prompt, one run)
+    # parsed order_status "sales_report" but domain_hint "master_products" - the parser
+    # KNEW the ask was a report and still named the product-master domain. Both
+    # `lanes/business/__init__.py` tool-pick overrides for a report ask (outstanding and
+    # sales_report alike) gate on `domain == "order"` and otherwise fall through to
+    # whatever `select_tool(domain)` picks for the WRONG domain - here, the product
+    # listing. `OUTSTANDING_ORDER_STATUS` is the SAME set `resolve_gate.py`'s own R20
+    # hole already shares between the outstanding statuses and `sales_report` (imported
+    # lazily - that module imports THIS one back, function-local, at its own line ~337),
+    # so this reads ONLY the parser's own structured `order_status` field, never the
+    # message text, the same discipline the `resource_attachment` correction above
+    # already keeps, and extends one existing normalisation rather than adding a second.
+    from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
+
+    report_order_status = jsc.js_string(o.get("order_status") or "").strip()
+    if report_order_status in OUTSTANDING_ORDER_STATUS and o.get("domain_hint") != "order":
+        prior_domain = o.get("domain_hint")
+        o["domain_hint"] = "order"
+        o["domain_corrected"] = f"{prior_domain}->order (order_status {report_order_status})"
 
     # -- MENU-LABEL OVERRIDE ------------------------------------------------------------ #
     # Exact menu/button labels are SELECTIONS (-> portal link), not free-text queries.
@@ -2062,6 +2110,15 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 jsc.get(pcs, "order_status")
             ):
                 o["order_status"] = jsc.get(pcs, "order_status")
+
+            # sales_channel: the SAME axis, the SAME carry, for the SAME reason
+            # (PLAN-chatbot-sales-report.md, S4 wiring point 2, captain ruling 1) -
+            # a sales report ask that hit the ambiguous-customer picker is answered
+            # by a bare pick naming no channel word at all.
+            if not jsc.truthy(o.get("sales_channel")) and jsc.truthy(
+                jsc.get(pcs, "sales_channel")
+            ):
+                o["sales_channel"] = jsc.get(pcs, "sales_channel")
 
             # requested_attributes: the PERSPECTIVE of the question is an axis the pick
             # turn did not name - carry it like the date window (exec 13951947).

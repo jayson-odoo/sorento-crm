@@ -453,6 +453,12 @@ async def startup_event():
     # 403/422 there - and a SIDE-EFFECTING tool (it creates a reorder run) must not sit on
     # the assistant's read list at all. No bootstrap.
 
+    # AC-1642 STRUCK (security B1, Phase 3): `crm_sales_report` is deliberately NOT added to
+    # the in-app assistant's `enabled_tools` either - the assistant is a DIFFERENT auth
+    # boundary from the route's `order_management.orders.view` RBAC permission, and a staff
+    # member who is 403 on the route could otherwise read the money figures through the
+    # assistant instead, across every company. No bootstrap.
+
     try:
         from app.database import SessionLocal
         from app.services import project_seed_service

@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc, topic
+from app.services.chatbot.contracts import DETAIL_OFFER_KINDS
 from app.services.chatbot.tail import pending as pending_marker
 
 UNDEFINED = jsc.UNDEFINED
@@ -794,6 +795,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     if jsc.truthy(order_status_value):
         variables["order_status"] = order_status_value
 
+    # PLAN-chatbot-sales-report.md, S4 wiring point 2 (captain ruling 1): the sales
+    # report's own channel filter is an axis of the SAME kind, carried the SAME way
+    # and for the SAME reason - a sales report ask that stopped at the gate's
+    # ambiguous-customer picker persisted no trace of it, so the pick turn that
+    # resumes it has no channel of its own (`head/output_exchange.py`'s reuse arm
+    # reads this key back beside `order_status`). Written only when there IS one.
+    sales_channel_value = jsc.get(qf, "sales_channel")
+    if jsc.truthy(sales_channel_value):
+        variables["sales_channel"] = sales_channel_value
+
     # ---- TIER MENU PERSISTENCE (RS-9 Fix 6) ------------------------------- #
     # `route-turn`'s pre-check needs the OFFERED tier list, in order, to resolve a bare
     # digit on ANY later turn of the promotion thread - not just the one round trip the
@@ -847,7 +858,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         jsc.get(outstanding_ask, "filters")
         if jsc.truthy(outstanding_ask)
         else jsc.get(prev, "outstanding_filters")
-        if prev_pending_kind in ("outstanding_scope", "outstanding_detail")
+        if (prev_pending_kind == "outstanding_scope" or prev_pending_kind in DETAIL_OFFER_KINDS)
         else None
     )
     if outstanding_filters_value:
@@ -1885,7 +1896,8 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         # carried picker two lines down - the customer read the scope question while
         # the session was armed against the picker roster, and the "3" that answered it
         # resolved against the wrong list.
-        or selection_context in ("outstanding_scope", "outstanding_detail")
+        or selection_context == "outstanding_scope"
+        or selection_context in DETAIL_OFFER_KINDS
     )
     prev_picker = jsc.get(prev, "picker_last_result_set")
     carried = (
@@ -2009,7 +2021,7 @@ def _offer_carry(
         # _apply_outstanding_pending` already resolved it, or dropped it because this turn
         # brought its own question).
         return None
-    if prev_ctx == "outstanding_detail" and jsc.truthy(jsc.get(qf, "outstanding_pending_dropped")):
+    if prev_ctx in DETAIL_OFFER_KINDS and jsc.truthy(jsc.get(qf, "outstanding_pending_dropped")):
         # AC-1143 (owner ruling, 13 Sep 2026): the detail offer is a ROSTER the customer
         # can still see, so it carries like `suggest_offer` and the tier menu - but
         # `topic.changed` cannot bound it on its own, because a bare "SRTWC999" carries

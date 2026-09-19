@@ -55,13 +55,15 @@ _PRODUCT_FOLD = re.compile(r"[-\s]+")
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
 
-#: R20 (owner round 7, 13 Sep 2026): the `order_status` values that make a turn an
-#: OUTSTANDING ask, which is the one ask the customer picker must not offer a delivery
-#: hint on - see the `If-customer-picker` arm. The three scope words come from
-#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, and bare `outstanding`
-#: is added because that table deliberately omits it (the field-reveal gate resolves it).
+#: R20 (owner round 7, 13 Sep 2026), extended by PLAN-chatbot-sales-report.md S4
+#: wiring point 8: the `order_status` values whose customer picker must not offer a
+#: delivery hint - see the `If-customer-picker` arm. The three scope words come from
+#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, bare `outstanding`
+#: is added because that table deliberately omits it (the field-reveal gate resolves
+#: it), and `sales_report` for the SAME reason as the outstanding asks: the probe
+#: measures DELIVERED DOs, a population this report does not read at all.
 OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
-    {"outstanding", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+    {"outstanding", "sales_report", *fetch_mod.ORDER_STATUS_TO_SCOPE}
 )
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input
@@ -554,12 +556,39 @@ def build_ctx_resolved(
 # --------------------------------------------------------------------------- #
 
 
+def _report_ask_has_product_subject(parser: dict[str, Any], compatible: Any) -> bool:
+    """Second-defect fix A (captain brief, 19 Sep 2026, general seam): a REPORT
+    ask (`order_status` in `OUTSTANDING_ORDER_STATUS` - both the outstanding
+    statuses and `sales_report` share this hole, the same population R20
+    already names for the customer-picker probe) accepts EITHER a customer OR
+    a product as its subject (AC-1119 / AC-1626 / S7). Clause 3 below exists
+    for an order-domain turn in general, where a customer that failed to
+    resolve really is nothing to answer with - but a report ask has an
+    ALTERNATE subject that clause does not know about: "dealer Srt5674-N
+    August total sale quantity" parsed "Srt5674-N" as a customer (the word
+    "dealer" sits in front of it), the resolver's own `fallback_to_all_types`
+    then found it as a PRODUCT instead, and clause 3 answered a miss with NO
+    TOOL CALL AT ALL even though the report was fully answerable off that
+    product. This is checked HERE, at the one seam that already knows both
+    `order_status` and `compatible_entities`, rather than teaching the tool-
+    pick dispatch (`run_fetch`) to re-derive a decision this gate already
+    made."""
+    order_status = jsc.js_string(parser.get("order_status") or "")
+    if order_status not in OUTSTANDING_ORDER_STATUS:
+        return False
+    return any(
+        jsc.truthy(c) and jsc.lower_or_empty(jsc.get(c, "entity_type")) == "product"
+        for c in jsc.array(compatible)
+    )
+
+
 def if3_miss(ctx_resolved_ctx: dict[str, Any], *, parser: dict[str, Any]) -> bool:
     """`If3` - the miss gate, three OR'd clauses, verbatim.
 
     Clause 3 is the "customer resolved to nothing" case the first two cannot see: the
     domain accepts a customer, the parser named one, and nothing customer-shaped survived
-    the gate.
+    the gate. `_report_ask_has_product_subject` (second-defect fix A, 19 Sep 2026) is a
+    FOURTH, AND'd exception on clause 3 alone - clauses 1 and 2 are untouched.
     """
     gate = jsc.get(ctx_resolved_ctx, "gate") or {}
     resolved = jsc.get(ctx_resolved_ctx, "resolved") or {}
@@ -590,6 +619,7 @@ def if3_miss(ctx_resolved_ctx: dict[str, Any], *, parser: dict[str, Any]) -> boo
             jsc.truthy(c) and jsc.lower_or_empty(jsc.get(c, "entity_type")) == "customer"
             for c in jsc.array(compatible)
         )
+        and not _report_ask_has_product_subject(parser, compatible)
     )
 
 

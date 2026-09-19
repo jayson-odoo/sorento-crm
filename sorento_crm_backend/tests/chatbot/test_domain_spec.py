@@ -160,6 +160,11 @@ CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
         # override lives in `lanes/business/__init__.py::run_fetch`, never in
         # `select_tool`'s own `tools[0]` pick.
         "crm_outstanding_report",
+        # PLAN-chatbot-sales-report.md, S4 wiring point 3: allow-list member only -
+        # the override lives beside the one above in
+        # `lanes/business/__init__.py::run_fetch`, never in `select_tool`'s
+        # `tools[0]` pick.
+        "crm_sales_report",
         # PLAN-low-stock-report.md S6 (AC-62): allow-list member only - like the
         # outstanding report above, the override lives in
         # `lanes/business/__init__.py::run_fetch` and never in `select_tool`'s `tools[0]`
