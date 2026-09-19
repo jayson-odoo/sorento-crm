@@ -1,7 +1,7 @@
 """The order inquiry sheet's line pick: exact date, then same month, then the sheet's PO.
 
 Contract: `documentation/plans/scm/oi-sheet-line-pick-month-po-acceptance-criteria.md`,
-AC-LP-1 to AC-LP-15, with `PLAN-oi-sheet-line-pick-month-po.md` sections 0 to 3 for the
+AC-LP-1 to AC-LP-16, with `PLAN-oi-sheet-line-pick-month-po.md` sections 0 to 3 for the
 promised behaviour. One test per criterion, named for it; AC-LP-12 gets two (the ledger
 charge, and the legitimate split it must not break). AC-LP-14 (R4) and AC-LP-15 (R5) are
 later small-fix slices, added after the pick's own tests below first went green, and moved
@@ -50,7 +50,7 @@ test that pins the reversed behaviour; nothing existing needed to change.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.models.order import SalesOrder, SalesOrderLine
@@ -109,6 +109,18 @@ def _sibling_po_line(
         from_so_line_ref=from_so_line_ref,
     )
     w.db.add(line)
+    w.db.flush()
+    return line
+
+
+def _born_at(w: World, line: SalesOrderLine, when: datetime) -> SalesOrderLine:
+    """`created_at` written explicitly (copied from
+    `test_oi_sheet_pairing_repair.py::_born_at`): it is the LAST tiebreak in the line pick,
+    and `server_default=func.now()` gives every line seeded in one transaction the SAME
+    timestamp (Postgres freezes `now()` per transaction), so a test that relies on "the
+    older line" without saying which is older would be measuring the order the SELECT
+    happened to return."""
+    line.created_at = when
     w.db.flush()
     return line
 
@@ -1156,3 +1168,95 @@ def test_single_sheet_variant_never_dedupes_a_repeat():
         assert {str(r.so_line_id) for r in rows} == {
             str(w.mirror_of(line_a).id), str(w.mirror_of(line_b).id),
         }
+
+
+# --------------------------------------------------------------------------- #
+# AC-LP-16: an equal-quantity line is tried before a bigger one (R6)          #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_lp_16_equal_quantity_line_before_a_bigger_one():
+    """AC-LP-16 (R6, prod CB2805A-DIY / SO324265, 19 Sep 2026). Two lines share ONE exact
+    date, qty 230 (created FIRST, so it wins today's created-at tie-break) and qty 150; the
+    sheet's own 150 row is stated FIRST, ahead of the 230 row. `_rank_for` carries no
+    quantity term at all, so today the bigger line takes the 150 row on nothing but that
+    tie-break, and the 230 row then finds every line too small or already spent and reads
+    `qty_exceeds_ordered` - CB2805A-DIY's own defect (whole order, 18 Sep prod copy: 184
+    instructions, only 180 landed)."""
+    with world() as w:
+        order = w.order()
+        line_230 = _born_at(
+            w, w.line(order, qty_ordered="230", required_date=date(2026, 1, 2)),
+            datetime(2026, 6, 1, 8, 0, 0),
+        )
+        line_150 = _born_at(
+            w, w.line(order, qty_ordered="150", required_date=date(2026, 1, 2)),
+            datetime(2026, 6, 1, 9, 0, 0),
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 150, date(2026, 1, 2),
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 230, date(2026, 1, 2),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 2, result
+        assert result["rows_line_not_found"] == 0, result
+        rows_by_qty = {Decimal(str(row.qty)): row for row in w.rows()}
+        assert len(rows_by_qty) == 2, [str(r.qty) for r in w.rows()]
+        assert str(rows_by_qty[Decimal("150")].so_line_id) == str(
+            w.mirror_of(line_150).id
+        ), "the 150 row did not land on the 150 line"
+        assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
+            w.mirror_of(line_230).id
+        ), "the 230 row did not land on the 230 line"
+
+
+def test_ac_lp_16_equal_quantity_wins_the_po_pass_too():
+    """AC-LP-16 (PO pass). The same defect, reached through pass 3 instead of pass 1: two
+    lines share one month-mismatched date and one book PO, so only the citation pass can
+    settle either. `_rank_for_po` carries no quantity term either, so the tie-break
+    (earliest date, then oldest, then id) alone would hand ONE line to both rows and starve
+    the other - the equal-quantity step has to settle it first."""
+    with world() as w:
+        order = w.order()
+        line_230 = _with_ref(
+            w,
+            _born_at(
+                w, w.line(order, qty_ordered="230", required_date=date(2026, 5, 2)),
+                datetime(2026, 6, 1, 8, 0, 0),
+            ),
+            _ref(),
+        )
+        line_150 = _with_ref(
+            w,
+            _born_at(
+                w, w.line(order, qty_ordered="150", required_date=date(2026, 5, 2)),
+                datetime(2026, 6, 1, 9, 0, 0),
+            ),
+            _ref(),
+        )
+        po_a, po_line_230 = w.po_line(qty_ordered="230", number=_po_number("202509"))
+        _names(w, po_line_230, line_230.source_ref)
+        _sibling_po_line(w, po_a, qty_ordered="150", from_so_line_ref=line_150.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 150, date(2026, 2, 2),
+             w.warehouse.warehouse_code, po_a.po_number),
+            (order.so_number, w.product.product_code, 230, date(2026, 2, 2),
+             w.warehouse.warehouse_code, po_a.po_number),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 2, result
+        assert result["rows_line_not_found"] == 0, result
+        rows_by_qty = {Decimal(str(row.qty)): row for row in w.rows()}
+        assert len(rows_by_qty) == 2, [str(r.qty) for r in w.rows()]
+        assert str(rows_by_qty[Decimal("150")].so_line_id) == str(
+            w.mirror_of(line_150).id
+        ), "the 150 row did not land on the 150 line"
+        assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
+            w.mirror_of(line_230).id
+        ), "the 230 row did not land on the 230 line"

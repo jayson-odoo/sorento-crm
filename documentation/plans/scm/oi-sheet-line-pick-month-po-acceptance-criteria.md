@@ -1,6 +1,6 @@
 # UAC - order inquiry sheet: line pick by exact date, then same month, then the sheet's PO
 
-Plan: `PLAN-oi-sheet-line-pick-month-po.md`. Owner rulings 19 Sep 2026 (R1 to R5 in the plan).
+Plan: `PLAN-oi-sheet-line-pick-month-po.md`. Owner rulings 19 Sep 2026 (R1 to R6 in the plan).
 
 Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod, 19 Sep):
 
@@ -51,6 +51,12 @@ Fixture shape for every AC below is the measured one, SO324265 / BT012-CR (prod,
   when they disagree: a row whose citation names a DIFFERENT purchase order than the only line
   in its own month does not take that line, even stated first in the file - the citation-alone
   pass settles it (or the fallback, if nothing free cites it), never the month pass.
+- **AC-LP-16** (R6, prod CB2805A-DIY / SO324265, 19 Sep 2026) Inside EVERY pass, a line whose
+  `qty_ordered` EQUALS the row's own quantity is tried before any bigger line, even one that
+  would otherwise win the pass's own tie-break (created-at, or earliest date). Reached through
+  the exact-date pass or the citation-alone pass alike. A row that splits a line (its own
+  quantity smaller than every candidate) is unaffected and still lands as AC-S1-2 and AC-LP-12
+  describe.
 
 ## Citation lending
 
