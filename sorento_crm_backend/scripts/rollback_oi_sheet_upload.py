@@ -64,7 +64,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 # Allow `from app.*` imports when invoked from the backend directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -73,14 +73,40 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
-from app.models.project_so import OrderInquiry, OrderInquiryLink, OrderInquiryRow
+from app.models.order import SalesOrder, SalesOrderLine
+from app.models.project_so import (
+    OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    ProjectSalesOrderLine,
+)
 from app.models.scm import OrderLinkClaim
 from app.services.project_order_inquiry_import_service import _MIGRATION_STAMP
 from app.services.scm import order_link_service
 from scripts.delete_empty_order_inquiries import _no_rows_clause, _no_task_clause
 
-#: The four counts every run answers with, in the order they are performed.
+#: The four counts every run answers with, in the order they are performed. `kept` /
+#: `kept_rows` join them only when a planning trait actually kept a row (`_remove`) - never
+#: unconditionally, or the exact `set(counts)` a pre-existing rollback caller may still
+#: check would grow keys it never asked for.
 COUNT_KEYS = ("rows", "links", "claims", "inquiries")
+
+#: The three traits `rows_of` reads to decide a row is planning's, not the sheet's alone
+#: (`PLAN-oi-rollback-recover-planning-rows.md`, section 2.3, ruling R3), checked in this
+#: order so a row carrying more than one still reports the first that applies.
+KEPT_TRAITS = ("redirected_to_pool", "changed_at", "supply_decision_id")
+
+
+def _kept_trait(row: OrderInquiryRow) -> Optional[str]:
+    """Which trait keeps `row` through a rollback, or `None` for the plain rows a rollback
+    still deletes exactly as it always has."""
+    if row.redirected_to_pool:
+        return "redirected_to_pool"
+    if row.changed_at is not None:
+        return "changed_at"
+    if row.supply_decision_id is not None:
+        return "supply_decision_id"
+    return None
 
 
 #: Refused rather than run. A blank name strips back to the bare stamp, which every migrated
@@ -97,8 +123,8 @@ def _stamp(file_name: str) -> str:
     return f"{_MIGRATION_STAMP} {file_name.strip()}"
 
 
-def rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
-    """Every row this file raised, and no row of any other.
+def _stamped(db: Session, file_name: str) -> List[OrderInquiryRow]:
+    """Every row this file raised, kept and removable both.
 
     `_note_for` writes the stamp alone, or the stamp then `"; <remark>"`, so those are the
     only two shapes this may match. A bare `startswith(stamp)` would additionally match every
@@ -108,8 +134,6 @@ def rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
     `autoescape=True` because a file name is the operator's own text: `%` or `_` in it would
     otherwise be read as LIKE wildcards.
     """
-    if not (file_name or "").strip():
-        raise ValueError(BLANK_NAME)
     stamp = _stamp(file_name)
     return (
         db.query(OrderInquiryRow)
@@ -121,6 +145,50 @@ def rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
         )
         .all()
     )
+
+
+def rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
+    """This file's rows the rollback actually REMOVES - the sheet's own, never a row
+    planning has since worked on (section 2.3, ruling R3): `_kept_trait` excludes any row
+    carrying `redirected_to_pool`, `changed_at` or `supply_decision_id`, which `_kept_rows_of`
+    reads back separately so a caller cannot delete what this leaves out by accident.
+    """
+    if not (file_name or "").strip():
+        raise ValueError(BLANK_NAME)
+    return [row for row in _stamped(db, file_name) if _kept_trait(row) is None]
+
+
+def _kept_rows_of(db: Session, file_name: str) -> List[OrderInquiryRow]:
+    """`rows_of`'s complement: the stamped rows a planning trait keeps."""
+    return [row for row in _stamped(db, file_name) if _kept_trait(row) is not None]
+
+
+def _kept_row_info(db: Session, row: OrderInquiryRow) -> Dict[str, Any]:
+    """What the dry run and `--apply` both name a kept row by (AC-R-19): its sales order,
+    item, quantity, date and which trait kept it - the same read
+    `project_order_inquiry_service.py::_row_core_so_number` uses for a row's own current
+    order.
+    """
+    so_number = None
+    if row.so_line_id:
+        found = (
+            db.query(SalesOrder.so_number)
+            .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .filter(ProjectSalesOrderLine.id == row.so_line_id)
+            .first()
+        )
+        so_number = found[0] if found else None
+    return {
+        "so_number": so_number,
+        "item_code": row.item_code,
+        "qty": row.qty,
+        "delivery_date": row.delivery_date,
+        "trait": _kept_trait(row),
+    }
 
 
 def _companies_of(db: Session, rows: Sequence[OrderInquiryRow]) -> List[tuple]:
@@ -147,12 +215,20 @@ def _companies_of(db: Session, rows: Sequence[OrderInquiryRow]) -> List[tuple]:
     )
 
 
-def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, int]:
-    """Claims freed, then links, then the rows, then the headers left empty."""
+def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, Any]:
+    """Claims freed, then links, then the rows, then the headers left empty - a row
+    planning has worked on since it was raised is never touched (section 2.3): `rows_of`
+    already excludes it, and `kept` / `kept_rows` here are its own separate count and
+    listing (AC-R-19), added to the result only when there is something to say.
+    """
+    kept = _kept_rows_of(db, file_name)
     rows = rows_of(db, file_name)
     counts = {key: 0 for key in COUNT_KEYS}
+    if kept:
+        counts["kept"] = len(kept)
+        counts["kept_rows"] = [_kept_row_info(db, row) for row in kept]
     if not rows:
-        print("  no rows carry that stamp")
+        print("  no rows carry that stamp" if not kept else "  every stamped row is kept")
         return counts
 
     companies = _companies_of(db, rows)
@@ -229,7 +305,7 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, int]:
 
 def run(
     db: Session, file_name: str, apply: bool = False, all_companies: bool = False
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     """Remove (or, without `apply`, merely count) one upload. The CALLER commits.
 
     A dry run performs the very same deletions inside a SAVEPOINT and rolls back to it, so
@@ -301,6 +377,16 @@ def main() -> int:
         print(f"links removed:      {counts['links']}")
         print(f"claims removed:     {counts['claims']}")
         print(f"empty headers:      {counts['inquiries']}")
+        if counts.get("kept"):
+            # AC-R-19: named, not only counted - purchasing and CS need to know WHICH row a
+            # planning trait kept, not merely how many.
+            print(f"rows kept:          {counts['kept']}")
+            for named in counts.get("kept_rows") or []:
+                print(
+                    f"  - {named.get('so_number') or '(no SO)'} / "
+                    f"{named.get('item_code') or '(no item)'}: {named.get('qty')} @ "
+                    f"{named.get('delivery_date')} ({named.get('trait')})"
+                )
         if not apply and counts["rows"]:
             print("\nRe-run with --apply to remove these rows.")
     finally:
