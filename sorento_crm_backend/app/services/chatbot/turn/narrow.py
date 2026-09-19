@@ -11,6 +11,13 @@ from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
 _TYPE_POLICIES = {"narrow_by_type"}
 
+#: B1 (owner hand pass 7, 19 Sep 2026, turn "SRTWT165-FT CERT"): every roster has a
+#: hard cap - measured, main's `gate.py` caps its own customer-base picker at 8
+#: ("8 lines is already a lot") but has no cap for a PRODUCT roster, so 10 is this
+#: one's own number. A roster this wide is never a real choice: it printed 200
+#: unrelated product codes over one unresolved token.
+_ROSTER_CAP = 10
+
 
 def _candidates(focus: Focus, kind: str) -> list[dict[str, Any]]:
     if kind == "tier":
@@ -129,8 +136,23 @@ def _options(
     label differ (an account code nobody typed, against the name the roster printed),
     so both are kept.
     """
+    # R-g (owner hand pass 7, 19 Sep 2026): which LABELS are shared by more than one
+    # COMPANY - the same product code can be a separate record per company
+    # (`gate.py`'s own `specific_options` already suffixes a duplicate-code picker
+    # line with the company for exactly this reason). Only a label straddling more
+    # than one company earns the suffix; a single-company code is untouched.
+    company_counts: dict[str, set[str]] = {}
+    if grouping != "ledger_family":
+        for c in candidates:
+            label0 = c.get("name") or c.get("raw") or c.get("canonical_code")
+            company0 = c.get("company_name")
+            if label0 and company0:
+                company_counts.setdefault(str(label0).strip().casefold(), set()).add(
+                    str(company0).strip()
+                )
+
     built: list[dict[str, Any]] = []
-    by_label: dict[str, dict[str, Any]] = {}
+    by_label: dict[Any, dict[str, Any]] = {}
     for c in candidates:
         code = c.get("canonical_code") or c.get("raw")
         identity = c.get("uuid") or code
@@ -141,6 +163,7 @@ def _options(
         name = c.get("name")
         label = name or c.get("raw") or code
         stamp = c.get("stamp")
+        company = c.get("company_name")
         uuids = list(family) if isinstance(family, list) and family else ([identity] if identity else [])
         # ONE LINE PER LABEL, and the line carries every row behind it (contract 103's
         # own rule, read one level up from the code): a family is one code across
@@ -157,7 +180,14 @@ def _options(
             key = family
             label = ledger_family_label(str(name or label or ""))
         else:
-            key = str(label).strip().casefold() if label else str(identity)
+            label_key = str(label).strip().casefold() if label else str(identity)
+            multi_company = bool(company) and len(company_counts.get(label_key, ())) > 1
+            # R-g: a code that is TWO records (one per company) is TWO options, never
+            # merged into one because they happen to share a label - browser pass 3's
+            # own rule for a ledger family, read the other way for a company.
+            key = (label_key, company) if multi_company else label_key
+            if multi_company:
+                label = f"{label} ({company})"
         merged = by_label.get(key)
         if merged is not None:
             for u in uuids:
@@ -181,7 +211,10 @@ def _options(
             option["stamp"] = stamp
         by_label[key] = option
         built.append(option)
-    return built
+    # B1: a hard cap, in the resolver's own order (already the relevance order the
+    # candidates arrived in) - a roster nobody could realistically read through is not
+    # a choice, whatever built it.
+    return built[:_ROSTER_CAP]
 
 
 @dataclass
@@ -302,6 +335,20 @@ def decide(
         already_settled = bool(resolved_codes) and resolved_codes <= settled_codes
         reroster_on_switch = policy_value in ("must_narrow_one", "narrow_by_tier")
         if policy_value in _ROSTER_POLICIES and kind != "tier" and (reroster_on_switch or not already_settled):
+            if typed_exactly:
+                # R-e (owner hand pass 7, 19 Sep 2026, turn "ETA srtwc8518-SH"): a
+                # token that IS one of the resolver's own matched codes settles the
+                # narrowing outright, whatever fuzzy family siblings came back
+                # beside it - the same rule `ambiguous_filter_asks` above already
+                # applies for `optional_filter`. SRTWC8518-SH is an exact
+                # product_code; its SH-P/SH-200/SH-300 siblings are noise for THIS
+                # narrowing the same way they are for a filter, and rostering them
+                # anyway is what asked "which one?" about a code the customer had
+                # already named exactly.
+                exact_rows = [
+                    row for row in resolved_candidates if _code_of(row).casefold() in typed_now
+                ]
+                return NarrowOutcome(None, [], exact_rows, None, note="typed_exact_settles")
             if _choices(resolved_candidates, family_grouping) <= 1:
                 # A code that resolves to exactly one thing IS narrowed to a code -
                 # there is nothing left to ask. One FAMILY is one thing too (item 1):

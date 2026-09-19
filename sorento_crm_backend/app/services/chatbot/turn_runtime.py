@@ -496,6 +496,35 @@ def unplaced_alternatives(entities: list[Any], resolved: Any) -> dict[str, list[
     return out
 
 
+def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
+    """R-g (owner hand pass 7, 19 Sep 2026): the resolver's own `company_name` per match,
+    keyed by uuid - read straight off the RAW resolver payload (never off `gate.py`'s own
+    `compatible_entities`/`by_uuid`, which `tests/chatbot/test_replay.py`'s frozen corpus
+    compares byte-for-byte; an extra key there broke 100+ recorded fixtures that carry a
+    `company_name` on a match with nothing to do with this feature). Flattened the same
+    three ways `gate.py::run_gate` flattens its own `flat` list (resolutions, intersection,
+    by_entity_type), so a match this module never reads through `compatible_entities`
+    still contributes its company - `candidates_by_kind` below only reads the entry for a
+    uuid that IS in `compatible`.
+    """
+    out: dict[str, str] = {}
+
+    def _consume(matches: Any) -> None:
+        for m in jsc.array(matches):
+            uuid = jsc.nullish_str(jsc.get(m, "uuid")).strip()
+            company = jsc.get(m, "company_name")
+            if uuid and isinstance(company, str) and company.strip():
+                out.setdefault(uuid, company.strip())
+
+    from app.services.chatbot.lanes.business.gate import _flatten_by_entity_type
+
+    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
+        _consume(jsc.get(resolution, "matches"))
+    _consume(jsc.get(resolved, "intersection"))
+    _consume(_flatten_by_entity_type(jsc.get(resolved, "by_entity_type")))
+    return out
+
+
 def _without_guesses(
     compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -706,7 +735,9 @@ def resolve_kinds(
         by_token,
         compatible,
         predicate,
-        candidates_by_kind(stamps_from, compatible, customer_bases, product_stamp),
+        candidates_by_kind(
+            stamps_from, compatible, customer_bases, product_stamp, _company_names_by_uuid(resolved)
+        ),
         unplaced,
         spec_tier_matched(resolved),
         unplaced_alts,
@@ -774,6 +805,7 @@ def candidates_by_kind(
     compatible: list[dict[str, Any]],
     customer_bases_with_do: set[str] | None = None,
     product_stamp: tuple[set[str], str, str] | None = None,
+    company_names_by_uuid: dict[str, str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """The resolver's own rows, grouped by entity kind, for the narrower's roster.
 
@@ -814,6 +846,15 @@ def candidates_by_kind(
         display = row.get("display_name")
         if isinstance(display, str) and display.strip():
             built["name"] = display.strip()
+        # R-g (owner hand pass 7, 19 Sep 2026): the same additive carry as `name`
+        # above, off the RAW resolver's own `company_name` (`_company_names_by_uuid`,
+        # read off `resolved` rather than off `gate.py`'s own `compatible_entities` -
+        # see that function's own docstring for why) - `turn/narrow.py::_options` reads
+        # it so a code that is a SEPARATE record in two companies stays two options,
+        # never merged into one because they share a label.
+        company_name = (company_names_by_uuid or {}).get(row.get("uuid") or "")
+        if isinstance(company_name, str) and company_name.strip():
+            built["company_name"] = company_name.strip()
         if code in stamps:
             built["stamp"] = "has incoming" if stamps[code] else "no incoming"
         elif kind == "product" and product_stamp is not None:
