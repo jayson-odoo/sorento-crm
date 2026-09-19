@@ -2,7 +2,7 @@
 
 Status: APPROVED by owner 20 Sep 2026, full `/feature` pipeline, backend only. Lane
 `fix/oi-sheet-rebuild-from-planning`. UAC written; tickets next.
-UAC: `oi-rollback-recover-planning-rows-acceptance-criteria.md` (AC-RB-1 to AC-RB-23).
+UAC: `oi-rollback-recover-planning-rows-acceptance-criteria.md` (AC-RB-1 to AC-RB-41).
 
 ## 0. What was measured
 
@@ -183,6 +183,22 @@ shape), because that is prod's state today; only AC-RB-21 drives the real confir
 
 Each test must fail for the RIGHT reason (an assertion on behaviour, or the missing outcome code),
 never an import error or a fixture typo. AC-RB-22 and AC-RB-23 are captain-run, not tester files.
+
+## 3.3 Review round, 20 Sep (slice S6, UAC AC-RB-31 to AC-RB-41)
+
+Reviewer NOT READY (1 blocker), security-reviewer NEEDS WORK (1 high). Both reproduced their
+findings; kill tests on AC-RB-6/7/9, 13, 24, 29 all went red, so the suite guards its ACs. Taken:
+B1 over-link on the used row; two sheet rows on one decided line each settled to the full buy
+(0 lines on the 0918 copy, reachable under the new line pick); false `top_up_sum_mismatch` on
+every later upload; snapshot without `required_date`; RESERVE AND ORDER is a buy verb; used rows
+out of the top-up sum; tolerant snapshot parse; `changed_at` from the decision; rollback single
+read + self-guarding DELETE + company refusal over kept rows; nits (dead `KEPT_TRAITS`, `AC-R-19`
+typos, `_top_up_status` docstring, preview warning line).
+
+Not taken, with the evidence: a stale top-level `buy_qty` after `_replace_buy_with_reserve`
+(545 of 545 active snapshots on the copy have `buy_qty` equal to their `kind = buy` components;
+trigger to revisit: the rehearsal or prod shows one that differs); loading columns instead of
+entities in `_already_raised` (about 12.7k rows; worker memory is read off the rehearsal).
 
 ## 4. Not in scope
 

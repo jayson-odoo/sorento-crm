@@ -39,7 +39,8 @@ Fixture shape, measured on prod copy `sorento_ai_automation_0918_1900` (SO314593
   and `previous_delivery_date` 2026-06-01, and no used row, when the book is uploaded with a row
   182 @ 2026-06-01 for that line, then that sheet row is RAISED (not skipped as already raised)
   with `redirected_to_pool = true`, the sheet's quantity and date, and the file's stamp.
-- **AC-RB-2** Two deliveries on ONE line with the SAME quantity (the CB2807-DIY shape): each
+- **AC-RB-2** Two deliveries with the SAME quantity (the CB2807-DIY shape; on prod each delivery
+  is its own sales order line of the same item, the test also holds them on ONE line): each
   sheet row becomes the used row of the fresh row that remembers its exact quantity AND date;
   neither is paired by quantity alone, and swapping the sheet rows' order in the file changes
   nothing.
@@ -139,6 +140,40 @@ Known difference from the 18 Sep state, accepted unless the owner rules otherwis
 read PLAIN 176 @ 2026-12-01 beside its DELAY notice (the confirm told purchasing of the delay but
 never restated the row). Under AC-RB-24 + AC-RB-11 it comes back 219 @ 2027-05-04, was 176 @
 2026-12-01, which is what the active decision says. The rehearsal (AC-RB-22) lists it by name.
+
+## Review round (reviewer + security-reviewer, 20 Sep 2026; slice S6)
+
+- **AC-RB-31** (blocker B1) The links on a rebuilt used row never total more than the row's own
+  quantity: the received-link move is capped at the row's quantity MINUS what the upload's own
+  book pairing already linked onto it. Fixture: received allocation 400, fresh row holds 182 of
+  it, used row 182: after the upload `sum(link.qty)` on the used row is 182, not 364.
+- **AC-RB-32** Two or more sheet rows landing on ONE line in one upload, the line covered by an
+  active decision: none is settled (AC-RB-11 does not fire), all are raised plain as today, the
+  same refusal `_settle_row_in_place` makes for two live rows. Two or more sheet rows on a top-up
+  line: AC-RB-26 does not fire, they read `already_raised`.
+- **AC-RB-33** A second upload reports `already_raised`, and no other code, for the row rebuilt
+  by AC-RB-11, by AC-RB-24 and by AC-RB-26. The mismatch codes never fire on a line whose live
+  stamped row already equals this sheet row on (quantity, date) or on (previous quantity,
+  previous date).
+- **AC-RB-34** A decision snapshot with no `required_date` proposes no date change: quantity
+  equal to the sheet raises PLAIN; quantity different settles the quantity and keeps the sheet's
+  date.
+- **AC-RB-35** (R7 refined) The line's own row means a live ORDER, ORDER BACK or RESERVE AND
+  ORDER row, the buy verbs used everywhere else; a line whose only live row is RESERVE AND ORDER
+  reads `already_raised`, and the top-up sum counts it.
+- **AC-RB-36** A used row (`redirected_to_pool`) is never counted in the top-up sum.
+- **AC-RB-37** A malformed snapshot entry (unreadable `buy_qty` or `required_date`) never aborts
+  the upload: that sheet row is raised plain and every other row is processed.
+- **AC-RB-38** `changed_at` on a row rebuilt by AC-RB-11 is the decision's `confirmed_at`.
+- **AC-RB-39** The rollback's more-than-one-company refusal is evaluated over EVERY stamped row,
+  kept ones included, before any kept row is listed; without `--all-companies` nothing of a
+  second company is printed or returned.
+- **AC-RB-40** `[code]` The rollback reads the stamped rows and their line siblings ONCE and
+  derives kept and removable from that one read; the DELETE itself repeats the row's own three
+  traits as predicates, so a row planning touches after the read is not deleted. Verified by
+  review, not by a test.
+- **AC-RB-41** The upload preview's "already carries an order inquiry" warning counts
+  `no_used_delivery_match` and `top_up_sum_mismatch` rows on their own line of text.
 
 ## The whole journey
 
