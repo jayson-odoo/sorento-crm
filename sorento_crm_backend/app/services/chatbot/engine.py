@@ -1408,6 +1408,18 @@ def _run_stages(  # noqa: PLR0915
             jsc.js_string(verdict.get("order_status") or "").strip() == "sales_report"
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
+        if sales_report_grant_refused:
+            # Same event shape `lanes.business.run_fetch`'s own sales-report grant
+            # check emits (`__init__.py:1216`), so an operator reading the trace sees
+            # one denial shape regardless of which seam refused it.
+            turn_trace.add(
+                "domain_grant",
+                {
+                    "domain": verdict.get("domain_hint"),
+                    "skipped": "not_granted",
+                    "needs": _SALES_REPORT_GRANT,
+                },
+            )
 
         stage[0] = "routed"
         settings_row = switches
