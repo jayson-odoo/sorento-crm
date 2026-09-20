@@ -133,10 +133,25 @@ def two_sessions():
     try:
         yield s1, s2
     finally:
-        s1.close()
-        s2.close()
-        transaction.rollback()
-        connection.close()
+        # Sharing one connection means every autobegin stacks ONE savepoint chain
+        # regardless of which Session issued it - s2's post-commit SELECT autobegins
+        # a savepoint on top of whatever s1 last left open. Closing s1 first rolls
+        # back to ITS savepoint and destroys s2's from under it, so s2.close() then
+        # tries to roll back to a savepoint that no longer exists and raises
+        # InvalidSavepointSpecification. Closing in reverse order of last use avoids
+        # that, and each close is guarded so one Session's teardown error can never
+        # skip the connection/transaction cleanup below - an unguarded exception here
+        # previously left an aborted connection holding the schema's lock, hanging
+        # the next test and the session-end DROP SCHEMA.
+        for s in (s2, s1):
+            try:
+                s.close()
+            except Exception:
+                pass
+        try:
+            transaction.rollback()
+        finally:
+            connection.close()
 
 
 def _make_user(db, *perm_slugs: str) -> dict:
