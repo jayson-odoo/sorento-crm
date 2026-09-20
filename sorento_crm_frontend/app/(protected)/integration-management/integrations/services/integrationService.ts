@@ -3,6 +3,7 @@ import { extractApiError } from '@/lib/api-client';
 import type {
   Integration,
   IntegrationCreatePayload,
+  IntegrationTestResult,
   IntegrationUpdatePayload,
   IssuedKey,
 } from '../types/integration.types';
@@ -102,4 +103,17 @@ export async function revokeKey(integrationId: string, keyId: string): Promise<v
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to revoke key'));
   }
+}
+
+/**
+ * Probes the PERSISTED connection - `autocount_esb` rows only. `ok: false` is a
+ * normal answer (a bad key, an unreachable gateway), so a non-2xx response here
+ * is still a real failure to surface, never the test result itself.
+ */
+export async function testIntegration(integrationId: string): Promise<IntegrationTestResult> {
+  const response = await apiFetch(`${BASE}/${integrationId}/test`, { method: 'POST' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to test the connection'));
+  }
+  return response.json();
 }

@@ -9,11 +9,13 @@ import {
   getIntegrations,
   issueKey,
   rotateKey,
+  testIntegration,
   updateIntegration,
 } from '../services/integrationService';
 import type {
   Integration,
   IntegrationCreatePayload,
+  IntegrationTestResult,
   IntegrationUpdatePayload,
   IssuedKey,
 } from '../types/integration.types';
@@ -84,6 +86,18 @@ export function useRotateKey() {
     mutationFn: ({ integrationId, graceDays }) => rotateKey(integrationId, graceDays),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: LIST_KEY }),
     onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
+ * Probes the persisted connection. The result - including `ok: false` - is
+ * shown inline by the caller (a Badge, never a toast or a dialog), so this
+ * mutation carries no `onSuccess`/`onError` side effect and invalidates
+ * nothing: a probe changes no server state.
+ */
+export function useTestIntegration() {
+  return useMutation<IntegrationTestResult, Error, string>({
+    mutationFn: (integrationId: string) => testIntegration(integrationId),
   });
 }
 

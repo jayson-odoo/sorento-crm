@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, KeyRound, Pencil, Plug, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, KeyRound, Loader2, Pencil, Plug, RefreshCw, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,10 +15,11 @@ import {
   useIntegration,
   useIssueKey,
   useRotateKey,
+  useTestIntegration,
 } from '../hooks/useIntegrations';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import type { Integration, IssuedKey } from '../types/integration.types';
+import type { Integration, IntegrationTestResult, IssuedKey } from '../types/integration.types';
 import { IntegrationFormDialog } from './IntegrationFormDialog';
 import { IssuedKeyDialog } from './IssuedKeyDialog';
 import { StatusCell } from './IntegrationsView';
@@ -34,6 +35,55 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const EMPTY = <span className="text-muted-foreground"> - </span>;
+
+/** Only the FoundryX ESB integration has a gateway to probe (PLAN-foundryx-pull-
+ * connection-ui.md S2). Trigger for more: another outbound integration grows its
+ * own connection probe. */
+const TESTABLE_TYPE = 'autocount_esb';
+
+/** Probes the persisted connection and shows the result inline - never a toast or
+ * a dialog (AC-FE-3). A new click replaces whatever the last one showed. */
+function TestConnectionButton({ integration }: { integration: Integration }) {
+  const test = useTestIntegration();
+  const [result, setResult] = useState<Pick<IntegrationTestResult, 'ok' | 'message'> | null>(
+    null,
+  );
+
+  if (integration.type !== TESTABLE_TYPE) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={test.isPending}
+        onClick={() =>
+          test.mutate(integration.id, {
+            onSuccess: (r) => setResult(r),
+            onError: (e: Error) => setResult({ ok: false, message: e.message }),
+          })
+        }
+      >
+        {test.isPending ? (
+          <>
+            <Loader2 className="size-4 animate-spin" /> Testing…
+          </>
+        ) : (
+          <>
+            <Plug className="size-4" /> Test
+          </>
+        )}
+      </Button>
+      {result && (
+        <Badge variant={result.ok ? 'success' : 'destructive'} appearance="light" size="sm">
+          {result.message}
+        </Badge>
+      )}
+    </div>
+  );
+}
 
 function KeysCard({ integration }: { integration: Integration }) {
   const issue = useIssueKey();
@@ -56,7 +106,8 @@ function KeysCard({ integration }: { integration: Integration }) {
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
         <CardTitle>API keys</CardTitle>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <TestConnectionButton integration={integration} />
           <Button
             size="sm"
             variant="outline"
