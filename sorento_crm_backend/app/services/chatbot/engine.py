@@ -1924,6 +1924,52 @@ def _run_stages(  # noqa: PLR0915
                         bridge_answered = True
                 if answer is None:
                     answer = turn_compose.compose(envelopes, state_out, policy, turn_ctx)
+                    # BRIDGE (R5): the HIT arm, AC-1694 to AC-1696 - a single-domain
+                    # ORDER fetch that genuinely found rows opens with the
+                    # Customer/Product/Dates scope block. A no-op for every other
+                    # domain (`answer_bridge.apply_scope_block`'s own
+                    # `search_scope_header` returns `None` outside "order") and for
+                    # a miss (`envelope_missed`), so the miss composer's own text is
+                    # never touched here. `resolver_payload` is `None` on a bare
+                    # positional pick (no entity of its own, so `resolve_kinds`
+                    # never ran) - the gate/resolved axes fall back to the FOCUS
+                    # carry (`apply_scope_block`'s own `focus_customers`/
+                    # `focus_products`), which is where a customer picker's own
+                    # pick and the original ask's product both already live.
+                    # `own_header` (`envelope_of`'s own flag, true for the
+                    # outstanding report) is excluded the SAME way `turn/compose.py`'s
+                    # own `date_line` decoration already is: the outstanding report
+                    # prints its OWN four-line Customer/Product/Location/Order-date
+                    # header (`lanes/business/__init__.py::
+                    # _outstanding_scope_filter_lines`), and stacking this one on top
+                    # of it said the same thing twice - measured live,
+                    # `test_outstanding_lane.py`'s own
+                    # `test_report_skips_search_scope_header`.
+                    if (
+                        len(fetch_plan.fetch) == 1
+                        and envelopes
+                        and not run_fetch_mod.envelope_missed(envelopes[0])
+                        and not envelopes[0].get("own_header")
+                    ):
+                        from app.services.chatbot import answer_bridge
+
+                        answer = answer_bridge.apply_scope_block(
+                            answer,
+                            domain=fetch_plan.fetch[0].domain,
+                            qf=(ctx.get("parse") or {}).get("output"),
+                            gate_json=(
+                                resolver_payload.get("gate")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            resolver_json=(
+                                resolver_payload.get("resolved")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            focus_customers=state_out.focus.customers,
+                            focus_products=state_out.focus.products,
+                        )
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
                 lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"

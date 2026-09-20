@@ -94,6 +94,7 @@ from app.services.chatbot.lanes.business import services as business_services
 from app.services.chatbot.lanes.business.services import AnswerServices
 from app.services.chatbot.tail import compose as tail_compose
 from app.services.chatbot.tail import reply as reply_mod
+from app.services.chatbot.tail import scope_block
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import pending
 
@@ -101,6 +102,47 @@ from app.services.chatbot.turn import pending
 # domain and for any entity kind - `narrow.decide`'s own rule for every other roster
 # kind, applied here too.
 _MIN_ROSTER_OPTIONS = 2
+
+_ORDER_DATE_LINE_RE = re.compile(r"^Order date: .*$")
+
+
+def apply_scope_block(
+    answer: turn_compose.Answer,
+    *,
+    domain: str | None,
+    qf: Mapping[str, Any] | None,
+    gate_json: Mapping[str, Any] | None,
+    resolver_json: Mapping[str, Any] | None,
+    focus_customers: Any = None,
+    focus_products: Any = None,
+) -> turn_compose.Answer:
+    """R5's HIT arm (AC-1694 to AC-1696): a single-domain ORDER fetch that genuinely
+    found rows opens with the Customer/Product/Dates scope block ahead of
+    production's own intro. The caller's own `Answer` (from `turn/compose.py`,
+    unchanged - this never touches `sections`/`question`/`offer`/`files`/`actions`)
+    is returned AS-IS for every other domain (`tail.scope_block.search_scope_header`
+    returns `None`).
+
+    `turn/compose.py`'s own per-section `date_line` decoration
+    (`"Order date: ..."`, one line under the header) restates the SAME window the
+    scope block's own `Dates:` line already states, once this arm applies - stripped
+    here rather than suppressed at its own seam, which would need to know in advance
+    whether this bridge was about to run.
+    """
+    scope = scope_block.search_scope_header(
+        domain=domain,
+        qf=qf,
+        gate_json=gate_json,
+        resolver_json=resolver_json,
+        focus_customers=focus_customers,
+        focus_products=focus_products,
+    )
+    if scope is None or not answer.text:
+        return answer
+    from dataclasses import replace
+
+    lines = [line for line in answer.text.split("\n") if not _ORDER_DATE_LINE_RE.match(line)]
+    return replace(answer, text=f"{scope}\n\n" + "\n".join(lines))
 
 
 def _compose_text(lane_item: dict[str, Any], *, ctx: Any, canned: Any, db: Any, **values: Any) -> str:
@@ -141,6 +183,18 @@ def _roster_option(row: dict[str, Any], *, kind: str, position: int) -> dict[str
     }
     if code is not None:
         option["code"] = code
+    # AC-1695: the SAME field `turn/narrow.py::_options` carries beside `label` - a
+    # customer's own human name, separate from its code, so `turn/apply.py::
+    # _answer_pending`'s own pick-to-entity conversion (which reads `option.get(
+    # "name")` specifically, not "label") can put the NAME on the focus entity a
+    # pick just settled, not the account code nobody typed. Missing here left a
+    # picked customer's own scope-block line reading its code back at the
+    # customer who just read the name on the roster. `title` first: the gate's own
+    # ambiguous-customer picker rows (`resolve_gate.if_customer_picker`) carry the
+    # printed name under `title`, never `name` (measured live writing this fix).
+    name = row.get("title") or row.get("name")
+    if name:
+        option["name"] = name
     stamp = row.get("stamp")
     if stamp:
         option["stamp"] = stamp
