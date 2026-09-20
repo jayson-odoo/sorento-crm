@@ -640,27 +640,38 @@ def _combo_products(
 ) -> list[dict]:
     """Every product a slot on this tag may point at (S6, AC-S6-3/S6-4).
 
-    The line's fixed parts plus EVERY candidate of every open choice group,
-    in combo order - a superset of `_resolved_part_products`, which only
-    carries the ONE candidate this tag chose. Each row is a `_part_row`
-    (the same resolver a fixed part already goes through) plus `role` (the
-    group's label, absent on a fixed part) and `chosen` (true on the
-    candidate THIS tag's own `choices` names), so the subject picker can
-    group candidates under their role and mark this tag's own pick.
+    The line's fixed parts plus EVERY candidate of every open choice group.
+    A superset of `_resolved_part_products`, which only carries the ONE
+    candidate this tag chose. Each row is a `_part_row` (the same resolver a
+    fixed part already goes through) plus `role` (the group's label, absent
+    on a fixed part) and `chosen` (true on the candidate THIS tag's own
+    `choices` names), so the subject picker can group candidates under their
+    role and mark this tag's own pick.
+
+    AC-S6-13: the ORDER is the pre-r10 narrow order first - this tag's own
+    fixed parts and its chosen candidate, exactly the order
+    `_resolved_part_products` produces - with the non-chosen candidates of
+    every open group appended at the end, in combo order. A slot index a
+    template already saved (D3/D4) must keep pointing at the same product
+    after r10 widens `parts`; interleaving a leftover candidate at the
+    group's own sort position would shift every index after it.
     """
     from app.models.product import Product
 
     chosen = dict(tag.choices or {})
-    wanted: list[tuple[str, Optional[str], bool]] = []
+    narrow: list[tuple[str, Optional[str], bool]] = []
+    leftovers: list[tuple[str, Optional[str], bool]] = []
     for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
         if part.product_id:
-            wanted.append((str(part.product_id), None, False))
+            narrow.append((str(part.product_id), None, False))
             continue
         role = part.role or ""
         chosen_id = chosen.get(role)
         for candidate in part.candidates or []:
             candidate_id = str(candidate)
-            wanted.append((candidate_id, role, candidate_id == str(chosen_id)))
+            entry = (candidate_id, role, candidate_id == str(chosen_id))
+            (narrow if entry[2] else leftovers).append(entry)
+    wanted = narrow + leftovers
     if not wanted:
         return []
 
