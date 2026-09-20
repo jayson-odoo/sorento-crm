@@ -5,17 +5,23 @@ Six additive pieces, none touching what already exists:
 1. AC-S1-4: ``price_tag_requests.print_by`` NULL -> ``'self'`` (a request
    born before r9 D7 never answered the question; ``office`` rows are
    untouched).
-2. AC-S2-5: a version-2 prompt for ``ai_extract_portal_price_tag_request``,
-   inserted only when the STORED version 1 is byte-for-byte the pre-r10
-   fallback (an owner-edited version 1 is left alone; a tenant with no
-   stored version gets nothing, since there is nothing to compare against).
-   The new text is a literal here, never imported from
-   ``ai_prompt_registry`` - a migration must not depend on live application
-   code drifting out from under it (LESSONS-LEARNT 340).
+2. AC-S2-5: a new prompt version for ``ai_extract_portal_price_tag_request``,
+   published and moved onto the ``production`` label only when the text
+   ``production`` CURRENTLY points at is byte-for-byte the pre-r10 fallback
+   (an owner-edited production text is left alone; a tenant with no stored
+   version gets nothing, since there is nothing to compare against). The new
+   version number is always ``COALESCE(MAX(version), 0) + 1`` for this
+   prompt name, never a literal ``2`` - an owner or an earlier bump may
+   already have published an unrelated v2. The new text is a literal here,
+   never imported from ``ai_prompt_registry`` - a migration must not depend
+   on live application code drifting out from under it.
 3. AC-S4-1: ``products.price_tag_description TEXT NULL``.
 4. AC-S5-1: ``product_combos.image_attachment_id UUID NULL`` FK
    ``attachments(id) ON DELETE SET NULL``, plus the ``Combo Image``
    (``combo_image``) attachment type, seeded idempotently by code.
+   AC-S5-13: ``attachments_entity_type_check`` widened to also allow
+   ``product_combo_image`` (rebuilt, same as 402 - Postgres has no "add a
+   value to a CHECK").
 5. AC-S6-1: ``price_tag_request_tags.print_excluded BOOLEAN NOT NULL
    DEFAULT false``.
 6. AC-S7-11: ``dealer_kit.tag_size_preset`` gains ``sheet_cols``,
@@ -25,9 +31,11 @@ Six additive pieces, none touching what already exists:
 
 Downgrade drops every column added by 3/4/5/7 (the attachment TYPE row from
 4 stays - an attachment may still reference it, same rule every other
-attachment-type seed in this codebase follows) and leaves 1/2's DATA
-untouched, the same as every other backfill migration in this codebase: a
-downgrade restores SCHEMA, not a value a person may have acted on since.
+attachment-type seed in this codebase follows), restores the 402 entity_type
+list (clearing any ``product_combo_image`` row to ``general`` first), and
+leaves 1/2's DATA untouched, the same as every other backfill migration in
+this codebase: a downgrade restores SCHEMA, not a value a person may have
+acted on since.
 
 Revision ID: ptag_0013_r10
 Revises: 522_oi_cancelled_used_confirm
@@ -48,9 +56,9 @@ PROMPT_NAME = "ai_extract_portal_price_tag_request"
 
 # The EXACT text `_ai_extract_price_tag_fallback()` returned before this
 # migration's own S2 changed it (frozen 20 Sep 2026, one call) - compared
-# against the STORED version 1 template, never against the live function
-# (LESSONS-LEARNT 340: a migration must never import live application code,
-# since that code keeps changing in this very lane).
+# against the text the `production` label currently points at, never
+# against the live function, since a migration must not depend on live
+# application code that keeps changing in this very lane.
 _PRE_R10_FALLBACK = (
     "You are an information-extraction assistant. The user uploads documents "
     "(delivery orders, photos, message screenshots, PDFs). Read every "
@@ -102,6 +110,43 @@ def _dealer_kit_schema(conn) -> str | None:
     return None if inspector.has_table("tag_size_preset") else "dealer_kit"
 
 
+# AC-S5-13: the value list `402_attachments_entity_type_allow_supplier_
+# stock_list.py` (the most recent widening before this lane) left the real
+# database in, widened here the same way - rebuilt rather than extended in
+# place, since Postgres has no "add a value to a CHECK".
+_ENTITY_TYPES_BEFORE = (
+    "product",
+    "promotion",
+    "complaint",
+    "general",
+    "complaint_document",
+    "order",
+    "stock_list",
+    "form",
+    "inbound_shipment",
+    "dealer_kit_asset",
+    "project",
+    "project_lead",
+    "supplier_stock_list",
+)
+_ENTITY_TYPES_ADDED = ("product_combo_image",)
+
+
+def _apply_entity_type_check(values: tuple[str, ...]) -> None:
+    listed = ", ".join(f"'{value}'" for value in values)
+    op.execute(
+        sa.text(
+            "ALTER TABLE attachments DROP CONSTRAINT IF EXISTS attachments_entity_type_check"
+        )
+    )
+    op.execute(
+        sa.text(
+            "ALTER TABLE attachments ADD CONSTRAINT attachments_entity_type_check CHECK ("
+            f"entity_type IS NULL OR entity_type IN ({listed}))"
+        )
+    )
+
+
 def _seed_combo_image_type() -> None:
     """AC-S5-1: idempotent by ``code`` - a second run inserts nothing new."""
     op.execute(
@@ -125,21 +170,41 @@ def upgrade() -> None:
         )
     )
 
-    # --- AC-S2-5: v2 prompt, only over an untouched v1 ----------------------
-    stored_v1 = conn.execute(
+    # --- AC-S2-5: a new production version, only over an untouched production
+    # text - and only when there IS a production label to move, or a version
+    # nobody's `production` label points at would never reach a live extract
+    # call.
+    production_text = conn.execute(
         sa.text(
-            "SELECT template FROM ai_prompt_versions WHERE name = :n AND version = 1"
+            "SELECT v.template FROM ai_prompt_labels l "
+            "JOIN ai_prompt_versions v ON v.id = l.version_id "
+            "WHERE l.name = :n AND l.label = 'production'"
         ),
         {"n": PROMPT_NAME},
     ).scalar()
-    if stored_v1 is not None and stored_v1 == _PRE_R10_FALLBACK:
-        conn.execute(
+    if production_text is not None and production_text == _PRE_R10_FALLBACK:
+        next_version = conn.execute(
+            sa.text(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM ai_prompt_versions "
+                "WHERE name = :n"
+            ),
+            {"n": PROMPT_NAME},
+        ).scalar()
+        new_id = conn.execute(
             sa.text(
                 "INSERT INTO ai_prompt_versions "
                 "(id, name, version, type, template, variables) "
-                "VALUES (gen_random_uuid(), :n, 2, 'text', :t, '[]'::jsonb)"
+                "VALUES (gen_random_uuid(), :n, :v, 'text', :t, '[]'::jsonb) "
+                "RETURNING id"
             ),
-            {"n": PROMPT_NAME, "t": _V2_TEXT},
+            {"n": PROMPT_NAME, "v": next_version, "t": _V2_TEXT},
+        ).scalar()
+        conn.execute(
+            sa.text(
+                "UPDATE ai_prompt_labels SET version_id = :v "
+                "WHERE name = :n AND label = 'production'"
+            ),
+            {"n": PROMPT_NAME, "v": new_id},
         )
 
     # --- AC-S4-1: products.price_tag_description ----------------------------
@@ -158,6 +223,7 @@ def upgrade() -> None:
         ),
     )
     _seed_combo_image_type()
+    _apply_entity_type_check(_ENTITY_TYPES_BEFORE + _ENTITY_TYPES_ADDED)
 
     # --- AC-S6-1: price_tag_request_tags.print_excluded ---------------------
     op.add_column(
@@ -218,6 +284,17 @@ def downgrade() -> None:
     op.drop_column("tag_size_preset", "sheet_cols", schema=dk_schema)
 
     op.drop_column("price_tag_request_tags", "print_excluded")
+
+    # Rows written meanwhile would violate the narrower constraint, so clear
+    # them first rather than leaving the downgrade to fail halfway (402's
+    # own pattern).
+    op.execute(
+        sa.text(
+            "UPDATE attachments SET entity_type = 'general' "
+            "WHERE entity_type = 'product_combo_image'"
+        )
+    )
+    _apply_entity_type_check(_ENTITY_TYPES_BEFORE)
 
     # The `Combo Image` attachment TYPE row stays - an attachment may still
     # reference it, the same rule every other attachment-type seed follows.
