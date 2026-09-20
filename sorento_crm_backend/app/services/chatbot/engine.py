@@ -1708,47 +1708,28 @@ def _run_stages(  # noqa: PLR0915
             )
             bridge_answered = True
 
-        if (
-            answer is None
-            and branch_kind in ("business_query", "check_promotion")
-            and completes_here
-            and not sales_report_grant_refused
-            and len(plan.domains) <= 1
-            # `narrow.decide`'s own asks (a tier pick with no candidate settled yet,
-            # an entity roster) still win over a resolver `not_found` exit while they
-            # are still live (R6 retires the now-shadowed ones) - measured live,
-            # `prod_sample/check-promotion-477071884...`: a contact entitled to three
-            # tiers resolves the PRODUCT to nothing (`not_found`) on the very turn
-            # `narrow_by_tier` already built its own `tier_pick` ask for, and the
-            # bridge answering here stole precedence from it, replacing the real
-            # three-tier picker with a bare "would you like to escalate" sentence.
-            and plan.ask is None
-            # An outstanding report's own REFINE re-run (`turn/apply.py::
-            # _answer_outstanding`) already built a real `FetchSpec` in the FIRST
-            # apply pass, independent of whatever the resolver says about a location
-            # or status WORD this turn named - that word's own "not_found" is not a
-            # verdict on the report itself. Measured live,
-            # `test_outstanding_lane.py::TestDateNarrowingUnderAnOpenOffer` and
-            # siblings: the bridge answering here skipped the report fetch entirely.
-            and not any(spec.filters.get("outstanding") for spec in plan.fetch)
-            and isinstance(resolver_payload, dict)
-            and resolver_payload.get("_exit_kind") == "not_found"
-        ):
-            from app.services.chatbot import answer_bridge
-            from app.services.chatbot import copy as copy_mod
-
-            answer = answer_bridge.answer_for(
-                resolver_payload,
-                envelope=None,
-                parser=(ctx.get("parse") or {}).get("output"),
-                ctx=ctx,
-                canned=copy_mod.resolve(db),
-                services=business_services.production_answer_services(db),
-                db=db,
-                asked_at_turn=turn_no,
-                roster_caps=roster_caps,
-            )
-            bridge_answered = True
+        # A resolver `not_found` exit is answered by the SAME `answer_bridge.answer_for`
+        # call the FETCH section below already makes post-fetch (`via_resolver_exit`
+        # inside `answer_for` itself reads `payload.get("_exit_kind") == "not_found"`,
+        # independent of what the fetch envelope carries) - there is no separate
+        # PRE-fetch trigger here on purpose (R5, captain's ruling 20 Sep 2026, reverting
+        # coder 28's R4 shortcut). `turn_runtime.make_tool_runner`'s `runner()` calls the
+        # KEPT `lanes.business.run_fetch` unconditionally for every `FetchSpec`, whether
+        # or not anything resolved (it is what decides "needs scope" / "not found" /
+        # picker text for the unresolved shapes today, and `_answered_unfiltered`
+        # relabels its own fragment `outcome: "not_found"` when nothing filtered it) - so
+        # skipping straight to a customer-facing miss BEFORE that call ran means a
+        # genuine infrastructure failure inside it is never seen: measured live,
+        # `test_engine_failure_paths.py::TestTheBusinessLaneOnFetchFailure::
+        # test_an_mcp_failure_that_raises_is_a_failed_turn_not_a_not_found` and
+        # `test_s3_switch_and_complete_by_body.py::TestSendActionShape::
+        # test_every_completed_lane_pins_quick_replies_string_or_null_never_a_list`
+        # both mock `lanes.business.run_fetch` to raise and expect `status == "failed"`;
+        # the pre-fetch shortcut answered "not found" instead because the mocked raise
+        # was never reached. Same reply text either way (`not_found_error_message` and
+        # `miss_suggest.run_miss_lane` read `resolved`/`gate`/`parser`, never the fetch
+        # fragment itself), so removing the shortcut costs nothing observable on a live
+        # not_found turn and buys back the failure-not-silence guarantee.
 
         # R3's second access_ask trigger (`fetch_arm == "tier-ask"`) is discovered only
         # once `lanes.business.run_fetch` has actually run the per-tier promotion probe -
@@ -1861,26 +1842,55 @@ def _run_stages(  # noqa: PLR0915
                         asked_at_turn=turn_no,
                     )
                     bridge_answered = True
-                # BRIDGE (R4): a genuine absence discovered only once the fetch has
-                # actually run - `make_tool_runner.runner`'s own "answered unfiltered"
-                # fallback marks the fragment `outcome: "not_found"`, carried through
-                # untouched as `raw_fragment`. Single-domain only, same precedence as
-                # every other bridge arm above; `resolver_payload` is still the
-                # resolver's own exit item (`_exit_kind`, `resolved`, `gate`), unrelated
-                # to what the fetch itself found.
+                # BRIDGE (R4/R5): a genuine absence, discovered once the fetch has
+                # actually run - either the resolver's OWN exit was already "not_found"
+                # (`answer_bridge.answer_for`'s `via_resolver_exit`, R5: this is now the
+                # ONLY place that trigger is read, so a mocked/broken fetch lane is
+                # always given the chance to raise first) or `make_tool_runner.runner`'s
+                # own "answered unfiltered" fallback marked the fragment
+                # `outcome: "not_found"`, carried through untouched as `raw_fragment`
+                # (`via_error_fragment`). Single-domain only, same precedence as every
+                # other bridge arm above.
                 if (
                     answer is None
                     and len(fetch_plan.fetch) == 1
                     and envelopes
                     and plan.ask is None
-                    # Same exclusion as the pre-fetch trigger above: an outstanding
-                    # report's own re-run is never a genuine absence just because a
-                    # location/status WORD this turn named did not resolve as an
-                    # entity - `_answered_unfiltered`'s own docstring names the report
-                    # as the one exception to "unfiltered means nothing to narrow by",
-                    # and the SAME carve-out has to hold here or the bridge answers a
-                    # generic escalate offer over a report that never even ran.
+                    # An outstanding report's own REFINE re-run (`turn/apply.py::
+                    # _answer_outstanding`) already built a real `FetchSpec` in the
+                    # FIRST apply pass, independent of whatever the resolver says about
+                    # a location/status WORD this turn named - that word's own
+                    # "not_found" is not a verdict on the report itself.
+                    # `_answered_unfiltered`'s own docstring names the report as the one
+                    # exception to "unfiltered means nothing to narrow by", and the SAME
+                    # carve-out has to hold here or the bridge answers a generic
+                    # escalate offer over a report that never even ran. Measured live,
+                    # `test_outstanding_lane.py::TestDateNarrowingUnderAnOpenOffer` and
+                    # siblings.
                     and not any(spec.filters.get("outstanding") for spec in fetch_plan.fetch)
+                    # The SAME carve-out, for the FIRST ask rather than a REFINE re-run:
+                    # an outstanding-shaped order ask (`order_status` in the
+                    # `_DOCUMENT_STATUS_TO_ORDER_STATUS` family, every value containing
+                    # "outstanding") whose only named subject is a customer that did not
+                    # resolve is deferred per the 16 Sep 2026 ruling
+                    # (`turn/narrow.py::_narrow`'s own docstring: "a single un-uuid'd
+                    # candidate... passes through, deferred, rather than an ask
+                    # manufactured from a name alone") - never a manufactured escalate
+                    # offer either. Measured live: `lanes/business/__init__.py::
+                    # run_fetch`'s own `ENTITY_FILTER_REQUIRED_TOOLS` early return (the
+                    # outstanding report needs a filter, none could be built from an
+                    # unresolved customer name) already answers `_error_fragment(...,
+                    # outcome="not_found")` WITHOUT ever calling the report tool - R4's
+                    # own `raw_fragment` carry-through then let this bridge route that
+                    # SAME fragment through the rich miss composer, which mints an
+                    # escalate `team_pick` `run_miss_lane` never used to reach for this
+                    # domain (`test_rearch_s3_journey_chain.py::TestJourneyChain::
+                    # test_step_4_outstanding_do_customer_must_narrow_one_no_document_question`,
+                    # green on R3, before R4's `raw_fragment` existed at all). A
+                    # genuinely RESOLVED customer/product on the SAME ask reaches the
+                    # real report tool instead (`kind: "result"`, no `outcome` key), so
+                    # this exclusion never hides an actual zero-row report answer.
+                    and "outstanding" not in str(parsed_output.get("order_status") or "")
                     and isinstance(resolver_payload, dict)
                 ):
                     from app.services.chatbot import answer_bridge
