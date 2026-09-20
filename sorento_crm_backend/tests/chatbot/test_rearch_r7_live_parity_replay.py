@@ -781,8 +781,20 @@ class TestMultiDomainPickFetchesEveryNamedDomain:
 
 
 class TestIncomingHyphenSuffixNeverReadsAsAnUnknownProductType:
+    """Reviewer MB-3 (re-check round, 20 Sep 2026): `resolve_gate._token_of`
+    (`resolve_gate.py:587-602`) folds a token's hyphens ONLY when the entity's OWN
+    `hint == "product"` - the resolver never reads it, the PARSER's hint word decides.
+    The captain's live re-check saw the parser emit `inbound_shipment` for this exact
+    ask on one of two runs (`Couldn't find: "srtwt7202-new" (inbound shipment)`), so
+    `hint="product"` alone (this class's original, still-passing parametrization) does
+    not guard AC-1703 for the shape live traffic actually produces. Re-parametrized
+    over BOTH hints per the re-check brief; `allowed_lookup` is `['product',
+    'inbound_shipment', 'category', 'brand']` in both (measured, reviewer), so the
+    guard's own `allowed` filter is not what differs - only the token folding is."""
+
+    @pytest.mark.parametrize("hint", ["product", "inbound_shipment"])
     def test_replaying_the_recorded_single_entity_verdict_still_answers_the_product_dym(
-        self, session_factory, monkeypatch
+        self, session_factory, monkeypatch, hint: str
     ) -> None:
         _seed_contact_and_get(session_factory)
         base = unique_code("ZZTINCNEW").replace("-", "")
@@ -793,29 +805,33 @@ class TestIncomingHyphenSuffixNeverReadsAsAnUnknownProductType:
         # Byte-identical to turn 5cde645f-7e01-489b-833c-fe41876daa9f's own recorded
         # `raw.derived` shape, re-pointed at the seeded family: ONE product entity,
         # raw carrying a "-new" suffix no seeded code has, no product_type entity.
+        # `hint` is the ONE input MB-3 measured as deciding whether `_token_of` folds
+        # the hyphen suffix before the fuzzy scan ever sees it.
         qf = _parser_output(
             domain_hint="incoming",
             intent_hint="check_incoming",
             entities=[
-                {"raw": f"{base}-new", "hint": "product", "canonical_code": None,
+                {"raw": f"{base}-new", "hint": hint, "canonical_code": None,
                  "current_message": True, "confident": True},
             ],
             routing={"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"},
         )
         result, _captured = _run_turn_real(
             session_factory, monkeypatch, qf=qf, text_body=f"Incoming {base}-new",
-            msg_id="zzt-r7-incoming-new-dym", mcp_response={"data": []},
+            msg_id=f"zzt-r7-incoming-new-dym-{hint}", mcp_response={"data": []},
         )
         reply = (result.reply or {}).get("text") or ""
         assert "as a product type" not in reply, (
-            f"the parser's own verdict already names ONE clean product entity "
-            f"('{base}-new', no separate product_type word) - the engine must not "
-            f"re-derive a bogus 'new' product-type word downstream of it. Live turn "
+            f"[hint={hint}] the parser's own verdict already names ONE clean product "
+            f"entity ('{base}-new', no separate product_type word) - the engine must "
+            f"not re-derive a bogus 'new' product-type word downstream of it, "
+            f"whichever hint word the parser guessed for the SAME token. Live turn "
             f"5cde645f-7e01-489b-833c-fe41876daa9f answered 'I don't know '\''new'\'' as "
             f"a product type.' from this exact recorded (already-correct) verdict: "
             f"{reply!r}"
         )
         assert "Did you mean" in reply, (
-            f"AC-1703: a real near-match family must be offered as the did-you-mean, "
-            f"same as every other F8 case: {reply!r}"
+            f"[hint={hint}] AC-1703: a real near-match family must be offered as the "
+            f"did-you-mean, same as every other F8 case, regardless of the parser's "
+            f"own hint word for the unplaced token: {reply!r}"
         )
