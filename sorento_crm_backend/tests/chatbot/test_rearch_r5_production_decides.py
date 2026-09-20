@@ -76,6 +76,31 @@ def _seed_contact_and_get(session_factory) -> None:
     _seed_business_contact(session_factory, variables={})
 
 
+def _grant_contact_company(session_factory, company_id: Any) -> None:
+    """A SECOND `respond_contact_companies` grant, additive to `_seed_contact_and_get`'s
+    own Sorento-only one (`test_outstanding_lane.py::_seed_contact`'s own comment: "bound
+    to Sorento so a REAL company-scoped DB read ... sees the SAME company"). A contact
+    with no grant into a company resolves to ZERO rows there regardless of any `gate.py`/
+    resolver fix (`company_scope_resolver.py`'s own fail-closed rule, AC-F3) - measured
+    directly writing `TestCustomerOptionCarriesFamily`: the seeded Mocha customer row was
+    invisible to the real resolver with only the default Sorento grant in place, a second,
+    independent gap from the `compatible_entities`/`uuids` question the test's own
+    assertions pin (coder 29's report, item 4's "Separately" note)."""
+    from sqlalchemy import text as _sql_text
+
+    db = session_factory()
+    db.execute(
+        _sql_text(
+            "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+            "SELECT gen_random_uuid(), id, :company_id FROM respond_contacts WHERE respond_io_id = :cid "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"cid": str(CONTACT_ID), "company_id": company_id},
+    )
+    db.commit()
+    db.close()
+
+
 def _order_envelope_json(order_rows: list[dict[str, Any]]) -> str:
     """`crm_order_management_orders_list`'s route body, rendered through the REAL MCP
     presenter (`sorento_crm_mcp.presenters.present_response`) - the same "production
@@ -102,6 +127,25 @@ def _mcp_double(*, other: Any):
         return other(name, args)
 
     return _call, captured
+
+
+def _mcp_probe_for(tool_rows: dict[str, list[dict[str, Any]]]):
+    """An `AnswerServices.mcp_probe(name, args)` double keyed by TOOL NAME, each answer
+    rendered through the REAL MCP presenter (`_present_response`, the same "production
+    path, not a shortcut" convention `_order_envelope_json` uses) and PARSED back to a
+    dict - `AnswerServices.mcp_probe`'s production binding (`services.py::_mcp_probe`)
+    already returns a parsed envelope (its own inner `call` runs `parse_mcp_content`), so
+    a caller of this bundle (`miss_suggest.run_miss_lane`, `answer.run_crossdomain`) never
+    parses a second time. A tool name with no entry answers the harmless `{"data": []}`
+    both callers' own `dym_ok`/`crossdomain_render` already degrade cleanly from."""
+
+    def _probe(name: str, args: dict[str, Any]) -> Any:
+        rows = tool_rows.get(name)
+        if rows is None:
+            return {"data": []}
+        return json.loads(_present_response()(name, json.dumps({"data": rows})))
+
+    return _probe
 
 
 def _real_resolve_with_safe_probe(monkeypatch) -> None:
@@ -133,14 +177,33 @@ def _real_resolve_with_safe_probe(monkeypatch) -> None:
     monkeypatch.setattr(engine_mod.business_services, "production_services", _bundle)
 
 
-def _run_turn_with_mcp_call(session_factory, monkeypatch, *, qf, text_body, msg_id, mcp_call):
+def _run_turn_with_mcp_call(
+    session_factory, monkeypatch, *, qf, text_body, msg_id, mcp_call, answer_mcp_probe=None
+):
     """The SAME real-resolver wiring `test_outstanding_lane.py::_run_turn_real(real_resolver=
     True)` does, PLUS a safe probe/access_types stub (`_real_resolve_with_safe_probe`),
     with a caller-supplied `mcp_call(name, args)` double instead of its own
     single-canned-response one - needed where a turn's ladder calls MORE than one tool
     (the incoming-miss-falls-back-to-stock scenario), which `_run_turn`'s own
     `_capturing_mcp` cannot answer differently per tool name, or where the turn raises
-    an ambiguous-customer picker (see `_real_resolve_with_safe_probe`'s own docstring)."""
+    an ambiguous-customer picker (see `_real_resolve_with_safe_probe`'s own docstring).
+
+    `answer_mcp_probe(name, args) -> dict`, optional: the SECOND MCP seam a business
+    turn can reach - `AnswerServices.mcp_probe`, which `miss_suggest.run_miss_lane`'s
+    did-you-mean/require-specific stamp probe and `answer.run_crossdomain`'s ladder
+    probe both call through `answer_bridge.answer_for`'s own `services=business_services.
+    production_answer_services(db)` (`engine.py:1918` - the ONLY live call site;
+    `answer_services_for` has NO live caller anywhere under `app/`, measured via `grep -rn
+    "answer_services_for(" app/` excluding its own def, tester 33). Stubbing
+    `answer_services_for` alone (as this function did before tester 33) leaves
+    `production_answer_services` real, so a probe-dependent turn reaches the actual
+    `MCPRuntimeClient` and trips `conftest.py`'s "never call the real MCP server" guard -
+    caught by both callers' own broad `except Exception`, so the turn silently degrades
+    to "probe did not run" rather than failing loud (measured directly: `TestRequireSpecificRosterCopy`'s
+    and `TestIncomingMissLadderProduct`'s own reds, both from this exact gap). Defaults to
+    a harmless `{"data": []}` for every OTHER test in this file, which resolves to the SAME
+    "probe not attempted" branch `dym_annotate`/`run_crossdomain` already degrade to on the
+    forbidden-call path today - no behaviour change for a test that does not pass one."""
     from app.services.chatbot.head import parser as parser_mod
     from app.services.chatbot.lanes.business.services import AnswerServices, FetchServices
     from tests.chatbot.test_outstanding_lane import _enable_business_lane
@@ -168,6 +231,7 @@ def _run_turn_with_mcp_call(session_factory, monkeypatch, *, qf, text_body, msg_
     monkeypatch.setattr(
         engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=mcp_call)
     )
+    probe_fn = answer_mcp_probe if answer_mcp_probe is not None else (lambda name, args: {"data": []})
     monkeypatch.setattr(
         engine_mod.business_services,
         "answer_services_for",
@@ -175,13 +239,20 @@ def _run_turn_with_mcp_call(session_factory, monkeypatch, *, qf, text_body, msg_
             mcp_probe=lambda name, args: {"data": []}, family_fetch=lambda query: {"data": []}
         ),
     )
+    monkeypatch.setattr(
+        engine_mod.business_services,
+        "production_answer_services",
+        lambda db: AnswerServices(mcp_probe=probe_fn, family_fetch=lambda query: {"data": []}),
+    )
     envelope = _envelope()
     envelope.message["message"]["messageId"] = msg_id
     envelope.message["message"]["message"]["text"] = text_body
     return engine_mod.run_turn(envelope, session_factory=session_factory)
 
 
-def _run_turn_real(session_factory, monkeypatch, *, qf, text_body, msg_id, mcp_response):
+def _run_turn_real(
+    session_factory, monkeypatch, *, qf, text_body, msg_id, mcp_response, answer_mcp_probe=None
+):
     """`_run_turn_with_mcp_call` with a single canned `mcp_response` for every tool
     call this turn makes (a STRING, already rendered through the real MCP presenter
     where relevant - see `_order_envelope_json`), the common case."""
@@ -189,7 +260,8 @@ def _run_turn_real(session_factory, monkeypatch, *, qf, text_body, msg_id, mcp_r
 
     mcp_call, captured = _capturing_mcp(mcp_response)
     result = _run_turn_with_mcp_call(
-        session_factory, monkeypatch, qf=qf, text_body=text_body, msg_id=msg_id, mcp_call=mcp_call
+        session_factory, monkeypatch, qf=qf, text_body=text_body, msg_id=msg_id, mcp_call=mcp_call,
+        answer_mcp_probe=answer_mcp_probe,
     )
     return result, captured
 
@@ -532,10 +604,21 @@ class TestFetchedEmptyIsAMiss:
                     "current_message": True, "confident": True,
                 },
             ],
+            # `not_found_error_message`/`run_miss_lane` read `parser.routing.
+            # suggested_team` VERBATIM, no domain/policy fallback of their own (measured:
+            # `answer.build_suggest_offer`'s own team pick is `company_team or
+            # routing.suggested_team or "customer_service"`) - a real LLM parser emission
+            # for a `product_attachment` ask carries "marketing_product" here
+            # (`test_product_attachment_picker_stamp.py::_parser`'s own literal, the SAME
+            # domain), which this fixture omitted, defaulting to the base's own
+            # `suggested_team: None` and stamping the generic "customer service team"
+            # regardless of domain. `suggested_agent`/`team_source` stay the base's own
+            # `None` - only the ONE field this test's own assertion needs changes.
+            routing={"suggested_team": "marketing_product", "suggested_agent": None, "team_source": None},
         )
         result, captured = _run_turn_real(
             session_factory, monkeypatch, qf=qf, text_body=f"photo for {code}",
-            msg_id="zzt-r5-fetched-empty-attachment", 
+            msg_id="zzt-r5-fetched-empty-attachment",
             mcp_response={"data": []},
         )
         reply = (result.reply or {}).get("text") or ""
@@ -588,9 +671,26 @@ class TestIncomingMissLadderProduct:
             return json.dumps({"has_result": False, "items": []})
 
         mcp_call, captured2 = _mcp_double(other=_other)
+        # The bridge's own AC-1705 ladder (`answer.run_crossdomain`) reaches for the SAME
+        # stock row through the SECOND MCP seam (`AnswerServices.mcp_probe`), never
+        # through the primary `FetchServices.mcp_call` double `_other` above answers -
+        # `answer_bridge._fold_crossdomain_ladder` is called with `services=
+        # business_services.production_answer_services(db)` (`engine.py:1918`), which
+        # left real crashes into the "never call the real MCP server" guard before this
+        # fix (measured directly writing this file).
+        answer_probe = _mcp_probe_for(
+            {
+                "crm_inventory_stock_balance_list": [
+                    {
+                        "product_code": code, "total_qty": 42, "outstanding_qty": 0,
+                        "warehouse_allocations": [{"warehouse_code": "ZZT-WH", "qty": 42}],
+                    }
+                ]
+            }
+        )
         result = _run_turn_with_mcp_call(
             session_factory, monkeypatch, qf=qf, text_body=f"incoming for {code}",
-            msg_id="zzt-r5-incoming-ladder", mcp_call=mcp_call,
+            msg_id="zzt-r5-incoming-ladder", mcp_call=mcp_call, answer_mcp_probe=answer_probe,
         )
         reply = (result.reply or {}).get("text") or ""
         assert "But no incoming matched these." in reply, reply
@@ -697,9 +797,30 @@ class TestRequireSpecificRosterCopy:
                 },
             ],
         )
+        # The has/no Product Photos STAMPS are a SECOND MCP seam (`AnswerServices.
+        # mcp_probe`, `crm_master_product_attachments_list` - `miss_suggest.
+        # run_miss_lane`'s own require-specific stamp probe), never the primary
+        # `FetchServices.mcp_call` this turn's `mcp_response` answers - only the
+        # HAS_CODE product carries a file, so the probe answers with ONE row (the
+        # real MCP tool would never return a row for a product with no attachment).
+        answer_probe = _mcp_probe_for(
+            {
+                "crm_master_product_attachments_list": [
+                    {
+                        "product": {"product_code": has_code},
+                        "attachment": {
+                            "attachment_type": "Product Photos",
+                            "original_filename": f"{has_code}.jpg",
+                        },
+                        "company_name": "Sorento",
+                    }
+                ]
+            }
+        )
         result, captured = _run_turn_real(
             session_factory, monkeypatch, qf=qf, text_body=f"photo for {base}",
             msg_id="zzt-r5-attachment-roster", mcp_response={"data": []},
+            answer_mcp_probe=answer_probe,
         )
         reply = (result.reply or {}).get("text") or ""
         assert "product_attachment search needs to be more specific" in reply, (
@@ -843,6 +964,11 @@ class TestCustomerOptionCarriesFamily:
         alpha_mch = seed_customer(db, company_id=mocha.id, name="ZZT PICK ALPHA TRADING SDN BHD")
         beta_srt = seed_customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT PICK BETA TRADING SDN BHD")
         db.commit()
+        # The contact must be GRANTED into Mocha too, or the real resolver sees zero rows
+        # there no matter what `gate.py` does with them (see `_grant_contact_company`'s
+        # own docstring) - a second, independent fixture gap from the `uuids` mismatch
+        # this test's own assertions are pinning.
+        _grant_contact_company(session_factory, mocha.id)
 
         qf = _parser_output(
             domain_hint="order",
