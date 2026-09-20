@@ -251,21 +251,27 @@ class TestPromotionAskMultiSelect:
             "each per-tier probe call must be scoped to exactly that tier's own "
             f"access level: {captured1}"
         )
-        # `verdict["access_levels"]` is the compound-entitled-name carry
-        # `turn_runtime._tier_gate` reads for a SETTLED tier (measured + already
-        # pinned green: `test_rearch_r3_answer_bridge.py::
-        # TestMakeToolRunnerCarriesTheRealTierGate::
-        # test_a_settled_tier_pick_keeps_todays_synthetic_recompose` feeds it the same
-        # way) - a real answer turn's own parser carries the contact's entitled
-        # compound names forward the same way it carries `routing`/`domain_hint`;
-        # this test's own qf must too, or `_tier_gate` recomposes against an empty
-        # entitlement regardless of which tier(s) were picked.
+        # Security review, PR #952 Phase 3, finding B1 (`.claude/handoffs/
+        # rearch-phase3-security.md`): `verdict["access_levels"]` is the PARSER's
+        # own field, and the prompt inventory measured it EMPTY on 249/249 real
+        # answer-turn captures (`documentation/plans/chatbot/
+        # parser-prompt-inventory.md:106`) - feeding `entitled_names` here asserted
+        # an assumption nowhere true in production and hid the bug this pin now
+        # exposes: `turn_runtime._tier_gate` reads the VERDICT's `access_levels`
+        # for a SETTLED tier pick, never the resolver's own entitlement, so an
+        # empty (real-shaped) verdict recomposes to an empty `access_levels_
+        # recomposed`, which the promotion route reads as "no filter at all"
+        # (`app/api/v1/marketing/promotions.py` -> `contact_access_type_service.
+        # translate_names_to_codes`) - the contact reads promotions of every tier.
+        # See `test_rearch_r6_review_round.py::
+        # TestTierPickFetchUsesResolverEntitlementNeverParserWords` for the
+        # engine-level, real-resolver-entitlement version of this same red.
         entitled_names = ["Sorento Dealer", "Sorento Office"]
         answer_qf = _parser_output(
             domain_hint=None,
             intent_hint=None,
             entities=[],
-            access_levels=entitled_names,
+            access_levels=[],
             **answer_overrides,
         )
         _result2, captured2 = _run_turn(
