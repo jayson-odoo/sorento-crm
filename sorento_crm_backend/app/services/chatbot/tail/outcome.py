@@ -196,23 +196,24 @@ def escalate_catalog(
         include_response = False
 
     elif kind == "escalation_declined":
-        response = copy.render("escalation_declined")
+        # AC-1703's tail, captain's ruling 20 Sep 2026: a decline over a NON-escalation
+        # offer (a did-you-mean roster's own attached "would you like me to escalate"
+        # sentence, a detail offer) finishes on this SAME arm as an actual escalation
+        # decline, but gets R22(a)'s own short acknowledgement, never the generic
+        # "Escalation declined." line - that sentence names an escalation nobody asked
+        # for. `lane_parse_output` is the only place that knows which of the two this
+        # turn was (`apply`'s `trace.lane == "offer_declined"`), so the copy key is
+        # chosen off the flag it left on `ctx.parse.output`, not a second branch kind
+        # (main itself has no `branch_kind` wire concept - this is one arm choosing
+        # between two registry copies, the mechanical port of
+        # `lanes/business/__init__.py::_outstanding_offer_closed`'s own pre-existing
+        # distinction).
+        response = copy.render(
+            "offer_declined" if jsc.truthy(jsc.get(qf, "chatbot_declined_offer_copy")) else "escalation_declined"
+        )
         manual_response = True
         include_response = True
         is_escalate_offer = False  # -> cs-offer-gate FALSE -> straight to compile-state
-
-    elif kind == "offer_declined":
-        # R22(a), AC-1703's tail: a decline over a NON-escalation offer (a did-you-mean
-        # roster's own attached "would you like me to escalate" sentence, a detail
-        # offer) gets its own short acknowledgement, never the generic
-        # "Escalation declined." line - that sentence names an escalation nobody asked
-        # for; this is `escalation_declined`'s sibling for every other offer the bot
-        # makes (`lanes/business/__init__.py::_outstanding_offer_closed`'s own words,
-        # the old pipeline's copy of the same registry key).
-        response = copy.render("offer_declined")
-        manual_response = True
-        include_response = True
-        is_escalate_offer = False
 
     elif kind == "offer_hold":
         # The clarify ask was composed upstream by `offer-hold-reply` (same body as

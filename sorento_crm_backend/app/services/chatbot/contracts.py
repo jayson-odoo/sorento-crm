@@ -208,11 +208,7 @@ SelectionContext = Literal[SELECTION_CONTEXTS]  # type: ignore[valid-type]
 # Engine vocabularies
 # --------------------------------------------------------------------------- #
 
-# The 13 arms `route-turn` decides between, in ladder order, plus `offer_declined`
-# (PLAN-chatbot-answer-half-reattach.md R4, AC-1703's tail): a decline over a NON-
-# escalation offer (a did-you-mean roster's own attached escalate sentence, a detail
-# offer) - `escalation_declined`'s sibling, R22(a)'s own registry copy, never the
-# generic "Escalation declined." line for an escalation nobody asked for.
+# The 13 arms `route-turn` decides between, in ladder order.
 BRANCH_KINDS = (
     "access_denied",
     "escalate_offer",
@@ -220,7 +216,6 @@ BRANCH_KINDS = (
     "ideate",
     "offer_hold",
     "escalation_declined",
-    "offer_declined",
     "check_promotion",
     "low_signal",
     "clarify_menu",
@@ -237,7 +232,6 @@ TAG_ONLY_BRANCH_KINDS: frozenset[str] = frozenset(
     {
         "escalate_offer",
         "escalation_declined",
-        "offer_declined",
         "clarify_menu",
         "not_supported",
         "demand_qty",
@@ -779,7 +773,6 @@ CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
         "access_denied",
         "escalate_offer",
         "escalation_declined",
-        "offer_declined",
         "clarify_menu",
         "not_supported",
         "demand_qty",

@@ -1420,6 +1420,7 @@ def _run_stages(  # noqa: PLR0915
             # null until one of its options is chosen.
             accepted_team=plan.trace.team,
             accepted_assignee=plan.trace.assignee,
+            declined_offer_copy=plan.trace.lane == "offer_declined",
             prior_session=session_block,
         )
         ctx = build_ctx(

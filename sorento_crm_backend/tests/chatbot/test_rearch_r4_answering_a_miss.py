@@ -432,6 +432,10 @@ class TestAC1703EscalateOverARoster:
             f"ROSTER_KINDS), so no lane at all is set and no acknowledgement is composed: "
             f"got branch_kind={result.branch_kind!r} reply={reply_text!r}"
         )
+        # R5 re-pin (tester 32, 20 Sep 2026, test_dry_run_isolation.py::
+        # TestWordsComposedAreWordsSent's own completeness check): the words above must
+        # actually reach the customer as an ACTION, not merely sit on `result.reply`.
+        assert result.actions and result.actions[-1]["kind"] == "send_message", result.actions
 
 
 # --------------------------------------------------------------------------- #

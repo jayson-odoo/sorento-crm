@@ -425,6 +425,7 @@ def lane_parse_output(
     domain: str | None = None,
     accepted_team: str | None = None,
     accepted_assignee: str | None = None,
+    declined_offer_copy: bool = False,
     prior_session: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
@@ -508,6 +509,16 @@ def lane_parse_output(
     # `None` (a bare "yes") leaves whatever the verdict already carried untouched.
     if accepted_assignee:
         out["escalation"] = {**(out.get("escalation") or {}), "preferred_assignee_id": accepted_assignee}
+    # AC-1703's tail, captain's ruling 20 Sep 2026: a decline over a NON-escalation
+    # offer (a did-you-mean roster's own attached escalate sentence, a detail offer)
+    # finishes on the SAME `escalation_declined` branch kind as an actual escalation
+    # decline - `apply`'s `trace.lane == "offer_declined"` is the only place that
+    # knows which of the two this turn was, so it is carried here rather than a
+    # second branch kind, the same "one flag on ctx.parse.output" idiom
+    # `preferred_assignee_id` just above uses. `escalate_catalog` reads it back to
+    # choose R22(a)'s own registry copy over the generic "Escalation declined." line.
+    if declined_offer_copy:
+        out["chatbot_declined_offer_copy"] = True
     return out
 
 

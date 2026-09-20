@@ -17,7 +17,15 @@ from app.services.chatbot.turn.plan import Plan
 _LANE_BRANCH: dict[str, str] = {
     "escalation": "out_of_scope",
     "escalation_declined": "escalation_declined",
-    "offer_declined": "offer_declined",
+    # A decline over a NON-escalation offer (a did-you-mean roster's own attached
+    # escalate sentence, a detail offer) finishes under the SAME branch kind as an
+    # actual escalation decline (AC-1703's tail) - `apply.py` stamps
+    # `trace.lane = "offer_declined"` only so the trace screen shows which of the two
+    # this turn actually was; `escalate_catalog` reads that distinction back off
+    # `ctx.parse.output` (a flag `lane_parse_output` sets), not off a second branch
+    # kind, per the captain's ruling (20 Sep 2026): main itself has no `branch_kind`
+    # wire concept, so this is a copy-key choice inside one existing arm, not new scope.
+    "offer_declined": "escalation_declined",
     "not_supported": "not_supported",
     "clarification": "clarify_menu",
     "casual": "low_signal",
