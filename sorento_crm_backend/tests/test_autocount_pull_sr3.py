@@ -752,7 +752,7 @@ class TestApplyTaskGuards:
     def test_pc_2a_snapshot_expired_410_fails_and_creates_nothing(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_user = str(uuid.uuid4())
         code = f"{MARKER}-PC2A"
         snapshot_id = f"{MARKER}-snap-pc2a"
@@ -780,7 +780,7 @@ class TestApplyTaskGuards:
     def test_pc_2b_unknown_snapshot_404_fails_and_creates_nothing(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_user = str(uuid.uuid4())
         code = f"{MARKER}-PC2B"
         snapshot_id = f"{MARKER}-snap-pc2b"
@@ -810,7 +810,7 @@ class TestApplyTaskGuards:
     ):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_user = str(uuid.uuid4())
         code = f"{MARKER}-PC2C"
         rows = [_canonical_row(code)]
@@ -838,7 +838,7 @@ class TestApplyTaskRealIngest:
     def test_pc_3_ten_fixture_rows_against_an_empty_company_all_create(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_user = str(uuid.uuid4())
         rows = _fixture("products-rows-page1.json")["rows"]
         snapshot_id = f"{MARKER}-snap-pc3"
@@ -876,7 +876,7 @@ class TestApplyTaskStamping:
     def test_pc_4a_created_products_carry_the_confirming_user(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_user = str(uuid.uuid4())
         code = f"{MARKER}-PC4A"
         rows = [_canonical_row(code)]
@@ -902,7 +902,7 @@ class TestApplyTaskStamping:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_user = str(uuid.uuid4())
         original_creator = str(uuid.uuid4())
         code = f"{MARKER}-PC4B"

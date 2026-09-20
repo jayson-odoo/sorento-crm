@@ -1,11 +1,14 @@
-"""Thin client for the FoundryX AutoCount pull gateway (PLAN-autocount-pull-review.md).
+"""Thin client for the FoundryX AutoCount pull gateway (PLAN-autocount-pull-review.md,
+PLAN-foundryx-pull-connection-ui.md).
 
-One small class, sync ``httpx.Client``, no retries, no caching. The key is read from
-settings and sent ONLY as the ``X-API-Key`` header - never logged, never echoed in an
-exception message. Every error becomes one ``FoundryxPullError(code, message, status)``:
-``status`` is the HTTP status SORENTO answers the caller with (not necessarily FoundryX's
-own status - see the mapping in ``_parse``), ``code`` is FoundryX's own stable code where
-it can be trusted, else ``UNREACHABLE`` / ``NOT_CONFIGURED``.
+One small class, sync ``httpx.Client``, no retries, no caching. The base URL and key
+are read from the seeded ``foundryx-esb`` ``integrations`` row - the single source of
+truth since SR6 - and sent ONLY as the ``X-API-Key`` header - never logged, never
+echoed in an exception message. Every error becomes one
+``FoundryxPullError(code, message, status)``: ``status`` is the HTTP status SORENTO
+answers the caller with (not necessarily FoundryX's own status - see the mapping in
+``_parse``), ``code`` is FoundryX's own stable code where it can be trusted, else
+``UNREACHABLE`` / ``NOT_CONFIGURED``.
 
 ``TRANSPORT`` is a module-level seam: production leaves it ``None`` (httpx then uses its
 normal outbound transport); tests replace it with an ``httpx.MockTransport`` that serves
@@ -13,11 +16,14 @@ the committed fixtures, so nothing here ever needs a live FoundryX to be exercis
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 
 import httpx
+from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.models.integration import Integration
+from app.services.integration_admin_service import IntegrationAdminService
 
 #: Test seam. See module docstring.
 TRANSPORT: Optional[httpx.BaseTransport] = None
@@ -25,6 +31,10 @@ TRANSPORT: Optional[httpx.BaseTransport] = None
 _BUILD_TIMEOUT_SECONDS = 15
 _STATUS_TIMEOUT_SECONDS = 15
 _ROWS_TIMEOUT_SECONDS = 30
+_PROBE_TIMEOUT_SECONDS = 5
+
+#: `GET .../snapshots/{id}` on an id that can never exist - the Test action's probe.
+_NIL_SNAPSHOT_ID = "00000000-0000-0000-0000-000000000000"
 
 #: A runaway upstream (`totalPages` that keeps growing, or never settles) must not page
 #: forever - `all_rows` refuses once it would exceed this many pages. Generous for any
@@ -39,6 +49,10 @@ _NOT_CONFIGURED_HTTP_STATUSES = (401, 403, 404)
 
 _NOT_CONFIGURED_MESSAGE = "The AutoCount connection is not set up."
 
+#: The name of the one FoundryX identity row (migration 297, `integration_seed.py`).
+#: One row, one connection - the key covers both companies (SRT + MCH).
+_INTEGRATION_NAME = "foundryx-esb"
+
 
 class FoundryxPullError(Exception):
     """One shape for every way a FoundryX call can fail."""
@@ -50,12 +64,45 @@ class FoundryxPullError(Exception):
         super().__init__(message)
 
 
-class FoundryxAutocountClient:
-    """Talks to the FoundryX AutoCount pull gateway for one request/task."""
+class FoundryxProbeUnreachable(Exception):
+    """Raised by ``probe()`` only, on a connect/timeout failure. Kept separate from
+    ``FoundryxPullError`` because the Test action wants the underlying reason, never
+    the generic NOT_CONFIGURED bucket ``_parse`` uses for the ordinary pull path."""
 
-    def __init__(self) -> None:
-        base_url = (settings.foundryx_base_url or "").strip()
-        api_key = (settings.foundryx_api_key or "").strip()
+
+class FoundryxAutocountClient:
+    """Talks to the FoundryX AutoCount pull gateway for one request/task.
+
+    Reads the ``foundryx-esb`` integration row through ``db`` on construction - the
+    row is the only source of truth (SR6 retires the old env-var settings). A key
+    rotated through the UI is therefore picked up by the very next build, with no
+    process restart: nothing here is cached across requests or across sessions.
+    """
+
+    def __init__(self, db: Session) -> None:
+        row = db.query(Integration).filter(Integration.name == _INTEGRATION_NAME).first()
+        self._resolve(db, row)
+
+    @classmethod
+    def from_integration(cls, db: Session, row: Optional[Integration]) -> "FoundryxAutocountClient":
+        """Builds the client from a SPECIFIC row, already resolved by the caller (the
+        Test action's route, which has the row from the path's id - not necessarily
+        the one named ``foundryx-esb``, and not necessarily the only ``autocount_esb``
+        row). ``__init__`` above is the by-name constructor the pull path uses; both
+        share ``_resolve`` so the usability rules (active, base_url, api_key) live in
+        exactly one place.
+        """
+        client = cls.__new__(cls)
+        client._resolve(db, row)
+        return client
+
+    def _resolve(self, db: Session, row: Optional[Integration]) -> None:
+        base_url = ""
+        api_key = ""
+        if row is not None and row.is_active:
+            base_url = ((row.config_json or {}).get("base_url") or "").strip()
+            credentials = IntegrationAdminService(db).decrypt_credentials(row) or {}
+            api_key = (credentials.get("api_key") or "").strip()
         if not base_url or not api_key:
             raise FoundryxPullError(
                 code="NOT_CONFIGURED", message=_NOT_CONFIGURED_MESSAGE, status=503
@@ -166,3 +213,80 @@ class FoundryxAutocountClient:
                 total_pages = 1
             page += 1
         return rows
+
+    def probe(self) -> tuple[int, Optional[dict]]:
+        """``GET`` the nil-snapshot id, RAW - unlike ``_request``/``_parse``, a non-2xx
+        status is not converted into ``FoundryxPullError``. The Test action needs the
+        real status and body shape to map (see ``check_connection`` below), not the
+        ordinary NOT_CONFIGURED bucket every other call collapses onto.
+
+        Raises ``FoundryxProbeUnreachable`` on a connect/timeout failure, OR on a
+        malformed ``base_url`` (``httpx.InvalidURL`` - not a subclass of
+        ``httpx.HTTPError``, so it needs its own branch, and its message is not
+        forwarded verbatim: a URL-parse error can echo back attacker-shaped input).
+        """
+        try:
+            with self._client(_PROBE_TIMEOUT_SECONDS) as client:
+                response = client.get(
+                    f"/api/v1/autocount/snapshots/{_NIL_SNAPSHOT_ID}", headers=self._headers()
+                )
+        except httpx.InvalidURL as exc:
+            raise FoundryxProbeUnreachable("invalid base URL") from exc
+        except httpx.HTTPError as exc:
+            raise FoundryxProbeUnreachable(str(exc) or exc.__class__.__name__) from exc
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        return response.status_code, body if isinstance(body, dict) else None
+
+
+def check_connection(db: Session, row: Integration) -> dict:
+    """The Test action's ONE mapping function (PLAN-foundryx-pull-connection-ui.md S2)
+    - the gateway-answer table lives here, not in the route, so there is exactly one
+    place that decides what "Connected" means.
+
+    Builds the client from ``row`` - the ROW THE CALLER RESOLVED FROM THE PATH, not a
+    by-name lookup: the row on screen might not be named ``foundryx-esb`` (a rename),
+    and it might not be the only ``autocount_esb`` row (a second, rehearsal
+    connection) - either way, Test must answer for the row it was asked about.
+
+    Never raises: every outcome, including an unconfigured row or an unreachable
+    gateway, is a `{ok, message, latency_ms}` test RESULT, not an error. Latency
+    covers the probe itself only, not the row lookup/decrypt that precedes it.
+    """
+    try:
+        client = FoundryxAutocountClient.from_integration(db, row)
+    except FoundryxPullError:
+        return {"ok": False, "message": "Base URL or key missing", "latency_ms": 0}
+
+    started = time.monotonic()
+
+    def _latency_ms() -> int:
+        return int(round((time.monotonic() - started) * 1000))
+
+    try:
+        status_code, body = client.probe()
+    except FoundryxProbeUnreachable as exc:
+        return {"ok": False, "message": f"Unreachable: {exc}", "latency_ms": _latency_ms()}
+
+    latency_ms = _latency_ms()
+    if status_code in (404, 410) and body is not None:
+        return {"ok": True, "message": "Connected", "latency_ms": latency_ms}
+    if status_code == 401:
+        return {"ok": False, "message": "Key rejected", "latency_ms": latency_ms}
+    if status_code == 403:
+        return {
+            "ok": False,
+            "message": "AutoCount service is not enabled on FoundryX",
+            "latency_ms": latency_ms,
+        }
+    if status_code == 429:
+        return {
+            "ok": False,
+            "message": "Too many attempts, try again shortly",
+            "latency_ms": latency_ms,
+        }
+    if status_code == 404:
+        return {"ok": False, "message": "Not a FoundryX gateway", "latency_ms": latency_ms}
+    return {"ok": False, "message": f"Unexpected answer {status_code}", "latency_ms": latency_ms}

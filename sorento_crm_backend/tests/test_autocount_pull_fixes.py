@@ -33,6 +33,7 @@ from app.main import app  # noqa: E402,F401
 
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
+import tests.support.fake_foundryx as fake_foundryx
 import tests.test_autocount_pull_sr3 as sr3
 import tests.test_autocount_pull_sr4 as sr4
 from tests.test_autocount_pull_sr1 import (  # noqa: F401 - env/task_db are fixtures
@@ -110,7 +111,7 @@ class TestF1EmptyFedGuard:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         owner_id = _seed_permitted_user(db, "inventory.stock.autocount_pull")
         rows = [sr4._stock_row(f"{MARKER}-F1A", f"{MARKER}-F1A-GHOST", 5)]  # no warehouse at all
@@ -158,7 +159,7 @@ class TestF1EmptyFedGuard:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         matched_wh = Warehouse(
             id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-F1B-MATCHED",
@@ -234,7 +235,7 @@ class TestF1cEmptyFedSetToZeroCount:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         wh = Warehouse(
             id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-F1C-WH", warehouse_name="Fed",
@@ -262,18 +263,18 @@ class TestF1cEmptyFedSetToZeroCount:
 
 
 class TestF2UnboundedPaging:
-    def test_f2_all_rows_stops_after_max_pages_and_raises_row_limit(self, monkeypatch):
+    def test_f2_all_rows_stops_after_max_pages_and_raises_row_limit(self, task_db, monkeypatch):
         """An upstream whose `totalPages` keeps growing must not be paged forever.
         `MAX_PAGES` is the coder's new module constant on `foundryx_autocount_client.py`,
         pinned here at 3 - `raising=False` so this test itself does not collection-error
         before the constant exists; the fake caps growth at page 10 so this run stays
         finite and fast even against TODAY'S unbounded loop."""
-        from app.config import settings
         import app.services.foundryx_autocount_client as client_mod
         from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 
-        monkeypatch.setattr(settings, "foundryx_base_url", BASE_URL, raising=False)
-        monkeypatch.setattr(settings, "foundryx_api_key", API_KEY, raising=False)
+        db, _factory = task_db
+        fake_foundryx.seed_foundryx_connection(db, base_url=BASE_URL, api_key=API_KEY)
+        db.commit()
 
         snapshot_id = f"{MARKER}-snap-f2"
         calls: list[int] = []
@@ -294,7 +295,7 @@ class TestF2UnboundedPaging:
         )
         monkeypatch.setattr(client_mod, "MAX_PAGES", 3, raising=False)
 
-        client = FoundryxAutocountClient()
+        client = FoundryxAutocountClient(db)
         with pytest.raises(FoundryxPullError) as exc_info:
             client.all_rows(snapshot_id)
 
@@ -877,7 +878,7 @@ class TestD1FailedPreviewRowsAreVisible:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         owner_id = _seed_permitted_user(db, "master_data.products.autocount_pull")
 
         # A product already linked under a DIFFERENT source system - the same shape

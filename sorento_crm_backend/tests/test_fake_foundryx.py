@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import tests.support.fake_foundryx as fake_foundryx
+from tests._pg_fixture import blank_session
 
 API_KEY = "fake-key-for-the-browser-pass"
 
@@ -97,7 +98,6 @@ def test_fetch_verified_snapshot_accepts_what_the_fake_serves(monkeypatch, fake)
     ever drifts from what `fetch_verified_snapshot` requires (AC-PP-1, the A5 hash),
     this is what catches it, not a hand-rolled assertion on the fake's own JSON."""
     import app.services.foundryx_autocount_client as client_mod
-    from app.config import settings
     from app.tasks.autocount_pull_tasks import fetch_verified_snapshot
 
     def _handler(request: httpx.Request) -> httpx.Response:
@@ -111,16 +111,20 @@ def test_fetch_verified_snapshot_accepts_what_the_fake_serves(monkeypatch, fake)
         return httpx.Response(response.status_code, content=response.content)
 
     monkeypatch.setattr(client_mod, "TRANSPORT", httpx.MockTransport(_handler))
-    monkeypatch.setattr(settings, "foundryx_base_url", "http://fake-foundryx.test", raising=False)
-    monkeypatch.setattr(settings, "foundryx_api_key", API_KEY, raising=False)
 
-    client = client_mod.FoundryxAutocountClient()
-    build = client.build("SRT", "products")
-    snapshot_id = build["snapshotId"]
+    with blank_session() as db:
+        fake_foundryx.seed_foundryx_connection(
+            db, base_url="http://fake-foundryx.test", api_key=API_KEY
+        )
+        db.commit()
 
-    header, rows, warnings = fetch_verified_snapshot(
-        client, snapshot_id=snapshot_id, company_code="SRT"
-    )
+        client = client_mod.FoundryxAutocountClient(db)
+        build = client.build("SRT", "products")
+        snapshot_id = build["snapshotId"]
+
+        header, rows, warnings = fetch_verified_snapshot(
+            client, snapshot_id=snapshot_id, company_code="SRT"
+        )
 
     assert header["status"] == "ready"
     assert len(rows) == header["recordCount"]

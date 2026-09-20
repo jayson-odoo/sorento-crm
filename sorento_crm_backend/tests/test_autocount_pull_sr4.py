@@ -305,7 +305,7 @@ class TestStockPreviewGuards:
     ):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = [_stock_row(f"{MARKER}-SP1A", f"{MARKER}-SP1A-WH", 5)]
         job_id = _prepare_stock_preview(
             db, fake, rows=rows, fetched_header=_stock_header(rows, **overrides)
@@ -332,7 +332,7 @@ class TestStockPreviewConfirmBlocked:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         wh_code = f"{MARKER}-SP1B-WH"
         db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=wh_code, warehouse_name="Fed",
@@ -414,7 +414,7 @@ class TestStockPreviewFeedsFedOnly:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         active_code = f"{MARKER}-FED2B"
         inactive_code = f"{MARKER}-OFF2B"
@@ -501,7 +501,7 @@ class TestStockPreviewValidateOnly:
     ):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_id = _seed_sp_scenario(db, fake)
 
         def _snapshot():
@@ -538,7 +538,7 @@ class TestStockPreviewJobRowsAndCounts:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_id = _seed_sp_scenario(db, fake)
 
         _run_preview(monkeypatch, factory, job_id)
@@ -592,7 +592,7 @@ class TestStockPreviewJobRowsAndCounts:
         received row count."""
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         job_id = _seed_sp_scenario(db, fake)
 
         _run_preview(monkeypatch, factory, job_id)
@@ -948,7 +948,7 @@ class TestStockApplyTask:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         active_wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-SC2-FED",
                                warehouse_name="Fed", is_active=True, company_id=DEFAULT_COMPANY_ID)
@@ -1093,7 +1093,7 @@ class TestStockApplyArchivesStockList:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         backend = self._patch_storage(monkeypatch)
         type_id = self._seed_attachment_type(db)
         previous_id = self._seed_previous_attachment(db, type_id)
@@ -1163,7 +1163,7 @@ class TestStockApplyArchivesStockList:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         backend = self._patch_storage(monkeypatch)
         type_id = self._seed_attachment_type(db)
         previous_id = self._seed_previous_attachment(db, type_id)
@@ -1207,7 +1207,7 @@ class TestStockApplyArchivesStockList:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         self._patch_storage(monkeypatch)
         self._seed_attachment_type(db)
 
@@ -1268,7 +1268,7 @@ class TestStockApplyArchiveFailureIsAVisibleWarning:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         # Deliberately NO Stock_List AttachmentType seeded - reproduces sc_2's own
         # "the import succeeds, the archive step has nothing to write to" case.
 

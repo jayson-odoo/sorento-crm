@@ -209,7 +209,7 @@ def get_pull_rows(
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
     try:
-        rows = pull_service.fetch_snapshot_rows(job)
+        rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
     if pull_service.entity_of(job) == "products":
@@ -231,7 +231,7 @@ def download_pull(
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
     try:
-        rows = pull_service.fetch_snapshot_rows(job)
+        rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
     if pull_service.entity_of(job) == "products":
@@ -260,7 +260,7 @@ def compare_pull(
     job = _resolve_pull(db, current_user, job_id)
     _require_rows_available(job)
     try:
-        pull_rows = pull_service.fetch_snapshot_rows(job)
+        pull_rows = pull_service.fetch_snapshot_rows(db, job)
     except FoundryxPullError as exc:
         _raise_foundryx_error(exc)
     if pull_service.entity_of(job) == "products":
