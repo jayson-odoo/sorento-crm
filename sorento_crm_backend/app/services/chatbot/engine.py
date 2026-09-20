@@ -1104,6 +1104,39 @@ def _worker_failed(
     return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
 
 
+def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
+    """Which of a fan-out's domains the resolver gate is asked about (AC-1708, MB-1).
+
+    `gate.run_gate` reads `parser.domain_hint` as the SOLE key into `gate.ALLOWED`, and
+    that matrix is per-domain: the `order` row carries `customer`, while `incoming`,
+    `inventory`, `promotion` and `spo_allocation` do not. A fan-out verdict names no
+    domain of its own, so the hint has to be CHOSEN - and choosing `plan.domains[0]`
+    (message order) meant "incoming and orders for hanlim" handed the gate a row with no
+    `customer` in it, the ambiguous customer was dropped from the gate's own scan, and
+    the turn answered "Here are the results." over two empty sections. The mirrored
+    wording, "orders and incoming for hanlim", asked the question correctly.
+
+    So: the first domain in the plan whose row COVERS every hint this turn's entities
+    carry, and no injection at all when none does. Refusing to inject restores the
+    generic picker (`turn/compose.py`'s own "Which one do you mean?"), which asks a badly
+    worded question rather than losing the ask.
+    """
+    from app.services.chatbot.lanes.business.gate import ALLOWED
+
+    hints = {
+        jsc.nullish_str(e.get("hint")).strip().lower()
+        for e in (entities or [])
+        if isinstance(e, dict) and jsc.nullish_str(e.get("hint")).strip()
+    }
+    for domain in domains:
+        row = ALLOWED.get(jsc.js_string(domain))
+        if row is None:
+            continue
+        if hints <= {jsc.js_string(kind).strip().lower() for kind in row}:
+            return domain
+    return None
+
+
 def _run_stages(  # noqa: PLR0915
     envelope: Envelope,
     *,
@@ -1518,8 +1551,11 @@ def _run_stages(  # noqa: PLR0915
             # mean?". The pre-rearch head had no such turn - one verdict named one
             # domain - so `domain_hint` was never absent there; contract 122's fan-out
             # (`asks: [{"domain": "order"}, {"domain": "incoming"}]`) is what introduced
-            # it. The plan's FIRST domain is message order, the same order the sections
-            # are composed in, so the resolver is asked about the ask it is answering.
+            # it. WHICH domain is `_fanout_domain_hint`'s own rule (reviewer MB-1): the
+            # first one whose `ALLOWED` row takes the kinds this turn's entities carry,
+            # and no hint at all when none does - message order alone decided it before,
+            # so "incoming and orders for hanlim" handed the gate a row with no
+            # `customer` and lost the ambiguous customer entirely.
             resolver_parse_output = turn_runtime.with_carried_entities(
                 (ctx.get("parse") or {}).get("output") or {},
                 state_out.focus,
@@ -1530,10 +1566,14 @@ def _run_stages(  # noqa: PLR0915
                 and resolver_parse_output.get("entities")
                 and not jsc.truthy(resolver_parse_output.get("domain_hint"))
             ):
-                resolver_parse_output = {
-                    **resolver_parse_output,
-                    "domain_hint": plan.domains[0],
-                }
+                fanout_domain = _fanout_domain_hint(
+                    plan.domains, resolver_parse_output.get("entities")
+                )
+                if fanout_domain is not None:
+                    resolver_parse_output = {
+                        **resolver_parse_output,
+                        "domain_hint": fanout_domain,
+                    }
             resolver_ctx = {
                 **ctx,
                 "parse": {**(ctx.get("parse") or {}), "output": resolver_parse_output},
