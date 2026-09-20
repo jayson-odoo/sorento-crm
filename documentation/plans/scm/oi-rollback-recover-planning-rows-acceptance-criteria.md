@@ -200,6 +200,11 @@ Measured shapes: SO419595 B2155-NL-BLUE board row 493 @ 2026-09-30 = sheet 493 @
   stamped-only wording of AC-RB-33; AC-RB-33's counter case (plan 76, board top-up 38, sheet 38
   on the same date) still raises the sheet row plain, because the sum is checked first.
 
+- **AC-RB-43** (rehearsal rerun: SO419851, three ORDER BACK rows of 3, decision buy 0, reported on
+  every upload) A line the active decision plans at buy 0 has nothing to top up: the top-up rule
+  never runs on it, no sum is taken, and the sheet row reads `already_raised` as before this lane
+  (R4: an all-from-stock line is left as today).
+
 ## The whole journey
 
 - **AC-RB-21** `[T]` One test walks step 2 to step 4 of the journey on the fixture above: upload,
