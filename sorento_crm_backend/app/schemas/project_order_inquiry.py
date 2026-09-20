@@ -177,8 +177,11 @@ class OrderInquiryRowOut(BaseModel):
     cited_document: Optional[str] = None
     #: Every document this row's quantity sits on, oldest link first (AC-I5).
     links: List[OrderInquiryLinkOut] = []
-    #: The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder
-    #: planning, and is exactly what `scm.committed_v` now nets (migration 422).
+    #: The sum of `links[].qty` for the REAL links only - `links` also carries synthetic
+    #: "via PO" entries (`derived: true`) for a linked PO's own open SPO allocations,
+    #: which never wrote an `order_inquiry_links` row and are excluded from this sum.
+    #: `qty - linked_qty` is what still flows to reorder planning, and is exactly what
+    #: `scm.committed_v` now nets (migration 422).
     linked_qty: str = "0"
     #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
     #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared

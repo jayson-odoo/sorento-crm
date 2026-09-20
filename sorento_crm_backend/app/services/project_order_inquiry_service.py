@@ -5346,10 +5346,14 @@ class ProjectOrderInquiryService:
             return
 
         def _is_host_row(row: OrderInquiryRow) -> bool:
+            # SO314592 (prod, 21 Sep 2026): a USED row (`redirected_to_pool`) is grey,
+            # already spent, and must never anchor a companion - the same exclusion
+            # `order_inquiry_worklist_service.py`'s own `_live_host_row` already applies.
             return (
                 row.verb in (IV_ORDER, IV_ORDER_BACK)
                 and row.state != INQUIRY_CANCELLED
                 and row.ack_state != ACK_REJECTED
+                and not row.redirected_to_pool
             )
 
         host_rows_by_product: Dict[str, List[OrderInquiryRow]] = {}
