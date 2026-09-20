@@ -59,15 +59,26 @@ re-derived from `crossdomain_render` in isolation):
     own field lines, OR the three-way "nothing on order" sentence when the PO rung also
     finds nothing}
 
-    Would you like me to escalate to customer service team?
+    Would you like me to escalate to purchasing team?
 
 The escalate offer follows EVERY miss now, including one a rung partially answered -
 `not_found_error_message`'s own offer is unconditional on a miss existing at all; it does
-not read whether a LATER ladder rung filled in more text under it. It says "customer
-service team" even when the PO rung itself answers: `_apply_crossdomain_rung` stamps
-`parser.routing.suggested_team = "purchasing"` for LATER turns, but the offer for THIS
-turn is already built off the parser's ORIGINAL (here, absent) `suggested_team` before the
-rung mutates it - measured, not assumed. Only ONE offer reaches `result.reply.text` (the
+not read whether a LATER ladder rung filled in more text under it.
+
+**Re-pinned again after the ladder-before-miss sequencing fix (coder 36, 21 Sep 2026).**
+The paragraph this replaces said the offer named "customer service team" even when the PO
+rung answered, because the offer was built off the parser's ORIGINAL `suggested_team`
+before the rung's own mutation landed. That is no longer how the turn runs:
+`answer_bridge._run_crossdomain_ladder` (previously `_fold_crossdomain_ladder`) now runs
+BEFORE `not_found_error_message` composes the miss text (matching main's own
+`lanes/business/__init__.py::complete_answer` sequencing), so
+`_apply_crossdomain_rung`'s own `parser["routing"]["suggested_team"] = rung_team` stamp
+(`app/services/chatbot/lanes/business/answer.py:1064`
+`_CROSSDOMAIN_RUNG_TEAM = {"purchase_order": "purchasing"}`, applied at line 1385) lands
+before THIS turn's own offer is built, not just later turns'. The offer now names the
+rung's own team, "purchasing", whenever the rung runs at all (granted, no exception) -
+whether it found rows (AC-921, `TestOwner8Sep`, D7) or not (AC-922) - measured directly
+through `engine.run_turn`, not assumed. Only ONE offer reaches `result.reply.text` (the
 "said twice" defect `TestOwner8SepTheRungIsPerContactAndOffersOnce`'s own docstring names
 stays fixed); `_run_stock_turn`'s own `said` variable joins the reply text with a
 `send_message` action that mirrors it verbatim, which is why a raw substring count against
@@ -315,7 +326,13 @@ class TestAC921ThePORungReachesTheCustomer:
         # docstring) - exactly once, never the "said twice" defect this class's own
         # sibling test's docstring names.
         assert reply_text.count("Would you like me to escalate") == 1, reply_text
-        assert "Would you like me to escalate to customer service team?" in reply_text, reply_text
+        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) -
+        # `_run_crossdomain_ladder` now runs BEFORE `not_found_error_message` composes
+        # the offer, so `_apply_crossdomain_rung`'s own `routing.suggested_team = "purchasing"`
+        # stamp (`app/services/chatbot/lanes/business/answer.py:1064`
+        # `_CROSSDOMAIN_RUNG_TEAM = {"purchase_order": "purchasing"}`, stamped at line 1385)
+        # lands before this turn's own offer text is built, not just later turns'.
+        assert "Would you like me to escalate to purchasing team?" in reply_text, reply_text
 
     def test_the_supplier_is_never_in_the_rung_text(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
@@ -381,7 +398,13 @@ class TestAC922NothingOnAnyRung:
         assert "But no inventory matched these." in reply_text, reply_text
         assert f"No stock, no incoming and nothing on order for {CODE}." in reply_text, reply_text
         assert reply_text.count("Would you like me to escalate") == 1, reply_text
-        assert "Would you like me to escalate to customer service team?" in reply_text, reply_text
+        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) - see
+        # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
+        # own comment for the file:line citation. The PO rung stamps `suggested_team =
+        # "purchasing"` whenever it RUNS (granted, no exception) - not only when it finds
+        # rows - so this all-three-miss case (rung ran, found nothing) still names
+        # "purchasing", the same as AC-921's rung-answered case.
+        assert "Would you like me to escalate to purchasing team?" in reply_text, reply_text
 
 
 class TestTheSuffixedCodeShapeReachesTheRung:
@@ -567,7 +590,10 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         # The offer follows every miss now, even a rung-answered one (module docstring) -
         # exactly once, which is the "offers once" half of this class's own name.
         assert text.count("Would you like me to escalate") == 1, text
-        assert "Would you like me to escalate to customer service team?" in text, text
+        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) - see
+        # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
+        # own comment for the file:line citation.
+        assert "Would you like me to escalate to purchasing team?" in text, text
 
     def test_without_the_grant_no_probe_and_the_ladder_off_note(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
@@ -633,4 +659,7 @@ class TestD7AnIncomingAskReachesThePORung:
         assert "GUANGDONG" not in said
         # The offer follows every miss now, even a rung-answered one - exactly once.
         assert text.count("Would you like me to escalate") == 1, text
-        assert "Would you like me to escalate to customer service team?" in text, text
+        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) - see
+        # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
+        # own comment for the file:line citation.
+        assert "Would you like me to escalate to purchasing team?" in text, text
