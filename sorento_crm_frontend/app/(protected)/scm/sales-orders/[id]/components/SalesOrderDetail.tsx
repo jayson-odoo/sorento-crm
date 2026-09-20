@@ -1116,6 +1116,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
           </Badge>
         ),
         size: 130,
+        enableSorting: false,
         meta: { headerTitle: 'Source' },
       },
       {

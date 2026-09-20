@@ -78,6 +78,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services import project_line_draft_service
 from app.services.error_handler import AppException
+from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
     ProjectSupplyService,
@@ -2188,46 +2189,26 @@ class FulfilmentBoardService:
     def _line_numbers(self, records: Sequence[tuple]) -> Dict[str, int]:
         """A line number per core line, because the core table has none.
 
-        Derived per sales order by (required date nulls last, item code, line id) as the
-        FALLBACK - the same deterministic rule adoption falls back to for the mirror, so
-        the board and the sheet still agree where neither has anything better to go on.
-
-        AutoCount's OWN `line_no` (PLAN-so-lines-autocount-order.md 3.5) wins over that
-        fallback once every contributing line of the order carries one, distinctly: the
-        two screens then name a line by the number AutoCount does, not one guessed from a
-        date. One NULL among an order's lines falls back to the derived rule for the WHOLE
-        order - a partial `line_no` is not enough to trust.
+        `project_line_numbering.number_lines` (B1 review round): AutoCount's own `line_no`
+        wins once every contributing line of the order carries one, distinctly - gaps and
+        all. Otherwise every line falls back to a DERIVED 1..n, by (required date nulls
+        last, item code, line id) - the same rule `_resolve_core_line` and adoption's own
+        `_mirror` share, so a key the board hands out is readable by both without a mirror
+        having to exist first.
 
         A mirror line, when it ALREADY exists and numbers every contributing line of that
         order distinctly, still wins over both: the mirror is what the sheet shows, and
-        Re-sync can renumber a later line.
+        Re-sync can renumber a later line. `number_lines` has no opinion on the mirror -
+        that pass is applied here, same as before.
         """
-        by_order: Dict[str, List[tuple]] = defaultdict(list)
-        line_no_by_id: Dict[str, Optional[int]] = {}
+        by_order: Dict[str, List[LineFacts]] = defaultdict(list)
         for line, order, product, _warehouse, _agent in records:
-            line_id = str(line.id)
             by_order[str(order.id)].append(
-                (
-                    line.required_date is None,
-                    line.required_date or date.min,
-                    product.product_code or "",
-                    line_id,
-                )
+                LineFacts(str(line.id), line.line_no, line.required_date, product.product_code or "")
             )
-            line_no_by_id[line_id] = line.line_no
         derived: Dict[str, int] = {}
         for entries in by_order.values():
-            for index, entry in enumerate(sorted(entries), start=1):
-                derived[entry[3]] = index
-
-        for entries in by_order.values():
-            ids = [entry[3] for entry in entries]
-            line_numbers = [line_no_by_id.get(line_id) for line_id in ids]
-            if all(n is not None for n in line_numbers) and len(set(line_numbers)) == len(
-                line_numbers
-            ):
-                for line_id, number in zip(ids, line_numbers):
-                    derived[line_id] = int(number)
+            derived.update(number_lines(entries))
 
         mirrored = {
             core_id: entry["line_no"]
@@ -2235,7 +2216,7 @@ class FulfilmentBoardService:
             if entry.get("line_no")
         }
         for entries in by_order.values():
-            ids = [entry[3] for entry in entries]
+            ids = [entry.id for entry in entries]
             numbers = [mirrored.get(line_id) for line_id in ids]
             if all(n is not None for n in numbers) and len(set(numbers)) == len(numbers):
                 for line_id, number in zip(ids, numbers):
