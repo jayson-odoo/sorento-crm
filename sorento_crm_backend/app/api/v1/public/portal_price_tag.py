@@ -313,6 +313,44 @@ def portal_download_price_tag_pdf(
     )
 
 
+@router.post(
+    "/submissions/price_tag_request/{request_id}/export", status_code=202
+)
+def portal_export_price_tag_pdf(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Queue a NEW tag sheet PDF for the portal's Download PDF (r10 S9).
+
+    Contact-authenticated exactly like the download route above - a request
+    that has no READY export yet (or whose last one FAILED) has nothing for
+    that route to stream, and until now the portal had no way to ask for
+    one; Approve auto-queues an export (D12), but nothing retried a FAILED
+    one and the button just sat dead.
+
+    Queued as the request's own ASSIGNEE, the same actor
+    ``portal_approve_price_tag_request`` passes - the portal has no CRM user
+    of its own, and the marketing person who designed the tag sheet is the
+    natural "who asked for this PDF" answer here too.
+    `UserDownload.user_id` is a bare string, not FK-checked, so an
+    unclaimed request (no assignee yet) falls back to the contact's own id
+    rather than 422ing on "no requesting user" - a click here must always
+    get a PDF queued, the same way it always streams a READY one.
+    `request_tag_sheet_export`'s own guards (status, promotion, page/version)
+    pass their 409 straight through as the toast text.
+    """
+    req = _require_own_request(db, token, request_id)
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        request_tag_sheet_export,
+    )
+
+    download, _sheet_ids = request_tag_sheet_export(
+        db, request_id=req.id, user_id=req.assigned_to_id or token.contact_id,
+    )
+    return {"download_id": str(download.id)}
+
+
 # ---------------------------------------------------------------------------
 # Update (draft)
 # ---------------------------------------------------------------------------

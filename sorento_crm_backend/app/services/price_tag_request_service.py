@@ -2182,11 +2182,13 @@ Marketing's own work is not part of the form's payload, so it is captured
         # top level, so a top-level import here would be circular.
         from app.services.dealer_kit.tag_sheet_export_service import (
             latest_completed_export,
+            latest_export_status,
         )
 
         response.has_completed_export = (
             latest_completed_export(db, request.id) is not None
         )
+        response.latest_export_status = latest_export_status(db, request.id)
 
         # R3-1/AC-R1: reverses S8's D-P6 - a submitted request is read-only
         # exactly like a stock inquiry. True for a draft only; a submitted

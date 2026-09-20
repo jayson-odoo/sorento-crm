@@ -285,6 +285,32 @@ def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownlo
     )
 
 
+def latest_export_status(db: Session, request_id: str) -> Optional[str]:
+    """r10 S9: `ready | pending | failed | None` - "never asked" from "in
+    progress" from "failed", off the request's most recent tag sheet PDF
+    download regardless of its status (``latest_completed_export`` above
+    only ever answers a READY one). ``processing`` reads as `pending` too -
+    the portal button has one waiting state, not two.
+    """
+    row = (
+        db.query(UserDownload)
+        .filter(
+            UserDownload.source_entity_type == "price_tag_request",
+            UserDownload.source_entity_id == str(request_id),
+            UserDownload.kind == KIND,
+        )
+        .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    if row.status == DownloadStatus.READY.value:
+        return "ready"
+    if row.status == DownloadStatus.FAILED.value:
+        return "failed"
+    return "pending"
+
+
 def render_inputs(db: Session, download_id: str) -> dict:
     """Everything the tag sheet render needs."""
     from app.services.dealer_kit.export_service import get_request as _get_export_request

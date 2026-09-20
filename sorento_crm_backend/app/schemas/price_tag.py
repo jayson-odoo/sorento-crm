@@ -454,6 +454,13 @@ class PriceTagRequestResponse(BaseModel):
     # (PLAN-price-tag-feedback-r2 S2).
     has_completed_export: bool = False
 
+    #: r10 S9: `ready | pending | failed | null`, off the request's most
+    #: recent tag sheet PDF export regardless of its outcome - tells the
+    #: portal "never asked" from "in progress" from "failed" so Download PDF
+    #: can read the right label instead of a dead button (AC-S9-1). Filled
+    #: the same way as `has_completed_export` above.
+    latest_export_status: Optional[str] = None
+
     # D-P6/AC-B6: whether a post-submit edit is currently allowed - True for
     # a draft, or a submitted request at New / Changes requested; False at
     # every other status. Filled by ``response_with_resolved_lines`` for the
