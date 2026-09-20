@@ -49,6 +49,7 @@ import {
   Loader2,
   MessageSquare,
   Eye,
+  EyeOff,
   Maximize2,
   Minimize2,
   Package,
@@ -127,6 +128,7 @@ import {
   restoreRequestVersion,
 } from '../../../../services/priceTagDataService';
 import { useTagDataChanges, tagDataChangesKey } from '../../../hooks/useTagDataChanges';
+import { useUpdateRequestTag } from '../../../hooks/useRequestTagMutations';
 import { isTerminalPriceTagStatus } from '@/lib/dealer-kit/print-collection';
 import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
@@ -504,6 +506,7 @@ export function RequestTagDesigner({
       requestTags.map(({ tag, line }) => ({
         id: tag.id,
         quantity: tag.quantity,
+        print_excluded: Boolean(tag.print_excluded),
         line,
       })),
     [requestTags],
@@ -820,9 +823,10 @@ export function RequestTagDesigner({
 
   const arrangeItems: ArrangeItem[] = useMemo(
     () =>
-      tagRefs
-        .map((ref) => ({ tag: tags[ref.id], quantity: ref.quantity }))
-        .filter((item): item is ArrangeItem => Boolean(item.tag)),
+      tagRefs.flatMap((ref) => {
+        const tag = tags[ref.id];
+        return tag ? [{ tag, quantity: ref.quantity, print_excluded: ref.print_excluded }] : [];
+      }),
     [tagRefs, tags],
   );
 
@@ -1064,6 +1068,40 @@ export function RequestTagDesigner({
     if (fresh) setRequest(fresh);
     if (rows) setResolvedRows(rows);
   }, [request.id]);
+
+  const updateTag = useUpdateRequestTag(request.id);
+  /**
+   * r10 S6 Not printed: flips `print_excluded` on the tag and writes the
+   * answer into the request held here. The response's own value wins when
+   * the server sends one; until the r10 backend lands it does not, so the
+   * value just sent stands in - the row greys locally and a reload forgets
+   * it. Arrange re-runs off `tagRefs`, so the copies drop out at once.
+   */
+  const handleTogglePrintExcluded = useCallback(
+    async (tag: PriceTagRequestTag) => {
+      const next = !tag.print_excluded;
+      try {
+        const saved = await updateTag.mutateAsync({
+          tagId: tag.id,
+          data: { print_excluded: next },
+        });
+        const value = typeof saved?.print_excluded === 'boolean' ? saved.print_excluded : next;
+        setRequest((prev) => ({
+          ...prev,
+          lines: prev.lines.map((line) => ({
+            ...line,
+            tags: (line.tags ?? []).map((row) =>
+              row.id === tag.id ? { ...row, print_excluded: value } : row,
+            ),
+          })),
+        }));
+        toast.success(value ? `Tag ${tag.label} will not print` : `Tag ${tag.label} prints again`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not update the tag');
+      }
+    },
+    [updateTag],
+  );
 
   /** D15: the whole-request export, no sheet filter - the same call and
    *  toast the detail page's `handleExport` makes. */
@@ -1365,6 +1403,8 @@ export function RequestTagDesigner({
         onApplyToAll={handleApplyDesignToAll}
         onRemoveTag={handleRemoveTag}
         removingTagId={tagDeletion.isPending ? tagDeletion.targetId : null}
+        onTogglePrintExcluded={handleTogglePrintExcluded}
+        togglingTagId={updateTag.isPending ? (updateTag.variables?.tagId ?? null) : null}
       />
       {selectedTag ? (
         <TagSizeControl
@@ -1740,6 +1780,8 @@ function LinesRail({
   onApplyToAll,
   onRemoveTag,
   removingTagId,
+  onTogglePrintExcluded,
+  togglingTagId,
 }: {
   lines: PriceTagRequestLine[];
   /** Resolved rows keyed by TAG id (D3). */
@@ -1759,6 +1801,9 @@ function LinesRail({
   onApplyToAll: () => void;
   onRemoveTag: (tag: PriceTagRequestTag) => void;
   removingTagId: string | null;
+  /** r10 S6: the row's Not printed toggle. */
+  onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
+  togglingTagId: string | null;
 }) {
   return (
     // D9 (AC-S3-2/S3-3): the 45% cap is gone - LINES fills whatever height
@@ -1833,6 +1878,8 @@ function LinesRail({
                     onReview={onReviewTag}
                     onSelect={onSelect}
                     onUseTemplate={onUseTemplate}
+                    toggling={togglingTagId === soleTag.id}
+                    onTogglePrintExcluded={onTogglePrintExcluded}
                   />
                 );
               }
@@ -1908,6 +1955,8 @@ function LinesRail({
                         onSelect={onSelect}
                         onUseTemplate={onUseTemplate}
                         onRemove={onRemoveTag}
+                        toggling={togglingTagId === tag.id}
+                        onTogglePrintExcluded={onTogglePrintExcluded}
                       />
                     ))}
                   </div>
@@ -1946,6 +1995,8 @@ function FoldedLineBlock({
   onReview,
   onSelect,
   onUseTemplate,
+  toggling,
+  onTogglePrintExcluded,
 }: {
   line: PriceTagRequestLine;
   tag: PriceTagRequestTag;
@@ -1962,7 +2013,10 @@ function FoldedLineBlock({
   onReview: (tagId: string) => void;
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
+  toggling: boolean;
+  onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
 }) {
+  const excluded = Boolean(tag.print_excluded);
   const priceSuffix =
     data && data.show_promo_price && data.sell_price != null
       ? ` / SP ${formatTagPrice(data.sell_price)}`
@@ -1977,7 +2031,10 @@ function FoldedLineBlock({
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
       <button
         type="button"
-        className="w-full px-3 py-2 pr-20 text-left transition-colors hover:bg-muted/50"
+        className={cn(
+          'w-full px-3 py-2 pr-24 text-left transition-colors hover:bg-muted/50',
+          excluded && 'opacity-60',
+        )}
         onClick={() => onSelect(tag.id)}
       >
         <div className="flex items-center gap-1.5">
@@ -2009,6 +2066,7 @@ function FoldedLineBlock({
               {priceSuffix}
               {overrideSuffix}
             </p>
+            {excluded && <NotPrintedPill />}
             {line.package_warning && (
               <Badge
                 variant="warning"
@@ -2027,9 +2085,9 @@ function FoldedLineBlock({
         )}
       </button>
       {/* Same action group `TagRailRow` uses (D12): pins first, then the
-          Changed dot, then Use template. No Remove here - a folded line's
-          only tag is already un-removable (`canRemove` is false when a line
-          has one tag), so the button never showed for it anyway. */}
+          Changed dot, then Not printed, then Use template. No Remove here - a
+          folded line's only tag is already un-removable (`canRemove` is false
+          when a line has one tag), so the button never showed for it anyway. */}
       <div className="absolute right-1 top-1 flex items-center gap-0.5">
         {openPins > 0 && (
           <span
@@ -2048,6 +2106,12 @@ function FoldedLineBlock({
             onClick={() => onReview(tag.id)}
           />
         )}
+        <NotPrintedToggle
+          tag={tag}
+          excluded={excluded}
+          toggling={toggling}
+          onToggle={onTogglePrintExcluded}
+        />
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2059,6 +2123,55 @@ function FoldedLineBlock({
         </button>
       </div>
     </div>
+  );
+}
+
+/** r10 S6: the pill a row marked Not printed wears (AC-S6-9). */
+function NotPrintedPill() {
+  return (
+    <Badge
+      variant="secondary"
+      appearance="light"
+      className="mt-1 px-1.5 py-0 text-2xs font-normal"
+      data-testid="not-printed-pill"
+    >
+      Not printed
+    </Badge>
+  );
+}
+
+/**
+ * r10 S6 (AC-S6-9): the Not printed toggle. `aria-pressed` carries the state,
+ * the label stays the same either way so a reader hears one control, not two.
+ * A tag marked this way is still openable and editable - only arrange, the
+ * PDF and the counts skip it - so the row itself stays live.
+ */
+function NotPrintedToggle({
+  tag,
+  excluded,
+  toggling,
+  onToggle,
+}: {
+  tag: PriceTagRequestTag;
+  excluded: boolean;
+  toggling: boolean;
+  onToggle: (tag: PriceTagRequestTag) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40',
+        excluded && 'text-foreground',
+      )}
+      title={excluded ? 'Not printed - press to print again' : 'Not printed'}
+      aria-label={`Not printed ${tag.label}`}
+      aria-pressed={excluded}
+      disabled={toggling}
+      onClick={() => onToggle(tag)}
+    >
+      <EyeOff className="size-3.5" />
+    </button>
   );
 }
 
@@ -2084,6 +2197,8 @@ function TagRailRow({
   onSelect,
   onUseTemplate,
   onRemove,
+  toggling,
+  onTogglePrintExcluded,
 }: {
   tag: PriceTagRequestTag;
   data: LineTagData | undefined;
@@ -2101,7 +2216,10 @@ function TagRailRow({
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
   onRemove: (tag: PriceTagRequestTag) => void;
+  toggling: boolean;
+  onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
 }) {
+  const excluded = Boolean(tag.print_excluded);
   // D6: every choice group is resolved into its own tag at submit now (the
   // tag builder), so `open_groups` is always empty by the time a request
   // reaches the designer - no Open pill, no Split, no Pick one anywhere in
@@ -2111,7 +2229,10 @@ function TagRailRow({
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
       <button
         type="button"
-        className="w-full py-1.5 pl-6 pr-20 text-left transition-colors hover:bg-muted/50"
+        className={cn(
+          'w-full py-1.5 pl-6 pr-28 text-left transition-colors hover:bg-muted/50',
+          excluded && 'opacity-60',
+        )}
         onClick={() => onSelect(tag.id)}
       >
         <div className="flex items-center gap-1.5">
@@ -2136,6 +2257,7 @@ function TagRailRow({
             ? ` / Override ${formatTagPrice(tag.marketing_price_override)}`
             : ''}
         </p>
+        {excluded && <NotPrintedPill />}
       </button>
       <div className="absolute right-1 top-1 flex items-center gap-0.5">
         {/* D12: the open-pins count is a SIBLING of the row button, first in
@@ -2161,6 +2283,12 @@ function TagRailRow({
             onClick={() => onReview(tag.id)}
           />
         )}
+        <NotPrintedToggle
+          tag={tag}
+          excluded={excluded}
+          toggling={toggling}
+          onToggle={onTogglePrintExcluded}
+        />
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"

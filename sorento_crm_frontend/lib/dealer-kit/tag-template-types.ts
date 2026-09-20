@@ -620,6 +620,13 @@ export interface TagPartData {
   /** This part's OWN product's currency (AC-A11), not the host's. Optional,
    *  see `ProductTagData.currency`. */
   currency?: string;
+  /** r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
+   *  subject picker can group the candidates under it. Absent on a fixed
+   *  part and on every row written before r10. */
+  role?: string | null;
+  /** r10 S6: true on the candidate THIS tag's own choices name - the one
+   *  `own_parts` and Tag total count. Absent on a fixed part. */
+  chosen?: boolean;
 }
 
 /**
@@ -636,8 +643,15 @@ export interface LineTagData {
   tag_label: string;
   /** Groups this tag has NOT resolved. Empty once marketing splits or picks. */
   open_groups: TagOpenGroup[];
-  /** The resolved parts on this tag, in part order. Empty for a bare product. */
+  /** Every product a slot on this tag may point at, in part order (r10 S6):
+   *  the line's fixed parts plus EVERY candidate of every choice group, not
+   *  only the one this tag chose. Empty for a bare product. */
   parts: TagPartData[];
+  /** The parts this tag itself prints - fixed parts plus its own chosen
+   *  candidate - which is what `set_members` and Tag total add up (r10 S6).
+   *  Absent on a row pinned before r10, where `parts` was already this list,
+   *  so readers fall back to `parts` (AC-S6-11). */
+  own_parts?: TagPartData[];
   code: string;
   name: string;
   dimensions: string;

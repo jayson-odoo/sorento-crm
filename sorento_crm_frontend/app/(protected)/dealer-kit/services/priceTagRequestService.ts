@@ -141,6 +141,10 @@ export interface PriceTagRequestTag {
   marketing_override_reason: string | null;
   list_price: number | null;
   sell_price: number | null;
+  /** r10 S6: marked "Not printed" - still designable, skipped by arrange,
+   *  the PDF and the sheet counts. Absent reads as false: the server does
+   *  not send it until the r10 migration lands. */
+  print_excluded?: boolean;
 }
 
 export interface PriceTagRequestLine {
@@ -463,6 +467,8 @@ export interface PriceTagRequestTagUpdate {
   quantity?: number;
   marketing_price_override?: number | null;
   marketing_override_reason?: string | null;
+  /** r10 S6: the rail's Not printed toggle. */
+  print_excluded?: boolean;
 }
 
 /** PATCH one tag. Replaces the retired line-level PUT. */

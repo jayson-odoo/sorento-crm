@@ -63,6 +63,8 @@ export interface TagRequestLine {
 export interface TagRequestTag {
   id: string;
   quantity: number;
+  /** r10 S6: marked Not printed - arrange seats no copy of it. */
+  print_excluded?: boolean;
   line: TagRequestLine;
 }
 
@@ -663,6 +665,9 @@ export function impositionSlots(
 export interface ArrangeItem {
   tag: PlacedTag;
   quantity: number;
+  /** r10 S6 (AC-S6-8): a tag marked Not printed gets no copy and no slot,
+   *  so it never reaches a sheet, the sheet counts or the export. */
+  print_excluded?: boolean;
 }
 
 /** Where a copy was dragged to, if it was. */
@@ -700,6 +705,7 @@ interface Copy {
 export function copiesOf(items: ArrangeItem[]): Copy[] {
   const copies: Copy[] = [];
   for (const item of items) {
+    if (item.print_excluded) continue;
     const count = Math.max(1, Math.floor(item.quantity || 1));
     for (let index = 0; index < count; index += 1) {
       copies.push({
