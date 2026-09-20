@@ -12,6 +12,7 @@
 import type {
   BranchKind,
   ChatbotTurn,
+  TurnAttachment,
   TurnStage,
   TurnStageRecord,
   TurnTraceRecord,
@@ -301,4 +302,39 @@ export function rememberedRecord(turn: ChatbotTurn): TurnStageRecord | undefined
 /** AC-253: manual retry is the only retry, and only from a failed turn (R4). */
 export function canRetry(turn: ChatbotTurn): boolean {
   return turn.status === 'failed';
+}
+
+function isAttachment(value: unknown): value is TurnAttachment {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).url === 'string' &&
+    typeof (value as Record<string, unknown>).filename === 'string'
+  );
+}
+
+/**
+ * The files a `send_attachments` action would send, or `[]` when the turn's response
+ * carries none.
+ *
+ * `actions[].attachments_src` is backend `engine.py::_clean_attachments`'s own value -
+ * either the bare file list, or (when the source it cleaned was an envelope rather than
+ * a plain list) that envelope with its `attachments` key rewritten in place - so both
+ * shapes are read here rather than assuming the array form. Every entry is re-checked
+ * for `url` + `filename` before it renders: the field is loosely typed on the wire
+ * (`ChatbotTurnResponse.response` docstring) because it is the engine's shape, not this
+ * screen's.
+ */
+export function turnAttachments(turn: ChatbotTurn): TurnAttachment[] {
+  const actions = turn.response?.actions;
+  if (!Array.isArray(actions)) return [];
+  const action = actions.find((a) => a && a.kind === 'send_attachments');
+  if (!action) return [];
+  const src = action.attachments_src;
+  const list = Array.isArray(src)
+    ? src
+    : src && typeof src === 'object'
+      ? (src as Record<string, unknown>).attachments
+      : null;
+  return Array.isArray(list) ? list.filter(isAttachment) : [];
 }

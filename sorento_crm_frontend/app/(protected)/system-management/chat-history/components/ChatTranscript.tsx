@@ -10,6 +10,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { ChatMessageRow } from '../types/chatHistory.types';
 import type { ChatbotTurn } from '../types/chatbotTurn.types';
 import { StateTracePanel } from './StateTracePanel';
+import { TurnAttachments } from './TurnAttachments';
 import { TurnPanel } from './TurnPanel';
 
 interface ChatTranscriptProps {
@@ -261,6 +262,7 @@ export function ChatTranscript({
                     one to read; the older raw state trace stays as the fallback for
                     messages that predate the turn engine, and goes when every message has
                     a turn (Phase 2). */}
+                {!outgoing && turn && <TurnAttachments turn={turn} />}
                 {!outgoing &&
                   (turn ? (
                     <TurnPanel turn={turn} retryUnavailableReason={retryUnavailableReason} />
