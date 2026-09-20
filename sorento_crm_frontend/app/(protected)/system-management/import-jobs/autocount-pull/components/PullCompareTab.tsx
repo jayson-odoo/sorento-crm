@@ -29,6 +29,14 @@ export interface PullCompareTabProps {
   entity: AutocountPullEntity;
 }
 
+/** D4 (small-fix track): same reasoning as `PullExcelViewTab`'s own constant - a stable
+ *  key per entity, never the pathname (which embeds the job id) the shared `DataGrid`
+ *  falls back to without one. */
+const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
+  products: 'master_data.products.autocount_pull::compare',
+  stock_balances: 'inventory.stock.autocount_pull::compare',
+};
+
 function summaryHeadline(result: AutocountComparePullResult): { title: string; body: string; ok: boolean } {
   const { summary } = result;
   const ok = isCompareFullMatch(summary);
@@ -189,6 +197,7 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
           recordCount={result.differences.length}
           isLoading={false}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
+          listingKey={COMPARE_LISTING_KEY[entity]}
         >
           <Card>
             <div className="flex items-center justify-end p-3">

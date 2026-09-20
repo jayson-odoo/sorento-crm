@@ -167,24 +167,9 @@ describe('P2: the generic 2s job poll is not used for a building pull', () => {
   });
 });
 
-describe('B2 (small-fix track): Results / Outcome breakdown / Rows hidden until a pull reaches review', () => {
-  it.each(['building', 'previewing'])(
-    'phase %s: none of Results, Outcome breakdown or Rows render',
-    async (phase) => {
-      getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'autocount_products_pull', status: 'started' }));
-      usePull.mockReturnValue({ data: { job_id: 'job-1', phase } });
-
-      render(wrap(<ImportJobDetailPage params={PARAMS} />));
-
-      await screen.findByTestId('autocount-pull-review');
-      expect(screen.queryByText('Results')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('outcome-breakdown')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('rows-card')).not.toBeInTheDocument();
-    },
-  );
-
-  it.each(['review', 'confirmed'])(
-    'phase %s: Results, Outcome breakdown and Rows all render as before',
+describe('D2 (small-fix track, browser e2e run 3): Results / Outcome breakdown / Rows never render for a pull job', () => {
+  it.each(['building', 'previewing', 'review', 'confirmed', 'failed', 'expired'])(
+    'phase %s: none of Results, Outcome breakdown or Rows render - only the pull card and Job Summary',
     async (phase) => {
       getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'autocount_products_pull', status: 'finished' }));
       usePull.mockReturnValue({ data: { job_id: 'job-1', phase } });
@@ -192,11 +177,24 @@ describe('B2 (small-fix track): Results / Outcome breakdown / Rows hidden until 
       render(wrap(<ImportJobDetailPage params={PARAMS} />));
 
       await screen.findByTestId('autocount-pull-review');
-      expect(screen.getByText('Results')).toBeInTheDocument();
-      expect(screen.getByTestId('outcome-breakdown')).toBeInTheDocument();
-      expect(screen.getByTestId('rows-card')).toBeInTheDocument();
+      expect(screen.getByText('Job Summary')).toBeInTheDocument();
+      expect(screen.queryByText('Results')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('outcome-breakdown')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('rows-card')).not.toBeInTheDocument();
     },
   );
+
+  it('an autocount_stock_pull job also never renders the three cards', async () => {
+    getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'autocount_stock_pull', status: 'finished' }));
+    usePull.mockReturnValue({ data: { job_id: 'job-1', phase: 'review' } });
+
+    render(wrap(<ImportJobDetailPage params={PARAMS} />));
+
+    await screen.findByTestId('autocount-pull-review');
+    expect(screen.queryByText('Results')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('outcome-breakdown')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rows-card')).not.toBeInTheDocument();
+  });
 
   it('control: a non-pull job type always renders the three cards, whatever usePull returns', async () => {
     getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'product_import', status: 'finished' }));

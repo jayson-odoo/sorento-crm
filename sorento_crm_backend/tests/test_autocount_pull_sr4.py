@@ -706,7 +706,16 @@ class TestStockDownloadRoute:
         resp = env.client.get(f"{PULLS_URL}/{job_id}/download.xlsx")
         assert resp.status_code == 200, resp.text
         assert resp.headers["content-type"].startswith(_STOCK_XLSX_MEDIA_TYPE)
-        assert "filename" in resp.headers.get("content-disposition", "")
+        disposition = resp.headers.get("content-disposition", "")
+        assert "filename" in disposition
+        # D3 (small-fix track): the stock DOWNLOAD uses the same stock-list name the
+        # apply's archive step gets - lowercase company code, no more the generic
+        # `autocount-stock_balances-pull.xlsx` (nor the apply-side `autocount-pull-pull.xlsx`).
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%Y%m%d")
+        assert f"autocount-stock-list-srt-{today}.xlsx" in disposition, disposition
 
         wb = openpyxl.load_workbook(io.BytesIO(resp.content))
         ws = wb.active
@@ -1069,6 +1078,7 @@ class TestStockApplyArchivesStockList:
         return backend
 
     def test_sc_4a_successful_apply_archives_the_new_stock_list(self, task_db, monkeypatch):
+        from app.models.company import Company
         from app.models.inventory import Warehouse
         from app.models.resources import Attachment
 
@@ -1078,6 +1088,9 @@ class TestStockApplyArchivesStockList:
         backend = self._patch_storage(monkeypatch)
         type_id = self._seed_attachment_type(db)
         previous_id = self._seed_previous_attachment(db, type_id)
+        if not db.query(Company).filter(Company.id == DEFAULT_COMPANY_ID).first():
+            db.add(Company(id=DEFAULT_COMPANY_ID, name="Sorento", code="SRT"))
+            db.commit()
 
         active_wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-SC4-FED",
                                warehouse_name="Fed", is_active=True, company_id=DEFAULT_COMPANY_ID)
@@ -1106,7 +1119,14 @@ class TestStockApplyArchivesStockList:
         assert row_after["status"] == "finished", row_after["error"]
 
         assert len(backend.uploads) == 1, backend.uploads
-        _, stored_bytes, _ = backend.uploads[0]
+        uploaded_path, stored_bytes, _ = backend.uploads[0]
+        # D3 (small-fix track): a real name, not the old `autocount-pull-pull.xlsx` -
+        # lowercase company code + the apply's own local (Asia/Kuala_Lumpur) date.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%Y%m%d")
+        assert uploaded_path == f"stock_list/autocount-stock-list-srt-{today}.xlsx", uploaded_path
         wb = openpyxl.load_workbook(io.BytesIO(stored_bytes))
         ws = wb.active
         header_row = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]

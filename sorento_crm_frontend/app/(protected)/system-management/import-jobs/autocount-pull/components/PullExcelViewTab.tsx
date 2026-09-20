@@ -29,6 +29,16 @@ export interface PullExcelViewTabProps {
   entity: AutocountPullEntity;
 }
 
+/** D4 (small-fix track): the shared `DataGrid` falls back to the current pathname when no
+ *  `listingKey` is given - which, on this page, embeds the job id, so every pull minted its
+ *  OWN never-reused `UserListColumnConfig` row and a first-time insert raced the page's own
+ *  column-hook write into it (a 500 from the unique-constraint loser, then a 200 once the row
+ *  existed). One stable key per entity, not per record. */
+const EXCEL_VIEW_LISTING_KEY: Record<AutocountPullEntity, string> = {
+  products: 'master_data.products.autocount_pull::excel-view',
+  stock_balances: 'inventory.stock.autocount_pull::excel-view',
+};
+
 export const PRODUCT_COLUMNS: ColumnDef<AutocountPullExcelRow>[] = [
   {
     id: 'item_code',
@@ -208,6 +218,7 @@ export function PullExcelViewTab({ jobId, entity }: PullExcelViewTabProps) {
       isLoading={isLoading}
       isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
+      listingKey={EXCEL_VIEW_LISTING_KEY[entity]}
     >
       <Card>
         <CardHeader className="block space-y-3">

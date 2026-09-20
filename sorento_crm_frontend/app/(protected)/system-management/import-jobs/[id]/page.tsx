@@ -115,14 +115,14 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   // job-progress poll below has nothing to show while FoundryX is still building (no RQ job
   // exists yet for that phase), so it stays off for as long as that is true.
   const pullStillBuilding = isPullJob && pullStatus?.phase === 'building';
-  // B2 (small-fix track): before `review`, `job.result` is still whatever the LAST pull
-  // left behind (or nothing at all) - the generic Results / Outcome breakdown / Rows cards
-  // below read that stale envelope and print copy meant for pre-row-capture jobs ("This job
-  // ran before per-row outcome capture existed..."), which is wrong and confusing while the
-  // pull card above already says Building / Preparing. Suppressed for exactly those two
-  // phases; `review` onward renders the three cards as before.
-  const pullNotYetReviewable =
-    isPullJob && (pullStatus?.phase === 'building' || pullStatus?.phase === 'previewing');
+  // D2 (small-fix track, browser e2e run 3): a pull job's OWN `job.result` is never the
+  // per-row envelope the generic Results / Outcome breakdown / Rows cards below expect - it
+  // is either stale (whatever the last apply on this job row left, if any) or entirely
+  // absent, so those three cards printed copy meant for pre-row-capture jobs and numbers
+  // that contradicted the pull card's own counters, in EVERY phase, not only Building /
+  // Preparing (B2's narrower guard). The pull's own Changes tab already wraps the same rows
+  // card once there is something to show (AC-RV-2); Job Summary is the only generic card a
+  // pull job keeps.
 
   // Poll for status updates if job is still processing
   const { data: statusData } = useImportJobStatus(id, !isLoading && !!job && !pullStillBuilding);
@@ -376,10 +376,9 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             </Card>
           )}
 
-          {/* Results Card - B2: nothing to show yet for a pull still Building/Preparing, and
-              `job.result` at that point is stale (a previous pull's, or absent) - the pull
-              card above already carries the phase. */}
-          {!pullNotYetReviewable && (
+          {/* Results Card - D2: never for a pull job, any phase (see the note above
+              `isPullJob`'s own definition). */}
+          {!isPullJob && (
             <Card>
               <CardHeader>
                 <CardTitle>Results</CardTitle>
@@ -410,9 +409,9 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
           {/* The planned-line reaction this SO book upload raised, once the worker wrote it. */}
           {planningChangeBatch && <PlanningChangeOutcomeCard batch={planningChangeBatch} />}
 
-          {/* Outcome breakdown - every reason, exact counts, never truncated. B2: same guard
+          {/* Outcome breakdown - every reason, exact counts, never truncated. D2: same guard
               as Results above. */}
-          {!pullNotYetReviewable && (
+          {!isPullJob && (
             <OutcomeBreakdownCard
               result={job.result}
               activeCode={rowsCodeFilter}
@@ -425,8 +424,8 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             />
           )}
 
-          {/* Per-row drill-down - B2: same guard as Results above. */}
-          {!pullNotYetReviewable && (
+          {/* Per-row drill-down - D2: same guard as Results above. */}
+          {!isPullJob && (
             <ImportJobRowsCard
               jobId={id}
               result={job.result}

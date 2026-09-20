@@ -332,6 +332,9 @@ class TestDownloadRoute:
         )
         disposition = resp.headers.get("content-disposition", "")
         assert "filename" in disposition
+        # D3 (small-fix track): the products download name is untouched by the D3 fix -
+        # only the stock download/archive names changed.
+        assert "autocount-products-pull.xlsx" in disposition, disposition
 
 
 # ======================================================================= CM2

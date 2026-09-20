@@ -45,6 +45,7 @@ from tests.test_autocount_pull_sr1 import (  # noqa: F401 - env/task_db are fixt
     _job_row,
     _job_rows,
     _patch_foundryx,
+    _prepare_preview,
     _run_preview,
     _seed_pull_job,
     _stored,
@@ -831,3 +832,115 @@ class TestRowPriceNonFinite:
         assert _row_price("nan") == 0.0
         assert _row_price("inf") == 0.0
         assert _row_price("-inf") == 0.0
+
+
+# ============================================ D1, browser e2e run 3 (real defect)
+
+
+class TestD1FailedPreviewRowsAreVisible:
+    def test_created_and_failed_preview_rows_both_reach_the_real_rows_route(
+        self, task_db, monkeypatch
+    ):
+        """Reported live: a SRT products pull with 1 new / 0 changed / 2 unchanged / 7
+        failed (reference conflicts) left `import_job_rows` holding 1 created + 7 failed
+        rows with proper messages, yet the Changes tab (the SAME generic rows card every
+        other importer uses) and the legacy Rows card both showed "0 matching" / "no
+        per-row detail was captured for this job".
+
+        NOT REPRODUCED: this test builds the exact same shape (a `ReferenceConflict`
+        from a product already linked under a different `source_ref`, the same message
+        format the report quoted - `_ingest_one`'s `except ReferenceConflict`, code
+        "source_ref", message "source_ref: product_code=... is already linked to
+        another source") through the REAL `preview_autocount_pull` task (`task_db`'s own
+        `SessionLocal` patch - `ImportOutcome.flush()` opens its own session) and the
+        REAL `/api/v1/system/jobs/{id}/rows` route (a hand-wired TestClient bound to the
+        SAME connection, `test_f1a`'s own pattern above) - and the route returns all 8
+        rows correctly. Checked and ruled out as the cause: ownership (`_resolve_owned_
+        job`'s `user_id` check - would 403, not "0 matching"), `ImportJobRow`/`ImportJob`
+        company scoping (neither model is company-scoped), pagination/sort defaults
+        (`row_number` is null on every row either way - affects order, not count),
+        `code="source_ref"` degrading gracefully through `label_for` (no exception),
+        `entity_id`/`identity` schema fields (all `Optional` in `ImportJobRowResponse`).
+        Left as a regression guard proving the route is correct for this exact shape;
+        the live defect needs the production job's actual DB state or a network trace of
+        the failing request to pin further - reported to the captain, not fixed blind.
+        """
+        from decimal import Decimal
+
+        from fastapi.testclient import TestClient
+
+        from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+        from app.models.product import Product, ProductCategory, UnitOfMeasure
+        from app.services.integration_reference_service import IntegrationReferenceService
+
+        from tests._pg_fixture import unique_code
+
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake)
+        owner_id = _seed_permitted_user(db, "master_data.products.autocount_pull")
+
+        # A product already linked to a DIFFERENT source - the same shape the live
+        # report named ("product_code='ACC-SRT8001' is already linked to another
+        # source"): a new row for the same code, under a NEW source_ref, hits the
+        # adopt-by-code ladder's ReferenceConflict.
+        category = ProductCategory(category_code=unique_code(MARKER), category_name="cat")
+        uom = UnitOfMeasure(uom_code=unique_code(MARKER)[:20], uom_name="unit")
+        db.add_all([category, uom])
+        db.flush()
+        refs = IntegrationReferenceService(db, company_id=DEFAULT_COMPANY_ID)
+        conflict_rows = []
+        for i in range(7):
+            conflicted_code = f"{MARKER}-D1CONFLICT{i}"
+            existing = Product(
+                product_code=conflicted_code, product_name="Existing", category_id=category.id,
+                base_uom_id=uom.id, list_price=Decimal("50.00"), company_id=DEFAULT_COMPANY_ID,
+            )
+            db.add(existing)
+            db.flush()
+            refs.link(
+                entity_type="products", entity_id=str(existing.id),
+                source_ref=f"{MARKER}-OTHER-SOURCE-{i}",
+            )
+            conflict_rows.append(_canonical_row(conflicted_code))
+        db.commit()
+
+        ok_row = _canonical_row(f"{MARKER}-D1OK")
+        rows = [ok_row, *conflict_rows]
+        job_id = _prepare_preview(db, fake, rows=rows)
+        db.execute(
+            text("UPDATE import_jobs SET user_id = :u WHERE id = :id"),
+            {"u": owner_id, "id": str(job_id)},
+        )
+        db.commit()
+
+        _run_preview(monkeypatch, factory, job_id)
+
+        row_after = _job_row(db, job_id)
+        assert row_after["status"] == "finished", row_after["error"]
+        counts = row_after["metadata"]["autocount_pull"]["counts"]
+        assert counts["new"] == 1 and counts["failed"] == 7, counts
+
+        written = _job_rows(db, job_id)
+        assert len([r for r in written if r["outcome"] == "created"]) == 1, written
+        failed_written = [r for r in written if r["outcome"] == "failed"]
+        assert len(failed_written) == 7, written
+        assert all("already linked to another source" in (r["message"] or "") for r in failed_written)
+
+        def _override_get_db():
+            yield db
+
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = lambda: {"id": owner_id}
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": owner_id}
+        try:
+            with TestClient(app) as c:
+                resp = c.get(f"/api/v1/system/jobs/{job_id}/rows", params={"limit": 50})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["pagination"]["total"] == 8, body
+        assert {r["outcome"] for r in body["data"]} == {"created", "failed"}, body
+        assert len([r for r in body["data"] if r["outcome"] == "failed"]) == 7, body

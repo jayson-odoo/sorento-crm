@@ -22,6 +22,7 @@ import math
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text, update
 from sqlalchemy.orm import Session
@@ -41,6 +42,12 @@ JOB_TYPES = {
     "products": "autocount_products_pull",
     "stock_balances": "autocount_stock_pull",
 }
+
+#: D3 (small-fix track, browser e2e run 3): "date of the apply" is the LOCAL calendar day,
+#: same convention every other module in this file's neighbourhood uses for a user-facing
+#: date rather than the server's UTC one (`marketing_service.py`, `pdf_render.py`, etc. each
+#: define their own `ZoneInfo("Asia/Kuala_Lumpur")` - there is no single shared helper).
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 #: Entity name -> the `import_jobs.job_type` Confirm's SECOND row is stored under (SR3).
 APPLY_JOB_TYPES = {
@@ -435,8 +442,28 @@ _PRODUCTS_TEMPLATE_HEADER = (
 )
 
 
+def stock_list_archive_filename(company_code: str, *, when: Optional[datetime] = None) -> str:
+    """D3 (small-fix track, browser e2e run 3): the archived Stock List used to be named
+    `autocount-pull-pull.xlsx` - the apply job's OWN `job_metadata` is keyed
+    `autocount_apply`, not `autocount_pull`, so `entity_of(apply_job)` (which only ever
+    reads the latter) silently fell back to "pull" for BOTH halves of `download_filename`'s
+    old `f"autocount-{entity}-pull.xlsx"`. Company code and the LOCAL (Asia/Kuala_Lumpur)
+    calendar date of the apply instead, so two companies - or the same company on two
+    different days - never collide on the one install-wide file name history
+    (`replace_latest_stock_list` itself is unscoped, see the plan's accepted risks).
+    """
+    when = when or datetime.now(_MY_TZ)
+    return f"autocount-stock-list-{company_code.lower()}-{when.strftime('%Y%m%d')}.xlsx"
+
+
 def download_filename(job: ImportJob) -> str:
     entity = entity_of(job) or "pull"
+    if entity == "stock_balances":
+        # Same name the archive gets (D3) - the pull job's OWN metadata carries
+        # `company_code` (set once, at `start_pull`), so no extra DB read is needed here
+        # the way the apply job (no `autocount_pull` metadata at all) requires.
+        company_code = _pull_meta(job).get("company_code") or "company"
+        return stock_list_archive_filename(company_code)
     return f"autocount-{entity}-pull.xlsx"
 
 

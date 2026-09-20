@@ -48,7 +48,7 @@ from app.services import import_outcome_codes as codes
 from app.services.autocount_pull_service import (
     build_stock_workbook,
     classify_stock_rows,
-    download_filename,
+    stock_list_archive_filename,
 )
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.import_outcome import ImportOutcome
@@ -271,8 +271,14 @@ def _apply_stock(db, job: ImportJob, snapshot_id: str, pull_job_id: Optional[str
         import app.services.stock_list_archive_service as stock_list_archive_service
 
         workbook_bytes = build_stock_workbook(fed_rows)
+        # D3 (small-fix track): the apply job's OWN metadata carries no `autocount_pull`
+        # entity/company_code at all (it is keyed `autocount_apply`) - `download_filename`
+        # only ever reads the former, which is how this used to come out
+        # `autocount-pull-pull.xlsx`. A real DB lookup by `company_id` instead, the same
+        # one `_preview_products`/`_preview_stock` already use for the FoundryX call.
+        archive_filename = stock_list_archive_filename(_company_code(db, job.company_id))
         stock_list_archive_service.replace_latest_stock_list(
-            db, file_bytes=workbook_bytes, filename=download_filename(job),
+            db, file_bytes=workbook_bytes, filename=archive_filename,
             user_id=str(job.user_id),
         )
     except Exception:
