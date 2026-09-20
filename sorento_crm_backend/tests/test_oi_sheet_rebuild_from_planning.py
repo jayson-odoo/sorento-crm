@@ -2095,3 +2095,92 @@ def test_board_top_up_of_same_qty_and_date_does_not_swallow_a_top_up():
         assert plain.delivery_date == date(2027, 1, 4)
         assert plain.previous_qty is None
         assert result["rows_raised"] == 1, result
+
+
+# --------------------------------------------------------------------------- #
+# Rehearsal round: AC-RB-42 (sum first, then any own row equal on Now or Was)  #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("shape", ["now_equal", "was_equal"])
+def test_board_row_equal_to_sheet_row_is_already_raised(shape):
+    """AC-RB-42. Order of the checks on a line whose live own rows all carry the active
+    decision: FIRST the sum (AC-RB-26); ELSE, when ANY live own row of the line - stamped or
+    not - equals the sheet row on (quantity, date) [`now_equal`, the SO419595 B2155-NL-BLUE
+    shape] or on (previous quantity, previous date) [`was_equal`, the SO314593 CB2806A-DIY
+    shape], the sheet row is `already_raised`, silently, as before this lane. Neither shape
+    sums to the decision's own buy quantity (the board row alone already IS the whole buy),
+    so today's sum-only check reports `top_up_sum_mismatch` instead."""
+    with world() as w:
+        order = w.order()
+        if shape == "now_equal":
+            line = w.line(order, qty_ordered="493", required_date=date(2026, 9, 30))
+            mirror = _adopted_mirror(w, order, line)
+            decision = _decision(
+                w, mirror, line, buy_qty="493", required_date=date(2026, 9, 30),
+            )
+            board_row = w.board_row(mirror, qty="493")
+            board_row.delivery_date = date(2026, 9, 30)
+            board_row.supply_decision_id = decision.id
+            w.db.flush()
+            sheet_qty, sheet_date = 493, date(2026, 9, 30)
+        else:
+            line = w.line(order, qty_ordered="220", required_date=date(2027, 3, 1))
+            mirror = _adopted_mirror(w, order, line)
+            decision = _decision(
+                w, mirror, line, buy_qty="220", required_date=date(2027, 3, 1),
+            )
+            board_row = w.board_row(mirror, qty="220")
+            board_row.delivery_date = date(2027, 3, 1)
+            board_row.supply_decision_id = decision.id
+            board_row.previous_qty = Decimal("182")
+            board_row.previous_delivery_date = date(2026, 6, 1)
+            board_row.note = "Was 182 on 2026-06-01"
+            w.db.flush()
+            sheet_qty, sheet_date = 182, date(2026, 6, 1)
+        assert not (board_row.note or "").startswith(importer._MIGRATION_STAMP), (
+            "fixture sanity: the board row must not be sheet-stamped"
+        )
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, sheet_qty, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert result["rows_raised"] == 0, result
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 1, rows
+        assert str(rows[0].id) == str(board_row.id)
+        assert capture.codes() == [oc.ALREADY_RAISED], capture.calls
+
+
+def test_board_row_neither_equal_nor_summing_is_still_reported():
+    """AC-RB-42 boundary. Neither the sum (134 + 300 = 434, decision buy 300) nor an equal
+    own row (board row 300 @ 2026-09-04 against a sheet row of 134 on the same date - not
+    equal on quantity, and no previous_* on the board row to be equal on Was either): the
+    mismatch report still fires. Expected GREEN today and must stay green - this pins that
+    AC-RB-27's own report is not accidentally silenced by AC-RB-42's new equality exit."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="500", required_date=date(2026, 9, 4))
+        mirror = _adopted_mirror(w, order, line)
+        decision = _decision(w, mirror, line, buy_qty="300", required_date=date(2026, 9, 4))
+        board_row = w.board_row(mirror, qty="300")
+        board_row.delivery_date = date(2026, 9, 4)
+        board_row.supply_decision_id = decision.id
+        w.db.flush()
+        capture = _Capture()
+        data = sheet([
+            (order.so_number, w.product.product_code, 134, date(2026, 9, 4),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert result["rows_raised"] == 0, result
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 1, rows
+        assert str(rows[0].id) == str(board_row.id)
+        assert capture.codes() == [oc.TOP_UP_SUM_MISMATCH], capture.calls
