@@ -729,7 +729,11 @@ export function useOrderInquiryWorklistColumns({
         // acknowledged (the ordinary case) shows the number and nothing else.
         accessorKey: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        size: 150,
+        // Review fix round (20 Sep 2026): the cell truncates and every child is
+        // `shrink-0` - a row that is both `used` and on a cancelled line needs room
+        // for the number, the used pill, the Was/Now icon, the cancelled pill and
+        // the gaps/padding between them (~174px measured).
+        size: 200,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1 tabular-nums">

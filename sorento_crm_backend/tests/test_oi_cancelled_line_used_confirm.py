@@ -42,6 +42,7 @@ from pathlib import Path
 import pytest
 
 from app.models.base import company_scope
+from app.models.company import Company
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
@@ -111,6 +112,7 @@ SUMMARY = f"{LIST}/summary"
 ACK_URL = f"{LIST}/acknowledge"
 VIEW = "projects.projects.view"
 ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
+DELETE_SO_URL = "/api/v1/external/ingest/sales_orders/deletions"
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +775,155 @@ def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(en
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
     assert row.ack_state == ACK_ACKNOWLEDGED
+
+
+# ---------------------------------------------------------------------------
+# AC-CL-6/7: write site 4, the AutoCount DELETION (plan 3.2b, review round)
+# ---------------------------------------------------------------------------
+
+
+def _delete_so(env, source_ref: str):
+    return env.client.post(
+        DELETE_SO_URL,
+        json={"companyCode": env.company_a_code, "source_refs": [source_ref]},
+    )
+
+
+@pytest.mark.parametrize("row_state", [INQUIRY_RAISED, INQUIRY_ACTIONED])
+def test_autocount_deletion_flags_an_acknowledged_row_changed(env, row_state):
+    """AC-CL-6 (plan 3.2b, write site 4): an AutoCount DELETION of the sales order
+    (`POST /external/ingest/sales_orders/deletions`) reaches
+    `DeletionService._deactivate` (~435), which cancels every line of the deleted
+    order that has a dependent - a mirrored line always has one
+    (`ProjectSalesOrderLine.core_sales_order_line_id`). That transition must flag a
+    live, acknowledged row `changed` with `changed_at` set, the same as the other
+    three write sites. `_deactivate` does not call `flag_rows_for_cancelled_lines`
+    today, so this is RED: the line becomes cancelled but the row is left
+    `acknowledged`."""
+    record, header, line, product_id = _create_then_prep_push(env)
+    _mirror, row = _mirror_for_ingest_line(
+        env, header["id"], line["id"], product_id, row_state=row_state, row_ack=ACK_ACKNOWLEDGED,
+    )
+
+    resp = _delete_so(env, record["source_ref"])
+    assert resp.status_code == 200, resp.text
+    verdict = next(
+        r for r in resp.json()["records"] if r["source_ref"] == record["source_ref"]
+    )
+    assert verdict["outcome"] == "deactivated", verdict
+
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
+    updated_line = env.so_lines(header["id"])[0]
+    assert updated_line["line_status"] == "cancelled"
+    assert row.ack_state == ACK_CHANGED
+    assert row.changed_at is not None
+
+
+def test_autocount_repeated_deletion_does_not_reflag_a_reconfirmed_row(env):
+    """AC-CL-7 (plan 3.2b, write site 4): only the TRANSITION flags a row through
+    the deletion path too - once purchasing re-confirms, deleting the SAME
+    already-cancelled order a second time (the ESB re-draining its queue,
+    `_deactivate`'s own idempotence, `test_a_second_deletion_of_a_dependent_row_
+    still_reports_deactivated`) does not bring the row back. Expected to pass
+    today as much as the sibling write-site tests do once wired - it is written
+    alongside the red test above rather than deferred, so the transition guard is
+    pinned the moment 3.2b lands."""
+    record, header, line, product_id = _create_then_prep_push(env)
+    _mirror, row = _mirror_for_ingest_line(
+        env, header["id"], line["id"], product_id, row_ack=ACK_ACKNOWLEDGED,
+    )
+
+    first = _delete_so(env, record["source_ref"])
+    assert first.status_code == 200, first.text
+
+    # purchasing re-confirms, whatever state the first deletion left the row in.
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
+    ack_resp = env.client.post(ACK_URL, json={"row_ids": [str(row.id)]})
+    assert ack_resp.status_code == 200, ack_resp.text
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
+    assert row.ack_state == ACK_ACKNOWLEDGED
+
+    second = _delete_so(env, record["source_ref"])
+    assert second.status_code == 200, second.text
+    assert (
+        next(
+            r for r in second.json()["records"] if r["source_ref"] == record["source_ref"]
+        )["outcome"]
+        == "deactivated"
+    )
+
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
+    assert row.ack_state == ACK_ACKNOWLEDGED
+
+
+def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
+    """Cross-company isolation regression guard (security review M1, plan 3.2).
+    `flag_rows_for_cancelled_lines` issues a plain `db.query(...).join(...)` with
+    no explicit company predicate of its own - it relies entirely on the
+    session-level `do_orm_execute` SELECT listener (`company_scope.py`,
+    `with_loader_criteria`) to keep another company's row out of its join.
+
+    Expected GREEN today: the listener already covers every ORM SELECT, so this
+    is a regression guard against a later rewrite of the function into a bulk
+    UPDATE (which bypasses the ORM entirely and would need its own explicit
+    company filter), not a red test for unbuilt behaviour.
+
+    The literal shape the brief asked for - a company B mirror pointing at
+    company A's OWN core line id - cannot be built: `core_sales_order_line_id`
+    carries `uq_projects_so_line_core_line`, a real unique constraint, one
+    mirror per core line company-wide. The nearest honest shape instead: two
+    ENTIRELY separate chains, one per company, and BOTH transitioned core line
+    ids handed to the SAME call - the shape a caller would produce if it ever
+    (wrongly) collected ids across companies before calling this function.
+    Under a session scoped to company A, only the company A row may flip; the
+    company B id resolves to nothing through the join because the loader
+    criteria hides company B's own mirror from it."""
+    with blank_session() as db:
+        company_a = _sorento(db)
+        company_b = str(uuid.uuid4())
+        db.add(Company(id=company_b, name=f"{MARKER} co-b", code=unique_code("CB")[:20]))
+        db.flush()
+
+        product_a = _product(db, f"ZZT-CLX-A-{_uid()[:6]}", f"{MARKER} company a")
+        _so_a, core_line_a, _pso_a, mirror_a = _line_chain(
+            db, company_a, product_a, qty="8", line_status="open"
+        )
+        inquiry_a = _inquiry(db, company_a, mirror_a.project_sales_order_id)
+        row_a = _oi_row(
+            db, company_a, inquiry_a.id, mirror_a.id, product_a.product_code, "8",
+        )
+
+        product_b = _product(db, f"ZZT-CLX-B-{_uid()[:6]}", f"{MARKER} company b")
+        _so_b, core_line_b, _pso_b, mirror_b = _line_chain(
+            db, company_b, product_b, qty="6", line_status="open"
+        )
+        inquiry_b = _inquiry(db, company_b, mirror_b.project_sales_order_id)
+        row_b = _oi_row(
+            db, company_b, inquiry_b.id, mirror_b.id, product_b.product_code, "6",
+        )
+        db.commit()
+
+        from app.services.project_order_inquiry_service import (
+            flag_rows_for_cancelled_lines,
+        )
+
+        with company_scope(db, frozenset({company_a})):
+            changed = flag_rows_for_cancelled_lines(db, [core_line_a.id, core_line_b.id])
+            db.commit()
+
+        db.refresh(row_a)
+        db.refresh(row_b)
+
+    assert changed == 1, changed
+    assert row_a.ack_state == ACK_CHANGED
+    assert row_a.changed_at is not None
+
+    assert row_b.ack_state == ACK_ACKNOWLEDGED
+    assert row_b.changed_at is None
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,10 @@ auto-acknowledged; SO314593 CB2828-DIY 90 and SO314594 C-FH12 364 + 364 are the 
   `actioned` included) whose `ack_state` is `acknowledged` becomes `changed` with `changed_at`
   set. A row already `awaiting`, `changed` or `rejected` is left as it is. The AutoCount push
   cancels a line two ways and both count: the document itself is cancelled, or the pushed
-  document no longer carries a line that something still references (plan 3.2a).
+  document no longer carries a line that something still references (plan 3.2a). An AutoCount
+  DELETION of the sales order (`POST /external/ingest/sales_orders/deletions`) cancels its lines
+  too and flags their rows the same way (plan 3.2b). A push for one company never flags another
+  company's row.
 - **AC-CL-7** `[BE]` Only the TRANSITION flags rows: a second push of the same already cancelled
   document, or an edit that leaves a cancelled line cancelled, flags nothing, so a row purchasing
   has confirmed does not come back.

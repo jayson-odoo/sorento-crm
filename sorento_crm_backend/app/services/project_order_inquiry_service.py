@@ -505,6 +505,11 @@ def flag_rows_for_cancelled_lines(
         row.changed_at = now
     if rows:
         db.flush()
+    logger.info(
+        "flag_rows_for_cancelled_lines: %d core line id(s), %d row(s) flagged",
+        len(ids),
+        len(rows),
+    )
     return len(rows)
 
 

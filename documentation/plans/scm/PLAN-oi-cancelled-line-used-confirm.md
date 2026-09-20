@@ -99,6 +99,11 @@ Nothing new is stored. Three writers flip it, one reader shows the line's status
   longer carries but something still references (~1481-1487). Its rows are flagged through the
   same function, only when the line was not already `cancelled` (the loop also walks
   `already_cancelled`).
+- **3.2b A fourth `cancelled` write: the AutoCount DELETION (found by the reviewer, 20 Sep
+  2026).** `deletion_service.DeletionService._deactivate` (~435), reached from
+  `POST /external/ingest/{entity}/deletions`, cancels every line of a deleted sales order that
+  has dependents, and a mirrored line always has one. Same function, same transition guard
+  (`line.line_status != cancelled` before the write, `sales_orders` only).
 - **3.7 Confirm accepts an `actioned` row (correction, 20 Sep 2026, read on resume).** Section 1
   said `actioned` rows can be confirmed already. That is true of `acknowledge_scope` (worklist
   service 1256: eligible = `awaiting` / `changed`, state not `cancelled`) and FALSE of

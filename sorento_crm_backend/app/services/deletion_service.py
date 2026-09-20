@@ -431,6 +431,19 @@ class DeletionService:
             .filter(getattr(spec.line_model, spec.line_fk) == str(entity_id))
             .all()
         )
+        # PLAN-oi-cancelled-line-used-confirm.md (3.2b): captured only on the
+        # TRANSITION - a repeated deletion of the same header walks lines that
+        # are already `cancelled`, and re-flagging them would ask purchasing
+        # to reconfirm a row it already settled.
+        newly_cancelled_so_line_ids: list[str] = []
         for line in lines:
+            if spec.entity_type == "sales_orders" and line.line_status != CANCELLED:
+                newly_cancelled_so_line_ids.append(line.id)
             line.line_status = CANCELLED
         self.db.flush()
+        if newly_cancelled_so_line_ids:
+            from app.services.project_order_inquiry_service import (
+                flag_rows_for_cancelled_lines,
+            )
+
+            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)
