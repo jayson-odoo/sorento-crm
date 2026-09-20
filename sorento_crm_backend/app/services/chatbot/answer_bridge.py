@@ -328,12 +328,24 @@ def _offer_answer(
         if len(options) >= _MIN_ROSTER_OPTIONS:
             # AC-1704/contract 121: the domain a pick continues answering FOR - missing
             # here (`pending.ask` with no `payload=` at all) left `payload.domain` unset
-            # and a bare number's answer unable to say which ask it settled.
+            # and a bare number's answer unable to say which ask it settled. `status`
+            # is the SAME carry `_answer_outstanding` already does for
+            # `outstanding_detail`/`sales_report_detail` (`focus.status`, projected
+            # onto `order_status` by `turn_runtime.lane_parse_output`) - a sales
+            # report's own ambiguous-customer pick otherwise answers "1" with the
+            # generic order tool, never `crm_sales_report`, since the ASKING turn's
+            # `order_status` reached the verdict directly (no `document`/`status`
+            # pair for `_focus_rules` to carry it on `focus.status` itself) and the
+            # answering turn's own verdict never repeats it.
+            ask_payload: dict[str, Any] = {"domain": (parser or {}).get("domain_hint")}
+            order_status = (parser or {}).get("order_status")
+            if order_status:
+                ask_payload["status"] = order_status
             question = pending.ask(
                 kind,
                 options,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint")},
+                payload=ask_payload,
             )
     return turn_compose.Answer(text=text, question=question)
 

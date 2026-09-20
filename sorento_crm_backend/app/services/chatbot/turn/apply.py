@@ -602,6 +602,15 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         )
         if asked_for:
             focus.domains = [d for d in asked_for if isinstance(d, str) and d]
+        # AC-1704: the SAME carry `_answer_outstanding` does for its own detail
+        # offers (`focus.status`, projected onto `order_status` by `turn_runtime.
+        # lane_parse_output`) - a roster pick (`customer_pick`, `product_pick`)
+        # answering a SALES REPORT ask needs it too, since that status reached the
+        # asking turn's verdict directly and the answering turn's own verdict never
+        # repeats it.
+        asked_status = pending.payload.get("status")
+        if isinstance(asked_status, str) and asked_status:
+            focus.status = asked_status
         if is_roster(pending.kind):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
