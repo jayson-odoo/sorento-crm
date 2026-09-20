@@ -1919,6 +1919,17 @@ def _run_stages(  # noqa: PLR0915
                         db=db,
                         asked_at_turn=turn_no,
                         roster_caps=roster_caps,
+                        # The four `complete_answer` hands its own miss half and
+                        # cross-domain call (reviewer B3/N3/N4): the configured ladder
+                        # - without it `answer._next_crossdomain_rung` returns None for
+                        # a non-dict and the SECOND rung, the PO rung from migration
+                        # `491_chatbot_ladder_incoming_po` (owner ruling 8 Sep 2026),
+                        # never ran - plus the turn id, the turn's own trace and the
+                        # lane's real dry-run flag.
+                        crossdomain_ladder=_crossdomain_ladder(switches),
+                        turn_id=turn_id,
+                        trace=turn_trace,
+                        dry_run=dry_run,
                     )
                     if answer is not None:
                         bridge_answered = True

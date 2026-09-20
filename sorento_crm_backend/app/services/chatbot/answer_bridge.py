@@ -546,6 +546,7 @@ def _fold_crossdomain_ladder(
     contact_id: Any,
     space_id: str | None,
     trace: Any = None,
+    dry_run: bool = True,
 ) -> str:
     """AC-1705: the cross-domain stock ladder, folded above the escalate marker.
 
@@ -581,7 +582,7 @@ def _fold_crossdomain_ladder(
         services=services,
         contact_id=contact_id,
         space_id=space_id,
-        dry_run=True,
+        dry_run=dry_run,
         crossdomain_ladder=(
             dict(crossdomain_ladder) if isinstance(crossdomain_ladder, Mapping) else None
         ),
@@ -616,6 +617,7 @@ def answer_for(
     crossdomain_ladder: Mapping[str, Any] | None = None,
     turn_id: str | None = None,
     trace: Any = None,
+    dry_run: bool = True,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -693,10 +695,27 @@ def answer_for(
         resolved=resolved,
         gate=gate,
         services=services,
+        # Reviewer B2. `miss_suggest._sibling_gate`'s FOURTH condition is
+        # `if build_result is None: return False`, so omitting this closed the sibling
+        # gate unconditionally and a partially-typed variant code never got its
+        # sibling-family offer - the has-incoming / no-incoming picker - even though
+        # every other condition held. Main's own `complete_answer` passes this exact
+        # literal on its combined not-found/error arm
+        # (`lanes/business/__init__.py:1660-1665`) with a comment saying why, and the
+        # literal is TRUE for all three of this function's triggers: `answer_for` is
+        # the MISS seam and returns `None` for a hit, and `via_fetched_empty`'s own
+        # trigger condition IS `not fetch_item.get("has_result")`.
+        build_result={"has_result": False},
         contact_id=contact_id,
         space_id=space_id,
-        execution_id=f"bridge-turn-{asked_at_turn}",
-        dry_run=True,
+        # Main passes the turn id (`complete_answer`'s own `execution_id=turn_id`), so
+        # the miss probes correlate with the turn on the trace screen; a synthetic
+        # "bridge-turn-N" correlates with nothing (reviewer N4).
+        execution_id=turn_id if turn_id else f"bridge-turn-{asked_at_turn}",
+        # Main passes the lane's own flag rather than a hardcoded literal (N3). Inert
+        # today - `run_miss_lane`'s own docstring says D14 suppresses WRITES and this
+        # lane has none - but it is a real flag the engine holds.
+        dry_run=dry_run,
         roster_caps=roster_caps,
     )
     lane_item = {**offer, "branch_kind": "not_found"}
@@ -726,5 +745,6 @@ def answer_for(
         contact_id=contact_id,
         space_id=space_id,
         trace=trace,
+        dry_run=dry_run,
     )
     return turn_compose.Answer(text=text, question=question)
