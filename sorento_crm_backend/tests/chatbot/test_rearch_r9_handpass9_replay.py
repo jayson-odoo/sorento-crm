@@ -197,7 +197,7 @@ class TestPhotoRosterStaysAnswerableAndNamesThePickedProduct:
         base = unique_code("ZZTHP9PHB").replace("-", "")
         family = _seed_photo_family(session_factory, base)
         no_code, _no_id = family["a"]
-        has_code, _has_id = family["c"]
+        has_code, has_id = family["c"]
 
         answer_probe = _mcp_probe_for(
             {
@@ -239,9 +239,36 @@ class TestPhotoRosterStaysAnswerableAndNamesThePickedProduct:
             message_type="casual", intent_hint=None, domain_hint=None, entities=[],
             reference_positions=[has_position],
         )
+
+        # Branch by tool name AND product_ids, the same convention
+        # `TestIncomingMissAfterAPickUsesTheStockFallbackLadder._other` (this same file)
+        # uses - a fixed `{"data": []}` double answers EVERY pick identically, which
+        # made the first pick's genuine miss and this SECOND, different pick's genuine
+        # hit indistinguishable to the fetch seam. Only a fetch scoped to `has_id`
+        # (the roster option this turn actually picked) returns the real row, so the
+        # assertion below tests the engine's own carry-and-refetch behaviour, not the
+        # test double.
+        def _second_pick_other(name: str, args: dict[str, Any]) -> str:
+            if name == "crm_master_product_attachments_list" and has_id in (
+                args.get("product_ids") or []
+            ):
+                return _present_response()(
+                    name, json.dumps({"data": [
+                        {
+                            "product": {"product_code": has_code},
+                            "attachment": {
+                                "attachment_type": "Product Photos",
+                                "original_filename": f"{has_code}.jpg",
+                            },
+                            "company_name": "Sorento",
+                        }
+                    ]}),
+                )
+            return json.dumps({"data": []})
+
         result3 = _run_turn_with_mcp_call(
             session_factory, monkeypatch, qf=qf_second_pick, text_body=str(has_position),
-            msg_id="zzt-hp9-d2-pick-2", mcp_call=_mcp_double(other=lambda *_a, **_k: json.dumps({"data": []}))[0],
+            msg_id="zzt-hp9-d2-pick-2", mcp_call=_mcp_double(other=_second_pick_other)[0],
             answer_mcp_probe=answer_probe,
         )
         reply3 = (result3.reply or {}).get("text") or ""

@@ -38,6 +38,52 @@ One test (`TestOwner8SepTheRungIsPerContactAndOffersOnce.test_without_the_grant_
 and_the_ladder_off_note`) stays a confirmed RED: `_climb` probes every rung unconditionally
 and does not carry over the OLD `_CROSSDOMAIN_RUNG_GRANT` per-contact gate
 (`purchase_orders.placed`) - flag for a coder pass, do not silently retire it.
+
+**AC-1706 re-pin (hand pass 9 round, 21 Sep 2026).** The owner-ruled "answer half
+re-attach" plan (`documentation/plans/chatbot/PLAN-chatbot-answer-half-reattach.md`,
+`chatbot-answer-half-reattach-acceptance-criteria.md`) reattached the OLD n8n-ported
+composer - `answer_bridge.py`'s own miss breakdown (`not_found_error_message`) plus
+`lanes/business/answer.py::run_crossdomain`/`_apply_crossdomain_rung`, reached through
+`answer_bridge._fold_crossdomain_ladder` (`engine.py:1918`'s
+`production_answer_services(db)`) - superseding the "16 Sep 2026 rewrite" section above:
+`turn/fetch.py::_climb` is no longer what answers a business turn's cross-domain ladder.
+Ten tests below pinned that now-superseded `_climb` wording; each is re-pinned to the
+CURRENT production shape, measured directly through `engine.run_turn` (not guessed, not
+re-derived from `crossdomain_render` in isolation):
+
+    Here's what you want:
+    • product: {code}
+
+    But no {domain} matched these.
+    {ladder sentence - "no PO placed" -> "but PO is placed:" + `_crossdomain_rung_text`'s
+    own field lines, OR the three-way "nothing on order" sentence when the PO rung also
+    finds nothing}
+
+    Would you like me to escalate to customer service team?
+
+The escalate offer follows EVERY miss now, including one a rung partially answered -
+`not_found_error_message`'s own offer is unconditional on a miss existing at all; it does
+not read whether a LATER ladder rung filled in more text under it. It says "customer
+service team" even when the PO rung itself answers: `_apply_crossdomain_rung` stamps
+`parser.routing.suggested_team = "purchasing"` for LATER turns, but the offer for THIS
+turn is already built off the parser's ORIGINAL (here, absent) `suggested_team` before the
+rung mutates it - measured, not assumed. Only ONE offer reaches `result.reply.text` (the
+"said twice" defect `TestOwner8SepTheRungIsPerContactAndOffersOnce`'s own docstring names
+stays fixed); `_run_stock_turn`'s own `said` variable joins the reply text with a
+`send_message` action that mirrors it verbatim, which is why a raw substring count against
+`said` would read 2 - the count assertions below read `result.reply.text` alone.
+
+The rung's own field composer (`_crossdomain_rung_text`) never renders a PO Number line at
+all (no per-document heading, owner ruling 11 Sep 2026, second ruling) - the OLD
+`TestOwner8Sep` FLAG about `po_number` reaching the customer no longer applies to the
+CURRENT composer, only to the now-fully-unreached `_crossdomain_rung_text`'s ancestor.
+
+Behaviour pins that are UNCHANGED and must stay: the PO rung genuinely runs per contact
+(`PO_TOOL in probes`, gated on `purchase_orders.placed`), it runs once per suffixed code
+(AC-1690-adjacent, `TestTheSuffixedCodeShapeReachesTheRung`), the supplier field never
+reaches the reply (`test_the_supplier_is_never_in_the_rung_text`, already green,
+untouched), and D7's incoming-origin climb still reaches the PO rung
+(`TestD7AnIncomingAskReachesThePORung`).
 """
 from __future__ import annotations
 
@@ -243,31 +289,33 @@ class TestAC921ThePORungReachesTheCustomer:
         placed. The unit tests of `run_crossdomain` were green while this was not, because
         they never asked whether the block reaches the REPLY.
 
-        16 Sep 2026 (contract 102/122): the rung is its OWN numbered section under the
-        primary's miss line now, not a folded "but PO is placed" sentence - measured
-        directly through `engine.run_turn`, not re-derived from `crossdomain_render`'s
-        retired wording."""
+        20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026): the
+        16 Sep 2026 `_climb`-based wording this test used to pin is unreached code on the
+        turn path now - measured directly through `engine.run_turn` against the CURRENT
+        bridge ladder (`answer_bridge._fold_crossdomain_ladder` ->
+        `answer.run_crossdomain`/`_apply_crossdomain_rung`), not re-derived from
+        `crossdomain_render` in isolation. See module docstring's "AC-1706 re-pin" section
+        for the shape and why the escalate offer still follows a rung that answered."""
         result, said, probes = _run_stock_turn(
             session_factory, monkeypatch, po_response=PO_ROWS
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
-        # 20 Sep 2026 (R-d, hand pass 7): `turn/compose.py` now reuses the fetch lane's
-        # own `lane_text` for the WHOLE section, header included, instead of a synthetic
-        # `*{label}* for {code}:` header - the miss line is the primary domain's own
-        # production wording with no domain-name prefix.
-        assert "No matching results found." in said, said
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Here's what you want:" in reply_text, reply_text
+        assert f"• product: {CODE}" in reply_text, reply_text
+        assert "But no inventory matched these." in reply_text, reply_text
         assert (
-            "Here is the PO placed I found.\n\n"
-            f"1. *Product Code:* {CODE}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
+            f"No stock and no incoming for {CODE}, but PO is placed:\n"
+            f"*Product Code:* {CODE}\n*Ordered:* 1000\n*Outstanding:* 1000\n"
             "*Location:* KL-WH"
-        ) in said, said
+        ) in reply_text, reply_text
         assert "PO Date" not in said  # PO_ROWS carries no po_date field
-        # Contract 127 ("team pick for MISSED domains"): the ladder answered, so nothing on
-        # this turn is missing - `compose.py` only offers to escalate when EVERY envelope
-        # missed. Retires the old "the escalate offer still follows" expectation (that was
-        # `crossdomain_render`'s own always-append-the-offer wording, unreached code now).
-        assert "Would you like me to escalate" not in said, said
+        # The escalate offer follows every miss now, EVEN a rung-answered one (module
+        # docstring) - exactly once, never the "said twice" defect this class's own
+        # sibling test's docstring names.
+        assert reply_text.count("Would you like me to escalate") == 1, reply_text
+        assert "Would you like me to escalate to customer service team?" in reply_text, reply_text
 
     def test_the_supplier_is_never_in_the_rung_text(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
@@ -287,8 +335,13 @@ class TestAC921ThePORungReachesTheCustomer:
         them on a real turn or the turn-detail screen shows an empty crossdomain section
         for every business turn.
 
-        16 Sep 2026: `turn/fetch.py::_climb`'s own event shape is `{domain, rungs_tried,
-        answered}` - the primary domain the ladder was climbed FROM, not a `rung` key."""
+        20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026):
+        `_climb`'s `{domain, rungs_tried, answered}` shape is unreached now - the LIVE
+        event is `_apply_crossdomain_rung`'s own `trace.add("crossdomain", {rung, tool,
+        args, rows, rendered})` (`lanes/business/answer.py`), measured directly. TWO
+        `crossdomain` events persist on this turn: the hard-coded inventory<->incoming
+        probe first (`rung: "crm_incoming_stock_list"`, `rows: 0`), then the ladder's PO
+        rung (`rung: "purchase_order"`, `tool: PO_TOOL`, `rows: 1`)."""
         from app.models.chatbot_turn import ChatbotTurn
 
         result, _, _ = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS)
@@ -303,28 +356,32 @@ class TestAC921ThePORungReachesTheCustomer:
         assert "tool" in kinds
         assert "crossdomain" in kinds, f"no crossdomain event persisted: {kinds}"
         crossdomain_events = [e for e in events if e["kind"] == "crossdomain"]
-        assert any(e.get("answered") == "purchase_order" for e in crossdomain_events), crossdomain_events
-        assert any("purchase_order" in (e.get("rungs_tried") or []) for e in crossdomain_events)
+        po_rung_events = [e for e in crossdomain_events if e.get("rung") == "purchase_order"]
+        assert po_rung_events, f"no purchase_order rung event persisted: {crossdomain_events}"
+        assert any(e.get("rows", 0) > 0 for e in po_rung_events), (
+            f"the PO rung event never recorded a row: {po_rung_events}"
+        )
+        assert any(e.get("tool") == PO_TOOL for e in po_rung_events), po_rung_events
 
 
 class TestAC922NothingOnAnyRung:
     def test_no_stock_no_incoming_no_po_says_all_three(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
     ) -> None:
-        """16 Sep 2026: the "nothing on any rung" line names the rungs by their OWN
-        domain labels (contract 122's generic grammar), not `crossdomain_render`'s retired
-        "No stock, no incoming and nothing on order for X." sentence."""
+        """20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026):
+        `crossdomain_render`'s "No stock, no incoming and nothing on order for X."
+        sentence IS what answers now (it was retired-on-paper, not retired live) -
+        measured directly. See module docstring's "AC-1706 re-pin" section."""
         result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS)
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        # 20 Sep 2026 (R-d): no `*stock* for {code}:` header any more - the primary
-        # domain's own miss wording, unprefixed.
-        assert (
-            "No matching results found.\n"
-            "Nothing on incoming stock or outstanding purchase orders either."
-        ) in said, said
-        # 20 Sep 2026 (R-f): the generic escalate offer now names a single team.
-        assert "Would you like me to escalate to warehouse team?" in said, said
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Here's what you want:" in reply_text, reply_text
+        assert f"• product: {CODE}" in reply_text, reply_text
+        assert "But no inventory matched these." in reply_text, reply_text
+        assert f"No stock, no incoming and nothing on order for {CODE}." in reply_text, reply_text
+        assert reply_text.count("Would you like me to escalate") == 1, reply_text
+        assert "Would you like me to escalate to customer service team?" in reply_text, reply_text
 
 
 class TestTheSuffixedCodeShapeReachesTheRung:
@@ -360,13 +417,16 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, f"{code}: the PO rung never ran"
-        # 20 Sep 2026 (R-d): no `*outstanding purchase orders* for {code}:` header - the
-        # rung's own `lane_text`, header included.
+        # 20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026): the
+        # bridge ladder's own wording (module docstring "AC-1706 re-pin" section), not
+        # `_climb`'s retired numbered-section shape.
+        reply_text = (result.reply or {}).get("text") or ""
+        assert f"• product: {code}" in reply_text, reply_text
         assert (
-            "Here is the PO placed I found.\n\n"
-            f"1. *Product Code:* {code}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
+            f"No stock and no incoming for {code}, but PO is placed:\n"
+            f"*Product Code:* {code}\n*Ordered:* 1000\n*Outstanding:* 1000\n"
             "*Location:* KL-WH"
-        ) in said, said
+        ) in reply_text, reply_text
 
     @pytest.mark.parametrize("code", SUFFIXED_CODES)
     def test_each_suffixed_code_gets_the_three_way_miss(
@@ -380,13 +440,13 @@ class TestTheSuffixedCodeShapeReachesTheRung:
             )
         )
         stub_access(attributes=["purchase_orders.placed"])  # the rung is per contact
-        _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
-        # 20 Sep 2026 (R-d): no `*stock* for {code}:` header - the primary domain's own
-        # miss wording, unprefixed.
-        assert (
-            "No matching results found.\n"
-            "Nothing on incoming stock or outstanding purchase orders either."
-        ) in said, said
+        result, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
+        # 20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026): the
+        # bridge ladder's own three-way miss (module docstring "AC-1706 re-pin" section).
+        reply_text = (result.reply or {}).get("text") or ""
+        assert f"• product: {code}" in reply_text, reply_text
+        assert "But no inventory matched these." in reply_text, reply_text
+        assert f"No stock, no incoming and nothing on order for {code}." in reply_text, reply_text
 
 
 class TestIssue736SeparatorInsensitiveRequestedSet:
@@ -489,29 +549,25 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        # 16 Sep 2026: the generic composer (contract 102) prints every field the tool's
-        # own envelope carries, in its own label, with no PO-domain-specific selection or
-        # relabelling - measured, not the pre-rewrite `_crossdomain_rung_text`'s curated
-        # "Ordered"/"Outstanding" 5-field subset. FLAG for a coordinator/coder look: this
-        # means `po_number` ("PO Number") now reaches the customer, which an 11 Sep 2026
-        # owner ruling said should not happen ("no per-document heading naming the PO/SPO
-        # number") - that ruling was against `crossdomain_render`'s own rendering, which is
-        # unreached code on a live turn now (see module docstring); whether the same rule
-        # should be re-applied inside the new generic composer is an open question this
-        # test does not decide, it only pins what the engine does today.
-        # 20 Sep 2026 (R-d): no `*outstanding purchase orders* for {code}:` header - the
-        # rung's own `lane_text`, header included.
-        assert (
-            "Here is the PO placed I found.\n\n"
-            f"1. *Product Code:* {CODE}\n*PO Number:* 202607-S0031\n"
-            "*Ordered Qty:* 27\n*Outstanding Qty:* 27\n*PO Date:* 2026-06-30"
-        ) in said, said
-        assert "Location" not in said  # po_row carries no location field
-        # Contract 127: the ladder answered, so nothing missed - no escalate offer follows
-        # (retires the old "said exactly once" expectation, which assumed the offer always
-        # follows a rung's answer).
+        # 20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026):
+        # `_crossdomain_rung_text` (`lanes/business/answer.py`) is the LIVE composer now,
+        # and it never renders a PO Number line at all (no per-document heading, owner
+        # ruling 11 Sep 2026, second ruling) - measured directly, not the generic
+        # composer's own "every field the envelope carries" shape this test used to pin.
+        # The old FLAG about `po_number` reaching the customer no longer applies.
         text = (result.reply or {}).get("text") or ""
-        assert text.count("Would you like me to escalate") == 0, text
+        assert f"• product: {CODE}" in text, text
+        assert (
+            f"No stock and no incoming for {CODE}, but PO is placed:\n"
+            f"*Product Code:* {CODE}\n*Ordered:* 27\n*Outstanding:* 27\n"
+            "*PO date:* 2026-06-30"
+        ) in text, text
+        assert "PO Number" not in text
+        assert "Location" not in text  # po_row carries no location field
+        # The offer follows every miss now, even a rung-answered one (module docstring) -
+        # exactly once, which is the "offers once" half of this class's own name.
+        assert text.count("Would you like me to escalate") == 1, text
+        assert "Would you like me to escalate to customer service team?" in text, text
 
     def test_without_the_grant_no_probe_and_the_ladder_off_note(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
@@ -562,17 +618,19 @@ class TestD7AnIncomingAskReachesThePORung:
         assert result.status == "done", result.error
         # the incoming lane's own picker probe may sit beside them; the climb is what matters
         assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
-        # 20 Sep 2026 (R-d): no `*incoming stock*`/`*outstanding purchase orders*` for
-        # {code}: headers - the primary domain's own miss wording, then the rung's own
-        # `lane_text`, header included.
-        assert "No matching results found." in said, said
+        # 20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026): D7's
+        # own lead/trail swap (origin=incoming: "No incoming and no stock for X") through
+        # the bridge ladder - module docstring's "AC-1706 re-pin" section.
+        text = (result.reply or {}).get("text") or ""
+        assert "But no incoming matched these." in text, text
+        assert f"• product: {CODE}" in text, text
         assert (
-            "Here is the PO placed I found.\n\n"
-            f"1. *Product Code:* {CODE}\n*Ordered Qty:* 1000\n*Outstanding Qty:* 1000\n"
+            f"No incoming and no stock for {CODE}, but PO is placed:\n"
+            f"*Product Code:* {CODE}\n*Ordered:* 1000\n*Outstanding:* 1000\n"
             "*Location:* KL-WH"
-        ) in said, said
+        ) in text, text
         assert "PO Date" not in said  # PO_ROWS carries no po_date field
         assert "GUANGDONG" not in said
-        # Contract 127: the ladder answered, so nothing missed - no escalate offer follows.
-        text = (result.reply or {}).get("text") or ""
-        assert text.count("Would you like me to escalate") == 0
+        # The offer follows every miss now, even a rung-answered one - exactly once.
+        assert text.count("Would you like me to escalate") == 1, text
+        assert "Would you like me to escalate to customer service team?" in text, text

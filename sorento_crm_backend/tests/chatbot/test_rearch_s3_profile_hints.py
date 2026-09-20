@@ -93,7 +93,10 @@ class TestProfileOnEveryParserUserBlock:
 
         captured_filters: list[dict] = []
 
-        def fake_run_fetch(plan, ctx):
+        def fake_run_fetch(plan, ctx, **_):
+            # `**_` absorbs `bridge_owns_ladder` (added at the production call site by
+            # fcd1b7f58, the reviewer S1 cross-domain-ladder dedup) - this test asserts
+            # only the tier filter reaches the fetch plan, not the ladder-ownership flag.
             for spec in plan.fetch:
                 captured_filters.append(spec.filters)
             return []
