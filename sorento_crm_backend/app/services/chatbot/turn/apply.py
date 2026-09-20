@@ -757,6 +757,31 @@ def _focus_rules(
                 # rule, unchanged).
                 focus.date_window = None
                 trace.rules_fired.append("new_ask_drops_date_window")
+            # Hand pass 10 (owner ruling): the SAME rule, extended to the two axes
+            # that hold no subject of their own - `tier` and `extra` are never a
+            # SUBJECT (contract 121's `domain_in_message` table is unchanged: it
+            # governs `products`/`customers`/`document` only), so a NEW ASK drops
+            # them exactly like `date_window`, whatever domain it names. Not
+            # promotion-specific: `narrow.decide`'s own `kind == "tier"` branch reads
+            # `focus.tier` as its own CARRY whenever this turn resolved nothing fresh
+            # for that kind, so a stale tier from an earlier roster pick answered a
+            # brand new "promo for X" straight at the OLD tier with no ask at all
+            # (live turns 42c2da52 tier ask -> a5dc8ded "2" Dealer -> ac576e8c "3" End
+            # user, sticky and correct, then 3854f23a a fresh "promo for X" answered
+            # Dealer straight). `focus.extra` is the same gap for a carried
+            # `attachment_type` (the photo chain's own word bleeding into a later,
+            # unrelated ask). Guarded by `by_kind` like every other axis here: a kind
+            # THIS message resolves (the parser's own `access_levels`, resolver-gated
+            # as today) is not a carry and is never dropped by this rule.
+            if "tier" not in by_kind and focus.tier:
+                focus.tier = []
+                trace.rules_fired.append("new_ask_drops_tier")
+            for extra_kind in list(focus.extra.keys()):
+                if extra_kind in by_kind:
+                    continue
+                if focus.extra.get(extra_kind):
+                    focus.extra[extra_kind] = []
+                    trace.rules_fired.append(f"new_ask_drops_{extra_kind}")
         elif decision.refines:
             trace.rules_fired.append("refinement_keeps_subject")
 
