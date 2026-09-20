@@ -1154,9 +1154,10 @@ def _top_up_status(
     row's quantity plus theirs equals the decision's `buy_qty` (AC-RB-26: raise the sheet
     row plain). `False` when they all carry it but the sum does not match - AC-RB-42 has
     the caller check the sheet row against these SAME rows one more way before reporting
-    it (AC-RB-27). `None` when the shape does not even apply - any live buy-verb row that
-    carries NO decision id, or one from a DIFFERENT (stale or superseded) revision
-    (AC-RB-28): the ordinary `already_raised` skip stands, unreported.
+    it (AC-RB-27). `None` when the shape does not even apply - a `buy_qty` of zero or less
+    (AC-RB-43, R4: an all-from-stock line has nothing to top up, so no sum is even taken),
+    any live buy-verb row that carries NO decision id, or one from a DIFFERENT (stale or
+    superseded) revision (AC-RB-28): the ordinary `already_raised` skip stands, unreported.
 
     Called once `_used_row_candidate` has said EITHER this mirror carries no `Replaces N
     used` shape at all, OR its one exact match already has its used pair (AC-RB-4's own
@@ -1165,6 +1166,8 @@ def _top_up_status(
     is silently left alone rather than handed to this function's own sum). `buy_qty` is
     the caller's own tolerant read (AC-RB-37) - this function trusts it.
     """
+    if buy_qty <= _ZERO:
+        return None
     order_rows = _line_own_rows(mirror_rows)
     if not order_rows:
         return None
