@@ -552,12 +552,37 @@ def answer_for(
 
     via_resolver_exit = payload.get("_exit_kind") == "not_found"
     via_error_fragment = fragment_outcome == "not_found"
-    if not (via_resolver_exit or via_error_fragment):
+    # R5 (AC-1699, AC-1702): a THIRD trigger - the resolver settled a real subject,
+    # the fetch genuinely ran for it, and the tool came back with zero rows. This
+    # fragment carries NO top-level `outcome` at all (`kind: "result"`, the ordinary
+    # hit shape `lanes.business.fetch.output_structurer` returns via `fetch_result`) -
+    # `fetch_item.get("has_result")` is what actually says whether it found anything,
+    # the same field `envelope_of`'s own `has_result` computation reads. Checked on
+    # `raw_fragment`/`fetch_item` directly, never the OUTER `envelope`'s own
+    # `turn/fetch.py::envelope_missed` rule - that rule reads several fields
+    # (`figures`, `denied`, `tool_has_result`, `entities`, `miss`) a hand-built test
+    # envelope carrying only `raw_fragment` never populates, and every existing
+    # `TestMissArmReturnsNoneOutsideItsOwnTerritory` case is exactly such a fixture.
+    # `raw_fragment.get("kind") == "error"` (an access_denied refusal or an
+    # infrastructure failure, both from `business._error_fragment`) is excluded the
+    # same way `via_error_fragment` already excludes an infra failure (neither
+    # `not_found` nor `access_denied` outcome) - only the ordinary "result" kind ever
+    # reaches this trigger.
+    via_fetched_empty = (
+        not via_error_fragment
+        and isinstance(raw_fragment, Mapping)
+        and raw_fragment.get("kind") == "result"
+        and isinstance(fetch_item, Mapping)
+        and not fetch_item.get("has_result")
+    )
+    if not (via_resolver_exit or via_error_fragment or via_fetched_empty):
         return None
 
     resolved = payload.get("resolved")
     gate = payload.get("gate")
-    full_payload = {**payload, "fetch": fetch_item} if via_error_fragment else payload
+    full_payload = (
+        {**payload, "fetch": fetch_item} if (via_error_fragment or via_fetched_empty) else payload
+    )
 
     not_found = answer_mod.not_found_error_message(
         full_payload, parser=parser, resolved=resolved, gate=gate
