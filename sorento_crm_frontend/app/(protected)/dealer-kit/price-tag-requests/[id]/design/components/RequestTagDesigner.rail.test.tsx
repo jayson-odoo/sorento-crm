@@ -154,12 +154,17 @@ vi.mock('../../../../services/priceTagDataService', () => ({
   resolveTagPin: vi.fn(async () => {}),
   listRequestVersions: vi.fn(async () => []),
   getRequestVersion: vi.fn(),
-  restoreRequestVersion: vi.fn(),
+  restoreRequestVersion: vi.fn(async () => {}),
+  dismissTagDataUpdate: vi.fn(async () => {}),
 }));
 
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { listReviewComments } from '../../../../services/priceTagReviewService';
-import { listTagDataChanges } from '../../../../services/priceTagDataService';
+import {
+  listTagDataChanges,
+  restoreRequestVersion,
+  dismissTagDataUpdate,
+} from '../../../../services/priceTagDataService';
 import {
   getPriceTagRequest,
   resolveRequestTags,
@@ -179,6 +184,8 @@ const mockComments = vi.mocked(listReviewComments);
 const mockGetRequest = vi.mocked(getPriceTagRequest);
 const mockUpdateTag = vi.mocked(updateRequestTag);
 const mockChanges = vi.mocked(listTagDataChanges);
+const mockRestore = vi.mocked(restoreRequestVersion);
+const mockDismiss = vi.mocked(dismissTagDataUpdate);
 
 // ---------------------------------------------------------------------------
 // Fixtures - one line, one open Basin group, four candidates
@@ -517,5 +524,103 @@ describe('RequestTagDesigner rail - Not printed toggle (AC-S6-9)', () => {
       ),
     );
     expect(screen.queryByTestId('not-printed-pill')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S8-8 (PLAN-price-tag-r10.md S8): a tag whose pin was auto-updated shows
+// the SAME red dot ("Product data changed - review"), but Review now opens
+// `ProductDataUpdatedDialog` (title "Product data updated", Was/Now, Dismiss
+// and Roll back) rather than the old Keep/Update dialog - which stays for a
+// tag with a pending diff and no `data_updated_at` (statuses outside
+// AUTO_UPDATE_STATUSES, S8-4). Already wired in `RequestTagDesigner.tsx`
+// (`updatedTags`/`ProductDataUpdatedDialog`), so these are GREEN regression
+// guards, not red - Phase 1 shipped the real markup for this dialog.
+// ---------------------------------------------------------------------------
+
+const UPDATED_TAG = tag({
+  data_updated_at: '2026-09-20T10:00:00Z',
+  data_update_changes: [
+    { field: 'list_price', label: 'List price', old: '1599.00', new: '1699.00' },
+  ],
+  data_update_version: 3,
+} as Partial<PriceTagRequestTag>);
+
+describe('RequestTagDesigner rail - product data updated dialog (AC-S8-8)', () => {
+  it('shows the red dot and opens ProductDataUpdatedDialog with Was/Now on Review', async () => {
+    await mount(request({ lines: [line({ tags: [UPDATED_TAG] })] }));
+
+    const dot = screen.getByRole('button', {
+      name: /Review product data changes on SRTBF11834 1a/,
+    });
+    expect(dot).toHaveAttribute('title', 'Product data changed - review');
+
+    fireEvent.click(dot);
+
+    expect(await screen.findByText('Product data updated')).toBeInTheDocument();
+    expect(screen.getByText('1599.00', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('1699.00', { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText('Product data changed')).toBeNull();
+  });
+
+  it('Dismiss calls dismissTagDataUpdate and the dot clears after the refetch', async () => {
+    mockGetRequest.mockResolvedValueOnce(request({ lines: [line({ tags: [tag()] })] }));
+    await mount(request({ lines: [line({ tags: [UPDATED_TAG] })] }));
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Review product data changes on SRTBF11834 1a/ }),
+    );
+    await screen.findByText('Product data updated');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Dismiss$/ }));
+
+    await waitFor(() => expect(mockDismiss).toHaveBeenCalledWith('req-1', 'tag-1a'));
+    await waitFor(() => expect(screen.queryByText('Product data updated')).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /Review product data changes/ }),
+      ).toBeNull(),
+    );
+  });
+
+  it('Roll back calls restoreRequestVersion with the tag\'s data_update_version', async () => {
+    await mount(request({ lines: [line({ tags: [UPDATED_TAG] })] }));
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Review product data changes on SRTBF11834 1a/ }),
+    );
+    await screen.findByText('Product data updated');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Roll back$/ }));
+
+    await waitFor(() => expect(mockRestore).toHaveBeenCalledWith('req-1', 3));
+  });
+
+  it('a tag with a pending diff and NO data_updated_at still opens the old Keep / Update dialog', async () => {
+    mockChanges.mockResolvedValue([
+      {
+        tag_id: 'tag-1a',
+        tag_label: '1a',
+        line_id: 'line-1',
+        code: 'SRTBF11834',
+        name: 'ZZT Cabinet',
+        changes: [
+          { field: 'list_price', label: 'List price', old: '1599.00', new: '1699.00' },
+        ],
+      },
+    ]);
+    await mount(request({ lines: [line({ tags: [tag()] })] }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Review product data changes/ }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Review product data changes/ }));
+
+    expect(await screen.findByText('Product data changed')).toBeInTheDocument();
+    expect(screen.queryByText('Product data updated')).toBeNull();
+    expect(screen.getByRole('button', { name: /Keep current/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Update tag/ })).toBeInTheDocument();
   });
 });
