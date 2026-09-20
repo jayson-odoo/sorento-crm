@@ -30,7 +30,17 @@ def test_inventory_product_family_lists_all_ten_no_ask():
     assert len(inventory_fetch.entities) == 10
 
 
-def test_incoming_product_family_asks_product_pick_with_ten_options_not_list_all():
+def test_incoming_product_family_settles_all_ten_no_ask_from_apply():
+    """Stale pin, re-pinned by tester 36 (review round, 20 Sep 2026): AC-1690
+    (`0c4864a4d`, already shipped BEFORE this round started) retired `turn/
+    narrow.py`'s own product roster entirely - `decide()` now settles every
+    `kind == "product"` candidate through as an entity unconditionally, for
+    EVERY domain, and a require-specific roster (like `incoming`'s own, ten
+    real options - `test_rearch_s3_roster_from_resolver.py`,
+    `test_rearch_s3_journey_chain.py`) is minted later, by `gate.py`, off the
+    REAL resolver's candidates - a layer this function-level `apply()` call
+    (no resolver, no DB) never reaches. Same shape as the sibling
+    `test_inventory_product_family_lists_all_ten_no_ask` immediately above."""
     from app.services.chatbot.turn.apply import apply
     from app.services.chatbot.turn.state import Focus, Profile, State
 
@@ -39,13 +49,15 @@ def test_incoming_product_family_asks_product_pick_with_ten_options_not_list_all
 
     _state2, plan = apply(state, v, build_policy())
 
-    assert plan.ask is not None
-    assert plan.ask.kind == "product_pick"
-    assert len(plan.ask.options) == 10
-    assert getattr(plan.ask, "list_all", False) is False
+    assert plan.ask is None
+    fetch_domains = [f.domain for f in plan.fetch] if plan.fetch else []
+    assert "incoming" in fetch_domains
+    incoming_fetch = next(f for f in plan.fetch if f.domain == "incoming")
+    assert len(incoming_fetch.entities) == 10
 
 
-def test_purchase_cost_product_family_asks_product_pick():
+def test_purchase_cost_product_family_settles_all_ten_no_ask_from_apply():
+    """Stale pin - same AC-1690 cause as the sibling test above."""
     from app.services.chatbot.turn.apply import apply
     from app.services.chatbot.turn.state import Focus, Profile, State
 
@@ -54,8 +66,11 @@ def test_purchase_cost_product_family_asks_product_pick():
 
     _state2, plan = apply(state, v, build_policy())
 
-    assert plan.ask is not None
-    assert plan.ask.kind == "product_pick"
+    assert plan.ask is None
+    fetch_domains = [f.domain for f in plan.fetch] if plan.fetch else []
+    assert "purchase_cost" in fetch_domains
+    purchase_cost_fetch = next(f for f in plan.fetch if f.domain == "purchase_cost")
+    assert len(purchase_cost_fetch.entities) == 10
 
 
 def test_order_customer_with_three_candidate_families_asks_customer_pick():

@@ -116,6 +116,12 @@ class TestResolveKindsReturnsAResolveOutcome:
             f"ResolveOutcome must be frozen, got __dataclass_params__={params!r}"
         )
         field_names = [f.name for f in dataclasses.fields(cls)]
+        # Reviewer S3 (review round, 20 Sep 2026): `unplaced_alternatives` has no
+        # reader left anywhere (R6 deleted `turn/apply.py::_did_you_mean`, its only
+        # consumer) and the coder's own docstring on the field names this test as
+        # the reason it is still there. Dropped from the pinned list so the coder
+        # can delete the dead field - this goes RED until it is deleted, which is
+        # expected and correct (the field is currently still present).
         assert field_names == [
             "resolved_kinds",
             "compatible_entities",
@@ -123,7 +129,6 @@ class TestResolveKindsReturnsAResolveOutcome:
             "resolved_candidates",
             "unplaced_tokens",
             "spec_tier",
-            "unplaced_alternatives",
             "payload",
         ], f"ResolveOutcome field order/names do not match the contract: {field_names!r}"
 

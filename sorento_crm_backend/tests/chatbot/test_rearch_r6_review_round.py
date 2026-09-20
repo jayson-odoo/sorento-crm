@@ -64,7 +64,6 @@ from tests.chatbot.test_outstanding_lane import (
 )
 from tests.chatbot.test_rearch_r3_bridge_engine import (
     _ambiguous_hanlim_resolve_services,
-    _expected_customer_picker_text,
 )
 from tests.chatbot.test_rearch_r3_roster_cap import (  # noqa: F401 - pytest fixtures
     _permissions,
@@ -763,11 +762,20 @@ class TestOneOptionDidYouMeanNeverEchoesTheUnplacedToken:
         reply = (result.reply or {}).get("text") or ""
         open_question = _session_of(session_factory).get("open_question") or {}
         options = open_question.get("options") or []
+        kind = str(open_question.get("kind") or "")
 
-        assert not (0 < len(options) < 2), (
-            f"AC-1691 [{domain}]: no Pending may ever carry fewer than two options - "
-            f"a one-option roster is not a real choice: {open_question!r}"
-        )
+        # AC-1691 is about ROSTERS. Production's own miss + escalate offer
+        # (`engine._question_offered`, `engine.py:3689-3696`) is a `team_pick`
+        # with exactly one "Yes" option and `expects: "yes_no"` - a yes/no
+        # confirmation, not a roster, and correct per
+        # `test_rearch_r4_bridge_miss.py:808`. Scope the option-count floor to
+        # actual roster kinds only: `*_pick` AND `expects != "yes_no"`.
+        is_roster_kind = kind.endswith("_pick") and open_question.get("expects") != "yes_no"
+        if is_roster_kind:
+            assert not (0 < len(options) < 2), (
+                f"AC-1691 [{domain}]: no ROSTER may ever carry fewer than two "
+                f"options - a one-option roster is not a real choice: {open_question!r}"
+            )
         for opt in options:
             label = str(opt.get("label") or opt.get("code") or "")
             assert label.strip().lower() != token.strip().lower(), (
@@ -963,16 +971,37 @@ class TestOneCrossdomainLadderPerTurn:
 
 
 class TestMissArmRosterHasNoMinimumTwoGuard:
-    def test_a_one_row_suggest_last_result_set_still_mints_a_pending(self) -> None:
+    def test_a_one_row_suggest_last_result_set_mints_no_roster(self) -> None:
+        """S5's own fix (implemented, `answer_bridge.py:520`) is "never mint a
+        roster Pending with fewer than two options" - with one candidate row and
+        no escalate-catalog/member-offer producer, the honest answer is NO
+        Pending at all (`None`), not a smaller roster. Unsatisfiable as
+        `>= 2 options` since one row cannot produce two."""
         offer = {"suggest_last_result_set": [{"uuid": "u1", "code": "X1", "entity_type": "product"}]}
         result = answer_bridge._miss_question(
             offer, {}, gate=None, parser={"routing": {}, "domain_hint": "incoming"},
             asked_at_turn=1, text="1. X1",
         )
-        assert result is not None and len(result.options) >= 2, (
-            "reviewer S5: the miss arm's own did-you-mean roster must never mint a "
-            f"Pending with fewer than two options, the same guard `_tier_options`/"
-            f"`_offer_answer` already carry: {result!r}"
+        assert result is None, (
+            "reviewer S5: a ONE-row did-you-mean set must mint NO roster Pending "
+            f"(not a sub-minimum one, and no other producer offers a substitute "
+            f"yes/no ask here): {result!r}"
+        )
+
+    def test_two_rows_still_mint_a_real_two_option_roster(self) -> None:
+        offer = {
+            "suggest_last_result_set": [
+                {"uuid": "u1", "code": "X1", "entity_type": "product"},
+                {"uuid": "u2", "code": "X2", "entity_type": "product"},
+            ]
+        }
+        result = answer_bridge._miss_question(
+            offer, {}, gate=None, parser={"routing": {}, "domain_hint": "incoming"},
+            asked_at_turn=1, text="1. X1",
+        )
+        assert result is not None and len(result.options) == 2, (
+            "reviewer S5: TWO genuinely distinct candidates must still mint a "
+            f"real roster, not be swept up by the minimum-two guard too: {result!r}"
         )
 
 
@@ -1069,9 +1098,42 @@ class TestScopeBlockAskScopedAxesAndBestEffortWrapper:
 
 # --------------------------------------------------------------------------- #
 # REVIEWER item 11d (S7) - a MULTI-domain ambiguous-customer ask still reaches
-# `turn/compose.compose_question`'s generic "Which one do you mean?" fallback
-# (`engine.py:1889` gates the bridge on `len(plan.domains) <= 1`), where
-# `484c79d92` read "Which customer do you mean?" (`gate.py`'s own header).
+# `turn/compose.compose_question`'s generic "Which one do you mean?" fallback,
+# where `484c79d92` read "Which customer do you mean?" (`gate.py`'s own header).
+#
+# Tester 36 re-measured the exact path (captain ruling, 20 Sep 2026), the coder's
+# rebuttal (worktree `agent-aa7b10e854453193b`, item 7(d)) does not survive: that
+# rebuttal instrumented a DIFFERENT resolver seam (a product entity, checking
+# whether `resolve_gate`'s own `allowed_lookup` derivation raises anything) and
+# concluded no picker fires at all for `domain_hint=None`. Re-run with a CUSTOMER
+# entity through THIS file's own `_ambiguous_hanlim_resolve_services` fixture
+# (the real gate.py pipeline, fake only at the resolve-entity/probe I/O boundary)
+# and a monkeypatch spy on `app.services.chatbot.turn.apply.narrow_decide`:
+# a Pending DOES fire, with `kind="customer_pick"`, from `turn/apply.py::
+# _narrow_and_plan` (`turn/apply.py:1044`, `narrow_decide(kind="customer",
+# policy_value="must_narrow_one", ...)`), NOT from `gate.py`.
+#
+# Why: `engine.py`'s own BRIDGE (`engine.py:1668-1692`, the block whose own
+# comment reads "where this and narrow.decide's own roster arms would both ask,
+# the bridge wins for a single-domain plan") is the ONLY caller of `resolve_gate.
+# run`'s rich `offer` exit that ever reaches the customer, and it is gated on
+# `len(plan.domains) <= 1` (`engine.py:1692`). For this two-domain ask the guard
+# is False, so the bridge never engages, `plan.ask` (the plain `customer_pick`
+# `_narrow_and_plan` already minted) is left standing, and it reaches
+# `turn_compose.compose_question` (`turn/compose.py:487`) with no entry for
+# `customer_pick` in `_ASK_HEADERS` (`turn/compose.py:409-424`) - hence the
+# generic default header. The fixture's parser verdict shape (`domain_hint=None`,
+# `asks=[{"domain": ...}, {"domain": ...}]`) is the REAL shape a genuine
+# multi-domain verdict carries (confirmed against
+# `tests/chatbot/replay_turns/console/handbuilt-rp-004-two-domains-in-one-
+# message-fan-out-in-message-order-contract-122.json`'s own recorded `verdict`).
+#
+# The finding is REAL and left red. The final exact-string pin against
+# `_expected_customer_picker_text` (a SINGLE-domain-only production chain) is
+# dropped - it presupposes a specific fix shape (that the multi-domain reply
+# would come out byte-identical to the single-domain one, "(SRT)" suffix and
+# all) the coder has not chosen yet; pinning the HEADER is the finding, not the
+# exact wording of a fix nobody has written.
 # --------------------------------------------------------------------------- #
 
 
@@ -1096,6 +1158,8 @@ class TestMultiDomainAmbiguousCustomerUsesGatesOwnHeader:
                 # here at all - a silent prefix filter) - so "order" is the ONLY
                 # domain of the two that can raise an ask, isolating the customer
                 # picker's own header/precedence question this test is about.
+                # `domain_hint=None` + a two-entry `asks` list is the real shape a
+                # genuine multi-domain verdict carries (see module comment above).
                 asks=[{"domain": "order"}, {"domain": "incoming"}],
             ),
             text_body="orders and incoming for hanlim",
@@ -1104,13 +1168,14 @@ class TestMultiDomainAmbiguousCustomerUsesGatesOwnHeader:
             resolve_services=_ambiguous_hanlim_resolve_services(spy_probe),
         )
         reply = (result.reply or {}).get("text") or ""
-        expected = _expected_customer_picker_text(probe_rows=[])
         assert "Which one do you mean?" not in reply, (
             f"reviewer S7: a multi-domain ambiguous-customer ask must never fall "
-            f"through to turn/compose.py's generic header: {reply!r}"
+            f"through to turn/compose.py's generic header (turn/compose.py:487, "
+            f"`customer_pick` absent from `_ASK_HEADERS`): {reply!r}"
         )
         assert reply.startswith("Which customer do you mean? Please choose:"), (
             f"reviewer S7: gate.py's own customer-picker header must win even for "
-            f"a multi-domain ask: {reply!r}"
+            f"a multi-domain ask - engine.py's own bridge (engine.py:1668-1692) "
+            f"must not skip the offer exit just because len(plan.domains) > 1: "
+            f"{reply!r}"
         )
-        assert reply == expected, (reply, expected)

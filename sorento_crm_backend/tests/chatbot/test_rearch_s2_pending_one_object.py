@@ -160,19 +160,27 @@ def test_asked_at_turn_is_set_from_state():
     from tests.chatbot._turn_helpers import build_policy, entity, verdict
 
     state = State(focus=Focus(), pending=None, profile=Profile(), turn_no=42)
-    # Two candidates, not one (AC-1691, PLAN-chatbot-answer-half-reattach R1, coder
-    # commit f42cdb9f4): a roster is never asked with fewer than two options, so a
-    # single ambiguous candidate no longer arms `plan.ask` at all - this test's own
-    # purpose is `Pending.asked_at_turn`'s wiring, not the roster floor, so it is kept
-    # rostering with a second candidate rather than asserting around the new,
-    # correct one-candidate-settles behaviour.
+    # Stale pin, re-pinned by tester 36 (review round, 20 Sep 2026): AC-1690
+    # (`0c4864a4d`, already shipped BEFORE this round started) retired `turn/
+    # narrow.py`'s own product roster entirely - `kind == "product"` now settles
+    # through as entities unconditionally for every domain, so this test's own
+    # `wc286`/`wc287` product fixture no longer arms `plan.ask` at all regardless
+    # of candidate count (a require-specific product roster is minted later, by
+    # `gate.py`, off the real resolver's candidates - a layer this function-level
+    # `apply()` call never reaches). This test's own purpose is `Pending.
+    # asked_at_turn`'s wiring, not which kind rosters, so it is re-pointed at a
+    # kind `apply()` still rosters directly: `customer` under "order"
+    # (must_narrow_one, `test_rearch_s2_narrower.py::
+    # test_order_customer_with_three_candidate_families_asks_customer_pick`'s own
+    # already-green shape), two candidates (AC-1691's own floor).
     v = verdict(
-        domain_hint="incoming",
+        domain_hint="order",
         entities=[
-            entity("wc286", hint="product", confident=True),
-            entity("wc287", hint="product", confident=True),
+            entity("chin", hint="customer", confident=True),
+            entity("chun", hint="customer", confident=True),
         ],
     )
     _state2, plan = apply(state, v, build_policy())
     assert plan.ask is not None
+    assert plan.ask.kind == "customer_pick"
     assert plan.ask.asked_at_turn == 42

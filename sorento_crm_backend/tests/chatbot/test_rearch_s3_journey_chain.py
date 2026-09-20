@@ -36,7 +36,7 @@ from app.services.chatbot.turn.compose import Answer  # noqa: F401
 
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, seeded, stub_access, stub_parser
-from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
+from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company, _seed_workspace
 from tests.chatbot.test_rearch_s3_roster_from_resolver import (
     PRODUCT_CODES,
     _seed_products,
@@ -58,10 +58,30 @@ def _seed_wc286_family(session_factory, monkeypatch) -> None:
     (ten `SRTWC286-SH*` codes) rather than inventing a second one. The roster the
     narrower arms also probes `crm_incoming_stock_list` to stamp each option "has
     incoming"/"no incoming" (contract 28), so that tool needs the same stub.
+
+    Tester 36 (20 Sep 2026, review round): this helper was missing the contact's
+    `workspace_id` - `_seed(session_factory)` (`_set_session_vars`'s bare INSERT)
+    never sets one, unlike every other S3 helper that seeds a real resolver run
+    (`test_rearch_s3_roster_from_resolver.py::_seed_contact`,
+    `test_rearch_s3_attribute_first.py::_seed_contact`, both call `_seed_workspace`
+    first). Measured: with no `workspace_id`, the real resolver's tier-1/2 lexical
+    match finds NOTHING for "wc286" (falls through to tier-3 embedding, which then
+    raises `OPENAI_API_KEY is required` and is swallowed) - a TEST HARNESS gap, not
+    the "tier-3 has no key so this can never work" architectural limit coder 31's
+    round report claimed. With a real `workspace_id` linked, the SAME seeded ten
+    `SRTWC286-SH*` products resolve exactly as `test_rearch_s3_roster_from_resolver.py`'s
+    own green control does (confirmed directly, ten real candidates, `product_pick`).
     """
     _link_contact_company(session_factory, company_id=SORENTO)
     _seed_products(session_factory, PRODUCT_CODES)
     _stub_incoming_probe(monkeypatch, codes_with_incoming=set())
+    workspace_id = _seed_workspace(session_factory)
+    db = session_factory()
+    db.execute(
+        text("UPDATE respond_contacts SET workspace_id = :wid WHERE respond_io_id = :c"),
+        {"wid": workspace_id, "c": str(CONTACT_ID)},
+    )
+    db.commit()
 
 
 def _set_session_vars(session_factory, state: dict) -> None:
@@ -133,7 +153,27 @@ class TestJourneyChain:
         assert result.branch_kind == "business_query", result.branch_kind
         sv = _session_vars(session_factory)
         assert sv.get("open_question") is not None, sv
-        assert sv["open_question"].get("kind") == "product_pick", sv["open_question"]
+        open_question = sv["open_question"]
+        assert open_question.get("kind") == "product_pick", open_question
+
+        # Tester 36 (review round, 20 Sep 2026): pin what this test's own docstring
+        # claims - a REAL roster of the resolver's ten candidates, never the
+        # retired one-option typed-token echo (AC-1691/AC-1692, R6). `_seed_wc286_
+        # family` now links the contact's `workspace_id`, so the real resolver
+        # matches all ten seeded `SRTWC286-SH*` products.
+        options = open_question.get("options") or []
+        assert len(options) >= 2, (
+            f"a require-specific roster must never be a single option: {open_question!r}"
+        )
+        labels = {opt.get("label") for opt in options}
+        assert "wc286" not in {str(label).strip().lower() for label in labels}, (
+            f"the roster must list the resolver's real candidate codes, never the "
+            f"customer's own typed word back at them: {open_question!r}"
+        )
+        assert labels == set(PRODUCT_CODES), (
+            f"the roster must be the full real family the resolver actually "
+            f"matched: {open_question!r}"
+        )
 
     def test_step_2_pick_8_roster_stays_alive_incoming_renders(
         self, session_factory, stub_parser, stub_access

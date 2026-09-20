@@ -41,7 +41,7 @@ from tests.chatbot.test_engine import (
     stub_access,
     stub_parser,
 )
-from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
+from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company, _seed_workspace
 from tests.chatbot.test_rearch_s3_roster_from_resolver import (
     PRODUCT_CODES,
     _seed_products,
@@ -183,6 +183,20 @@ class TestFinding2aOpenPendingHandsBackSessionPatch:
         _link_contact_company(session_factory, company_id=SORENTO)
         _seed_products(session_factory, PRODUCT_CODES)
         _stub_incoming_probe(monkeypatch, codes_with_incoming=set())
+        # Tester 36 (review round, 20 Sep 2026): `_seed_top_level_session_vars`'s bare
+        # INSERT never sets `workspace_id`, so the real resolver's tier-1/2 lexical
+        # match found nothing for "wc286" (falling through to a tier-3 embedding call
+        # that raises for lack of an API key) - a TEST HARNESS gap, not the
+        # architectural "this can never resolve here" limit coder 31's round report
+        # claimed. Link a real workspace, same fix as
+        # `test_rearch_s3_journey_chain.py::_seed_wc286_family`.
+        workspace_id = _seed_workspace(session_factory)
+        db = session_factory()
+        db.execute(
+            text("UPDATE respond_contacts SET workspace_id = :wid WHERE respond_io_id = :c"),
+            {"wid": workspace_id, "c": str(CONTACT_ID)},
+        )
+        db.commit()
         stub_parser(self._roster_verdict(confident=False))
         stub_access()
         envelope = _envelope(test_run_id="ZZT-run-2a")
@@ -195,8 +209,24 @@ class TestFinding2aOpenPendingHandsBackSessionPatch:
         assert result.branch_kind == "business_query", result.branch_kind
         assert result.session_patch is not None
         assert result.session_patch.get("open_question") is not None, result.session_patch
-        assert result.session_patch["open_question"].get("kind") == "product_pick", (
-            result.session_patch["open_question"]
+        open_question = result.session_patch["open_question"]
+        assert open_question.get("kind") == "product_pick", open_question
+
+        # Pin what this test's own docstring claims - a REAL ten-option roster of
+        # the resolver's own candidates, never the retired one-option typed-token
+        # echo (AC-1691/AC-1692, R6) this test was measured to be green on before.
+        options = open_question.get("options") or []
+        assert len(options) >= 2, (
+            f"a require-specific roster must never be a single option: {open_question!r}"
+        )
+        labels = {opt.get("label") for opt in options}
+        assert "wc286" not in {str(label).strip().lower() for label in labels}, (
+            f"the roster must list the resolver's real candidate codes, never the "
+            f"customer's own typed word back at them: {open_question!r}"
+        )
+        assert labels == set(PRODUCT_CODES), (
+            f"the roster must be the full real family the resolver actually "
+            f"matched: {open_question!r}"
         )
 
     def test_the_dry_run_writes_nothing_to_respond_contacts_session_vars(
