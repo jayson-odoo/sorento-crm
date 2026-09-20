@@ -275,7 +275,12 @@ export interface OrderInquiryRow extends OrderInquiryAckFields {
    * link's document, kept as the one-word display the older screens read.
    */
   links?: OrderInquiryLink[];
-  /** The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder planning. */
+  /**
+   * The sum of `links[].qty` for the REAL links only - `links` also carries synthetic
+   * "via PO" entries (`derived: true`) for a linked PO's own open SPO allocations, which
+   * never wrote an `order_inquiry_links` row and are excluded from this sum.
+   * `qty - linked_qty` is what still flows to reorder planning.
+   */
   linked_qty?: string;
   /** The document CS cited on an order back, which the cascade tries before any other. */
   cited_document?: string | null;

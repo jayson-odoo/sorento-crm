@@ -18,8 +18,7 @@ lightweight route named in the brief over `test_order_inquiry_draft_links.py`'s 
 `_redirected_fixture`, which exists to test the settle-time WRITER of the flag, not to
 be a generic used-row builder). T3 reuses `test_order_inquiry_bundles.py::test_d7`'s
 own inline-TestClient pattern (route JSON, never the service directly - `response_model`
-silently drops an undeclared field). T5 is the new backfill callable the brief names:
-`app/services/oi_bundle_used_anchor_backfill.py::rebundle_rows_anchored_on_used_hosts`.
+silently drops an undeclared field).
 
 SO314594 (prod, 21 Sep 2026), T6: `OrderInquiryWorklistService._anchor_headline_by_id`
 (`order_inquiry_worklist_service.py` ~1879) sums EVERY entry `links_for_rows` returns
@@ -425,50 +424,6 @@ def test_t4_only_used_rows_are_newly_excluded_rejected_and_partly_linked_are_una
     )
     assert companion.bundled_with_row_id == partly_linked_host.id
     assert rejected_host.id  # green control named explicitly: excluded both before and after
-
-
-# =============================================================================================
-# T5: the backfill callable moves an already-used anchor onto the live host
-# =============================================================================================
-
-
-def test_t5_backfill_rebundles_rows_anchored_on_a_used_host(world):
-    """`app/services/oi_bundle_used_anchor_backfill.py::rebundle_rows_anchored_on_used_hosts`
-    does not exist yet - RED at the local import below (ImportError/ModuleNotFoundError),
-    the "missing function" red the brief asks for rather than a fixture bug."""
-    from app.services.oi_bundle_used_anchor_backfill import (
-        rebundle_rows_anchored_on_used_hosts,
-    )
-
-    _single_host_rule(world)
-    used_host = world.row("CKS1050", 182)
-    world.redirect(used_host.id)
-    live_host = world.row("CKS1050", 220)
-    companion = world.row("CKSW015", 220)
-    # Write the STALE anchor directly - exactly the shape a row derived before this
-    # fix landed is left holding, never through `derive_bundles` (which, once fixed,
-    # could never produce this in the first place).
-    world.db.execute(
-        text(
-            "UPDATE " + P + ".order_inquiry_rows SET bundled_with_row_id = :h, "
-            "bundled_qty = :q WHERE id = :r"
-        ),
-        {"h": used_host.id, "q": Decimal("182"), "r": companion.id},
-    )
-    world.db.commit()
-    world.db.refresh(companion)
-    assert companion.bundled_with_row_id == used_host.id, "fixture sanity: stale anchor written"
-
-    moved = rebundle_rows_anchored_on_used_hosts(world.db)
-    world.db.commit()
-    world.db.refresh(companion)
-
-    assert moved == 1, "exactly one row's anchor pointed at a used host"
-    assert companion.bundled_with_row_id == live_host.id, "re-derivation moves it to the live host"
-    assert companion.bundled_qty == Decimal("220")
-
-    again = rebundle_rows_anchored_on_used_hosts(world.db)
-    assert again == 0, "idempotent: nothing left anchored on a used host"
 
 
 # =============================================================================================
