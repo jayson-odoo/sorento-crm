@@ -402,6 +402,51 @@ that writes nothing.
   stays on the worklist to be read, but purchasing is not asked to buy the goods again, and
   ticking it for a bulk action says "This row has already been answered".
 
+### What a re-upload rebuilds
+
+Purchasing keeps the book; customer service plans supply against it on Fulfilment Planning. Once
+CS has acted on a line, re-uploading the sheet later (after a rollback, for example - see
+"Rolling an upload back" below) rebuilds what CS did rather than overwriting it:
+
+* **A line whose delivery already arrived** comes back exactly as it was: the sheet's row for
+  that delivery is raised as the greyed **used** row again, carrying its received document,
+  rather than skipped or raised plain. CS's own fresh row for the line is not re-raised by the
+  upload itself; that is the plan's own doing, not the sheet's.
+* **A line CS has since confirmed a different quantity or date for** comes back already settled
+  to what CS decided, with the sheet's own figure kept as the Was.
+* **A line CS planned entirely from stock** (nothing bought against it) comes back plain, exactly
+  as the sheet states it - it is never given a false Was/Now.
+* **A DELAY notice** (or any notice that isn't itself the buy) a confirm raised beside the line's
+  own row is left untouched either way; it never stands in for the row itself, so the row beside
+  it still rebuilds as above.
+* **A top-up CS added on top of the sheet's own quantity** leaves the sheet's row plain, once the
+  sheet's quantity plus the top-up together add up to what CS decided to buy for the line.
+* **More than one sheet row landing on the same line CS has already planned** are all raised
+  plain, the same as an ordinary upload - the rebuild never guesses which row a decision belongs
+  to when there is more than one candidate for it.
+
+### When it will not guess
+
+The rebuild above only fires on an exact match. When it cannot find one, it raises nothing for
+that row and, on the Test preview, counts it under its own warning:
+
+> N rows could not be matched automatically and need a person's eye (a used-row or top-up line
+> whose quantity or date does not line up exactly)
+
+This happens when:
+
+* **a delivery's quantity or date no longer matches any of CS's planned deliveries** - usually
+  because the sheet or the plan was corrected after CS worked the line;
+* **a top-up line's quantities don't add up** to what CS decided to buy for the line in total.
+
+The Test preview only counts these rows; to see which row by name, click **Confirm upload** and
+check **[System Management → Import Jobs](/system-management/import-jobs)**, where each is
+labelled **Beside a used-row line, but no exact quantity/date match** or **Beside a top-up line,
+but the quantities do not sum to plan**. Check the named row against the plan on Fulfilment
+Planning or the sales order line on Order Inquiries, fix whichever side is wrong, and upload the
+sheet again - the rebuild reads it fresh every time, so there is nothing else to do once the two
+agree.
+
 ### Which PO or SPO a row is linked to
 
 1. **What AutoCount records for that sales order line comes first**, whatever the remark says.
@@ -438,6 +483,32 @@ migrated row is confirmed the moment it is raised, so it will not show on the pa
 confirm** view - set the **Confirmed** filter to **Confirmed** or **All** to find it. Each row
 carries the quantity, delivery date and stock location the sheet stated, the instruction it was
 raised with, and the note naming the file it came from.
+
+### Rolling an upload back
+
+If a mistaken upload has to be taken back out, for example after an importer fix ships and the
+file needs re-loading, an operator runs a rollback from the command line - there is nothing to
+click in the CRM for this. A rollback no longer removes a row Fulfilment Planning has since
+worked on. It keeps:
+
+* a **used** row, with its received document;
+* a row CS has already confirmed a different quantity or date for;
+* a top-up row;
+* and any other sheet row sitting on the same sales order line as one of the above, even one
+  that carries none of those marks itself.
+
+Always run it as a dry run first (its default) and read what it reports before re-running to
+apply it. Both the dry run and the real run report the same two counts either way: how many rows
+it would remove, and how many it keeps - and for every kept row, the sales order, item,
+quantity, date and which of the reasons above kept it.
+
+Run a rollback when customer service is not in the middle of confirming a plan on one of these
+rows: a confirm on a row the rollback is checking waits until the rollback has finished.
+
+### Uploading the same book twice
+
+Once nothing on it has changed, uploading the same book a second time writes nothing new -
+every row, rebuilt rows included, comes back under **Already raised**.
 
 ### Who can upload it
 
