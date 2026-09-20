@@ -695,9 +695,19 @@ def _focus_rules(
     # and CB2863-BL, 17 Sep 2026).
     carried_rows = {kind: list(_kind_field(focus, kind)) for kind in KIND_FIELD_MAP}
 
-    for kind, group in by_kind.items():
-        _set_kind_field(focus, kind, group)
-    if by_kind:
+    # AC-1704: `_answer_pending` already settled `trace.picked_kinds` this turn, from
+    # the option the customer just picked - its own uuid on the focus. The SAME
+    # message's raw entities can still carry that kind (a typed code answering a
+    # roster IS an entity of the roster's own kind, hint and all, per `decide()`'s
+    # own label match) with no uuid attached, and applying `by_kind` unconditionally
+    # threw the picked, resolved row away for a fresh, unplaced guess at the very
+    # word that picked it. One rule, every kind: a kind a pick just settled is not
+    # replaced again by this same turn's own entities.
+    picked_kinds = set(trace.picked_kinds)
+    replaced_kinds = {kind for kind in by_kind if kind not in picked_kinds}
+    for kind in replaced_kinds:
+        _set_kind_field(focus, kind, by_kind[kind])
+    if replaced_kinds:
         trace.rules_fired.append("replace_same_axis")
     else:
         trace.rules_fired.append("reuse_alive")
