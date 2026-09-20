@@ -85,6 +85,7 @@ this branch before R4).
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Mapping
 
@@ -104,6 +105,8 @@ from app.services.chatbot.turn import pending
 _MIN_ROSTER_OPTIONS = 2
 
 _ORDER_DATE_LINE_RE = re.compile(r"^Order date: .*$")
+
+logger = logging.getLogger(__name__)
 
 
 def apply_scope_block(
@@ -128,21 +131,32 @@ def apply_scope_block(
     scope block's own `Dates:` line already states, once this arm applies - stripped
     here rather than suppressed at its own seam, which would need to know in advance
     whether this bridge was about to run.
-    """
-    scope = scope_block.search_scope_header(
-        domain=domain,
-        qf=qf,
-        gate_json=gate_json,
-        resolver_json=resolver_json,
-        focus_customers=focus_customers,
-        focus_products=focus_products,
-    )
-    if scope is None or not answer.text:
-        return answer
-    from dataclasses import replace
 
-    lines = [line for line in answer.text.split("\n") if not _ORDER_DATE_LINE_RE.match(line)]
-    return replace(answer, text=f"{scope}\n\n" + "\n".join(lines))
+    BEST EFFORT, main's own wrapper verbatim in intent ("a disclosure bug must never
+    block the answer", `origin/main:tail/compile_state.py::_search_scope_header`): the
+    port had no wrapper of its own, so a raise anywhere in here was caught by
+    `engine.py`'s fetch/compose handler instead and turned a turn that had genuinely
+    found rows into `status="failed"` with "Could not look an answer up." The rows go
+    out without the header rather than not at all.
+    """
+    try:
+        scope = scope_block.search_scope_header(
+            domain=domain,
+            qf=qf,
+            gate_json=gate_json,
+            resolver_json=resolver_json,
+            focus_customers=focus_customers,
+            focus_products=focus_products,
+        )
+        if scope is None or not answer.text:
+            return answer
+        from dataclasses import replace
+
+        lines = [line for line in answer.text.split("\n") if not _ORDER_DATE_LINE_RE.match(line)]
+        return replace(answer, text=f"{scope}\n\n" + "\n".join(lines))
+    except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
+        logger.warning("chatbot: the search-scope header did not render", exc_info=True)
+        return answer
 
 
 def _compose_text(lane_item: dict[str, Any], *, ctx: Any, canned: Any, db: Any, **values: Any) -> str:
