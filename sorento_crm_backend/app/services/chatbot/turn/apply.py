@@ -974,6 +974,26 @@ def _is_idle_chat(
     return True
 
 
+def _names_an_unresolved_product(verdict: dict[str, Any]) -> bool:
+    """Does THIS message type a product code the PARSER ITSELF is not confident about
+    (contract 111, #866 port, hand pass 9 owner ruling)?
+
+    `confident` is the parser's own per-entity field (`tests/chatbot/_turn_helpers.py::
+    entity`'s default is `True` - a well-formed emission states it either way), read
+    as-is (D1/AC-1520: the engine never re-derives a confidence score of its own from
+    the word). A RESOLVED product ("SRTWC287", `confident: True`) is not this case -
+    `test_brand_of_resolved_product_in_add_comment_body` still escalates straight
+    through with the resolved product's own brand in the add_comment.
+    """
+    return any(
+        isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("hint") == "product"
+        and e.get("confident") is False
+        for e in (verdict.get("entities") or [])
+    )
+
+
 def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | None:
     """Which NON-business lane this turn belongs to, or None for a business question.
 
@@ -989,6 +1009,24 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
     if escalation.get("is_escalation_confirmation") is True:
         return "escalation"
     if message_type == "escalation":
+        # Contract 111 (#866 port, hand pass 9 owner ruling): a product token the
+        # parser itself is not confident about must be settled BEFORE any team
+        # question - `out_of_scope` only when the message names no product token at
+        # all (or one the parser IS confident about, which still escalates straight
+        # through with the resolved product's own brand, `test_brand_of_resolved_
+        # product_in_add_comment_body`). `clarification` is the SAME lane (and the
+        # SAME `clarify_menu` branch_kind) a casual-typed `scope_intent: "broaden"`
+        # turn already reaches below - no new mechanism: this message type reaches
+        # it for the same reason, what the turn is even about is unsettled, so the
+        # generic clarifying question ("are you asking about Product, Stock,
+        # ...?") runs before any lane-specific one does, rather than handing an
+        # unrecognised code straight to a human. Only when NO domain is named
+        # either (`not domains`) - a message that ALSO names its own domain still
+        # reaches the ordinary business path below, where the resolver's own
+        # did-you-mean (`miss_suggest.build_suggest_offer`'s D1 arm,
+        # `ENTITY_MISS_SUGGEST_FLOOR` 0.30) is the one that runs.
+        if not domains and _names_an_unresolved_product(verdict):
+            return "clarification"
         return "escalation"
     if (
         message_type == "request_for_help"
