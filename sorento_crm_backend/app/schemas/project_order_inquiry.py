@@ -406,6 +406,11 @@ class OrderInquiryWorklistRow(BaseModel):
     #: `remaining_open` - declared here because `response_model` silently drops a field
     #: it has not been told about.
     redirected_to_pool: bool = False
+    #: PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true when the sales order line
+    #: this row sits on has `line_status = cancelled`. Excluded from Buy only (AC-CL-4);
+    #: Purchased/Incoming still count it when it holds a link. Declared here because
+    #: `response_model` silently drops a field it has not been told about.
+    line_cancelled: bool = False
 
 
 class OrderInquiryMonthTotal(BaseModel):

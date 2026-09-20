@@ -85,6 +85,20 @@ Nothing new is stored. Three writers flip it, one reader shows the line's status
   `setAckFilter((c) => (c === 'to_confirm' ? ACK_ANY : 'to_confirm'))`. Types + service contract
   comment updated. No motion (dense, high-frequency grid: nothing here animates).
 
+- **3.5a The cutoff is the migration's RUN time, not a literal (correction, 20 Sep 2026).** The
+  importer stamps `acknowledged_at` with the upload time on every born-acknowledged row, and the
+  owner rolled back and re-uploaded both books on prod on 20 Sep after #1050 deployed. A literal
+  written at authoring time is already older than those stamps, and older still than any upload
+  between authoring and deploy, so the backfill would skip the very rows the owner reported.
+  `upgrade()` passes `datetime.utcnow()`. Alembic applies a revision once per database, so
+  nothing replays it; `backfill_to_confirm(connection, cutoff)` stays idempotent for a given
+  cutoff (a flagged row is no longer `acknowledged`, a row confirmed later carries a later
+  stamp), which is what AC-CL-10 asserts.
+- **3.2a A third `cancelled` write in the ingest (found in review, 20 Sep 2026).**
+  `document_ingest_service._sync_lines` also cancels a LEFTOVER line: one the pushed document no
+  longer carries but something still references (~1481-1487). Its rows are flagged through the
+  same function, only when the line was not already `cancelled` (the loop also walks
+  `already_cancelled`).
 - **3.7 Confirm accepts an `actioned` row (correction, 20 Sep 2026, read on resume).** Section 1
   said `actioned` rows can be confirmed already. That is true of `acknowledge_scope` (worklist
   service 1256: eligible = `awaiting` / `changed`, state not `cancelled`) and FALSE of

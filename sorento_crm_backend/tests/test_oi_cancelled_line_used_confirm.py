@@ -33,9 +33,11 @@ reinvented:
 """
 from __future__ import annotations
 
+import importlib.util
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -692,6 +694,87 @@ def test_autocount_repeated_cancel_push_does_not_reflag_a_reconfirmed_row(env):
     assert row.changed_at == first_changed_at
 
 
+def _push_two_line_order(env):
+    """One sales order, two lines - the shape a leftover cancel needs (AC-CL-6, plan
+    3.2a): the pushed document later drops ONE of them, and it must still be there,
+    referenced, to be cancelled rather than deleted."""
+    record = _so_record(
+        env, lines=[_so_line(env), _so_line(env, product_ref=env.product2_ref)]
+    )
+    res = env.post(INGEST_SO, [record])
+    assert res.status_code == 200, res.text
+    header = env.header("sales_orders", record["source_ref"])
+    lines = env.so_lines(header["id"])
+    assert len(lines) == 2, lines
+    return record, header, lines
+
+
+@pytest.mark.parametrize("row_state", [INQUIRY_RAISED, INQUIRY_ACTIONED])
+def test_autocount_leftover_referenced_line_flags_an_acknowledged_row_changed(env, row_state):
+    """AC-CL-6 (write site 2, plan 3.2a): the AutoCount push cancels a line TWO ways -
+    the document itself cancelled (covered above), or the pushed document no longer
+    carries a line that something still references (`_sync_lines`'s leftover sweep,
+    `is_referenced` true because the seeded mirror below still points at it via
+    `core_sales_order_line_id`) - `_sync_lines` (~1481-1487) sets that line `cancelled`
+    in place rather than deleting it. Both must flag a live, acknowledged row `changed`."""
+    record, header, lines = _push_two_line_order(env)
+    ref_b = record["lines"][1]["source_ref"]
+    line_b = next(l for l in lines if l["source_ref"] == ref_b)
+
+    _mirror, row = _mirror_for_ingest_line(
+        env, header["id"], line_b["id"], line_b["product_id"],
+        row_state=row_state, row_ack=ACK_ACKNOWLEDGED,
+    )
+
+    # Push the SAME document again, without line B - it is a leftover the payload no
+    # longer names, but the mirror above still references its id, so it is cancelled
+    # in place rather than deleted.
+    reduced = dict(record, lines=[record["lines"][0]])
+    res2 = env.post(INGEST_SO, [reduced])
+    assert res2.status_code == 200, res2.text
+
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
+    updated_line_b = next(
+        l for l in env.so_lines(header["id"]) if l["id"] == line_b["id"]
+    )
+    assert updated_line_b["line_status"] == "cancelled"
+    assert row.ack_state == ACK_CHANGED
+    assert row.changed_at is not None
+
+
+def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(env):
+    """AC-CL-7 (write site 2, plan 3.2a): only the TRANSITION flags a row through the
+    leftover-cancel path too - a row purchasing re-confirms after the first reduced
+    push does not come back on a second one, even though the loop that cancels a
+    leftover line walks `already_cancelled` every time (`_sync_lines` docstring)."""
+    record, header, lines = _push_two_line_order(env)
+    ref_b = record["lines"][1]["source_ref"]
+    line_b = next(l for l in lines if l["source_ref"] == ref_b)
+
+    _mirror, row = _mirror_for_ingest_line(
+        env, header["id"], line_b["id"], line_b["product_id"], row_ack=ACK_ACKNOWLEDGED,
+    )
+
+    reduced = dict(record, lines=[record["lines"][0]])
+    env.post(INGEST_SO, [reduced])
+    env.db.commit()
+
+    # purchasing re-confirms, whatever state the first reduced push left the row in.
+    resp = env.client.post(ACK_URL, json={"row_ids": [str(row.id)]})
+    assert resp.status_code == 200, resp.text
+    env.db.commit()
+    env.db.refresh(row)
+    assert row.ack_state == ACK_ACKNOWLEDGED
+
+    # the same reduced document again - line B is already cancelled this time.
+    env.post(INGEST_SO, [reduced])
+
+    env.db.expire_all()
+    row = env.db.get(OrderInquiryRow, row.id)
+    assert row.ack_state == ACK_ACKNOWLEDGED
+
+
 # ---------------------------------------------------------------------------
 # AC-CL-8: the sheet importer's birth state
 # ---------------------------------------------------------------------------
@@ -1028,6 +1111,77 @@ def test_backfill_flags_cancelled_line_and_used_rows_and_is_idempotent():
         db.refresh(row_before)
         assert row_before.ack_state == ACK_ACKNOWLEDGED
         assert changed_third == 0, changed_third
+
+
+_BACKFILL_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "522_oi_cancelled_used_confirm.py"
+)
+
+
+def _backfill_migration_module():
+    spec = importlib.util.spec_from_file_location(
+        "zzt_oi_cl_backfill_migration", _BACKFILL_MIGRATION_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_backfill_migration_upgrade(db):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    module = _backfill_migration_module()
+    context = MigrationContext.configure(connection=db.connection())
+    with Operations.context(context):
+        module.upgrade()
+    return module
+
+
+def test_migration_522_uses_its_own_run_time_as_cutoff_not_a_fixed_literal():
+    """AC-CL-10 (plan 3.5a): the real migration file's own `upgrade()` must pass
+    `datetime.utcnow()` (its RUN time) as the cutoff, not a literal fixed at authoring
+    time - a sheet upload that acknowledges a row MOMENTS before the migration runs
+    (the owner's own 20 Sep re-upload of both books) must still be flagged. Driven
+    through `alembic/versions/522_oi_cancelled_used_confirm.py` for real via
+    `Operations.context`, the same harness `tests/scm/test_oi_confirm_per_so.py`'s own
+    AC-CF-16 migration test (`_run_upgrade`) uses."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+
+        def _row(*, acknowledged_at):
+            product = _product(db, f"ZZT-CLMIG-{_uid()[:8]}", f"{MARKER} mig product")
+            _so, _line, _pso, mirror = _line_chain(
+                db, company_id, product, qty="9", line_status="cancelled"
+            )
+            inquiry = _inquiry(db, company_id, mirror.project_sales_order_id)
+            return _oi_row(
+                db, company_id, inquiry.id, mirror.id, product.product_code, "9",
+                ack_state=ACK_ACKNOWLEDGED, acknowledged_at=acknowledged_at,
+            )
+
+        # Moments before the migration runs below - later than the fixed literal
+        # `CUTOFF = datetime(2026, 9, 20, 0, 0, 0)` the migration file holds today,
+        # but always earlier than the migration's own run time.
+        recent_row = _row(acknowledged_at=datetime.utcnow() - timedelta(minutes=1))
+        old_row = _row(acknowledged_at=datetime(2026, 1, 1))
+        db.commit()
+
+        _run_backfill_migration_upgrade(db)
+        db.commit()
+
+        db.refresh(recent_row)
+        db.refresh(old_row)
+
+    assert recent_row.ack_state == ACK_CHANGED, (
+        "a row acknowledged moments before the migration ran must still be flagged"
+    )
+    assert recent_row.changed_at is not None
+    assert old_row.ack_state == ACK_CHANGED
+    assert old_row.changed_at is not None
 
 
 # ---------------------------------------------------------------------------

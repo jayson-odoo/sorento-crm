@@ -51,7 +51,9 @@ auto-acknowledged; SO314593 CB2828-DIY 90 and SO314594 C-FH12 364 + 364 are the 
   order edit (`sales_order_service._upsert_lines`) or by the AutoCount push
   (`document_ingest_service`), every live order inquiry row of that line (state not `cancelled`,
   `actioned` included) whose `ack_state` is `acknowledged` becomes `changed` with `changed_at`
-  set. A row already `awaiting`, `changed` or `rejected` is left as it is.
+  set. A row already `awaiting`, `changed` or `rejected` is left as it is. The AutoCount push
+  cancels a line two ways and both count: the document itself is cancelled, or the pushed
+  document no longer carries a line that something still references (plan 3.2a).
 - **AC-CL-7** `[BE]` Only the TRANSITION flags rows: a second push of the same already cancelled
   document, or an edit that leaves a cancelled line cancelled, flags nothing, so a row purchasing
   has confirmed does not come back.
@@ -67,8 +69,10 @@ auto-acknowledged; SO314593 CB2828-DIY 90 and SO314594 C-FH12 364 + 364 are the 
 - **AC-CL-10** `[BE]` Backfill, one migration, idempotent: every live row on a cancelled line
   that is `acknowledged` becomes `changed` with `changed_at` set (344 on the measured copy, less
   the 1 already awaiting). The statement only takes rows whose `acknowledged_at` is null or
-  earlier than a fixed cutoff in the migration: run twice, the second run changes nothing, and a
-  row purchasing confirmed after the first run is NOT flagged again.
+  earlier than its cutoff: run twice with the same cutoff, the second run changes nothing, and a
+  row purchasing confirmed after the first run is NOT flagged again. The migration's cutoff is
+  its own run time (plan 3.5a): a row the sheet upload acknowledged moments before the migration
+  runs IS flagged (the owner re-uploaded both books on prod on 20 Sep).
 - **AC-CL-11** `[BE]` The sheet rollback already keeps a row with `changed_at` set, so flagged
   rows survive a rollback and a re-upload reports them `already_raised` (asserted, not assumed).
 

@@ -1388,11 +1388,23 @@ class DocumentIngestService(MasterRefResolver):
                 unresolved_dropped += 1
 
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
+        # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, write site 2): every
+        # SALES ORDER line this push cancels, captured only on the TRANSITION - two
+        # collection points, both guarded the same way (prior status read BEFORE the
+        # write, appended only when it was not already `cancelled`): the matched-by-ref
+        # setattr loop just below (the same precedent `from_so_line_ref` capture-
+        # before-setattr already uses a few lines down), and the leftover-cancel sweep
+        # (3.2a, ~1481-1487) further down, which walks `already_cancelled` on EVERY
+        # push and would re-flag a reconfirmed row without the same guard. A re-push
+        # that flags nothing at either site never even calls
+        # `flag_rows_for_cancelled_lines`.
+        newly_cancelled_so_line_ids: list[str] = []
 
         unmatched: list[dict[str, Any]] = []
         for values in line_values:
             row = by_ref.pop(values["source_ref"], None)
             if row is not None:
+                prior_line_status = row.line_status
                 values.pop("line_number", None)
                 # D22: a resolved warehouse that DIFFERS from what the row
                 # already carries overwrites it (the AutoCount location wins)
@@ -1439,6 +1451,12 @@ class DocumentIngestService(MasterRefResolver):
                 for column, value in values.items():
                     setattr(row, column, value)
                 counts["updated"] += 1
+                if (
+                    spec.entity_type == "sales_orders"
+                    and prior_line_status != CANCELLED
+                    and row.line_status == CANCELLED
+                ):
+                    newly_cancelled_so_line_ids.append(row.id)
             else:
                 unmatched.append(values)
 
@@ -1465,16 +1483,31 @@ class DocumentIngestService(MasterRefResolver):
         # once here rather than once per row inside `is_referenced`.
         line_referrers = referrers_of(self.db, line_table)
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
+            prior_line_status = row.line_status
             if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
                 counts["cancelled"] += 1
+                # PLAN-oi-cancelled-line-used-confirm.md (3.2a): this loop walks
+                # `already_cancelled` on EVERY push (its whole reason to be there is
+                # the ref-less xlsx-era adoption guard), so the TRANSITION guard has
+                # to be here too, not just at the matched-by-ref site above - an
+                # unconditional append would re-flag a row purchasing already
+                # re-confirmed on every later push of the same reduced document.
+                if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
+                    newly_cancelled_so_line_ids.append(row.id)
             else:
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        if newly_cancelled_so_line_ids:
+            from app.services.project_order_inquiry_service import (
+                flag_rows_for_cancelled_lines,
+            )
+
+            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)
         # Self-heal (issue #969): the ESB push is the true writer behind almost every
         # unmirrored line measured live (394 of them, all `source_system = autocount`) -
         # `_upsert_lines`'s self-heal never sees this write, it is the manual FE edit's
