@@ -1051,6 +1051,11 @@ def _narrow_and_plan(
                 just_picked=kind in picked,
                 family_grouping=getattr(policy.kind(kind), "family_grouping", None),
                 unplaced=unplaced,
+                # AC-1710 / reviewer S4: the roster this kind is allowed to print is
+                # `chatbot_entity_kinds.roster_cap`, the SAME column `gate.py`'s own
+                # rosters already read through `roster_caps` - never `narrow.py`'s
+                # module literal.
+                roster_cap=getattr(policy.kind(kind), "roster_cap", None),
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:

@@ -513,7 +513,11 @@ def _miss_question(
         ) or "product"
         kind = f"{entity_kind}_pick"
         options = _stamped_roster_options(rows, kind=kind, text=text)
-        if options:
+        # AC-1691's umbrella, "in any domain and for any entity kind" - the SAME guard
+        # `_tier_options` and `_offer_answer` already carry, and the one arm of this
+        # module that was missing it (reviewer S5). A one-row `suggest_last_result_set`
+        # is not a choice; the escalate offer below is the honest question for it.
+        if len(options) >= _MIN_ROSTER_OPTIONS:
             return pending.ask(
                 kind,
                 options,

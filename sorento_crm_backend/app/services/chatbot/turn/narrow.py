@@ -120,7 +120,10 @@ def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
 
 
 def _options(
-    candidates: list[dict[str, Any]], kind: str, grouping: str | None = None
+    candidates: list[dict[str, Any]],
+    kind: str,
+    grouping: str | None = None,
+    cap: int | None = None,
 ) -> list[dict[str, Any]]:
     """One numbered row per candidate.
 
@@ -222,8 +225,12 @@ def _options(
         built.append(option)
     # B1: a hard cap, in the resolver's own order (already the relevance order the
     # candidates arrived in) - a roster nobody could realistically read through is not
-    # a choice, whatever built it.
-    return built[:_ROSTER_CAP]
+    # a choice, whatever built it. AC-1710/reviewer S4: the number is this kind's own
+    # `chatbot_entity_kinds.roster_cap`, handed down by the caller that holds the
+    # Policy; `_ROSTER_CAP` is the fallback for a caller with no policy of its own
+    # (every direct `decide()` call in the tests), the same role `gate.py`'s named
+    # legacy default plays on its side.
+    return built[: cap if isinstance(cap, int) and cap > 0 else _ROSTER_CAP]
 
 
 @dataclass
@@ -249,6 +256,7 @@ def decide(
     just_picked: bool = False,
     family_grouping: str | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    roster_cap: int | None = None,
 ) -> NarrowOutcome:
     """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
 
@@ -257,6 +265,12 @@ def decide(
     and a count of what this contact may see needs no tier pick before it can be counted.
     So a named attribute satisfies `narrow_by_type` and silences `narrow_by_tier`, and
     changes nothing for any other policy value.
+
+    `roster_cap` is this kind's own `chatbot_entity_kinds.roster_cap` (AC-1710,
+    reviewer S4): the rosters this function still raises - customer, attachment_type,
+    kind_pick - cut at the CONFIGURED number, not at the module's literal 10. The
+    caller holds the Policy, so the caller reads it; `None` keeps `_ROSTER_CAP` for a
+    caller with no policy of its own.
     """
     if policy_value == "not_applicable":
         return NarrowOutcome(None, [], [], None)
@@ -329,7 +343,7 @@ def decide(
         ):
             return NarrowOutcome(
                 f"{kind}_pick",
-                _options(resolved_candidates, kind, family_grouping),
+                _options(resolved_candidates, kind, family_grouping, roster_cap),
                 [],
                 None,
                 note="ambiguous_filter_asks",
@@ -393,7 +407,10 @@ def decide(
                 # SAME policy value).
                 return NarrowOutcome(None, [], list(resolved_candidates), None)
             return NarrowOutcome(
-                f"{kind}_pick", _options(resolved_candidates, kind, family_grouping), [], None
+                f"{kind}_pick",
+                _options(resolved_candidates, kind, family_grouping, roster_cap),
+                [],
+                None,
             )
         if policy_value not in _ROSTER_POLICIES or kind == "tier":
             candidates = list(resolved_candidates)
@@ -459,7 +476,10 @@ def decide(
                 return NarrowOutcome(None, [], candidates, None, note="settled_carry")
             if kind != "product" and _choices(candidates, family_grouping) > 1:
                 return NarrowOutcome(
-                    f"{kind}_pick", _options(candidates, kind, family_grouping), [], None
+                    f"{kind}_pick",
+                    _options(candidates, kind, family_grouping, roster_cap),
+                    [],
+                    None,
                 )
             # AC-1690: a product roster is `gate.py`'s own job (see the identical
             # guard above, in the `resolved_candidates` branch) - `product_attachment`
@@ -486,7 +506,10 @@ def decide(
             # as `narrow_to_code`.
             if kind != "product" and _choices(candidates, family_grouping) > 1:
                 return NarrowOutcome(
-                    f"{kind}_pick", _options(candidates, kind, family_grouping), [], None
+                    f"{kind}_pick",
+                    _options(candidates, kind, family_grouping, roster_cap),
+                    [],
+                    None,
                 )
             return NarrowOutcome(None, [], candidates, None, note="settled_carry")
         # R-a (owner ruling, hand pass 6, 17 Sep 2026): re-roster on a domain switch
