@@ -73,15 +73,17 @@ the same precedence `tail.reply_ladder.compose_reply`'s `result_set` reads):
      is_escalate_offer`) - `team_pick`, the same one-option "Yes" shape `engine.run_tail`'s
      own `_question_offered` mints for a canned lane's escalate catalog.
 
-**AC-1705's cross-domain stock ladder** rides on every miss attempt (item 2's `_fold_
-crossdomain_ladder`): `answer.crossdomain_zeroset` / `run_crossdomain` already gate
-themselves to `domain_hint in ("incoming", "inventory")` and a genuinely resolved,
-probeable product, so calling them unconditionally is a no-op (no MCP call at all) for
-every other domain's miss. `tail.compose.crossdomain_compose` folds the rendered block
-above the escalate marker, exactly as it would for the (dead, pre-rearch) `complete_turn`
-path - this is genuinely NEW wiring for the single-domain miss, not a reattachment of
-something the new engine already ran (measured: neither function has a live caller on
-this branch before R4).
+**AC-1705's cross-domain stock ladder** rides on every miss attempt
+(`_run_crossdomain_ladder`, run BEFORE the miss text so its own team-name mutation
+lands first - hand pass 9 item 2 - then `_apply_crossdomain_render` folds its render
+onto the composed text afterwards): `answer.crossdomain_zeroset` / `run_crossdomain`
+already gate themselves to `domain_hint in ("incoming", "inventory")` and a genuinely
+resolved, probeable product, so calling them unconditionally is a no-op (no MCP call at
+all) for every other domain's miss. `tail.compose.crossdomain_compose` folds the
+rendered block above the escalate marker, exactly as it would for the (dead, pre-rearch)
+`complete_turn` path - this is genuinely NEW wiring for the single-domain miss, not a
+reattachment of something the new engine already ran (measured: neither function has a
+live caller on this branch before R4).
 """
 from __future__ import annotations
 
@@ -629,8 +631,37 @@ def _miss_question(
     return None
 
 
-def _fold_crossdomain_ladder(
-    text: str,
+def _answered_fresh(parser: Mapping[str, Any] | None) -> bool:
+    """Did THIS message settle its own pick by typing a fresh entity, or by naming a
+    did-you-mean slot specifically - main's own `fresh_typed` gate (`tail/compile_
+    state.py::_picker_carry`, ported to this bridge as `answer_for`'s own roster-
+    survival check, hand pass 9 D2). Only reader: the roster-survival patch below.
+
+    Two signals, either one retires a still-open roster rather than letting it carry
+    to a later, different position:
+
+    * `reference_target == "dym"` - the parser's own dym-slot marker
+      (`lanes/business/answer.py`'s S5 positional-pick comment: "on a dym pick the LLM
+      emits the candidate's DYM slot and the parser has already spent it resolving the
+      entity"). AC-1704's certificate roster answers this way.
+    * a `current_message: True` entity - the message TYPED something new (a code, a
+      name), the other half of main's own `fresh_typed` gate. AC-1704's certificate
+      roster answers this way too, when the customer types the code instead of the
+      number.
+
+    A bare positional pick (`reference_positions` only, no `reference_target`, no
+    entities) - D1/D2/D3's own shape - carries neither, so the roster it answers stays
+    open for a later, different position (contract 36).
+    """
+    p = parser if isinstance(parser, Mapping) else {}
+    if p.get("reference_target") == "dym":
+        return True
+    return any(
+        isinstance(e, Mapping) and e.get("current_message") is True for e in (p.get("entities") or [])
+    )
+
+
+def _run_crossdomain_ladder(
     *,
     parser: Mapping[str, Any] | None,
     resolved: Any,
@@ -642,23 +673,35 @@ def _fold_crossdomain_ladder(
     space_id: str | None,
     trace: Any = None,
     dry_run: bool = True,
-) -> str:
-    """AC-1705: the cross-domain stock ladder, folded above the escalate marker.
+) -> dict[str, Any]:
+    """AC-1705's cross-domain stock ladder: `answer.run_crossdomain`'s own call, split
+    out from the FOLD below (`_apply_crossdomain_render`, hand pass 9 item 2) so a
+    caller that needs the rung's own TEAM update (`_apply_crossdomain_rung` mutates
+    `parser["routing"]["suggested_team"]` in place) can run this BEFORE building any
+    text that reads `parser.routing`, then fold the SAME result's render afterwards -
+    never a second `run_crossdomain` call, which would probe twice for one fact.
+
+    Main's own sequencing, measured (`lanes/business/__init__.py::complete_answer`,
+    `origin/main` at the time of this split): `run_crossdomain` runs BEFORE
+    `_run_miss_half`/`not_found_error_message` even starts, so `not_found_error_
+    message`'s own `team = _pretty_team(routing.suggested_team or "customer_service")`
+    (read at the TOP of that function, before its own `build_breakdown_msg` composes the
+    escalate sentence) already sees the rung's own team. This bridge's OLD single-call
+    shape (`_fold_crossdomain_ladder`, folded the render immediately after running the
+    ladder) ran this AFTER the miss text (and its escalate sentence) were already
+    composed, so the sentence was always built off the STALE/default team - live turn
+    on this lane named "customer service" instead of the PO rung's own "purchasing"
+    (hand pass 9, item 2, tester 43's own measurement).
 
     `answer.run_crossdomain` gates itself to `domain_hint in ("incoming", "inventory")`
     and at least one probeable (uuid-carrying) product (`crossdomain_zeroset`'s own
     domain/probeable checks) - calling it unconditionally on every miss is therefore a
     genuine no-op (no MCP call, `render=None`) for every other domain, never a second
-    ladder policy of this module's own.
+    ladder policy of this module's own. The `{}` first argument is equivalent to main's
+    own validator item on a miss: `crossdomain_zeroset` reads that item for
+    `returned_codes` alone, and on a miss that set is empty either way.
 
-    Main's post-fetch MISS arm runs this too (`main:1610`, ahead of its own `has_result`
-    branch, folding the render into the `result_item` the miss half then reads) - the
-    earlier claim here that main "runs no crossdomain on a miss" was wrong (reviewer
-    SF-4). The `{}` first argument is nevertheless equivalent on this path:
-    `crossdomain_zeroset` reads that item for `returned_codes` alone, and on a miss that
-    set is empty either way.
-
-    Every argument is the one `complete_answer` hands its own `run_crossdomain`
+    Every OTHER argument is the one `complete_answer` hands its own `run_crossdomain`
     (`lanes/business/__init__.py:1685-1710`), reviewer B3/S2:
 
     * `entities_names` is the resolver aggregate's own `name` (the contact's entitled
@@ -683,7 +726,7 @@ def _fold_crossdomain_ladder(
     session_block = ctx.get("session") if isinstance(ctx, Mapping) else None
     access = ctx.get("access") if isinstance(ctx, Mapping) else None
     granted = access.get("attributes") if isinstance(access, Mapping) else None
-    result = answer_mod.run_crossdomain(
+    return answer_mod.run_crossdomain(
         {},
         parser=parser,
         resolved=resolved,
@@ -699,6 +742,13 @@ def _fold_crossdomain_ladder(
         trace=trace,
         granted=granted,
     )
+
+
+def _apply_crossdomain_render(text: str, result: Mapping[str, Any]) -> str:
+    """The rung's own rendered block, folded above the escalate marker, from the
+    ALREADY-COMPUTED `result` `_run_crossdomain_ladder` (above) returned - this
+    function never calls the ladder itself, so running it early (before the miss text)
+    and folding its render late (after) never probes twice for one fact."""
     render = result.get("render")
     if not isinstance(render, Mapping):
         return text
@@ -824,12 +874,32 @@ def answer_for(
     full_payload = (
         {**payload, "fetch": fetch_item} if (via_error_fragment or via_fetched_empty) else payload
     )
+    contact_id = (ctx.get("contact") or {}).get("id") if isinstance(ctx, Mapping) else None
+    space_id = business_services.fetch_space_id(db) if db is not None else None
+    # Hand pass 9, item 2: the ladder runs BEFORE the miss text - matching main's own
+    # sequencing (`complete_answer` calls `run_crossdomain` ahead of `_run_miss_half`) -
+    # so `_apply_crossdomain_rung`'s own `parser["routing"]["suggested_team"] = rung_team`
+    # mutation (`lanes/business/answer.py`, unchanged from main) lands BEFORE
+    # `not_found_error_message` reads `routing.suggested_team` for its own escalate
+    # sentence. See `_run_crossdomain_ladder`'s own docstring for the measured main
+    # citation. The render itself is folded onto `text` at the very end, from this SAME
+    # `crossdomain_result` - never a second `run_crossdomain` call.
+    crossdomain_result = _run_crossdomain_ladder(
+        parser=parser,
+        resolved=_ladder_resolved(resolved, raw_fragment),
+        entities_names=entities_names,
+        crossdomain_ladder=crossdomain_ladder,
+        ctx=ctx,
+        services=services,
+        contact_id=contact_id,
+        space_id=space_id,
+        trace=trace,
+        dry_run=dry_run,
+    )
 
     not_found = answer_mod.not_found_error_message(
         full_payload, parser=parser, resolved=resolved, gate=_breakdown_gate(gate, raw_fragment)
     )
-    contact_id = (ctx.get("contact") or {}).get("id") if isinstance(ctx, Mapping) else None
-    space_id = business_services.fetch_space_id(db) if db is not None else None
     offer = miss_mod.run_miss_lane(
         not_found,
         parser=parser,
@@ -880,7 +950,7 @@ def answer_for(
         and question.kind == "team_pick"
         and carried_pending is not None
         and pending.is_roster(carried_pending.kind)
-        and carried_pending.payload.get("escalate_offered") is not True
+        and not _answered_fresh(parser)
     ):
         # Contract 36 / `turn/compose.py`'s own identical rule (hand pass 2, item 8): a
         # roster survives its own pick AND a miss over it - the escalate offer is a
@@ -888,23 +958,35 @@ def answer_for(
         # a picked position that missed swapped the still-open roster for a bare
         # `team_pick`, and a LATER, different position had nothing left to match against
         # (hand pass 9 D2, live turns 93d45184-5530-4d04-8f6d-bdda695d241e /
-        # 640b6464-fc9b-44c8-9aaf-9dce42358d51). `_miss_question` only ever mints this
-        # exact bare-"Yes" `team_pick` shape on its last, catalog-only branch - a fresh
-        # did-you-mean/require-specific roster or a member offer is a genuinely NEW
-        # question and replaces the carry as it already does.
+        # 640b6464-fc9b-44c8-9aaf-9dce42358d51) - the roster's own SUBSEQUENT position no
+        # longer had anything to be read against once `state.pending` became the
+        # one-option `team_pick`, so `decide()` fell to a CARRY reading and reused the
+        # FIRST pick's stale focus verbatim (measured: `rules_fired: ["answer_pending_
+        # not_an_answer", "reuse_alive"]`, `decision: {"kind": "carry", "why":
+        # "nothing_answered"}`) instead of replacing it with the SECOND pick's own
+        # product. `_miss_question` only ever mints this exact bare-"Yes" `team_pick`
+        # shape on its last, catalog-only branch - a fresh did-you-mean/require-specific
+        # roster or a member offer is a genuinely NEW question and replaces the carry as
+        # it already does.
         #
-        # `carried_pending.payload["escalate_offered"]` is ALREADY `True` for a
-        # did-you-mean roster (`_miss_question`'s OWN roster-mint stamps it there at
-        # BIRTH, offering escalate from the very first ask - AC-1703's "reply with a
-        # code to continue, or would you like me to escalate") - answering ONE of
-        # those and missing has already run the did-you-mean's own course, and a
-        # fresh `team_pick` escalate offer is the correct NEXT question, not a
-        # lingering roster (AC-1704, `test_rearch_r7_live_parity_replay.py::
-        # TestAnsweringTheCertificateDidYouMeanContinuesTheOriginalAsk`, pinned
-        # BEFORE hand pass 9 and still binding). D2's OWN roster (`_offer_answer`'s
-        # require-specific "please choose", never AC-1703's escalate offer at ask
-        # time) carries no such flag until a pick's own miss earns it here for the
-        # FIRST time - which is exactly the gap this patches.
+        # The guard is `_answered_fresh`, not `payload.get("escalate_offered")`
+        # (coder 35's own first attempt, flagged as a live conflict, not committed):
+        # measured directly (temporary debug prints, removed before commit) that D2's
+        # own photo roster and AC-1704's certificate roster are BYTE-IDENTICAL on
+        # `escalate_offered` - BOTH already carry `True` from birth, because both are
+        # minted by `_miss_question`'s own did-you-mean/require-specific branch, which
+        # stamps it unconditionally. The field that actually tells them apart is the
+        # ANSWERING message's own verdict, not the roster's payload: AC-1704's "position"
+        # case answers with `reference_target: "dym"` (the parser's own dym-slot marker,
+        # `lanes/business/answer.py`'s S5 comment: "on a dym pick the LLM emits the
+        # candidate's DYM slot and the parser has already spent it resolving the
+        # entity") and its "code" case answers with a genuinely typed entity
+        # (`current_message: True`) - main's own `fresh_typed` gate (`tail/compile_
+        # state.py::_picker_carry`, this test module's docstring measurement note 1)
+        # retires a roster on EITHER signal. D2/D3's own bare positional picks
+        # (`reference_positions` only, no `reference_target`, no entities) carry
+        # neither, so the roster stays open for a later, different position - the
+        # SAME rule main already applies, not a new heuristic.
         from dataclasses import replace as _replace
 
         question = _replace(
@@ -912,17 +994,5 @@ def answer_for(
             team=carried_pending.team or question.team,
             payload={**carried_pending.payload, "escalate_offered": True},
         )
-    text = _fold_crossdomain_ladder(
-        text,
-        parser=parser,
-        resolved=_ladder_resolved(resolved, raw_fragment),
-        entities_names=entities_names,
-        crossdomain_ladder=crossdomain_ladder,
-        ctx=ctx,
-        services=services,
-        contact_id=contact_id,
-        space_id=space_id,
-        trace=trace,
-        dry_run=dry_run,
-    )
+    text = _apply_crossdomain_render(text, crossdomain_result)
     return turn_compose.Answer(text=text, question=question)
