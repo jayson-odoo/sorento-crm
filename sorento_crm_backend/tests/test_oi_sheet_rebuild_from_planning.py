@@ -43,6 +43,7 @@ from app.models.project_so import (
     DECISION_SUPERSEDED,
     INQUIRY_CANCELLED,
     IV_DELAY,
+    IV_ORDER_BACK,
     IV_RESERVE_AND_ORDER,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -2184,3 +2185,55 @@ def test_board_row_neither_equal_nor_summing_is_still_reported():
         assert len(rows) == 1, rows
         assert str(rows[0].id) == str(board_row.id)
         assert capture.codes() == [oc.TOP_UP_SUM_MISMATCH], capture.calls
+
+
+# --------------------------------------------------------------------------- #
+# Rehearsal rerun: AC-RB-43 (a buy 0 line is never a top-up line)              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("shape", ["order_back", "dated_order"])
+def test_buy_zero_line_is_never_a_top_up_line(shape):
+    """AC-RB-43 (rehearsal rerun: SO419851, three ORDER BACK rows of 3, decision buy 0,
+    reported on every upload). A line the active decision plans at buy 0 has nothing to top
+    up: the top-up rule never runs on it, no sum is taken (R4: an all-from-stock line is
+    left as today), and the sheet row reads `already_raised`. Today: `top_up_sum_mismatch`
+    (3 + 3 != 0, or 5 + 3 != 0) - the board row is left untouched either way."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="500", required_date=date(2026, 9, 10))
+        mirror = _adopted_mirror(w, order, line)
+        decision = _decision(w, mirror, line, buy_qty="0", required_date=date(2026, 9, 10))
+        board_row = w.board_row(mirror, qty="3")
+        board_row.delivery_date = date(2026, 9, 10)
+        board_row.supply_decision_id = decision.id
+        if shape == "order_back":
+            board_row.verb = IV_ORDER_BACK
+            board_row.note = "Order-back: lent 3 to SO419852 line 4"
+            sheet_row = (
+                order.so_number, w.product.product_code, 3, "ORDER BACK",
+                w.warehouse.warehouse_code, "",
+            )
+        else:
+            sheet_row = (
+                order.so_number, w.product.product_code, 5, date(2026, 9, 10),
+                w.warehouse.warehouse_code, "",
+            )
+        w.db.flush()
+        assert not (board_row.note or "").startswith(importer._MIGRATION_STAMP), (
+            "fixture sanity: the board row must not be sheet-stamped"
+        )
+        before = _row_snapshot(board_row)
+        capture = _Capture()
+        data = sheet([sheet_row])
+
+        result = _apply(w, data, outcome=capture, file_name="journey.xlsx")
+
+        assert result["rows_raised"] == 0, result
+        rows = [r for r in w.rows() if str(r.so_line_id) == str(mirror.id)]
+        assert len(rows) == 1, rows
+        assert str(rows[0].id) == str(board_row.id)
+        assert capture.codes() == [oc.ALREADY_RAISED], capture.calls
+        w.db.refresh(board_row)
+        after = _row_snapshot(board_row)
+        assert before == after, (before, after)
