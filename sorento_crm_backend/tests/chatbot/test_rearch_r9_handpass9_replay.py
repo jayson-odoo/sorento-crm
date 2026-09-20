@@ -248,6 +248,21 @@ class TestPhotoRosterStaysAnswerableAndNamesThePickedProduct:
         # (the roster option this turn actually picked) returns the real row, so the
         # assertion below tests the engine's own carry-and-refetch behaviour, not the
         # test double.
+        #
+        # `"file_path"` on the row (re-pinned, coder 36's ladder-before-miss fix
+        # session, 21 Sep 2026): measured directly that
+        # `sorento_crm_mcp.presenters.present_response`'s own `_Builder.attach`
+        # (`sorento_crm_mcp/sorento_crm_mcp/presenters.py:326`) only appends to
+        # `b.attachments` when the row's `file_path`/`url` is filled - without one
+        # (the shape this double used before) `b.attachments` stays empty and the
+        # intro falls through to `_DEFAULT_INTRO["crm_master_product_attachments_
+        # list"]` ("Here are the product files I found.", `presenters.py:73`) instead
+        # of the "has real attachments" intro (`presenters.py:1611-1613`,
+        # `"I have attached the file(s) below."`) production's own genuinely-filed
+        # live turns render. Adding the same `file_path` a real DB-backed attachment
+        # row always carries (`test_product_attachment_picker_stamp.py::
+        # _seed_file_for`'s own convention) makes this double produce the SAME live
+        # intro, not a fixture invention.
         def _second_pick_other(name: str, args: dict[str, Any]) -> str:
             if name == "crm_master_product_attachments_list" and has_id in (
                 args.get("product_ids") or []
@@ -259,6 +274,7 @@ class TestPhotoRosterStaysAnswerableAndNamesThePickedProduct:
                             "attachment": {
                                 "attachment_type": "Product Photos",
                                 "original_filename": f"{has_code}.jpg",
+                                "file_path": f"https://example.test/zzt-{has_code}.jpg",
                             },
                             "company_name": "Sorento",
                         }
@@ -283,9 +299,39 @@ class TestPhotoRosterStaysAnswerableAndNamesThePickedProduct:
             f"real file, per main's own carry rule (module docstring measurement "
             f"note 1): {reply3!r}"
         )
-        assert "I have attached the file(s) below." in reply3 and has_code in reply3, (
-            f"D2: the second pick must attach {has_code}'s own real photo: {reply3!r}"
+        # "I have attached the file(s) below." IS the live intro here (re-pinned,
+        # coder 36's ladder-before-miss fix session, 21 Sep 2026) - only once the
+        # double's row carries a real `file_path` (see `_second_pick_other`'s own
+        # comment above for the measured presenter mechanics); pinning it before that
+        # fix would have asserted a shape the double could never produce, whatever the
+        # engine did. Three things matter, none weakened: the SECOND pick's own
+        # product names the reply (never the first pick's, `no_code`), and the
+        # `send_attachments` action carries that SAME product's Product Photos file,
+        # not just text that mentions it.
+        assert "I have attached the file(s) below." in reply3, reply3
+        assert has_code in reply3, (
+            f"D2: the second pick must name {has_code}'s own product in the reply, "
+            f"not repeat the first pick's: {reply3!r}"
         )
+        assert no_code not in reply3, (
+            f"D2: the reply must never carry the FIRST pick's own product "
+            f"({no_code}) once a SECOND, different pick has answered: {reply3!r}"
+        )
+        send_attachments = [
+            a for a in (result3.actions or []) if isinstance(a, dict) and a.get("kind") == "send_attachments"
+        ]
+        assert send_attachments, f"D2: the second pick must carry a send_attachments action: {result3.actions!r}"
+        attached_files = [
+            f for a in send_attachments for f in (a.get("attachments_src") or []) if isinstance(f, dict)
+        ]
+        assert any(
+            f.get("attachmentType") == "Product Photos" and has_code in str(f.get("filename") or "")
+            for f in attached_files
+        ), (
+            f"D2: the send_attachments action must carry {has_code}'s own Product "
+            f"Photos file, not the first pick's: {attached_files!r}"
+        )
+
 
 
 # --------------------------------------------------------------------------- #
