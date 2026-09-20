@@ -2392,6 +2392,44 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
+def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
+    """True when a token the customer typed missed AND has real did-you-mean neighbours.
+
+    AC-1703. The described-set branches below all assert something about the SET the
+    question described - "I don't know 'new' as a product type", "I don't know 'Technical
+    drawings' as a document type", "Couldn't find a SRTWT165-FT with a certificate". Every
+    one of them is a false statement when the SUBJECT itself is a code the catalogue does
+    not carry: nothing was described, a token was mistyped, and production's own answer is
+    the did-you-mean for that token ('Couldn't find "X" (product). Did you mean ...').
+    Three live F8 turns came back with the set answer over the top of it
+    (5cde645f "Incoming srtwt7202-new", 0d4abc93 "Technical drawings sttwc286-SH",
+    55ca1323 "SRTWT165-FT CERT"), and `build_suggest_offer` cannot recover any of them:
+    its own `if not is_clar and not require_spec` gate means a clarify SUPPRESSES the
+    did-you-mean candidates entirely, so the two can never both reach the customer.
+
+    Read through `miss_resolutions` + `_ms_is_exact`, the same two `build_suggest_offer`'s
+    own D1 arm is built on, so this guard cannot claim a did-you-mean D1 then declines to
+    print. `allowed_lookup` narrows it the same way D1 does.
+    """
+    r = resolved if isinstance(resolved, dict) else {}
+    g = gate if isinstance(gate, dict) else {}
+    allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
+    allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
+    for res in _ms_miss_resolutions(r, gate=g):
+        candidates = [
+            *jsc.array(jsc.get(res, "matches")),
+            *jsc.array(jsc.get(res, "alternatives")),
+        ]
+        for match in candidates:
+            if not jsc.truthy(jsc.get(match, "canonical_code")) or _ms_is_exact(match):
+                continue
+            entity_type = jsc.get(match, "entity_type")
+            if allowed is not None and jsc.truthy(entity_type) and entity_type not in allowed:
+                continue
+            return True
+    return False
+
+
 # F1 (attribute-first asks, AC-1319): a HAS turn's noun per leg, for the miss sentence.
 # `attachment_type` has no fixed noun - its own value already IS the customer's label.
 _PREDICATE_NOUN: dict[str, str] = {
@@ -3213,9 +3251,16 @@ def not_found_error_message(
         else:
             require_specific = jsc.get(g, "require_specific")
             predicate = jsc.get(g, "predicate")
+            # AC-1703: the four described-set answers below all state something about the
+            # SET the question described, and none of them is true when the SUBJECT is a
+            # code the catalogue does not carry. A mistyped token with real neighbours is
+            # production's did-you-mean, and it has to be reachable: `build_suggest_offer`
+            # skips its own D1 candidates entirely whenever a clarify fired here, so the
+            # set answer does not merely come FIRST, it silences the other one.
+            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(r, g)
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
-            elif isinstance(predicate, dict) and "schemes_on_file" in predicate:
+            elif described_set_answers and "schemes_on_file" in predicate:
                 # F3 (AC-1321): a certificate SCHEME word the register cannot read -
                 # names what IS on file instead of the generic "no {attach_noun}
                 # matched these" below, which would say nothing about schemes at all.
@@ -3230,7 +3275,7 @@ def not_found_error_message(
                     f"Schemes on file: {schemes_text}. "
                     f"Would you like me to escalate to {team} team?"
                 )
-            elif isinstance(predicate, dict) and "attachment_types_on_file" in predicate:
+            elif described_set_answers and "attachment_types_on_file" in predicate:
                 # R6/AC-1329 (console fix round 2): the unrecognised word is an
                 # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
                 # document-type miss answers the wrong question with the
@@ -3251,7 +3296,7 @@ def not_found_error_message(
                 )
                 is_clarification = True
             elif (
-                isinstance(predicate, dict)
+                described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
                 and jsc.array(jsc.get(predicate, "unrecognized_terms"))
             ):
@@ -3288,7 +3333,7 @@ def not_found_error_message(
                     )
                 is_clarification = True
             elif (
-                isinstance(predicate, dict)
+                described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
                 and not jsc.array(jsc.get(predicate, "unrecognized_terms"))
             ):
