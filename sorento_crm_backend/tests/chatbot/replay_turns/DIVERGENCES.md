@@ -699,3 +699,26 @@ session to rule out before signing.
 - console/handbuilt-rp-004-two-domains-in-one-message-fan-out-in-message-order-contract-122.json: pending: old `product_pick` roster echoed the fully unresolved `SRTWT2634` token back as its own single option (F8); the current engine arms no such roster - the two domains (inventory, incoming) each miss, climb to the `purchase_order` ladder rung and also miss, and the turn now offers a `team_pick` escalation ("stock"/"incoming stock"/"No it's okay") instead, measured directly, no leaked product code (signed captain, 20 Sep 2026: AC-1691 / AC-1692 of PLAN-chatbot-answer-half-reattach (owner approved), a roster never has fewer than two options and an unplaced token is never offered back)
 - console/handbuilt-rp-004-two-domains-in-one-message-fan-out-in-message-order-contract-122.json: tools: the old recording expected zero tool calls (the roster short-circuited before any fetch); re-measured 20 Sep 2026 against the current engine (rung fix applied): the two primary domains each call their own tool (`crm_inventory_stock_balance_list`, `crm_incoming_stock_list`) with the unresolved token skipped `missing_or_bad_uuid` (`total_uuids_passed: 0`) and the `purchase_order` ladder rung no longer runs at all, since no entity in either primary spec resolved (AC-1688) - `tool_results` corrected to the two real calls with empty (`has_result: false`) envelopes; reply text and the `team_pick` pending are unchanged from the prior re-pin (signed captain, 20 Sep 2026: AC-1691 / AC-1692 of PLAN-chatbot-answer-half-reattach (owner approved), a roster never has fewer than two options and an unplaced token is never offered back; rung refused when no entity resolved, AC-1688)
 - console/owner-15sep-chain-010-console-check-1789443498.json: step 4: tools: this case's `pending` divergence (every step, including step 4) was already signed 17 Sep 2026 above (`unseeded-code-plus-16sep-narrow-ruling`) - step 4's OWN new divergence this round is `tools` only: the old recording expected zero tool calls for "last in for SRTWC8517" (`spo_allocation` domain, unresolved product); the current engine now calls `crm_procurement_spo_allocations_last_receipt_list` with the token skipped `missing_or_bad_uuid` (`total_uuids_passed: 0`) - `tool_results` corrected to that one real call with an empty (`has_result: false`) envelope, matching the measured clean-miss reply ("No matching results found.\nI could not find SRTWC8517.", no escalation offer since `spo_allocation` has no escalation team) (signed captain, 20 Sep 2026: AC-1691 / AC-1692 of PLAN-chatbot-answer-half-reattach (owner approved), a roster never has fewer than two options and an unplaced token is never offered back)
+
+## R5 via_fetched_empty re-pin, 20 Sep 2026 (tester 33, captain-directed re-record, AC-1707)
+
+Four cases pinned the OLDER `turn_compose.compose`-only team_pick-PER-DOMAIN shape for a
+resolver that settled a real subject whose fetch then genuinely ran and returned ZERO rows
+(a shape `answer_bridge.answer_for` did not yet have a trigger for when these were
+recorded). R5 (`393d063be`, AC-1699/AC-1702) added `via_fetched_empty`, so this SAME
+zero-row shape is now caught by the bridge and answered with production's own
+`not_found_error_message` + `miss_suggest.run_miss_lane` composer instead - the standard
+"Here's what you want:\n• {axis}: {value}\n\nBut no {domain} matched these. Would you
+like me to escalate to {team} team?" text, whose own pending is the plain one-option
+`team_pick` `["Yes"]` shape every other single-domain miss in this corpus already carries
+(e.g. `handbuilt-rp-004` above), not a domain-labelled roster option. For each of the 4,
+re-measured directly against `f269bc008`: `branch_kind`, `action_kinds`, `tools` (tool name
++ arg keys) and `entity_ids` all still match the recording byte-for-byte - `pending.
+option_labels` is the ONLY field that diverges, on exactly the one step named. `pending`
+corrected to `["Yes"]` on that step in each file (single-field diff, verified via `git diff
+--stat`: one line changed per file).
+
+- console/case-034-a5-po-for-a-product-and-no-supplier-for-a-dealer.json: step 1: pending: `["outstanding purchase orders"]` -> `["Yes"]`, the `via_fetched_empty` miss composer's own plain escalate offer replacing the old per-domain-labelled roster option (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
+- console/case-043-stock-then-po-carries-the-product.json: step 2: pending: `["outstanding purchase orders"]` -> `["Yes"]`, same trigger, same fix (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
+- console/case-058-d17-parser-driven-word-answers-to-the-open-scope-detail-questions-and-a-new-ask.json: step 4: pending: `["orders"]` -> `["Yes"]`, same trigger, same fix - steps 5/6 of this same chain still match the recording unchanged, confirming the divergence is this ONE step's own fetch outcome, not a chain-wide cascade (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
+- console/case-072-r24-a-business-query-under-an-open-offer-is-a-new-ask-hanlim-delivery.json: step 2: pending: `["orders"]` -> `["Yes"]`, same trigger, same fix (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
