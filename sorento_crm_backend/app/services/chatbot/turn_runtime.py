@@ -1181,9 +1181,10 @@ def make_tool_runner(
         page_ids: list[str] = []
         carry = spec.filters.get("set_page")
         if isinstance(carry, dict):
-            page_predicate, page_ids = page_the_set(
-                db, carry, access_levels=list(verdict.get("access_levels") or [])
-            )
+            # Security B2: the entitlement comes off the CARRY (what page 1 answered
+            # under), never off this turn's verdict - a bare "more" states no tier, and
+            # an empty list is read downstream as "no tier filter at all".
+            page_predicate, page_ids = page_the_set(db, carry)
         lane_out = lane_parse_output(verdict, focus=focus, domain=domain)
         lane_out = _spec_window(lane_out, spec)
         answered = spec.filters.get("outstanding")
@@ -1232,11 +1233,17 @@ def make_tool_runner(
         # genuine absence: answered with the SAME `not_found` fragment the
         # unfiltered-answer guard below hands to production's own miss composer, so
         # the words are production's and no tool call goes out.
+        #
+        # Security B2, the same rule one seam over: a carried set whose page 1
+        # entitlement was never recorded cannot be re-counted honestly, and a page with
+        # no ids leaves the fetch with NO entities at all - the most unfiltered read
+        # there is. `page_the_set` refuses it; this is where that refusal becomes the
+        # same production miss.
         if (
             spec.filters.get("tier")
             and isinstance(tier_gate_value, dict)
             and not tier_gate_value.get("access_levels_recomposed")
-        ):
+        ) or (page_predicate is not None and page_predicate.get("entitlement_missing")):
             fragment: dict[str, Any] = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
@@ -1362,8 +1369,17 @@ def spec_tier_matched(resolved: Any) -> bool:
 SET_PAGE_SIZE = 5
 
 
+def _entitled_names(values: Any) -> list[str]:
+    """The access-level NAMES in `values`, trimmed, non-empty, in order."""
+    return [v for v in jsc.array(values) if isinstance(v, str) and v.strip()]
+
+
 def set_page_carry(
-    predicate: dict[str, Any] | None, spec: FetchSpec, scope_terms: list[str]
+    predicate: dict[str, Any] | None,
+    spec: FetchSpec,
+    scope_terms: list[str],
+    *,
+    access_levels: Any = None,
 ) -> dict[str, Any] | None:
     """Where a counted-set answer got to, for `focus.set_page` (AC-1317).
 
@@ -1376,6 +1392,21 @@ def set_page_carry(
     an empty `scope_terms` describes "every product that has stock" and the next "more"
     pages the whole catalogue. A spec tier reached with nothing to scope by is a miss, not
     a set.
+
+    **Security B2 (re-check round, 20 Sep 2026): `access_levels` is part of the
+    description, not beside it.** The same `require` leg and the same class words read
+    under two entitlements are two different populations, so the levels page 1 actually
+    answered under (`lanes/business._fetch_semantic_input`'s own, off
+    `tier_gate.access_levels_recomposed`, carried out as the envelope's
+    `access_levels_used`) belong INSIDE `set_key` - main records the same fact as
+    `access_levels` on its own flat carry (`lanes/business/resolve_gate._set_page_reply`
+    reads it back as the next page's `tier_gate`). Without it the "more" turn had nothing
+    to recount by and fell to the PARSER's `access_levels`, which is empty in 249 of 249
+    real captures: `product_predicate_service._access_level_codes` reads an empty name
+    list as "no tier filter", so page 2 of a promotion set counted and named products
+    whose only promotion is restricted to a tier the contact does not hold. The key is
+    ALWAYS written, empty list included - a carry with no levels recorded is refused by
+    `page_the_set` rather than read as "no restriction".
     """
     if not predicate or not scope_terms:
         return None
@@ -1391,23 +1422,59 @@ def set_page_carry(
             "scope_terms": list(scope_terms),
             "domain": spec.domain,
             "set_noun": set_noun_for(labels),
+            "access_levels": _entitled_names(access_levels),
         },
         "offset": min(SET_PAGE_SIZE, total),
     }
 
 
-def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: list[str]):
+def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = None):
     """The next page of a carried set: `(predicate, product_ids)`.
 
     The set is re-counted from its own description, which is what makes the carry two
     small values instead of a list - and what makes a page honest when the catalogue
     moved between the two turns.
+
+    **Security B2: the entitlement is part of that description.** The recount runs under
+    the levels the CARRY recorded (`set_key.access_levels`, written by `set_page_carry`
+    from the levels page 1's own fetch used), never under anything this turn's parser
+    happened to state - a "more" states nothing, and an empty name list reaches
+    `product_predicate_service._access_level_codes` as "no tier filter at all", which is
+    how page 2 of a promotion set widened past page 1. A carry that records NO levels is
+    refused (`qualifying_total: 0`, no ids, `entitlement_missing`), so the runner answers
+    the miss instead of reading the set unfiltered.
+
+    `access_levels` is for a caller that already knows the entitlement and holds a carry
+    written before it was recorded: the first page under it STAMPS the carry, so every
+    later page of that same carry recounts under the same authority. Production's own
+    "more" (`make_tool_runner.runner`) passes nothing at all.
     """
     from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP
     from app.services.product_predicate_service import resolve_product_set
 
     key = carry.get("set_key") or {}
     offset = int(carry.get("offset") or 0)
+    entitled = _entitled_names(key.get("access_levels"))
+    if not entitled:
+        stamped = _entitled_names(access_levels)
+        if stamped:
+            key["access_levels"] = list(stamped)
+            entitled = stamped
+    if not entitled:
+        return {
+            "require": key.get("require") or {},
+            "qualifying_total": 0,
+            "truncated": False,
+            "unrecognized_terms": [],
+            "class_labels": [],
+            "entitlement_missing": True,
+            "page": {
+                "start": offset + 1,
+                "end": offset,
+                "new_offset": offset,
+                "set_noun": key.get("set_noun") or "products",
+            },
+        }, []
     outcome = resolve_product_set(
         db,
         require=key.get("require") or {},
@@ -1417,7 +1484,7 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: list[str]
         limit=SET_PAGE_ID_CAP,
         product_ids=None,
         brand=None,
-        access_levels=access_levels,
+        access_levels=entitled,
     )
     total = int(outcome.get("qualifying_total") or 0)
     ids = [
@@ -1482,8 +1549,17 @@ def _tier_gate(
     entitled compound names and `entitled_tiers` the tiers those map to
     (`lanes/business/tier_gate.py`). A chosen tier outside `entitled_tiers` is dropped
     before the recompose, so a pick off a stale or blind menu cannot widen the read.
-    The verdict is the fallback for a caller with no resolver answer at all (a test
-    double, a turn whose resolver raised), never the primary.
+
+    **Security S4 (re-check round, 20 Sep 2026): no resolver tier gate means NO
+    entitlement, never the parser's claim.** The verdict used to be the fallback here for
+    "a caller with no resolver answer at all", and that left the one exposure B1 was
+    about: a message that STATES a tier became the authority whenever
+    `resolver_tier_gate` is not a dict, which three production shapes reach - the
+    resolver raising (`turn_runtime.py:776-778` logs it and returns `payload=None`), a
+    plan naming both `ideate` and `promotion` (the `ideate` entry builds no tier gate,
+    `lanes/business/__init__.py:45-49`), and `resolve_gate.run`'s own `set_page` early
+    return (`resolve_gate.py:990`, ahead of the `access_check` block). All three now
+    recompose to `[]`, and the runner's fail-closed guard above answers the miss.
     """
     tier = spec.filters.get("tier")
     if not tier:
@@ -1491,18 +1567,9 @@ def _tier_gate(
     from app.services.chatbot.lanes.business.tier_gate import recompose
 
     resolver_gate = resolver_tier_gate if isinstance(resolver_tier_gate, dict) else None
-    entitled_names = (
-        jsc.array(resolver_gate.get("name")) if resolver_gate is not None else None
+    entitled = (
+        _entitled_names(resolver_gate.get("name")) if resolver_gate is not None else []
     )
-    entitled = [
-        a
-        for a in (
-            entitled_names
-            if entitled_names is not None
-            else (verdict.get("access_levels") or [])
-        )
-        if isinstance(a, str) and a.strip()
-    ]
     # AC-1698 ("1 and 2", "all"): `narrow_by_tier`'s own settle carries every chosen
     # tier, a list once more than one was picked (a single pick stays the scalar
     # `filter_value` always was) - `recompose` already takes several (`jsc.array`),
@@ -1934,6 +2001,13 @@ def envelope_of(
         # own `fetch=` kwarg expects. `None` on every other fetch, which is the ONLY
         # value `turn/compose.py` (which never reads this key) will ever see.
         "tier_ask_fetch": fetched if fragment.get("_fetch_arm") == "tier-ask" else None,
+        # Security B2 (AC-1333's own rule on main, `lanes/business/__init__.py:1449-
+        # 1455`): the RECOMPOSED access levels this fetch actually went out with
+        # (`_fetch_semantic_input`'s own, off `tier_gate.access_levels_recomposed` when
+        # a tier gate ran). `engine.py` records it on the set-page carry so a later
+        # "more" recounts the set under the SAME entitlement rather than under the
+        # parser's own, empty, list. `None` on every arm that never called the tool.
+        "access_levels_used": fetched.get("access_levels"),
     }
     if raw_fragment is not None:
         # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`
