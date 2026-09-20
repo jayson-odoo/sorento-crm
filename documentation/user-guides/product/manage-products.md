@@ -99,7 +99,48 @@ once. See [Run a reorder plan](../supply-chain/run-a-reorder-plan.md).
 
 ## Bulk import
 
-To create or update many products at once from Excel, see [Upload the product master](../purchasing/upload-product-master.md). That flow runs in the background and reports progress in a **Latest products import** panel on this page.
+To create or update many products at once from Excel, see [Upload the product master](../purchasing/upload-product-master.md). That flow runs in the background and reports progress in a **Latest products import** panel on this page. Manual Import stays available as the fallback even when Pull from AutoCount is turned on for your company.
+
+## Pull from AutoCount
+
+If your company is connected to AutoCount, you can pull the current items book straight from AutoCount instead of exporting a macro workbook and uploading it by hand. You review what would change before anything is applied.
+
+**Who can do this:** anyone holding the **Pull from AutoCount** permission (`master_data.products.autocount_pull`) - granted automatically to every role that already holds product **Import**, plus admin. You need exactly one company selected; with more than one company in scope Sorento refuses with "Select a single company before pulling from AutoCount." and starts nothing.
+
+### Start a pull
+
+1. With one company selected, open **Products**.
+2. In the **Actions** menu, the same menu that holds **Import**, click **Pull from AutoCount**.
+3. Sorento asks AutoCount for a fresh snapshot of the items book and takes you to the pull's page, showing **Building**. A snapshot for a large company (Mocha) can take up to about half an hour to prepare. You can leave and come back later - the same menu item then reads **Review pull** and takes you straight back to this pull.
+4. Once AutoCount finishes, Sorento reads the snapshot and works out what Confirm would do. Nothing in Sorento has changed yet. Status moves to **Preparing**, then **Awaiting confirm**.
+
+### Review before confirming
+
+The pull's page shows a status pill (**Building**, **Preparing**, **Awaiting confirm**, **Confirmed**, **Failed**, **Expired**), the snapshot time and how long it stays valid, a row of counters, and three tabs:
+
+* **Changes** - what Confirm will do: which items are **new**, which are **changed** (field by field, the current value next to the incoming one), which **failed**, and which AutoCount left out of the snapshot.
+* **Excel view** - the whole pull laid out with the same columns, in the same order, as the manual product-master template (**Item Code**, **Description**, **Desc 2**, **Item Group**, **Item Brand**, **Price**, **Is Active**), so you can read it side by side with the AutoCount workbook. **Download xlsx** saves it.
+* **Compare with my Excel** - drop the very file you would have uploaded by hand. Sorento lines it up against the pull and tells you either "100% match" or lists every difference (which field, your Excel's value, the pull's value). This is advisory only - it never blocks Confirm and nothing from your file is applied to any product. A duplicated Item Code in your file keeps the last row with that code. The result stays on the page after a reload, and the difference list can be downloaded as xlsx.
+
+**What the counters mean:**
+
+* **Received** - rows AutoCount sent for this pull.
+* **New** - would create a new product.
+* **Changed** - would update an existing product; see Changes for which fields.
+* **Unchanged** - already matches Sorento; not shown as a row.
+* **Failed** - could not be applied; see Changes for the reason.
+* **Price to 0** - the price would move from a non-zero value to zero.
+* **Left out by AutoCount** - AutoCount's own snapshot excluded this item; see Changes for why.
+
+### Confirm
+
+Click **Confirm**. Only the person who started the pull can confirm it. Sorento re-reads the same snapshot and applies it through the same rules as the product-master upload and the AutoCount integration itself: a description starting with `****` marks a product **Discontinued**, blank length/width/height are read from the description, and a brand-new product is linked to the tenant's default supplier. Products created or updated by a pull's Confirm record you as the creator or the last person who updated them.
+
+The pull's page then links to the **apply job** (**View apply job**), which shows the real per-item outcome. You get the same in-app notification and email you already get when any import finishes.
+
+**If a pull sits in Building for about an hour without finishing**, it becomes **Expired**. The page stops checking on it - start a fresh pull from the same **Pull from AutoCount** action.
+
+**If "Snapshot checksum did not match" appears** on the pull's page, Confirm still worked as reviewed - this is advisory only. If you see it often, tell your integrations admin.
 
 ## See also
 
@@ -110,4 +151,5 @@ To create or update many products at once from Excel, see [Upload the product ma
 * [Run a reorder plan](../supply-chain/run-a-reorder-plan.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Upload product attachments](../purchasing/upload-product-attachments.md)
+* [Pull stock from AutoCount](../warehouse/upload-stock.md#pull-from-autocount)
 * [Product Management - Data analysis for the AI assistant](data-analysis.md)

@@ -21,6 +21,7 @@ import {
   Download,
   SlidersHorizontal,
   MessageSquare,
+  CloudDownload,
 } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -67,6 +68,7 @@ import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -152,6 +154,9 @@ const ProductsList = () => {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
+
+  // AutoCount pull - one more secondary action beside Import (PLAN-autocount-pull-review.md).
+  const autocountPull = useAutocountPullAction('products', 'master_data.products.autocount_pull');
 
   // Back hands the list its own query string back, and the pager keeps rewriting
   // it, so the list reads it (S3-01). One hook, every list.
@@ -901,6 +906,16 @@ const ProductsList = () => {
                 onClick: () => setUploadDialogOpen(true),
                 dataGuideTarget: 'master-data.products.upload-button',
               },
+              ...(autocountPull.visible
+                ? [
+                    {
+                      key: 'autocount-pull',
+                      label: autocountPull.label,
+                      icon: CloudDownload,
+                      onClick: autocountPull.onSelect,
+                    },
+                  ]
+                : []),
             ]}
             bulkActions={[
               {

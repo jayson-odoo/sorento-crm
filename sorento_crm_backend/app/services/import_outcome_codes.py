@@ -87,6 +87,18 @@ ALREADY_EXISTS = "already_exists"
 #: board or by an earlier upload. Left exactly as it is, links included: the sheet is a
 #: migration, not a second opinion about a row somebody has since worked on.
 ALREADY_RAISED = "already_raised"
+#: The sales order line this row names sits beside a `Replaces N used` row (a replan that
+#: redirected a received line), but its quantity or date matches no fresh row's own
+#: `previous_qty` / `previous_delivery_date` exactly (`PLAN-oi-rollback-recover-planning-
+#: rows.md`, ruling R6). Nothing is guessed at: no used row is raised, and this row is
+#: named so purchasing and customer service know which delivery to look at by hand.
+NO_USED_DELIVERY_MATCH = "no_used_delivery_match"
+#: The sales order line this row names sits beside a top-up: every live ORDER / ORDER BACK
+#: row on the line carries the ACTIVE decision's own id, but the sheet row's quantity plus
+#: theirs does not equal the decision's `buy_qty` (`PLAN-oi-rollback-recover-planning-
+#: rows.md`, ruling R8). Nothing is guessed at: no row is raised, and this row is named so
+#: purchasing and customer service know which delivery to look at by hand.
+TOP_UP_SUM_MISMATCH = "top_up_sum_mismatch"
 #: The sales order line this row names already carries a MIGRATED row, on the line's own
 #: date rather than the sheet's - the 18 Sep 2026 reversal of section 7.4. Re-uploading
 #: the same sheet, corrected, is how that date gets fixed: the migrated row's own
@@ -147,6 +159,25 @@ UPSERT_ERROR = "upsert_error"
 ROW_ERROR = "row_error"
 DB_ERROR = "db_error"
 
+# --- AutoCount pull (PLAN-autocount-pull-review.md) -----------------------
+#: A row FoundryX itself left out of the snapshot (its own `excludedRows` /
+#: `excludedNonzeroCount`, e.g. a mapping failure on their side). Never applied by
+#: either preview or Confirm; rides on OUTCOME_SKIPPED, carrying FoundryX's own
+#: reason/message so the reviewer sees exactly what AutoCount refused and why.
+#: Upper-cased, unlike every other code here: it names FoundryX's own reason
+#: vocabulary rather than one of ours, so it is spelled the way FoundryX's own
+#: `excludedRows[].reason` codes are (see the cross-repo contract, Appendix A).
+AUTOCOUNT_EXCLUDED = "AUTOCOUNT_EXCLUDED"
+#: A stock row whose `location_code` matched a warehouse that exists but is inactive
+#: (AC-SP-2) - never reaches `bulk_import_stock`, FED or otherwise.
+AUTOCOUNT_NOT_APPLIED_INACTIVE = "AUTOCOUNT_NOT_APPLIED_INACTIVE"
+#: A stock row whose `location_code` matched no warehouse in this company at all.
+AUTOCOUNT_NOT_APPLIED_UNKNOWN = "AUTOCOUNT_NOT_APPLIED_UNKNOWN"
+#: A header `negativePairList` entry - FoundryX's own record of an (item, location) it
+#: read as negative on-hand. Display only, from the fetched header, never `bulk_import_
+#: stock`'s input (AC-SP-4).
+AUTOCOUNT_NEGATIVE = "AUTOCOUNT_NEGATIVE"
+
 LABELS: dict[str, str] = {
     CREATED: "Created",
     UPDATED: "Updated",
@@ -178,6 +209,8 @@ LABELS: dict[str, str] = {
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",
     ALREADY_RAISED: "Left alone: this line already carries an order inquiry",
+    NO_USED_DELIVERY_MATCH: "Beside a used-row line, but no exact quantity/date match",
+    TOP_UP_SUM_MISMATCH: "Beside a top-up line, but the quantities do not sum to plan",
     DELIVERY_DATE_UPDATED: "Delivery date corrected to the sheet's own",
     ALREADY_RECEIVED_GUARD: "Blocked: quantity already received",
     CHARGE_LINE: "Charge line: money on the order, no product",
@@ -195,6 +228,10 @@ LABELS: dict[str, str] = {
     UPSERT_ERROR: "Could not be saved",
     ROW_ERROR: "Row could not be written",
     DB_ERROR: "Database error",
+    AUTOCOUNT_EXCLUDED: "Left out by AutoCount",
+    AUTOCOUNT_NOT_APPLIED_INACTIVE: "Not applied: warehouse is inactive",
+    AUTOCOUNT_NOT_APPLIED_UNKNOWN: "Not applied: unknown location",
+    AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
 }
 
 

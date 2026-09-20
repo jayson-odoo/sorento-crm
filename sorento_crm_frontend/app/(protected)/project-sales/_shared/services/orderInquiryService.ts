@@ -579,6 +579,14 @@ export async function unplaceAllOrderInquiryRows(
  *     same affordance a rejected or settled row already uses, never a new trigger; the
  *     cell's own trigger is the muted `note` pill.
  *
+ * `PLAN-oi-cancelled-line-used-confirm.md` (AC-CL-1/4): every row in
+ * `OrderInquiryWorklistRow` gains `line_cancelled : boolean` - true when the sales order
+ * line this row sits on has `line_status = cancelled`. Greyed the same way a used row is
+ * (`opacity-60`), with its own muted `cancelled` pill beside the Qty cell (a plain mark,
+ * never clickable - unlike `used`, there is no note behind it to open). Excluded from the
+ * Buy card / `kind=buy` filter / month-tab Buy figure only - Purchased and Incoming still
+ * count it when it holds a link. Absent or false on every row before this plan.
+ *
  * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
  * no project at all. Permission is `projects.projects.view`, the same read the module
  * already grants.

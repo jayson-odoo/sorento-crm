@@ -222,7 +222,10 @@ class TestContractVersion22:
         assert res.status_code == 200, res.text
         body = res.json()
         # Bumped again (autocount-brands-ingest, AC-13): "2.3" adds `brands`.
-        assert body["version"] == "2.3"
+        # Bumped again (ingest-products-code-wins, SR0): "2.4" adds products
+        # code-wins deletion `codes` - unrelated to the PO/SPO link fields
+        # this test pins, only the version literal needed to move.
+        assert body["version"] == "2.4"
         wanted = {
             "from_so_line_ref", "from_so_external", "from_po_line_ref", "from_po_number",
         }

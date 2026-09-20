@@ -185,6 +185,39 @@ from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import is_uuid, resolve_identifier
 
 
+# Lifted out of `bulk_import_products` (PLAN-autocount-pull-review.md, P11) so the
+# AutoCount pull's "Compare with my Excel" tab (`autocount_pull_compare.py`) applies the
+# SAME rules the manual import applies, rather than a second copy that can drift.
+
+def join_description_and_desc2(description: Optional[str], desc2: Optional[str]) -> str:
+    """The manual import's Desc 2 join: Description + a single space + Desc 2, stripped.
+    A blank Desc 2 leaves Description untouched."""
+    description = description or ""
+    if desc2:
+        return f"{description} {desc2}".strip()
+    return description
+
+
+def parse_manual_list_price(raw_price) -> Decimal:
+    """The manual import's Price parse: a blank cell reads as 0; a negative value (the
+    AutoCount "no price" sentinel) is clamped to 0. Raises on anything that is not a
+    number - the caller decides what a bad row means for it."""
+    if raw_price is None or str(raw_price).strip() == "":
+        return Decimal("0")
+    price = Decimal(str(raw_price))
+    if price < 0:
+        price = Decimal("0")
+    return price
+
+
+def is_active_from_manual_value(raw_active) -> bool:
+    """The manual import's Is Active rule: false only for the spellings
+    F/FALSE/0/N/NO (case-insensitive); everything else, including blank, is active."""
+    if raw_active is not None and str(raw_active).strip().upper() in ("F", "FALSE", "0", "N", "NO"):
+        return False
+    return True
+
+
 class ProductService:
     """Service for product operations."""
     
@@ -1646,20 +1679,12 @@ class ProductService:
                 product_name = (row.get("product_name") or row.get("Product Name") or row.get("Item Code") or product_code).strip() or product_code
                 description = row.get("description") or row.get("Description") or ""
                 desc2 = row.get("desc2") or row.get("Desc 2") or ""
-                if desc2:
-                    description = f"{description} {desc2}".strip()
+                description = join_description_and_desc2(description, desc2)
                 item_group = (row.get("item_group") or row.get("Item Group") or "").strip() or None
                 item_brand = (row.get("item_brand") or row.get("Item Brand") or "").strip() or None
                 raw_price = row.get("list_price") or row.get("Price") or row.get("price")
                 try:
-                    if raw_price is None or str(raw_price).strip() == "":
-                        list_price = Decimal("0")
-                    else:
-                        list_price = Decimal(str(raw_price))
-                    # A negative list price (e.g. the -1 "no price" sentinel from the
-                    # source system) is coerced to 0 rather than rejecting the row.
-                    if list_price < 0:
-                        list_price = Decimal("0")
+                    list_price = parse_manual_list_price(raw_price)
                 except Exception:
                     msg = f"Price must be a valid number, got '{raw_price}'"
                     errors.append(f"Row {idx} ({product_code}): {msg}")
@@ -1672,9 +1697,7 @@ class ProductService:
                     )
                     continue
                 raw_active = row.get("is_active") or row.get("Is Active") or row.get("Is active")
-                is_active = True
-                if raw_active is not None and str(raw_active).strip().upper() in ("F", "FALSE", "0", "N", "NO"):
-                    is_active = False
+                is_active = is_active_from_manual_value(raw_active)
 
                 if not item_group:
                     msg = "item_group is required"

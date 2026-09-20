@@ -358,9 +358,15 @@ def lock_product_code(db: Session, product_code: str) -> list[str]:
     on. A caller that UPDATED already-committed product rows still holds locks on rows
     the fresh session CAN see, so under the rolled-back test fixture the `after_update`
     re-derive can still queue behind a transaction that will never commit; a test in
-    that shape has to commit for real or drive derivation itself. Production is
-    unaffected either way - the `after_commit` hook runs after a real commit, and the
-    caller's locks are released by then.
+    that shape has to commit for real or drive derivation itself. Production used to be
+    affected too, not just tests: `product_spec_change_listener`'s `after_commit` hook
+    fires on releasing a SAVEPOINT as well as a real top-level commit, and
+    `MasterIngestService` gives every record its own SAVEPOINT - so this `FOR UPDATE`
+    used to run, from a fresh session, while the caller's own (still open) outer
+    transaction held the very lock it wanted, wedging the RQ worker for as long as
+    `lock_timeout` allowed. The listener now waits for the session's actual outermost
+    commit before deriving (see its module docstring), so by the time this runs the
+    caller's locks are genuinely released.
 
     Held to the end of the transaction, so the caller's own commit releases it. Taken
     per code and never for a whole batch, which is what keeps `derive_all` bounded: its

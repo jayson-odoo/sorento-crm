@@ -1657,6 +1657,13 @@ class SalesOrderService:
         """
         existing_lines = list(so.lines)
         matched_ids: set[str] = set()
+        # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, write site 1): every core
+        # line THIS call cancels, so `flag_rows_for_cancelled_lines` can be called once,
+        # after the flush below, with exactly the lines that transitioned here - never a
+        # line that was already cancelled before this call (the qty-to-zero write is
+        # gated on the transition already, and the removed-line write only ever reaches
+        # a line `removed` filtered to `!= CANCELLED`).
+        newly_cancelled_core_ids: set[str] = set()
         line_changes: list[tuple[SalesOrderLine, float, Optional[date], str, str]] = []
         added_lines: list[SalesOrderLine] = []
 
@@ -1751,6 +1758,7 @@ class SalesOrderService:
                     # line on the same order is edited, and `qty_ordered=0` alone would
                     # cancel it as a side effect of an edit that never touched it.
                     target.line_status = CANCELLED
+                    newly_cancelled_core_ids.add(target.id)
                 if "warehouse_code" in fields_set:
                     target.warehouse_id = warehouse_id
                 if "required_date" in fields_set:
@@ -1925,10 +1933,21 @@ class SalesOrderService:
                 })
                 if l.id in cancel_core_ids:
                     l.line_status = CANCELLED
+                    newly_cancelled_core_ids.add(l.id)
                 else:
                     self.db.delete(l)
 
         self.db.flush()
+        if newly_cancelled_core_ids:
+            # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6): flushed above, so this
+            # reads the just-written `line_status` rather than the pre-write value - not
+            # that it matters here (the ids are already known to have transitioned), but
+            # `flag_rows_for_cancelled_lines` itself only ever reads `OrderInquiryRow`.
+            from app.services.project_order_inquiry_service import (
+                flag_rows_for_cancelled_lines,
+            )
+
+            flag_rows_for_cancelled_lines(self.db, newly_cancelled_core_ids)
         # Symmetric with the prune above (issue #969): a NEW core line this call just
         # inserted is invisible to the board until something mirrors it, and today only
         # `adopt`/Re-sync did. Self-heals in the same transaction whenever this order

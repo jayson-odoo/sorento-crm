@@ -80,6 +80,7 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
     _is_company_scoped,
+    is_unclaimed_or_same_source,
 )
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
@@ -662,7 +663,8 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
 
 class MasterIngestService:
     def __init__(
-        self, db: Session, integration_id: Optional[str] = None, *, company_id: str
+        self, db: Session, integration_id: Optional[str] = None, *, company_id: str,
+        stamp_user_id: Optional[str] = None,
     ):
         self.db = db
         self.integration_id = integration_id
@@ -670,6 +672,10 @@ class MasterIngestService:
         # push meant for the other one would land there silently -- the failure
         # this whole anchor exists to prevent.
         self.company_id = company_id
+        # SR3 (PLAN-autocount-pull-review.md, AC-PC-4): the confirming user, for a real
+        # ingest triggered by a pull Confirm only. None (the default) is the ordinary
+        # FoundryX push - it stamps neither `created_by` nor `updated_by`, unchanged.
+        self.stamp_user_id = stamp_user_id
         self.refs = IntegrationReferenceService(db, company_id=self.company_id)
         # Set for the duration of a dry-run ingest. Read by _apply to decide
         # whether to capture a before/after diff; the rollback that makes the
@@ -683,8 +689,18 @@ class MasterIngestService:
         # and there is no row" - a real, if unusual, state on a fresh install.
         self._settings_cache: Any = _UNSET
 
+    #: B3 (small-fix track, PLAN-autocount-pull-review.md): how often `on_progress` fires
+    #: mid-batch. A full-size products preview is thousands of records; calling back on
+    #: every single one would be as noisy as never calling back at all.
+    PROGRESS_REPORT_EVERY = 500
+
     def ingest(
-        self, entity_type: str, records: list[dict], *, dry_run: bool = False
+        self,
+        entity_type: str,
+        records: list[dict],
+        *,
+        dry_run: bool = False,
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> IngestResult:
         """Apply a batch of canonical records.
 
@@ -695,6 +711,14 @@ class MasterIngestService:
         disagree with the sync it claims to predict, which is worse than no
         preview at all; the only way to know what the database would do is to
         ask it and then take it back.
+
+        ``on_progress`` (B3): called with ``(processed, total)`` every
+        `PROGRESS_REPORT_EVERY` records and once more at the end with
+        ``(total, total)`` - never more often than that, and never left out even when
+        `records` is empty or shorter than the report interval. Best-effort: an
+        exception from the callback is logged and swallowed, never allowed to fail the
+        ingest itself (the same contract every other observability hook in this
+        module keeps).
         """
         spec = ENTITY_SPECS.get(entity_type)
         if spec is None:
@@ -703,11 +727,14 @@ class MasterIngestService:
                 f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
             )
 
+        total = len(records)
         result = IngestResult(dry_run=dry_run)
         self._dry_run = dry_run
         try:
-            for raw in records:
+            for index, raw in enumerate(records, start=1):
                 result.records.append(self._ingest_one(entity_type, spec, raw))
+                if on_progress is not None and index % self.PROGRESS_REPORT_EVERY == 0:
+                    self._report_progress(on_progress, index, total)
         finally:
             self._dry_run = False
             if dry_run:
@@ -715,7 +742,18 @@ class MasterIngestService:
                 # partially-applied preview sitting in the session for whatever
                 # commits next.
                 self.db.rollback()
+        if on_progress is not None:
+            self._report_progress(on_progress, total, total)
         return result
+
+    @staticmethod
+    def _report_progress(
+        on_progress: Callable[[int, int], None], processed: int, total: int
+    ) -> None:
+        try:
+            on_progress(processed, total)
+        except Exception:  # pragma: no cover - defensive by design
+            logger.warning("ingest progress callback failed", exc_info=True)
 
     def _ingest_one(self, entity_type: str, spec: EntitySpec, raw: dict) -> RecordResult:
         source_ref = raw.get("source_ref") if isinstance(raw, dict) else None
@@ -860,7 +898,27 @@ class MasterIngestService:
         else:
             adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         if adopted is not None:
-            if self.refs.origin_of(entity_type=entity_type, entity_id=adopted) is not None:
+            origin = self.refs.origin_of(entity_type=entity_type, entity_id=adopted)
+            if origin is not None:
+                if entity_type == "products" and is_unclaimed_or_same_source(origin):
+                    # Code-wins (ingest-products-code-wins, SR0): the same
+                    # rule `MasterRefResolver` already applies to a document
+                    # line's product rung (`WARN_REF_MISMATCH`) - the
+                    # FoundryX AutoCount HTTP source exposes no numeric item
+                    # key, so a product push always arrives keyed by item
+                    # code even though the row is already claimed by an
+                    # `AED_SORENTO:<numeric key>` reference SO/PO line ingest
+                    # minted. The item code decides identity and the STORED
+                    # reference is kept -- `_link` is deliberately never
+                    # called here, so the incoming ref is never written.
+                    from app.services.master_ref_resolver import WARN_REF_MISMATCH
+
+                    self._finalize_product_derived(payload, columns, adopted)
+                    diff = self._diff(spec, adopted, columns)
+                    self._update(spec, adopted, columns)
+                    self._post_write_product_hooks(entity_type, adopted)
+                    warnings.append(WARN_REF_MISMATCH)
+                    return IngestOutcome.UPDATED, adopted, diff, warnings
                 # Already claimed by a different source document -- surfacing
                 # beats silently retargeting someone else's record.
                 raise ReferenceConflict(
@@ -1045,6 +1103,13 @@ class MasterIngestService:
                 # D18: only on create - an existing agent's provenance (manual,
                 # import) is never overwritten by a later AutoCount confirmation.
                 row.source = "autocount"
+            if self.stamp_user_id:
+                # AC-PC-4: only a pull Confirm sets `stamp_user_id` at all - the
+                # ordinary FoundryX push leaves both columns untouched, same as today.
+                if hasattr(row, "created_by"):
+                    row.created_by = self.stamp_user_id
+                if hasattr(row, "updated_by"):
+                    row.updated_by = self.stamp_user_id
             self.db.add(row)
             self.db.flush()
             return str(row.id)
@@ -1102,6 +1167,10 @@ class MasterIngestService:
                 setattr(row, column, value)
             if hasattr(row, "updated_at"):
                 row.updated_at = datetime.utcnow()
+            if self.stamp_user_id and hasattr(row, "updated_by"):
+                # AC-PC-4: `created_by` is never touched on an update - only `_insert`
+                # sets it, so a record's original creator survives every later sync.
+                row.updated_by = self.stamp_user_id
             self.db.flush()
 
     def _link(self, entity_type: str, entity_id: str, payload: Any) -> None:
@@ -1121,9 +1190,23 @@ def _value_changed(current: Any, incoming: Any) -> bool:
     ``Decimal('0.00')`` where the canonical payload carries ``Decimal('0')`` or
     an int, and reporting that as a change would fill an operator's diff with
     edits that are not edits -- which trains them to skim the one that is.
+
+    A foreign key (``category_id``, ``brand_id``, ``base_uom_id``, ...) is the
+    same shape of false positive, for a different reason: ``_diff``'s ``current``
+    comes back from a raw ``text()`` SELECT, which the driver hands back as a
+    native ``uuid.UUID`` for every postgres ``uuid`` column regardless of the
+    ORM column's own ``as_uuid=False`` -- while every id this module resolves
+    (``product_rules.ensure_reference``, ``resolve_master_by_code``, an
+    incoming payload's own FK) is a plain ``str``. Left unguarded, an unchanged
+    FK on an otherwise-identical record compared ``UUID(...) != "same value"``,
+    which is always true, and reported the record as changed with a diff that
+    named nothing real (caught by AC-PP-3's parity test, PLAN-autocount-pull-review.md).
     """
     if current is None or incoming is None:
         return (current is None) != (incoming is None)
+
+    if isinstance(current, uuid.UUID) or isinstance(incoming, uuid.UUID):
+        return str(current) != str(incoming)
 
     numeric = (int, float, Decimal)
     if (

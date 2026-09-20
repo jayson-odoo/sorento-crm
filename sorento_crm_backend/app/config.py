@@ -161,7 +161,13 @@ class Settings(BaseSettings):
     external_api_key: str | None = None  # API key for external parties to access endpoints
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).
     external_api_key_act_as_user_id: str | None = None  # EXTERNAL_API_KEY_ACT_AS_USER_ID
-    
+
+    # AutoCount pull + review (PLAN-autocount-pull-review.md). The FoundryX gateway this
+    # backend calls to build/read a frozen AutoCount snapshot. Blank on either field means
+    # "not configured" - the pull start route refuses with NOT_CONFIGURED and calls nothing.
+    foundryx_base_url: str = ""  # FOUNDRYX_BASE_URL
+    foundryx_api_key: str = ""   # FOUNDRYX_API_KEY
+
     # Redis Queue (must match everywhere: API, workers, seed scripts; use same host:port/db)
     redis_url: str = "redis://localhost:6379/0"
 
