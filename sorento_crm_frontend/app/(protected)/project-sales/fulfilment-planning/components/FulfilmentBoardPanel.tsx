@@ -785,9 +785,13 @@ export function FulfilmentBoardPanel({
    * The same lines, in AutoCount's own order (S4, owner ruling 21 Sep 2026, fix round
    * #1076) - sales order, then the line number AutoCount itself sent.
    *
-   * SUPERSEDED from `orderByProductRows` (the grid's own axis, unchanged below): a planner
-   * comparing this list against the source document reads it top to bottom the way
-   * AutoCount does, not product by product. The grid and the list are no longer
+   * SUPERSEDED `orderByProductRows` (retired, fix round #1076 delta review), which used to
+   * order THIS list to match the grid's product axis - it had no production caller left
+   * once the list moved here. The grid's own axis was never built from it either - it is
+   * `boardAxis` over `board.data.productRows` below, untouched by this change - so a
+   * planner comparing this list against the source document now reads it top to bottom the
+   * way AutoCount does, not product by product, while the grid keeps its own
+   * product-by-product axis for the cross-order view. The two are no longer
    * position-aligned - the toggle now genuinely shows two different readings of one
    * payload, which is the owner's call, not a defect. Applied here rather than inside the
    * list so `allContributions` - which Approve-all and the confirm dialog also read - keeps

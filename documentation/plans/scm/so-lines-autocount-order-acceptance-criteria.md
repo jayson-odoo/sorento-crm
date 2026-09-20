@@ -76,7 +76,7 @@ Plan: `PLAN-so-lines-autocount-order.md`. Each AC is one pytest / vitest / brows
 
 - AC-S4-1 List view order = `so_number`, then `line_no` numeric nulls last, then
   `item_code`, then `required_date`.
-- AC-S4-2 Grid product axis unchanged.
+- AC-S4-2 The grid's axis is unchanged: the server's `productRows`, via `boardAxis`.
 
 ## Lane gate
 

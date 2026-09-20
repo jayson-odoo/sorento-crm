@@ -99,12 +99,16 @@ gain `autocount: 'AutoCount'`.
 - Existing mirrors keep their numbers: `line_no` is the address drafts and confirmations
   use (`project_so.py:1282-1292`), so renumbering would detach them. A later Re-sync that
   renumbers is a separate ask (trigger: owner says an already-adopted order must match).
-- Board list view order (`fulfilmentBoard.ts:orderByProductRows`) stays product-first: that
-  is the grid's axis, and the toggle depends on it. `line_no` remains its last tiebreak.
-  Superseded for the LIST view by S4 below (owner ruling, 21 Sep) - `orderByProductRows`
-  and this rule stay exactly as written for the GRID.
+- Board list view order used to be `fulfilmentBoard.ts:orderByProductRows`, sorting the
+  LIST to match the grid's own axis (product-first, `line_no` its last tiebreak). The
+  grid's axis is not built by that function - it is the server's `productRows` via
+  `boardAxis`, independently.
+  Superseded for the LIST view by S4 below (owner ruling, 21 Sep) - the grid's axis is
+  unchanged (still the server's `productRows` via `boardAxis`); `orderByProductRows` is
+  retired (delta review, fix round #1076) since it had no production caller left after S4.
 - S4 (owner, 21 Sep): the board list view sorts by sales order then AutoCount line number;
-  the grid axis stays product-first, so the grid/list toggle is no longer position-aligned.
+  the grid's axis is the server's `productRows`, unchanged, so the grid/list toggle is no
+  longer position-aligned.
 
 ### 3.6 Backfill
 

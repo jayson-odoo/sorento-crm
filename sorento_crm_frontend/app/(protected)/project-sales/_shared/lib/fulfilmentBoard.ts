@@ -25,7 +25,6 @@ import type {
   BoardDecision,
   BoardDraft,
   BoardOrderStanding,
-  BoardProductRow,
   BoardRowAxis,
   BoardSource,
   ConfirmBorrowComponent,
@@ -1023,49 +1022,19 @@ export function rankingNote(
 }
 
 /**
- * The list view's row order: the board's OWN product order, product by product.
- *
- * The grid and the list are two readings of one payload, and the reader toggles between them
- * to find the same line. The grid's vertical axis is `productRows`, which the server sends in
- * its own order; the list was handed `contributions` in the order the demand query returned
- * them, so the same product sat in two different places and the toggle became a re-search.
- *
- * One ordering, and it is the payload's: a line sorts by where its product appears on the
- * grid's axis, then by required date, sales order and line number so the sequence is TOTAL - a
- * partial rule gives a different answer on each render and the two views drift apart again.
- * A product the axis does not name keeps its relative position at the end rather than being
- * dropped; the list is the overview of the WHOLE selection, so it may legitimately hold a line
- * the (windowed) grid does not show.
- */
-export function orderByProductRows<T extends { item_code: string; required_date?: string | null; so_number?: string; line_no?: number }>(
-  contributions: readonly T[],
-  productRows: readonly BoardProductRow[],
-): T[] {
-  const rank = new Map<string, number>();
-  productRows.forEach((row, index) => rank.set(row.item_code, index));
-  const after = productRows.length;
-  return [...contributions].sort((a, b) => {
-    const byProduct = (rank.get(a.item_code) ?? after) - (rank.get(b.item_code) ?? after);
-    if (byProduct !== 0) return byProduct;
-    if (a.item_code !== b.item_code) return a.item_code.localeCompare(b.item_code);
-    // A line nobody dated sorts last within its product, the same way an undated order sorts
-    // last on every other listing in this product.
-    const byDate = (a.required_date ?? '9999-12-31').localeCompare(b.required_date ?? '9999-12-31');
-    if (byDate !== 0) return byDate;
-    const byOrder = (a.so_number ?? '').localeCompare(b.so_number ?? '');
-    if (byOrder !== 0) return byOrder;
-    return (a.line_no ?? 0) - (b.line_no ?? 0);
-  });
-}
-
-/**
  * The LIST view's own row order (S4, PLAN-so-lines-autocount-order.md, fix round #1076 -
- * owner ruling, 21 Sep 2026): sales order, then the line number AutoCount itself sent -
- * NOT `orderByProductRows`'s product axis above, which the GRID keeps exactly as written.
- * A planner comparing the list against the source document reads it top to bottom the way
- * AutoCount does; the grid keeps its own product-by-product axis for the cross-order view,
- * so the two are no longer position-aligned and the toggle genuinely shows two different
- * readings - the owner's call, not a defect.
+ * owner ruling, 21 Sep 2026): sales order, then the line number AutoCount itself sent.
+ *
+ * SUPERSEDES the list borrowing the grid's product axis (`orderByProductRows`, retired -
+ * fix round #1076 delta review: it had no production caller left once the list moved
+ * here, and its own unit coverage moved to the panel level -
+ * `FulfilmentBoardPanel.test.tsx`'s "AC-S4-1 (panel)" describe block). The GRID's own axis
+ * was never built from that function either - it is `boardAxis` over the server's
+ * `productRows`, unrelated to either list ordering - so this change moves the list alone:
+ * a planner comparing it against the source document reads it top to bottom the way
+ * AutoCount does, while the grid keeps its own product-by-product axis for the
+ * cross-order view. The two are no longer position-aligned and the toggle genuinely shows
+ * two different readings - the owner's call, not a defect.
  *
  * No `productRows` argument: the product axis plays no part in this ordering at all, so a
  * caller cannot accidentally influence it with the grid's own row order.

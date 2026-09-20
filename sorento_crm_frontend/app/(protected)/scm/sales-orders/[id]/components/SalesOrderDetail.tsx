@@ -1116,6 +1116,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
           </Badge>
         ),
         size: 130,
+        // Matches the list's own Source column: five values is a filter, not a sort.
         enableSorting: false,
         meta: { headerTitle: 'Source' },
       },

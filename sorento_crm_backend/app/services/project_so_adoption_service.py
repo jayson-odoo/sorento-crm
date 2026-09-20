@@ -209,6 +209,9 @@ class ProjectSOAdoptionService:
         core = self.db.query(SalesOrder).filter(SalesOrder.id == order.so_id).first()
         held_numbers = {line.line_no for line in existing}
         numbers = self._numbers_for_missing(missing, held_numbers)
+        # start_at is unused once numbers is supplied - _mirror only reads it as the
+        # rule-2 (derived) fallback when numbers is None - kept because the parameter has
+        # no default.
         return self._mirror(
             order, core, missing, start_at=self._next_line_no(str(order.id)), numbers=numbers
         )
@@ -264,16 +267,30 @@ class ProjectSOAdoptionService:
         The additive half `mirror_missing_lines` applies to the still-owed lines, taken out
         so the migration can hand it a different line set (every line, not only the owed
         ones) without changing what the board's own re-sync means.
+
+        Numbered the same per-line way as `mirror_missing_lines` (B1 review round, fix
+        round): a missing line's own AutoCount number is checked against what THIS order's
+        mirror already holds before it is used, never handed to `_mirror` raw - an order
+        first adopted under rule 2 (derived numbering) has no unique index stopping a raw
+        AutoCount `line_no` from landing on a mirror line number another line already owns.
         """
+        existing = self._mirror_lines(str(order.id))
         held = {
             str(line.core_sales_order_line_id)
-            for line in self._mirror_lines(str(order.id))
+            for line in existing
             if line.core_sales_order_line_id
         }
         missing = [line for line in core_lines if str(line.id) not in held]
         if not missing:
             return []
-        return self._mirror(order, core, missing, start_at=self._next_line_no(str(order.id)))
+        held_numbers = {line.line_no for line in existing}
+        numbers = self._numbers_for_missing(missing, held_numbers)
+        # start_at is unused once numbers is supplied - _mirror only reads it as the
+        # rule-2 (derived) fallback when numbers is None - kept because the parameter has
+        # no default.
+        return self._mirror(
+            order, core, missing, start_at=self._next_line_no(str(order.id)), numbers=numbers
+        )
 
     # ----------------------------------------------------------------- pieces
 
@@ -425,7 +442,9 @@ class ProjectSOAdoptionService:
                 for line in core_lines
             ]
             if has_own_numbering(entries):
-                numbers = {entry.id: int(entry.line_no) for entry in entries}  # type: ignore[arg-type]
+                numbers = {
+                    entry.id: int(entry.line_no) for entry in entries  # type: ignore[arg-type]
+                }
             else:
                 derived = number_lines(entries)
                 numbers = {id_: n + (start_at - 1) for id_, n in derived.items()}

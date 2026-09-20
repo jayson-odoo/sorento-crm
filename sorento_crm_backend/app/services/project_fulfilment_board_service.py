@@ -2204,7 +2204,9 @@ class FulfilmentBoardService:
         by_order: Dict[str, List[LineFacts]] = defaultdict(list)
         for line, order, product, _warehouse, _agent in records:
             by_order[str(order.id)].append(
-                LineFacts(str(line.id), line.line_no, line.required_date, product.product_code or "")
+                LineFacts(
+                    str(line.id), line.line_no, line.required_date, product.product_code or ""
+                )
             )
         derived: Dict[str, int] = {}
         for entries in by_order.values():
@@ -2213,7 +2215,10 @@ class FulfilmentBoardService:
         mirrored = {
             core_id: entry["line_no"]
             for core_id, entry in self._addressing.items()
-            if entry.get("line_no")
+            # `is not None`, not truthiness (S-1, fix round): a mirror line_no of 0 is a
+            # real AutoCount number, ingest accepts it (`ge=0`), and a falsy check would
+            # drop it the way a resolver that used truthiness would too.
+            if entry.get("line_no") is not None
         }
         for entries in by_order.values():
             ids = [entry.id for entry in entries]
