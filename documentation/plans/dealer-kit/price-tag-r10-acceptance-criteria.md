@@ -27,8 +27,12 @@ left stale.
   form. (vitest PriceTagRequestForm)
 - AC-S2-4 The same code appearing twice in an extract response yields one line with quantity 1, not 2.
   (vitest)
-- AC-S2-5 Migration inserts `ai_extract_portal_price_tag_request` version 2 when version 1 text equals the
-  pre-r10 fallback, and inserts nothing when the stored text differs. (pytest migration)
+- AC-S2-5 (amended by the tester, captain's ruling, phase 3 review, 21 Sep) Migration moves the `production`
+  label of `ai_extract_portal_price_tag_request` onto a version containing rule (9) when the CURRENT
+  production text equals the pre-r10 fallback (inserting a new version, not just row 2); an owner-edited
+  production text is left alone (no new version, label untouched); a pre-existing version 2 an owner
+  published for something unrelated does not collide - the migration never hardcodes `version = 2` - and
+  production still ends on the rule-9 text. (pytest test_migration_ptag_0013_r10.py)
 
 ## S3. Readable spec values
 
@@ -69,8 +73,10 @@ left stale.
 - AC-S5-3 A second `POST` replaces: the new row is linked and referenced, the old row is unlinked and
   deleted; `DELETE /product-combos/{id}/image` clears and deletes the same way. (pytest)
 - AC-S5-4 `GET /products/{id}/combos` returns `image: {attachment_id, url}` (signed) or `null`. (pytest)
-- AC-S5-5 The combo block on the product page shows Upload when empty, else the thumbnail with Replace and
-  Clear; image files only. (vitest ProductCombosSection)
+- AC-S5-5 (amended by the tester, captain's ruling, phase 3 review, 21 Sep) The combo block on the product
+  page shows Upload when empty, else the thumbnail with Replace and Clear; image files only; the controls
+  route through a `useProductComboImage` hook (the same shape every other combo mutation on the page uses,
+  not a bare service call); the image row wraps at phone width (`flex-wrap`). (vitest ProductCombosSection)
 - AC-S5-11 `gallery_images` ranks a Combo Image attachment after Technical Specifications, so the host's own
   `product_image` never resolves to it; `primary_image_urls` excludes the type. (pytest product_images)
 - AC-S5-6 A line whose `combo_id` names a combo with an image resolves `images[0]` to the combo image with
@@ -81,6 +87,17 @@ left stale.
 - AC-S5-8 The PDF payload's `images` map contains the combo attachment id. (pytest tag_sheet_export)
 - AC-S5-9 Deleting the attachment nulls the combo's image and the line falls back to the gallery. (pytest)
 - AC-S5-10 Changing the combo image changes the tag's data hash (red dot). (pytest)
+- AC-S5-12 (added by the tester, captain's ruling, phase 3 review, 21 Sep) `POST /product-combos/{id}/image`
+  refuses `x.svg` sent as `image/svg+xml` and `x.exe` sent as `image/png` with 422; `x.PNG` sent as
+  `application/octet-stream` is accepted, and the stored mime is derived from the FILENAME extension
+  (`image/png`), never trusted from the client's content type; the stored attachment's `company_id` is the
+  HOST product's company; replacing an image whose attachment is still linked from another product's own
+  link does not hard-delete that attachment or break the other product's link. (pytest test_product_combos.py)
+- AC-S5-13 (added by the tester, captain's ruling, phase 3 review, 21 Sep) `attachments_entity_type_check`
+  includes `product_combo_image` after the r10 migration upgrade (an attachments row with that entity_type
+  inserts); downgrade restores the pre-r10 (402) value list, so `product_combo_image` is refused again; the
+  combo image upload route stores `entity_type='product_combo_image'` (the value under test in the migration
+  must be the value the route actually writes). (pytest test_migration_ptag_0013_r10.py + test_product_combos.py)
 
 ## S6. Any product of the parent on any tag; Not printed
 
@@ -109,7 +126,17 @@ left stale.
 - AC-S6-10 Revise carries `print_excluded` on a tag whose choice set is unchanged. (pytest revise)
 - AC-S6-11 A pinned row written before r10 (no `own_parts`) still renders `set_members` and Tag total from
   `parts`. (pytest `_row_from_pin`)
-- AC-S6-12 The proof (arranged sheets) never contains an excluded tag. (pytest, same filter as S6-8)
+- AC-S6-12 (amended by the tester, captain's ruling, phase 3 review, 21 Sep) The proof (arranged sheets)
+  never contains an excluded tag - including a SAVED doc whose placements were arranged before a tag was
+  marked Not printed: `resolve_tag_sheet_print_payload` filters the doc's OWN sheets too, not only a
+  freshly-arranged doc, and drops a sheet a filter empties out entirely; the export sheet list counts printed
+  tags only. (pytest, same filter as S6-8)
+- AC-S6-13 (added by the tester, captain's ruling, phase 3 review, 21 Sep) For a line [X fixed sort 0, open
+  group G=A,B,C sort 1, Y fixed sort 2], tag 1b (chose B): `parts` = [X, B(chosen), Y, A, C] - the NARROW
+  own-order list first (this tag's own fixed parts and its chosen candidate, in sort order), the group's
+  non-chosen candidates APPENDED at the end in combo order, never interleaved at the group's own sort
+  position; `own_parts` = [X, B, Y]; the index of Y is 2 on every tag of that line, whichever candidate it
+  chose. (pytest test_dealer_kit_tag_data.py)
 
 ## S7. Automatic arrange
 
@@ -133,7 +160,10 @@ left stale.
 - AC-S7-9 The Konva arrange preview draws a rotated tag the same way (visual, browser evidence).
 - AC-S7-11 Migration adds `sheet_cols`, `sheet_rows`, `sheet_turn` to `dealer_kit.tag_size_preset`; the
   preset routes read and write them; a template `print_size` with `sheet` keys round-trips through save and
-  publish. (pytest)
+  publish. (pytest) Amended by the tester, captain's ruling, phase 3 review, 21 Sep: both Publish (which
+  snapshots the draft via `updateTemplate`) and Undo-after-Restore (which PUTs the pre-restore draft straight
+  back) must send a `print_size` that still carries the configured `sheet` grid - neither drops a configured
+  grid to a bare `doc`-only payload with no `print_size` key. (vitest tag-templates/[id]/page.test.tsx)
 - AC-S7-12 A size group whose template `print_size` carries `sheet: {cols: 2, rows: 7, turn: false}` lays out
   2 x 7 at cell 100 x 41 with the tag at each cell's top-left, ignoring the derived fit. (vitest request-tags)
 - AC-S7-13 A configured grid whose cell is smaller than the tag is ignored (derived fit used) and the Tag
@@ -145,6 +175,13 @@ left stale.
   of tags resized to a preset carrying a grid uses that grid. (vitest)
 - AC-S7-10 A group whose tag exceeds A4 in both rotations still produces one overflowing centred slot and the
   existing "0 per sheet" message. (vitest, existing AC-S6-3 of r6 kept)
+- AC-S7-16 (added by the tester, captain's ruling, phase 3 review, 21 Sep) Two DIFFERENT request tags off ONE
+  line (an open group resolved into its own tag per candidate at submit, D6), same size, quantity 1 each,
+  none excluded: both reach the Arrange doc as distinct placements with distinct `request_tag_id`s.
+  `autoArrange` itself places whatever `ArrangeItem[]` it is handed correctly (lib layer); a request tag
+  nobody has opened on the canvas yet must still reach `arrangeItems` one layer up in `RequestTagDesigner` -
+  it must not silently drop out because that component's own `tags` state record has no entry for it yet.
+  (vitest lib/dealer-kit/request-tags.test.ts + RequestTagDesigner.test.tsx designer-level shape)
 
 ## S8. Auto-apply product data changes, rollback, indicator
 
@@ -159,13 +196,19 @@ left stale.
   change as today and Keep / Update still work. (pytest, Q9 ruled)
 - AC-S8-5 The list sweep (`GET price-tag-requests` with a touched row) applies the update the same way and
   `data_changed_tag_count` counts tags with `data_updated_at` set. (pytest)
-- AC-S8-6 `POST tags/{id}/dismiss` clears the three columns; the count drops. (pytest)
+- AC-S8-6 `POST tags/{id}/dismiss` clears the three columns; the count drops. (pytest) Amended by the
+  tester, captain's ruling, phase 3 review, 21 Sep: Dismiss's own count-refresh must pass
+  `apply_updates=False` the same way the pin route's own refresh does - a second, uncoordinated before/after
+  pair for some OTHER tag's own live diff must never ride in on a dismiss call. (pytest test_price_tag_data_pin.py)
 - AC-S8-7 `POST versions/{data_update_version}/restore` after an auto-update puts the old list price back on
   the tag's pin and the versions list gains a new row for the state being left. (pytest, existing restore)
 - AC-S8-8 Designer rail shows the red dot on an updated tag; the Review dialog lists old -> new per field
   and offers Dismiss and Roll back; Dismiss clears the dot without a page reload; Roll back calls restore and
   the canvas re-renders the old value. (vitest RequestTagDesigner)
-- AC-S8-9 Detail header pill and list badge read `Product data updated · N`. (vitest)
+- AC-S8-9 (amended by the tester, captain's ruling, phase 3 review, 21 Sep) Detail header pill and list badge
+  follow the request's own status: `designing`/`changes_requested` (which auto-apply, S8-2) read `Product
+  data updated · N`; `proof_ready`/`approved` (flag-only, S8-4 - nothing has actually moved yet) read
+  `Product data changed · N`. (vitest PriceTagRequestDetail + PriceTagRequestsList)
 - AC-S8-10 A terminal request is never re-pinned. (pytest)
 - AC-S8-11 The PDF payload after an auto-update renders the new value (pins are the print source). (pytest
   tag_sheet_export)
@@ -181,6 +224,21 @@ left stale.
   dismisses it, not until the next live diff happens to be empty. After `POST tags/{tag_id}/dismiss` the next
   poll reports 0. (pytest `test_price_tag_data_pin.py::TestS8AutoApplyOnDesigning::
   test_ac_s8_13_the_badge_holds_its_count_across_a_second_sweep_until_dismiss`)
+- AC-S8-14 (added by the tester, captain's ruling, phase 3 review, 21 Sep) `POST versions/{n}/restore`
+  clears the rolled-back tag's `data_updated_at`, `data_update_changes` and `data_update_version`, and
+  `data_changed_tag_count` drops to 0 on the next poll - a restore that leaves the indicator set would keep
+  showing "Product data updated" for a change that was just undone. (pytest test_price_tag_request_versions.py)
+- AC-S8-15 (added by the tester, captain's ruling, phase 3 review, 21 Sep) Auto-apply requires the ACTING
+  principal to hold `.process` on a real staff session: a `.view`-only caller (and an X-API-Key principal,
+  whatever the acted-as user's own grants are) may still poll and see the diff, but the tag is never re-pinned
+  and `data_updated_at` stays null; a `.process` holder's own read still applies exactly as today, and the
+  PageVersions it writes carry `created_by` naming that user, not an anonymous system write. (pytest
+  test_price_tag_data_pin.py)
+- AC-S8-16 (added by the tester, captain's ruling, phase 3 review, 21 Sep) `apply_auto_data_updates` called
+  twice with the same (already-applied) triples writes ONE before/after pair, not two - a version-number race
+  guard against a duplicate write off the same live edit. (pytest test_price_tag_data_pin.py, single-session
+  double-call; see the test's own docstring for why a true two-connection lock test is not attempted in this
+  slice)
 
 ## S9. Portal Download PDF
 
@@ -196,16 +254,32 @@ left stale.
   (vitest)
 - AC-S9-5 At `proof_ready` the item is disabled and reads "Available after approval". (vitest)
 - AC-S9-6 With a READY export the click streams without queueing (today's path). (vitest)
+- AC-S9-7 (added by the tester, captain's ruling, phase 3 review, 21 Sep) A second `POST .../export` while
+  the first is still pending answers 202 with the SAME `download_id` and does not enqueue a second render
+  (`enqueue_job` called once, one `user_downloads` row for the request); revoked visibility refuses the
+  export route the same way the download route does (403 `FORM_TYPE_NOT_VISIBLE`). (pytest
+  test_portal_price_tag_routes.py)
+- AC-S9-8 (added by the tester, captain's ruling, phase 3 review, 21 Sep) The read-only gear's poll starts on
+  MOUNT when the request already carries `latest_export_status: 'pending'` (a reload mid-export, or a second
+  tab that queued it) - not only after this component's own click sets local `exportPending` state. (vitest
+  PriceTagRequestForm.readOnlyGear.test.tsx)
 
 ## S10. Designer rail scroll position
 
 - AC-S10-1 With 40 tags in the rail, scrolling the rail to the bottom and clicking the last tag leaves the
-  rail's `scrollTop` unchanged and the clicked row selected. (vitest RequestTagDesigner rail, jsdom
-  scrollTop set by hand)
+  rail's `scrollTop` unchanged and the clicked row selected. (vitest RequestTagDesigner rail, jsdom scrollTop
+  set by hand) Confirmed by the tester, captain's ruling, phase 3 review, 21 Sep, with a REAL assertion (the
+  numeric `scrollTop` value AND the scroll container's element identity, not merely "the rail is still in the
+  document"): already green - no rail remount or scroll manipulation exists on tag select today.
 - AC-S10-2 `TagCanvasEditor` still remounts per selected tag (`key`), the rail element identity does not
   change across selections. (vitest)
-- AC-S10-3 The rail is visible beside the Arrange view and its selected row matches the sheet's selected
-  tag. (vitest ArrangeSheetView + browser evidence)
+- AC-S10-3 (amended by the tester, captain's ruling, phase 3 review, 21 Sep) The rail is visible beside the
+  Arrange view and its selected row matches the sheet's selected tag; on the Arrange canvas, selection is
+  keyed by REQUEST tag id, not the placed copy's own `-c0`/`-c1` id - the placed copy whose `request_tag_id`
+  matches `selectedTagId` is the one marked selected, and clicking a placed copy reports the REQUEST tag id,
+  not the copy id. (vitest ArrangeSheetView + browser evidence)
+- AC-S10-4 (added by the tester, captain's ruling, phase 3 review, 21 Sep) The rail wrapper is hidden at
+  phone width and shown only from `md` up (`hidden md:flex`). (vitest RequestTagDesigner.rail.test.tsx)
 
 ## Browser evidence (end of lane, agent-browser, sidebar navigation)
 

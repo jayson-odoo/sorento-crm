@@ -1213,3 +1213,35 @@ describe('PriceTagRequestDetail - product-data-changed pill, no Update all (AC-C
     expect(screen.queryByRole('button', { name: /update all/i })).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S8-9 amended (captain's ruling, phase 3 review): the pill's WORDING
+// follows the request's status - `designing`/`changes_requested` auto-apply
+// (S8-2), so "updated" is the true past tense; `proof_ready`/`approved` are
+// flag-only (S8-4, nothing has moved yet), so "changed" is the honest word.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestDetail - pill wording follows status (AC-S8-9 amended)', () => {
+  it('reads "Product data changed · N" at proof_ready - nothing auto-applied there', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ status: 'proof_ready', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    mockChanges.mockResolvedValue([changeSet('tag-1')]);
+    renderDetail();
+
+    const pill = await screen.findByTestId('product-data-changed-pill');
+    expect(pill.textContent).toContain('Product data changed · 1');
+    expect(pill.textContent).not.toContain('updated');
+  });
+
+  it('reads "Product data changed · N" at approved too', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ status: 'approved', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    mockChanges.mockResolvedValue([changeSet('tag-1')]);
+    renderDetail();
+
+    const pill = await screen.findByTestId('product-data-changed-pill');
+    expect(pill.textContent).toContain('Product data changed · 1');
+  });
+});

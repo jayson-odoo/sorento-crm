@@ -22,8 +22,36 @@ import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
 vi.mock('react-konva', () => {
   const passthrough = (name: string) =>
-    function KonvaStandIn({ children }: { children?: React.ReactNode }) {
-      return <div data-konva={name}>{children}</div>;
+    function KonvaStandIn({
+      children,
+      onClick,
+      onTap,
+      stroke,
+    }: {
+      children?: React.ReactNode;
+      onClick?: (e: unknown) => void;
+      onTap?: (e: unknown) => void;
+      stroke?: string;
+    }) {
+      return (
+        <div
+          data-konva={name}
+          data-stroke={stroke}
+          onClick={
+            onClick
+              ? (domEvent: { stopPropagation: () => void }) => {
+                  // Real DOM stopPropagation so a click on an inner Group
+                  // never bubbles up to the Stage's own onClick (which
+                  // expects a real Konva event with `.getStage()`).
+                  domEvent.stopPropagation();
+                  onClick({ cancelBubble: false });
+                }
+              : undefined
+          }
+        >
+          {children}
+        </div>
+      );
     };
   return {
     Stage: passthrough('stage'),
@@ -162,3 +190,59 @@ describe('ArrangeSheetView (AC-S7-6)', () => {
     expect(document.querySelector('[data-konva="stage"]')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S10-3 second half (captain's ruling, phase 3 review): selection on the
+// arrange sheet is keyed by REQUEST tag id, not the placed copy's own
+// `-c0`/`-c1` id - `TagOnCanvas` currently compares/reports `tag.id` (the
+// copy) instead of `tag.request_tag_id`.
+// ---------------------------------------------------------------------------
+
+describe('ArrangeSheetView - selection by request tag id (AC-S10-3)', () => {
+  it('marks the placed copy whose request_tag_id matches selectedTagId as selected', () => {
+    const placement: SheetPlacement[] = [
+      { template_id: 'tpl-small', width_mm: 66.7, height_mm: 31.9, rotation: 0, cols: 3, rows: 9, capacity: 27 },
+    ];
+    render(
+      <ArrangeSheetView
+        {...baseProps()}
+        doc={doc([
+          { id: 'sheet-1', tags: [_placedFor('req-tag-a'), _placedFor('req-tag-b')] },
+        ])}
+        placement={placement}
+        selectedTagId="req-tag-b"
+      />,
+    );
+
+    const groups = document.querySelectorAll('[data-konva="group"]');
+    expect(groups).toHaveLength(2);
+    const rects = Array.from(groups).map((g) => g.querySelector('[data-konva="rect"]'));
+    expect(rects[0]?.getAttribute('data-stroke')).toBe('#d4d4d8');
+    expect(rects[1]?.getAttribute('data-stroke')).toBe('#3b82f6');
+  });
+
+  it('clicking a placed copy calls onSelectTag with the REQUEST tag id, not the copy id', () => {
+    const onSelectTag = vi.fn();
+    const placement: SheetPlacement[] = [
+      { template_id: 'tpl-small', width_mm: 66.7, height_mm: 31.9, rotation: 0, cols: 3, rows: 9, capacity: 27 },
+    ];
+    render(
+      <ArrangeSheetView
+        {...baseProps()}
+        onSelectTag={onSelectTag}
+        doc={doc([{ id: 'sheet-1', tags: [_placedFor('req-tag-a')] }])}
+        placement={placement}
+      />,
+    );
+
+    const group = document.querySelector('[data-konva="group"]') as HTMLElement;
+    group.click();
+
+    expect(onSelectTag).toHaveBeenCalledWith('req-tag-a');
+    expect(onSelectTag).not.toHaveBeenCalledWith('req-tag-a-c0');
+  });
+});
+
+function _placedFor(requestTagId: string): PlacedTag {
+  return placedTag(`${requestTagId}-c0`, requestTagId);
+}

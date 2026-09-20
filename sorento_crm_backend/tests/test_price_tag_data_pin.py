@@ -1603,6 +1603,56 @@ class TestS8AutoApplyOnDesigning:
         assert tag.data_update_changes is None
         assert tag.data_update_version is None
 
+    def test_ac_s8_6_extended_dismiss_does_not_auto_apply_another_tags_own_diff(
+        self, crm
+    ):
+        """AC-S8-6 extended (captain's ruling, phase 3 review): Dismiss's own
+        count-refresh must pass `apply_updates=False`, the same way the pin
+        route's does (its own comment: a second, uncoordinated before/after
+        pair for some OTHER tag must never ride in on this call)."""
+        client, db = crm
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product_a = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product_a)
+        seed.attach_design(db, request)
+        product_a.list_price = 1200.00
+        db.commit()
+        tag_a_id = _tags(db, request.id)[0].id
+
+        first_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert first_poll.status_code == 200, first_poll.text
+
+        product_b = seed.seed_product(db, list_price=1000.00)
+        PriceTagRequestService.replace_lines(
+            db,
+            request,
+            [
+                {"line_type": "product", "product_id": product_a.id},
+                {"line_type": "product", "product_id": product_b.id},
+            ],
+        )
+        db.commit()
+        # Pins the new tag fresh (no diff yet).
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        product_b.list_price = 1300.00
+        db.commit()
+        db.expire_all()
+        tag_b_id = next(
+            t.id for t in _tags(db, request.id) if t.id != tag_a_id
+        )
+
+        dismissed = client.post(f"{_CRM.format(id=request.id)}/tags/{tag_a_id}/dismiss")
+        assert dismissed.status_code == 200, dismissed.text
+
+        db.expire_all()
+        tag_b = next(t for t in _tags(db, request.id) if t.id == tag_b_id)
+        assert tag_b.data_updated_at is None, (
+            "tag B's own diff must not be swept up by tag A's dismiss call"
+        )
+        assert float(tag_b.pinned_tag_data["list_price"]) == 1000.00
+
     def test_ac_s8_10_a_terminal_request_is_never_re_pinned(self, db_only):
         from app.services.dealer_kit import tag_data_service
 
@@ -1667,3 +1717,271 @@ def test_ac_s4_8_a_price_tag_description_edit_is_flagged_as_a_data_change():
         row = rows[0]
         fields = {c.get("field") for c in (row.get("data_changes") or [])}
         assert "price_tag_description" in fields, row.get("data_changes")
+
+
+# ---------------------------------------------------------------------------
+# AC-S8-15 (captain's ruling, phase 3 review): auto-apply must require the
+# ACTING principal to hold `.process`, on a REAL staff session - a `.view`
+# only caller (or an X-API-Key call, whatever the acted-as user's own grants
+# are) may still poll and see the diff, but the resolver must not write on
+# their behalf. A `.process` holder's own PageVersions must name them
+# (`created_by`), not go in as an anonymous system write.
+# ---------------------------------------------------------------------------
+
+
+def _seed_role(db, *, user_id: str, role_id: str, slug: str, permissions: list[str]):
+    from app.models.user import (
+        User,
+        UserPermission,
+        UserRole,
+        UserRoleAssignment,
+        UserRolePermission,
+    )
+
+    db.add(
+        UserRole(
+            id=role_id, slug=slug, name=slug, description="",
+            is_protected=False, is_default=False,
+        )
+    )
+    db.add(User(id=user_id, email=f"{slug}@test.com", name=slug, status="ACTIVE"))
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
+    for perm_slug in permissions:
+        existing = (
+            db.query(UserPermission).filter(UserPermission.slug == perm_slug).first()
+        )
+        if existing is None:
+            existing = UserPermission(id=str(uuid.uuid4()), slug=perm_slug, name=perm_slug, description="")
+            db.add(existing)
+            db.flush()
+        db.add(
+            UserRolePermission(
+                id=str(uuid.uuid4()), role_id=role_id, permission_id=existing.id
+            )
+        )
+    db.commit()
+
+
+_VIEW_ONLY_ID = "a1b2c3d4-0001-4000-8000-000000000001"
+_VIEW_ONLY_ROLE = "a1b2c3d4-0001-4000-8000-000000000002"
+_PROCESS_HOLDER_ID = "a1b2c3d4-0002-4000-8000-000000000001"
+_PROCESS_HOLDER_ROLE = "a1b2c3d4-0002-4000-8000-000000000002"
+
+
+def _diff_request_in_designing(db):
+    """A designing request, already pinned, whose product then changes -
+    exactly the shape `AUTO_UPDATE_STATUSES` auto-applies on today."""
+    product = seed.seed_product(db, list_price=1000.00)
+    contact_id = seed.seed_portal_contact(db)
+    request = seed.seed_request(
+        db, contact_id, status="new", products=[product], print_by="office",
+    )
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    PriceTagRequestService.transition_status(
+        db, request.id, "designing", user_id=seed.MARKETER_ID
+    )
+    db.commit()
+    seed.attach_design(db, request)
+    product.list_price = 1200.00
+    db.commit()
+    tag_id = _tags(db, request.id)[0].id
+    return request, tag_id
+
+
+@pytest.fixture
+def rbac_client():
+    from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    with blank_session() as db:
+        seed.seed_marketer(db)  # the .process holder `crm` fixtures already use
+        _seed_role(
+            db, user_id=_VIEW_ONLY_ID, role_id=_VIEW_ONLY_ROLE, slug="zzt_ptag_view_only",
+            permissions=["dealer_kit.price_tag_requests.view"],
+        )
+
+        def _override_get_db():
+            yield db
+
+        async def _override_scope():
+            scope = frozenset({seed.SORENTO})
+            set_company_scope(db, scope)
+            return scope
+
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[apply_company_scope] = _override_scope
+
+        def _as_view_only():
+            app.dependency_overrides[get_current_user] = lambda: {
+                "id": _VIEW_ONLY_ID, "email": "zzt_ptag_view_only@test.com",
+            }
+            app.dependency_overrides[get_current_user_or_api_key] = (
+                app.dependency_overrides[get_current_user]
+            )
+
+        def _as_marketer():
+            principal = {"id": seed.MARKETER_ID, "email": "zzt-ptag-r9-marketer@test.com"}
+            app.dependency_overrides[get_current_user] = lambda: principal
+            app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+        def _as_api_key_acting_as(user_id: str):
+            # The real integration_auth marker (`auth_method`) that tells a
+            # route apart from a normal session - `get_current_user` (JWT
+            # only) is never reachable via an API key, only the combined
+            # dependency is.
+            principal = {"id": user_id, "email": "zzt-api-key@test.com", "auth_method": "integration_api_key"}
+            app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+        try:
+            with TestClient(app) as client:
+                yield client, db, _as_view_only, _as_marketer, _as_api_key_acting_as
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestS8AutoApplyRequiresAProcessHoldingStaffSession:
+    def test_a_view_only_principal_sees_the_diff_but_does_not_apply(self, rbac_client):
+        client, db, as_view_only, _as_marketer, _as_api_key = rbac_client
+        request, tag_id = _diff_request_in_designing(db)
+        as_view_only()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        row = next((r for r in body if r["tag_id"] == tag_id), None)
+        assert row is not None and row["changes"], (
+            "a viewer must still be TOLD about the change"
+        )
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "a .view-only caller must never trigger the re-pin"
+        )
+        assert tag.data_updated_at is None
+
+    def test_an_api_key_principal_does_not_apply_even_acting_as_a_process_holder(
+        self, rbac_client
+    ):
+        client, db, _as_view_only, _as_marketer, as_api_key = rbac_client
+        request, tag_id = _diff_request_in_designing(db)
+        _seed_role(
+            db, user_id=_PROCESS_HOLDER_ID, role_id=_PROCESS_HOLDER_ROLE,
+            slug="zzt_ptag_process_holder",
+            permissions=[
+                "dealer_kit.price_tag_requests.view",
+                "dealer_kit.price_tag_requests.process",
+            ],
+        )
+        as_api_key(_PROCESS_HOLDER_ID)
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "an API-key channel must never auto-apply, whatever the acted-as "
+            "user's own grants are"
+        )
+        assert tag.data_updated_at is None
+
+    def test_a_process_holder_applies_and_the_versions_carry_their_created_by(
+        self, rbac_client
+    ):
+        client, db, _as_view_only, as_marketer, _as_api_key = rbac_client
+        request, tag_id = _diff_request_in_designing(db)
+        as_marketer()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequestTag
+
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1200.00, (
+            "a .process holder must apply exactly as today"
+        )
+        assert tag.data_updated_at is not None
+
+        versions = (
+            db.query(PageVersion)
+            # `ilike`, not `like` - Postgres LIKE is case-sensitive, and the
+            # AFTER version's own message is "Product update..." (capital P).
+            .filter(PageVersion.commit_message.ilike("%product update%"))
+            .all()
+        )
+        assert len(versions) == 2, "the auto-apply must have written its before/after pair"
+        assert all(v.created_by == seed.MARKETER_ID for v in versions), (
+            "an auto-applied version must be attributed to the staff member "
+            "whose read triggered it, not written as an anonymous system row",
+            [(v.commit_message, v.created_by) for v in versions],
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-S8-16 (captain's ruling, phase 3 review): a version-number race guard.
+# Two pollers computing the SAME `triples` before either has flushed (two
+# concurrent requests both diffing the same live edit) must not each write
+# their own before/after pair - `apply_auto_data_updates` has no idempotency
+# check today, so calling it twice in a row with the same triples writes
+# TWO pairs (4 versions), not one. Single-session version per the captain's
+# fallback: a true two-connection lock test is not attempted here - the
+# scratch-schema fixture (`blank_session`) gives one connection per test, and
+# building a second real connection against the SAME scratch schema outside
+# that fixture is its own can of worms this slice does not need opened to
+# pin the observable contract (one pair, however many times the same
+# already-applied triples are handed in).
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s8_16_apply_auto_data_updates_called_twice_with_the_same_triples_writes_one_pair():
+    from app.models.dealer_kit import PageVersion
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        seed.seed_marketer(db)
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product], print_by="office",
+        )
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        tag = _tags(db, request.id)[0]
+
+        product.list_price = 1200.00
+        db.commit()
+
+        live_rows = tag_data_service.resolve_tags_live(db, request, [tag])
+        changes = [{"field": "list_price", "label": "List price", "old": "1000.00", "new": "1200.00"}]
+        triples = [(tag, live_rows[0], changes)]
+
+        tag_data_service.apply_auto_data_updates(db, request, triples)
+        tag_data_service.apply_auto_data_updates(db, request, triples)
+
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id, PageVersion.commit_message.ilike("%product update%"))
+            .all()
+        )
+        assert len(versions) == 2, (
+            "a second call with the SAME (already-applied) triples must be a "
+            "no-op, not a duplicate before/after pair",
+            [v.commit_message for v in versions],
+        )

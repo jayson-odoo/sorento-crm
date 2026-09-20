@@ -564,6 +564,21 @@ describe('resolveSizeGrid', () => {
 });
 
 describe('autoArrange', () => {
+  it('AC-S7-16: two DIFFERENT tags of the same size (one line split into two, D6) both get placed', () => {
+    // Live browser finding, phase 3 review: "2 sheets / 3 tags" with only
+    // one of two same-size sink tags actually placed, reproduced after save
+    // and reload. Two distinct PlacedTag ids, two distinct request_tag_ids,
+    // same template and same footprint - exactly what an open group's two
+    // candidates look like once split.
+    const result = autoArrange([
+      { tag: placed('sink-copy-a', 'req-tag-a', 't-sink', 143.5, 100), quantity: 1 },
+      { tag: placed('sink-copy-b', 'req-tag-b', 't-sink', 143.5, 100), quantity: 1 },
+    ]);
+
+    const placedIds = result.sheets.flatMap((s) => s.tags.map((t) => t.request_tag_id));
+    expect(placedIds.sort()).toEqual(['req-tag-a', 'req-tag-b']);
+  });
+
   it('AC-S7-1: 30 copies of 66.7 x 31.9mm (3 x 9 = 27/sheet) yields two sheets, 27 then 3', () => {
     const result = autoArrange([{ tag: placed('a', 'l1', 't-sink', 66.7, 31.9), quantity: 30 }]);
 

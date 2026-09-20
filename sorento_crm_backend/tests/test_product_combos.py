@@ -624,3 +624,149 @@ def test_ac_s5_4_get_combos_carries_the_image_field(db, monkeypatch):
     assert image is not None
     assert image["attachment_id"]
     assert image["url"]
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-12 (captain's ruling, phase 3 review): the extension is the
+# allowlist, and the stored mime is DERIVED from it - a client-supplied
+# content type is not trusted either way. Replacing an image whose
+# attachment is also linked elsewhere (seeded by hand) must not delete a
+# still-referenced row.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s5_12_svg_content_type_is_refused_despite_the_image_prefix(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("x.svg", b"<svg onload=alert(1)></svg>", "image/svg+xml")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_12_an_exe_claiming_to_be_a_png_is_refused_by_its_extension(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("x.exe", _jpg_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_12_extension_wins_over_a_generic_client_content_type(db, monkeypatch):
+    """A caller who sends no real content type (`application/octet-stream`,
+    what a plain `<input type=file>` sends for an unrecognised extension on
+    some platforms) must not be refused when the FILENAME extension is a
+    real, allowed image type - the mime stored is derived from the
+    extension, never trusted from the client."""
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("x.PNG", _jpg_bytes(), "application/octet-stream")},
+    )
+
+    assert response.status_code in (200, 201), response.text
+    attachment_id = response.json()["attachment_id"]
+
+    from app.models.resources import Attachment
+
+    stored = db.query(Attachment).filter(Attachment.id == attachment_id).one()
+    assert stored.mime_type == "image/png", stored.mime_type
+
+
+def test_ac_s5_12_replace_survives_an_attachment_still_linked_elsewhere(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    first = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("first.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert first.status_code in (200, 201), first.text
+    first_attachment_id = first.json()["attachment_id"]
+
+    # Seeded by hand: some OTHER product also links this same attachment,
+    # for an unrelated reason (e.g. it was separately attached there too).
+    from app.models.product import ProductAttachment
+
+    other_host = _product(db, "SRTOTHERHOST")
+    other_link = ProductAttachment(
+        id=_uid(),
+        product_id=other_host.id,
+        attachment_id=first_attachment_id,
+        is_primary=False,
+        access_levels=["dealer", "end_user"],
+        company_id=SORENTO,
+    )
+    db.add(other_link)
+    db.commit()
+
+    second = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("second.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert second.status_code in (200, 201), second.text
+
+    from app.models.resources import Attachment
+
+    db.expire_all()
+    assert (
+        db.query(Attachment).filter(Attachment.id == first_attachment_id).first()
+        is not None
+    ), "an attachment another product still links must not be hard-deleted"
+    assert (
+        db.query(ProductAttachment)
+        .filter(ProductAttachment.id == other_link.id)
+        .first()
+        is not None
+    ), "the OTHER product's own link must survive the combo's replace"
+
+
+def test_ac_s5_12_the_attachments_company_id_is_the_host_products_company(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert response.status_code in (200, 201), response.text
+
+    from app.models.resources import Attachment
+
+    stored = db.query(Attachment).filter(Attachment.id == response.json()["attachment_id"]).one()
+    assert str(stored.company_id) == str(host.company_id)
+
+
+def test_ac_s5_13_the_stored_attachment_carries_the_real_entity_type(db, monkeypatch):
+    """AC-S5-13 (captain's ruling, phase 3 review): the value under test in
+    `test_migration_ptag_0013_r10.py`'s CHECK-constraint fix must be the
+    value the upload route ACTUALLY writes, or the migration test proves
+    nothing about the real 500."""
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert response.status_code in (200, 201), response.text
+
+    from app.models.resources import Attachment
+
+    stored = db.query(Attachment).filter(Attachment.id == response.json()["attachment_id"]).one()
+    assert stored.entity_type == "product_combo_image"

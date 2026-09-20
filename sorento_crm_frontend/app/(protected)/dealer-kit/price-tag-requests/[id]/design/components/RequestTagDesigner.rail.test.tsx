@@ -624,3 +624,66 @@ describe('RequestTagDesigner rail - product data updated dialog (AC-S8-8)', () =
     expect(screen.getByRole('button', { name: /Update tag/ })).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S10-4 (captain's ruling, phase 3 review): the rail wrapper is hidden at
+// phone width and only shown from `md` up - `hidden md:flex`.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner rail - hidden at phone width (AC-S10-4)', () => {
+  it('the rail wrapper carries `hidden` and `md:flex`', async () => {
+    await mount(request());
+
+    let node: HTMLElement | null = screen.getByText('Lines');
+    while (node && !node.className.split(' ').includes('w-64')) {
+      node = node.parentElement;
+    }
+    expect(node).not.toBeNull();
+    const classes = (node as HTMLElement).className.split(' ');
+    expect(classes).toContain('hidden');
+    expect(classes).toContain('md:flex');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S10-1 (captain's ruling, phase 3 review, real assertion): with 40 tags
+// in the rail, scrolling the rail to the bottom and clicking the last tag
+// leaves the rail's `scrollTop` unchanged - and it is the SAME scroll
+// container element (identity, not merely "a div with the same class") that
+// never remounted.
+// ---------------------------------------------------------------------------
+
+function _fortyTagLines(): PriceTagRequestLine[] {
+  return Array.from({ length: 40 }, (_, i) =>
+    line({
+      id: `line-${i}`,
+      code: `SRT-ZZT-${i}`,
+      tags: [tag({ id: `tag-${i}`, label: `${i + 1}a` })],
+    }),
+  );
+}
+
+describe('RequestTagDesigner rail - scroll position survives select (AC-S10-1)', () => {
+  it('scrollTop is unchanged and the scroll container is the SAME element after clicking the last tag', async () => {
+    mockResolve.mockResolvedValue(
+      Array.from({ length: 40 }, (_, i) => row({ tag_id: `tag-${i}`, code: `SRT-ZZT-${i}` })),
+    );
+    await mount(request({ lines: _fortyTagLines() }));
+
+    const scrollContainer = document.querySelector('.overflow-y-auto') as HTMLElement;
+    expect(scrollContainer).not.toBeNull();
+    // jsdom does not lay out real scroll extents - set it by hand, as the
+    // AC's own brief instructs.
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      value: 900,
+      writable: true,
+    });
+    expect(scrollContainer.scrollTop).toBe(900);
+
+    fireEvent.click(screen.getByText('SRT-ZZT-39'));
+
+    const scrollContainerAfter = document.querySelector('.overflow-y-auto') as HTMLElement;
+    expect(scrollContainerAfter).toBe(scrollContainer);
+    expect(scrollContainerAfter.scrollTop).toBe(900);
+  });
+});

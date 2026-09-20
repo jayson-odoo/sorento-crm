@@ -97,4 +97,34 @@ describe('PriceTagRequestsList - Product data column (AC-D6)', () => {
     await screen.findByText('PT-000001');
     expect(screen.queryByText(/Product data updated/)).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // AC-S8-9 amended (captain's ruling, phase 3 review): the badge's wording
+  // follows the row's OWN status, the same rule the detail pill follows -
+  // `proof_ready`/`approved` are flag-only (S8-4), so "changed" is the
+  // honest word there, not "updated".
+  // -------------------------------------------------------------------------
+
+  it('reads "Product data changed · 2" for a proof_ready row', async () => {
+    listPriceTagRequests.mockResolvedValue({
+      data: [row({ id: 'req-3', status: 'proof_ready', data_changed_tag_count: 2 })],
+      pagination: { total: 1, page: 1, limit: 50 },
+    });
+
+    renderList();
+
+    expect(await screen.findByText('Product data changed · 2')).toBeInTheDocument();
+    expect(screen.queryByText(/Product data updated/)).toBeNull();
+  });
+
+  it('reads "Product data changed · 2" for an approved row', async () => {
+    listPriceTagRequests.mockResolvedValue({
+      data: [row({ id: 'req-4', status: 'approved', data_changed_tag_count: 2 })],
+      pagination: { total: 1, page: 1, limit: 50 },
+    });
+
+    renderList();
+
+    expect(await screen.findByText('Product data changed · 2')).toBeInTheDocument();
+  });
 });

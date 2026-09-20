@@ -639,3 +639,73 @@ class TestRestoreAcksTheLiveHashOnAutoApplyStatuses:
         db.expire_all()
         tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
         assert float(tag.pinned_tag_data["list_price"]) == 1300.00
+
+
+# ---------------------------------------------------------------------------
+# AC-S8-14 (new, captain's ruling 20 Sep, phase 3 review): Roll back must
+# clear the indicator it is rolling back, not just the pin - a tag whose
+# `data_updated_at`/`data_update_changes`/`data_update_version` survive the
+# restore would keep showing "Product data updated" (and counting toward
+# the badge) for a change that was just undone.
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreClearsTheIndicator:
+    def test_roll_back_clears_data_updated_at_changes_and_version(self, crm):
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequestTag
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        tag_id = _first_tag_id(db, request)
+
+        product.list_price = 1200.00
+        db.commit()
+        first_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert first_poll.status_code == 200, first_poll.text
+
+        db.expire_all()
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert tag.data_updated_at is not None, "the fixture must have auto-applied first"
+        before_version = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id, PageVersion.commit_message.like("Before product update:%"))
+            .one()
+        )
+
+        restore = client.post(
+            f"{_CRM.format(id=request.id)}/versions/{before_version.version}/restore"
+        )
+        assert restore.status_code == 200, restore.text
+
+        db.expire_all()
+        restored_tag = (
+            db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        )
+        assert restored_tag.data_updated_at is None
+        assert restored_tag.data_update_changes is None
+        assert restored_tag.data_update_version is None
+
+        next_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert next_poll.status_code == 200, next_poll.text
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequest
+
+        assert (
+            db.query(PriceTagRequest.data_changed_tag_count)
+            .filter(PriceTagRequest.id == request.id)
+            .scalar()
+            == 0
+        )

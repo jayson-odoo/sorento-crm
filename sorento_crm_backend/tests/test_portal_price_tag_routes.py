@@ -1447,6 +1447,10 @@ class TestTheDownloadRoute:
         _revoke_the_grant(db, contact_id)
 
         res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
     def test_a_storage_outage_answers_502_not_a_relabeled_404(self, client, monkeypatch):
         """Mirrors ``portal_download_attachment``: a bucket that refuses is a
         502 the caller can retry, not a 404 that reads like the file was
@@ -2157,6 +2161,69 @@ class TestAcS92PortalExportRoute:
         response = c.post(f"{_BASE}/{created['id']}/export")
 
         assert response.status_code == 409, response.text
+
+    def test_ac_s9_7_a_second_export_while_one_is_pending_answers_202_with_the_same_download_id(
+        self, client, monkeypatch
+    ):
+        """AC-S9-7: a double-click (or the poll racing a slow click) must not
+        queue a second render of the same request - the same `download_id`
+        comes back, and `enqueue_job` is called exactly once."""
+        from tests import _ptag_r9_seed as seed
+        from app.models.download import UserDownload
+        from app.models.price_tag import PriceTagRequest
+
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        request = db.query(PriceTagRequest).filter_by(id=created["id"]).one()
+        seed.attach_design(db, request)
+        _approve(db, created["id"])
+
+        queued: list = []
+        monkeypatch.setattr(
+            "app.services.queue_service.enqueue_job",
+            lambda *a, **k: queued.append((a, k)),
+        )
+
+        first = c.post(f"{_BASE}/{created['id']}/export")
+        assert first.status_code == 202, first.text
+        first_id = first.json()["download_id"]
+
+        second = c.post(f"{_BASE}/{created['id']}/export")
+        assert second.status_code == 202, second.text
+        assert second.json()["download_id"] == first_id, (
+            "a second call while the first is still pending must answer the "
+            "SAME download, not queue a duplicate render"
+        )
+
+        assert len(queued) == 1, "enqueue_job must not fire twice for one pending export"
+        rows = (
+            db.query(UserDownload)
+            .filter(UserDownload.source_entity_id == created["id"])
+            .count()
+        )
+        assert rows == 1, "no second user_downloads row for the same request"
+
+    def test_ac_s9_7_revoked_visibility_refuses_the_export_route_too(self, client):
+        from tests import _ptag_r9_seed as seed
+        from app.models.price_tag import PriceTagRequest
+
+        c, db, contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        request = db.query(PriceTagRequest).filter_by(id=created["id"]).one()
+        seed.attach_design(db, request)
+        _approve(db, created["id"])
+        _revoke_the_grant(db, contact_id)
+
+        response = c.post(f"{_BASE}/{created['id']}/export")
+
+        assert response.status_code == 403, response.text
+        assert response.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
 
     def test_another_contacts_request_404s(self, client):
         c, db, _contact_id = client

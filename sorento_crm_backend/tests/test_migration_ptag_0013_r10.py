@@ -74,6 +74,25 @@ _PRE_R10_FALLBACK = (
 
 PROMPT_NAME = "ai_extract_portal_price_tag_request"
 
+# The exact value list `402_attachments_entity_type_allow_supplier_stock_
+# list.py` (the most recent widening of `attachments_entity_type_check`
+# before this lane) left in the real database - AC-S5-13.
+_PRE_R10_ENTITY_TYPES = (
+    "product",
+    "promotion",
+    "complaint",
+    "general",
+    "complaint_document",
+    "order",
+    "stock_list",
+    "form",
+    "inbound_shipment",
+    "dealer_kit_asset",
+    "project",
+    "project_lead",
+    "supplier_stock_list",
+)
+
 
 def _load_migration():
     matches = sorted(
@@ -126,6 +145,25 @@ def _pre_migration_shape(db) -> None:
     # seed step and must start from "not there" like every other assertion
     # in this file does.
     db.execute(text("DELETE FROM attachment_types WHERE code = 'combo_image'"))
+    # AC-S5-13 (captain's ruling, phase 3 review): `create_all` never builds
+    # a CHECK constraint at all (SQLAlchemy models do not declare one), so
+    # the scratch schema stayed green while the real DB 500s on
+    # `attachments_entity_type_check` - the constraint never got the new
+    # `product_combo_image` value the r10 combo image upload writes.
+    # Recreated here at the PRE-r10 shape - the value list `402_attachments_
+    # entity_type_allow_supplier_stock_list.py` (the most recent widening
+    # before this lane) left the real database in.
+    db.execute(
+        text("ALTER TABLE attachments DROP CONSTRAINT IF EXISTS attachments_entity_type_check")
+    )
+    db.execute(
+        text(
+            "ALTER TABLE attachments ADD CONSTRAINT attachments_entity_type_check CHECK ("
+            "entity_type IS NULL OR entity_type IN ("
+            + ", ".join(f"'{v}'" for v in _PRE_R10_ENTITY_TYPES)
+            + "))"
+        )
+    )
 
 
 def _run_upgrade(db):
@@ -285,15 +323,45 @@ def test_null_print_by_backfills_to_self_office_rows_untouched(db):
 # ---------------------------------------------------------------------------
 
 
-def test_a_stock_untouched_v1_prompt_gets_a_v2_insert(db):
+def _seed_prompt_version(db, *, version: int, template: str) -> str:
     version_id = _uid()
     db.execute(
         text(
             "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables) "
-            "VALUES (:i, :n, 1, 'text', :t, '[]'::jsonb)"
+            "VALUES (:i, :n, :v, 'text', :t, '[]'::jsonb)"
         ),
-        {"i": version_id, "n": PROMPT_NAME, "t": _PRE_R10_FALLBACK},
+        {"i": version_id, "n": PROMPT_NAME, "v": version, "t": template},
     )
+    return version_id
+
+
+def _seed_production_label(db, version_id: str) -> None:
+    db.execute(
+        text(
+            "INSERT INTO ai_prompt_labels (id, name, label, version_id) "
+            "VALUES (:i, :n, 'production', :v)"
+        ),
+        {"i": _uid(), "n": PROMPT_NAME, "v": version_id},
+    )
+
+
+def _production_template(db) -> str | None:
+    return db.execute(
+        text(
+            "SELECT v.template FROM ai_prompt_labels l "
+            "JOIN ai_prompt_versions v ON v.id = l.version_id "
+            "WHERE l.name = :n AND l.label = 'production'"
+        ),
+        {"n": PROMPT_NAME},
+    ).scalar()
+
+
+def test_a_stock_untouched_v1_prompt_moves_production_to_a_new_rule_9_version(db):
+    """AC-S2-5 (amended): a version-2 row nobody's `production` label points
+    at never reaches a live extract call - the fix has to move the LABEL,
+    not just insert a row."""
+    v1_id = _seed_prompt_version(db, version=1, template=_PRE_R10_FALLBACK)
+    _seed_production_label(db, v1_id)
     db.commit()
 
     _run_upgrade(db)
@@ -303,19 +371,17 @@ def test_a_stock_untouched_v1_prompt_gets_a_v2_insert(db):
         {"n": PROMPT_NAME},
     ).mappings().all()
     assert [row["version"] for row in versions] == [1, 2], versions
-    assert "quantity" in versions[1]["template"].lower()
     assert versions[1]["template"] != versions[0]["template"]
+
+    production_text = _production_template(db)
+    assert production_text is not None
+    assert "(9)" in production_text
+    assert "quantity" in production_text.lower()
 
 
 def test_an_owner_edited_v1_prompt_is_left_alone(db):
-    version_id = _uid()
-    db.execute(
-        text(
-            "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables) "
-            "VALUES (:i, :n, 1, 'text', :t, '[]'::jsonb)"
-        ),
-        {"i": version_id, "n": PROMPT_NAME, "t": "The owner's own edited prompt text."},
-    )
+    v1_id = _seed_prompt_version(db, version=1, template="The owner's own edited prompt text.")
+    _seed_production_label(db, v1_id)
     db.commit()
 
     _run_upgrade(db)
@@ -327,6 +393,32 @@ def test_an_owner_edited_v1_prompt_is_left_alone(db):
     assert [row["version"] for row in versions] == [1], (
         "an owner edit must never be silently superseded"
     )
+    assert _production_template(db) == "The owner's own edited prompt text."
+
+
+def test_a_pre_existing_v2_does_not_collide_and_production_ends_on_the_rule_9_text(db):
+    """AC-S2-5 (amended): the migration must never hardcode `version = 2` -
+    an owner (or an earlier bump like `272_ideate_intent_parser_prompt.py`'s
+    own mechanism) may already have published one for an unrelated reason,
+    and a literal insert of `version = 2` collides on
+    `uq_ai_prompt_versions_name_version`. `production` still names the
+    pre-r10 text (nobody has re-published since), so the migration must
+    still publish the rule-9 fallback - at whatever version number is next
+    free - and move the label onto it.
+    """
+    v1_id = _seed_prompt_version(db, version=1, template=_PRE_R10_FALLBACK)
+    # An unrelated v2 an owner saved by hand, carrying neither the pre-r10
+    # text nor rule (9) - `production` still points at v1.
+    _seed_prompt_version(db, version=2, template="An owner's own unrelated v2 edit.")
+    _seed_production_label(db, v1_id)
+    db.commit()
+
+    _run_upgrade(db)
+
+    production_text = _production_template(db)
+    assert production_text is not None
+    assert "(9)" in production_text
+    assert "quantity" in production_text.lower()
 
 
 def test_no_stored_prompt_at_all_inserts_nothing(db):
@@ -560,3 +652,66 @@ def test_downgrade_drops_the_s6_and_s8_tag_columns(db):
             {"c": column},
         ).scalar()
         assert exists is None, f"{column} should be gone after downgrade"
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-13 (captain's ruling, phase 3 review): the browser run 500s on the
+# real DB because `attachments_entity_type_check` never gained
+# `product_combo_image` - the scratch schema has no such constraint at all
+# (`create_all` never builds one), which is why pytest stayed green while
+# the live upload failed.
+# ---------------------------------------------------------------------------
+
+
+def test_an_attachment_with_entity_type_product_combo_image_inserts_after_upgrade(db):
+    _run_upgrade(db)
+
+    aid = _uid()
+    name = unique_code("zztcombo")
+    db.execute(
+        text(
+            "INSERT INTO attachments (id, original_filename, stored_filename, "
+            "file_path, mime_type, storage_provider, is_deleted, entity_type) "
+            "VALUES (:i, :f, :f, :p, 'image/jpeg', 's3', false, 'product_combo_image')"
+        ),
+        {"i": aid, "f": f"{name}.jpg", "p": f"combos/{name}.jpg"},
+    )
+    stored = db.execute(
+        text("SELECT entity_type FROM attachments WHERE id = :i"), {"i": aid}
+    ).scalar()
+    assert stored == "product_combo_image"
+
+
+def test_downgrade_restores_the_402_entity_type_list(db):
+    _run_upgrade(db)
+    _run_downgrade(db)
+
+    # The 402 list still works...
+    aid = _uid()
+    name = unique_code("zztstock")
+    db.execute(
+        text(
+            "INSERT INTO attachments (id, original_filename, stored_filename, "
+            "file_path, mime_type, storage_provider, is_deleted, entity_type) "
+            "VALUES (:i, :f, :f, :p, 'image/jpeg', 's3', false, 'supplier_stock_list')"
+        ),
+        {"i": aid, "f": f"{name}.jpg", "p": f"stock/{name}.jpg"},
+    )
+    stored = db.execute(
+        text("SELECT entity_type FROM attachments WHERE id = :i"), {"i": aid}
+    ).scalar()
+    assert stored == "supplier_stock_list"
+
+    # ...but `product_combo_image` (the value THIS migration adds) must be
+    # gone again, or the downgrade did not actually restore the 402 shape.
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO attachments (id, original_filename, stored_filename, "
+                "file_path, mime_type, storage_provider, is_deleted, entity_type) "
+                "VALUES (:i, :f, :f, :p, 'image/jpeg', 's3', false, 'product_combo_image')"
+            ),
+            {"i": _uid(), "f": "x.jpg", "p": "x.jpg"},
+        )

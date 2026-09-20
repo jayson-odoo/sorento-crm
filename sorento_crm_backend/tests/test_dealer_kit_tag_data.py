@@ -1280,6 +1280,116 @@ def _combo_line_request(db):
     return request, cabinet, mirror, taps
 
 
+def _combo_line_with_trailing_fixed_part(db):
+    """X (fixed, sort 0), an open Kitchen Tap group of A/B/C (sort 1), Y
+    (fixed, sort 2) - a fixed part AFTER the open group, so the WIDE order
+    the group's leftover candidates get appended in is distinguishable from
+    the pre-r10 narrow order they used to sit inside (AC-S6-13)."""
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = _product(db, code=unique_code("ZZTIDX"))
+    x = _product(db, code=unique_code("ZZTX"))
+    y = _product(db, code=unique_code("ZZTY"))
+    candidates = [_product(db, code=unique_code(f"ZZTC{i}")) for i in range(3)]
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="idx combo", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()), combo_id=combo.id, part_product_id=x.id,
+            choice_group=None, sort_order=0,
+        )
+    )
+    for index, candidate in enumerate(candidates):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()), combo_id=combo.id, part_product_id=candidate.id,
+                choice_group="Group", sort_order=1,
+            )
+        )
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()), combo_id=combo.id, part_product_id=y.id,
+            choice_group=None, sort_order=2,
+        )
+    )
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.submit_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 1,
+                    "parts": [
+                        {"product_id": x.id},
+                        {"role": "Group", "candidates": [c.id for c in candidates]},
+                        {"product_id": y.id},
+                    ],
+                }
+            ],
+        },
+    )
+    db.commit()
+    return request, x, y, candidates
+
+
+def test_ac_s6_13_part_index_is_stable_own_order_first_then_leftover_candidates():
+    """AC-S6-13: `parts` is the pre-r10 NARROW order first (this tag's own
+    fixed parts and its chosen candidate, in sort order) with the group's
+    non-chosen candidates APPENDED at the end, in combo order - never
+    interleaved at the group's own sort position. `own_parts` is that narrow
+    list alone."""
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, x, y, candidates = _combo_line_with_trailing_fixed_part(db)
+        line = request.lines[0]
+        tags = sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))
+        assert len(tags) == 3, "one tag per candidate, D6"
+
+        for tag in tags:
+            chosen_id = next(iter((tag.choices or {}).values()))
+            chosen = next(c for c in candidates if str(c.id) == str(chosen_id))
+            leftovers = [c for c in candidates if c.id != chosen.id]
+
+            rows = tag_data_service.resolve_tags_live(db, request, [tag])
+            row = rows[0]
+
+            own_codes = [p["code"] for p in row["own_parts"]]
+            assert own_codes == [x.product_code, chosen.product_code, y.product_code], (
+                tag.label if hasattr(tag, "label") else tag.id,
+                own_codes,
+            )
+
+            codes = [p["code"] for p in row["parts"]]
+            expected = (
+                [x.product_code, chosen.product_code, y.product_code]
+                + [c.product_code for c in leftovers]
+            )
+            assert codes == expected, codes
+            # The captain's own worked numbers: Y always at index 2, the
+            # chosen candidate always at index 1, whichever tag this is.
+            assert codes.index(y.product_code) == 2
+            assert codes.index(chosen.product_code) == 1
+
+
 def test_ac_s6_3_tag_1a_parts_lists_every_candidate_own_parts_is_the_narrow_list():
     from app.services.dealer_kit import tag_data_service
 

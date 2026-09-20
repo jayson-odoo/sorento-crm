@@ -261,3 +261,54 @@ describe('read-only gear: Download PDF poll (r10 S9, AC-S9-3/S9-4)', () => {
     await waitFor(() => expect(requestPriceTagExport).toHaveBeenCalledWith('req-1'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S9-8 (captain's ruling, phase 3 review): the poll must start on a
+// SERVER-SIDE pending export too (e.g. a reload mid-export, or a second tab
+// that queued it) - not only after this component's own click sets
+// `exportPending`. Today the poll `useEffect` gates strictly on the LOCAL
+// `exportPending` state, so a request that loads already `pending` shows the
+// right label but never refetches and never streams.
+// ---------------------------------------------------------------------------
+
+describe('read-only gear: Download PDF poll starts on a server-side pending (r10 S9, AC-S9-8)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('mounting on a pending export polls every 5s and streams once ready', async () => {
+    asMock(getRequest).mockResolvedValueOnce({
+      ...baseRequest,
+      status: 'approved',
+      has_completed_export: false,
+      latest_export_status: 'pending',
+    });
+    downloadPriceTagPdf.mockResolvedValue(undefined);
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    expect(
+      screen.getByRole('button', { name: /preparing your pdf/i }),
+    ).toBeInTheDocument();
+
+    vi.useFakeTimers();
+    try {
+      asMock(getRequest).mockResolvedValueOnce({
+        ...baseRequest,
+        status: 'approved',
+        has_completed_export: true,
+        latest_export_status: 'ready',
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      expect(getRequest).toHaveBeenCalledTimes(2);
+      expect(downloadPriceTagPdf).toHaveBeenCalledWith('req-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

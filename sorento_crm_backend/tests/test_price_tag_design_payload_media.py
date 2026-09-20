@@ -663,3 +663,122 @@ def test_ac_s6_8_print_excluded_tag_is_omitted_from_design_media():
         "an image reachable only through the excluded tag must not be signed "
         "into the export either"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-12 extended (captain's ruling, phase 3 review): a SAVED doc's own
+# placements are never filtered by `design_media` - `_resolved_payload`
+# passes `doc` straight through. A tag marked Not printed AFTER the last
+# arrange leaves a stale placement in `doc.sheets` that the print page draws
+# from directly, so `resolve_tag_sheet_print_payload` must filter the doc's
+# own sheets too, and drop a sheet a filter empties out entirely.
+# ---------------------------------------------------------------------------
+
+
+def _placed(tag_id: str, copy_index: int = 0) -> dict:
+    return {
+        "id": f"{tag_id}-c{copy_index}",
+        "template_id": "tpl-1",
+        "request_tag_id": tag_id,
+        "x_mm": 5,
+        "y_mm": 5,
+        "width_mm": 60,
+        "height_mm": 40,
+        "layers": [],
+    }
+
+
+def test_ac_s6_12_a_stale_excluded_placement_is_dropped_from_the_print_payload():
+    from app.models.access import RespondContact
+    from app.models.dealer_kit import ExportRequest, Page, PageVersion
+    from app.models.download import DownloadStatus, UserDownload
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        resolve_tag_sheet_print_payload,
+    )
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    with blank_session() as db:
+        printed = seed.seed_product(db)
+        excluded = seed.seed_product(db)
+
+        contact = RespondContact(
+            id=str(uuid.uuid4()),
+            phone_number=f"+60{uuid.uuid4().hex[:9]}",
+            name=seed.unique_code("contact"),
+        )
+        db.add(contact)
+        db.flush()
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=seed.SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {"line_type": "product", "product_id": printed.id},
+                    {"line_type": "product", "product_id": excluded.id},
+                ],
+            },
+        )
+        db.flush()
+        printed_tag = seed.tags_of(request.lines[0])[0]
+        excluded_tag = seed.tags_of(request.lines[1])[0]
+        excluded_tag.print_excluded = True
+        db.flush()
+
+        # Sheet 1 mixes a printed and an excluded copy (the excluded one is
+        # STALE - marked Not printed after this arrange was saved). Sheet 2
+        # holds ONLY the excluded tag, so filtering it must empty the sheet.
+        doc = {
+            "kind": "tag_sheet",
+            "imposition": {"page_width_mm": 210, "page_height_mm": 297, "bleed_mm": 5, "gap_mm": 0},
+            "sheets": [
+                {"id": "sheet-1", "tags": [_placed(printed_tag.id), _placed(excluded_tag.id)]},
+                {"id": "sheet-2", "tags": [_placed(excluded_tag.id, copy_index=1)]},
+            ],
+        }
+
+        page = Page(
+            name=f"ZZT tags {seed.unique_code('slug')}",
+            slug=seed.unique_code("zzt-tags").lower(),
+            kind="tag_sheet",
+            company_id=seed.SORENTO,
+        )
+        db.add(page)
+        db.flush()
+        version = PageVersion(page_id=page.id, version=1, doc=doc)
+        db.add(version)
+        db.flush()
+        request.page_id = page.id
+
+        download = UserDownload(
+            user_id=seed.MARKETER_ID,
+            kind="dealer_kit_tag_sheet_pdf",
+            source_entity_type="price_tag_request",
+            source_entity_id=request.id,
+            status=DownloadStatus.PENDING.value,
+            filename="zzt-tags.pdf",
+        )
+        db.add(download)
+        db.flush()
+        db.add(
+            ExportRequest(
+                download_id=download.id,
+                page_id=page.id,
+                page_version_id=version.id,
+                audience="staff",
+                show_invoice_price=False,
+                requested_by=seed.MARKETER_ID,
+            )
+        )
+        db.commit()
+
+        payload = resolve_tag_sheet_print_payload(db, download.id)
+
+    sheets = payload["doc"]["sheets"]
+    assert [s["id"] for s in sheets] == ["sheet-1"], (
+        "sheet-2 held ONLY the excluded tag and must be dropped entirely: " + str(sheets)
+    )
+    sheet_one_tag_ids = {t["request_tag_id"] for t in sheets[0]["tags"]}
+    assert sheet_one_tag_ids == {printed_tag.id}, sheet_one_tag_ids

@@ -488,6 +488,93 @@ it('Restore from the viewer shows the restoring state and offers Undo', async ()
 });
 
 // ---------------------------------------------------------------------------
+// AC-S7-11 extended (captain's ruling, phase 3 review): the per-A4 grid
+// configured on `print_size.sheet` must survive both Publish (which snapshots
+// the draft via `updateTemplate`) and Undo-after-Restore (which PUTs the
+// pre-restore draft straight back) - both currently send only `template.doc`
+// (`width_mm`/`height_mm`/`layers`), which has no `print_size` key at all,
+// so a configured grid is silently dropped by either action.
+// ---------------------------------------------------------------------------
+
+it('AC-S7-11 extended: Publish sends a print_size that still carries the configured sheet grid', async () => {
+  mockGet.mockResolvedValue(
+    templateFixture({
+      print_size: { width_mm: 85, height_mm: 58, sheet: { cols: 3, rows: 9, turn: false } },
+    }),
+  );
+  mockUpdate.mockResolvedValue(templateFixture());
+  mockPublish.mockResolvedValue(
+    templateFixture({ published_version_id: 'v1', published_version_no: 1 }),
+  );
+  render(<TagTemplateEditorPage />);
+
+  await screen.findByTestId('canvas-editor');
+  fireEvent.click(screen.getByRole('button', { name: /Publish/ }));
+  const dialog = within(screen.getByRole('dialog'));
+  fireEvent.click(dialog.getByRole('button', { name: 'Publish' }));
+
+  await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+  expect(mockUpdate).toHaveBeenCalledWith(
+    'tmpl-1',
+    expect.objectContaining({
+      print_size: expect.objectContaining({
+        sheet: { cols: 3, rows: 9, turn: false },
+      }),
+    }),
+  );
+});
+
+it('AC-S7-11 extended: Undo after Restore sends a print_size that still carries the configured sheet grid', async () => {
+  mockGet.mockResolvedValue(
+    templateFixture({
+      print_size: { width_mm: 85, height_mm: 58, sheet: { cols: 2, rows: 7, turn: true } },
+    }),
+  );
+  mockGetVersion.mockResolvedValue({
+    id: 'v1',
+    template_id: 'tmpl-1',
+    version_no: 1,
+    note: null,
+    created_by: null,
+    created_by_name: null,
+    created_at: '2026-08-01T00:00:00Z',
+    doc: { layers: [{ id: 'a' }, { id: 'b' }], width_mm: 85, height_mm: 58 },
+    print_size: { width_mm: 85, height_mm: 58 },
+  } as never);
+  mockRestore.mockResolvedValue(
+    templateFixture({
+      doc: { layers: [{ id: 'a' }, { id: 'b' }], width_mm: 85, height_mm: 58 } as never,
+      print_size: { width_mm: 85, height_mm: 58 },
+    }),
+  );
+  render(<TagTemplateEditorPage />);
+
+  await screen.findByTestId('canvas-editor');
+  fireEvent.click(screen.getByRole('button', { name: /Versions/ }));
+  fireEvent.click(await screen.findByText('View v1'));
+  await screen.findByTestId('version-viewer');
+  fireEvent.click(screen.getByText('Restore this version'));
+
+  await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith(
+    'Draft restored',
+    expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) }),
+  ));
+
+  mockUpdate.mockResolvedValue(templateFixture());
+  const [, options] = mockToastSuccess.mock.calls[0];
+  await (options as unknown as { action: { onClick: () => Promise<void> } }).action.onClick();
+
+  expect(mockUpdate).toHaveBeenCalledWith(
+    'tmpl-1',
+    expect.objectContaining({
+      print_size: expect.objectContaining({
+        sheet: { cols: 2, rows: 7, turn: true },
+      }),
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Autosave (D22, S8, AC-S8-4): the draft autosaves the same way the request
 // designer's tags do, through the existing draft PUT (`updateTemplate`).
 // ---------------------------------------------------------------------------
