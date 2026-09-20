@@ -1,7 +1,7 @@
 """RED tests for SR0 - products resolve code-wins on ingest (contract 2.4).
 
-UAC:  documentation/plans/autocount/ingest-products-code-wins-acceptance-criteria.md
-PLAN: documentation/plans/autocount/PLAN-ingest-products-code-wins.md
+UAC:  documentation/plans/_archive/autocount/ingest-products-code-wins-acceptance-criteria.md
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-products-code-wins.md
 
 Today `MasterIngestService._apply_scoped` raises `ReferenceConflict` the
 moment a product's adopt-by-code match already carries a reference under

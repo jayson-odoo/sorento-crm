@@ -1,6 +1,6 @@
 # UAC - products resolve code-wins on ingest (contract 2.4)
 
-Plan: `documentation/plans/autocount/PLAN-ingest-products-code-wins.md`
+Plan: `documentation/plans/_archive/autocount/PLAN-ingest-products-code-wins.md`
 Slice: SR0 of the AutoCount pull + review work. Backend only, no screen.
 Owner ruling R8 (2026-09-19): products are keyed by item code. Cross-repo text: FoundryX plan 10,
 Appendix A9 (`foundryx-shared-service`, `documentation/plans/sprint-5/10-autocount-pull-review.md`).
