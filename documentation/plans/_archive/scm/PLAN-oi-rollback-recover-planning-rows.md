@@ -1,7 +1,7 @@
 # PLAN - order inquiry: recover the rows planning had worked on, and stop a rollback taking them again
 
-Status: APPROVED by owner 20 Sep 2026, full `/feature` pipeline, backend only. Lane
-`fix/oi-sheet-rebuild-from-planning`. UAC written; tickets next.
+Status: SHIPPED. Merged and deployed 20 Sep 2026 in #1050 (baad8defc); owner ran the rollback and
+re-upload of the 2026 book on prod the same day.
 UAC: `oi-rollback-recover-planning-rows-acceptance-criteria.md` (AC-RB-1 to AC-RB-41).
 
 ## 0. What was measured
