@@ -846,7 +846,10 @@ class TestProductSpecs:
             {
                 "key": f"{stem}_material",
                 "label": "Material",
-                "value": "ceramic",
+                # AC-S3-1 (r10): a stored slug title-cases automatically -
+                # "ceramic" prints as "Ceramic", the same rule
+                # `_spec_display_value` applies everywhere else.
+                "value": "Ceramic",
                 "unit": None,
             },
         ]
@@ -895,7 +898,8 @@ class TestLineSpecs:
         assert {
             "key": f"{stem}_material",
             "label": "Material",
-            "value": "granite",
+            # AC-S3-1 (r10): title-cased, like every other stored slug.
+            "value": "Granite",
             "unit": None,
         } in row["specs"]
 

@@ -1267,10 +1267,17 @@ class TestRecheckProductData:
     """
 
     def test_recheck_clears_the_ack_and_the_diff_reappears(self, crm):
+        # AC-S8-2 governs `designing` since r10 - the very next poll auto-
+        # applies the diff this test wants to see reappear as a FLAG, which
+        # would make it disappear (re-pinned) instead. `proof_ready` is
+        # outside `AUTO_UPDATE_STATUSES` (AC-S8-4), so recheck's r9 flag-only
+        # semantics are still exactly what this test guards there.
         client, db = crm
         product = seed.seed_product(db, list_price=1000.00)
         request, _product, _contact = _designing_request(db, product=product)
         seed.attach_design(db, request)
+        request.status = "proof_ready"
+        db.commit()
         tag_id = _tags(db, request.id)[0].id
 
         product.list_price = 1200.00
@@ -1510,6 +1517,71 @@ class TestS8AutoApplyOnDesigning:
 
         row = next(r for r in listed.json()["data"] if r["id"] == request.id)
         assert row["data_changed_tag_count"] >= 1
+
+    def test_ac_s8_13_the_badge_holds_its_count_across_a_second_sweep_until_dismiss(
+        self, crm
+    ):
+        """AC-S8-13 (new, extends AC-S8-5): the list badge is "seen it or not",
+        not "does a live diff exist right now" - the FIRST sweep after a
+        product edit auto-applies (S8-2) and re-pins the tag to the live
+        value, so a diff computed AFTER that has nothing left to report. If
+        the stored count tracked that live diff it would silently drop to 0
+        on the very next poll, and the "Product data updated" badge would
+        vanish before anyone opened Review - the auto-apply's whole point is
+        to be SEEN, not applied invisibly. The count must instead track
+        `data_updated_at` (set on apply, cleared only by Dismiss).
+
+        Polls through `GET .../data-changes` (AC-S8-2's own poll endpoint,
+        which always re-resolves) rather than the list route - the list
+        route's OWN `touched_request_ids` cap would skip a row nothing has
+        touched since its last check and read the stored column back
+        unchanged, which would pass this test without ever exercising the
+        gap. `data_changed_tag_count` is asserted straight off the row
+        `store_data_change_count` (shared by both routes) writes.
+
+        Red today (captain's test list, 20 Sep): `_row_change_count`/
+        `store_data_change_count` still count `row.get("changes") or
+        row.get("data_changes")` - the LIVE diff, empty the moment the tag
+        is re-pinned - so the second poll's count silently drops to 0.
+        """
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+
+        def _stored_count() -> int:
+            db.expire_all()
+            from app.models.price_tag import PriceTagRequest
+
+            return (
+                db.query(PriceTagRequest.data_changed_tag_count)
+                .filter(PriceTagRequest.id == request.id)
+                .scalar()
+            )
+
+        first_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert first_poll.status_code == 200, first_poll.text
+        assert _stored_count() == 1, "the first poll must auto-apply and count the tag"
+
+        tag_id = _tags(db, request.id)[0].id
+
+        second_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert second_poll.status_code == 200, second_poll.text
+        assert _stored_count() == 1, (
+            "the badge must hold its count across a second poll with no "
+            "further edit - it means 'not yet dismissed', not 'a live diff "
+            "exists right now'"
+        )
+
+        dismissed = client.post(f"{_CRM.format(id=request.id)}/tags/{tag_id}/dismiss")
+        assert dismissed.status_code == 200, dismissed.text
+
+        third_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert third_poll.status_code == 200, third_poll.text
+        assert _stored_count() == 0, "Dismiss must be what finally clears the badge"
 
     def test_ac_s8_6_dismiss_clears_the_three_columns_and_the_count_drops(self, crm):
         client, db = crm

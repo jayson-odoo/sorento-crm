@@ -235,12 +235,29 @@ def test_set_members_text_parts_and_open_group(db):
                 f"+ {basin.product_code} {basin.product_name} 800 x 500 x 220 mm",
             ]
         )
-        # The same parts key by key, for the rail and the CRM Lines tab.
-        assert [part["code"] for part in row["parts"]] == [
+        # The same parts key by key, for the rail and the CRM Lines tab -
+        # `own_parts` (r10 S6) is the narrow list, this tag's own resolved
+        # parts, what `set_members`/Tag total print.
+        assert [part["code"] for part in row["own_parts"]] == [
             mirror.product_code,
             tap.product_code,
             basin.product_code,
         ]
+        # `parts` (r10 S6, AC-S6-3) is the WIDE list - every candidate of
+        # every open group, so the subject picker can bind a slot to ANY of
+        # them - with `chosen: True` on the one THIS tag resolved to.
+        other_basin = black if basin is white else white
+        by_code = {part["code"]: part for part in row["parts"]}
+        assert set(by_code) == {
+            mirror.product_code,
+            tap.product_code,
+            white.product_code,
+            black.product_code,
+        }
+        assert by_code[basin.product_code]["role"] == "Basin"
+        assert by_code[basin.product_code]["chosen"] is True
+        assert by_code[other_basin.product_code]["role"] == "Basin"
+        assert not by_code[other_basin.product_code]["chosen"]
 
 
 def test_a_tag_with_no_parts_is_exactly_todays_product_tag(db):

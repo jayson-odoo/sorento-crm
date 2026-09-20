@@ -665,9 +665,12 @@ class TestListRouteRefreshesOnlyTouchedRows:
         calls: list[str] = []
         real_resolver = tag_data_service.resolve_request_line_data
 
-        def counting_resolver(db_arg, req_arg):
+        def counting_resolver(db_arg, req_arg, *args, **kwargs):
+            # r10 S8: the list sweep now calls with `apply_updates=True` too
+            # - widened to accept it (and anything else) rather than pin the
+            # resolver's exact keyword set here.
             calls.append(req_arg.id)
-            return real_resolver(db_arg, req_arg)
+            return real_resolver(db_arg, req_arg, *args, **kwargs)
 
         monkeypatch.setattr(tag_data_service, "resolve_request_line_data", counting_resolver)
 

@@ -1012,6 +1012,7 @@ def test_print_payload_lines_carry_their_specs(api):
     assert {
         "key": f"{stem}_material",
         "label": "Material",
-        "value": "ceramic",
+        # AC-S3-1 (r10): title-cased, like every other stored slug.
+        "value": "Ceramic",
         "unit": None,
     } in payload["resolvedData"][tag_id]["specs"]

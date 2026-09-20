@@ -95,7 +95,41 @@ def _load_migration():
     return module
 
 
+def _pre_migration_shape(db) -> None:
+    """Undo what ``blank_session()``'s ``create_all`` already emitted from the
+    ORM models - the coder's slice added the r10 columns to the model
+    classes, so the blank schema is built at the POST-migration shape and
+    the migration's own ``ADD COLUMN`` collides with a column that is
+    already there. Mirrors
+    ``test_migration_324_grn_line_spo_number_raw.py``'s own
+    ``_pre_migration_shape`` (same gap, same fix): drop everything this ONE
+    migration adds, `IF EXISTS` so a caller can run it defensively, then let
+    ``upgrade()`` add it all back for real.
+
+    ``tag_size_preset`` is unqualified, the same way the migration's own
+    ``op.add_column(..., schema=_dealer_kit_schema(conn))`` resolves it -
+    the scratch schema's ``dealer_kit`` sibling is already on this
+    connection's ``search_path`` (`tests/_pg_fixture.py`), so a literal
+    ``dealer_kit.`` prefix here would name the wrong (real) schema instead.
+    """
+    db.execute(text("ALTER TABLE products DROP COLUMN IF EXISTS price_tag_description"))
+    db.execute(text("ALTER TABLE product_combos DROP COLUMN IF EXISTS image_attachment_id"))
+    db.execute(text("ALTER TABLE price_tag_request_tags DROP COLUMN IF EXISTS print_excluded"))
+    db.execute(text("ALTER TABLE price_tag_request_tags DROP COLUMN IF EXISTS data_updated_at"))
+    db.execute(text("ALTER TABLE price_tag_request_tags DROP COLUMN IF EXISTS data_update_changes"))
+    db.execute(text("ALTER TABLE price_tag_request_tags DROP COLUMN IF EXISTS data_update_version"))
+    db.execute(text("ALTER TABLE tag_size_preset DROP COLUMN IF EXISTS sheet_cols"))
+    db.execute(text("ALTER TABLE tag_size_preset DROP COLUMN IF EXISTS sheet_rows"))
+    db.execute(text("ALTER TABLE tag_size_preset DROP COLUMN IF EXISTS sheet_turn"))
+    # Nothing seeds this row on `create_all` (only the migration itself
+    # does), but drop it defensively too - the idempotency test re-runs the
+    # seed step and must start from "not there" like every other assertion
+    # in this file does.
+    db.execute(text("DELETE FROM attachment_types WHERE code = 'combo_image'"))
+
+
 def _run_upgrade(db):
+    _pre_migration_shape(db)
     module = _load_migration()
     ctx = MigrationContext.configure(db.connection())
     with Operations.context(ctx):
@@ -238,7 +272,10 @@ def test_null_print_by_backfills_to_self_office_rows_untouched(db):
         text("SELECT id, print_by FROM price_tag_requests WHERE id IN (:a, :b)"),
         {"a": null_request, "b": office_request},
     ).mappings().all()
-    by_id = {row["id"]: row["print_by"] for row in rows}
+    # `id` comes back as a native `UUID` from the driver, not the plain str
+    # `_uid()` handed the INSERT - stringify the key or the lookup below
+    # KeyErrors on a type mismatch that has nothing to do with the backfill.
+    by_id = {str(row["id"]): row["print_by"] for row in rows}
     assert by_id[null_request] == "self"
     assert by_id[office_request] == "office"
 

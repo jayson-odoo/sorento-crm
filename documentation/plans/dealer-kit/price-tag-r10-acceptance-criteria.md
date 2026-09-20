@@ -174,6 +174,13 @@ left stale.
   keeps the restored pin, no new before-version is written, and the response lists no change for it (the
   restore acks the live hash on the restored tags, the same ack Keep writes today; a LATER product edit applies
   again). (pytest `test_price_tag_request_versions.py::TestRestoreAcksTheLiveHashOnAutoApplyStatuses`)
+- AC-S8-13 (added by the tester, captain's ruling, 20 Sep, extends AC-S8-5) On a `designing` request with a
+  pinned tag whose product price changed, the FIRST poll (list sweep or `GET data-changes`) auto-applies and
+  stores `data_changed_tag_count = 1`; a SECOND poll with no further edit still reports
+  `data_changed_tag_count = 1` - the tag still carries `data_updated_at`, so the badge holds until a person
+  dismisses it, not until the next live diff happens to be empty. After `POST tags/{tag_id}/dismiss` the next
+  poll reports 0. (pytest `test_price_tag_data_pin.py::TestS8AutoApplyOnDesigning::
+  test_ac_s8_13_the_badge_holds_its_count_across_a_second_sweep_until_dismiss`)
 
 ## S9. Portal Download PDF
 
