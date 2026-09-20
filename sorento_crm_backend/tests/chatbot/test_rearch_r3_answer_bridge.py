@@ -662,7 +662,18 @@ class TestMakeToolRunnerCarriesTheRealTierGate:
             f"expected the resolver's real tier_gate, got {calls[0].get('tier_gate')!r}"
         )
 
-    def test_a_settled_tier_pick_keeps_todays_synthetic_recompose(self, monkeypatch) -> None:
+    def test_a_settled_tier_pick_keeps_todays_recompose_against_the_real_gate(
+        self, monkeypatch
+    ) -> None:
+        """A tier already settled by a pick still recomposes through today's
+        `_tier_gate(spec, verdict, focus, resolver_tier_gate)` - it is not "synthetic"
+        any more, since S4 made `_tier_gate` itself fail closed to `[]` whenever no
+        resolver gate reaches it (`spec.filters.get("tier")` truthy is not enough on
+        its own once a resolver ran this turn). The expectation is therefore computed
+        by calling the real function WITH the same `resolver_tier_gate` the runner is
+        given below, never without it - a call missing that argument is stale against
+        the fail-closed contract, not a fair pin of "today's recompose".
+        """
         from app.services.chatbot.lanes import business
 
         calls: list[dict[str, Any]] = []
@@ -681,7 +692,10 @@ class TestMakeToolRunnerCarriesTheRealTierGate:
         verdict = {"access_levels": ["Sorento Dealer"]}
         focus = Focus()
         spec = FetchSpec(domain="promotion", entities=[], filters={"tier": "dealer"}, date_window=None)
-        expected = turn_runtime._tier_gate(spec, verdict, focus)
+        resolver_tier_gate = {
+            "name": ["Sorento Dealer"], "entitled_tiers": ["dealer"], "tier_ask": True
+        }
+        expected = turn_runtime._tier_gate(spec, verdict, focus, resolver_tier_gate)
 
         runner = turn_runtime.make_tool_runner(
             object(),
@@ -696,15 +710,13 @@ class TestMakeToolRunnerCarriesTheRealTierGate:
             space_id=None,
             dry_run=True,
             turn_trace=None,
-            resolver_tier_gate={
-                "name": ["Sorento Dealer"], "entitled_tiers": ["dealer"], "tier_ask": True
-            },
+            resolver_tier_gate=resolver_tier_gate,
         )
         runner("promotion", spec)
         assert calls, "lanes.business.run_fetch was never called"
         assert calls[0]["tier_gate"] == expected, (
-            f"a settled tier pick must keep today's synthetic recompose: "
-            f"expected {expected!r}, got {calls[0].get('tier_gate')!r}"
+            f"a settled tier pick must keep today's recompose against the real "
+            f"resolver gate: expected {expected!r}, got {calls[0].get('tier_gate')!r}"
         )
 
 
