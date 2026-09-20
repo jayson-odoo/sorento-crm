@@ -525,10 +525,13 @@ def _fold_crossdomain_ladder(
     *,
     parser: Mapping[str, Any] | None,
     resolved: Any,
+    entities_names: Any,
+    crossdomain_ladder: Mapping[str, Any] | None,
     ctx: Any,
     services: AnswerServices,
     contact_id: Any,
     space_id: str | None,
+    trace: Any = None,
 ) -> str:
     """AC-1705: the cross-domain stock ladder, folded above the escalate marker.
 
@@ -537,6 +540,20 @@ def _fold_crossdomain_ladder(
     domain/probeable checks) - calling it unconditionally on every miss is therefore a
     genuine no-op (no MCP call, `render=None`) for every other domain, never a second
     ladder policy of this module's own.
+
+    Every argument is the one `complete_answer` hands its own `run_crossdomain`
+    (`lanes/business/__init__.py:1685-1710`), reviewer B3/S2:
+
+    * `entities_names` is the resolver aggregate's own `name` (the contact's entitled
+      level names). `None` skips `crossdomain_probe_args`'s intersection entirely and
+      sends the PARSER's claimed `access_levels` verbatim, so a level the customer's
+      words named but the contact does not hold reached the probe.
+    * `crossdomain_ladder` is `system_settings.chatbot_crossdomain_ladder`
+      (`engine._crossdomain_ladder`). `answer._next_crossdomain_rung` returns `None`
+      for a non-dict ladder, so without it the SECOND rung - the PO rung, migration
+      `491_chatbot_ladder_incoming_po`, owner ruling 8 Sep 2026 - never ran at all.
+    * `trace` is the turn's own `TurnTrace`, so the rung probes appear on the trace
+      screen under this turn rather than nowhere.
     """
     session_block = ctx.get("session") if isinstance(ctx, Mapping) else None
     access = ctx.get("access") if isinstance(ctx, Mapping) else None
@@ -546,11 +563,15 @@ def _fold_crossdomain_ladder(
         parser=parser,
         resolved=resolved,
         session_block=session_block,
-        entities_names=None,
+        entities_names=entities_names,
         services=services,
         contact_id=contact_id,
         space_id=space_id,
         dry_run=True,
+        crossdomain_ladder=(
+            dict(crossdomain_ladder) if isinstance(crossdomain_ladder, Mapping) else None
+        ),
+        trace=trace,
         granted=granted,
     )
     render = result.get("render")
@@ -578,6 +599,9 @@ def answer_for(
     db: Any,
     asked_at_turn: int | None,
     roster_caps: Mapping[str, int] | None = None,
+    crossdomain_ladder: Mapping[str, Any] | None = None,
+    turn_id: str | None = None,
+    trace: Any = None,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -620,8 +644,26 @@ def answer_for(
     if not (via_resolver_exit or via_error_fragment or via_fetched_empty):
         return None
 
-    resolved = payload.get("resolved")
-    gate = payload.get("gate")
+    # The SAME three reads `complete_answer` opens with
+    # (`lanes/business/__init__.py:1553-1560`), coercions included: a non-dict
+    # `resolved`/`gate` is `{}` there, never `None`, and `entities_names` is the
+    # resolver aggregate's own entitled level names, `None` only when the aggregate
+    # genuinely did not run (which both readers handle).
+    resolved = payload.get("resolved") if isinstance(payload.get("resolved"), dict) else {}
+    gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
+    aggregate = payload.get("aggregate") if isinstance(payload.get("aggregate"), dict) else None
+    # Security S2. Main's own expression is `aggregate.get("name") if aggregate is not
+    # None else None`, and `None` tells `answer.crossdomain_probe_args` to skip its
+    # intersection and send the PARSER's claimed `access_levels` verbatim - a level the
+    # customer's WORDS named, which nothing has checked against the contact's entitlement.
+    # The aggregate only runs on the `access_check` entry (the promotion lane), so every
+    # incoming/inventory miss - the only origins the cross-domain ladder has - took that
+    # `None` branch. `[]` instead of `None` is the one deliberate divergence: an
+    # unverified claim is dropped rather than forwarded. It is byte-identical to main
+    # whenever the parser claimed nothing, which is 249 of 249 real captures
+    # (`documentation/plans/chatbot/parser-prompt-inventory.md:106`), so the only turn
+    # that can observe the difference is the one making an unverified claim.
+    entities_names = aggregate.get("name") if aggregate is not None else []
     full_payload = (
         {**payload, "fetch": fetch_item} if (via_error_fragment or via_fetched_empty) else payload
     )
@@ -663,9 +705,12 @@ def answer_for(
         text,
         parser=parser,
         resolved=resolved,
+        entities_names=entities_names,
+        crossdomain_ladder=crossdomain_ladder,
         ctx=ctx,
         services=services,
         contact_id=contact_id,
         space_id=space_id,
+        trace=trace,
     )
     return turn_compose.Answer(text=text, question=question)

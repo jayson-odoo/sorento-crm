@@ -757,8 +757,18 @@ def resolve_kinds(
     from app.services.chatbot.lanes.business import resolve_gate
     from app.services.chatbot.lanes.business import services as business_services
 
+    entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
-    if not entities:
+    # Security B1/S1 (review round, 20 Sep 2026): the `access_check` entry is about the
+    # CONTACT, not about anything the message named - `resolve_gate.run` reads the
+    # entitlement and runs the tier gate BEFORE resolve-entity is even called, and main's
+    # own `run_until_exit` enters there for every `check_promotion` turn whether or not a
+    # product was named. Skipping the resolver for an entity-less turn was a rearch-only
+    # shortcut, and it cost the two turns that need the entitlement most: a bare "promo"
+    # (no product) fell through to `narrow.py`'s entitlement-BLIND tier menu, and the turn
+    # that ANSWERS a tier pick (a bare "1", no entity of its own) reached `_tier_gate`
+    # with no entitlement to recompose against at all.
+    if not entities and entry != "access_check":
         return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
     if roster_caps is None:
         from app.models.chatbot_policy import ChatbotEntityKind
@@ -774,7 +784,6 @@ def resolve_kinds(
             # that never adopted this column.
             roster_caps = None
     services = business_services.production_services(db)
-    entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
     try:
         payload = resolve_gate.run(
             ctx,
@@ -1231,17 +1240,41 @@ def make_tool_runner(
         # per-tier promotion probe (`lanes.business.run_fetch`'s own tier_ask arm) sees
         # what the contact actually holds rather than nothing at all.
         tier_gate_value = (
-            _tier_gate(spec, verdict, focus) if spec.filters.get("tier") else resolver_tier_gate
+            _tier_gate(spec, verdict, focus, resolver_tier_gate)
+            if spec.filters.get("tier")
+            else resolver_tier_gate
         )
         payload = {"gate": gate, "tier_gate": tier_gate_value, "ctx": lane_ctx}
-        fragment = business.run_fetch(
-            payload,
-            services=business_services.fetch_services(db),
-            dry_run=dry_run,
-            space_id=space_id,
-            trace=turn_trace,
-            db=db,
-        )
+        # Security B1, FAIL CLOSED: a tier-filtered fetch whose recomposed access
+        # levels came out EMPTY must never reach the tool. Downstream an empty list
+        # is not "nothing matches", it is "no tier filter":
+        # `lanes/business/fetch.py` copies it into the tool args,
+        # `api/v1/marketing/promotions.py` hands it to
+        # `contact_access_type_service.translate_names_to_codes`, which returns None
+        # for an empty name list, and the service reads None as "no access-level
+        # filter" - so the contact reads promotions of every tier. It is empty only
+        # when the contact holds no entitlement the recompose could keep, which is a
+        # genuine absence: answered with the SAME `not_found` fragment the
+        # unfiltered-answer guard below hands to production's own miss composer, so
+        # the words are production's and no tool call goes out.
+        if (
+            spec.filters.get("tier")
+            and isinstance(tier_gate_value, dict)
+            and not tier_gate_value.get("access_levels_recomposed")
+        ):
+            fragment: dict[str, Any] = {
+                "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
+                "outcome": "not_found",
+            }
+        else:
+            fragment = business.run_fetch(
+                payload,
+                services=business_services.fetch_services(db),
+                dry_run=dry_run,
+                space_id=space_id,
+                trace=turn_trace,
+                db=db,
+            )
         if _answered_unfiltered(fragment, entities, unplaced):
             # Every subject this fetch had is a token the resolver could not place, so
             # there was nothing to filter by - and a tool called with no filter answers
@@ -1436,7 +1469,12 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: list[str]
     return predicate, page_ids
 
 
-def _tier_gate(spec: FetchSpec, verdict: dict[str, Any], focus: Focus) -> dict[str, Any] | None:
+def _tier_gate(
+    spec: FetchSpec,
+    verdict: dict[str, Any],
+    focus: Focus,
+    resolver_tier_gate: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """The tier the narrower already settled, in the shape the kept fetch reads.
 
     `access_levels_recomposed` is what `lanes/business._fetch_semantic_input` sends to
@@ -1456,20 +1494,51 @@ def _tier_gate(spec: FetchSpec, verdict: dict[str, Any], focus: Focus) -> dict[s
     ("dealer" + `["Sorento Dealer", "Mocha Dealer"]` -> both). A tier the contact does
     not hold falls back to their real entitlement, which is the kept lane's own Q23
     reading - answer at what they may see rather than at nothing.
+
+    **Security B1 (review round, 20 Sep 2026): the entitlement comes from the RESOLVER,
+    never from the parser's words.** `verdict["access_levels"]` is what the MESSAGE
+    stated (`head/parser.py`), and it is empty in 249 of 249 real captures
+    (`documentation/plans/chatbot/parser-prompt-inventory.md:106`) - so recomposing
+    against it on the turn that ANSWERS a tier pick produced an empty
+    `access_levels_recomposed`, which `api/v1/marketing/promotions.py` ->
+    `contact_access_type_service.translate_names_to_codes` reads as "no access-level
+    filter at all", answering with promotions of every tier. `resolver_tier_gate` is
+    `resolve_gate.run`'s own `access_check` output: `name` is the contact's REAL
+    entitled compound names and `entitled_tiers` the tiers those map to
+    (`lanes/business/tier_gate.py`). A chosen tier outside `entitled_tiers` is dropped
+    before the recompose, so a pick off a stale or blind menu cannot widen the read.
+    The verdict is the fallback for a caller with no resolver answer at all (a test
+    double, a turn whose resolver raised), never the primary.
     """
     tier = spec.filters.get("tier")
     if not tier:
         return None
     from app.services.chatbot.lanes.business.tier_gate import recompose
 
+    resolver_gate = resolver_tier_gate if isinstance(resolver_tier_gate, dict) else None
+    entitled_names = (
+        jsc.array(resolver_gate.get("name")) if resolver_gate is not None else None
+    )
     entitled = [
-        a for a in (verdict.get("access_levels") or []) if isinstance(a, str) and a.strip()
+        a
+        for a in (
+            entitled_names
+            if entitled_names is not None
+            else (verdict.get("access_levels") or [])
+        )
+        if isinstance(a, str) and a.strip()
     ]
     # AC-1698 ("1 and 2", "all"): `narrow_by_tier`'s own settle carries every chosen
     # tier, a list once more than one was picked (a single pick stays the scalar
     # `filter_value` always was) - `recompose` already takes several (`jsc.array`),
     # so every chosen tier reaches ONE fetch's own `access_levels`, never just the last.
-    tiers = tier if isinstance(tier, list) else [tier]
+    tiers = [t for t in (tier if isinstance(tier, list) else [tier])]
+    if resolver_gate is not None:
+        held = {
+            jsc.js_string(t).strip().lower()
+            for t in jsc.array(resolver_gate.get("entitled_tiers"))
+        }
+        tiers = [t for t in tiers if jsc.js_string(t).strip().lower() in held]
     recomposed = recompose(tiers, list(focus.brands or []), entitled)["access_levels"]
     if not recomposed:
         recomposed = sorted(entitled, key=jsc.js_string)
