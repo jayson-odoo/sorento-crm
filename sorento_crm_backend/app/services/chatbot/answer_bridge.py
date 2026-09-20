@@ -371,6 +371,16 @@ def _offer_answer(
             question = pending.ask(
                 kind,
                 options,
+                # D4 (hand pass 9): this roster's OWN `team` was never stamped at
+                # all, so a pick over it that misses had nothing to restore its
+                # team from and fell to the generic default ("customer service")
+                # instead of the domain's own team ("purchasing" for incoming) -
+                # `_miss_question`'s SAME roster-mint (item 2 above) already
+                # stamps `team=` this exact way. Not the domain's policy-level
+                # `escalation_team_code` (unavailable here): the ASKING turn's own
+                # verdict already routed correctly (`suggested_team`), the same
+                # field this bridge trusts everywhere else.
+                team=(parser or {}).get("routing", {}).get("suggested_team"),
                 asked_at_turn=asked_at_turn,
                 payload=ask_payload,
             )
@@ -482,6 +492,74 @@ def _stamped_roster_options(rows: list[Any], *, kind: str, text: str) -> list[di
                 option["stamp"] = stamp
         options.append(option)
     return options
+
+
+def _breakdown_gate(gate: Any, raw_fragment: Any) -> Any:
+    """`gate`, with `compatible_entities` widened to the FETCH's own effective subject -
+    for `not_found_error_message`'s breakdown bullets ONLY (D1, hand pass 9).
+
+    The resolver's OWN `gate.compatible_entities` is built from THIS message's own
+    entities alone, which is empty for a bare positional pick - the picked entity never
+    reaches the resolver at all (`turn/apply.py::_answer_pending` assembles it directly
+    from the roster option). The FETCH step's own per-domain synthetic gate
+    (`turn_runtime.make_tool_runner`'s own `gate["compatible_entities"] = entities`)
+    merges the carried FOCUS with this turn's own entities - the effective subject the
+    fetch itself was scoped to, the SAME input the primary tool call used - and rides
+    along on `raw_fragment.delegate_payload.gate`, the "kept lane" fragment
+    `lanes.business.run_fetch` already returns.
+
+    NOT used for `_miss_question`'s own require-specific roster (its `gate.
+    compatible_entities` read is the AMBIGUOUS-CANDIDATE set a customer must choose
+    among, a different list with a different job) or for `run_miss_lane` - only the
+    breakdown bullets need the wider, already-settled subject. Measured: passing the
+    widened gate to the require-specific roster too raised a phantom 4th "photo"
+    option with no real uuid, because the fetch's synthetic gate carries a
+    NOT-cleanly-resolved word straight through, which `not_found_error_message`'s own
+    `_ms_is_uuid`/base-name guard already drops from the BULLETS but the roster builder
+    does not."""
+    delegate_gate = (
+        raw_fragment.get("delegate_payload", {}).get("gate")
+        if isinstance(raw_fragment, Mapping) and isinstance(raw_fragment.get("delegate_payload"), Mapping)
+        else None
+    )
+    if isinstance(delegate_gate, Mapping) and delegate_gate.get("compatible_entities"):
+        return {**gate, "compatible_entities": delegate_gate["compatible_entities"]}
+    return gate
+
+
+def _ladder_resolved(resolved: Any, raw_fragment: Any) -> Any:
+    """`resolved`, widened the SAME way `_breakdown_gate` widens `gate` - for
+    `answer.crossdomain_zeroset`'s own read ONLY (D4, hand pass 9).
+
+    `crossdomain_zeroset` needs a PROBEABLE product (a code with a uuid) to activate at
+    all; on a picked-position turn `resolved` is `{}` (the resolver never ran - nothing
+    was left unsettled for it to resolve, see `bridge_answers_a_miss`'s own docstring
+    note in `engine.py`), so the ladder was permanently inactive for every after-a-pick
+    miss regardless of `crossdomain_ladder`/`domain_hint`/`message_type` all being
+    correct. Built in the SAME shape `crossdomain_zeroset`'s own "no `resolutions`" arm
+    already reads (`TestIssue736SeparatorInsensitiveRequestedSet`'s own fixture:
+    `{"tokens": [...], "intersection": [...]}`), from the identical delegate gate
+    `_breakdown_gate` reads - the picked product is a real, uuid-carrying entity there
+    either way."""
+    if isinstance(resolved, Mapping) and (resolved.get("resolutions") or resolved.get("intersection")):
+        return resolved
+    delegate_gate = (
+        raw_fragment.get("delegate_payload", {}).get("gate")
+        if isinstance(raw_fragment, Mapping) and isinstance(raw_fragment.get("delegate_payload"), Mapping)
+        else None
+    )
+    compat = delegate_gate.get("compatible_entities") if isinstance(delegate_gate, Mapping) else None
+    products = [
+        c
+        for c in (compat if isinstance(compat, list) else [])
+        if isinstance(c, Mapping) and c.get("entity_type") == "product" and c.get("canonical_code") and c.get("uuid")
+    ]
+    if not products:
+        return resolved
+    base = dict(resolved) if isinstance(resolved, Mapping) else {}
+    base["tokens"] = [p["canonical_code"] for p in products]
+    base["intersection"] = list(products)
+    return base
 
 
 def _miss_question(
@@ -650,11 +728,18 @@ def answer_for(
     turn_id: str | None = None,
     trace: Any = None,
     dry_run: bool = True,
+    carried_pending: Any = None,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
     all fall through to the caller's own fallback (`turn/compose.py`, or R5's own hit
-    arm)."""
+    arm).
+
+    `carried_pending` is `state.pending` as `apply()` left it, BEFORE this miss's own
+    question overwrites it (`engine.py`'s own `state_out.pending`) - the same value
+    `turn/compose.py::compose`'s identical carried-roster check reads. Optional and
+    `None` on every caller that predates hand pass 9 (a missing carry just means the
+    roster-preservation rule below never fires, same as before it existed)."""
     if not isinstance(payload, dict):
         return None
     raw_fragment = envelope.get("raw_fragment") if isinstance(envelope, dict) else None
@@ -699,6 +784,30 @@ def answer_for(
     # genuinely did not run (which both readers handle).
     resolved = payload.get("resolved") if isinstance(payload.get("resolved"), dict) else {}
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
+    # D4 (hand pass 9): a bare positional pick's own verdict names no team of its
+    # own - the customer typed "1", not the original ask - so `turn_runtime.
+    # lane_parse_output`'s own generic fallback (`DEFAULT_SUGGESTED_TEAM`,
+    # "customer_service"/"general_enquiries") answered every after-a-pick miss,
+    # ladder rung included, regardless of which team the ORIGINAL ask (the roster
+    # still-open turn) was actually routed to. `carried_pending.team` is that team
+    # (`_offer_answer`'s and `_miss_question`'s own roster-minting arms both stamp
+    # it there off THAT turn's `routing.suggested_team` at ask time), so a pick over
+    # it restores the same team (live turn 139f5282-4968-4802-bd11-501de55bca50:
+    # escalated to "customer service", not the incoming domain's own "purchasing").
+    if carried_pending is not None and carried_pending.team:
+        # A pick answering an EXISTING carried roster names no team of its own - a
+        # bare "1" is not a customer statement about who should handle this - so the
+        # roster's own established team always wins here, never `lane_parse_output`'s
+        # own generic default ("customer_service"/"general_enquiries",
+        # `turn_runtime.py`'s own `DEFAULT_SUGGESTED_TEAM`) that turn's bare verdict
+        # would otherwise carry.
+        parser = {
+            **(parser if isinstance(parser, Mapping) else {}),
+            "routing": {
+                **((parser or {}).get("routing") or {}),
+                "suggested_team": carried_pending.team,
+            },
+        }
     aggregate = payload.get("aggregate") if isinstance(payload.get("aggregate"), dict) else None
     # Security S2. Main's own expression is `aggregate.get("name") if aggregate is not
     # None else None`, and `None` tells `answer.crossdomain_probe_args` to skip its
@@ -717,7 +826,7 @@ def answer_for(
     )
 
     not_found = answer_mod.not_found_error_message(
-        full_payload, parser=parser, resolved=resolved, gate=gate
+        full_payload, parser=parser, resolved=resolved, gate=_breakdown_gate(gate, raw_fragment)
     )
     contact_id = (ctx.get("contact") or {}).get("id") if isinstance(ctx, Mapping) else None
     space_id = business_services.fetch_space_id(db) if db is not None else None
@@ -766,10 +875,47 @@ def answer_for(
     question = _miss_question(
         offer, producers, gate=gate, parser=parser, asked_at_turn=asked_at_turn, text=text
     )
+    if (
+        question is not None
+        and question.kind == "team_pick"
+        and carried_pending is not None
+        and pending.is_roster(carried_pending.kind)
+        and carried_pending.payload.get("escalate_offered") is not True
+    ):
+        # Contract 36 / `turn/compose.py`'s own identical rule (hand pass 2, item 8): a
+        # roster survives its own pick AND a miss over it - the escalate offer is a
+        # SENTENCE the roster carries, not a second question replacing it. Without this,
+        # a picked position that missed swapped the still-open roster for a bare
+        # `team_pick`, and a LATER, different position had nothing left to match against
+        # (hand pass 9 D2, live turns 93d45184-5530-4d04-8f6d-bdda695d241e /
+        # 640b6464-fc9b-44c8-9aaf-9dce42358d51). `_miss_question` only ever mints this
+        # exact bare-"Yes" `team_pick` shape on its last, catalog-only branch - a fresh
+        # did-you-mean/require-specific roster or a member offer is a genuinely NEW
+        # question and replaces the carry as it already does.
+        #
+        # `carried_pending.payload["escalate_offered"]` is ALREADY `True` for a
+        # did-you-mean roster (`_miss_question`'s OWN roster-mint stamps it there at
+        # BIRTH, offering escalate from the very first ask - AC-1703's "reply with a
+        # code to continue, or would you like me to escalate") - answering ONE of
+        # those and missing has already run the did-you-mean's own course, and a
+        # fresh `team_pick` escalate offer is the correct NEXT question, not a
+        # lingering roster (AC-1704, `test_rearch_r7_live_parity_replay.py::
+        # TestAnsweringTheCertificateDidYouMeanContinuesTheOriginalAsk`, pinned
+        # BEFORE hand pass 9 and still binding). D2's OWN roster (`_offer_answer`'s
+        # require-specific "please choose", never AC-1703's escalate offer at ask
+        # time) carries no such flag until a pick's own miss earns it here for the
+        # FIRST time - which is exactly the gap this patches.
+        from dataclasses import replace as _replace
+
+        question = _replace(
+            carried_pending,
+            team=carried_pending.team or question.team,
+            payload={**carried_pending.payload, "escalate_offered": True},
+        )
     text = _fold_crossdomain_ladder(
         text,
         parser=parser,
-        resolved=resolved,
+        resolved=_ladder_resolved(resolved, raw_fragment),
         entities_names=entities_names,
         crossdomain_ladder=crossdomain_ladder,
         ctx=ctx,

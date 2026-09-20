@@ -1951,12 +1951,29 @@ def _run_stages(  # noqa: PLR0915
             # RESOLVED customer/product on the SAME ask reaches the real report tool
             # instead (`kind: "result"`, no `outcome` key), so this exclusion never
             # hides an actual zero-row report answer.
+            # Hand pass 9, D4: dropped its own `and isinstance(resolver_payload, dict)`
+            # clause. `resolve_kinds` returns `payload=None` on two of its own early
+            # returns - the resolver raised, OR (the one that bit here) this turn named
+            # NO entities to resolve at all, which is exactly what an after-a-PICK turn
+            # looks like: `turn/apply.py::_answer_pending` already assembled a fully
+            # SETTLED entity (code + uuid) directly from the roster option, so
+            # `with_carried_entities(unsettled_only=True)` finds nothing left to hand
+            # the resolver. Requiring a dict here sent that turn's miss to `run_fetch`'s
+            # OLD `_climb` rung (`bridge_owns_ladder=False`) instead of the bridge's own
+            # AC-1705 ladder - live turn 139f5282-4968-4802-bd11-501de55bca50's "Stock
+            # details found for the requested products." raw MCP-presenter intro,
+            # never the bridge's "But no incoming matched these." sentence. The call
+            # site below already hands `answer_bridge.answer_for` `resolver_payload or
+            # {}` (the SAME "no opinion" fallback `answer_parse_output`'s own `gate=`
+            # read uses two lines above `resolve_outcome` is unpacked), so a None here
+            # degrades to an empty payload rather than skipping the bridge outright -
+            # `answer_for`'s own `via_fetched_empty` trigger reads the FETCH envelope's
+            # `raw_fragment`, not `resolver_payload`, so it still fires correctly.
             bridge_answers_a_miss = (
                 len(fetch_plan.fetch) == 1
                 and plan.ask is None
                 and not any(spec.filters.get("outstanding") for spec in fetch_plan.fetch)
                 and "outstanding" not in str(parsed_output.get("order_status") or "")
-                and isinstance(resolver_payload, dict)
             )
             try:
                 envelopes = run_fetch_mod.run_fetch(
@@ -2000,7 +2017,7 @@ def _run_stages(  # noqa: PLR0915
                     from app.services.chatbot import copy as copy_mod
 
                     answer = answer_bridge.answer_for(
-                        resolver_payload,
+                        resolver_payload or {},
                         envelope=envelopes[0],
                         parser=answer_parse_output,
                         ctx=ctx,
@@ -2020,6 +2037,12 @@ def _run_stages(  # noqa: PLR0915
                         turn_id=turn_id,
                         trace=turn_trace,
                         dry_run=dry_run,
+                        # Hand pass 9 D2: the roster `apply()` carried into this turn
+                        # (a still-open pick still answerable), so a bare escalate
+                        # offer over ANOTHER miss patches onto it (contract 36) rather
+                        # than replacing it - the same rule `turn_compose.compose`
+                        # already applies on its own miss arm below.
+                        carried_pending=state_out.pending,
                     )
                     if answer is not None:
                         bridge_answered = True

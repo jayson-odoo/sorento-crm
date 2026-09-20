@@ -24,7 +24,21 @@ PENDING_KINDS: tuple[str, ...] = (
 )
 
 # Stay alive, tracked by `answered_positions`, after their own pick.
-ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick", "kind_pick"})
+#
+# `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's `tail/compile_state.py
+# ::_picker_carry` draws no kind-based distinction at all - a `require_specific` roster
+# stays answerable across as many picks as the customer makes, and only a message that
+# TYPES a fresh entity retires it (`_picker_carry`'s own `fresh_typed` gate). The tier
+# ask is the identical shape (a numbered list, one axis), so treating it as a one-off
+# offer that clears on its own pick was the gap: a SECOND, different tier position over
+# the same still-open roster re-printed the FIRST pick's own reply instead of running a
+# fresh fetch for the tier just named (live turn 25dcef1d-decc-407b-a6eb-08d8112ee814).
+# `turn/apply.py::_answer_pending` already rebuilds `focus.tier`/`access_levels` fresh
+# from EACH turn's own matched option (never accumulated across picks), so a roster kind
+# here does not need a parallel "replace, don't merge" rule - the existing pick-handling
+# code already replaces the tier filter every time, the same way a product roster's
+# second pick answers with only that pick's own product.
+ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick", "kind_pick", "tier_pick"})
 
 
 def is_roster(kind: str) -> bool:
@@ -38,7 +52,7 @@ def is_roster(kind: str) -> bool:
     `warehouse_pick` or `order_pick` the moment somebody sets one. Those read as "not a
     roster" against the nine literals and lost contract 36's sticky roster silently.
 
-    The nine named kinds keep their own classification (`tier_pick`, `team_pick` and
+    The remaining eight named kinds keep their own classification (`team_pick` and
     `company_pick` end in `_pick` and are one-off offers, not rosters); anything the
     narrower minted outside them is a candidate list, and a candidate list is a roster.
     """

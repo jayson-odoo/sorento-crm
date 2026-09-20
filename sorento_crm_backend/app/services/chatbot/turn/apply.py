@@ -827,9 +827,22 @@ def _broaden(
     already the widened set (`decide.broadens_the_roster`, contract 31 / hand pass 2 item
     10). `all` never touches an axis this message also named outright - naming it IS the
     scope.
+
+    Never when this message names its OWN set of domains (`verdict.get("asks")`,
+    D5(a), hand pass 9): "the question is the same question, widened" is what
+    `broaden_axis: "all"` with no axis means for a turn CONTINUING the open ask - but
+    `asks` is a DOMAIN SWITCH (contract 121's own carrier of "every domain THIS
+    message asked about"), a genuinely different question the standing subject
+    answers next, per `turn/decide.py`'s own four-row table ("domain_in_message:
+    true, entities: no" - "a domain switch over the standing subject"). Left
+    unguarded, "stock and incoming and PO" (which also carries `broaden_axis: "all"`,
+    since it is asking broadly across all three) wiped the roster's own carried
+    products the SAME turn it switched to them, sending every domain an unscoped
+    fetch instead of the standing subject (live turn
+    554cf9c4-9249-4e45-ab2a-7a154b813009).
     """
     level = broaden_level(verdict)
-    if level is None or decision.answers:
+    if level is None or decision.answers or verdict.get("asks"):
         return
     axis = broaden_kind(verdict)
     if level == EVERYTHING and axis in (None, "date") and focus.date_window:
@@ -1007,6 +1020,21 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
     return None
 
 
+# D5(b), hand pass 9: main's own `lanes/business/gate.py` `ALLOWS_EMPTY` (86-95) - a
+# domain named False there refuses a fetch that would otherwise run with NO entity and
+# NO filter at all, rather than answering broad and unscoped. `inventory` is the one
+# row main's own zero-entity refusal (`run_gate`, 350-363: "no entities and 'inventory'
+# requires a scoping entity") disagrees with this engine's `list_all` narrowing policy
+# value on - a subject-less "stock and incoming and PO" ran every domain broad,
+# printing 50 unrelated stock rows (live turn 554cf9c4-9249-4e45-ab2a-7a154b813009).
+# Only this one row is ported, not main's whole dict: `master_products`/
+# `product_attachment`/`order` all narrow on a `must_narrow_one`/`narrow_to_code`
+# policy that already asks before falling through to an empty fetch, so nothing else
+# is reachable with zero entities in practice today - a second domain earns its own
+# entry when a live turn proves the same gap, not before.
+_REFUSES_EMPTY_SUBJECT: frozenset[str] = frozenset({"inventory"})
+
+
 def _narrow_and_plan(
     focus: Focus,
     policy: Policy,
@@ -1137,12 +1165,39 @@ def _narrow_and_plan(
     else:
         for name, _ask_kind, _ask_options, entities, filters in outcomes:
             row = policy.domain(name)
+            date_window = focus.date_window if row and row.takes_date_filter else None
+            if (
+                len(domains) > 1
+                and not entities
+                and not filters
+                and not date_window
+                and name in _REFUSES_EMPTY_SUBJECT
+            ):
+                # D5(b): no entity, no filter, no date window - nothing to scope this
+                # domain's fetch by at all, on a MULTI-domain ask ("stock and
+                # incoming and PO", D5(b)'s own scenario - main's own `ALLOWS_EMPTY`
+                # is read at exactly this fan-out seam, `gate.py`'s own per-domain
+                # loop over an asks-shaped verdict). Refused outright rather than run
+                # broad (`_REFUSES_EMPTY_SUBJECT`'s own docstring); the OTHER domains
+                # this turn asked about (D5(b)'s own incoming/PO, allowed broad by
+                # main's design) still fetch normally.
+                #
+                # `len(domains) > 1` deliberately excludes a SINGLE-domain inventory
+                # ask with nothing to scope by (a "low stock report" with no
+                # location/product named) - that shape already has its own
+                # scope-needed miss arm downstream (`answer.not_found_error_message`'s
+                # `needs_scope` branch, a team_pick offer, not a refusal here) and
+                # regressed `test_turn_replay.py`'s `handbuilt-lsr-*` corpus when this
+                # guard did not have it (measured: `branch_kind` fell to `low_signal`
+                # with no fetch AND no ask raised at all).
+                trace.rules_fired.append("refused_empty_subject")
+                continue
             fetch.append(
                 FetchSpec(
                     domain=name,
                     entities=entities,
                     filters=filters,
-                    date_window=focus.date_window if row and row.takes_date_filter else None,
+                    date_window=date_window,
                 )
             )
 

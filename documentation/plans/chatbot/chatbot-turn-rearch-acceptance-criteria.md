@@ -450,6 +450,21 @@ entry and exit presets apply; nothing else animates.
   "CHIA LEE CHUN" / "CHUN YE" alongside the CHIN CHUN ledgers; genuine ties (several
   ledgers of one name) clear the gap by construction.
 
+### Hand pass 9 rulings (owner console, 20 Sep 2026)
+
+- D3. Sticky roster, tier axis. `tier_pick` joins `pending.ROSTER_KINDS` (was:
+  product/customer/kind picks only). Main's own `tail/compile_state.py::_picker_carry`
+  draws no kind-based distinction - a `require_specific` roster stays answerable across
+  as many picks as the customer makes, and the tier ask is the identical shape (a
+  numbered list, one axis) to the pickers already in the set. SUPERSEDES
+  `test_rearch_r3_answer_bridge.py::TestStickyRosterContract36::
+  test_tier_pick_is_not_a_roster_kind_by_contract_but_a_pick_is_still_a_pending`'s old
+  assumption (`is_roster("tier_pick") is False`), updated in the same round. Each pick
+  still REPLACES the tier filter rather than accumulating (`turn/apply.py::
+  _answer_pending` already rebuilds `focus.tier`/`access_levels` fresh per pick, the
+  same "replace, not merge" rule a product roster's second pick already has) - no
+  parallel carry rule needed.
+
 ## Appendix A - Compatibility contract (129 lines, signed 15 Sep 2026)
 
 Source: architecture page section 9. `main` = live on prod today; `lane` = on

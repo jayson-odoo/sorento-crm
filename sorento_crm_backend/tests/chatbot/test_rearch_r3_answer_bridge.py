@@ -575,15 +575,26 @@ class TestStickyRosterContract36:
         # the roster's own options are untouched by layering an answered position
         assert layered_again.options == pending.options
 
-    def test_tier_pick_is_not_a_roster_kind_by_contract_but_a_pick_is_still_a_pending(
+    def test_tier_pick_is_a_roster_kind_the_same_as_product_and_customer(
         self,
     ) -> None:
-        """`tier_pick` is NOT in `pending.ROSTER_KINDS` (contract 36 only names
-        product/customer/kind picks) - documented here so a reader does not expect
-        `answered_positions` to accumulate across a multi-turn tier conversation the
-        way a roster's does. One turn's "1 and 2" is settled by `decision.positions`
-        alone (AC-1698's multi-select), not by a carried `answered_positions` list."""
-        assert pending_mod.is_roster("tier_pick") is False
+        """SUPERSEDED (hand pass 9 ruling, 20 Sep 2026): `tier_pick` is now IN
+        `pending.ROSTER_KINDS`. Main's `tail/compile_state.py::_picker_carry` draws no
+        kind-based distinction at all - a `require_specific` roster stays answerable
+        across as many picks as the customer makes, and the tier ask is the identical
+        shape (a numbered list, one axis) to the product/customer/kind pickers this
+        contract already covers. The OLD assertion here (`is_roster("tier_pick") is
+        False`) pinned a gap: a SECOND, different tier position over the same
+        still-open roster re-printed the FIRST pick's own reply instead of running a
+        fresh fetch for the newly named tier (live turn
+        25dcef1d-decc-407b-a6eb-08d8112ee814, `tests/chatbot/
+        test_rearch_r9_handpass9_replay.py::
+        TestPromotionTierRosterStaysAnswerableAcrossMultiplePicks`). `answered_positions`
+        still does not need to accumulate INTO the tier filter itself:
+        `turn/apply.py::_answer_pending` rebuilds `focus.tier`/`access_levels` fresh
+        from EACH turn's own matched option, the same "replace, not merge" behaviour a
+        product roster's second pick already has."""
+        assert pending_mod.is_roster("tier_pick") is True
 
 
 # --------------------------------------------------------------------------- #

@@ -1716,6 +1716,19 @@ def answer_parse_output(
         named = [d for d in (domains or []) if d]
         if len(named) == 1:
             out["domain_hint"] = named[0]
+    # Hand pass 9, D4: a bare positional pick ("1") parses as `message_type: "casual"` -
+    # correctly, that IS what the words are - but this function's own two callers
+    # (`answer_bridge.question_for`/`answer_for`) only ever run on a turn ALREADY routed
+    # to the business_query/check_promotion branch (`_run_stages`'s own gate on
+    # `branch_kind`), so by the time either reads this output the turn IS a business
+    # answer, whatever the parser called the customer's one-word reply. Left uncoerced,
+    # `answer.crossdomain_zeroset`'s own `message_type != "business_query"` gate read
+    # the pick's literal "casual" and switched the whole cross-domain ladder off - an
+    # after-a-pick incoming miss never climbed to stock at all (live turn
+    # 139f5282-4968-4802-bd11-501de55bca50), where the identical FRESH-ask shape
+    # climbs correctly because the customer's own words there really did carry
+    # "business_query".
+    out["message_type"] = "business_query"
     return out
 
 
