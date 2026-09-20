@@ -115,37 +115,39 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('read-only gear: Download PDF (D19)', () => {
-  it('disables Download PDF with a reason when no completed export exists', async () => {
+describe('read-only gear: Download PDF (r10 S9)', () => {
+  it('AC-S9-5: disables Download PDF with "Available after approval" before approved', async () => {
     asMock(getRequest).mockResolvedValue({
       ...baseRequest,
+      status: 'proof_ready',
       has_completed_export: false,
+      latest_export_status: null,
     });
 
     render(<PriceTagRequestForm requestId="req-1" />);
 
     await screen.findByText('PT-202609-0001');
-    const item = screen.getByRole('button', { name: /download pdf/i });
+    const item = screen.getByRole('button', { name: /available after approval/i });
     expect(item).toBeDisabled();
-    expect(screen.getByText('No completed export yet')).toBeInTheDocument();
 
     fireEvent.click(item);
     expect(downloadPriceTagPdf).not.toHaveBeenCalled();
   });
 
-  it('enables Download PDF and calls the real download when a completed export exists', async () => {
+  it('AC-S9-6: a READY export at approved+ streams without queueing', async () => {
     asMock(getRequest).mockResolvedValue({
       ...baseRequest,
+      status: 'approved',
       has_completed_export: true,
+      latest_export_status: 'ready',
     });
     downloadPriceTagPdf.mockResolvedValue(undefined);
 
     render(<PriceTagRequestForm requestId="req-1" />);
 
     await screen.findByText('PT-202609-0001');
-    const item = screen.getByRole('button', { name: /download pdf/i });
+    const item = screen.getByRole('button', { name: /^download pdf$/i });
     expect(item).not.toBeDisabled();
-    expect(screen.queryByText('No completed export yet')).not.toBeInTheDocument();
 
     fireEvent.click(item);
     expect(downloadPriceTagPdf).toHaveBeenCalledWith('req-1');
@@ -154,14 +156,16 @@ describe('read-only gear: Download PDF (D19)', () => {
   it('surfaces a failed download as a named toast, not a silent no-op', async () => {
     asMock(getRequest).mockResolvedValue({
       ...baseRequest,
+      status: 'approved',
       has_completed_export: true,
+      latest_export_status: 'ready',
     });
     downloadPriceTagPdf.mockRejectedValue(new Error('The stored file is no longer available.'));
 
     render(<PriceTagRequestForm requestId="req-1" />);
 
     await screen.findByText('PT-202609-0001');
-    fireEvent.click(screen.getByRole('button', { name: /download pdf/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^download pdf$/i }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(

@@ -369,20 +369,25 @@ describe('RequestTagDesigner rail (S12-2)', () => {
     expect(screen.queryByText(/^Open:/)).toBeNull();
   });
 
-  it('TAG SIZE renders after LINES inside the same top-panel container', async () => {
+  it('AC-S10-1/2 (r10, supersedes the nested-in-canvas-editor layout): TAG SIZE renders after LINES, as a SIBLING of the canvas editor, not inside it', async () => {
     await mount(request());
 
     const linesHeading = screen.getByText('Lines');
     const tagSizeHeading = screen.getByText('Tag Size');
 
-    // Both are handed to the canvas as ONE `leftRail` node (D9: one panel,
-    // no new splitter) - the mocked `TagCanvasEditor` renders it straight
-    // inside `canvas-editor`, so that is the shared container LINES and
-    // TAG SIZE both live under. `compareDocumentPosition` is the structural
-    // check; `DOCUMENT_POSITION_FOLLOWING` means "comes after".
-    const container = screen.getByTestId('canvas-editor');
-    expect(container).toContainElement(linesHeading);
-    expect(container).toContainElement(tagSizeHeading);
+    // r10 S10: the rail is hoisted OUT of the keyed `TagCanvasEditor`
+    // subtree - selecting a tag remounts the canvas but must never remount
+    // the rail's own scroll container along with it, or the rail loses its
+    // scroll position on every select (the bug this slice fixes). The
+    // mocked `TagCanvasEditor` no longer receives a `leftRail` prop at all,
+    // so LINES/TAG SIZE must NOT be found inside it.
+    const canvasEditor = screen.getByTestId('canvas-editor');
+    expect(canvasEditor).not.toContainElement(linesHeading);
+    expect(canvasEditor).not.toContainElement(tagSizeHeading);
+
+    // Both still live under one shared rail container, LINES before TAG
+    // SIZE - `compareDocumentPosition`'s `DOCUMENT_POSITION_FOLLOWING` means
+    // "comes after".
     // eslint-disable-next-line no-bitwise
     expect(
       linesHeading.compareDocumentPosition(tagSizeHeading) &
@@ -470,5 +475,47 @@ describe('RequestTagDesigner rail - live red-dot poll (AC-C2)', () => {
     await waitFor(() =>
       expect(screen.getByTitle('Product data changed - review')).toBeInTheDocument(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S6-9 (PLAN-price-tag-r10.md S6, amended by the tester 20 Sep): the rail
+// row's Not printed toggle is an icon button whose ACCESSIBLE NAME is
+// "Not printed <tag label>" with `aria-pressed`; the visible "Not printed"
+// text lives on a separate pill (`data-testid="not-printed-pill"`).
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner rail - Not printed toggle (AC-S6-9)', () => {
+  it('toggles print_excluded via PATCH, greys the row and shows the pill; pressing again clears it', async () => {
+    mockUpdateTag.mockResolvedValueOnce({ ...tag(), print_excluded: true } as PriceTagRequestTag);
+    await mount(request());
+
+    const toggle = screen.getByRole('button', { name: 'Not printed 1a' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByTestId('not-printed-pill')).toBeNull();
+
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(mockUpdateTag).toHaveBeenCalledWith('req-1', 'tag-1a', { print_excluded: true }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Not printed 1a' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+    expect(screen.getByTestId('not-printed-pill')).toHaveTextContent('Not printed');
+
+    mockUpdateTag.mockResolvedValueOnce({ ...tag(), print_excluded: false } as PriceTagRequestTag);
+    fireEvent.click(screen.getByRole('button', { name: 'Not printed 1a' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Not printed 1a' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      ),
+    );
+    expect(screen.queryByTestId('not-printed-pill')).toBeNull();
   });
 });

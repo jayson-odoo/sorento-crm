@@ -1171,7 +1171,7 @@ describe('PriceTagRequestDetail - approved goes back to the designer (AC-S10-2)'
 // ---------------------------------------------------------------------------
 
 describe('PriceTagRequestDetail - product-data-changed pill, no Update all (AC-C3/AC-C4)', () => {
-  it('AC-C3: shows "Product data changed · 2" for two changed tags', async () => {
+  it('AC-C3: shows "Product data updated · 2" for two changed tags', async () => {
     mockGet.mockResolvedValue(
       requestWith({ status: 'designing', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
     );
@@ -1182,7 +1182,7 @@ describe('PriceTagRequestDetail - product-data-changed pill, no Update all (AC-C
     renderDetail();
 
     const pill = await screen.findByTestId('product-data-changed-pill');
-    expect(pill.textContent).toContain('Product data changed · 2');
+    expect(pill.textContent).toContain('Product data updated · 2');
   });
 
   it('AC-C4: renders no "Update all" button at count 2', async () => {
@@ -1209,7 +1209,7 @@ describe('PriceTagRequestDetail - product-data-changed pill, no Update all (AC-C
     renderDetail();
 
     const pill = await screen.findByTestId('product-data-changed-pill');
-    expect(pill.textContent).toContain('Product data changed · 5');
+    expect(pill.textContent).toContain('Product data updated · 5');
     expect(screen.queryByRole('button', { name: /update all/i })).toBeNull();
   });
 });

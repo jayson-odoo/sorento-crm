@@ -908,3 +908,39 @@ def test_security_review_blank_prompt_text_raises_ai_extract_prompt_missing(monk
         svc._build_messages("portal.complaint", schema, {}, has_line_items=False)
 
     assert exc_info.value.code == "ai_extract_prompt_missing"
+
+
+# ---------------------------------------------------------------------------
+# AC-S2-2 (PLAN-price-tag-r10.md S2): the price tag request's own line-items
+# entry shape drops quantity (and both prices) - quantity is decided by
+# marketing later, never read off the document. Every OTHER line-item form
+# keeps quantity, so the change must be scoped to this one form key.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s2_2_price_tag_line_items_entry_shape_has_no_quantity(db_session):
+    svc = AIExtractService(db=db_session)
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    messages = svc._build_messages(
+        "portal.price_tag_request", schema, {}, has_line_items=True
+    )
+    user = next(m for m in messages if m["role"] == "user")
+
+    assert "product_code" in user["content"]
+    assert "product_name" in user["content"]
+    assert "notes" in user["content"]
+    assert "quantity" not in user["content"]
+    assert "unit_price" not in user["content"]
+
+
+def test_ac_s2_2_every_other_line_items_form_keeps_quantity(db_session):
+    svc = AIExtractService(db=db_session)
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    messages = svc._build_messages(
+        "portal.purchase_request", schema, {}, has_line_items=True
+    )
+    user = next(m for m in messages if m["role"] == "user")
+
+    assert "quantity" in user["content"]

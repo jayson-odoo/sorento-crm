@@ -455,3 +455,172 @@ def test_business_gate_ignores_combos(db):
     assert combo_reads == [], (
         "the resolver read the combo tables: " + "; ".join(combo_reads[:2])
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-2 .. AC-S5-4 (PLAN-price-tag-r10.md S5): the combo image upload.
+#
+# Contract (the plan names no route path beyond "POST /product-combos/{id}/
+# image" - this suite hangs it off the same `/api/v1/master-data` prefix
+# every other combo route already uses):
+#
+#     POST   /api/v1/master-data/product-combos/{combo_id}/image   multipart
+#     DELETE /api/v1/master-data/product-combos/{combo_id}/image
+#
+# Red until the route exists (404) - every case below is red for that one
+# reason, not for six unrelated ones.
+# ---------------------------------------------------------------------------
+
+COMBO_IMAGE = "/api/v1/master-data/product-combos/{combo_id}/image"
+
+
+def _jpg_bytes() -> bytes:
+    # A minimal valid-enough JPEG header; the route only needs to see a
+    # plausible image/jpeg upload, not decode pixels.
+    return bytes.fromhex("ffd8ffe000104a4649460001") + b"\x00" * 32 + bytes.fromhex("ffd9")
+
+
+def test_ac_s5_2_upload_creates_a_combo_image_attachment_and_sets_it(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+
+    assert response.status_code in (200, 201), response.text
+    body = response.json()
+    assert body["attachment_id"]
+    assert body["url"]
+
+    db.expire_all()
+    fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
+    assert str(fresh_combo.image_attachment_id) == body["attachment_id"]
+
+    from app.models.product import ProductAttachment
+
+    link = (
+        db.query(ProductAttachment)
+        .filter(ProductAttachment.attachment_id == body["attachment_id"])
+        .first()
+    )
+    assert link is not None, "the image must also be linked to the HOST product"
+    assert str(link.product_id) == str(host.id)
+
+
+def test_ac_s5_2_a_non_image_upload_is_422(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.txt", b"not an image", "text/plain")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_2_an_oversized_upload_is_422(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    oversized = b"\xff" * (11 * 1024 * 1024)  # over the 10 MB Combo Image cap
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", oversized, "image/jpeg")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_2_a_combo_of_another_company_is_404_on_upload_and_delete(db, monkeypatch):
+    _mocha(db)
+    host = _product(db, "SRTBF11834", company_id=SORENTO)
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch, company_id=MOCHA)
+
+    upload = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert upload.status_code == 404, upload.text
+
+    delete = client.delete(COMBO_IMAGE.format(combo_id=combo.id))
+    assert delete.status_code == 404, delete.text
+
+
+def test_ac_s5_3_a_second_upload_replaces_the_first(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    first = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("first.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert first.status_code in (200, 201), first.text
+    first_attachment_id = first.json()["attachment_id"]
+
+    second = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("second.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert second.status_code in (200, 201), second.text
+    second_attachment_id = second.json()["attachment_id"]
+    assert second_attachment_id != first_attachment_id
+
+    db.expire_all()
+    fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
+    assert str(fresh_combo.image_attachment_id) == second_attachment_id
+
+    from app.models.resources import Attachment
+
+    old = db.query(Attachment).filter(Attachment.id == first_attachment_id).first()
+    assert old is None, "the replaced attachment must be deleted, not orphaned"
+
+
+def test_ac_s5_3_delete_clears_and_deletes(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    uploaded = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    attachment_id = uploaded.json()["attachment_id"]
+
+    response = client.delete(COMBO_IMAGE.format(combo_id=combo.id))
+    assert response.status_code == 204, response.text
+
+    db.expire_all()
+    fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
+    assert fresh_combo.image_attachment_id is None
+
+    from app.models.resources import Attachment
+
+    assert db.query(Attachment).filter(Attachment.id == attachment_id).first() is None
+
+
+def test_ac_s5_4_get_combos_carries_the_image_field(db, monkeypatch):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    before = client.get(COMBOS.format(product_id=host.id))
+    assert before.json()["data"][0]["image"] is None
+
+    client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+
+    after = client.get(COMBOS.format(product_id=host.id))
+    image = after.json()["data"][0]["image"]
+    assert image is not None
+    assert image["attachment_id"]
+    assert image["url"]

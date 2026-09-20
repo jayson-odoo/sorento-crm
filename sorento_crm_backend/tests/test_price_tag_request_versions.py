@@ -514,3 +514,128 @@ class TestAVersionDrawsItsOwnPinnedData:
 
         assert response.status_code == 200, response.text
         assert response.json()["lines"]
+
+
+# ---------------------------------------------------------------------------
+# AC-S8-12 (NEW, captain's test list): Roll back must ack the live hash on
+# the restored tags of a request in AUTO_UPDATE_STATUSES, else the very next
+# poll re-applies the update the restore just undid. Restore already snapshots
+# the state it left (the "Before restore to vN" version) - the same ack Keep
+# writes today has to land on the restored tag too.
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreAcksTheLiveHashOnAutoApplyStatuses:
+    def test_a_restore_does_not_get_immediately_re_applied_by_the_next_poll(self, crm):
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        tag_id = _first_tag_id(db, request)
+
+        # The auto-update: the next poll re-pins the tag to 1200 and writes
+        # the "Before product update" version that is the way back.
+        product.list_price = 1200.00
+        db.commit()
+        first_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert first_poll.status_code == 200, first_poll.text
+
+        db.expire_all()
+        before_version = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id, PageVersion.commit_message.like("Before product update:%"))
+            .one()
+        )
+
+        restore = client.post(
+            f"{_CRM.format(id=request.id)}/versions/{before_version.version}/restore"
+        )
+        assert restore.status_code == 200, restore.text
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        restored_tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(restored_tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "the restore must put the OLD pin back"
+        )
+        version_count_after_restore = (
+            db.query(PageVersion).filter(PageVersion.page_id == page.id).count()
+        )
+
+        # The live product is STILL 1200 - unchanged since the auto-update.
+        # Without the ack, this poll would see the pin (1000) disagree with
+        # the live value (1200) and re-apply immediately, undoing the restore
+        # the person just asked for.
+        second_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert second_poll.status_code == 200, second_poll.text
+        body = second_poll.json()
+        assert not any(row["tag_id"] == tag_id for row in body), body
+
+        db.expire_all()
+        still_restored = (
+            db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        )
+        assert float(still_restored.pinned_tag_data["list_price"]) == 1000.00, (
+            "the next poll must NOT silently redo the update the restore undid"
+        )
+        assert (
+            db.query(PageVersion).filter(PageVersion.page_id == page.id).count()
+            == version_count_after_restore
+        ), "no NEW 'Before product update' version from a poll that changed nothing"
+
+    def test_a_later_edit_after_the_restore_still_applies(self, crm):
+        """The ack is scoped to the change the restore just undid - a LATER,
+        genuinely new edit must still be caught."""
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequestTag
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        tag_id = _first_tag_id(db, request)
+
+        product.list_price = 1200.00
+        db.commit()
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        db.expire_all()
+        before_version = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id, PageVersion.commit_message.like("Before product update:%"))
+            .one()
+        )
+        client.post(f"{_CRM.format(id=request.id)}/versions/{before_version.version}/restore")
+
+        # A genuinely NEW edit after the restore.
+        product.list_price = 1300.00
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        body = response.json()
+        assert any(row["tag_id"] == tag_id for row in body), body
+
+        db.expire_all()
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1300.00

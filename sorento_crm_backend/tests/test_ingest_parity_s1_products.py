@@ -1006,3 +1006,56 @@ class TestAcP110ProductColumnConventionD24:
         assert diff == {}, diff
         assert manual_row["is_discontinued"] is True
         assert manual_row["dimensions_length"] == Decimal("880.00")
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-9 (PLAN-price-tag-r10.md S4): `price_tag_description` is staff-
+# authored, like `remark` is AutoCount-authored - the masters push never
+# writes it, on create OR update. `CanonicalProduct` is the payload schema
+# the ESB/xlsx paths both build; if it never grows the field, `_product_
+# columns` cannot write it either, so this is the one seam that matters.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s4_9_the_canonical_product_payload_has_no_price_tag_description_field():
+    from app.schemas.canonical_masters import CanonicalProduct
+
+    assert "price_tag_description" not in CanonicalProduct.model_fields, (
+        "price_tag_description is CRM-owned - the masters push payload must "
+        "never carry it, or a push would silently overwrite what staff typed"
+    )
+
+
+def test_ac_s4_9_a_repush_never_touches_an_existing_price_tag_description(db):
+    """Belt and braces: even if a future payload smuggled the key in as an
+    unmodelled extra, `_product_columns`' explicit column list must still
+    leave it untouched on an update."""
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    cat_code, uom_code = _code("S49CAT"), _code("S49UOM")
+    svc = _esb(db, DEFAULT_COMPANY_ID)
+    svc.ingest("product_categories", [{"source_ref": f"DK-{cat_code}", "code": cat_code, "name": "Cat"}])
+    svc.ingest("units_of_measure", [{"source_ref": f"DK-{uom_code}", "code": uom_code, "name": "Each"}])
+    code = _code("S49PRD")
+    ref = f"DK-{code}"
+    result = svc.ingest(
+        "products",
+        [{"source_ref": ref, "code": code, "name": "Cabinet", "category_code": cat_code, "uom_code": uom_code}],
+    )
+    assert result.created == 1, result.records[0].errors
+
+    db.execute(
+        text("UPDATE products SET price_tag_description = 'ZZT staff text' WHERE product_code = :c"),
+        {"c": code},
+    )
+    db.flush()
+
+    result = svc.ingest(
+        "products",
+        [{"source_ref": ref, "code": code, "name": "Cabinet renamed", "category_code": cat_code, "uom_code": uom_code}],
+    )
+    assert result.updated == 1, result.records[0].errors
+
+    stored = db.execute(
+        text("SELECT price_tag_description FROM products WHERE product_code = :c"), {"c": code}
+    ).scalar()
+    assert stored == "ZZT staff text"

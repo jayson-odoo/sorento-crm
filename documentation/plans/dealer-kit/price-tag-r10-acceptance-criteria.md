@@ -103,7 +103,9 @@ left stale.
   request-tags + pytest print payload)
 - AC-S6-9 The rail row shows a `Not printed` toggle (icon button with label, `aria-pressed`); pressing it
   calls the PATCH, greys the row and shows the pill; pressing again clears it. (vitest RequestTagDesigner
-  rail)
+  rail) Amended by the tester, 20 Sep: the toggle's ACCESSIBLE NAME is `Not printed <tag label>` with
+  `aria-pressed` reflecting the state; the visible text `Not printed` lives on the separate pill
+  (`data-testid="not-printed-pill"`), not on the button itself.
 - AC-S6-10 Revise carries `print_excluded` on a tag whose choice set is unchanged. (pytest revise)
 - AC-S6-11 A pinned row written before r10 (no `own_parts`) still renders `set_members` and Tag total from
   `parts`. (pytest `_row_from_pin`)
@@ -167,6 +169,11 @@ left stale.
 - AC-S8-10 A terminal request is never re-pinned. (pytest)
 - AC-S8-11 The PDF payload after an auto-update renders the new value (pins are the print source). (pytest
   tag_sheet_export)
+- AC-S8-12 (added by the tester, captain's test list, 20 Sep) After `POST versions/{n}/restore` on a `designing`
+  request whose tag was auto-updated, the next `GET data-changes` does NOT re-apply the same live data: the tag
+  keeps the restored pin, no new before-version is written, and the response lists no change for it (the
+  restore acks the live hash on the restored tags, the same ack Keep writes today; a LATER product edit applies
+  again). (pytest `test_price_tag_request_versions.py::TestRestoreAcksTheLiveHashOnAutoApplyStatuses`)
 
 ## S9. Portal Download PDF
 

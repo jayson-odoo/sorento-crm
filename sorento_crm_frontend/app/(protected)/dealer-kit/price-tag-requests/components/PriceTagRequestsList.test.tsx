@@ -73,7 +73,7 @@ beforeEach(() => {
 });
 
 describe('PriceTagRequestsList - Product data column (AC-D6)', () => {
-  it('renders "Product data changed · 2" for a row with data_changed_tag_count 2', async () => {
+  it('renders "Product data updated · 2" for a row with data_changed_tag_count 2', async () => {
     listPriceTagRequests.mockResolvedValue({
       data: [row({ id: 'req-1', data_changed_tag_count: 2 })],
       pagination: { total: 1, page: 1, limit: 50 },
@@ -81,7 +81,7 @@ describe('PriceTagRequestsList - Product data column (AC-D6)', () => {
 
     renderList();
 
-    expect(await screen.findByText('Product data changed · 2')).toBeInTheDocument();
+    expect(await screen.findByText('Product data updated · 2')).toBeInTheDocument();
   });
 
   it('renders an empty cell - no pill - for a row with data_changed_tag_count 0', async () => {
@@ -95,6 +95,6 @@ describe('PriceTagRequestsList - Product data column (AC-D6)', () => {
     // The row itself rendered, so an absent pill below is a real negative,
     // not a permanent-skeleton false pass.
     await screen.findByText('PT-000001');
-    expect(screen.queryByText(/Product data changed/)).toBeNull();
+    expect(screen.queryByText(/Product data updated/)).toBeNull();
   });
 });

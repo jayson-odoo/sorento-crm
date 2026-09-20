@@ -173,7 +173,9 @@ Mechanics:
   cell (Q1): Small 66.7 x 31.9 (3 x 9), DIY 100 x 41 (2 x 7), Kitchen Sink 143.5 x 100 turned (2 x 2).
 - Ruled round 2: the grid is CONFIGURABLE per tag size. A tag size (a template's `print_size`, or a saved
   size preset) may carry `sheet: {cols, rows, turn}`; when it does, arrange uses it; when it does not, arrange
-  derives the best fit. Storage: `print_size` JSONB gains the optional `sheet` keys (no migration; the
+  derives the best fit. Measured 20 Sep: `TagTemplate.print_size` is a bare dict on the backend, so `sheet`
+  already round-trips; only the preset columns need the migration. Storage: `print_size` JSONB gains the
+  optional `sheet` keys (no migration; the
   template save routes already store `print_size` whole), `dealer_kit.tag_size_preset` gains
   `sheet_cols INT NULL, sheet_rows INT NULL, sheet_turn BOOL NOT NULL DEFAULT false` (migration).
   Editing: the Tag Size panel (`TagSizeControl`, shared by the template editor and the request designer)
@@ -187,7 +189,8 @@ Mechanics:
   `(width_mm, height_mm)`, groups ordered by area desc then first line order. For each group, `impositionFit`
   at gap 0 / bleed 5 (the printable margin, a constant `PRINT_MARGIN_MM`) is computed for rotation 0 and
   rotation 90; the rotation with more per sheet wins (tie:
-  0). Slots are packed row-major from the top-left of a centred block (symmetrical margins, as today). With a
+  0). `impositionFit` allows `FIT_TOLERANCE_MM = 0.5` so a size typed to one decimal (66.7 for 200/3) still
+  fits its cell. Slots are packed row-major from the top-left of a centred block (symmetrical margins, as today). With a
   configured grid the cell is usable page / cols x rows and the tag sits at the cell's top-left, so tags
   touch when the tag equals the cell and leave a strip when it is smaller; the group overflows to as many
   sheets as it needs; the next group starts a new sheet. `PlacedTag` gains
@@ -237,6 +240,11 @@ rollback; the red dot becomes an "updated" indicator that the person dismisses.
   it too, so a request nobody has open still updates within a page load of the list.
 - Restore is whole-request (every tag's pins + the doc), as today. A single-tag rollback is not built; the
   trigger for one is an owner request after a multi-tag batch where only one tag should revert.
+- Roll back must ack the live hash on the restored tags of a request in `AUTO_UPDATE_STATUSES`, else the next
+  poll re-applies the update it just undid (tester's test list, 20 Sep, AC-S8-12): restore already writes a
+  "Before restore to vN" snapshot of the state it left, and it must stamp the SAME `data_change_ack_hash` Keep
+  writes today onto every tag it restores, computed against that tag's now-current (restored) pin. A later,
+  genuinely new product edit still trips the gate, because it produces a different hash.
 
 ### S9. Portal Download PDF (owner addition, 20 Sep: "the button is not clickable")
 

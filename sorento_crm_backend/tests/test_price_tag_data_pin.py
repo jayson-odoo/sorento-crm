@@ -1348,3 +1348,250 @@ class TestRecheckProductData:
         # must exist and be the thing that refuses this id, or the assertion
         # above passes for a reason that has nothing to do with company scope.
         assert response.json().get("code") == "NOT_FOUND", response.text
+
+
+# ---------------------------------------------------------------------------
+# S8 (PLAN-price-tag-r10.md, "Product data change: auto-apply, keep the old
+# data for rollback, indicator"): `designing`/`changes_requested` no longer
+# wait for a person to click Update - the read seam itself (`resolve_request_
+# line_data`) applies the change the next time anything reads it. Written
+# test-FIRST: `data_updated_at`/`data_update_changes`/`data_update_version`
+# do not exist on the model yet, so every assertion reading them is red on
+# AttributeError; the auto-apply behaviour itself is red because today
+# nothing re-pins without an explicit `pin` action.
+# ---------------------------------------------------------------------------
+
+
+class TestS8AutoApplyOnDesigning:
+    def test_ac_s8_2_the_next_poll_applies_the_change_and_reports_it_once(self, crm):
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        page, _doc = seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        row = next(r for r in body if r["tag_id"] == tag_id)
+        assert any(c.get("field") == "list_price" for c in row["changes"]), row
+
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert float(tag.pinned_tag_data["list_price"]) == 1200.00, (
+            "the tag must be re-pinned to the LIVE value with no click"
+        )
+        assert tag.data_updated_at is not None
+        assert tag.data_update_changes, tag.data_update_changes
+        assert tag.data_update_version is not None
+
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        before = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Before product update:")
+        ]
+        assert len(before) == 1, [v.commit_message for v in versions]
+        assert tag.data_update_version == before[0].version
+
+    def test_ac_s8_2_a_second_poll_with_no_further_edit_reports_nothing(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        again = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
+        assert again == [], again
+
+    def test_ac_s8_3_three_tags_changing_together_fold_into_one_before_version(self, crm):
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        products = [seed.seed_product(db, list_price=100.00 * (i + 1)) for i in range(3)]
+        request, _p, _contact = _designing_request(db, product=products[0])
+        PriceTagRequestService.replace_lines(
+            db,
+            request,
+            [{"line_type": "product", "product_id": p.id} for p in products],
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        for p in products:
+            p.list_price = p.list_price + 50
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        tags = _tags(db, request.id)
+        assert len(tags) == 3
+        assert all(t.data_updated_at is not None for t in tags)
+
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        before = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Before product update:")
+        ]
+        assert len(before) == 1, (
+            "three tags changing in one sweep must fold into ONE before-version, "
+            f"got {[v.commit_message for v in versions]}"
+        )
+
+    def test_ac_s8_4_proof_ready_is_not_auto_applied_flag_only_as_today(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        request.status = "proof_ready"
+        db.commit()
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        row = next(r for r in body if r["tag_id"] == tag_id)
+        assert row["changes"], "the change must still be FLAGGED at proof_ready"
+
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert float(tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "proof_ready must NOT auto-apply - Keep/Update stay a person's own click"
+        )
+
+        # Keep still works exactly as before S8.
+        kept = client.post(
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin", json={"action": "keep"}
+        )
+        assert kept.status_code == 200, kept.text
+
+    def test_ac_s8_5_the_list_sweep_applies_the_update_too(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        listed = client.get("/api/v1/dealer-kit/price-tag-requests")
+        assert listed.status_code == 200, listed.text
+
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert tag.data_updated_at is not None, (
+            "the list sweep must apply the update the same way the detail poll does"
+        )
+
+        row = next(r for r in listed.json()["data"] if r["id"] == request.id)
+        assert row["data_changed_tag_count"] >= 1
+
+    def test_ac_s8_6_dismiss_clears_the_three_columns_and_the_count_drops(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        response = client.post(f"{_CRM.format(id=request.id)}/tags/{tag_id}/dismiss")
+
+        assert response.status_code == 200, response.text
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert tag.data_updated_at is None
+        assert tag.data_update_changes is None
+        assert tag.data_update_version is None
+
+    def test_ac_s8_10_a_terminal_request_is_never_re_pinned(self, db_only):
+        from app.services.dealer_kit import tag_data_service
+
+        product = seed.seed_product(db_only, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db_only)
+        request = seed.seed_request(
+            db_only, contact_id, status="collected", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        line = request.lines[0]
+        tag = seed.first_tag(request)
+        tag.pinned_tag_data = {"code": product.product_code, "list_price": 1000.00}
+        tag.pinned_at = seed.utcnow()
+        db_only.commit()
+        product.list_price = 1200.00
+        db_only.commit()
+
+        tag_data_service.resolve_request_line_data(db_only, request)
+
+        db_only.expire_all()
+        fresh = (
+            db_only.query(type(tag)).filter_by(id=tag.id).first()
+        )
+        assert float(fresh.pinned_tag_data["list_price"]) == 1000.00
+        assert fresh.data_updated_at is None
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-8 (PLAN-price-tag-r10.md S4): editing `price_tag_description` on a
+# product with an open request changes the tag's data hash, so `GET
+# data-changes` flags it - the same gate every other pinned field already
+# goes through. Checked at `proof_ready`, outside `AUTO_UPDATE_STATUSES`
+# (S8), so this is a clean "flag, not auto-apply" assertion.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s4_8_a_price_tag_description_edit_is_flagged_as_a_data_change():
+    with blank_session() as db:
+        seed.seed_marketer(db)
+        product = seed.seed_product(db)
+        product.price_tag_description = "Original copy"
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        request.status = "proof_ready"
+        db.commit()
+
+        product.price_tag_description = "Changed copy"
+        db.commit()
+
+        from app.services.dealer_kit import tag_data_service
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+
+        row = rows[0]
+        fields = {c.get("field") for c in (row.get("data_changes") or [])}
+        assert "price_tag_description" in fields, row.get("data_changes")

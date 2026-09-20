@@ -274,3 +274,82 @@ def test_a_photo_wins_over_a_pdf_marked_primary():
 
         url = product_images.primary_image_urls(db, [product], CONSUMER)[product.id]
         assert photo.original_filename.split(".")[0] in url
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-11 (PLAN-price-tag-r10.md S5): `gallery_images` ranks a Combo Image
+# attachment LAST (after Technical Specifications), so a combo picture never
+# wins the host's own tag photo; `primary_image_urls` excludes the type
+# altogether, so a catalogue tile never shows a combo's picture as if it were
+# the product's own.
+# ---------------------------------------------------------------------------
+
+
+def _typed_image(db, product, *, type_name: str, is_primary=False, sort_order=0):
+    from app.models.product import ProductAttachment
+    from app.models.resources import Attachment, AttachmentType
+
+    row = (
+        db.query(AttachmentType).filter(AttachmentType.type_name == type_name).first()
+    )
+    if row is None:
+        row = AttachmentType(
+            id=str(uuid.uuid4()), type_name=type_name, allowed_extensions="jpg,jpeg,png"
+        )
+        db.add(row)
+        db.flush()
+
+    name = unique_code("zztcombo")
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=f"{name}.jpg",
+        stored_filename=f"{name}.jpg",
+        file_path=f"https://cdn.example.test/products/{name}.jpg",
+        mime_type="image/jpeg",
+        storage_provider="s3",
+        company_id=SORENTO,
+        is_deleted=False,
+        attachment_type_id=row.id,
+    )
+    db.add(attachment)
+    db.flush()
+    db.add(
+        ProductAttachment(
+            product_id=product.id,
+            attachment_id=attachment.id,
+            is_primary=is_primary,
+            sort_order=sort_order,
+            access_levels=["dealer", "end_user"],
+            company_id=SORENTO,
+        )
+    )
+    db.flush()
+    return attachment
+
+
+def test_ac_s5_11_gallery_ranks_combo_image_after_technical_specifications():
+    from app.services.dealer_kit import product_images
+
+    with pg_session() as db, company_scope(db, SCOPE):
+        product = _product(db)
+        combo_pic = _typed_image(db, product, type_name="Combo Image", sort_order=0)
+        drawing = _typed_image(db, product, type_name="Technical Specifications", sort_order=1)
+
+        images = product_images.gallery_images(db, product, STAFF)
+
+    ids_in_order = [img["attachment_id"] for img in images]
+    assert ids_in_order.index(drawing.id) < ids_in_order.index(combo_pic.id), ids_in_order
+
+
+def test_ac_s5_11_primary_image_urls_excludes_combo_image_even_when_primary():
+    from app.services.dealer_kit import product_images
+
+    with pg_session() as db, company_scope(db, SCOPE):
+        product = _product(db)
+        _typed_image(db, product, type_name="Combo Image", is_primary=True)
+
+        urls = product_images.primary_image_urls(db, [product], CONSUMER)
+
+    assert product.id not in urls, (
+        "a combo picture must never be offered as the product's own tile image"
+    )

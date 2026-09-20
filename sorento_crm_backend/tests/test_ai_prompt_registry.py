@@ -551,3 +551,19 @@ def test_the_model_shows_up_in_the_agent_list(seeded: Session):
     row = next(r for r in AIPromptService(seeded).list_keys() if r["name"] == "spec_understanding")
     assert row["model"] == "gpt-5.4-mini"
     assert row["provider"] == "openai"
+
+
+# ---------------------------------------------------------------------------
+# AC-S2-1 (PLAN-price-tag-r10.md S2): the price tag fallback carries rule (9),
+# which stops quantity being copied off the document - quantity is how many
+# TAGS marketing wants, never something a scanned document states.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s2_1_price_tag_fallback_carries_rule_9_omit_quantity():
+    from app.services.ai_prompt_registry import _ai_extract_price_tag_fallback
+
+    text = _ai_extract_price_tag_fallback()
+
+    assert "(9)" in text
+    assert "Omit `quantity`" in text

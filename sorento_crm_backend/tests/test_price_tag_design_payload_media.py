@@ -574,3 +574,92 @@ def test_a_pinned_parts_photo_url_is_resigned_not_read_back_stale():
         "the export media map still carries the dead pinned url"
     )
     assert media["images"].get(mirror_photo.id) == part_url
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-8 (PLAN-price-tag-r10.md S5): the PDF payload's `images` map contains
+# the combo attachment id - the export media map walks `row["images"]`, and
+# S5-6 already puts the combo picture there first.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s5_8_combo_image_reaches_the_export_media_map():
+    from app.models.product_combo import ProductCombo
+    from app.services.dealer_kit.tag_sheet_export_service import design_media
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    with blank_session() as db:
+        cabinet = seed.seed_product(db)
+        combo_image = seed.seed_product_photo(db, cabinet)
+        combo = ProductCombo(
+            id=str(uuid.uuid4()),
+            host_product_id=cabinet.id,
+            name=seed.unique_code("combo"),
+            sort_order=0,
+            image_attachment_id=combo_image.id,
+        )
+        db.add(combo)
+        db.flush()
+
+        contact_id = seed.seed_portal_contact(db)
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact_id,
+            company_id=seed.SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {"line_type": "product", "product_id": cabinet.id, "combo_id": combo.id}
+                ],
+            },
+        )
+        db.flush()
+
+        _rows, media = design_media(db, request, doc={})
+
+    assert combo_image.id in media["images"], media["images"]
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-8 / AC-S6-12 (PLAN-price-tag-r10.md S6): `design_media` (the ONE
+# resolver the PDF/portal/CRM previews all share) omits a `print_excluded`
+# tag entirely - no row, and no image reachable ONLY through that tag.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s6_8_print_excluded_tag_is_omitted_from_design_media():
+    from app.services.dealer_kit.tag_sheet_export_service import design_media
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    with blank_session() as db:
+        contact_id = seed.seed_portal_contact(db)
+        printed = seed.seed_product(db)
+        excluded = seed.seed_product(db)
+        excluded_photo = seed.seed_product_photo(db, excluded)
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact_id,
+            company_id=seed.SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {"line_type": "product", "product_id": printed.id},
+                    {"line_type": "product", "product_id": excluded.id},
+                ],
+            },
+        )
+        db.flush()
+        excluded_tag = seed.tags_of(request.lines[1])[0]
+        excluded_tag.print_excluded = True
+        db.commit()
+
+        rows, media = design_media(db, request, doc={})
+
+    assert excluded_tag.id not in {row["tag_id"] for row in rows}, (
+        "an excluded tag must not reach the print payload at all"
+    )
+    assert excluded_photo.id not in media["images"], (
+        "an image reachable only through the excluded tag must not be signed "
+        "into the export either"
+    )

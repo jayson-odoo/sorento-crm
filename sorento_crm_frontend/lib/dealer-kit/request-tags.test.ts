@@ -25,14 +25,13 @@ import {
   autoArrange,
   copiesOf,
   defaultTemplateFor,
+  DEFAULT_IMPOSITION,
   impositionFit,
-  impositionSlots,
   normaliseImpositionPreset,
-  pinKeyForPlacement,
-  pinnedFromDoc,
-  placementKey,
+  PRINT_MARGIN_MM,
   resizeAllTags,
   resizeTag,
+  resolveSizeGrid,
   resolveTagSize,
   starterTemplateFor,
   tagForTag,
@@ -134,15 +133,11 @@ function setTag(id: string, quantity = 1): TagRequestTag {
   return { id, quantity, line: setLine(id, quantity) };
 }
 
-// A4, 3mm bleed, 2mm gap - the everyday page geometry most of this file's
-// fixtures arrange onto. Named PAGE_A4 rather than after a preset because S6
-// removed the presets: every `ImpositionConfig` now lays out the same way,
-// auto-fit off the tag's own size (see `impositionSlots`/`impositionFit`
-// below).
+// A4, auto preset - kept only for `normaliseImpositionPreset`'s own tests
+// (the old per-request page/bleed/gap fields it migrates off). r10 S7
+// replaced everything else here: `autoArrange` no longer takes a page at
+// all - every sheet is the fixed `DEFAULT_IMPOSITION` A4 page.
 const PAGE_A4: ImpositionConfig = { preset: 'auto', ...IMPOSITION_PRESETS.auto };
-// Same page, a much wider gap - genuinely different geometry, for the test
-// that reopens a saved sheet under a changed page.
-const PAGE_A4_WIDE_GAP: ImpositionConfig = { ...PAGE_A4, gap_mm: 10 };
 
 let layerSeq = 0;
 const newId = () => `layer-${(layerSeq += 1)}`;
@@ -418,55 +413,6 @@ describe('impositionFit', () => {
 });
 
 // ---------------------------------------------------------------------------
-// impositionSlots
-// ---------------------------------------------------------------------------
-
-describe('impositionSlots', () => {
-  it('fills a grid sized by impositionFit, centred in the bleed box, row-major', () => {
-    const slots = impositionSlots(PAGE_A4, 60, 40);
-    const { cols, rows, perSheet } = impositionFit(210, 297, 3, 2, 60, 40);
-    expect(slots).toHaveLength(perSheet);
-    expect(rows).toBeGreaterThan(1);
-    // Row-major: the first `cols` slots share one y; column and row spacing
-    // are the tag size plus the gap.
-    expect(slots.slice(0, cols).every((s) => s.y_mm === slots[0].y_mm)).toBe(true);
-    expect(slots[1].x_mm - slots[0].x_mm).toBe(60 + PAGE_A4.gap_mm);
-    expect(slots[cols].y_mm - slots[0].y_mm).toBe(40 + PAGE_A4.gap_mm);
-    // Centred horizontally inside the bleed box.
-    const totalW = cols * 60 + (cols - 1) * PAGE_A4.gap_mm;
-    expect(slots[0].x_mm).toBeCloseTo(3 + (204 - totalW) / 2, 6);
-  });
-
-  it('falls back to a single centred slot when the tag does not fit the page at all, so a copy still has somewhere to go', () => {
-    // impositionFit is what tells the designer "0 per sheet" (AC-S6-3); this
-    // function still has to seat a copy SOMEWHERE, or autoArrange places
-    // nothing and a saved line's design vanishes on the next reload.
-    const tiny: ImpositionConfig = { ...PAGE_A4, page_width_mm: 50 };
-    expect(impositionFit(50, 297, 3, 2, 95, 44.5).perSheet).toBe(0);
-    const slots = impositionSlots(tiny, 95, 44.5);
-    expect(slots).toHaveLength(1);
-    expect(slots[0]).toEqual({ x_mm: 3 + (44 - 95) / 2, y_mm: 3 + (291 - 44.5) / 2 });
-  });
-
-  it('a NaN fit still falls back to a single centred slot, never an empty grid (S2)', () => {
-    // A NaN cols/rows used to slip past the `perSheet === 0` check (NaN !==
-    // 0) while the row/col loops still never ran (any comparison against NaN
-    // is false), leaving `slots` empty and `autoArrange` crashing on
-    // `slots[0]`.
-    const nanPage: ImpositionConfig = { ...PAGE_A4, page_width_mm: NaN };
-    const slots = impositionSlots(nanPage, 95, 44.5);
-    expect(slots).toHaveLength(1);
-  });
-
-  it('the preset value no longer changes the layout - an old a4_3up/a4_2x2 doc lays out identically (AC-S6-4)', () => {
-    const auto = impositionSlots({ ...PAGE_A4, preset: 'auto' }, 60, 40);
-    expect(impositionSlots({ ...PAGE_A4, preset: 'a4_3up' }, 60, 40)).toEqual(auto);
-    expect(impositionSlots({ ...PAGE_A4, preset: 'a4_2x2' }, 60, 40)).toEqual(auto);
-    expect(impositionSlots({ ...PAGE_A4, preset: 'custom' }, 60, 40)).toEqual(auto);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // normaliseImpositionPreset - old presets migrate to 'auto' on load (S3, AC-S6-4)
 // ---------------------------------------------------------------------------
 
@@ -493,18 +439,24 @@ describe('normaliseImpositionPreset', () => {
 });
 
 // ---------------------------------------------------------------------------
-// copiesOf and autoArrange
+// copiesOf, resolveSizeGrid and autoArrange (r10 S7)
 // ---------------------------------------------------------------------------
 
-function placed(id: string, tagId: string, templateId = 't-sink'): PlacedTag {
+function placed(
+  id: string,
+  tagId: string,
+  templateId = 't-sink',
+  width_mm = 60,
+  height_mm = 40,
+): PlacedTag {
   return {
     id,
     template_id: templateId,
     request_tag_id: tagId,
     x_mm: 0,
     y_mm: 0,
-    width_mm: 60,
-    height_mm: 40,
+    width_mm,
+    height_mm,
     layers: [textLayer(`${id}-l`, 1)],
   };
 }
@@ -521,327 +473,221 @@ describe('copiesOf', () => {
   it('a quantity below one still places the tag once', () => {
     expect(copiesOf([{ tag: placed('a', 'l1'), quantity: 0 }])).toHaveLength(1);
   });
+
+  it('AC-S6-8: a print_excluded tag gets no copy at all', () => {
+    const copies = copiesOf([
+      { tag: placed('a', 'l1'), quantity: 2 },
+      { tag: placed('b', 'l2'), quantity: 3, print_excluded: true },
+      { tag: placed('c', 'l3'), quantity: 1 },
+    ]);
+    expect(copies.map((c) => c.id)).toEqual(['a-c0', 'a-c1', 'c-c0']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// autoArrange + resolveSizeGrid (r10 S7): sheets are always A4 portrait, a
+// fixed 5mm printable margin on every edge (Q3), copies grouped by SIZE and
+// packed at zero gap - a group turns 90deg when that seats more per sheet.
+// `pinKeyForPlacement`/`pinnedFromDoc`/manual drag are RETIRED (AC-S7-4): a
+// saved doc's positions are always re-flowed, never read back as a pin.
+// ---------------------------------------------------------------------------
+
+describe('resolveSizeGrid', () => {
+  it('AC-S7-1: 66.7 x 31.9mm (Small) derives 3 cols x 9 rows, no rotation', () => {
+    expect(resolveSizeGrid(66.7, 31.9, null)).toEqual({
+      cols: 3,
+      rows: 9,
+      rotation: 0,
+      perSheet: 27,
+      configured: false,
+    });
+  });
+
+  it('AC-S7-2: 143.5 x 100mm (Kitchen Sink) derives 2 x 2 TURNED - rotating seats more', () => {
+    expect(resolveSizeGrid(143.5, 100, null)).toEqual({
+      cols: 2,
+      rows: 2,
+      rotation: 90,
+      perSheet: 4,
+      configured: false,
+    });
+  });
+
+  it('AC-S7-2: 98 x 140mm derives 2 x 2 with NO rotation - turning would seat fewer', () => {
+    expect(resolveSizeGrid(98, 140, null)).toEqual({
+      cols: 2,
+      rows: 2,
+      rotation: 0,
+      perSheet: 4,
+      configured: false,
+    });
+  });
+
+  it('tolerance boundary (tester test list): 66.7mm fits 3 columns of 200mm usable width (200.1mm, within FIT_TOLERANCE_MM)', () => {
+    expect(impositionFit(210, 297, PRINT_MARGIN_MM, 0, 66.7, 100).cols).toBe(3);
+  });
+
+  it('tolerance boundary: 67mm does NOT fit 3 columns (201mm, past the 0.5mm tolerance) - only 2', () => {
+    expect(impositionFit(210, 297, PRINT_MARGIN_MM, 0, 67, 100).cols).toBe(2);
+  });
+
+  it('AC-S7-12: a configured 2 x 7 grid lays out at its own cell size (100 x 41), ignoring the derived fit', () => {
+    const grid = resolveSizeGrid(100, 41, { cols: 2, rows: 7, turn: false });
+    expect(grid).toEqual({
+      cols: 2,
+      rows: 7,
+      rotation: 0,
+      perSheet: 14,
+      configured: true,
+    });
+  });
+
+  it('AC-S7-13: a configured grid whose cell is smaller than the tag is refused, names the cell, and falls back to derive', () => {
+    // 5 x 5 over the 200 x 287 usable block: each cell is 40 x 57.4mm, too
+    // small for a 66.7 x 31.9mm tag on the width axis.
+    const grid = resolveSizeGrid(66.7, 31.9, { cols: 5, rows: 5, turn: false });
+    expect(grid.configured).toBe(false);
+    expect(grid).toMatchObject({ cols: 3, rows: 9, rotation: 0, perSheet: 27 });
+    expect(grid.refusedCell).toEqual({ width_mm: 40, height_mm: 57.4 });
+  });
+
+  it('a configured grid with turn: true rotates the tag inside its own cell', () => {
+    const grid = resolveSizeGrid(41, 100, { cols: 2, rows: 7, turn: true });
+    expect(grid).toEqual({
+      cols: 2,
+      rows: 7,
+      rotation: 90,
+      perSheet: 14,
+      configured: true,
+    });
+  });
 });
 
 describe('autoArrange', () => {
-  it('lays quantity copies out in line order across as many sheets as it needs', () => {
-    // A page that fits exactly 3 of the fixture's 60x40 tag (1 col x 3 rows),
-    // so 5 copies genuinely need a second sheet.
-    const narrowPage: ImpositionConfig = {
-      preset: 'auto',
-      page_width_mm: 70,
-      page_height_mm: 136,
-      bleed_mm: 3,
-      gap_mm: 2,
-    };
-    expect(impositionFit(70, 136, 3, 2, 60, 40).perSheet).toBe(3);
+  it('AC-S7-1: 30 copies of 66.7 x 31.9mm (3 x 9 = 27/sheet) yields two sheets, 27 then 3', () => {
+    const result = autoArrange([{ tag: placed('a', 'l1', 't-sink', 66.7, 31.9), quantity: 30 }]);
 
-    const sheets = autoArrange(
-      [
-        { tag: placed('a', 'l1'), quantity: 2 },
-        { tag: placed('b', 'l2'), quantity: 3 },
-      ],
-      narrowPage,
-    );
-
-    expect(sheets).toHaveLength(2);
-    expect(sheets[0].id).toBe('sheet-1');
-    expect(sheets[0].tags.map((t) => t.id)).toEqual(['a-c0', 'a-c1', 'b-c0']);
-    expect(sheets[1].tags.map((t) => t.id)).toEqual(['b-c1', 'b-c2']);
+    expect(result.sheets).toHaveLength(2);
+    expect(result.sheets[0].tags).toHaveLength(27);
+    expect(result.sheets[1].tags).toHaveLength(3);
+    expect(result.placement[0]).toMatchObject({ cols: 3, rows: 9, rotation: 0, capacity: 27 });
   });
 
-  it('puts each copy on its slot, so nothing overlaps', () => {
-    const slots = impositionSlots(PAGE_A4, 60, 40);
-    const sheets = autoArrange([{ tag: placed('a', 'l1'), quantity: 3 }], PAGE_A4);
-    expect(sheets[0].tags.map((t) => ({ x: t.x_mm, y: t.y_mm }))).toEqual(
-      slots.slice(0, 3).map((s) => ({ x: s.x_mm, y: s.y_mm })),
+  it('AC-S7-2: 4 copies of 143.5 x 100mm lay out 2 x 2, turned, on one sheet - the page itself stays portrait', () => {
+    const result = autoArrange([{ tag: placed('a', 'l1', 't-sink', 143.5, 100), quantity: 4 }]);
+
+    expect(result.sheets).toHaveLength(1);
+    expect(result.sheets[0].tags).toHaveLength(4);
+    expect(result.sheets[0].tags.every((t) => t.rotation === 90)).toBe(true);
+    expect(result.placement[0]).toMatchObject({ cols: 2, rows: 2, rotation: 90, capacity: 4 });
+    expect(DEFAULT_IMPOSITION.page_width_mm).toBeLessThan(DEFAULT_IMPOSITION.page_height_mm);
+  });
+
+  it('AC-S7-3: adjacent slots in a group touch - column 2 starts exactly where column 1 ends, same for rows', () => {
+    const result = autoArrange([{ tag: placed('a', 'l1', 't-sink', 60, 40), quantity: 4 }]);
+    const tags = result.sheets[0].tags;
+
+    // Row-major: tags[0]/[1] are column 1/2 of row 1; find the first tag of row 2.
+    expect(tags[1].x_mm - tags[0].x_mm).toBe(60);
+    const rowTwo = tags.find((t) => t.y_mm > tags[0].y_mm);
+    expect(rowTwo).toBeDefined();
+    expect((rowTwo as PlacedTag).y_mm - tags[0].y_mm).toBe(40);
+  });
+
+  it('AC-S7-4: no output placement ever carries `pinned` - arrange always re-flows', () => {
+    const result = autoArrange([{ tag: placed('a', 'l1', 't-sink', 60, 40), quantity: 3 }]);
+    for (const tag of result.sheets[0].tags) {
+      expect(tag).not.toHaveProperty('pinned');
+    }
+  });
+
+  it('AC-S7-5: 2 kitchen sink (143.5 x 100, turned) + 30 small (66.7 x 31.9) yield three sheets in that order - kitchen sink first (larger area)', () => {
+    const result = autoArrange([
+      { tag: placed('sink', 'l1', 't-sink', 143.5, 100), quantity: 2 },
+      { tag: placed('small', 'l2', 't-sink', 66.7, 31.9), quantity: 30 },
+    ]);
+
+    expect(result.sheets).toHaveLength(3);
+    expect(result.sheets[0].tags).toHaveLength(2);
+    expect(result.sheets[0].tags.every((t) => t.request_tag_id === 'l1')).toBe(true);
+    expect(result.sheets[0].tags.every((t) => t.rotation === 90)).toBe(true);
+    expect(result.sheets[1].tags).toHaveLength(27);
+    expect(result.sheets[1].tags.every((t) => t.request_tag_id === 'l2')).toBe(true);
+    expect(result.sheets[2].tags).toHaveLength(3);
+  });
+
+  it('AC-S7-12: a configured grid lookup is honoured per size group', () => {
+    const result = autoArrange(
+      [{ tag: placed('a', 'l1', 't-diy', 100, 41), quantity: 14 }],
+      () => ({ cols: 2, rows: 7, turn: false }),
     );
+
+    expect(result.sheets).toHaveLength(1);
+    expect(result.placement[0]).toMatchObject({ cols: 2, rows: 7, rotation: 0, capacity: 14 });
+    // The grid fills the usable block exactly (2 x 100 = 200, 7 x 41 = 287),
+    // so the first tag sits at the block's own top-left, no centring offset.
+    expect(result.sheets[0].tags[0]).toMatchObject({ x_mm: PRINT_MARGIN_MM, y_mm: PRINT_MARGIN_MM });
   });
 
   it('is deterministic: the same input answers the same document', () => {
     const items = [
-      { tag: placed('a', 'l1'), quantity: 2 },
-      { tag: placed('b', 'l2'), quantity: 2 },
+      { tag: placed('a', 'l1', 't-sink', 60, 40), quantity: 2 },
+      { tag: placed('b', 'l2', 't-sink', 60, 40), quantity: 2 },
     ];
-    expect(autoArrange(items, PAGE_A4)).toEqual(autoArrange(items, PAGE_A4));
-  });
-
-  it('sizes the slot grid off the largest tag, so a big tag still fits its slot', () => {
-    const big = { ...placed('b', 'l2'), width_mm: 100, height_mm: 70 };
-    const sheets = autoArrange(
-      [
-        { tag: placed('a', 'l1'), quantity: 1 },
-        { tag: big, quantity: 1 },
-      ],
-      PAGE_A4,
-    );
-    const slots = impositionSlots(PAGE_A4, 100, 70);
-    expect(sheets[0].tags[0].x_mm).toBe(slots[0].x_mm);
-    expect(sheets[0].tags[1].y_mm).toBe(slots[1].y_mm);
+    expect(autoArrange(items)).toEqual(autoArrange(items));
   });
 
   it('every copy carries the tag layers, its template and its line', () => {
-    const sheets = autoArrange([{ tag: placed('a', 'l1', 't-wc'), quantity: 2 }], PAGE_A4);
-    for (const tag of sheets[0].tags) {
+    const result = autoArrange([{ tag: placed('a', 'l1', 't-wc'), quantity: 2 }]);
+    for (const tag of result.sheets[0].tags) {
       expect(tag.template_id).toBe('t-wc');
       expect(tag.request_tag_id).toBe('l1');
       expect(tag.layers).toHaveLength(1);
     }
   });
 
-  it('keeps a manual drag and flows everything else around it', () => {
-    const pinned = { [placementKey('l1', 1)]: { sheet: 1, x_mm: 12.5, y_mm: 33 } };
-    const sheets = autoArrange(
-      [
-        { tag: placed('a', 'l1'), quantity: 2 },
-        { tag: placed('b', 'l2'), quantity: 1 },
-      ],
-      PAGE_A4,
-      pinned,
-    );
-
-    const slots = impositionSlots(PAGE_A4, 60, 40);
-    expect(sheets).toHaveLength(2);
-    expect(sheets[0].tags.map((t) => t.id)).toEqual(['a-c0', 'b-c0']);
-    // The pinned copy takes no slot, so the one behind it moves up into slot 2.
-    expect(sheets[0].tags[1]).toMatchObject({ x_mm: slots[1].x_mm, y_mm: slots[1].y_mm });
-    expect(sheets[1].tags).toHaveLength(1);
-    expect(sheets[1].tags[0]).toMatchObject({ id: 'a-c1', x_mm: 12.5, y_mm: 33 });
+  it('answers one empty sheet and no placement when the request has nothing to place', () => {
+    const result = autoArrange([]);
+    expect(result.sheets).toEqual([{ id: 'sheet-1', tags: [] }]);
+    expect(result.placement).toEqual([]);
   });
 
-  it('answers one empty sheet when the request has nothing to place', () => {
-    const sheets = autoArrange([], PAGE_A4);
-    expect(sheets).toEqual([{ id: 'sheet-1', tags: [] }]);
+  it('AC-S7-10 (existing AC-S6-3 of r6 kept): a tag too large for the page in both rotations still gets one overflowing centred slot', () => {
+    const result = autoArrange([{ tag: placed('a', 'l1', 't-sink', 400, 400), quantity: 1 }]);
+    expect(result.sheets).toHaveLength(1);
+    expect(result.sheets[0].tags).toHaveLength(1);
+    expect(result.placement[0].capacity).toBe(0);
   });
 
-  it('still places every line when the page is too small for the tag, so no design is lost on reload', () => {
-    // A page smaller than the tag - impositionFit reads 0 per sheet, but
-    // every copy still has to land SOMEWHERE: `tagsFromDoc` reads a line's
-    // design off `sheets`, so an empty sheet here would make every line look
-    // never-designed the next time this request is opened.
-    const tiny: ImpositionConfig = { ...PAGE_A4, page_width_mm: 50 };
-    const sheets = autoArrange(
-      [
-        { tag: placed('a', 'l1'), quantity: 1 },
-        { tag: placed('b', 'l2'), quantity: 1 },
-      ],
-      tiny,
-    );
-    expect(sheets.flatMap((s) => s.tags).map((t) => t.request_tag_id)).toEqual(['l1', 'l2']);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// pinKeyForPlacement and pinnedFromDoc
-// ---------------------------------------------------------------------------
-
-describe('pinKeyForPlacement', () => {
-  it('reads the copy index off the placement id', () => {
-    expect(pinKeyForPlacement({ id: 'tag-9-c2', request_tag_id: 'l1' })).toBe(
-      placementKey('l1', 2),
-    );
-  });
-
-  it('treats a placement written before copy ids as the first copy', () => {
-    expect(pinKeyForPlacement({ id: 't-1756-3', request_tag_id: 'l1' })).toBe(
-      placementKey('l1', 0),
-    );
-  });
-});
-
-describe('pinnedFromDoc', () => {
-  /**
-   * A pin is a DRAG, not a position.
-   *
-   * Every placed tag in a saved document carries a position, because
-   * arrangement is what a document IS. Reading each of those back as a pin
-   * meant that after one save-and-reopen the whole sheet was pinned: switching
-   * the imposition preset re-imposed nothing, and bumping a line's quantity
-   * dropped the new copy on top of copy 0 rather than into the next free slot.
-   * Only a copy somebody dragged carries `pinned: true`.
-   */
-  it('reads only the copies somebody actually dragged', () => {
-    const pinned = pinnedFromDoc({
-      kind: 'tag_sheet',
-      imposition: PAGE_A4,
-      sheets: [
-        { id: 'sheet-1', tags: [{ ...placed('a-c0', 'l1'), x_mm: 5, y_mm: 6 }] },
-        {
-          id: 'sheet-2',
-          tags: [{ ...placed('a-c1', 'l1'), x_mm: 7, y_mm: 8, pinned: true }],
-        },
-      ],
-    });
-
-    expect(pinned).toEqual({
-      [placementKey('l1', 1)]: { sheet: 1, x_mm: 7, y_mm: 8 },
-    });
-  });
-
-  it('a document saved before the flag existed opens unpinned', () => {
-    // Auto-arrange re-imposes it on open. That is the deliberate trade: those
-    // documents cannot say which of their positions was a drag, and re-imposing
-    // is the answer that leaves the sheet correct rather than frozen.
-    const pinned = pinnedFromDoc({
-      kind: 'tag_sheet',
-      imposition: PAGE_A4,
-      sheets: [{ id: 's-old', tags: [{ ...placed('t-1756-3', 'l9'), x_mm: 1, y_mm: 2 }] }],
-    });
-    expect(pinned).toEqual({});
-  });
-
-  it('answers nothing for a document that does not exist yet', () => {
-    expect(pinnedFromDoc(null)).toEqual({});
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Save, reopen, and keep arranging
-// ---------------------------------------------------------------------------
-
-describe('a saved sheet reopens still arrangeable', () => {
-  const items = [
-    { tag: placed('a', 'l1'), quantity: 2 },
-    { tag: placed('b', 'l2'), quantity: 1 },
-  ];
-
-  it('an auto-placed copy is not marked as dragged', () => {
-    const sheets = autoArrange(items, PAGE_A4);
-    for (const sheet of sheets) {
-      for (const tag of sheet.tags) expect(tag.pinned).not.toBe(true);
-    }
-  });
-
-  it('a dragged copy is marked, and only that one comes back as a pin', () => {
-    const pinned = { [placementKey('l1', 1)]: { sheet: 1, x_mm: 12.5, y_mm: 33 } };
-    const saved = { kind: 'tag_sheet' as const, imposition: PAGE_A4, sheets: autoArrange(items, PAGE_A4, pinned) };
-
-    const dragged = saved.sheets[1].tags[0];
-    expect(dragged.id).toBe('a-c1');
-    expect(dragged.pinned).toBe(true);
-    expect(pinnedFromDoc(saved)).toEqual(pinned);
-  });
-
-  it('reopening under a different page geometry re-imposes everything that was not dragged', () => {
-    const saved = { kind: 'tag_sheet' as const, imposition: PAGE_A4, sheets: autoArrange(items, PAGE_A4) };
-
-    const reopened = autoArrange(items, PAGE_A4_WIDE_GAP, pinnedFromDoc(saved));
-
-    const slots = impositionSlots(PAGE_A4_WIDE_GAP, 60, 40);
-    expect(reopened[0].tags.map((t) => ({ x: t.x_mm, y: t.y_mm }))).toEqual(
-      slots.slice(0, 3).map((s) => ({ x: s.x_mm, y: s.y_mm })),
-    );
-  });
-
-  it('a quantity bump lands in the next free slot, not on top of copy 0', () => {
-    const saved = { kind: 'tag_sheet' as const, imposition: PAGE_A4, sheets: autoArrange(items, PAGE_A4) };
-
-    const bumped = autoArrange(
-      [
-        { tag: placed('a', 'l1'), quantity: 3 },
-        { tag: placed('b', 'l2'), quantity: 1 },
-      ],
-      PAGE_A4,
-      pinnedFromDoc(saved),
-    );
-
-    const positions = bumped
-      .flatMap((sheet, index) => sheet.tags.map((t) => `${index}:${t.x_mm},${t.y_mm}`));
-    expect(new Set(positions).size).toBe(positions.length);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tag size control (D24, S9, AC-S9-3)
-// ---------------------------------------------------------------------------
-
-describe('resizeTag', () => {
-  it('sets the tag footprint used by the sheet layout, leaving everything else alone', () => {
-    const tag = placed('a', 'l1');
-    const resized = resizeTag(tag, 95, 44.5);
-
-    expect(resized).toMatchObject({ width_mm: 95, height_mm: 44.5 });
-    expect(resized.id).toBe(tag.id);
-    expect(resized.layers).toBe(tag.layers);
-  });
-});
-
-describe('resizeAllTags', () => {
-  it('applies one size to every line, in "Apply to all lines" (AC-S9-3)', () => {
-    const tags = {
-      l1: placed('a', 'l1'),
-      l2: placed('b', 'l2'),
-    };
-
-    const resized = resizeAllTags(tags, 95, 44.5);
-
-    expect(resized.l1).toMatchObject({ width_mm: 95, height_mm: 44.5 });
-    expect(resized.l2).toMatchObject({ width_mm: 95, height_mm: 44.5 });
-  });
-
-  it('leaves an empty map empty', () => {
-    expect(resizeAllTags({}, 95, 44.5)).toEqual({});
-  });
-});
-
-describe('tagSizePresets', () => {
-  it('offers every published template print size, deduped, plus the starter size', () => {
-    const presets = tagSizePresets(TEMPLATES);
-
-    // TEMPLATES fixture: t-sink/t-wc/t-set all 60x40, t-plain also 60x40 -
-    // one preset for that size, not four.
-    expect(presets.filter((p) => p.width_mm === 60 && p.height_mm === 40)).toHaveLength(1);
-    expect(presets).toContainEqual(
-      expect.objectContaining({ width_mm: PRODUCT_BLOCK_SIZE.width_mm, height_mm: PRODUCT_BLOCK_SIZE.height_mm }),
-    );
-  });
-
-  it('still offers the starter size when there are no templates at all', () => {
-    const presets = tagSizePresets([]);
-    expect(presets).toEqual([
-      expect.objectContaining({ width_mm: PRODUCT_BLOCK_SIZE.width_mm, height_mm: PRODUCT_BLOCK_SIZE.height_mm }),
+  it('AC-S6-8/S6-12: a print_excluded tag never reaches a sheet or the placement/sheet counts', () => {
+    const result = autoArrange([
+      { tag: placed('a', 'l1', 't-sink', 60, 40), quantity: 2 },
+      { tag: placed('b', 'l2', 't-sink', 60, 40), quantity: 5, print_excluded: true },
     ]);
+    const ids = result.sheets.flatMap((s) => s.tags.map((t) => t.request_tag_id));
+    expect(ids).toEqual(['l1', 'l1']);
   });
 });
 
-describe('autoArrange with resized tags (AC-S9-3)', () => {
-  it('re-lays out unpinned copies at the new size, and leaves a pinned copy exactly where it was dragged', () => {
-    const items = [
-      { tag: placed('a', 'l1'), quantity: 1 },
-      { tag: resizeTag(placed('b', 'l2'), 95, 44.5), quantity: 1 },
-    ];
-
-    const dragged = { [placementKey('l2', 0)]: { sheet: 0, x_mm: 12, y_mm: 34 } };
-    const sheets = autoArrange(items, PAGE_A4, dragged);
-
-    const line2Tag = sheets[0].tags.find((t) => t.request_tag_id === 'l2');
-    expect(line2Tag).toMatchObject({ x_mm: 12, y_mm: 34, width_mm: 95, height_mm: 44.5 });
-
-    // The unpinned line still flows through the slot grid, unaffected by the
-    // other line's resize.
-    const line1Tag = sheets[0].tags.find((t) => t.request_tag_id === 'l1');
-    expect(line1Tag?.pinned).not.toBe(true);
-  });
-});
 
 // ---------------------------------------------------------------------------
-// Tag size bounds + refusal (S9 review S3): a size has to fit the CURRENT
-// imposition sheet, refused with a reason rather than silently redrawn.
+// Tag size bounds + refusal (r10 S7, AC-S7-7): no longer per-imposition -
+// every sheet is the same A4 page with the same 5mm printable margin, so the
+// ceiling is a constant, page minus 10mm per axis.
 // ---------------------------------------------------------------------------
 
 describe('tagSizeBounds', () => {
-  it('is the usable page area after bleed, on both axes', () => {
-    // PAGE_A4: 210x297mm page, 3mm bleed each side.
-    expect(tagSizeBounds(PAGE_A4)).toEqual({
+  it('AC-S7-7: is the usable A4 page area after the 5mm printable margin, on both axes - no args', () => {
+    expect(tagSizeBounds()).toEqual({
       min_mm: 10,
-      max_width_mm: 204,
-      max_height_mm: 291,
+      max_width_mm: 200,
+      max_height_mm: 287,
     });
   });
 });
 
 describe('resolveTagSize', () => {
-  const bounds = tagSizeBounds(PAGE_A4);
+  const bounds = tagSizeBounds();
 
   it('accepts a size that fits, unchanged', () => {
     expect(resolveTagSize(95, 44.5, bounds)).toEqual({
@@ -1032,16 +878,17 @@ describe('applyDesignToAllTags', () => {
     expect(group?.props).toMatchObject({ children: [remappedCodeId] });
   });
 
-  it('keeps a target line\'s existing pinned copy/position rather than resetting it', () => {
+  it("keeps a target line's existing position rather than resetting it (r10 S7: PlacedTag no longer carries `pinned` at all - arrange always re-flows)", () => {
     const tags = {
       l1: sourceTag(),
-      l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
+      l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34 },
     };
     const requestTags = [productTag('l1'), productTag('l2')];
 
     const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
-    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
+    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34 });
+    expect(next.l2).not.toHaveProperty('pinned');
   });
 
   it('gives a target line a fresh tag id even when it already had one, so Undo is not silently defeated (B1)', () => {
@@ -1164,16 +1011,17 @@ describe('applyDesignToSiblings', () => {
     expect(next.l1).toBe(source);
   });
 
-  it('keeps a sibling tag at its own position - Update carries the design, not the layout', () => {
+  it("keeps a sibling tag at its own position - Update carries the design, not the layout (r10 S7: no `pinned` field any more)", () => {
     const tags = {
       l1: sourceTag(),
-      l2: { ...placed('old-l2', 'l2', 't-sink'), x_mm: 12, y_mm: 34, pinned: true },
+      l2: { ...placed('old-l2', 'l2', 't-sink'), x_mm: 12, y_mm: 34 },
     };
     const requestTags = [productTag('l1'), productTag('l2')];
 
     const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
-    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
+    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34 });
+    expect(next.l2).not.toHaveProperty('pinned');
   });
 
   it('gives every updated sibling a fresh tag id, and fresh layer ids shared with nobody', () => {

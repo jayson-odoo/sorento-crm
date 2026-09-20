@@ -577,3 +577,59 @@ describe('the print page and the canvas resolve a token identically', () => {
     expect(screen.getByText('Kitchen Sink')).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S4-5/S4-6/S4-7 (PLAN-price-tag-r10.md S4): `{{product.price_tag_
+// description}}` - a subject-aware token like every other `product.*` field
+// (subjectPart/Parent resolution is generic across PATH_SLOTS, already
+// covered for every other product field; this pins the token's own entry).
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - product.price_tag_description (AC-S4-5/S4-6)', () => {
+  it('renders the line text verbatim, including line breaks', () => {
+    const data = product({
+      price_tag_description: 'Made in Malaysia\nStainless steel',
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Made in Malaysia\nStainless steel',
+    );
+  });
+
+  it('AC-S4-6: an empty description renders an empty string, never spec_lines or description', () => {
+    const data = product({ price_tag_description: null } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('[{{product.price_tag_description}}]', data, 'print')).toBe('[]');
+  });
+});
+
+describe('mergeFieldCatalog - Price tag description (AC-S4-7)', () => {
+  it('lists Price tag description in group Product, directly after Spec lines', () => {
+    const catalog = mergeFieldCatalog([]);
+    const productFields = catalog.filter((field) => field.group === 'Product');
+    const labels = productFields.map((field) => field.label);
+
+    expect(labels).toContain('Price tag description');
+    const specIndex = labels.indexOf('Spec lines');
+    const descriptionIndex = labels.indexOf('Price tag description');
+    expect(specIndex).toBeGreaterThanOrEqual(0);
+    expect(descriptionIndex).toBe(specIndex + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S3-5 (PLAN-price-tag-r10.md S3): the FE is a pure pass-through for a
+// spec value - S3's title-casing happens server-side (`_spec_display_value`),
+// so a payload row that already carries "Stainless Steel" must render
+// exactly that, unchanged.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - spec.material pass-through (AC-S3-5)', () => {
+  it('renders a backend-formatted value unchanged, no client-side re-casing', () => {
+    const data = product({
+      specs: [{ key: 'material', label: 'Material', value: 'Stainless Steel', unit: null }],
+    });
+
+    expect(renderMergeFields('{{spec.material}}', data, 'print')).toBe('Stainless Steel');
+  });
+});

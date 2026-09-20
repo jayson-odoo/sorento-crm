@@ -283,4 +283,47 @@ describe('ProductCombosSection', () => {
     expect(screen.getAllByText(MIRROR.code)[0].className).toContain('truncate');
     expect(screen.getAllByText(MIRROR.product_name)[0].className).toContain('truncate');
   });
+
+  // -------------------------------------------------------------------------
+  // AC-S5-5 (PLAN-price-tag-r10.md S5): the combo block shows Upload when
+  // empty, else the thumbnail with Replace and Clear - image files only.
+  // Written test-FIRST: `ProductComboRow` carries no `image` field yet and
+  // the block renders no upload control at all, so this is red on a missing
+  // element rather than a wrong one.
+  // -------------------------------------------------------------------------
+
+  it('AC-S5-5: shows an Upload control when the combo has no image', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]');
+    expect(combo3).not.toBeNull();
+    expect(
+      within(combo3 as HTMLElement).getByRole('button', { name: /upload/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-S5-5: shows the thumbnail with Replace and Clear when the combo has an image', () => {
+    combosQuery.value = {
+      data: [
+        {
+          ...COMBO_3_IN_1,
+          image: { attachment_id: 'att-combo-1', url: 'https://cdn.example.test/combo.jpg' },
+        } as ProductComboRow,
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]');
+    expect(combo3).not.toBeNull();
+    const scoped = within(combo3 as HTMLElement);
+    expect(scoped.getByRole('img', { name: /3 in 1/i })).toHaveAttribute(
+      'src',
+      'https://cdn.example.test/combo.jpg',
+    );
+    expect(scoped.getByRole('button', { name: /replace/i })).toBeInTheDocument();
+    expect(scoped.getByRole('button', { name: /clear/i })).toBeInTheDocument();
+  });
 });
