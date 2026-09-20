@@ -844,12 +844,21 @@ class TagSizePresetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     width_mm: float = Field(..., ge=10)
     height_mm: float = Field(..., ge=10)
+    #: r10 S7: the configured "per A4" grid - absent means arrange derives
+    #: the best fit itself.
+    sheet_cols: Optional[int] = Field(default=None, ge=1)
+    sheet_rows: Optional[int] = Field(default=None, ge=1)
+    sheet_turn: bool = False
 
 
 class TagSizePresetUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     width_mm: Optional[float] = Field(default=None, ge=10)
     height_mm: Optional[float] = Field(default=None, ge=10)
+    #: r10 S7. `None` (sent explicitly) clears the grid back to `Auto`.
+    sheet_cols: Optional[int] = Field(default=None, ge=1)
+    sheet_rows: Optional[int] = Field(default=None, ge=1)
+    sheet_turn: Optional[bool] = None
 
 
 class TagSizePresetResponse(BaseModel):
@@ -863,6 +872,10 @@ class TagSizePresetResponse(BaseModel):
     # Resolved, not stored - a preset row holds a user id and nothing a
     # person can read (no UUIDs in the UI). Filled by the route.
     created_by_name: Optional[str] = None
+    #: r10 S7: the configured "per A4" grid; null means derive.
+    sheet_cols: Optional[int] = None
+    sheet_rows: Optional[int] = None
+    sheet_turn: bool = False
     created_at: datetime
     updated_at: datetime
 

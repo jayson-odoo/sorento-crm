@@ -60,9 +60,18 @@ def create_preset(
     width_mm: float,
     height_mm: float,
     created_by: Optional[str] = None,
+    sheet_cols: Optional[int] = None,
+    sheet_rows: Optional[int] = None,
+    sheet_turn: bool = False,
 ) -> TagSizePreset:
     row = TagSizePreset(
-        name=name, width_mm=width_mm, height_mm=height_mm, created_by=created_by
+        name=name,
+        width_mm=width_mm,
+        height_mm=height_mm,
+        created_by=created_by,
+        sheet_cols=sheet_cols,
+        sheet_rows=sheet_rows,
+        sheet_turn=bool(sheet_turn),
     )
     db.add(row)
     try:
@@ -75,6 +84,13 @@ def create_preset(
     return row
 
 
+#: A sentinel distinct from `None`, so `update_preset` can tell "the caller
+#: sent an explicit null, clear the grid" apart from "the caller sent
+#: nothing about this field at all" - both would otherwise arrive as the
+#: same `None` keyword argument (r10 S7, AC-S7-11).
+_UNSET = object()
+
+
 def update_preset(
     db: Session,
     preset_id: str,
@@ -82,6 +98,9 @@ def update_preset(
     name: Optional[str] = None,
     width_mm: Optional[float] = None,
     height_mm: Optional[float] = None,
+    sheet_cols=_UNSET,
+    sheet_rows=_UNSET,
+    sheet_turn=_UNSET,
 ) -> TagSizePreset:
     row = get_preset(db, preset_id)
     if name is not None:
@@ -90,6 +109,12 @@ def update_preset(
         row.width_mm = width_mm
     if height_mm is not None:
         row.height_mm = height_mm
+    if sheet_cols is not _UNSET:
+        row.sheet_cols = sheet_cols
+    if sheet_rows is not _UNSET:
+        row.sheet_rows = sheet_rows
+    if sheet_turn is not _UNSET:
+        row.sheet_turn = bool(sheet_turn)
     try:
         db.flush()
         db.commit()
