@@ -204,7 +204,13 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # "2.3" (autocount-brands-ingest): `brands` joins ENTITY_SPECS as a
 # first-class master, with its own INGEST/READ/DELETE permission slugs -
 # additive, an ESB on 2.2 simply never sees `brands` in `entities`.
-CONTRACT_VERSION = "2.3"
+# "2.4" (ingest-products-code-wins, SR0): a product whose stored reference is
+# under the SAME source system as the incoming push now resolves by item
+# code instead of failing as a conflict (`ref_mismatch`, stored reference
+# kept). `/{entity}/deletions` gains an optional `codes` map for the same
+# reason, only ever read for `products`. Both additive: an ESB still on 2.3
+# sends no `codes` and simply keeps hitting the old conflict.
+CONTRACT_VERSION = "2.4"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -848,6 +854,35 @@ def delete_records(
             code="BATCH_TOO_LARGE",
         )
 
+    # "2.4" (ingest-products-code-wins, SR0): optional `codes`, a
+    # source_ref -> code map so a product deletion can still find its row
+    # when the reference alone misses. Absent is fine (every pre-2.4 caller);
+    # present has to be an object of strings, or nothing is deleted - the
+    # SAME shape/code as the `source_refs` check above, so the ESB does not
+    # learn two different 422 conventions on one endpoint.
+    codes = payload.get("codes")
+    if codes is not None:
+        if not isinstance(codes, dict) or any(
+            not isinstance(value, str) for value in codes.values()
+        ):
+            raise AppException(
+                status_code=422,
+                message="Body 'codes', when present, must be an object of source_ref -> code strings",
+                code="INVALID_BODY",
+            )
+        # Fix round 1: the SAME cap `source_refs` already carries, refused
+        # with the same status/code/shape - `codes` is a second per-batch
+        # array on this body and must not be a way around the limit above.
+        if len(codes) > MAX_BATCH:
+            raise AppException(
+                status_code=413,
+                message=(
+                    f"Batch of {len(codes)} 'codes' entries exceeds the maximum of {MAX_BATCH}. "
+                    "Split it; the response is never silently truncated."
+                ),
+                code="BATCH_TOO_LARGE",
+            )
+
     company_id = resolve_company_anchor(db, payload, current_user)
 
     service = DeletionService(
@@ -856,7 +891,7 @@ def delete_records(
         company_id=company_id,
     )
     try:
-        result = service.delete(entity, source_refs, dry_run=dry_run)
+        result = service.delete(entity, source_refs, codes=codes, dry_run=dry_run)
     except UnsupportedIngestEntity as exc:
         raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
 

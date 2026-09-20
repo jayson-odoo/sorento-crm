@@ -425,3 +425,26 @@ banded-report upload. `app/services/scm/history_sources.py`'s `source_system` st
 under them stay in the database and `outstanding_import_service` must keep recognising the
 stamps forever, regardless of whether the writer that produced them still exists. The Order
 Inquiry sheet (Project Sales, ADR 0010) is unaffected and keeps its `/order-inquiry/*` routes.
+
+## 11. Contract v2.4 (products code-wins) (20 Sep 2026, `PLAN-ingest-products-code-wins.md`, SR0)
+
+Full design in that plan; UAC `ingest-products-code-wins-acceptance-criteria.md`. Recorded here,
+short, for the same reason section 10 is: a version bump is a contract-surface change and this
+file is the ESB-facing contract of record.
+
+`GET /api/v1/external/contract` -> `"version": "2.4"`. `fields_added` gains `products_deletions:
+["codes"]`; `field_notes` gains the two SR0 notes on `products`/`products_deletions`.
+
+Products only: `MasterIngestService._apply_scoped`'s adopt-by-code branch no longer raises
+`ReferenceConflict` when the matched row's existing reference is under the SAME source system
+this push links under (9,067 SRT products already claimed by SO/PO line ingest, since the
+AutoCount HTTP source exposes no numeric item key). It resolves instead - the record updates, the
+STORED reference stays exactly as it is, the incoming one is never written, and the verdict
+carries the `ref_mismatch` warning (the constant document-line resolution already uses for the
+identical situation). A reference under a DIFFERENT source system still conflicts, and every other
+master entity's adopt branch is unchanged.
+
+`POST /ingest/products/deletions` gains an optional `codes` (source_ref -> code) body field, read
+only for `products`: when the reference misses, the code is looked up the same
+case/whitespace-insensitive way adoption does, and proceeds only when the match is unlinked or
+under the same source system - same predicate, same warning.

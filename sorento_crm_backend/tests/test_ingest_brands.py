@@ -630,10 +630,13 @@ class TestDeletionsAC12:
 # ==================================================================== AC-13
 class TestContractAC13:
     def test_version_2_3_lists_brands(self, env):
+        # Bumped again (ingest-products-code-wins, SR0): "2.4" adds products
+        # code-wins deletion `codes` - this test still proves `brands` is
+        # listed among the entities, which "2.3" first introduced.
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.3"
+        assert body["version"] == "2.4"
         assert "brands" in body["entities"]
 
 

@@ -80,6 +80,7 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
     _is_company_scoped,
+    is_unclaimed_or_same_source,
 )
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
@@ -860,7 +861,27 @@ class MasterIngestService:
         else:
             adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         if adopted is not None:
-            if self.refs.origin_of(entity_type=entity_type, entity_id=adopted) is not None:
+            origin = self.refs.origin_of(entity_type=entity_type, entity_id=adopted)
+            if origin is not None:
+                if entity_type == "products" and is_unclaimed_or_same_source(origin):
+                    # Code-wins (ingest-products-code-wins, SR0): the same
+                    # rule `MasterRefResolver` already applies to a document
+                    # line's product rung (`WARN_REF_MISMATCH`) - the
+                    # FoundryX AutoCount HTTP source exposes no numeric item
+                    # key, so a product push always arrives keyed by item
+                    # code even though the row is already claimed by an
+                    # `AED_SORENTO:<numeric key>` reference SO/PO line ingest
+                    # minted. The item code decides identity and the STORED
+                    # reference is kept -- `_link` is deliberately never
+                    # called here, so the incoming ref is never written.
+                    from app.services.master_ref_resolver import WARN_REF_MISMATCH
+
+                    self._finalize_product_derived(payload, columns, adopted)
+                    diff = self._diff(spec, adopted, columns)
+                    self._update(spec, adopted, columns)
+                    self._post_write_product_hooks(entity_type, adopted)
+                    warnings.append(WARN_REF_MISMATCH)
+                    return IngestOutcome.UPDATED, adopted, diff, warnings
                 # Already claimed by a different source document -- surfacing
                 # beats silently retargeting someone else's record.
                 raise ReferenceConflict(
