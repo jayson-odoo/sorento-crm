@@ -944,3 +944,59 @@ class TestD1FailedPreviewRowsAreVisible:
         assert body["pagination"]["total"] == 8, body
         assert {r["outcome"] for r in body["data"]} == {"created", "failed"}, body
         assert len([r for r in body["data"] if r["outcome"] == "failed"]) == 7, body
+
+
+# ================================================================ S1, opus review, fix round 3
+
+
+class TestS1PreviewProgressWireField:
+    """`serialize()` (`autocount_pull_service.py`) is the ONLY producer of `preview_progress` -
+    no backend test asserted it, so the key could be deleted (or its shape drift from the FE's
+    `AutocountPullPreviewProgress` - `{processed, total}`, `autocountPull.types.ts`) with every
+    test still green while the progress bar silently reverted to a bare spinner. `serialize()`
+    is called directly, same as `TestSerializeApplyStatus` above (this file already prefers that
+    over the full HTTP route here, for setup simplicity)."""
+
+    def test_previewing_pull_carries_processed_and_total_progress(self, env):
+        from app.models.job import ImportJob
+        from app.services.autocount_pull_service import serialize
+
+        owner = env.user("master_data.products.autocount_pull")
+        job_id = _seed_pull_job(
+            env.db, job_type="autocount_products_pull", user_id=owner["id"],
+            company_id=env.company_a, entity="products", company_code=env.company_a_code,
+            snapshot_id=f"{MARKER}-snap-s1-progress", phase="previewing",
+        )
+        env.db.execute(
+            text("UPDATE import_jobs SET processed_rows = :p, total_rows = :t WHERE id = :id"),
+            {"p": 4, "t": 10, "id": str(job_id)},
+        )
+        env.db.commit()
+        job = env.db.query(ImportJob).filter(ImportJob.id == job_id).first()
+
+        result = serialize(job, env.db)
+
+        assert result["preview_progress"] == {"processed": 4, "total": 10}, result
+
+    def test_review_pull_carries_no_preview_progress(self, env):
+        """Once the phase has moved on there is nothing left to show - `AutocountPullReview`
+        only reads `preview_progress` while `previewing`."""
+        from app.models.job import ImportJob
+        from app.services.autocount_pull_service import serialize
+
+        owner = env.user("master_data.products.autocount_pull")
+        job_id = _seed_pull_job(
+            env.db, job_type="autocount_products_pull", user_id=owner["id"],
+            company_id=env.company_a, entity="products", company_code=env.company_a_code,
+            snapshot_id=f"{MARKER}-snap-s1-review", phase="review",
+        )
+        env.db.execute(
+            text("UPDATE import_jobs SET processed_rows = :p, total_rows = :t WHERE id = :id"),
+            {"p": 10, "t": 10, "id": str(job_id)},
+        )
+        env.db.commit()
+        job = env.db.query(ImportJob).filter(ImportJob.id == job_id).first()
+
+        result = serialize(job, env.db)
+
+        assert result["preview_progress"] is None, result

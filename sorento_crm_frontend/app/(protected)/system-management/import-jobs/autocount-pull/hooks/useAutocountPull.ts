@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
@@ -94,16 +94,18 @@ export function usePull(jobId: string, enabled = true) {
  *  still `building`/`previewing` (or any other mount of the same key inside that window - a
  *  prior visit, a back/forward nav) can otherwise still be served once the pull reaches
  *  `review`. Invalidating the moment `phase` reaches `review` or `confirmed` closes that gap
- *  without touching the shared hook's `staleTime`. Fires once per DISTINCT phase value,
- *  including the first one observed on mount - never again for a poll tick that reports the
- *  same phase back. */
+ *  without touching the shared hook's `staleTime`. The effect's own dependency array
+ *  (`[phase, jobId, queryClient]`) is ALREADY the guard against re-running on a same-phase
+ *  poll tick - React skips an effect whose deps are all reference-equal to the previous
+ *  render's - so a second ref tracking "the last phase seen" on top of that (N4, opus review,
+ *  fix round 3) was redundant, and actively wrong on a `jobId` change: the app router keeps
+ *  this component mounted across job A -> job B (prev/next navigation), and a ref keyed only
+ *  on phase would have suppressed the invalidation for job B if both jobs happened to be
+ *  observed in the same phase. */
 export function useRefreshRowsOnReview(jobId: string, phase: AutocountPullPhase | undefined): void {
   const queryClient = useQueryClient();
-  const lastPhaseRef = useRef<AutocountPullPhase | undefined>(undefined);
 
   useEffect(() => {
-    if (!phase || phase === lastPhaseRef.current) return;
-    lastPhaseRef.current = phase;
     if (phase === 'review' || phase === 'confirmed') {
       queryClient.invalidateQueries({ queryKey: ['import-job-rows', jobId] });
     }

@@ -31,10 +31,10 @@ the repro):
     open - `_rederive_inline` then opened a fresh session whose `FOR UPDATE` waited on a
     lock its own caller held. Pending codes are now kept per transaction level (in
     `session.info[_PENDING_KEY]`, keyed by the `SessionTransaction` object itself) and
-    folded upward on each SAVEPOINT's own commit; only the true outermost commit -
-    `session.in_nested_transaction()` is false at that point, since `close()` (which
-    would otherwise still report the just-released SAVEPOINT) has not run yet - pops the
-    lot and fires. A rollback drops only the level it ends: a SAVEPOINT rollback
+    folded upward on each SAVEPOINT's own commit; only the true outermost commit - the
+    `SessionTransaction` `_on_commit` resolves (`session.get_nested_transaction() or
+    session.get_transaction()`) has `parent is None` - pops the lot and fires. A
+    rollback drops only the level it ends: a SAVEPOINT rollback
     discards that record's own codes without disturbing an earlier sibling record's
     already-folded-up ones; a rollback of the outermost transaction drops everything.
 
@@ -223,18 +223,30 @@ def register_product_spec_listeners() -> None:
         # savepoint release apart from the real outermost commit.
         transaction = session.get_nested_transaction() or session.get_transaction()
         codes = buckets.pop(transaction, None) if transaction is not None else None
-        if not codes:
-            return
-        if transaction.parent is not None:
+        if transaction is not None and transaction.parent is not None:
             # A SAVEPOINT release, not the outermost commit - the caller's own
             # transaction (and any row lock it holds) is still open. Fold this
             # record's codes into the enclosing level and keep waiting.
-            buckets.setdefault(transaction.parent, set()).update(codes)
+            if codes:
+                buckets.setdefault(transaction.parent, set()).update(codes)
             return
-        # The outermost commit: everything collected across this transaction's own
-        # savepoints (folded upward as each one committed) is now durable.
-        session.info.pop(_PENDING_KEY, None)
-        rederive_codes(codes)
+        # The outermost commit (or no active transaction to fold into at all): pop
+        # `_PENDING_KEY` UNCONDITIONALLY, before checking whether this transaction's own
+        # bucket had any codes. A session path that closes a transaction level some
+        # other way - without a matching commit/rollback firing at that level - can
+        # leave an ORPHAN bucket keyed under a `SessionTransaction` no later commit will
+        # ever resolve to again; returning early here on "this transaction had no codes"
+        # (N1, opus review, fix round 3) left those buckets, and the whole pending-key
+        # dict holding them, in `session.info` for the rest of the session's life.
+        # Everything else still pending at this point - this transaction's own codes,
+        # plus any such orphans - is folded in before the sweep.
+        remaining = session.info.pop(_PENDING_KEY, None) or {}
+        all_codes = set(codes or [])
+        for leftover in remaining.values():
+            all_codes.update(leftover)
+        if not all_codes:
+            return
+        rederive_codes(all_codes)
 
     @event.listens_for(Session, "after_rollback")
     def _on_rollback(session):  # noqa: ANN001

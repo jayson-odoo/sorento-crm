@@ -161,4 +161,39 @@ describe('AutocountPullReview - rows cache refresh on review (D1)', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getImportJobRows).toHaveBeenCalledTimes(1);
   });
+
+  it('a jobId change at the SAME phase still refetches (N4, opus review, fix round 3)', async () => {
+    // The app router keeps `AutocountPullReview` mounted across a prev/next job navigation
+    // (`RecordNavigation` on the job detail page) - job B can be observed in `review` from
+    // the very first render this component sees of it, the same phase job A was already in,
+    // so a phase-keyed ref alone would wrongly treat this as "nothing changed".
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const OTHER_JOB_ID = '9fa255f5-0000-4000-8000-000000000000';
+    const OTHER_KEY = ['import-job-rows', OTHER_JOB_ID, 0, 25, undefined, undefined, undefined];
+    // Job B's own stale, empty cache entry - a prior visit to job B while it was still
+    // building, exactly test 1's scenario, just for a different job.
+    client.setQueryData(OTHER_KEY, { data: [], pagination: { total: 0, page: 1, limit: 25 }, empty: true });
+    getImportJobRows.mockResolvedValue({
+      data: EIGHT_ROWS,
+      pagination: { total: 8, page: 1, limit: 25 },
+      empty: false,
+    });
+
+    usePull.mockReturnValue({ data: basePull({ phase: 'review' }), isLoading: false });
+    const { rerender } = renderWithClient(client);
+    await waitFor(() => expect(getImportJobRows).toHaveBeenCalledTimes(1));
+
+    usePull.mockReturnValue({ data: basePull({ job_id: OTHER_JOB_ID, phase: 'review' }), isLoading: false });
+    rerender(
+      <QueryClientProvider client={client}>
+        <AutocountPullReview jobId={OTHER_JOB_ID} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText('8 matching')).toBeInTheDocument());
+    expect(getImportJobRows).toHaveBeenCalledWith(
+      OTHER_JOB_ID,
+      expect.objectContaining({ pageIndex: 0 }),
+    );
+  });
 });

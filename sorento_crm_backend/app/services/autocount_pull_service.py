@@ -451,8 +451,15 @@ def stock_list_archive_filename(company_code: str, *, when: Optional[datetime] =
     calendar date of the apply instead, so two companies - or the same company on two
     different days - never collide on the one install-wide file name history
     (`replace_latest_stock_list` itself is unscoped, see the plan's accepted risks).
+
+    The `or "company"` fallback (N2, opus review, fix round 3) lives HERE, the one place
+    both callers (`download_filename` below, and the apply task's own archive step in
+    `autocount_pull_tasks.py`) go through - an unresolvable `company_id` at either call
+    site (`_company_code`'s own "" default) used to reach this function bare, producing
+    `autocount-stock-list--<date>.xlsx`.
     """
     when = when or datetime.now(_MY_TZ)
+    company_code = company_code or "company"
     return f"autocount-stock-list-{company_code.lower()}-{when.strftime('%Y%m%d')}.xlsx"
 
 
@@ -462,8 +469,7 @@ def download_filename(job: ImportJob) -> str:
         # Same name the archive gets (D3) - the pull job's OWN metadata carries
         # `company_code` (set once, at `start_pull`), so no extra DB read is needed here
         # the way the apply job (no `autocount_pull` metadata at all) requires.
-        company_code = _pull_meta(job).get("company_code") or "company"
-        return stock_list_archive_filename(company_code)
+        return stock_list_archive_filename(_pull_meta(job).get("company_code"))
     return f"autocount-{entity}-pull.xlsx"
 
 

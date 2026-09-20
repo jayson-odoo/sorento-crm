@@ -731,6 +731,15 @@ class TestStockDownloadRoute:
             assert sheet_row[2] == api_row["location"]
             assert int(sheet_row[3]) == int(api_row["on_hand_qty"])
 
+    def test_empty_company_code_falls_back_the_same_way_the_download_does(self):
+        """N2 (opus review, fix round 3): `_company_code` (both `autocount_pull_service.py`
+        and `autocount_pull_tasks.py`'s own copy) returns "" for a job whose `company_id`
+        does not resolve - `stock_list_archive_filename` must fall back exactly like
+        `download_filename` already did, not print a bare double hyphen."""
+        from app.services.autocount_pull_service import stock_list_archive_filename
+
+        assert "autocount-stock-list--" not in stock_list_archive_filename("")
+
 
 # ======================================================================= CM-3a
 
