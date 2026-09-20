@@ -573,13 +573,28 @@ def _fold_crossdomain_ladder(
     genuine no-op (no MCP call, `render=None`) for every other domain, never a second
     ladder policy of this module's own.
 
+    Main's post-fetch MISS arm runs this too (`main:1610`, ahead of its own `has_result`
+    branch, folding the render into the `result_item` the miss half then reads) - the
+    earlier claim here that main "runs no crossdomain on a miss" was wrong (reviewer
+    SF-4). The `{}` first argument is nevertheless equivalent on this path:
+    `crossdomain_zeroset` reads that item for `returned_codes` alone, and on a miss that
+    set is empty either way.
+
     Every argument is the one `complete_answer` hands its own `run_crossdomain`
     (`lanes/business/__init__.py:1685-1710`), reviewer B3/S2:
 
     * `entities_names` is the resolver aggregate's own `name` (the contact's entitled
       level names). `None` skips `crossdomain_probe_args`'s intersection entirely and
       sends the PARSER's claimed `access_levels` verbatim, so a level the customer's
-      words named but the contact does not hold reached the probe.
+      words named but the contact does not hold reached the probe. This bridge passes
+      `[]` rather than main's `None` when the aggregate did not run, which is a
+      DELIBERATE fail-closed divergence: the intersection then keeps nothing and the
+      unverified claim is dropped. `[]` is inert today only because no tool the ladder
+      can reach reads `access_levels` at all (`crm_inventory_stock_balance_list`,
+      `crm_incoming_stock_list`, `crm_procurement_po_placed_list`; the rung probe does
+      not even send the key) - a future rung on an access-level-gated tool would inherit
+      the "empty means no filter" reading B1 was about, and must pass the entitlement
+      here instead (security N5).
     * `crossdomain_ladder` is `system_settings.chatbot_crossdomain_ladder`
       (`engine._crossdomain_ladder`). `answer._next_crossdomain_rung` returns `None`
       for a non-dict ladder, so without it the SECOND rung - the PO rung, migration
