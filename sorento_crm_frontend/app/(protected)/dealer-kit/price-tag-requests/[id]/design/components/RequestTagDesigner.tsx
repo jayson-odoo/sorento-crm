@@ -128,10 +128,17 @@ import {
   restoreRequestVersion,
 } from '../../../../services/priceTagDataService';
 import { useTagDataChanges, tagDataChangesKey } from '../../../hooks/useTagDataChanges';
-import { useUpdateRequestTag } from '../../../hooks/useRequestTagMutations';
+import {
+  useDismissTagDataUpdate,
+  useUpdateRequestTag,
+} from '../../../hooks/useRequestTagMutations';
 import { isTerminalPriceTagStatus } from '@/lib/dealer-kit/print-collection';
-import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import {
+  AUTO_UPDATE_STATUSES,
+  type TagDataChangeSet,
+} from '@/lib/dealer-kit/product-data-changes';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
+import ProductDataUpdatedDialog from '@/components/dealer-kit/ProductDataUpdatedDialog';
 import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
@@ -438,6 +445,22 @@ export function RequestTagDesigner({
     }
     return map;
   }, [dataChanges]);
+
+  /**
+   * r10 S8: tags whose pin was moved by an auto-update and nobody has
+   * dismissed yet - the SAME red dot, now meaning "updated, not yet seen".
+   * Read off the request's own tags, not the poll: once the pin has moved
+   * the live diff is empty again, so the poll cannot say it happened.
+   */
+  const updatedTags = useMemo(() => {
+    const map = new Map<string, PriceTagRequestTag>();
+    for (const line of request.lines) {
+      for (const tag of line.tags ?? []) {
+        if (tag.data_updated_at) map.set(tag.id, tag);
+      }
+    }
+    return map;
+  }, [request.lines]);
 
   /**
    * "Check product data" (owner round finding 3): a Keep silences ONE drift
@@ -1069,6 +1092,53 @@ export function RequestTagDesigner({
     if (rows) setResolvedRows(rows);
   }, [request.id]);
 
+  /**
+   * r10 S8: in an auto-update status the FIRST poll that reports a change has
+   * already applied it server-side (the pin moved, the before-version was
+   * written), so the request and the resolved rows are stale the moment the
+   * report lands. Re-read both once per report: the tag then carries
+   * `data_updated_at` (the dot switches to the Dismiss / Roll back dialog)
+   * and the canvas redraws against the new pin. The next poll reports nothing
+   * - the diff is empty once the pin matches - so this cannot loop.
+   */
+  const reportedTagIds = useMemo(
+    () => Array.from(changesByTag.keys()).sort().join(','),
+    [changesByTag],
+  );
+  useEffect(() => {
+    if (!reportedTagIds || !AUTO_UPDATE_STATUSES.includes(request.status)) return;
+    void reloadRequest();
+  }, [reportedTagIds, request.status, reloadRequest]);
+
+  /** Restore one version - the History sheet's Restore and S8's Roll back
+   *  are the same call. Re-reads the request AND the rows: the pins moved. */
+  const restoreVersion = useCallback(
+    async (version: number) => {
+      await restoreRequestVersion(request.id, version);
+      await reloadRequest();
+      toast.success(`Restored v${version}`);
+    },
+    [request.id, reloadRequest],
+  );
+
+  const dismissUpdate = useDismissTagDataUpdate(request.id);
+  /** r10 S8 Dismiss: clears the indicator server-side, then re-reads the tag
+   *  so the dot goes without a page reload. Refused (the route is not there
+   *  yet, or the request moved on): the message is shown and the dot stays. */
+  const handleDismissUpdate = useCallback(
+    async (tagId: string) => {
+      try {
+        await dismissUpdate.mutateAsync(tagId);
+        await reloadRequest();
+        toast.success('Update dismissed');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not dismiss the update');
+        throw error;
+      }
+    },
+    [dismissUpdate, reloadRequest],
+  );
+
   const updateTag = useUpdateRequestTag(request.id);
   /**
    * r10 S6 Not printed: flips `print_excluded` on the tag and writes the
@@ -1394,7 +1464,7 @@ export function RequestTagDesigner({
         pricesStatus={pricesStatus}
         tags={tags}
         openPinsByTag={openPinsByTag}
-        changedTagIds={new Set(changesByTag.keys())}
+        changedTagIds={new Set([...changesByTag.keys(), ...updatedTags.keys()])}
         onReviewTag={setReviewTagId}
         selectedRequestTagId={mode === 'arrange' ? selectedTagId : selectedRequestTagId}
         onSelect={handleRailSelect}
@@ -1647,8 +1717,13 @@ export function RequestTagDesigner({
         </div>
       </div>
 
+      {/* r10 S8: an UPDATED tag (the pin already moved) reviews what changed
+          with Dismiss / Roll back; a tag with a pending diff and no update
+          keeps the r9 Keep / Update decision - the flag-only statuses. */}
       <ProductDataReviewDialog
-        open={reviewTagId !== null && changesByTag.has(reviewTagId)}
+        open={
+          reviewTagId !== null && changesByTag.has(reviewTagId) && !updatedTags.has(reviewTagId)
+        }
         onOpenChange={(next) => {
           if (!next) setReviewTagId(null);
         }}
@@ -1657,6 +1732,21 @@ export function RequestTagDesigner({
           reviewTagId ? decideTagPin(reviewTagId, action) : Promise.resolve()
         }
       />
+      {reviewTagId !== null && updatedTags.has(reviewTagId) && (
+        <ProductDataUpdatedDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setReviewTagId(null);
+          }}
+          code={resolved.get(reviewTagId)?.code ?? ''}
+          tagLabel={updatedTags.get(reviewTagId)?.label ?? ''}
+          name={resolved.get(reviewTagId)?.name}
+          changes={updatedTags.get(reviewTagId)?.data_update_changes ?? []}
+          version={updatedTags.get(reviewTagId)?.data_update_version ?? null}
+          onDismiss={() => handleDismissUpdate(reviewTagId)}
+          onRollBack={restoreVersion}
+        />
+      )}
 
       <RequestVersionsSheet
         open={historyOpen}
@@ -1670,12 +1760,7 @@ export function RequestTagDesigner({
             )
             .catch(() => toast.error('Could not open that version'));
         }}
-        onRestore={async (version) => {
-          await restoreRequestVersion(request.id, version);
-          const rows = await resolveRequestTags(request.id);
-          setResolvedRows(rows);
-          toast.success(`Restored v${version}`);
-        }}
+        onRestore={restoreVersion}
       />
 
       {/* A version, read-only, in the same lightbox the detail page uses (and

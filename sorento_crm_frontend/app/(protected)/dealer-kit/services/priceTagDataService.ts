@@ -21,6 +21,11 @@
  *   Clears every tag's Keep ack and answers the same shape the GET does -
  *   "Check product data" re-arms a gate a Keep silenced (owner round finding 3).
  *
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/tags/{tagId}/dismiss   (r10 S8)
+ *   200 { tag_id }
+ *   Clears the tag's `data_updated_at` / `data_update_changes` /
+ *   `data_update_version` - the person has seen what the auto-update did.
+ *
  * GET  /api/v1/dealer-kit/price-tag-requests/{id}/versions
  *   200 [{ version, commit_message, created_by_name, created_at }] newest first
  * GET  /api/v1/dealer-kit/price-tag-requests/{id}/versions/{version}
@@ -106,6 +111,22 @@ export async function resolveTagPin(
     },
   );
   await unwrap<unknown>(response, 'Failed to apply that decision');
+}
+
+/**
+ * r10 S8: the auto-update indicator's Dismiss. Nothing on the tag moves -
+ * the new data is already pinned - so this only clears the three "updated"
+ * columns and the red dot they light.
+ */
+export async function dismissTagDataUpdate(
+  requestId: string,
+  tagId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/tags/${encodeURIComponent(tagId)}/dismiss`,
+    { method: 'POST' },
+  );
+  await unwrap<unknown>(response, 'Failed to dismiss the update');
 }
 
 /** `GET .../versions` - newest first. */

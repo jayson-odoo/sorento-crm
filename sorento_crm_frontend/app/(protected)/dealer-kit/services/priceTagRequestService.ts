@@ -77,6 +77,7 @@
  */
 
 import { apiFetch } from '@/lib/api';
+import type { LineDataChange } from '@/lib/dealer-kit/product-data-changes';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
@@ -145,6 +146,14 @@ export interface PriceTagRequestTag {
    *  the PDF and the sheet counts. Absent reads as false: the server does
    *  not send it until the r10 migration lands. */
   print_excluded?: boolean;
+  /** r10 S8: set when master data moved under this tag's pin and the change
+   *  was applied by itself; cleared by Dismiss. Null or absent = nothing to
+   *  show. */
+  data_updated_at?: string | null;
+  /** r10 S8: what that auto-update changed, old -> new per field. */
+  data_update_changes?: LineDataChange[] | null;
+  /** r10 S8: the "Before product update" version number Roll back restores. */
+  data_update_version?: number | null;
 }
 
 export interface PriceTagRequestLine {

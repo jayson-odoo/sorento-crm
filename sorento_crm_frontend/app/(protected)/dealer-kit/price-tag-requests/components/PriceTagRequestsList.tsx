@@ -311,7 +311,7 @@ export default function PriceTagRequestsList() {
           if (count <= 0) return null;
           return (
             <Badge size="sm" variant="warning" appearance="light">
-              Product data changed · {count}
+              Product data updated · {count}
             </Badge>
           );
         },
