@@ -270,6 +270,67 @@ class TestMirrorOrdersByLineNo:
                 assert [row.line_no for row in mirror] == [1, 3, 5, 7, 8]
                 assert str(mirror[-1].core_sales_order_line_id) == str(line_null.id)
 
+    def test_b1_mirror_missing_never_collides_with_a_number_already_held(self):
+        """B-1 (owner-side finding, 21 Sep): `_mirror_missing` (the migration path's own
+        additive half, behind `adopt_for_migration` on an EXISTING record) decides a
+        single named line's number in isolation - `has_own_numbering` sees one entry
+        carrying its own raw `line_no` and trusts it verbatim, never checking what the
+        mirror already holds. `mirror_missing_lines` (the board's own re-sync) already
+        guards this via `_numbers_for_missing`'s `held_numbers`; `_mirror_missing` must
+        agree, or a history line named later can grab a number a still-owed line already
+        answers to.
+
+        Setup: one line carries no AutoCount number, so the fresh mirror falls back to
+        the derived 1..n rule (mirror gets 1, 2 - never the raw numbers, per AC-S1r-2).
+        A THIRD, closed line - not yet mirrored, because `adopt` only mirrors undecided
+        demand - carries `line_no=2` verbatim, colliding with the number the derived
+        rule already gave the second open line. Naming that closed line through
+        `adopt_for_migration` must give it a FREE number (3, the next one above the
+        mirror's current max), never the 2 that collides.
+        """
+        with blank_session() as db:
+            company_id = _sorento(db)
+            with company_scope(db, frozenset({company_id})):
+                product = _product(db)
+                warehouse = _warehouse(db, company_id)
+                core = _core_order(db, company_id)
+                first = _core_line(db, core, product, warehouse=warehouse, required_date=D1)
+                first.line_no = None
+                second = _core_line(db, core, product, warehouse=warehouse, required_date=D2)
+                second.line_no = None
+                db.flush()
+
+                service = ProjectSOAdoptionService(db)
+                result = service.adopt(core.id, actor_user_id=None)
+                order = db.query(ProjectSalesOrder).get(result["project_sales_order_id"])
+                # Derived fallback (one NULL line_no) -> positional 1, 2.
+                assert [row.line_no for row in _mirror_lines(db, order.id)] == [1, 2]
+
+                colliding = _core_line(
+                    db, core, product, warehouse=warehouse, required_date=D3,
+                    qty_delivered="10", line_status="closed",
+                )
+                colliding.line_no = 2
+                db.flush()
+
+                service.adopt_for_migration(
+                    str(core.id), actor_user_id=None, core_line_ids=[str(colliding.id)],
+                )
+                db.flush()
+
+                mirror = _mirror_lines(db, order.id)
+                numbers = [row.line_no for row in mirror]
+                assert len(numbers) == len(set(numbers)), (
+                    f"two mirror lines of the same order share a line_no: {numbers}"
+                )
+                new_row = next(
+                    row for row in mirror if str(row.core_sales_order_line_id) == str(colliding.id)
+                )
+                assert new_row.line_no == 3, (
+                    "a named line whose own AutoCount number collides with one the mirror "
+                    "already holds must take the next FREE number, not the colliding one"
+                )
+
     def test_ac_s3_6_the_sheets_own_reader_lists_lines_in_autocount_order(self):
         """The same fixture as AC-S3-4, read through `ProjectSupplyService.lines_of` -
         the accessor `confirm` itself builds `by_id` from - so the sheet a planner
