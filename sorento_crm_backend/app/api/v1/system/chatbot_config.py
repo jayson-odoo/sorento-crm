@@ -95,8 +95,12 @@ class ChatbotEntityKindBody(BaseModel):
     # Owner ruling 20 Sep 2026 (PLAN-chatbot-answer-half-reattach.md "Roster cap"):
     # the ceiling on any roster this kind is asked in. `ge=2` because a one-option
     # roster is never a real choice (AC-1691) - a 422 names the field rather than the
-    # gate silently asking with one option.
-    roster_cap: int = Field(default=10, ge=2)
+    # gate silently asking with one option. `le=50` (captain ruling, review round,
+    # security S3): the number reaches `gate.py`'s own `reps = list(bases.values())
+    # [:cap]` AND its forward probe list `cust_probe_entities`, so an unbounded cap is
+    # an unbounded printed roster and an unbounded MCP probe payload. 50 is the
+    # ceiling, enforced here because this route is the only writer.
+    roster_cap: int = Field(default=10, ge=2, le=50)
 
 
 class ChatbotEntityKindResponse(ChatbotEntityKindBody):

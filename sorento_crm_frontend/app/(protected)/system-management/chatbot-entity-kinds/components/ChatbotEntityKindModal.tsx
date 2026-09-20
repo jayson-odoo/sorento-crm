@@ -16,6 +16,13 @@ import {
 import { useCreateChatbotEntityKind, useUpdateChatbotEntityKind } from '../hooks/useChatbotEntityKinds';
 import type { ChatbotEntityKind, ChatbotEntityKindInput } from '../types/chatbotEntityKind.types';
 
+/** The range the API accepts (`ChatbotEntityKindBody.roster_cap`, `ge=2, le=50`).
+ * Checked here so an out-of-range value reads as inline feedback on the field instead
+ * of a raw 422 toast: `min`/`max` on a number input are advisory only, because Save is
+ * a click handler and not an HTML form submit. */
+const ROSTER_CAP_MIN = 2;
+const ROSTER_CAP_MAX = 50;
+
 const BLANK: ChatbotEntityKindInput = {
   code: '',
   label: '',
@@ -69,8 +76,14 @@ export default function ChatbotEntityKindModal({
 
   const modalIndex = entityKindCode ? rows.findIndex((r) => r.code === entityKindCode) : -1;
 
+  const rosterCapInvalid =
+    draft.roster_cap === undefined ||
+    !Number.isInteger(draft.roster_cap) ||
+    draft.roster_cap < ROSTER_CAP_MIN ||
+    draft.roster_cap > ROSTER_CAP_MAX;
+
   const handleSave = () => {
-    if (!draft.code.trim() || !draft.label.trim()) return;
+    if (!draft.code.trim() || !draft.label.trim() || rosterCapInvalid) return;
     if (isNew) {
       create.mutate(draft, { onSuccess: () => onOpenChange(false) });
     } else if (entityKindCode) {
@@ -162,10 +175,19 @@ export default function ChatbotEntityKindModal({
             <Input
               id="kind-roster-cap"
               type="number"
-              min={2}
-              value={draft.roster_cap ?? 10}
-              onChange={(e) => set('roster_cap', Number(e.target.value))}
+              min={ROSTER_CAP_MIN}
+              max={ROSTER_CAP_MAX}
+              aria-invalid={rosterCapInvalid}
+              value={draft.roster_cap ?? ''}
+              onChange={(e) =>
+                set('roster_cap', e.target.value === '' ? undefined : Number(e.target.value))
+              }
             />
+            {rosterCapInvalid && (
+              <p className="text-xs text-destructive">
+                Enter a whole number between {ROSTER_CAP_MIN} and {ROSTER_CAP_MAX}.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Base property words</Label>
@@ -188,7 +210,7 @@ export default function ChatbotEntityKindModal({
             <Button
               type="button"
               onClick={handleSave}
-              disabled={saving || !draft.code.trim() || !draft.label.trim()}
+              disabled={saving || !draft.code.trim() || !draft.label.trim() || rosterCapInvalid}
             >
               {saving && <LoaderCircleIcon className="size-4 animate-spin" />}
               Save
