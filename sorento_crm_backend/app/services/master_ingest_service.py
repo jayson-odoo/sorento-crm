@@ -688,8 +688,18 @@ class MasterIngestService:
         # and there is no row" - a real, if unusual, state on a fresh install.
         self._settings_cache: Any = _UNSET
 
+    #: B3 (small-fix track, PLAN-autocount-pull-review.md): how often `on_progress` fires
+    #: mid-batch. A full-size products preview is thousands of records; calling back on
+    #: every single one would be as noisy as never calling back at all.
+    PROGRESS_REPORT_EVERY = 500
+
     def ingest(
-        self, entity_type: str, records: list[dict], *, dry_run: bool = False
+        self,
+        entity_type: str,
+        records: list[dict],
+        *,
+        dry_run: bool = False,
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> IngestResult:
         """Apply a batch of canonical records.
 
@@ -700,6 +710,14 @@ class MasterIngestService:
         disagree with the sync it claims to predict, which is worse than no
         preview at all; the only way to know what the database would do is to
         ask it and then take it back.
+
+        ``on_progress`` (B3): called with ``(processed, total)`` every
+        `PROGRESS_REPORT_EVERY` records and once more at the end with
+        ``(total, total)`` - never more often than that, and never left out even when
+        `records` is empty or shorter than the report interval. Best-effort: an
+        exception from the callback is logged and swallowed, never allowed to fail the
+        ingest itself (the same contract every other observability hook in this
+        module keeps).
         """
         spec = ENTITY_SPECS.get(entity_type)
         if spec is None:
@@ -708,11 +726,14 @@ class MasterIngestService:
                 f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
             )
 
+        total = len(records)
         result = IngestResult(dry_run=dry_run)
         self._dry_run = dry_run
         try:
-            for raw in records:
+            for index, raw in enumerate(records, start=1):
                 result.records.append(self._ingest_one(entity_type, spec, raw))
+                if on_progress is not None and index % self.PROGRESS_REPORT_EVERY == 0:
+                    self._report_progress(on_progress, index, total)
         finally:
             self._dry_run = False
             if dry_run:
@@ -720,7 +741,18 @@ class MasterIngestService:
                 # partially-applied preview sitting in the session for whatever
                 # commits next.
                 self.db.rollback()
+        if on_progress is not None:
+            self._report_progress(on_progress, total, total)
         return result
+
+    @staticmethod
+    def _report_progress(
+        on_progress: Callable[[int, int], None], processed: int, total: int
+    ) -> None:
+        try:
+            on_progress(processed, total)
+        except Exception:  # pragma: no cover - defensive by design
+            logger.warning("ingest progress callback failed", exc_info=True)
 
     def _ingest_one(self, entity_type: str, spec: EntitySpec, raw: dict) -> RecordResult:
         source_ref = raw.get("source_ref") if isinstance(raw, dict) else None

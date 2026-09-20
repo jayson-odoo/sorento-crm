@@ -47,6 +47,24 @@ export function useCurrentPull(entity: AutocountPullEntity, enabled = true) {
   });
 }
 
+/** B1 (small-fix track): a stable module-level function, not an inline closure re-created
+ *  on every render of every `usePull` caller - `AutocountPullReview` and
+ *  `ImportJobDetailPage` both call `usePull` for the SAME job, so two independent
+ *  `QueryObserver`s already exist for one query key; a fresh `refetchInterval` reference
+ *  on every render is one more thing that can make either observer re-evaluate its
+ *  schedule more than the 10s cadence actually calls for. */
+function pullRefetchInterval(query: { state: { data?: AutocountPull } }): number | false {
+  const data = query.state.data;
+  const phase = data?.phase;
+  if (phase === 'building' || phase === 'previewing') return 10000;
+  if (phase === 'confirmed') {
+    const applyStatus = data?.apply_status;
+    const applyEnded = applyStatus === 'finished' || applyStatus === 'failed';
+    return applyEnded ? false : 10000;
+  }
+  return false;
+}
+
 /** Polls every 10s while `building` or `previewing` (AC-BD-6), AND while `confirmed` with
  *  its apply job not yet in a terminal state (fix round 3, item 2) - the apply task's own
  *  `stock_list_not_archived` warning lands on the pull's metadata only once the apply task
@@ -60,17 +78,7 @@ export function usePull(jobId: string, enabled = true) {
     enabled: enabled && Boolean(jobId),
     staleTime: 1000 * 5,
     retry: 1,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      const phase = data?.phase;
-      if (phase === 'building' || phase === 'previewing') return 10000;
-      if (phase === 'confirmed') {
-        const applyStatus = data?.apply_status;
-        const applyEnded = applyStatus === 'finished' || applyStatus === 'failed';
-        return applyEnded ? false : 10000;
-      }
-      return false;
-    },
+    refetchInterval: pullRefetchInterval,
   });
 }
 

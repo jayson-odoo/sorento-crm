@@ -310,12 +310,24 @@ def serialize(job: ImportJob, db: Session) -> dict:
         apply_status = db.execute(
             text("SELECT status FROM import_jobs WHERE id = :id"), {"id": apply_job_id}
         ).scalar()
+    # B3 (small-fix track): `import_jobs.processed_rows`/`total_rows` - published by the
+    # preview task through its own fresh session (see `_publish_preview_progress` in
+    # `autocount_pull_tasks.py`; the preview's own session holds the whole dry-run ingest
+    # in one open transaction, so it cannot publish through itself). `null` before the
+    # task has set a total yet, and outside `previewing` - nothing left to show once the
+    # phase has moved on.
+    preview_progress = (
+        {"processed": job.processed_rows, "total": job.total_rows}
+        if phase == "previewing" and job.total_rows
+        else None
+    )
     return {
         "job_id": str(job.id),
         "entity": pull.get("entity"),
         "company_code": pull.get("company_code"),
         "phase": phase,
         "progress": pull.get("progress"),
+        "preview_progress": preview_progress,
         "header": pull.get("header"),
         "counts": pull.get("counts") or {},
         "confirm_blocked_reason": pull.get("confirm_blocked_reason"),

@@ -306,6 +306,19 @@ FoundryX lane (:8009) waits for their gateway (their S4) and for the owner to pl
 - Known UX edge: under a multi-company scope `/current` finds nothing, so the list button reads
   "Pull from AutoCount" and the click answers the single-company 400; a pull is only ever started
   and reviewed with one company selected.
+- Fix round (small-fix track, #1045 #1046): `MasterIngestService.ingest` takes an optional
+  `on_progress(processed, total)`, called every 500 records and once at the end; the preview task
+  publishes it through its OWN fresh session, never the dry run's own open one, and `serialize()`
+  returns `preview_progress` so the review page shows a bar (products) or a one-shot total (stock)
+  instead of a bare spinner for the 4 to 5 minutes a full-size preview takes. The generic Results /
+  Outcome breakdown / Rows cards under `[id]/page.tsx` are hidden for a pull still Building or
+  Preparing - they used to show copy meant for pre-row-capture jobs against a stale or absent
+  `job.result`.
+- Same fix round: `product_spec_change_listener`'s `after_commit` used to fire on releasing a
+  SAVEPOINT, not only the session's outermost commit - `MasterIngestService` gives every record its
+  own savepoint, so a re-derive's fresh session could block on the very row lock its own caller
+  still held (a live 14-minute worker wedge). It now waits for the outermost commit and folds
+  pending codes per transaction level, so a later record's rollback cannot drop an earlier one's.
 
 ## Definition of Done
 

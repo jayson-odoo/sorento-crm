@@ -1232,6 +1232,28 @@ class TestProductsPreview:
         assert row_after["status"] == "finished"
         assert row_after["metadata"]["autocount_pull"]["phase"] == "review"
 
+    def test_pp_7_processed_rows_reaches_total_after_a_ten_row_preview(self, task_db, monkeypatch):
+        """B3 (small-fix track): `MasterIngestService.ingest`'s `on_progress` publishes
+        through the preview task's OWN fresh session (`_publish_preview_progress`), never
+        the dry-run's own still-open one - so `import_jobs.processed_rows`/`total_rows`
+        land for real even though the preview itself always rolls back.
+        """
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake)
+        rows = _fixture("products-rows-page1.json")["rows"]
+        assert len(rows) == 10
+        job_id = _prepare_preview(db, fake, rows=rows)
+
+        _run_preview(monkeypatch, factory, job_id)
+
+        progress = db.execute(
+            text("SELECT processed_rows, total_rows FROM import_jobs WHERE id = :id"),
+            {"id": str(job_id)},
+        ).mappings().first()
+        assert progress["total_rows"] == 10
+        assert progress["processed_rows"] == 10
+
 
 # ======================================================================== T
 

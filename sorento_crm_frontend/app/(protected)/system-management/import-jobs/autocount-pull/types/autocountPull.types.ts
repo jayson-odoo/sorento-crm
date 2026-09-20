@@ -26,6 +26,17 @@ export interface AutocountPullProgress {
   stage?: string | null;
 }
 
+/** B3 (small-fix track): the preview task's own row-by-row progress through
+ *  `MasterIngestService.ingest`'s `on_progress` (products) or set once at the end
+ *  (stock, which has no per-record hook) - `null` before the task has published a
+ *  total yet, and outside `previewing` (nothing left to show once the phase has
+ *  moved on). Distinct from `progress` above, which is FoundryX's own page-fetch
+ *  progress during `building`. */
+export interface AutocountPullPreviewProgress {
+  processed: number;
+  total: number;
+}
+
 /**
  * The FoundryX ready header, as the pull route stores + returns it - camelCase, stripped of
  * `excludedRows` / `negativePairList` (AC-BD-2; both can be large and are not needed on the
@@ -120,6 +131,7 @@ export interface AutocountPull {
   company_code: string;
   phase: AutocountPullPhase;
   progress?: AutocountPullProgress | null;
+  preview_progress?: AutocountPullPreviewProgress | null;
   /** The FoundryX ready header (camelCase), once the snapshot has been read; `null` before. */
   header?: AutocountPullHeader | null;
   counts?: AutocountPullCounts | null;

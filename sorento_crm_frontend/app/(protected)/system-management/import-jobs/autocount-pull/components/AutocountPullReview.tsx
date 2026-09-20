@@ -203,7 +203,21 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
       <CardContent className="space-y-4">
         {isBuilding && (
           <div className="space-y-2">
-            {pull.progress ? (
+            {pull.phase === 'previewing' && pull.preview_progress ? (
+              // B3 (small-fix track): the preview's own row-by-row progress - the SAME
+              // bar the Building state uses above, "N of M" instead of "Page N of M".
+              <>
+                <Progress
+                  value={
+                    (pull.preview_progress.processed / Math.max(pull.preview_progress.total, 1)) * 100
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  {pull.preview_progress.processed.toLocaleString()} of{' '}
+                  {pull.preview_progress.total.toLocaleString()}
+                </p>
+              </>
+            ) : pull.progress ? (
               <>
                 <Progress value={(pull.progress.pagesDone / Math.max(pull.progress.pagesTotal, 1)) * 100} />
                 <p className="text-xs text-muted-foreground">

@@ -115,6 +115,14 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   // job-progress poll below has nothing to show while FoundryX is still building (no RQ job
   // exists yet for that phase), so it stays off for as long as that is true.
   const pullStillBuilding = isPullJob && pullStatus?.phase === 'building';
+  // B2 (small-fix track): before `review`, `job.result` is still whatever the LAST pull
+  // left behind (or nothing at all) - the generic Results / Outcome breakdown / Rows cards
+  // below read that stale envelope and print copy meant for pre-row-capture jobs ("This job
+  // ran before per-row outcome capture existed..."), which is wrong and confusing while the
+  // pull card above already says Building / Preparing. Suppressed for exactly those two
+  // phases; `review` onward renders the three cards as before.
+  const pullNotYetReviewable =
+    isPullJob && (pullStatus?.phase === 'building' || pullStatus?.phase === 'previewing');
 
   // Poll for status updates if job is still processing
   const { data: statusData } = useImportJobStatus(id, !isLoading && !!job && !pullStillBuilding);
@@ -368,57 +376,66 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             </Card>
           )}
 
-          {/* Results Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Successful</p>
-                  <p className="font-medium text-lg text-emerald-600">{displaySuccessful}</p>
+          {/* Results Card - B2: nothing to show yet for a pull still Building/Preparing, and
+              `job.result` at that point is stale (a previous pull's, or absent) - the pull
+              card above already carries the phase. */}
+          {!pullNotYetReviewable && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Results</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                  <div>
+                    <p className="text-muted-foreground">Successful</p>
+                    <p className="font-medium text-lg text-emerald-600">{displaySuccessful}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Failed</p>
+                    <p className="font-medium text-lg text-red-600">{displayFailed}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Skipped</p>
+                    <p className="font-medium text-lg text-yellow-600">{displaySkipped}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Processed</p>
+                    <p className="font-medium text-lg">{displayProcessed}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-muted-foreground">Failed</p>
-                  <p className="font-medium text-lg text-red-600">{displayFailed}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Skipped</p>
-                  <p className="font-medium text-lg text-yellow-600">{displaySkipped}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Processed</p>
-                  <p className="font-medium text-lg">{displayProcessed}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           {/* The planned-line reaction this SO book upload raised, once the worker wrote it. */}
           {planningChangeBatch && <PlanningChangeOutcomeCard batch={planningChangeBatch} />}
 
-          {/* Outcome breakdown - every reason, exact counts, never truncated */}
-          <OutcomeBreakdownCard
-            result={job.result}
-            activeCode={rowsCodeFilter}
-            onSelectCode={(code, group) => {
-              setRowsCodeFilter(code === rowsCodeFilter ? '' : code);
-              const outcomeForGroup =
-                group === 'successful' ? '' : group === 'skipped' ? 'skipped' : 'failed';
-              setRowsOutcomeFilter(code === rowsCodeFilter ? '' : outcomeForGroup);
-            }}
-          />
+          {/* Outcome breakdown - every reason, exact counts, never truncated. B2: same guard
+              as Results above. */}
+          {!pullNotYetReviewable && (
+            <OutcomeBreakdownCard
+              result={job.result}
+              activeCode={rowsCodeFilter}
+              onSelectCode={(code, group) => {
+                setRowsCodeFilter(code === rowsCodeFilter ? '' : code);
+                const outcomeForGroup =
+                  group === 'successful' ? '' : group === 'skipped' ? 'skipped' : 'failed';
+                setRowsOutcomeFilter(code === rowsCodeFilter ? '' : outcomeForGroup);
+              }}
+            />
+          )}
 
-          {/* Per-row drill-down */}
-          <ImportJobRowsCard
-            jobId={id}
-            result={job.result}
-            codeFilter={rowsCodeFilter}
-            outcomeFilter={rowsOutcomeFilter}
-            onChangeCode={setRowsCodeFilter}
-            onChangeOutcome={setRowsOutcomeFilter}
-          />
+          {/* Per-row drill-down - B2: same guard as Results above. */}
+          {!pullNotYetReviewable && (
+            <ImportJobRowsCard
+              jobId={id}
+              result={job.result}
+              codeFilter={rowsCodeFilter}
+              outcomeFilter={rowsOutcomeFilter}
+              onChangeCode={setRowsCodeFilter}
+              onChangeOutcome={setRowsOutcomeFilter}
+            />
+          )}
 
           {/* Error Card */}
           {job.error && (

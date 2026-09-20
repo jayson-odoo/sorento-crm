@@ -166,3 +166,47 @@ describe('P2: the generic 2s job poll is not used for a building pull', () => {
     await waitFor(() => expect(getImportJobStatus).toHaveBeenCalled());
   });
 });
+
+describe('B2 (small-fix track): Results / Outcome breakdown / Rows hidden until a pull reaches review', () => {
+  it.each(['building', 'previewing'])(
+    'phase %s: none of Results, Outcome breakdown or Rows render',
+    async (phase) => {
+      getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'autocount_products_pull', status: 'started' }));
+      usePull.mockReturnValue({ data: { job_id: 'job-1', phase } });
+
+      render(wrap(<ImportJobDetailPage params={PARAMS} />));
+
+      await screen.findByTestId('autocount-pull-review');
+      expect(screen.queryByText('Results')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('outcome-breakdown')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('rows-card')).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(['review', 'confirmed'])(
+    'phase %s: Results, Outcome breakdown and Rows all render as before',
+    async (phase) => {
+      getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'autocount_products_pull', status: 'finished' }));
+      usePull.mockReturnValue({ data: { job_id: 'job-1', phase } });
+
+      render(wrap(<ImportJobDetailPage params={PARAMS} />));
+
+      await screen.findByTestId('autocount-pull-review');
+      expect(screen.getByText('Results')).toBeInTheDocument();
+      expect(screen.getByTestId('outcome-breakdown')).toBeInTheDocument();
+      expect(screen.getByTestId('rows-card')).toBeInTheDocument();
+    },
+  );
+
+  it('control: a non-pull job type always renders the three cards, whatever usePull returns', async () => {
+    getImportJob.mockResolvedValue(ordinaryJob({ job_type: 'product_import', status: 'finished' }));
+    usePull.mockReturnValue({ data: { job_id: 'job-1', phase: 'building' } });
+
+    render(wrap(<ImportJobDetailPage params={PARAMS} />));
+
+    await screen.findByText('Job Summary');
+    expect(screen.getByText('Results')).toBeInTheDocument();
+    expect(screen.getByTestId('outcome-breakdown')).toBeInTheDocument();
+    expect(screen.getByTestId('rows-card')).toBeInTheDocument();
+  });
+});

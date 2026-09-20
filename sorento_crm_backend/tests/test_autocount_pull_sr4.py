@@ -585,6 +585,26 @@ class TestStockPreviewJobRowsAndCounts:
 
         assert len(rows_written) == 5, rows_written
 
+    def test_b3_progress_is_set_to_the_total_once_the_preview_finishes(self, task_db, monkeypatch):
+        """B3 (small-fix track): stock has no per-record hook to report progress through
+        mid-run (unlike `MasterIngestService.ingest`'s `on_progress`) - `_preview_stock`
+        publishes `processed_rows`/`total_rows` once, at the end, both equal to the
+        received row count."""
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake)
+        job_id = _seed_sp_scenario(db, fake)
+
+        _run_preview(monkeypatch, factory, job_id)
+
+        progress = db.execute(
+            text("SELECT processed_rows, total_rows FROM import_jobs WHERE id = :id"),
+            {"id": str(job_id)},
+        ).mappings().first()
+        received = _job_row(db, job_id)["metadata"]["autocount_pull"]["counts"]["received"]
+        assert progress["total_rows"] == received == 6
+        assert progress["processed_rows"] == received
+
 
 # ======================================================================= SP-5
 

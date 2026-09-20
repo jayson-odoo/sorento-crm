@@ -53,6 +53,7 @@ from app.services.autocount_pull_service import (
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.import_outcome import ImportOutcome
 from app.services.inventory_service import StockService
+from app.services.job_service import JobService
 from app.services.master_ingest_service import IngestOutcome, MasterIngestService
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,24 @@ EMPTY_FED_REASON = "No row matched an active warehouse; nothing to apply."
 
 class UnsupportedPullEntity(ValueError):
     """A pull entity this task cannot preview yet."""
+
+
+def _publish_preview_progress(job_id: str, processed: int, total: int) -> None:
+    """B3 (small-fix track): a full-size products preview sits 4-5 minutes on a bare
+    spinner today - this is what lets the review page show "N of M" instead. Writes
+    through its OWN fresh session, never the preview's own `db` - that session holds the
+    whole dry-run ingest in one open transaction (rolled back at the very end), so
+    publishing progress on it would commit the preview early, same shape of bug
+    `product_spec_change_listener` was just fixed for. Best-effort: this is a progress
+    indicator, not the result - a failure here must never fail the preview itself.
+    """
+    fresh = SessionLocal()
+    try:
+        JobService(fresh).update_job_progress(job_id, processed_rows=processed, total_rows=total)
+    except Exception:  # noqa: BLE001 - never let a progress bump fail the preview
+        logger.warning("could not publish preview progress for job %s", job_id, exc_info=True)
+    finally:
+        fresh.close()
 
 
 def preview_autocount_pull(db_job_id: str) -> None:
@@ -322,8 +341,18 @@ def _preview_products(db, job: ImportJob, pull: dict) -> dict:
     pull["warnings"] = warnings
 
     company_id = str(job.company_id) if job.company_id else None
+    job_id = str(job.job_id)
+    # Publish the total the moment the sheet is read (same reason the customer/GRN
+    # importers do it in `import_tasks.py`) - without it the review page shows 0/0 for
+    # the whole run, which reads as stuck.
+    _publish_preview_progress(job_id, 0, len(rows))
     ingest = MasterIngestService(db, company_id=company_id)
-    result = ingest.ingest("products", rows, dry_run=True)
+    result = ingest.ingest(
+        "products",
+        rows,
+        dry_run=True,
+        on_progress=lambda processed, total: _publish_preview_progress(job_id, processed, total),
+    )
 
     outcome_writer = ImportOutcome(job.id)
     counts = {
@@ -464,6 +493,10 @@ def _preview_stock(db, job: ImportJob, pull: dict) -> dict:
         )
 
     outcome_writer.flush()
+    # B3: stock has no per-record hook to report mid-run progress through (unlike
+    # `MasterIngestService.ingest`'s `on_progress`) - set once at the end, so the review
+    # page's spinner still resolves to a definite total rather than staying bare forever.
+    _publish_preview_progress(str(job.job_id), len(rows), len(rows))
 
     summary = validate_result.get("summary") or {}
     # `would_system_adjust_to_zero` is `bulk_import_stock`'s own count of every active-
