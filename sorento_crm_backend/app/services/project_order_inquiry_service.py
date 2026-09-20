@@ -462,6 +462,57 @@ def next_inquiry_no(db: Session, company_id: str) -> str:
     return _next_inquiry_no(db, company_id)
 
 
+def flag_rows_for_cancelled_lines(
+    db: Session, core_line_ids: Sequence[Any]
+) -> int:
+    """PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, C1): a sales order line just
+    transitioned to `cancelled` - every LIVE order inquiry row of that line (state not
+    `cancelled`, ACTIONED included) that purchasing had already acknowledged goes back
+    to To confirm, `changed_at` set, the SAME handshake `_settle_row_in_place` uses when
+    CS amends a row purchasing had already taken on.
+
+    ONE function, called from the two write sites (`SalesOrderService._upsert_lines`,
+    `document_ingest_service`) with only the core line ids THAT CALL'S OWN write just
+    cancelled - never every cancelled line in the company. That is what makes AC-CL-7
+    true: a second push of an already-cancelled document, or an edit that leaves a
+    cancelled line cancelled, names no transitioned id at all, so this is never called
+    for it and a row purchasing has re-confirmed does not come back.
+
+    A row already `awaiting`, `changed` or `rejected` is left as it is - there is
+    nothing new to tell purchasing about a row it has not yet confirmed, or has already
+    been told about, or CS has already re-decided. A row whose OWN state is `cancelled`
+    is left alone too - a dead row is nobody's work either way.
+    """
+    ids = [cid for cid in core_line_ids if cid]
+    if not ids:
+        return 0
+    now = datetime.utcnow()
+    rows = (
+        db.query(OrderInquiryRow)
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+        )
+        .filter(
+            ProjectSalesOrderLine.core_sales_order_line_id.in_(ids),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.ack_state == ACK_ACKNOWLEDGED,
+        )
+        .all()
+    )
+    for row in rows:
+        row.ack_state = ACK_CHANGED
+        row.changed_at = now
+    if rows:
+        db.flush()
+    logger.info(
+        "flag_rows_for_cancelled_lines: %d core line id(s), %d row(s) flagged",
+        len(ids),
+        len(rows),
+    )
+    return len(rows)
+
+
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
     if value is None:
         return default
@@ -1624,6 +1675,14 @@ class ProjectOrderInquiryService:
         )
         row.note = f"{row.note}; {fragment}" if row.note else fragment
         row.redirected_to_pool = True
+        # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-12, C3): a used row is a fresh
+        # fact for purchasing the same way a cancelled line is - flip it back to To
+        # confirm the SAME shape `_settle_row_in_place` above uses for a row CS amends
+        # under purchasing. A row still `awaiting` is left alone: nothing new for
+        # purchasing to be told about a row nobody has read yet.
+        if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+            row.changed_at = datetime.utcnow()
+            row.ack_state = ACK_CHANGED
         # Cached for `_release_fragment` (an ad-hoc attribute, not a mapped column) -
         # the fresh row's own Was/Now note reuses exactly what this call already found
         # (the links AND their receipt dates) rather than re-querying either.
@@ -4624,10 +4683,13 @@ class ProjectOrderInquiryService:
         re-run of Link. Only a REJECTED row is refused: taking it back is CS re-deciding the
         line, not purchasing changing its mind about a row that no longer counts.
 
-        The row's SUPPLY state is refused on too, and it is a different question from the
-        handshake: a CANCELLED row was called off and an ACTIONED one was answered
-        somewhere else, so taking either on is taking on work nobody is doing, and the
-        cascade behind the press would link nothing for it anyway.
+        The row's SUPPLY state is refused on too, but only when it is CANCELLED
+        (PLAN-oi-cancelled-line-used-confirm.md, section 3.7, owner ruling 20 Sep 2026):
+        a cancelled row was called off, so taking it on is taking on work nobody is
+        doing. An ACTIONED row is different - it was answered somewhere else, but "seen"
+        is still true of it (C2), and `_linkable_row_clauses` already keeps every
+        non-linkable state, ACTIONED included, out of the cascade below, so confirming
+        one takes the handshake stamp and links nothing.
 
         `link_up_to` is the LINK HORIZON the cascade half of the press runs under (section
         11): every named row is TAKEN ON whatever its date, and only the linking stops at
@@ -4636,13 +4698,13 @@ class ProjectOrderInquiryService:
         "N after <date>".
         """
         rows = self._rows_or_404(row_ids)
-        gone = [row for row in rows if row.state not in INQUIRY_LINK_STATES]
+        gone = [row for row in rows if row.state == INQUIRY_CANCELLED]
         if gone:
             raise AppException(
                 status_code=422,
                 message=(
-                    f"{len(gone)} of those rows are no longer open: a cancelled or "
-                    "actioned row is nobody's work to take on."
+                    f"{len(gone)} of those rows are no longer open: a cancelled row "
+                    "is nobody's work to take on."
                 ),
                 code="order_inquiry_row_not_open",
             )

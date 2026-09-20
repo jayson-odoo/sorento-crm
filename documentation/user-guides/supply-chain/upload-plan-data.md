@@ -84,11 +84,15 @@ card only, the furthest it has reached:
 
 Click a card to filter the grid to that stage. A row marked `used` (see "A row already covered
 by stock" below) never counts toward any of the three cards, or toward the Schedule matrix
-cards, so the card totals and what you see when you click into one always agree.
+cards, so the card totals and what you see when you click into one always agree. A row whose
+sales order line has been cancelled (see "A row on a cancelled line" below) drops out of **Buy**
+only - if it already holds a purchase order or shipping order link, it still counts in
+**Purchased** or **Incoming**.
 
 A fourth tile, **To confirm**, sits beside the three stage cards. It shows how many rows are
 still waiting on your sign-off; click it to return to the To confirm view from anywhere else on
-the page. See "Confirming a row" below.
+the page. Click it a second time to leave that filter, the same as pressing **Buy**,
+**Purchased** or **Incoming** a second time. See "Confirming a row" below.
 
 ### Month tabs
 
@@ -196,10 +200,32 @@ Nothing needs deciding on either row - the old one is just kept for the record, 
 reads as a plain buy. See [Sales order changes after planning](sales-order-changes.md) for how
 this comes about on the Fulfilment Planning board.
 
+A used row lands on **To confirm** once, the moment it becomes used - whether that happens on a
+replan or because a sheet re-upload rebuilds it. See "Confirming a row" below for what confirming
+it does.
+
 A row **Included with** another item (a "supplied with" companion, like a seat cover that ships
 inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i) lists each of
 those items' own change instead - hover it for one line per item, e.g. "with SRTWCX8605-S-RL-PJ:
 Was 182 on 01/06/2026, now 280 on 01/03/2027".
+
+### A row on a cancelled line
+
+A sales order line can be cancelled without anyone telling purchasing directly - an edit on the
+sales order, a cancellation pushed from AutoCount, or a sales order deleted in AutoCount. When
+that happens, every live row of that line is greyed the same way a **used** row is, and its Qty
+cell carries a plain `cancelled` tag beside the quantity. A row that is both **used** and on a
+cancelled line shows both.
+
+* It drops out of the **Buy** card and the **Buy** figure - purchasing is no longer asked to buy
+  for a line nobody wants any more.
+* If it already holds a purchase order or shipping order link, that link is left alone and the
+  row still counts in **Purchased** or **Incoming** - the system does not decide whether to keep
+  or drop that link; that stays purchasing's call.
+* The row lands on **To confirm** once, so purchasing sees it. Ticking it and pressing
+  **Confirm** means "seen": the row itself is not cancelled, it stays on the list, still greyed
+  and still tagged `cancelled`, and simply leaves **To confirm**. Nothing about its quantity,
+  links or state changes.
 
 ### When AutoCount's linkage overrides this page
 
@@ -246,11 +272,22 @@ to AutoCount's own document.
 * **I linked it by hand and it moved.** AutoCount's own linkage always wins, including over a
   link you made by hand. If AutoCount states that document is for another sales order's row,
   your row's link moves and carries a note saying so.
+* **Why is a row grey with a `cancelled` tag?** The sales order line it sits on has been
+  cancelled - by an edit on the sales order, or by AutoCount. See "A row on a cancelled line"
+  above.
+* **Do I need to cancel the PO linked to it?** No. The system leaves any purchase order or
+  shipping order link exactly as it is; whether to cancel or reuse it is your call.
+* **Why did To confirm suddenly fill up?** The first time this change went live, every existing
+  row on a cancelled line and every existing used row landed on **To confirm** once, so purchasing
+  could see them and sign off. Tick **Select all N records** and press **Confirm (N)** to clear
+  them in one go; after that, only the rows that newly become cancelled or used arrive there.
 
 ### Ticking rows and Actions
 
-Every row can be ticked, except a cancelled one. Open **Actions** to see what the ticked rows can
-do; each item counts only the rows it applies to, for example **Link selected (2 of 3)**:
+Every row can be ticked, except one whose own state is cancelled. A **used** row and a row on a
+cancelled line stay tickable - see "A row on a cancelled line" above. Open **Actions** to see
+what the ticked rows can do; each item counts only the rows it applies to, for example
+**Link selected (2 of 3)**:
 
 * **Auto link all...** links every eligible row on the whole list, not only the ticked ones.
 * **Choose document (1)** needs exactly one ticked row; it opens **Link to a document** so you can
@@ -278,10 +315,15 @@ matching your current filters, not only the ones on screen, before pressing **Co
 dialog states the count; press **Confirm** to write it.
 
 A confirmed row leaves **To confirm** without a reload, and the **To confirm** tile's count drops
-to match. Rejected and cancelled rows are skipped even if ticked, and the toast tells you how
-many rows were confirmed and how many were skipped. Only confirmed rows are counted by reorder
-planning - a row still on **To confirm**, or one that has come back as **Changed**, is left out
-until you confirm it.
+to match. Rejected rows, and a row whose own state is cancelled, are skipped even if ticked, and
+the toast tells you how many rows were confirmed and how many were skipped. Only confirmed rows
+are counted by reorder planning - a row still on **To confirm**, or one that has come back as
+**Changed**, is left out until you confirm it.
+
+A **used** row and a row on a cancelled line (see "A row already covered by stock" and "A row on
+a cancelled line" above) are ticked and confirmed the same way as any other row - their checkbox
+is enabled. These are not "cancelled rows" in the sense above: confirming one only marks it seen
+and does not touch its state, quantity or links.
 
 If CS changes a line you already confirmed - its quantity or delivery date - the row comes back
 onto **To confirm** marked **Changed**, showing what it was and what it is now. Confirm it again
@@ -387,6 +429,9 @@ that writes nothing.
   the line ordered. The sheet is what splits a line, never the upload.
 * **The upload never creates a sales order or a sales order line**, and never writes a location
   onto one. AutoCount owns the order book.
+* **A row the sheet raises onto a line that is already cancelled** lands on **To confirm**
+  straight away instead of starting confirmed, the same as a fresh used row does - see
+  "A row on a cancelled line" above.
 * **A line that already carries an order inquiry is skipped**, whoever raised it. So
   re-uploading the same sheet writes nothing new: every row comes back under **Already
   raised**, except that a corrected delivery date still fixes a migrated row's date and the
@@ -410,8 +455,9 @@ CS has acted on a line, re-uploading the sheet later (after a rollback, for exam
 
 * **A line whose delivery already arrived** comes back exactly as it was: the sheet's row for
   that delivery is raised as the greyed **used** row again, carrying its received document,
-  rather than skipped or raised plain. CS's own fresh row for the line is not re-raised by the
-  upload itself; that is the plan's own doing, not the sheet's.
+  rather than skipped or raised plain, and it lands on **To confirm** again for you to sign off.
+  CS's own fresh row for the line is not re-raised by the upload itself; that is the plan's own
+  doing, not the sheet's.
 * **A line CS has since confirmed a different quantity or date for** comes back already settled
   to what CS decided, with the sheet's own figure kept as the Was.
 * **A line CS planned entirely from stock** (nothing bought against it) comes back plain, exactly
@@ -478,11 +524,14 @@ left alone.
 
 ### Where the rows appear
 
-Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. A
-migrated row is confirmed the moment it is raised, so it will not show on the page's default **To
-confirm** view - set the **Confirmed** filter to **Confirmed** or **All** to find it. Each row
-carries the quantity, delivery date and stock location the sheet stated, the instruction it was
-raised with, and the note naming the file it came from.
+Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. An
+ordinary migrated row is confirmed the moment it is raised, so it will not show on the page's
+default **To confirm** view - set the **Confirmed** filter to **Confirmed** or **All** to find it.
+The two exceptions land on **To confirm** instead, needing your sign-off: a row rebuilt as
+**used** (see "A row already covered by stock" above), and a row landing on a line that is
+already cancelled (see "A row on a cancelled line" above). Each row carries the quantity, delivery
+date and stock location the sheet stated, the instruction it was raised with, and the note naming
+the file it came from.
 
 ### Rolling an upload back
 

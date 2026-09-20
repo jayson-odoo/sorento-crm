@@ -388,6 +388,13 @@ _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
 _LINE_OUTSTANDING = case(
     (SalesOrderLine.id.is_(None), OrderInquiryRow.qty), else_=demand_qty()
 )
+#: PLAN-oi-cancelled-line-used-confirm.md (AC-CL-4/5): whether the row's own sales order
+#: line is cancelled, NULL-safe the same way `_LINE_OUTSTANDING` is - a row whose mirror
+#: names no core line reads False here, not NULL, so `~_LINE_CANCELLED` in a WHERE clause
+#: still matches it instead of silently dropping it.
+_LINE_CANCELLED = case(
+    (SalesOrderLine.line_status == "cancelled", True), else_=False
+)
 #: The row's quantity, capped at that (7.3). ONE expression, used by the Buy card, the
 #: `kind=buy` filter and the Remaining column, so the three cannot answer differently for
 #: one row; `scm.committed_v` and the plan's horizon SQL carry the same rule as
@@ -685,6 +692,9 @@ _COLUMNS = (
     # AC-RL-16 (`PLAN-oi-replan-received-links.md` S3): reaches the wire so the Qty
     # cell's `redirected` mark can read it.
     OrderInquiryRow.redirected_to_pool.label("redirected_to_pool"),
+    # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): off the SAME `SalesOrderLine`
+    # outer join the location fallback already uses - no second join for this.
+    _LINE_CANCELLED.label("line_cancelled"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
@@ -1091,8 +1101,12 @@ class OrderInquiryWorklistService:
                 # exclusion here too - the goods it names already shipped elsewhere
                 # (AC-RL-10), and listing the row under `kind=buy` would show purchasing
                 # a row the card's own number has already excluded.
+                # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-4): same for a row on a
+                # cancelled line - nobody will buy it.
                 base = base.filter(
-                    _UNLINKED_QTY > 0, OrderInquiryRow.redirected_to_pool.is_(False)
+                    _UNLINKED_QTY > 0,
+                    OrderInquiryRow.redirected_to_pool.is_(False),
+                    ~_LINE_CANCELLED,
                 )
         if ack:
             # WHERE THE HANDSHAKE STANDS (`PLAN-scm-oi-handshake.md` section 4), which is
@@ -2001,6 +2015,9 @@ class OrderInquiryWorklistService:
             # AC-RL-16: a replan could not carry this row's coverage forward - it is
             # history now, and the FE marks it and excludes it from the cards.
             "redirected_to_pool": bool(row.redirected_to_pool),
+            # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true only when the line
+            # itself is cancelled - `closed` and `open` both read false.
+            "line_cancelled": bool(row.line_cancelled),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at cell's
@@ -2441,6 +2458,10 @@ class OrderInquiryWorklistService:
                 self._derived_cover_qty().label("derived_cover"),
                 _linked_qty().label("linked_any"),
                 _CAPPED_QTY.label("capped_qty"),
+                # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-4): so `buy` alone can
+                # zero out below - `incoming`/`purchased` stay real (a cancelled-line
+                # row that already holds a link still counts in Purchased/Incoming, C4).
+                _LINE_CANCELLED.label("line_cancelled"),
                 *extra_columns,
             )
             .filter(*extra_filters)
@@ -2454,8 +2475,14 @@ class OrderInquiryWorklistService:
             inner.c.qty - incoming,
             func.greatest(0, inner.c.po_linked - capped_derived_cover),
         )
-        buy = func.greatest(
-            inner.c.capped_qty - inner.c.linked_any - inner.c.bundled_qty, 0
+        # AC-CL-4: a row on a cancelled line owes nothing to Buy - nobody will buy it -
+        # while `incoming`/`purchased` above stay real for a row that already holds a
+        # link (C4).
+        buy = case(
+            (inner.c.line_cancelled, 0),
+            else_=func.greatest(
+                inner.c.capped_qty - inner.c.linked_any - inner.c.bundled_qty, 0
+            ),
         )
         return select(
             inner.c.row_id,

@@ -2885,6 +2885,7 @@ class _Raiser:
         """One order inquiry row, born acknowledged, against the sheet's own line."""
         from app.models.project_so import (
             ACK_ACKNOWLEDGED,
+            ACK_AWAITING,
             INQUIRY_RAISED,
             IV_ORDER,
             IV_ORDER_BACK,
@@ -2903,6 +2904,13 @@ class _Raiser:
             return None
         row = match.row
         location = (row.location or "").strip().upper() or None
+        # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-8/13, C1/C3): a row raised AS a
+        # used sibling, or onto a line already cancelled (the fallback pass - R7's own
+        # rule, only the fallback may take a cancelled line), is fresh news for
+        # purchasing - `awaiting`, not the migration's ordinary `acknowledged`.
+        born_awaiting = bool(match.used_sibling_id) or (
+            match.core_line is not None and match.core_line.line_status == "cancelled"
+        )
         entry = OrderInquiryRow(
             company_id=order.company_id,
             order_inquiry_id=record["inquiry"].id,
@@ -2930,10 +2938,12 @@ class _Raiser:
             state=INQUIRY_RAISED,
             # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1): this is a
             # migration of instructions purchasing has been working from for months, not a
-            # fresh request waiting on somebody's confirm.
-            ack_state=ACK_ACKNOWLEDGED,
-            acknowledged_by=self.actor,
-            acknowledged_at=self.now,
+            # fresh request waiting on somebody's confirm. Except `born_awaiting` above
+            # (AC-CL-8/13): a used row or one onto an already-cancelled line is genuinely
+            # fresh news, so it goes to To confirm like any other awaiting row instead.
+            ack_state=ACK_AWAITING if born_awaiting else ACK_ACKNOWLEDGED,
+            acknowledged_by=None if born_awaiting else self.actor,
+            acknowledged_at=None if born_awaiting else self.now,
             # 2.1(a): raised AS the used row rather than skipped, when `match` is a
             # recovered `Replaces N used` pairing (`_resolve_recovery_matches`).
             redirected_to_pool=bool(match.used_sibling_id),

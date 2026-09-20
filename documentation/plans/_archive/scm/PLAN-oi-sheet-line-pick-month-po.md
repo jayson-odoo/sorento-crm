@@ -1,6 +1,6 @@
 # PLAN - order inquiry sheet: line pick by exact date, then same month, then the sheet's PO
 
-Status: IN PROGRESS (owner go 19 Sep 2026). Lane `fix/oi-sheet-line-pick-month-po`, worktree `sorento_crm-oi-line-pick`.
+Status: SHIPPED. Merged and deployed 19 Sep 2026 in #1026, #1027, #1035 and #1036.
 UAC: `oi-sheet-line-pick-month-po-acceptance-criteria.md`
 
 ## 0. What was measured
