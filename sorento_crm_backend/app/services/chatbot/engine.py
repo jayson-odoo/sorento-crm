@@ -1693,7 +1693,20 @@ def _run_stages(  # noqa: PLR0915
             and not sales_report_grant_refused
             and len(plan.domains) <= 1
             and isinstance(resolver_payload, dict)
-            and resolver_payload.get("_exit_kind") in ("access_ask", "offer")
+            and (
+                resolver_payload.get("_exit_kind") in ("access_ask", "offer")
+                # R5: a `not_found` exit (the product never resolved) still needing a
+                # tier pick - `entry == "access_check"` already ran the tier gate
+                # before resolve-entity even tried the product, so its own
+                # `tier_ask: True` outranks the product's own absence. Same gate
+                # `answer_bridge.question_for` itself re-checks, kept in lockstep so
+                # neither can decide alone that the other agrees.
+                or (
+                    isinstance(resolver_payload.get("tier_gate"), dict)
+                    and resolver_payload["tier_gate"].get("tier_ask") is True
+                    and resolver_payload.get("_exit_kind") == "not_found"
+                )
+            )
         ):
             from app.services.chatbot import answer_bridge
             from app.services.chatbot import copy as copy_mod

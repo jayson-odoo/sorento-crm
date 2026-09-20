@@ -178,7 +178,27 @@ def _access_ask_answer(
     db: Any,
     asked_at_turn: int | None,
 ) -> turn_compose.Answer:
-    tier_source = fetch if isinstance(fetch, dict) and fetch.get("_fetch_arm") == "tier-ask" else payload
+    if isinstance(fetch, dict) and fetch.get("_fetch_arm") == "tier-ask":
+        tier_source = fetch
+    elif isinstance(payload, dict) and payload.get("_exit_kind") == "access_ask":
+        # `resolve_gate.run`'s own `exit_item` spreads `tier_gate_out` FIRST for this
+        # exit (`resolve_gate.py`'s own access_ask arm), so `payload` itself already
+        # carries `name`/`entitled_tiers` at the top level.
+        tier_source = payload
+    else:
+        # R5 (AC-1697's own tier axis, the "product_attachment roster copy" class of
+        # gap on the ACCESS side): a resolver `not_found` exit for a promotion ask
+        # still carries the SAME tier-gate read (`resolve_gate.run`'s `entry ==
+        # "access_check"` runs before the product is even looked up), just nested
+        # under `payload["tier_gate"]` rather than flattened - the product genuinely
+        # not resolving is not a verdict on which access levels this contact holds.
+        # Measured live: `TestRegressionGuardsMustStayGreen::
+        # test_promotion_ask_for_a_not_found_product_still_shows_the_three_tier_picker`,
+        # a contact entitled to 3 tiers whose typed product never resolves at all
+        # (`_exit_kind == "not_found"`, `tier_gate.tier_ask is True`) used to fall
+        # through to `turn/narrow.py`'s generic, entitlement-blind tier ask instead of
+        # this composer.
+        tier_source = payload.get("tier_gate") if isinstance(payload, dict) else None
     lane_item = {
         **answer_mod.access_level_choice_message(tier_source, parser=parser),
         "branch_kind": "access_choice",
@@ -258,7 +278,19 @@ def question_for(
         return None
     exit_kind = payload.get("_exit_kind")
     fetch_arm = fetch.get("_fetch_arm") if isinstance(fetch, dict) else None
-    if exit_kind == "access_ask" or fetch_arm == "tier-ask":
+    tier_gate = payload.get("tier_gate")
+    # R5: a `not_found` exit still needing a tier pick (the product never resolved,
+    # but `entry == "access_check"` already ran the tier gate before it tried) - the
+    # "continue" exit's own tier-ask (`fetch_arm == "tier-ask"`, run AFTER the real
+    # per-tier promotion probe) is untouched; this is the OTHER exit that same gate
+    # can leave the resolver on, never overlapping with it (`_access_ask_answer`'s own
+    # `tier_source` docstring names the shape difference).
+    needs_tier_ask = (
+        exit_kind == "not_found"
+        and isinstance(tier_gate, dict)
+        and tier_gate.get("tier_ask") is True
+    )
+    if exit_kind == "access_ask" or fetch_arm == "tier-ask" or needs_tier_ask:
         return _access_ask_answer(
             payload, fetch=fetch, parser=parser, ctx=ctx, canned=canned, db=db, asked_at_turn=asked_at_turn
         )
