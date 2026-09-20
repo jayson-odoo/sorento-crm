@@ -64,12 +64,17 @@ vi.mock('../autocount-pull/hooks/useAutocountPull', () => ({
   usePull: (...a: unknown[]) => usePull(...a),
 }));
 vi.mock('../autocount-pull/components/AutocountPullReview', () => ({
-  AutocountPullReview: () => <div data-testid="autocount-pull-review" />,
+  AutocountPullReview: ({ jobId }: { jobId: string }) => (
+    <div data-testid="autocount-pull-review" data-job-id={jobId} />
+  ),
 }));
 
 import ImportJobDetailPage from './page';
 
 const PARAMS = Promise.resolve({ id: 'job-1' });
+// E2 (small-fix track, fix round 2): a route param shaped like the Import Jobs LIST's own
+// link (the RQ job id, `import_jobs.job_id`), never the DB id every other test file here uses.
+const RQ_PARAMS = Promise.resolve({ id: 'rq-111' });
 
 function wrap(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -110,6 +115,7 @@ beforeEach(async () => {
   // Pre-resolve so `use(params)` never suspends the very first render in this file (a bare
   // `Promise.resolve` is still pending on the microtask queue the instant it is created).
   await PARAMS;
+  await RQ_PARAMS;
 });
 
 describe('P1: AutocountPullReview dispatch by job_type', () => {
@@ -206,5 +212,23 @@ describe('D2 (small-fix track, browser e2e run 3): Results / Outcome breakdown /
     expect(screen.getByText('Results')).toBeInTheDocument();
     expect(screen.getByTestId('outcome-breakdown')).toBeInTheDocument();
     expect(screen.getByTestId('rows-card')).toBeInTheDocument();
+  });
+});
+
+describe('E2 (small-fix track, fix round 2): opened from the Import Jobs LIST (URL carries the RQ job id)', () => {
+  it('usePull and AutocountPullReview both use the DB id (job.id), never the URL param', async () => {
+    getImportJob.mockResolvedValue(
+      ordinaryJob({ id: 'db-222', job_id: 'rq-111', job_type: 'autocount_stock_pull' }),
+    );
+    getImportJobStatus.mockResolvedValue({ job_id: 'db-222', status: 'finished' });
+    usePull.mockReturnValue({ data: { job_id: 'db-222', phase: 'review' } });
+
+    await act(async () => {
+      render(wrap(<ImportJobDetailPage params={RQ_PARAMS} />));
+    });
+
+    const review = await screen.findByTestId('autocount-pull-review');
+    expect(review).toHaveAttribute('data-job-id', 'db-222');
+    expect(usePull).toHaveBeenCalledWith('db-222', true);
   });
 });

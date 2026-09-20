@@ -110,7 +110,13 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const showPagination = pageIndex !== null && totalOnPage > 0 && currentIndex >= 0;
 
   const isPullJob = Boolean(job && AUTOCOUNT_PULL_JOB_TYPES.has(job.job_type));
-  const { data: pullStatus } = usePull(id, isPullJob);
+  // E2 (small-fix track, fix round 2): the list's row click lands on the URL with the RQ
+  // job id (`import_jobs.job_id`), which the generic job endpoints below accept alongside
+  // the DB id - but `/api/v1/autocount/pulls/{id}` only knows `import_jobs.id`. `job.id` is
+  // always that DB id once the job has loaded, so every pull-shaped call goes through it
+  // instead of the raw URL param.
+  const pullJobId = job?.id ?? '';
+  const { data: pullStatus } = usePull(pullJobId, isPullJob);
   // The pull's own review component polls itself every 10s (AC-BD-6) - the generic 2s
   // job-progress poll below has nothing to show while FoundryX is still building (no RQ job
   // exists yet for that phase), so it stays off for as long as that is true.
@@ -271,7 +277,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
           {/* AutoCount pull review - header pill, counters, Changes / Excel view / Compare
               tabs, Download and Confirm. Renders above the usual cards; every other job
               type is untouched. */}
-          {isPullJob && <AutocountPullReview jobId={id} />}
+          {isPullJob && <AutocountPullReview jobId={pullJobId} />}
 
           {/* Summary Card */}
           <Card>
