@@ -62,7 +62,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type {
-  ImpositionConfig,
   LineTagData,
   PlacedTag,
   TagBindingData,
@@ -72,25 +71,24 @@ import type {
   TagTemplateDoc,
   TagTemplateFamily,
 } from '@/lib/dealer-kit/tag-template-types';
-import { IMPOSITION_PRESETS, familyLabel } from '@/lib/dealer-kit/tag-template-types';
+import { familyLabel } from '@/lib/dealer-kit/tag-template-types';
 import { lineFamily } from '@/lib/dealer-kit/line-family';
 import {
   applyDesignToAllTags,
   applyDesignToSiblings,
   autoArrange,
+  DEFAULT_IMPOSITION,
   defaultTemplateFor,
-  normaliseImpositionPreset,
-  pinKeyForPlacement,
-  pinnedFromDoc,
   resizeAllTags,
   resizeTag,
+  STARTER_TEMPLATE_ID,
   starterTemplateFor,
   tagForTag,
   tagSizeBounds,
   tagSizePresets,
   tagsFromDoc,
   type ArrangeItem,
-  type PinnedPlacement,
+  type SheetGridConfig,
   type TagRequestTag,
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
@@ -252,18 +250,14 @@ export function RequestTagDesigner({
     for (const [tagId, tag] of tagsFromDoc(initialDoc)) map[tagId] = tag;
     return map;
   });
-  const [pinned, setPinned] = useState<Record<string, PinnedPlacement>>(() =>
-    pinnedFromDoc(initialDoc),
-  );
-  // A pre-S6 doc's `a4_3up`/`a4_2x2` preset migrates to 'auto' on load (S3,
-  // AC-S6-4) - the layout has been identical since S6, this just gets the
-  // saved value to catch up so the next autosave writes 'auto' instead of
-  // perpetuating history.
-  const [imposition, setImposition] = useState<ImpositionConfig>(
-    initialDoc?.imposition
-      ? normaliseImpositionPreset(initialDoc.imposition)
-      : { preset: 'auto', ...IMPOSITION_PRESETS.auto },
-  );
+  /**
+   * A per-A4 grid typed into the Tag Size panel THIS session, for a size
+   * that names no template/preset to persist it on yet (S7, AC-S7-14) -
+   * keyed `${width_mm}x${height_mm}` so it applies the moment a group of
+   * that size is arranged, without waiting for a save. `gridForSize` below
+   * checks this FIRST, ahead of the template/preset lookup.
+   */
+  const [customSheetGrids, setCustomSheetGrids] = useState<Record<string, SheetGridConfig>>({});
   /**
    * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
    * (S9 review B2) so it also applies to a line that has not been opened
@@ -669,7 +663,73 @@ export function RequestTagDesigner({
   const savedSizesQuery = useTagSizesQuery();
   const deleteSavedSize = useDeleteTagSizePreset();
   const [saveSizeOpen, setSaveSizeOpen] = useState(false);
-  const tagSizeBoundsForRequest = useMemo(() => tagSizeBounds(imposition), [imposition]);
+  const tagSizeBoundsForRequest = useMemo(() => tagSizeBounds(), []);
+
+  /**
+   * The per-A4 grid CONFIGURED for a size group at arrange time (S7,
+   * AC-S7-15): this session's own typed-but-unsaved value first, else the
+   * group's own template's `print_size.sheet` when it names this exact size,
+   * else a saved size preset with the same size, else null (arrange
+   * derives).
+   */
+  // Read through refs, not the state values directly (S7): `templates` and
+  // `savedSizesQuery.data` load ASYNCHRONOUSLY after mount, and a `doc`
+  // memoized off `gridForSize`'s own identity would otherwise get a fresh
+  // reference the moment either arrives - which the autosave-scheduling
+  // effect below reads as a real edit and persists nothing-changed. Only
+  // `customSheetGrids` (an actual typed edit) stays a real dependency.
+  const templatesRef = useRef(templates);
+  useEffect(() => {
+    templatesRef.current = templates;
+  }, [templates]);
+  const savedSizesRef = useRef(savedSizesQuery.data);
+  useEffect(() => {
+    savedSizesRef.current = savedSizesQuery.data;
+  }, [savedSizesQuery.data]);
+
+  const gridForSize = useCallback(
+    (width_mm: number, height_mm: number, templateId: string): SheetGridConfig | null => {
+      const key = `${width_mm}x${height_mm}`;
+      if (customSheetGrids[key]) return customSheetGrids[key];
+      const template = templatesRef.current.find((t) => t.id === templateId);
+      if (
+        template?.print_size.sheet &&
+        template.print_size.width_mm === width_mm &&
+        template.print_size.height_mm === height_mm
+      ) {
+        return template.print_size.sheet;
+      }
+      const preset = (savedSizesRef.current ?? []).find(
+        (s) => s.width_mm === width_mm && s.height_mm === height_mm && s.sheet_cols && s.sheet_rows,
+      );
+      if (preset?.sheet_cols && preset?.sheet_rows) {
+        return { cols: preset.sheet_cols, rows: preset.sheet_rows, turn: preset.sheet_turn ?? false };
+      }
+      return null;
+    },
+    [customSheetGrids],
+  );
+
+  /**
+   * A grid typed into the panel (S7, AC-S7-14): held for this session only
+   * (`customSheetGrids`), so arrange reflects it immediately without waiting
+   * on a save. Persisting it onto an EXISTING saved preset is Phase 2 (the
+   * backend does not carry `sheet_cols`/`sheet_rows`/`sheet_turn` yet) - a
+   * size with no preset yet carries it forward when "Save as size" is used
+   * (the dialog reads `customSheetGrids` directly, below).
+   */
+  const handleSheetGridChange = useCallback(
+    (width_mm: number, height_mm: number, grid: SheetGridConfig | null) => {
+      const key = `${width_mm}x${height_mm}`;
+      setCustomSheetGrids((prev) => {
+        if (!grid) {
+          return Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key));
+        }
+        return { ...prev, [key]: grid };
+      });
+    },
+    [],
+  );
 
   const handleResizeTag = useCallback(
     (width_mm: number, height_mm: number) => {
@@ -853,27 +913,32 @@ export function RequestTagDesigner({
     [tagRefs, tags],
   );
 
-  // The size Arrange's fit line and empty state are computed off (S6): the
-  // largest tag REQUESTED across every line, not what `autoArrange` managed
-  // to place - a page too small for the tag places nothing, and that is
-  // exactly when the "0 per sheet" message most needs a size to quote.
-  const tagDims = useMemo(() => {
-    if (arrangeItems.length === 0) return null;
-    return {
-      width_mm: Math.max(...arrangeItems.map((item) => item.tag.width_mm)),
-      height_mm: Math.max(...arrangeItems.map((item) => item.tag.height_mm)),
-    };
-  }, [arrangeItems]);
+  // Arrange, size-grouped (S7): each size's own sheets, packed at zero gap
+  // inside the fixed 5mm margin (or a configured grid), before the next size
+  // starts a fresh sheet. `placement` is display-only metadata alongside
+  // `doc.sheets` (AC-S7-6) - never stored in the doc.
+  const arranged = useMemo(
+    () => autoArrange(arrangeItems, gridForSize),
+    [arrangeItems, gridForSize],
+  );
 
   const doc: TagSheetDoc = useMemo(
     () => ({
       kind: 'tag_sheet',
-      imposition,
-      sheets: autoArrange(arrangeItems, imposition, pinned),
+      imposition: DEFAULT_IMPOSITION,
+      sheets: arranged.sheets,
       default_tag_size: defaultTagSize,
     }),
-    [arrangeItems, imposition, pinned, defaultTagSize],
+    [arranged, defaultTagSize],
   );
+
+  /** Template name by id, for the Arrange view's per-sheet line (AC-S7-6) -
+   *  `templates` is already loaded for the size presets above. */
+  const templateNameById = useMemo(() => {
+    const map: Record<string, string> = { [STARTER_TEMPLATE_ID]: 'Starter' };
+    for (const t of templates) map[t.id] = t.name;
+    return map;
+  }, [templates]);
 
   // -- Autosave (D22, S8) ------------------------------------------------------
 
@@ -889,8 +954,8 @@ export function RequestTagDesigner({
   );
 
   // Every REAL change to `doc` schedules a debounced save - a layer edit
-  // (through `tags`), an arranged pin, an imposition change. Two changes are
-  // NOT edits and must persist nothing:
+  // (through `tags`), a resize, a quantity change (through `arrangeItems`).
+  // Two changes are NOT edits and must persist nothing:
   //
   //  * the very first `doc` (whatever `initialDoc` seeded, or the empty
   //    starting point) - already exactly what the server has;
@@ -949,16 +1014,6 @@ export function RequestTagDesigner({
       handler();
     };
   }, [flush]);
-
-  const handleMoveTag = useCallback(
-    (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => {
-      setPinned((prev) => ({
-        ...prev,
-        [pinKeyForPlacement(tag)]: { sheet: sheetIndex, x_mm, y_mm },
-      }));
-    },
-    [],
-  );
 
   /**
    * The deliberate save: one version, and never racing the autosave (S4).
@@ -1488,6 +1543,10 @@ export function RequestTagDesigner({
           onDeleteSavedSize={(id, name) => deleteSavedSize.run({ id, subject: name })}
           deletingSavedSizeId={deleteSavedSize.isPending ? deleteSavedSize.targetId : null}
           onSaveAsSize={() => setSaveSizeOpen(true)}
+          sheetGrid={gridForSize(selectedTag.width_mm, selectedTag.height_mm, selectedTag.template_id)}
+          onSheetGridChange={(grid) =>
+            handleSheetGridChange(selectedTag.width_mm, selectedTag.height_mm, grid)
+          }
         />
       ) : (
         <div className="shrink-0 border-b border-r p-3">
@@ -1505,6 +1564,7 @@ export function RequestTagDesigner({
           onOpenChange={setSaveSizeOpen}
           width_mm={selectedTag.width_mm}
           height_mm={selectedTag.height_mm}
+          sheetGrid={customSheetGrids[`${selectedTag.width_mm}x${selectedTag.height_mm}`] ?? null}
         />
       )}
     </>
@@ -1707,11 +1767,10 @@ export function RequestTagDesigner({
               onSelectTag={setSelectedTagId}
               resolved={resolved}
               assetUrls={library.assetUrls}
-              onImpositionChange={setImposition}
-              onMoveTag={handleMoveTag}
               onPrintSheet={handlePrintSheet}
               printing={printing}
-              tagDims={tagDims}
+              placement={arranged.placement}
+              templateNameById={templateNameById}
             />
           )}
         </div>

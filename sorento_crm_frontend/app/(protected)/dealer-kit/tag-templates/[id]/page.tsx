@@ -191,11 +191,10 @@ export default function TagTemplateEditorPage() {
     useCallback(async (layers: TagLayer[]) => {
       const current = templateRef.current;
       if (!current) return;
-      const updated = await updateTemplate(
-        current.id,
-        { ...current.doc, layers },
-        { keepalive: teardownRef.current },
-      );
+      const updated = await updateTemplate(current.id, { ...current.doc, layers }, {
+        keepalive: teardownRef.current,
+        ...(current.print_size.sheet ? { sheet: current.print_size.sheet } : {}),
+      });
       setTemplate(updated);
     }, []),
   );
@@ -258,7 +257,30 @@ export default function TagTemplateEditorPage() {
   const handleResizeTemplate = useCallback(
     (width_mm: number, height_mm: number) => {
       setTemplate((prev) =>
-        prev ? { ...prev, doc: { ...prev.doc, width_mm, height_mm } } : prev,
+        prev
+          ? {
+              ...prev,
+              doc: { ...prev.doc, width_mm, height_mm },
+              // A per-A4 grid is specific to the size it was set for (S7) -
+              // resizing the tag invalidates it rather than silently
+              // carrying it onto the new size.
+              print_size: { width_mm, height_mm },
+            }
+          : prev,
+      );
+      scheduleAutosave(draftLayers);
+    },
+    [draftLayers, scheduleAutosave],
+  );
+
+  /** Per-A4 grid (S7, AC-S7-14): typed cols/rows/turn, or `null` from Auto -
+   *  written onto the template's OWN print size, same debounce as a resize. */
+  const handleSheetGridChange = useCallback(
+    (sheet: { cols: number; rows: number; turn: boolean } | null) => {
+      setTemplate((prev) =>
+        prev
+          ? { ...prev, print_size: { width_mm: prev.doc.width_mm, height_mm: prev.doc.height_mm, sheet: sheet ?? undefined } }
+          : prev,
       );
       scheduleAutosave(draftLayers);
     },
@@ -274,7 +296,13 @@ export default function TagTemplateEditorPage() {
     setSaving(true);
     try {
       await flushAutosave();
-      const updated = await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
+      const updated = template.print_size.sheet
+        ? await updateTemplate(
+            template.id,
+            { ...template.doc, layers: draftLayers },
+            { sheet: template.print_size.sheet },
+          )
+        : await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
       setTemplate(updated);
       toast.success('Template saved');
     } catch (err) {
@@ -506,6 +534,8 @@ export default function TagTemplateEditorPage() {
                 onDeleteSavedSize={(id, name) => deleteSavedSize.run({ id, subject: name })}
                 deletingSavedSizeId={deleteSavedSize.isPending ? deleteSavedSize.targetId : null}
                 onSaveAsSize={() => setSaveSizeOpen(true)}
+                sheetGrid={template.print_size.sheet ?? null}
+                onSheetGridChange={handleSheetGridChange}
               />
             }
             toolbarTrailing={toolbarTrailing}

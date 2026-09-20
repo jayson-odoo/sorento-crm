@@ -25,6 +25,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
+  TagSheetGrid,
   TagTemplate,
   TagTemplateDoc,
   TagTemplateFamily,
@@ -98,16 +99,22 @@ export async function createTemplate(input: {
  * a normal fetch when the document goes away, which is exactly the moment the
  * last edit most needs to reach the server. It is not the default because a
  * keepalive request body is capped at 64KB and a busy template exceeds that.
+ *
+ * `sheet` (S7, AC-S7-11) rides along on `print_size` - the caller passes the
+ * template's CURRENT grid (or null/absent to clear it) on every save, since
+ * this PUT replaces `print_size` wholesale rather than patching it.
  */
 export async function updateTemplate(
   id: string,
   doc: TagTemplateDoc,
-  options: { keepalive?: boolean } = {},
+  options: { keepalive?: boolean; sheet?: TagSheetGrid | null } = {},
 ): Promise<TagTemplate> {
+  const print_size: { width_mm: number; height_mm: number; sheet?: TagSheetGrid } = printSizeOf(doc);
+  if (options.sheet) print_size.sheet = options.sheet;
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ doc, print_size: printSizeOf(doc) }),
+    body: JSON.stringify({ doc, print_size }),
     keepalive: options.keepalive,
   });
   if (!response.ok) {

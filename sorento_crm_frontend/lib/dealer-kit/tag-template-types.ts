@@ -377,12 +377,21 @@ export interface TagTemplateDoc {
 // Template entity
 // ---------------------------------------------------------------------------
 
+/** A per-A4-sheet grid a template or a saved size preset may carry (S7,
+ *  AC-S7-11/12/15): arrange uses it in place of the derived best fit for any
+ *  size group that matches. Absent = arrange derives. */
+export interface TagSheetGrid {
+  cols: number;
+  rows: number;
+  turn: boolean;
+}
+
 export interface TagTemplate {
   id: string;
   name: string;
   family: TagTemplateFamily;
   doc: TagTemplateDoc;
-  print_size: { width_mm: number; height_mm: number };
+  print_size: { width_mm: number; height_mm: number; sheet?: TagSheetGrid };
   created_at: string;
   updated_at: string;
   /** The live pointer (PLAN D7). Absent = never published. */
@@ -481,16 +490,14 @@ export interface PlacedTag {
   height_mm: number;
   layers: TagLayer[];
   /**
-   * This copy was DRAGGED to where it sits, so re-arranging must leave it there.
-   *
-   * Every placed tag carries a position - arrangement is what the document is -
-   * so the position alone cannot say which of them somebody chose. Without this
-   * flag, one save and reopen pinned the entire sheet: switching the imposition
-   * preset re-imposed nothing and a quantity bump dropped the new copy on top of
-   * copy 0. Absent means auto-placed, which is what a document written before
-   * the flag reads as.
+   * Turned 90deg at print time (S7): `width_mm`/`height_mm` above stay the
+   * tag's own NATURAL (unrotated) size - what its layers are laid out
+   * against - while `x_mm`/`y_mm` are the top-left of the PLACED (rotated)
+   * box the renderers draw. Absent/0 = drawn as designed. A doc saved before
+   * S7 (or before this field, on a copy nobody rotated) has none, which reads
+   * as 0 - unrotated, exactly as it always printed.
    */
-  pinned?: boolean;
+  rotation?: 0 | 90;
 }
 
 // ---------------------------------------------------------------------------
