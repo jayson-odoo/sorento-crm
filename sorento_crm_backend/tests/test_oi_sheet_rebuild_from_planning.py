@@ -2223,6 +2223,11 @@ def test_buy_zero_line_is_never_a_top_up_line(shape):
         assert not (board_row.note or "").startswith(importer._MIGRATION_STAMP), (
             "fixture sanity: the board row must not be sheet-stamped"
         )
+        # Refreshed before snapshotting - see the same note on this pattern elsewhere in
+        # this file: the AFTER read is off the database, and an unrefreshed BEFORE would
+        # disagree with it on `Decimal` formatting alone (`Decimal("3")` vs the
+        # NUMERIC(15,4) round-trip `Decimal("3.0000")`).
+        w.db.refresh(board_row)
         before = _row_snapshot(board_row)
         capture = _Capture()
         data = sheet([sheet_row])
