@@ -182,6 +182,24 @@ never restated the row). Under AC-RB-24 + AC-RB-11 it comes back 219 @ 2027-05-0
 - **AC-RB-41** The upload preview's "already carries an order inquiry" warning counts
   `no_used_delivery_match` and `top_up_sum_mismatch` rows on their own line of text.
 
+## Rehearsal round (AC-RB-22 run on the clone, 20 Sep 2026; slice S7)
+
+The rehearsal rebuilt the 22 rows and the 3 extra shapes exactly (10 used, 13 settled, 1 top-up
+plain; 0 link-total violators; second upload raised 0). It also reported 14
+`top_up_sum_mismatch` rows, most of them false: a line customer service planned on the board
+carries the board's OWN row (decision id set, no stamp), and the sheet lists the same delivery.
+Measured shapes: SO419595 B2155-NL-BLUE board row 493 @ 2026-09-30 = sheet 493 @ 2026-09-30
+(equal on Now); SO314593 CB2806A-DIY board row 220 @ 2027-03-01, `Was 182 on 2026-06-01` = sheet
+182 @ 2026-06-01 (equal on Was). Before this lane both read `already_raised`.
+
+- **AC-RB-42** Order of the checks on a line whose live own rows all carry the active decision:
+  FIRST the sum (sheet quantity + those rows = the decision's buy quantity: raised plain,
+  AC-RB-26); ELSE, when ANY live own row of the line, stamped or not, equals the sheet row on
+  (quantity, date) or on (previous quantity, previous date), the sheet row is `already_raised`,
+  silently, as before this lane; ONLY otherwise `top_up_sum_mismatch`. This replaces the
+  stamped-only wording of AC-RB-33; AC-RB-33's counter case (plan 76, board top-up 38, sheet 38
+  on the same date) still raises the sheet row plain, because the sum is checked first.
+
 ## The whole journey
 
 - **AC-RB-21** `[T]` One test walks step 2 to step 4 of the journey on the fixture above: upload,
