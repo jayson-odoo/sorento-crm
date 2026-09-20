@@ -66,19 +66,35 @@ job with no worker restart.
 
 ### S2 - Test action (backend + frontend)
 
-`POST /api/v1/integrations/{id}/test`, gated `integration.integrations.edit`, only for
+`POST /api/v1/integrations/manage/{id}/test` (the admin router mounts at `/integrations/manage`), gated `integration.integrations.edit`, only for
 `type == "autocount_esb"` (other types answer 400 `TEST_NOT_SUPPORTED`). Probes the PERSISTED
 row (SMTP-test shape, so what is tested is what the pull will use): builds the client from the
 row and calls `GET /api/v1/autocount/snapshots/00000000-0000-0000-0000-000000000000`.
 
-| Gateway answer | Result shown |
+| Gateway answer (confirmed by FoundryX from their code, 2026-09-21) | Result shown |
 | --- | --- |
-| 404 / 410 (authed, unknown snapshot) | `ok: true`, "Connected" |
-| 401 | `ok: false`, "Key rejected" |
-| 403 | `ok: false`, "Key is not allowed for this company" |
+| JSON 404 `UNKNOWN_SNAPSHOT` (or 410) = key accepted | `ok: true`, "Connected" |
+| 401 `INVALID_API_KEY` | `ok: false`, "Key rejected" |
+| 403 `SERVICE_NOT_ENABLED` | `ok: false`, "AutoCount service is not enabled on FoundryX" |
+| 429 `TOO_MANY_REQUESTS` | `ok: false`, "Too many attempts, try again shortly" |
 | 404 with no JSON body / HTML | `ok: false`, "Not a FoundryX gateway" |
 | connect / timeout error | `ok: false`, "Unreachable: <reason>" |
 | NOT_CONFIGURED | `ok: false`, "Base URL or key missing" |
+
+What Test proves: base URL reachable, key valid, service enabled. It does NOT prove the key
+covers the current company: the gateway checks company membership only on `POST /snapshots`,
+which starts a real build and must never be used as a probe. A key bound to the wrong company
+surfaces on the first Pull click as 403 `COMPANY_NOT_ALLOWED` (already shown as the server's
+message). The guide says so in one sentence. Trigger for more: FoundryX adds an authed
+`whoami` returning the key's company codes (offered by them, not requested).
+
+Budget: each probe costs 1 of the key's 600 requests / 5 min and writes one FoundryX audit
+row; each 401 counts against Sorento's egress IP failure bucket. One probe per click, no
+auto-retry, no polling.
+
+Base URL: the integration stores the ORIGIN (`https://host`), the client appends
+`/api/v1/autocount/...` as it does today. FoundryX's prod gateway is https-only; the client
+does not validate the scheme (accepted note from #1051).
 
 Response `{ok, message, latency_ms}`. The key never appears in the response, a log line or
 `last_error`. `last_used_at` is not touched (that column means inbound use).

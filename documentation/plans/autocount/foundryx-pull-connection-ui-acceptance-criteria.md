@@ -24,10 +24,11 @@ Plan: `PLAN-foundryx-pull-connection-ui.md`. Every criterion is a test or a brow
 
 ## Test action
 
-- AC-TS-1 `POST /api/v1/integrations/{id}/test` on an `autocount_esb` row whose gateway answers
+- AC-TS-1 `POST /api/v1/integrations/manage/{id}/test` on an `autocount_esb` row whose gateway answers
   404/410 JSON to the nil-snapshot GET returns `{ok: true, message: "Connected", latency_ms}`.
 - AC-TS-2 Gateway 401 -> `{ok: false, message: "Key rejected"}`.
-- AC-TS-3 Gateway 403 -> `{ok: false, message: "Key is not allowed for this company"}`.
+- AC-TS-3 Gateway 403 -> `{ok: false, message: "AutoCount service is not enabled on FoundryX"}`.
+- AC-TS-3b Gateway 429 -> `{ok: false, message: "Too many attempts, try again shortly"}`.
 - AC-TS-4 Non-JSON 404 (a web server, not the gateway) -> `{ok: false, message: "Not a FoundryX gateway"}`.
 - AC-TS-5 Connection refused / timeout -> `{ok: false, message: "Unreachable: <reason>"}`, within
   the client's connect timeout.
