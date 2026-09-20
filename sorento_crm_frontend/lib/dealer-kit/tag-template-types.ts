@@ -36,6 +36,7 @@ export type SlotBinding =
   | 'accessories'
   | 'set_members'
   | 'barcode'
+  | 'price_tag_description'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
@@ -549,6 +550,9 @@ export interface ProductTagData {
   /** `products.barcode` (D14/S7). Null renders a placeholder in the editor
    * and nothing on print. */
   barcode: string | null;
+  /** Staff-authored tag copy (r10 S4). Absent/null renders nothing - no
+   *  fallback to `spec_lines` or a description. */
+  price_tag_description?: string | null;
   /** `products.currency` (AC-A5). Optional so an older pinned/cached row
    *  (frozen before this field existed) still renders - `resolvePath` falls
    *  back to `MYR` when absent (AC-A7). */
@@ -634,6 +638,8 @@ export interface TagPartData {
   /** r10 S6: true on the candidate THIS tag's own choices name - the one
    *  `own_parts` and Tag total count. Absent on a fixed part. */
   chosen?: boolean;
+  /** This part's OWN product's tag copy (r10 S4), not the host's. */
+  price_tag_description?: string | null;
 }
 
 /**
@@ -688,6 +694,9 @@ export interface LineTagData {
   barcode: string | null;
   /** The line's own currency (AC-A11). Optional, see `ProductTagData.currency`. */
   currency?: string;
+  /** Staff-authored tag copy (r10 S4). Null for a set line - a set has no
+   *  description of its own, same rule as barcode above. */
+  price_tag_description?: string | null;
 }
 
 /** A binding's resolved data, whichever kind of thing it points at. */

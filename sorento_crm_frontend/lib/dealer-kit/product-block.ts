@@ -140,6 +140,7 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     promotion_id: null,
     barcode: line.barcode,
     currency: line.currency,
+    price_tag_description: line.price_tag_description,
   };
 }
 
@@ -160,6 +161,7 @@ function productFromPart(part: TagPartData): ProductTagData {
     promotion_id: null,
     barcode: part.barcode ?? null,
     currency: part.currency,
+    price_tag_description: part.price_tag_description,
   };
 }
 
@@ -245,6 +247,8 @@ export function resolveSlotText(
         return subject.line.included_accessories;
       case 'barcode':
         return subject.line.barcode;
+      case 'price_tag_description':
+        return subject.line.price_tag_description ?? null;
       default:
         return null;
     }
@@ -276,6 +280,8 @@ export function resolveSlotText(
       return product.spec_lines.join('\n');
     case 'barcode':
       return product.barcode;
+    case 'price_tag_description':
+      return product.price_tag_description ?? null;
     default:
       return null;
   }

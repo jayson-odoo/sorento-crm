@@ -81,6 +81,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       product_code: '',
       product_name: '',
       description: '',
+      price_tag_description: '',
       category_id: '',
       brand_id: null,
       barcode: '',
@@ -140,6 +141,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       product_code: product.product_code,
       product_name: product.product_name,
       description: product.description || '',
+      price_tag_description: product.price_tag_description || '',
       category_id: categoryId,
       brand_id: brandId,
       barcode: product.barcode || '',
@@ -192,6 +194,11 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         product_code: data.product_code,
         product_name: data.product_name,
         description: data.description || undefined,
+        price_tag_description: data.price_tag_description
+          ? data.price_tag_description
+          : isEditMode
+            ? null
+            : undefined,
         category_id: data.category_id,
         brand_id: data.brand_id ?? (isEditMode ? null : undefined),
         barcode: data.barcode ? data.barcode : isEditMode ? null : undefined,
@@ -351,6 +358,25 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                           {...field}
                           value={field.value || ''}
                           rows={4}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="price_tag_description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Price tag description</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Copy printed verbatim on the price tag"
+                          {...field}
+                          value={field.value || ''}
+                          rows={3}
                         />
                       </FormControl>
                       <FormMessage />

@@ -362,6 +362,16 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         <p className="text-muted-foreground">Description</p>
                         <p className="font-medium">{product.description || '-'}</p>
                       </div>
+                      <div className="col-span-2">
+                        <p className="text-muted-foreground">Price tag description</p>
+                        <p
+                          className="font-medium whitespace-pre-line"
+                          style={{ whiteSpace: 'pre-line' }}
+                          data-testid="price-tag-description-value"
+                        >
+                          {product.price_tag_description || '-'}
+                        </p>
+                      </div>
                     </div>
                   </div>
 

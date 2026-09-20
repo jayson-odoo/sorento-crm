@@ -379,6 +379,9 @@ def product_tag_data(
         # Key by key, beside the rendered sentence: `{{spec.material}}` asks a
         # question `spec_lines` cannot answer (D58).
         "specs": product_specs(db, product, spec_row),
+        # S4: staff-authored tag copy. Absent (None) renders nothing (Q5) -
+        # no fallback to spec_lines/description.
+        "price_tag_description": product.price_tag_description or None,
         "images": gallery_images(db, product, viewer) if with_images else [],
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,
@@ -672,6 +675,8 @@ def _part_row(
         "sell_price": data["offer_price"] if price_mode == "selling" else None,
         # AC-A11: this part's OWN product's currency, not the host's.
         "currency": data["currency"],
+        # AC-S4-4: this part's OWN product's tag copy, not the host's.
+        "price_tag_description": data["price_tag_description"],
     }
 
 
@@ -765,6 +770,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         spec_values = data["specs"]
         images = data["images"]
         barcode = data["barcode"]
+        price_tag_description = data["price_tag_description"]
         set_members = data["set_members"]
 
         open_groups = _open_groups_for(db, line, tag)
@@ -883,6 +889,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "quantity": tag.quantity,
                 "barcode": barcode,
                 "currency": data["currency"],
+                "price_tag_description": price_tag_description,
             }
         )
 
@@ -956,6 +963,9 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "specs": [],
             "images": [],
             "barcode": None,
+            # A set has no price_tag_description of its own - same rule as
+            # barcode above (S7).
+            "price_tag_description": None,
             "set_members": _set_member_text(data["members"]),
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
@@ -974,6 +984,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "specs": data["specs"],
             "images": data["images"],
             "barcode": data["barcode"],
+            "price_tag_description": data["price_tag_description"],
             "set_members": "",
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
@@ -1236,6 +1247,7 @@ def data_hash(row: dict) -> str:
             "list_price",
             "sell_price",
             "barcode",
+            "price_tag_description",
         )
     }
     subject["images"] = sorted(
@@ -1300,6 +1312,12 @@ def diff_pin_against_live(
     add("spec_lines", "Specs", pinned.get("spec_lines"), live.get("spec_lines"))
     add("set_members", "Set members", pinned.get("set_members"), live.get("set_members"))
     add("barcode", "Barcode", pinned.get("barcode"), live.get("barcode"))
+    add(
+        "price_tag_description",
+        "Price tag description",
+        pinned.get("price_tag_description"),
+        live.get("price_tag_description"),
+    )
     add(
         "list_price",
         "List price",
