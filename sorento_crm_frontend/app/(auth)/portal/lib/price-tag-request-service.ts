@@ -229,6 +229,13 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
    *  second round trip. */
   has_completed_export?: boolean;
   /**
+   * r10 S9: `null` = never asked for one, `pending` = queued/running,
+   * `failed` = the last attempt died (no retry happened on its own),
+   * `ready` = the same thing `has_completed_export` says, spelled out so the
+   * menu item can read all three states apart instead of only yes/no.
+   */
+  latest_export_status?: 'ready' | 'pending' | 'failed' | null;
+  /**
    * D-P6/AC-B6: true while a post-submit edit is allowed (status `new` or
    * `changes_requested`, not a draft - a draft is already editable via
    * `portal_draft_at`). The FE Edit button reads this, never the status
@@ -778,4 +785,27 @@ export async function downloadPriceTagPdf(id: string): Promise<void> {
     filenameFromContentDisposition(res.headers.get('Content-Disposition')) ||
     'tag-sheet.pdf';
   saveBlobAs(blob, filename);
+}
+
+/**
+ * r10 S9: queue a tag sheet export for this request when none is ready yet
+ * (Approve auto-queues one, but a demo caught three requests where that
+ * export failed and nothing on the portal could ask for a second try).
+ *
+ * ```
+ * POST /api/v1/public/portal/submissions/price_tag_request/{id}/export
+ *   200/202 { status: "queued" }
+ *   404 wrong contact's request
+ *   409 request not `approved` or later, or an export is already pending
+ * ```
+ *
+ * The caller polls `getRequest` for `latest_export_status` to flip to
+ * `ready` (or `failed`), same as the designer's own export button.
+ */
+export async function requestPriceTagExport(id: string): Promise<{ status: string }> {
+  const res = await portalFetch(
+    `${BASE}/${encodeURIComponent(id)}/export`,
+    { method: 'POST' },
+  );
+  return unwrap<{ status: string }>(res, 'Failed to queue the PDF export');
 }

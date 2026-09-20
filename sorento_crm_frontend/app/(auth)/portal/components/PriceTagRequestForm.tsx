@@ -84,6 +84,7 @@ import {
   listReviewComments,
   collectRequest,
   downloadPriceTagPdf,
+  requestPriceTagExport,
 } from '../lib/price-tag-request-service';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
@@ -441,6 +442,14 @@ const DESIGN_PREVIEW_STATUSES = new Set([
   'collected',
 ]);
 
+/** r10 S9: a proof is not for printing, so the design preview shows from
+ *  `proof_ready` but the download item stays disabled until `approved`. */
+const DOWNLOAD_AVAILABLE_STATUSES = new Set([
+  'approved',
+  'ready_for_collection',
+  'collected',
+]);
+
 /**
  * The field keys a refusal named, if it named any.
  *
@@ -578,6 +587,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
   // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  // r10 S9: true from the click that queues an export (never asked yet, or
+  // the last one failed) until the poll sees it finish - the demo caught
+  // three approved requests whose auto-export had failed with nothing on
+  // the portal able to ask for a second one.
+  const [exportPending, setExportPending] = useState(false);
   const [collecting, setCollecting] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
@@ -616,6 +630,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // at what they approved, but Approve/Request Changes only make sense while
   // the design is actually waiting on them.
   const showDesignPreview = !!request && DESIGN_PREVIEW_STATUSES.has(request.status);
+  // r10 S9: what the gear's Download PDF item reads. `latest_export_status`
+  // is the source of truth once the server sends it; a request created
+  // before r10 falls back to today's yes/no.
+  const canDownloadPdf = !!request && DOWNLOAD_AVAILABLE_STATUSES.has(request.status);
+  const exportStatus: 'ready' | 'pending' | 'failed' | null =
+    request?.latest_export_status ?? (request?.has_completed_export ? 'ready' : null);
+  const exportPreparing = exportPending || exportStatus === 'pending';
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
@@ -1873,8 +1894,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [requestId, router, slug],
   );
 
-  // ---- Download PDF (D19): the request's latest completed tag sheet export ----
-  const handleDownloadPdf = useCallback(async () => {
+  // ---- Download PDF (D19): the request's latest completed tag sheet export.
+  // r10 S9: a READY export streams exactly as before; anything else (never
+  // asked, or the last attempt failed) queues one instead of sitting behind
+  // a dead button - the demo caught three approved requests stuck that way
+  // because Approve's own auto-export had failed with no retry. ----
+  const streamDownload = useCallback(async () => {
     if (!requestId) return;
     setDownloadingPdf(true);
     try {
@@ -1888,6 +1913,54 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setGearOpen(false);
     }
   }, [requestId]);
+
+  const handleDownloadPdf = useCallback(async () => {
+    if (!requestId) return;
+    if (exportStatus === 'ready') {
+      await streamDownload();
+      return;
+    }
+    // Never asked yet, or the last export failed: queue (or re-queue) one
+    // and let the poll below pick it up.
+    setExportPending(true);
+    try {
+      await requestPriceTagExport(requestId);
+    } catch (e) {
+      setExportPending(false);
+      toast.error(e instanceof Error ? e.message : 'Failed to queue the PDF export');
+    }
+  }, [requestId, exportStatus, streamDownload]);
+
+  // Poll every 5 s while an export is preparing; stream it the moment the
+  // refetched request says ready, surface a toast on failed.
+  useEffect(() => {
+    if (!exportPending || !requestId) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      getRequest(requestId)
+        .then((fresh) => {
+          if (cancelled || !fresh) return;
+          setRequest(fresh);
+          const status =
+            fresh.latest_export_status ?? (fresh.has_completed_export ? 'ready' : null);
+          if (status === 'ready') {
+            setExportPending(false);
+            void streamDownload();
+          } else if (status === 'failed') {
+            setExportPending(false);
+            toast.error('PDF export failed. Try again.');
+          }
+        })
+        .catch(() => {
+          // A transient failure to poll is not itself a failed export -
+          // the next tick tries again.
+        });
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [exportPending, requestId, streamDownload]);
 
   // ---- Loading skeleton ----
   if (loading) {
@@ -1992,7 +2065,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onApprove={handleApprove}
             onSend={handleSendChanges}
             download={{
-              available: Boolean(request.has_completed_export),
+              available: exportStatus === 'ready',
               pending: downloadingPdf,
               onDownload: () => void handleDownloadPdf(),
             }}
@@ -2364,24 +2437,27 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               onOpenChange={setGearOpen}
             >
               <DropdownMenuItem
-                disabled={!request.has_completed_export || downloadingPdf}
+                disabled={!canDownloadPdf || exportPreparing || downloadingPdf}
                 onSelect={(event) => {
                   event.preventDefault();
                   void handleDownloadPdf();
                 }}
               >
-                {downloadingPdf ? (
+                {downloadingPdf || exportPreparing ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <Download className="size-4" />
                 )}
-                <span className="flex flex-col items-start">
-                  <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
-                  {!request.has_completed_export && !downloadingPdf && (
-                    <span className="text-xs text-muted-foreground">
-                      No completed export yet
-                    </span>
-                  )}
+                <span>
+                  {!canDownloadPdf
+                    ? 'Available after approval'
+                    : downloadingPdf
+                      ? 'Downloading...'
+                      : exportPreparing
+                        ? 'Preparing your PDF'
+                        : exportStatus === 'failed'
+                          ? 'PDF failed, try again'
+                          : 'Download PDF'}
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
