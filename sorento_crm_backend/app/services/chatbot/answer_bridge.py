@@ -352,6 +352,19 @@ def _offer_answer(
             # pair for `_focus_rules` to carry it on `focus.status` itself) and the
             # answering turn's own verdict never repeats it.
             ask_payload: dict[str, Any] = {"domain": (parser or {}).get("domain_hint")}
+            # AC-1708: and EVERY domain the message named, when it named more than one.
+            # `domain` alone settled the focus to a single one (`turn/apply.py`'s
+            # contract-121 carry), so answering a two-domain ask's customer picker
+            # fetched the first section and silently dropped the second. Read off the
+            # verdict's own `asks` (contract 122), the same way `turn/apply.py` reads
+            # it, and answered by the same reader, which already takes `domains` first.
+            ask_domains = [
+                row.get("domain")
+                for row in ((parser or {}).get("asks") or [])
+                if isinstance(row, dict) and row.get("domain")
+            ]
+            if len(ask_domains) > 1:
+                ask_payload["domains"] = ask_domains
             order_status = (parser or {}).get("order_status")
             if order_status:
                 ask_payload["status"] = order_status

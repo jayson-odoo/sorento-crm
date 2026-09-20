@@ -1509,16 +1509,34 @@ def _run_stages(  # noqa: PLR0915
             # settled the tier, and the ruling "a pick settles only its kind" leaves the
             # product on the fetch - but it was never resolved, so the promotion tool was
             # called with no product at all.
+            # AC-1708 (reviewer S7): and the domain the plan is actually asking about.
+            # `gate.py:357` reads `parser.domain_hint` and nothing else - it is the key
+            # into `ALLOWED`, so a verdict that names none leaves `gate_debug` as
+            # `{"domain": null}` with no `allowed_lookup`, the gate raises no picker at
+            # all (`gate_passed: True`, `gate_clarification: ""`), and the ambiguous
+            # customer falls through to `turn/compose.py`'s generic "Which one do you
+            # mean?". The pre-rearch head had no such turn - one verdict named one
+            # domain - so `domain_hint` was never absent there; contract 122's fan-out
+            # (`asks: [{"domain": "order"}, {"domain": "incoming"}]`) is what introduced
+            # it. The plan's FIRST domain is message order, the same order the sections
+            # are composed in, so the resolver is asked about the ask it is answering.
+            resolver_parse_output = turn_runtime.with_carried_entities(
+                (ctx.get("parse") or {}).get("output") or {},
+                state_out.focus,
+                unsettled_only=plan.ask is None,
+            )
+            if (
+                len(plan.domains) > 1
+                and resolver_parse_output.get("entities")
+                and not jsc.truthy(resolver_parse_output.get("domain_hint"))
+            ):
+                resolver_parse_output = {
+                    **resolver_parse_output,
+                    "domain_hint": plan.domains[0],
+                }
             resolver_ctx = {
                 **ctx,
-                "parse": {
-                    **(ctx.get("parse") or {}),
-                    "output": turn_runtime.with_carried_entities(
-                        (ctx.get("parse") or {}).get("output") or {},
-                        state_out.focus,
-                        unsettled_only=plan.ask is None,
-                    ),
-                },
+                "parse": {**(ctx.get("parse") or {}), "output": resolver_parse_output},
             }
             resolve_outcome = (
                 turn_runtime.resolve_kinds(
@@ -1699,7 +1717,14 @@ def _run_stages(  # noqa: PLR0915
             branch_kind in ("business_query", "check_promotion")
             and completes_here
             and not sales_report_grant_refused
-            and len(plan.domains) <= 1
+            # AC-1708 (captain's ruling, 20 Sep 2026): an `offer` / `access_ask` exit is
+            # the SAME question whether the message named one domain or two - "which
+            # customer do you mean?" has one answer, and asking it twice in two wordings
+            # is the defect. The domain count gated this until now, so a two-domain
+            # ambiguous-customer ask printed `turn/compose.py`'s generic header while the
+            # one-domain one printed `gate.py`'s. HIT and MISS composition for a
+            # multi-domain plan is untouched and still `turn/compose.py`'s: neither is an
+            # `offer`/`access_ask` exit, and `question_for` answers nothing else.
             and isinstance(resolver_payload, dict)
             and (
                 resolver_payload.get("_exit_kind") in ("access_ask", "offer")
