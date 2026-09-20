@@ -717,12 +717,22 @@ class TestACertificateDidYouMeanProbesOnlyItsOwnNeighbours:
         (`SRTWT165-FT` unplaced product token + `CERT` resolved attachment_type)
         and asserts the did-you-mean probe's own `entities` argument is a
         HANDFUL - this turn's own product neighbours plus the resolved
-        certificate type - never the ~200-row catalogue population the
-        pre-fix `require` leg fed it. Also asserts the reply itself is the
-        numbered stamped form carrying both a "has certificate" and a
-        "no certificate" line (measured live after the fix, commit
-        `19d5f7789`: "1. SRTWT165-QT - has certificate\\n2. SRTWT165 - no
-        certificate\\n3. SRTWT165-NL - no certificate")."""
+        certificate type - never the catalogue-sized population the pre-fix
+        `require` leg fed it. Also asserts the reply itself is the numbered
+        stamped form carrying both a "has certificate" and a "no certificate"
+        line (measured live after the fix, commit `19d5f7789`: "1. SRTWT165-QT
+        - has certificate\\n2. SRTWT165 - no certificate\\n3. SRTWT165-NL - no
+        certificate").
+
+        25 UNRELATED, actively-certified noise products are seeded alongside
+        the 3 real neighbours: with no class word to scope the bare
+        `{"certificate": True}` leg by, `resolve_product_set` answers it over
+        every certified product the company has on file - this is what makes
+        the reverted-fix case genuinely fail here rather than pass by
+        accident of an otherwise-empty scratch schema (the pre-fix live
+        incident needed a real ~200-row catalogue to surface at all)."""
+        from tests.chatbot.test_rearch_s3_attribute_first import _seed_certificates
+
         _seed_contact_and_get(session_factory)
         base = unique_code("ZZTF41CERT").replace("-", "")
         neighbour_nl, neighbour_qt = f"{base}-NL", f"{base}-QT"
@@ -730,6 +740,11 @@ class TestACertificateDidYouMeanProbesOnlyItsOwnNeighbours:
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=neighbour_nl)
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=neighbour_qt)
         _seed_real_attachment_type(session_factory, "Certification")
+
+        noise_codes = [f"{base}NOISE{i:02d}" for i in range(25)]
+        for noise_code in noise_codes:
+            _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=noise_code)
+        _seed_certificates(session_factory, noise_codes, company_id=DEFAULT_COMPANY_ID)
 
         answer_probe = _mcp_probe_for(
             {
