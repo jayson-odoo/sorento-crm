@@ -12,7 +12,7 @@
 #                           the date window.
 #   5. domain resolution  - the locked pick, else `asks`, else `domain_hint`, else the
 #                           carried focus, else the document's own domain.
-#   6. `_did_you_mean`, then a `set_page` continuation - each returns its own Plan.
+#   6. a `set_page` continuation - returns its own Plan.
 #   7. `_narrow_and_plan` - the narrower and the fetch plan, folded into one per-domain
 #                           loop because they share it.
 #
@@ -1007,59 +1007,6 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
     return None
 
 
-def _did_you_mean(
-    entities: list[dict[str, Any]],
-    policy: Policy,
-    state: State,
-    trace: Trace,
-    candidates: dict[str, list[dict[str, Any]]] | None = None,
-):
-    """An entity the parser could not place asks before anything else does (contract 26,
-    111: did-you-mean before the team question).
-
-    `confident is False` is the parser's own "I read a token here and could not pin it".
-    The kind's `did_you_mean` flag (AC-1502) decides whether that kind is worth asking
-    about at all; a kind that is not stays silent and simply does not narrow.
-
-    A kind the RESOLVER already found real candidates for (the second `apply()` pass,
-    `candidates` non-empty for this kind) defers to the narrower instead of asking the
-    raw guess back: "wc286" is one typed word and ten real products, and a roster of the
-    resolver's own matches is a better question than "did you mean wc286?" - the
-    narrower's `narrow_to_code` ask is what actually lists them (contract 28).
-    """
-    unsure = [e for e in entities if e.get("confident") is False and e.get("hint")]
-    if not unsure:
-        return None
-    kind = unsure[0]["hint"]
-    if (candidates or {}).get(kind):
-        return None
-    row = policy.kind(kind)
-    # AC-1691/AC-1692's own class, one level up: a kind with no registered policy
-    # row at all (a parser-only attribute marker such as "product_type" - never a
-    # `chatbot_entity_kinds` row, never resolvable by the resolver, never narrowed
-    # by `narrow.py`) has no roster to build a real did-you-mean OVER - minting a
-    # one-option pick that echoes the customer's own unplaced WORD back is the same
-    # bug a hyphenated code's own fold already fixed at the narrowing seam, on a
-    # kind this roster can never legitimately settle. Only a kind the SYSTEM
-    # recognises (a real row, `did_you_mean` true by default) gets this ask.
-    if row is None or not row.did_you_mean:
-        return None
-    options = [
-        {
-            "position": i + 1,
-            "label": e.get("raw"),
-            "code": e.get("canonical_code") or e.get("raw"),
-            "uuid": e.get("canonical_code") or e.get("raw"),
-            "uuids": [e.get("canonical_code") or e.get("raw")],
-            "entity_type": kind,
-            "payload": {"did_you_mean": True},
-        }
-        for i, e in enumerate(unsure)
-    ]
-    trace.rules_fired.append("did_you_mean")
-    return pending_ask(f"{kind}_pick", options, asked_at_turn=state.turn_no, expects="pick")
-
-
 def _narrow_and_plan(
     focus: Focus,
     policy: Policy,
@@ -1354,16 +1301,16 @@ def apply(
     new_state = State(focus=focus, pending=pending_after, profile=state.profile, turn_no=state.turn_no)
     trace.lane = _lane(verdict, domains, policy)
 
-    # A did-you-mean outranks both the narrower and the lane: an entity nobody could place
-    # is the first thing worth asking about (contract 26, 111) - unless this turn ANSWERED
-    # the open question, which is what `domain_locked` records. The answer is about what
-    # the question was about, so there is nothing new to fail to place.
-    if not domain_locked:
-        dym = _did_you_mean(entities, policy, new_state, trace, candidates)
-        if dym is not None:
-            return new_state, Plan(
-                domains=list(domains), fetch=[], ask=dym, denied=[], trace=trace
-            )
+    # A did-you-mean is PRODUCTION's now (AC-1693, reviewer B1): `_did_you_mean` used to
+    # run here, ahead of the narrower and the lane, and mint a `{kind}_pick` whose only
+    # option was the customer's own unplaced WORD - one option, echoed back, and since
+    # `engine.py` guards the bridge's miss arm on `plan.ask is None`, setting an ask here
+    # was also what stopped the real answer from ever being composed. A token nobody
+    # could place is a MISS, and production's own miss chain
+    # (`answer.not_found_error_message` -> `miss_suggest.run_miss_lane`) is what says so,
+    # with the did-you-mean roster built from the RESOLVER's own trigram neighbours
+    # rather than from the guess itself. Measured red in 11 of the 13 supported domains
+    # before the deletion; the other two (promotion, ideate) never reached it.
 
     # A continuation pages the set the LAST answer described: same domain, same
     # description, one page further on (AC-1317). It never re-narrows and never re-asks -

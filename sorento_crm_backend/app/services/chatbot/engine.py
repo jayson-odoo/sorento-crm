@@ -1475,7 +1475,6 @@ def _run_stages(  # noqa: PLR0915
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
         unplaced_tokens: dict[str, str] = {}
         spec_tier = False
-        unplaced_alternatives: dict[str, list[dict[str, Any]]] = {}
         # R2 (PLAN-chatbot-answer-half-reattach.md): the raw `resolve_gate.run` payload
         # (`resolved`, `gate`, `aggregate`, `tier_gate`, `_exit_kind`), carried through
         # `ResolveOutcome.payload` - `None` until the resolver actually runs. Nothing
@@ -1562,7 +1561,6 @@ def _run_stages(  # noqa: PLR0915
             resolved_candidates = resolve_outcome.resolved_candidates
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
-            unplaced_alternatives = resolve_outcome.unplaced_alternatives
             resolver_payload = resolve_outcome.payload
             if resolved_kinds or resolved_candidates:
                 # The ONE re-entry the plan allows: what the resolver found goes back
@@ -1813,7 +1811,6 @@ def _run_stages(  # noqa: PLR0915
                     dry_run=dry_run,
                     turn_trace=turn_trace,
                     counted_set=spec_tier and bool(turn_runtime.class_scope_terms(verdict)),
-                    unplaced_alternatives=unplaced_alternatives,
                     resolver_gate=(
                         resolver_payload.get("gate")
                         if isinstance(resolver_payload, dict)

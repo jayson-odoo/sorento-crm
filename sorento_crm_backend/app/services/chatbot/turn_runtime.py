@@ -721,7 +721,16 @@ def resolve_kinds(
     which tier of the ONE product ladder answered, and therefore whether this turn
     renders as a counted set or as a list - and `unplaced_alternatives` is
     `{folded token: the resolver's own trigram neighbours}` for the SAME unplaced
-    tokens (R-c, owner hand pass 6, 17 Sep 2026; `make_tool_runner` is the one reader).
+    tokens (R-c, owner hand pass 6, 17 Sep 2026).
+
+    **`unplaced_alternatives` has NO reader left** (reviewer S3, review round): its
+    only consumer, `make_tool_runner`'s `alts_by_token`, went with `_alternatives_ask`
+    when production's own did-you-mean took that job back, and the parameter it rode on
+    is deleted. The FIELD and this computation stay only because
+    `test_rearch_r2_resolve_outcome_and_grant.py::
+    test_resolve_outcome_is_a_frozen_dataclass_with_the_contract_fields_in_order`
+    pins the field list by name; retiring it is a test change, not a code change.
+
     The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
     which `turn/narrow.py` now decides from the policy instead.
@@ -1166,7 +1175,6 @@ def make_tool_runner(
     dry_run: bool,
     turn_trace: Any,
     counted_set: bool = False,
-    unplaced_alternatives: dict[str, list[dict[str, Any]]] | None = None,
     resolver_gate: dict[str, Any] | None = None,
     resolver_tier_gate: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
