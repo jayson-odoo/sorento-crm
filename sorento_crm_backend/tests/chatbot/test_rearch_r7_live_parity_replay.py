@@ -64,6 +64,37 @@ from tests.chatbot.test_outstanding_lane import _run_turn as _run_turn_fake_reso
 from tests.chatbot.test_outstanding_lane import _seed_contact as _seed_business_contact
 
 
+# Real `attachment_types` row wording (tester 38, 20 Sep 2026 - captain's own measurement
+# of the production data, not invented). `_prefix_probe_attachment_type` matches a token
+# against `description` too (entity_resolver.py:2410-2515), so a seed whose description
+# reads "<Name>, seeded by ZZT" is reachable only from a token that already IS the type's
+# own name - the real rows are reachable from the parser's shorthand words ("certificate",
+# "photo", "drawing", ...) because their descriptions actually carry those words. Only
+# `description` (and, for Certification, `is_certificate`) differs from production; `code`
+# stays NULL, matching the model default (`app/models/resources.py:44`, nullable, no
+# default) - the real rows carry no `code` either, exactly as the coder's own measurement
+# ("`_seed_attachment_type`'s `code=None` ... is the reason it is a gap for Certification")
+# found for a description-less seed.
+_REAL_ATTACHMENT_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "Certification": "Certification, Cert, Certificate, Watermark Cert, WCM, PPS, Ikram by Purchasing",
+    "Product Photos": "Product Photos, Photo, Image, Pictures by Marketing",
+    "Technical Specifications": "Technical Specifications / Spec / Drawing by Marketing",
+    "Product Videos": "Product Videos by Marketing",
+}
+
+
+def _seed_real_attachment_type(session_factory: Any, type_name: str) -> str:
+    """`_seed_attachment_type` with the REAL row's description (and `is_certificate` for
+    Certification), so a token that only reaches production through its description
+    ("certificate", "drawing", ...) reaches the seeded row here too."""
+    return _seed_attachment_type(
+        session_factory,
+        type_name,
+        description=_REAL_ATTACHMENT_TYPE_DESCRIPTIONS[type_name],
+        is_certificate=(type_name == "Certification"),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Item 1 - AC-1701/AC-1702 (F6/F7): a miss's noun is the RESOLVED attachment-type
 # label, never the raw customer word or a JS-style "null"/"None" literal.
@@ -93,6 +124,11 @@ from tests.chatbot.test_outstanding_lane import _seed_contact as _seed_business_
 
 
 class TestMissNounIsTheResolvedAttachmentLabel:
+    """Captain ruling, 20 Sep 2026: the miss noun is the RESOLVED attachment type label in
+    both cases (AC-1702, matching the owner's hand pass 8 production reply), superseding the
+    older prompt v11 capture `prod_sample/out-of-scope-438930735...` that printed the
+    customer's own word."""
+
     def test_type_named_this_turn_uses_the_resolved_label_not_the_raw_word(
         self, session_factory, monkeypatch
     ) -> None:
@@ -102,7 +138,7 @@ class TestMissNounIsTheResolvedAttachmentLabel:
         _seed_contact_and_get(session_factory)
         code = unique_code("ZZTF7MISS")
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=code)
-        _seed_attachment_type(session_factory, "Product Photos")
+        _seed_real_attachment_type(session_factory, "Product Photos")
         qf = _parser_output(
             domain_hint="product_attachment",
             intent_hint="check_product_attachment",
@@ -140,7 +176,7 @@ class TestMissNounIsTheResolvedAttachmentLabel:
         has_code, no_code = f"{base}A", f"{base}B"
         has_id = _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=has_code)
         no_id = _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=no_code)
-        type_id = _seed_attachment_type(session_factory, "Product Photos")
+        type_id = _seed_real_attachment_type(session_factory, "Product Photos")
         _seed_file_for(
             session_factory, product_id=has_id, attachment_type_id=type_id,
             company_id=DEFAULT_COMPANY_ID, filename=f"{has_code}.jpg",
@@ -302,7 +338,7 @@ class TestCertificateDidYouMeanIsTheStampedForm:
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=base)
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=neighbour_nl)
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=neighbour_qt)
-        type_id = _seed_attachment_type(session_factory, "Certification")
+        type_id = _seed_real_attachment_type(session_factory, "Certification")
 
         # Real MCP presenter row: ONLY the base code has a certificate on file - a real
         # tool would never answer a row for a product with no attachment (same
@@ -536,7 +572,7 @@ class TestUnknownAttachmentTypeAndUnplacedProductInOneAsk:
         # Technical Specifications) - "Technical drawings" is genuinely NOT one of them,
         # matching the live turn exactly.
         for type_name in ("Certification", "Product Photos", "Product Videos", "Technical Specifications"):
-            _seed_attachment_type(session_factory, type_name)
+            _seed_real_attachment_type(session_factory, type_name)
 
         # Verdict re-pointed at the seeded family, otherwise the recorded shape verbatim:
         # a MISTYPED product raw ("sttwc286-SH" -> here `{base}SH` with a typo'd case

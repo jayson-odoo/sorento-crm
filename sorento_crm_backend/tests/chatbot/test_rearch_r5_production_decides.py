@@ -520,13 +520,29 @@ class TestScopeBlockAfterPick:
         )
         open_question = _session_of(session_factory).get("open_question") or {}
         assert open_question.get("kind") in ("customer_pick", "customer"), open_question
+        # Tester 38, 20 Sep 2026: HARDWARE and HOMEMART are equally similar to the typed
+        # "zzt chin chun" token and the gate applies no stable tiebreak between them
+        # (coder 32 measured 2 failures in 5 identical runs with a hardcoded position 1 -
+        # see the handoff), so roster order is not guaranteed. Read the roster the engine
+        # actually returned and answer the position whose OWN label names the intended
+        # customer, rather than assuming it landed at position 1.
+        options = open_question.get("options") or []
+        hardware_option = next(
+            (o for o in options if "HARDWARE" in str(o.get("label") or "").upper()), None
+        )
+        assert hardware_option is not None, (
+            f"test setup sanity: the seeded HARDWARE customer must appear in the roster: "
+            f"{options!r}"
+        )
+        hardware_position = hardware_option.get("position")
+        assert hardware_position is not None, hardware_option
 
         qf2 = _parser_output(
             message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-            reference_positions=[1],
+            reference_positions=[hardware_position],
         )
         result2, captured2 = _run_turn_real(
-            session_factory, monkeypatch, qf=qf2, text_body="1",
+            session_factory, monkeypatch, qf=qf2, text_body=str(hardware_position),
             msg_id="zzt-r5-pick-2", mcp_response=_order_envelope_json([row]),
         )
         reply2 = (result2.reply or {}).get("text") or ""
