@@ -339,40 +339,13 @@
     "additionalProperties": false,
     "description": "`POST /api/v1/external/chat/turn` 200 body.\n\n`delegate` names the n8n lane that must still run; `null` means the CRM finished the\nturn and the caller only sends. `session_patch` is populated on a dry run only, so a\nconsole or clone turn can be inspected without anything having been written.",
     "properties": {
-      "turn_id": {
-        "title": "Turn Id",
-        "type": "string"
-      },
-      "is_test": {
-        "default": false,
-        "title": "Is Test",
-        "type": "boolean"
-      },
-      "ctx": {
-        "anyOf": [
-          {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "title": "Ctx"
-      },
-      "item": {
-        "anyOf": [
-          {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "title": "Item"
+      "actions": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Actions",
+        "type": "array"
       },
       "branch_kind": {
         "anyOf": [
@@ -384,7 +357,6 @@
               "ideate",
               "offer_hold",
               "escalation_declined",
-              "offer_declined",
               "check_promotion",
               "low_signal",
               "clarify_menu",
@@ -402,6 +374,19 @@
         "default": null,
         "title": "Branch Kind"
       },
+      "ctx": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ctx"
+      },
       "delegate": {
         "anyOf": [
           {
@@ -413,40 +398,6 @@
         ],
         "default": null,
         "title": "Delegate"
-      },
-      "reply": {
-        "anyOf": [
-          {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "title": "Reply"
-      },
-      "actions": {
-        "items": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "title": "Actions",
-        "type": "array"
-      },
-      "session_patch": {
-        "anyOf": [
-          {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "title": "Session Patch"
       },
       "delegate_payload": {
         "anyOf": [
@@ -465,6 +416,54 @@
         "default": false,
         "title": "Duplicate",
         "type": "boolean"
+      },
+      "is_test": {
+        "default": false,
+        "title": "Is Test",
+        "type": "boolean"
+      },
+      "item": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Item"
+      },
+      "reply": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Reply"
+      },
+      "session_patch": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Session Patch"
+      },
+      "turn_id": {
+        "title": "Turn Id",
+        "type": "string"
       }
     },
     "required": [

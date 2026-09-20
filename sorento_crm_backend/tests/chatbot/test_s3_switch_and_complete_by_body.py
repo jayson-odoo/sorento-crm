@@ -160,7 +160,6 @@ class TestTheCompletedLaneSwitch:
             "access_denied",
             "escalate_offer",
             "escalation_declined",
-            "offer_declined",  # R5 re-pin (tester 32) - see test_contracts.py's own note
             "clarify_menu",
             "not_supported",
             "demand_qty",

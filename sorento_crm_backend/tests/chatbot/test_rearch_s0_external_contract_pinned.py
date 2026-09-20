@@ -10,17 +10,6 @@ corrected the filename from the brief's `3009b374c` to match (ruling, 16 Sep 202
 THIS AC IS EXPECTED GREEN RIGHT NOW, by design - it is the guard that later S0/S2/S3
 slices must not silently reshape the outer-loop contract, not a red waiting on new work.
 Said explicitly per the brief's own instruction.
-
-RE-PINNED (tester 32, 20 Sep 2026, PLAN-chatbot-answer-half-reattach.md R5): `branch_kind`'s
-own enum gained `offer_declined` (`contracts.BRANCH_KINDS`, coder 28's R4 add-on B) - the
-ONLY diff against the previous fixture (measured via `model_json_schema()` on both sides
-before writing this file). Deliberate, not a drift: origin/main's own `lanes/business/
-__init__.py::_outstanding_offer_closed` already renders a DIFFERENT canned copy key
-("offer_declined") than a plain escalate-offer decline ("escalation_declined") for this
-exact situation - main has no `branch_kind` wire concept of its own, so this is the
-rearch's contract catching up to a distinction main already made, not a new one invented
-here. See `test_contracts.py::test_branch_kinds_are_the_fourteen_the_router_decides`'s own
-note for the full adjudication.
 """
 from __future__ import annotations
 
