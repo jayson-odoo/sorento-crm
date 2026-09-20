@@ -1024,6 +1024,22 @@ export function RequestTagDesigner({
     [selectedRequestTagId, flush],
   );
 
+  /** r10 S10: the rail sits beside BOTH modes now (it used to live only
+   *  inside the design editor), so a click on a row drives whichever
+   *  selection that mode already reads - design's own `selectedRequestTagId`
+   *  (with the same pre-switch flush), or arrange's `selectedTagId`, which
+   *  `ArrangeSheetView` already highlights on the sheet. */
+  const handleRailSelect = useCallback(
+    (tagId: string) => {
+      if (mode === 'arrange') {
+        setSelectedTagId(tagId);
+      } else {
+        handleSelectTag(tagId);
+      }
+    },
+    [mode, handleSelectTag],
+  );
+
   /**
    * The request's tag set changed under us (a split), so re-read it and the
    * per-tag resolver rows with it. The placements in `tags` are untouched: the
@@ -1342,8 +1358,8 @@ export function RequestTagDesigner({
         openPinsByTag={openPinsByTag}
         changedTagIds={new Set(changesByTag.keys())}
         onReviewTag={setReviewTagId}
-        selectedRequestTagId={selectedRequestTagId}
-        onSelect={handleSelectTag}
+        selectedRequestTagId={mode === 'arrange' ? selectedTagId : selectedRequestTagId}
+        onSelect={handleRailSelect}
         onUseTemplate={setPickerLineId}
         canApplyToAll={Boolean(selectedTag) && tagRefs.length > 1}
         onApplyToAll={handleApplyDesignToAll}
@@ -1515,69 +1531,80 @@ export function RequestTagDesigner({
         )}
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        {mode === 'design' ? (
-          request.lines.length === 0 ? (
-            <CanvasMessage text="This request has no lines, so there is nothing to design." />
-          ) : templatesStatus === 'loading' ? (
-            <CanvasMessage text="Loading templates..." />
-          ) : templatesStatus === 'error' ? (
-            <CanvasMessage text="Failed to load tag templates.">
-              <Button variant="outline" size="sm" onClick={loadTemplates}>
-                <RefreshCw className="mr-1.5 size-3.5" />
-                Retry
-              </Button>
-            </CanvasMessage>
-          ) : pricesStatus === 'loading' ? (
-            <CanvasMessage text="Resolving prices..." />
-          ) : pricesStatus === 'error' ? (
-            <CanvasMessage text="Failed to resolve prices.">
-              <Button variant="outline" size="sm" onClick={loadPrices}>
-                <RefreshCw className="mr-1.5 size-3.5" />
-                Retry
-              </Button>
-            </CanvasMessage>
-          ) : selectedTag && selectedDoc ? (
-            <TagCanvasEditor
-              key={selectedTag.id}
-              doc={selectedDoc}
-              onChange={() => void save()}
-              // D1: a promotion is a LINE fact now, not the request's - the
-              // selected tag's own line carries it.
-              promotionId={selectedLine?.promotion_id ?? null}
-              boundData={boundData}
-              leftRail={rail}
-              onLayersChange={handleLayersChange}
-              onUseTemplate={() =>
-                selectedRequestTagId && setPickerLineId(selectedRequestTagId)
-              }
-              hideSaveBar
-              docId={selectedTag.id}
-              toolbarTrailing={toolbarTrailing}
-              reviewPins={canvasPins}
-              onReviewPinResolve={handleReviewPinResolve}
-            />
+      <div className="flex flex-1 overflow-hidden">
+        {/* r10 S10 (cause: `<TagCanvasEditor key={selectedTag.id} leftRail=
+            {rail}>` put the rail INSIDE the keyed subtree, so selecting a
+            tag remounted the rail's own scroll container along with the
+            canvas and a row picked at the bottom of a long list jumped out
+            of view). The rail now lives here, a sibling of both modes'
+            content, so it is never part of what remounts - and Arrange,
+            which had no rail of its own before, gets one for free. */}
+        <div className="flex h-full w-64 shrink-0 flex-col overflow-hidden">
+          {rail}
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {mode === 'design' ? (
+            request.lines.length === 0 ? (
+              <CanvasMessage text="This request has no lines, so there is nothing to design." />
+            ) : templatesStatus === 'loading' ? (
+              <CanvasMessage text="Loading templates..." />
+            ) : templatesStatus === 'error' ? (
+              <CanvasMessage text="Failed to load tag templates.">
+                <Button variant="outline" size="sm" onClick={loadTemplates}>
+                  <RefreshCw className="mr-1.5 size-3.5" />
+                  Retry
+                </Button>
+              </CanvasMessage>
+            ) : pricesStatus === 'loading' ? (
+              <CanvasMessage text="Resolving prices..." />
+            ) : pricesStatus === 'error' ? (
+              <CanvasMessage text="Failed to resolve prices.">
+                <Button variant="outline" size="sm" onClick={loadPrices}>
+                  <RefreshCw className="mr-1.5 size-3.5" />
+                  Retry
+                </Button>
+              </CanvasMessage>
+            ) : selectedTag && selectedDoc ? (
+              <TagCanvasEditor
+                key={selectedTag.id}
+                doc={selectedDoc}
+                onChange={() => void save()}
+                // D1: a promotion is a LINE fact now, not the request's - the
+                // selected tag's own line carries it.
+                promotionId={selectedLine?.promotion_id ?? null}
+                boundData={boundData}
+                onLayersChange={handleLayersChange}
+                onUseTemplate={() =>
+                  selectedRequestTagId && setPickerLineId(selectedRequestTagId)
+                }
+                hideSaveBar
+                docId={selectedTag.id}
+                toolbarTrailing={toolbarTrailing}
+                reviewPins={canvasPins}
+                onReviewPinResolve={handleReviewPinResolve}
+              />
+            ) : (
+              <CanvasMessage text="Preparing this line..." />
+            )
           ) : (
-            <CanvasMessage text="Preparing this line..." />
-          )
-        ) : (
-          <ArrangeSheetView
-            doc={doc}
-            activeSheetIndex={Math.min(activeSheetIndex, doc.sheets.length - 1)}
-            onActiveSheetChange={setActiveSheetIndex}
-            zoom={arrangeZoom}
-            onZoomChange={setArrangeZoom}
-            selectedTagId={selectedTagId}
-            onSelectTag={setSelectedTagId}
-            resolved={resolved}
-            assetUrls={library.assetUrls}
-            onImpositionChange={setImposition}
-            onMoveTag={handleMoveTag}
-            onPrintSheet={handlePrintSheet}
-            printing={printing}
-            tagDims={tagDims}
-          />
-        )}
+            <ArrangeSheetView
+              doc={doc}
+              activeSheetIndex={Math.min(activeSheetIndex, doc.sheets.length - 1)}
+              onActiveSheetChange={setActiveSheetIndex}
+              zoom={arrangeZoom}
+              onZoomChange={setArrangeZoom}
+              selectedTagId={selectedTagId}
+              onSelectTag={setSelectedTagId}
+              resolved={resolved}
+              assetUrls={library.assetUrls}
+              onImpositionChange={setImposition}
+              onMoveTag={handleMoveTag}
+              onPrintSheet={handlePrintSheet}
+              printing={printing}
+              tagDims={tagDims}
+            />
+          )}
+        </div>
       </div>
 
       <ProductDataReviewDialog
