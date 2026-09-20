@@ -1,11 +1,23 @@
 # PLAN - Chatbot: re-attach the production answer half to the new turn engine
 
 Status: APPROVED by the owner 20 Sep 2026 on `.lavish/chatbot-answer-half-reattach-plan.html` ("follow all your
-recommendation, except the cap needs to be configurable, actually I prefer 10"). R1 in progress.
+recommendation, except the cap needs to be configurable, actually I prefer 10"). R1 to R4 done; R5
+("production decides") done this round, folded together with the narrow-arm retirement R6 was
+scoped to separately (the single-domain roster suppression the R5 design needed IS that
+retirement, for `kind == "product"` - done in the same commits; R6's own remaining job is
+deleting the now-fully-dead `_ASK_HEADERS` text duplicates and re-recording the `prod_sample`
+replay fixtures the design rule changed, not a second design pass).
 Owner direction given 20 Sep 2026 (hand pass 8): "agree with the structural change to make this
 robust and scalable and be general to all scenarios". Same lane, same PR: `feat/chatbot-turn-rearch`
 (#952), tester branch `test/chatbot-turn-rearch-red`. UAC: `chatbot-answer-half-reattach-acceptance-criteria.md`
-(AC-1680 to AC-1709). Parent plan: `PLAN-chatbot-turn-rearch.md`.
+(AC-1680 to AC-1711). Parent plan: `PLAN-chatbot-turn-rearch.md`.
+
+**Correction (coder 29, 20 Sep 2026):** the bridge module lives at
+`app/services/chatbot/answer_bridge.py`, a SIBLING of `turn/` (not `turn/answer_bridge.py` as
+first written below) - `turn/`'s own purity guard forbids any file under that package from
+importing `chatbot.tail`, and the bridge imports `tail.outcome`/`tail.reply`/`tail.compose`
+freely by design (captain ruling 20 Sep 2026). Every "F COMPOSE" reference to `turn/answer_bridge.py`
+below means this module.
 
 ## Why
 
