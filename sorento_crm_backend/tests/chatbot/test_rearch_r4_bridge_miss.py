@@ -588,7 +588,22 @@ class TestBridgeCallsComposeFromFragments:
 
 def _dym_incoming_scenario() -> tuple[dict[str, Any], dict[str, Any], AnswerServices]:
     """A did-you-mean over an unplaced hyphenated code, domain incoming (F8's own shape,
-    AC-1703/AC-1704): one candidate answers "has incoming", the other does not."""
+    AC-1703/AC-1704): one candidate answers "has incoming", the other does not.
+
+    MEASURED (this tester's own defect adjudication, 20 Sep 2026): `canonical_code` here
+    must be uuid-shaped, with a `display` name, matching a REAL resolver candidate's own
+    shape for an entity whose canonical identity is the row id (`miss_suggest.human_label`
+    / `answer.py::build_suggest_offer`'s own `any_uuid` branch, line ~4161: "any uuid-coded
+    (promotion) candidate means number buttons plus human names in the message text").
+    A bare product CODE string (the original `SRTWT165-FTX`/`-FTY` here) takes the OTHER
+    branch (code mode), which renders the numbered/stamped form only when the dym-probe's
+    own `dym-annotate` node actually populated `outcome_fragment["dym-annotate"]` for these
+    candidates - a wiring this fixture's simple `mcp_probe` does not reach on this call
+    path (measured: `_expected_miss_text` on the ORIGINAL fixture produced the INLINE
+    sentence, 'Did you mean SRTWT165-FTX, or SRTWT165-FTY?', zero numbered lines - the
+    test's own `assert numbered` failed before `answer_bridge.answer_for` was ever called).
+    uuid-shaped candidates take the unconditional numbered-with-human-label branch instead,
+    which is what this test (and AC-1703's own stamped-roster shape) actually needs."""
     raw = "SRTWT165-FT"
     parser = {
         "domain_hint": "incoming",
@@ -605,15 +620,17 @@ def _dym_incoming_scenario() -> tuple[dict[str, Any], dict[str, Any], AnswerServ
                 "matches": [],
                 "alternatives": [
                     {
-                        "canonical_code": "SRTWT165-FTX",
+                        "canonical_code": "11111111-1111-4111-8111-111111111111",
                         "entity_type": "product",
-                        "uuid": "prod-dym-1",
+                        "uuid": "11111111-1111-4111-8111-111111111111",
+                        "display": {"product_name": "SRTWT165-FTX"},
                         "match_tier": "fuzzy",
                     },
                     {
-                        "canonical_code": "SRTWT165-FTY",
+                        "canonical_code": "22222222-2222-4222-8222-222222222222",
                         "entity_type": "product",
-                        "uuid": "prod-dym-2",
+                        "uuid": "22222222-2222-4222-8222-222222222222",
+                        "display": {"product_name": "SRTWT165-FTY"},
                         "match_tier": "fuzzy",
                     },
                 ],
@@ -687,7 +704,25 @@ class TestDidYouMeanRosterMintsAProductPick:
 
     def test_options_carry_the_production_stamp(self) -> None:
         """The printed line's own has/no suffix (computed off the SAME roster the offer
-        text prints), carried on each option as `stamp` - AC-1703/AC-1701's own shape."""
+        text prints), carried on each option as `stamp` - AC-1703/AC-1701's own shape.
+
+        DEFECT ADJUDICATION (tester 31, 20 Sep 2026, coder 28's own report): coder 28
+        reported this test failing inside `_expected_miss_text` (the fixture's bare-code
+        `canonical_code` values are not uuid-shaped, so `any_uuid` is False and production
+        falls into the inline "Did you mean A, or B?" sentence, never a numbered list) -
+        MEASURED and UPHELD (`assert numbered` failed with `[]` on the original fixture).
+        Fixed per the brief's own suggested remedy: `_dym_incoming_scenario`'s alternatives
+        are now uuid-shaped `canonical_code`s with a `display.product_name`, which routes
+        production into the unconditional numbered/human-label branch
+        (`answer.py::build_suggest_offer`'s `if any_uuid:` arm). Still RED after the fix,
+        for a DIFFERENT, real, confirmed reason: that branch never bakes a has/no stamp
+        into the rendered text at all (it is the promotion-style "numbered mode", not the
+        product has/no-incoming "code mode" `dym-annotate` wires stamps onto) -
+        `_stamps_by_position` correctly finds nothing to read back. This matches this same
+        session's own LIVE measurement against `:8081` (`parity-f8-did-you-mean-and-continue.json`):
+        a real "SRTWT165-FT CERT" ask today ALSO answers with the unstamped inline sentence,
+        never a stamped numbered roster - stamps on a did-you-mean roster are a genuinely
+        unimplemented feature today, not a fixture artifact. Left RED on purpose."""
         bridge = _require_answer_for()
         parser, resolved, extra = _dym_incoming_scenario()
         gate = extra["gate"]

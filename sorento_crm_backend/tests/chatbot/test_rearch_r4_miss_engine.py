@@ -227,12 +227,29 @@ def _expected_bridge_reply(
 
 
 class TestAC1699DatedOrderMissScopeBlockAndMemberPicker:
-    def test_reply_carries_scope_block_and_the_all_dates_reply_hint(self) -> None:
+    def test_reply_carries_scope_block_and_the_all_dates_reply_hint(self, monkeypatch) -> None:
+        """DEFECT ADJUDICATION (tester 31, 20 Sep 2026, coder 28's own report): the
+        original test computed `text` via `_expected_bridge_reply`'s own manual chain
+        with `fetch_rosters_stub` wired in, but the REAL `bridge.answer_for(db=None, ...)`
+        call below had no way to see that stub - `tail/reply.py::compose_from_fragments`
+        calls `member_offer.fetch_rosters(db, ...)` directly, and `db=None` there fails
+        open to an empty roster (measured: logged
+        "cs roster read failed for company_id=None brand=None: 'NoneType' object has no
+        attribute 'query'"), so the real call fell back to the generic "Please choose who
+        to route to" text instead of the stubbed "Ah Chong" line - UPHELD. Fixed by
+        monkeypatching `app.services.chatbot.tail.member_offer.fetch_rosters` (the actual
+        seam `compose_from_fragments` calls through `member_mod.fetch_rosters`, an
+        attribute lookup at call time, not a `from ... import fetch_rosters` binding) so
+        BOTH the manual reproduction and the real bridge call see the identical roster."""
+        from app.services.chatbot.tail import member_offer as member_mod
+
         parser, resolved, gate, services = _dated_order_scenario()
         payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
 
         def stub_rosters(db, plan, ctx):
             return [{"body": [{"user_id": "u1", "respond_user_id": "ru1", "name": "Ah Chong"}]}]
+
+        monkeypatch.setattr(member_mod, "fetch_rosters", stub_rosters)
 
         composed, _offer = _expected_bridge_reply(
             payload, parser=parser, resolved=resolved, gate=gate, services=services,

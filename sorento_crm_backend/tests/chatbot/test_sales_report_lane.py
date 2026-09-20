@@ -1589,11 +1589,21 @@ class TestTypedStemWinsOverFamilySibling:
         landing free, not this tester's own change): the ORIGINAL finding was that
         `outstanding_product_code`'s fallback picked whichever product entity was
         FIRST in resolution order, silently, with no roster. Measured now: the turn
-        correctly asks "Which product do you mean?" (a real `product_pick`
-        `open_question`, both candidates offered) instead of guessing - no fetch
-        runs on this turn at all, which is the CORRECT behaviour for a genuinely
-        ambiguous stem (neither candidate's own code casefold-equals "SRT567"), not
-        a gap. Re-pinned to the new, honest property."""
+        correctly asks (a real `product_pick` `open_question`, both candidates
+        offered) instead of guessing - no fetch runs on this turn at all, which is
+        the CORRECT behaviour for a genuinely ambiguous stem (neither candidate's
+        own code casefold-equals "SRT567"), not a gap. Re-pinned to the new, honest
+        property.
+
+        COPY RE-PIN (tester 31, 20 Sep 2026, R4's AC-1680 consolidation): the
+        literal "Which product do you mean?" header this test asserted is one of
+        the exact duplicate strings AC-1680 names for deletion - `turn/compose.py`'s
+        `_ASK_HEADERS` no longer carries a `product_pick`-specific entry, so a
+        roster with no domain-specific header falls to the ONE shared generic
+        header, `compose_question`'s own default, "Which one do you mean?"
+        (measured: `turn/compose.py:423,487`). Re-pinned to that current production
+        string; the candidates-present and open_question-shape assertions are
+        unchanged."""
         first_uuid = "55555555-5555-5555-5555-555555555555"
         second_uuid = "66666666-6666-6666-6666-666666666666"
         resolve_services = _family_resolve_services(
@@ -1626,7 +1636,7 @@ class TestTypedStemWinsOverFamilySibling:
             "an honest roster must fetch nothing before the customer picks", captured,
         )
         reply = (result.reply or {}).get("text") or ""
-        assert "Which product do you mean?" in reply, reply
+        assert "Which one do you mean?" in reply, reply
         assert "SRT5679" in reply and "SRT5670" in reply, reply
         open_question = _session_of(session_factory).get("open_question") or {}
         assert open_question.get("kind") == "product_pick", open_question
