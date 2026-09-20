@@ -46,7 +46,7 @@ import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
-import { buildPlanActions } from '../lib/planActions';
+import { buildPlanActions, PLAN_PERMISSION } from '../lib/planActions';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { demandClassBadge } from '../../lib/demandClass';
 import { salesOrderPlannedBadge } from '../../lib/salesOrderPlanned';
@@ -64,6 +64,7 @@ import {
   useSalesOrders,
 } from '../../hooks/useSalesOrders';
 import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
+import { SOURCE_FILTER_OPTIONS, SOURCE_LABELS } from '../lib/sourceLabels';
 import { fmtDate, fmtInt } from '../../lib/format';
 import type { SalesOrder, SalesOrderFormData } from '../../types/scm.types';
 import { SalesOrderFormModal } from './SalesOrderFormModal';
@@ -90,16 +91,6 @@ import { useListingViewPreferences } from '@/lib/listing-column-preferences/useL
  * the toolbar, the row click and the footer are the list's own.
  */
 
-/** Who wrote the order. `Order inquiry` is separate from `Sales order upload` because an
- *  order Joey's sheet created is one CS has never seen, and it decides who may edit it. */
-const SOURCE_FILTER_OPTIONS = [
-  { value: '', label: 'All sources' },
-  { value: 'inquiry', label: 'Order inquiry' },
-  { value: 'upload', label: 'Upload' },
-  { value: 'history', label: 'Absorbed history' },
-  { value: 'manual', label: 'Manual' },
-];
-
 /** How many purchase orders to name in the cell before collapsing the rest into a count. */
 const WAITING_ON_LIMIT = 2;
 
@@ -114,23 +105,8 @@ const ORDER_INQUIRY_LIMIT = 2;
  */
 const MAX_PLAN_SELECTION = 50;
 
-/** Who may open the fulfilment planning board. Same gate the board's own page carries. */
-const PLAN_PERMISSION = 'projects.projects.view';
 /** What the backend gates Reset planning on: the buyer's own write permission. */
 const RESET_PERMISSION = 'scm.reorder.run';
-
-const SOURCE_LABELS: Record<string, string> = {
-  inquiry: 'Order inquiry',
-  // Just "Upload" (the captain, 27 Aug). The column is called Source and every row of this
-  // list is a sales order, so "Sales order upload" spent two of its three words repeating
-  // the screen it is on - and the pill is a fixed-width cell that truncated the third.
-  upload: 'Upload',
-  // 11,006 of the orders in the book were absorbed from a six-year AutoCount export. Calling
-  // one "Manual" claims somebody keyed a 2020 order by hand, and it is the same word the
-  // detail page uses so the two screens cannot disagree about the same row.
-  history: 'Absorbed history',
-  manual: 'Manual',
-};
 
 /** The planning class - what the classification agents actually resolved, as distinct from
  *  the rarely-stated `order_type_label`. `unclassified` reads `demand_class IS NULL`. */

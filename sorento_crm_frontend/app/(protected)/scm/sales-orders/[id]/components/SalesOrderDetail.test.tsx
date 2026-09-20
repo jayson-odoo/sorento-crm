@@ -73,6 +73,15 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The header's Plan primary (S2, R3) reaches for the NextAuth session through this hook,
+// which is not mounted under jsdom - stubbed off, the same way the sales-orders LIST suite
+// stubs it, since this file's own tests are about Edit under the gear, not about the
+// permission gate (that is a browser-pass check, AC-S2-6/10).
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 // The Transfers tab renders the SAME grid the Transfers page does; that component has its
 // own tests, so here only the wiring (which order it is pinned to) has to be proven.
 vi.mock(
@@ -215,6 +224,20 @@ function renderDetail() {
  */
 function openTab(name: 'General' | 'Lines' | 'Delivery' | 'Transfers') {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
+}
+
+/**
+ * Edit lives behind the gear now (S2, R3): the header's primary slot is Plan. Radix opens
+ * its menu on POINTER-down (see the Columns button elsewhere in this file), so open it the
+ * same way, then press the Edit item.
+ */
+function clickEdit() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Sales order options' }), {
+    button: 0,
+    ctrlKey: false,
+    pointerType: 'mouse',
+  });
+  fireEvent.click(screen.getByRole('menuitem', { name: /^Edit$/ }));
 }
 
 beforeEach(() => {
@@ -889,7 +912,7 @@ describe('SalesOrderDetail - the lines say what the customer was charged', () =>
     // while the quantity box reads 20. Two figures contradicting each other on one row is
     // read as a broken screen, not as an unsaved edit.
     renderLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     // In an edit session the Product cell is a select, so the row is found by one of its
@@ -908,7 +931,7 @@ describe('SalesOrderDetail - the lines say what the customer was charged', () =>
 
   it('sends an edited price and discount with the line', async () => {
     renderLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.change(screen.getByLabelText('Unit price on SKU-A'), {
@@ -917,7 +940,7 @@ describe('SalesOrderDetail - the lines say what the customer was charged', () =>
     fireEvent.change(screen.getByLabelText('Discount on SKU-A'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
     expect(body.lines[0]).toMatchObject({
       id: 'l-a',
@@ -948,14 +971,14 @@ describe('SalesOrderDetail - the order type round trip', () => {
       .getByText('Order type', { selector: 'span.text-xs.text-muted-foreground' })
       .closest('div') as HTMLElement;
     expect(within(orderTypeField).getByText('Project')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Order type' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Retail' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
     expect(body).toMatchObject({ demand_class: 'retail' });
     // `order_type` is a different column and this screen no longer writes it.
@@ -972,13 +995,13 @@ describe('SalesOrderDetail - the order type round trip', () => {
     });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent(
       'Unclassified',
     );
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     expect(screen.queryByText('Select an order type.')).not.toBeInTheDocument();
     expect(updateSalesOrderMutateAsync.mock.calls[0][0].data).toMatchObject({
       demand_class: null,
@@ -989,11 +1012,11 @@ describe('SalesOrderDetail - the order type round trip', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     expect(updateSalesOrderMutateAsync.mock.calls[0][0].data).toMatchObject({
       order_date: '2026-05-04',
     });
@@ -1144,7 +1167,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
   it('has no Edit entry point while the record is still loading or missing', () => {
     useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     renderDetail();
-    expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sales order options' })).not.toBeInTheDocument();
   });
 
   it('swaps the header values for inputs in place, in the same field order, on Edit', () => {
@@ -1164,7 +1187,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
       );
 
     const before = labelOrder();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     const after = labelOrder();
 
     // Same labels, in the same order - editing swaps a value for an input, nothing moves.
@@ -1183,7 +1206,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     // Save / Cancel replace the pager and the way out; nothing else changed shape.
     expect(screen.getByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sales order options' })).not.toBeInTheDocument();
   });
 
   /**
@@ -1202,7 +1225,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
 
     expect(screen.getByText('Partly 2/3')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
 
     expect(screen.getByText('Partly 2/3')).toBeInTheDocument();
     // Read-only: editing swaps a value for an input, and this one has no input to swap to.
@@ -1234,13 +1257,13 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     expect(screen.getByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(screen.queryByRole('button', { name: 'Save sales order' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sales order options' })).toBeInTheDocument();
     expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
   });
 
@@ -1256,13 +1279,13 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     fireEvent.change(screen.getByLabelText('Delivery date'), {
       target: { value: '2026-09-15' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     expect(updateSalesOrderMutateAsync).toHaveBeenCalledWith({
       id: 'so-1',
       data: expect.objectContaining({
@@ -1278,7 +1301,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     // `clearable` renders an explicit × once a value is selected - the agent select's own
     // stated requirement, since not every order names an agent. Scoped to the Agent combobox:
     // the Location select on the line grid is clearable too and has its own × once a line
@@ -1287,7 +1310,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.pointerDown(within(agentCombo).getByRole('button', { name: 'Clear selection' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     expect(updateSalesOrderMutateAsync).toHaveBeenCalledWith({
       id: 'so-1',
       data: expect.objectContaining({ sales_agent_id: null }),
@@ -1298,13 +1321,13 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
     const qtyInputs = screen.getAllByDisplayValue('320');
     fireEvent.change(qtyInputs[0], { target: { value: '400' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
     // Every field the line already carried rides along unchanged - `id` so the BE matches
     // by id rather than SKU, and the location/date/UoM the order loaded with.
@@ -1324,7 +1347,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
     const locationCombo = screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' });
     // Code-first, same as the read view's Location cell (`BRW-BB` above) - a code review
@@ -1341,7 +1364,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' }));
@@ -1356,7 +1379,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
     expect(body.lines).toEqual([{
       id: 'l-1',
@@ -1377,7 +1400,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
     // The options load async (`getSalesOrderUoms`) - the trigger shows the placeholder
     // until they resolve and the value's label can be matched. Re-queried each poll
@@ -1398,7 +1421,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' })).toHaveTextContent(
@@ -1409,7 +1432,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.pointerDown(within(uomCombo).getByRole('button', { name: 'Clear selection' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
     expect(body.lines[0].uom).toBe('');
   });
@@ -1424,7 +1447,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     expect(await screen.findByText('Planning changes raised on 2 lines')).toBeInTheDocument();
@@ -1436,7 +1459,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     );
 
     // A fresh edit session clears the stale notice - it describes the LAST save, not this one.
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     expect(screen.queryByText('Planning changes raised on 2 lines')).not.toBeInTheDocument();
   });
 });
@@ -1984,7 +2007,7 @@ describe('SalesOrderDetail - removing a line', () => {
 
   it('removes the row immediately, with no dialog, and the totals follow', () => {
     renderTwoLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
@@ -2002,14 +2025,14 @@ describe('SalesOrderDetail - removing a line', () => {
 
   it('saves the remaining lines only, so the BE deletes the omitted one', async () => {
     renderTwoLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
     expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
-    await screen.findByRole('button', { name: /^Edit$/ });
+    await screen.findByRole('button', { name: 'Sales order options' });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
     // A removal changes the LINE COUNT, so `lines` is always sent - never omitted the way a
     // header-only save omits it.
@@ -2022,7 +2045,7 @@ describe('SalesOrderDetail - removing a line', () => {
     // The default fixture carries exactly one line.
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.click(
@@ -2037,7 +2060,7 @@ describe('SalesOrderDetail - removing a line', () => {
 
   it('keeps the session open and the row visible again after Cancel', () => {
     renderTwoLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
@@ -2047,7 +2070,7 @@ describe('SalesOrderDetail - removing a line', () => {
 
     // Cancel discarded the whole session, including the removal - the read view shows both
     // lines exactly as loaded.
-    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sales order options' })).toBeInTheDocument();
     openTab('Lines');
     expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
     expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
@@ -2074,7 +2097,7 @@ describe('SalesOrderDetail - removing a line', () => {
       isError: false,
     });
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     expect(screen.queryByLabelText('Product on BASIN-OLD-99')).not.toBeInTheDocument();
@@ -2126,7 +2149,7 @@ describe('SalesOrderDetail - R4: qty 0 on an existing line, never on a new one',
   // on an EXISTING line must save, not raise the banner below.
   it('accepts qty 0 on an existing line and saves', async () => {
     renderTwoLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.change(within(rowFor('SKU-A')).getByDisplayValue('10'), {
@@ -2149,7 +2172,7 @@ describe('SalesOrderDetail - R4: qty 0 on an existing line, never on a new one',
   // reused) is confirmed - owner said keep.
   it('still refuses qty 0 on a new line', async () => {
     renderTwoLines();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     fireEvent.click(screen.getByRole('button', { name: /Add line/i }));
@@ -2243,7 +2266,7 @@ describe('SalesOrderDetail - R4: Add line on the edit screen', () => {
   it('offers Add line in edit mode, appending an editable row', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    clickEdit();
     openTab('Lines');
 
     const before = screen.getAllByRole('spinbutton').length;
