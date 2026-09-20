@@ -1,6 +1,6 @@
 # PLAN: Sales order lines in AutoCount order, with a Source column and a Plan CTA
 
-Status: grilled, rulings R1-R5 taken 21 Sep 2026 (section 6); awaiting go to build
+Status: built, in review (21 Sep 2026)
 Domain: scm
 UAC: `so-lines-autocount-order-acceptance-criteria.md`
 Lane: `feat/so-lines-autocount-order` (one branch, one PR)
@@ -101,6 +101,10 @@ gain `autocount: 'AutoCount'`.
   renumbers is a separate ask (trigger: owner says an already-adopted order must match).
 - Board list view order (`fulfilmentBoard.ts:orderByProductRows`) stays product-first: that
   is the grid's axis, and the toggle depends on it. `line_no` remains its last tiebreak.
+  Superseded for the LIST view by S4 below (owner ruling, 21 Sep) - `orderByProductRows`
+  and this rule stay exactly as written for the GRID.
+- S4 (owner, 21 Sep): the board list view sorts by sales order then AutoCount line number;
+  the grid axis stays product-first, so the grid/list toggle is no longer position-aligned.
 
 ### 3.6 Backfill
 
@@ -143,3 +147,4 @@ R2. A line with NULL `source_system` shows **Manual** (not the header's source).
 R3. Header CTA label "Plan".
 R4. FoundryX full re-push for the backfill: owner asks the peer (outside this lane).
 R5. S3 ships in this lane.
+R6. Board list view: sales order then AutoCount No. (option 2 of 3; grid unchanged).

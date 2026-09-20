@@ -1057,3 +1057,42 @@ export function orderByProductRows<T extends { item_code: string; required_date?
     return (a.line_no ?? 0) - (b.line_no ?? 0);
   });
 }
+
+/**
+ * The LIST view's own row order (S4, PLAN-so-lines-autocount-order.md, fix round #1076 -
+ * owner ruling, 21 Sep 2026): sales order, then the line number AutoCount itself sent -
+ * NOT `orderByProductRows`'s product axis above, which the GRID keeps exactly as written.
+ * A planner comparing the list against the source document reads it top to bottom the way
+ * AutoCount does; the grid keeps its own product-by-product axis for the cross-order view,
+ * so the two are no longer position-aligned and the toggle genuinely shows two different
+ * readings - the owner's call, not a defect.
+ *
+ * No `productRows` argument: the product axis plays no part in this ordering at all, so a
+ * caller cannot accidentally influence it with the grid's own row order.
+ *
+ * `so_number` ascending, then `line_no` ascending - numeric, never lexicographic, and a
+ * line AutoCount never numbered (null/undefined) sorts LAST within its own sales order -
+ * then `item_code`, then `required_date` (undated last) only where even the item code
+ * ties.
+ */
+export function orderListRows<
+  T extends {
+    so_number?: string;
+    line_no?: number;
+    item_code: string;
+    required_date?: string | null;
+  },
+>(contributions: readonly T[]): T[] {
+  return [...contributions].sort((a, b) => {
+    const byOrder = (a.so_number ?? '').localeCompare(b.so_number ?? '');
+    if (byOrder !== 0) return byOrder;
+    const aNumbered = a.line_no !== null && a.line_no !== undefined;
+    const bNumbered = b.line_no !== null && b.line_no !== undefined;
+    if (aNumbered !== bNumbered) return aNumbered ? -1 : 1;
+    if (aNumbered && bNumbered && a.line_no !== b.line_no) {
+      return (a.line_no as number) - (b.line_no as number);
+    }
+    if (a.item_code !== b.item_code) return a.item_code.localeCompare(b.item_code);
+    return (a.required_date ?? '9999-12-31').localeCompare(b.required_date ?? '9999-12-31');
+  });
+}

@@ -57,11 +57,24 @@ Plan: `PLAN-so-lines-autocount-order.md`. Each AC is one pytest / vitest / brows
 - AC-S3-2 Board `_line_numbers`: an order with one NULL `line_no` falls back to the derived
   rule for the whole order.
 - AC-S3-3 Board `_line_numbers`: a fully mirrored order still reports the mirror's numbers.
-- AC-S3-4 Adoption `_mirror`: lines with `line_no` 5, 1, 3 get mirror `line_no` 1, 2, 3 in
-  the order 1, 3, 5.
-- AC-S3-5 Adoption `mirror_missing_lines`: a later core line takes the next number; existing
-  mirror lines keep theirs.
+- AC-S3-4 Adoption `_mirror`: lines with `line_no` 5, 1, 3 get mirror `line_no` 5, 1, 3
+  (raw, gaps kept - never renumbered to 1, 2, 3), read back in the order 1, 3, 5. (B1
+  review round, fix round #1076: updated from the original "renumbered 1, 2, 3".)
+- AC-S3-5 Adoption `mirror_missing_lines`: a later core line takes its OWN raw `line_no`
+  when it has one and it is free on the order, else the next `line_no`; an existing mirror
+  line is never rewritten. (B1 review round: updated from "takes the next number".)
 - AC-S3-6 Order inquiry sheet lists a freshly adopted order's lines in AutoCount order.
+- AC-B1-1 An unadopted order whose `line_no` disagrees with date/code order: the board's
+  key and `project_line_draft_service._resolve_core_line` name the same line; Save and
+  Undo both succeed.
+- AC-B1-2 Same, with one line's `line_no` NULL: both sides fall back to the derived rule.
+- AC-B1-3 A fully mirrored order: both sides still resolve by the mirror's own numbers.
+
+## S4 fulfilment planning - board list view order (owner ruling, 21 Sep, fix round #1076)
+
+- AC-S4-1 List view order = `so_number`, then `line_no` numeric nulls last, then
+  `item_code`, then `required_date`.
+- AC-S4-2 Grid product axis unchanged.
 
 ## Lane gate
 
