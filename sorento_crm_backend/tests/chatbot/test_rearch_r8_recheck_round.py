@@ -23,6 +23,7 @@ import pytest
 
 from app.services.chatbot import answer_bridge
 from app.services.chatbot import engine as engine_mod
+from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business.services import AnswerServices, FetchServices
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._pg_fixture import unique_code
@@ -584,3 +585,199 @@ class TestBridgeHandsTheMissLaneTheSameGateTheFetchUsed:
             f"certificate did-you-mean case (tester 38's realistic-seed fix) - the "
             f"stamped form must still render: {reply!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up round (tester 41, 20 Sep 2026) - pins coder 33's SECOND fix, commit
+# `19d5f7789` (`.claude/handoffs/20260920T132023Z-rearch-coder33-recheck-round-
+# report.md`, "Follow-up round - live F8 re-check"). The lane-added `require` /
+# `scope_terms` block in `resolve_gate.resolve_entity_body` maps a leg off the
+# INTENT alone (`derive_require`), so `check_product_attachment` /
+# `check_incoming` / `check_stock` carried a described-set leg on EVERY turn,
+# a bare code lookup included. With no class word to scope by,
+# `resolve_product_set` answered the leg over the WHOLE catalogue and
+# `references._emit_spec_matches` emitted that population as a third,
+# whole-query resolution of ordinary product matches - measured live for
+# "SRTWT165-FT CERT": 200 unnamed products on `gate.compatible_entities`, a
+# 131 KB fetch envelope, and a 206-entity did-you-mean probe that came back at
+# the tool's 50-row page cap, so `miss_suggest._annotate`'s own page-
+# saturation guard refused to attribute the has/no-certificate stamp and the
+# reply fell to the bare inline sentence (live turns 790d43c3-91a7-4229-8bd
+# and 85e536be). The fix drops the leg when the turn names a product CODE
+# (`gate._is_a_described_word`, called not copied) and has no class word
+# (`product_type`/`category` entity) to scope it by; a described ask keeps
+# its leg untouched, and a turn naming both a code AND a class word keeps its
+# scope term too.
+# --------------------------------------------------------------------------- #
+
+
+def _ctx_for_resolve_body(parser_output: dict[str, Any], *, text: str) -> dict[str, Any]:
+    return {
+        "contact": {"id": "zzt-f41-contact"},
+        "text": {"message": {"message": {"text": text}}},
+        "parse": {"output": parser_output},
+    }
+
+
+def _code_entity(code: str) -> dict[str, Any]:
+    return {
+        "raw": code, "hint": "product", "canonical_code": None,
+        "current_message": True, "confident": True,
+    }
+
+
+def _class_word_entity(raw: str, *, hint: str = "product_type") -> dict[str, Any]:
+    return {
+        "raw": raw, "hint": hint, "canonical_code": None,
+        "current_message": True, "confident": True,
+    }
+
+
+# One scenario per REQUIRE_LEGS-carrying intent (product_predicate_service.REQUIRE_LEGS):
+# the entities a bare code-only turn of that intent emits, and the text it came from.
+_CODE_ONLY_SCENARIOS: list[tuple[str, str, list[dict[str, Any]], str]] = [
+    (
+        "check_product_attachment", "product_attachment",
+        [
+            _code_entity("SRTWT165-FT"),
+            {"raw": "CERT", "hint": "attachment_type", "canonical_code": "certificate",
+             "current_message": True, "confident": True},
+        ],
+        "SRTWT165-FT CERT",
+    ),
+    (
+        "check_incoming", "incoming",
+        [_code_entity("SRTWT7202-NEW")],
+        "Incoming SRTWT7202-NEW",
+    ),
+    (
+        "check_stock", "master_products",
+        [_code_entity("SRTWT165-FT")],
+        "Stock SRTWT165-FT",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "intent_hint,domain_hint,entities,text", _CODE_ONLY_SCENARIOS,
+    ids=[s[0] for s in _CODE_ONLY_SCENARIOS],
+)
+class TestACodeOnlySubjectSendsNoDescribedSetLeg:
+    def test_a_bare_code_lookup_sends_no_require_or_scope_terms(
+        self, intent_hint: str, domain_hint: str, entities: list[dict[str, Any]], text: str
+    ) -> None:
+        """F8 re-check: a turn whose only subject is a product CODE, with no class
+        word to scope a described set by, must not carry `require` /
+        `predicate_words` / `scope_terms` at all - the leg would otherwise answer
+        `resolve_product_set` over the whole catalogue with an empty
+        `scope_terms`, which is exactly the "every product that has X" population
+        that produced the live 206-entity did-you-mean probe."""
+        parser_output = _parser_output(
+            intent_hint=intent_hint, domain_hint=domain_hint, entities=entities,
+        )
+        ctx = _ctx_for_resolve_body(parser_output, text=text)
+
+        body = resolve_gate.resolve_entity_body(ctx)
+
+        assert "require" not in body, (
+            f"F8 re-check: {intent_hint} sent require={body.get('require')!r} for a "
+            f"code-only subject with no class word (text={text!r}) - this is the "
+            f"described-set-over-the-whole-catalogue leg that must be dropped"
+        )
+        assert "scope_terms" not in body, body
+        assert "predicate_words" not in body, body
+
+    def test_the_same_intent_with_a_class_word_still_sends_the_leg(
+        self, intent_hint: str, domain_hint: str, entities: list[dict[str, Any]], text: str
+    ) -> None:
+        """Control: a turn that ALSO names a `product_type`/`category` class word
+        (a genuinely described set - "which taps have a cert") keeps its
+        `require` leg and its `scope_terms` untouched - the fix must not silence
+        every leg, only the code-with-nothing-to-scope-by shape."""
+        parser_output = _parser_output(
+            intent_hint=intent_hint, domain_hint=domain_hint,
+            entities=[*entities, _class_word_entity("taps")],
+        )
+        ctx = _ctx_for_resolve_body(parser_output, text=f"{text} taps")
+
+        body = resolve_gate.resolve_entity_body(ctx)
+
+        assert "require" in body, (
+            f"control: {intent_hint} with a class word present must still carry "
+            f"the described-set leg - none was sent for text={text!r}"
+        )
+        assert body.get("scope_terms") == ["taps"], body
+
+
+class TestACertificateDidYouMeanProbesOnlyItsOwnNeighbours:
+    def test_the_probe_receives_the_turns_own_neighbours_not_the_catalogue(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """F8 re-check, engine-level: replays the recorded certificate verdict
+        (`SRTWT165-FT` unplaced product token + `CERT` resolved attachment_type)
+        and asserts the did-you-mean probe's own `entities` argument is a
+        HANDFUL - this turn's own product neighbours plus the resolved
+        certificate type - never the ~200-row catalogue population the
+        pre-fix `require` leg fed it. Also asserts the reply itself is the
+        numbered stamped form carrying both a "has certificate" and a
+        "no certificate" line (measured live after the fix, commit
+        `19d5f7789`: "1. SRTWT165-QT - has certificate\\n2. SRTWT165 - no
+        certificate\\n3. SRTWT165-NL - no certificate")."""
+        _seed_contact_and_get(session_factory)
+        base = unique_code("ZZTF41CERT").replace("-", "")
+        neighbour_nl, neighbour_qt = f"{base}-NL", f"{base}-QT"
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=base)
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=neighbour_nl)
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=neighbour_qt)
+        _seed_real_attachment_type(session_factory, "Certification")
+
+        answer_probe = _mcp_probe_for(
+            {
+                "crm_master_product_attachments_list": [
+                    {
+                        "product": {"product_code": base},
+                        "attachment": {"attachment_type": "Certification", "original_filename": f"{base}.pdf"},
+                        "company_name": "Sorento",
+                    }
+                ]
+            }
+        )
+        probe_calls: list[tuple[str, dict[str, Any]]] = []
+
+        def _spying_probe(name: str, args: dict[str, Any]) -> Any:
+            probe_calls.append((name, dict(args)))
+            return answer_probe(name, args)
+
+        qf = _parser_output(
+            domain_hint="product_attachment", intent_hint="check_product_attachment",
+            entities=[
+                {"raw": f"{base}-FT", "hint": "product", "canonical_code": None,
+                 "current_message": True, "confident": True},
+                {"raw": "CERT", "hint": "attachment_type", "canonical_code": "certificate",
+                 "current_message": True, "confident": True},
+            ],
+            routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        )
+        result, _captured = _run_turn_real(
+            session_factory, monkeypatch, qf=qf, text_body=f"{base}-FT CERT",
+            msg_id="zzt-r8-f41-cert-probe-scope", mcp_response={"data": []},
+            answer_mcp_probe=_spying_probe,
+        )
+        reply = (result.reply or {}).get("text") or ""
+
+        assert probe_calls, f"the did-you-mean probe must have run for this miss: reply={reply!r}"
+        _tool, args = probe_calls[-1]
+        entities = args.get("entities") or []
+        assert len(entities) < 20, (
+            f"F8 re-check: the probe must carry only this turn's own neighbours, "
+            f"never the whole catalogue's unnamed product population it did "
+            f"pre-fix (measured live at 206 entities): got {len(entities)} "
+            f"entities={entities!r} reply={reply!r}"
+        )
+
+        assert reply.startswith(f'Couldn\'t find "{base}-FT" (product). Did you mean:'), (
+            f"the stamped numbered form must render, not the bare inline "
+            f"sentence a page-saturated probe would fall back to: {reply!r}"
+        )
+        assert "has certificate" in reply, reply
+        assert "no certificate" in reply, reply
