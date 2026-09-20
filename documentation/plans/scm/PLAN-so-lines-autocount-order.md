@@ -1,6 +1,6 @@
 # PLAN: Sales order lines in AutoCount order, with a Source column and a Plan CTA
 
-Status: built, in review (21 Sep 2026)
+Status: built, reviewed, draft PR open (21 Sep 2026)
 Domain: scm
 UAC: `so-lines-autocount-order-acceptance-criteria.md`
 Lane: `feat/so-lines-autocount-order` (one branch, one PR)
