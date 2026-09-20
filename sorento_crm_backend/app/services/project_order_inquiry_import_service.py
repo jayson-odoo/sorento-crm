@@ -1131,22 +1131,32 @@ def _used_row_candidate(
     return None, True
 
 
+def _line_own_rows(mirror_rows: Sequence[Any]) -> List[Any]:
+    """This line's own LIVE buy-verb rows (AC-RB-35: ORDER, ORDER BACK or RESERVE AND
+    ORDER) - a USED row is never among them (AC-RB-36), whatever verb or decision id it
+    happens to carry: it is history, not part of what the line still owes. The ONE
+    population both the top-up sum (`_top_up_status`) and AC-RB-42's own equality check
+    (`_top_up_matches_sheet_row`) read, so the two can never disagree about what counts
+    as "the line's own row".
+    """
+    return [
+        r for r in mirror_rows if r.verb in _LINE_OWN_ROW_VERBS and not r.redirected_to_pool
+    ]
+
+
 def _top_up_status(
     mirror_rows: Sequence[Any], row: Any, decision: Any, buy_qty: Decimal
 ) -> Optional[bool]:
     """R8 (AC-RB-26/27/28), the SRTWC8605-SC-RL shape: this mirror's live buy-verb rows
     are a TOP-UP of the ACTIVE decision for the line.
 
-    `True` when every live buy-verb row (AC-RB-35: ORDER, ORDER BACK or RESERVE AND ORDER)
-    carries THIS decision's own id and the sheet row's quantity plus theirs equals the
-    decision's `buy_qty` (AC-RB-26: raise the sheet row plain). `False` when they all carry
-    it but the sum does not match (AC-RB-27: raise nothing, report). `None` when the shape
-    does not even apply - any live buy-verb row that carries NO decision id, or one from a
-    DIFFERENT (stale or superseded) revision (AC-RB-28): the ordinary `already_raised` skip
-    stands, unreported.
-
-    A USED row (`redirected_to_pool`) is never counted (AC-RB-36): it is history, not part
-    of what the line still owes, whatever verb or decision id it happens to carry.
+    `True` when every live buy-verb row carries THIS decision's own id and the sheet
+    row's quantity plus theirs equals the decision's `buy_qty` (AC-RB-26: raise the sheet
+    row plain). `False` when they all carry it but the sum does not match - AC-RB-42 has
+    the caller check the sheet row against these SAME rows one more way before reporting
+    it (AC-RB-27). `None` when the shape does not even apply - any live buy-verb row that
+    carries NO decision id, or one from a DIFFERENT (stale or superseded) revision
+    (AC-RB-28): the ordinary `already_raised` skip stands, unreported.
 
     Called once `_used_row_candidate` has said EITHER this mirror carries no `Replaces N
     used` shape at all, OR its one exact match already has its used pair (AC-RB-4's own
@@ -1155,15 +1165,39 @@ def _top_up_status(
     is silently left alone rather than handed to this function's own sum). `buy_qty` is
     the caller's own tolerant read (AC-RB-37) - this function trusts it.
     """
-    order_rows = [
-        r for r in mirror_rows if r.verb in _LINE_OWN_ROW_VERBS and not r.redirected_to_pool
-    ]
+    order_rows = _line_own_rows(mirror_rows)
     if not order_rows:
         return None
     if any(str(r.supply_decision_id) != str(decision.id) for r in order_rows):
         return None
     total = _dec(row.qty) + sum((_dec(r.qty) for r in order_rows), _ZERO)
     return total == buy_qty
+
+
+def _top_up_matches_sheet_row(mirror_rows: Sequence[Any], row: Any) -> bool:
+    """AC-RB-42, checked ONLY after `_top_up_status` has already answered `False` (the sum
+    does not match): any of this line's own live buy-verb rows (`_line_own_rows` - the
+    SAME population the sum itself reads) already equals the sheet row on its Now (`qty`,
+    `delivery_date`) or its Was (`previous_qty`, `previous_delivery_date`) - STAMPED or
+    not. A board-made row CS confirmed - decision id set, never uploaded by any sheet -
+    routinely already states exactly this delivery, either as what it settled to (Now) or
+    as what it replaced (Was); before this lane such a line read `already_raised` and
+    said nothing else, and this keeps it that way rather than reporting a mismatch that
+    was never one. Order matters: the sum is tried FIRST (AC-RB-26's own genuine top-up,
+    where a board row happens to share the sheet row's own quantity and date, must still
+    be raised plain, never swallowed by this check).
+    """
+    sheet_qty = _dec(row.qty)
+    for sibling in _line_own_rows(mirror_rows):
+        if _dec(sibling.qty) == sheet_qty and sibling.delivery_date == row.delivery_date:
+            return True
+        if (
+            sibling.previous_qty is not None
+            and _dec(sibling.previous_qty) == sheet_qty
+            and sibling.previous_delivery_date == row.delivery_date
+        ):
+            return True
+    return False
 
 
 def _active_decision_snapshots(
@@ -1231,39 +1265,6 @@ def _snapshot_reads(snapshot: dict) -> Optional[Tuple[Decimal, Optional[date]]]:
     return buy_qty, required_date
 
 
-def _top_up_blocked(mirror_rows: Sequence[Any], row: Any, matches_on_mirror: int) -> bool:
-    """AC-RB-32 and AC-RB-33 meet here: the ONE early exit ahead of `_top_up_status`'s own
-    sum check, checked before ANY top-up sum is computed.
-
-    True when more than one sheet row lands on this mirror in this same upload (AC-RB-32:
-    a sum over several rows would double-count whichever the file states more than once -
-    the same refusal `_settle_row_in_place` makes for two live rows), or when a live row
-    THIS SHEET RAISED (its own note carries the migration stamp - re-review N2) ALREADY
-    carries this sheet row's own figures, as its Now (`qty`, `delivery_date`) or as its Was
-    (`previous_qty`, `previous_delivery_date`) - AC-RB-33: a re-upload of a row AC-RB-11 or
-    AC-RB-26 already rebuilt, whose own newly-settled or newly-raised quantity would
-    otherwise sum against the very sheet row it came from and read as a mismatch that was
-    never one. A BOARD row of the same quantity and date is a different fact - a genuine
-    second top-up beside it (buy 76, an existing top-up of 38, a sheet row ALSO 38) must
-    still be raised, never swallowed on nothing but a coincidence of figures.
-    """
-    if matches_on_mirror > 1:
-        return True
-    sheet_qty = _dec(row.qty)
-    for sibling in mirror_rows:
-        if not (sibling.note or "").startswith(_MIGRATION_STAMP):
-            continue
-        if _dec(sibling.qty) == sheet_qty and sibling.delivery_date == row.delivery_date:
-            return True
-        if (
-            sibling.previous_qty is not None
-            and _dec(sibling.previous_qty) == sheet_qty
-            and sibling.previous_delivery_date == row.delivery_date
-        ):
-            return True
-    return False
-
-
 def _resolve_recovery_matches(
     db: Session, plan: _Plan, rows_by_mirror: Dict[str, List[Any]]
 ) -> None:
@@ -1307,19 +1308,25 @@ def _resolve_recovery_matches(
             else:
                 # R8: no `Replaces N used` shape at all on this mirror - try the top-up
                 # shape before leaving the ordinary `already_raised` skip to stand.
+                # AC-RB-32: more than one sheet row on this mirror this upload blocks the
+                # top-up rule entirely, the same as it blocks 2.1(b)'s settle below.
                 decision, snapshot = decision_snapshots.get(mirror_id, (None, None))
                 mirror_rows = rows_by_mirror.get(mirror_id, [])
-                if decision is not None and not _top_up_blocked(
-                    mirror_rows, match.row, matches_per_mirror.get(mirror_id, 0)
-                ):
+                if decision is not None and matches_per_mirror.get(mirror_id, 0) <= 1:
                     parsed = _snapshot_reads(snapshot)
                     if parsed is not None:
                         buy_qty, _required_date = parsed
                         status = _top_up_status(mirror_rows, match.row, decision, buy_qty)
                         if status is True:
+                            # AC-RB-26: the sum matches - raised plain.
                             match.already_raised = False
                         elif status is False:
-                            match.top_up_sum_mismatch = True
+                            # AC-RB-42: the sum does not match - but a board row (stamped
+                            # or not) may still already equal this sheet row on its Now
+                            # or its Was, in which case it is silently already_raised,
+                            # never reported. Only otherwise is it a genuine mismatch.
+                            if not _top_up_matches_sheet_row(mirror_rows, match.row):
+                                match.top_up_sum_mismatch = True
                         # `status is None`: AC-RB-28, the plain skip stands.
             continue
         decision, snapshot = decision_snapshots.get(mirror_id, (None, None))
