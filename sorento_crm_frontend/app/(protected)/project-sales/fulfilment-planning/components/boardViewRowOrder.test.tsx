@@ -10,11 +10,22 @@
  * One ordering, `orderByProductRows`, consumed by both. Asserted by rendering BOTH views off
  * ONE fixture and comparing the product sequence they print - not by unit-testing the
  * comparator alone, because the defect was that one of the two views did not use it.
+ *
+ * SUPERSEDED for the LIST view only (owner ruling, S4, PLAN-so-lines-autocount-order.md,
+ * fix round #1076): the grid's axis is UNCHANGED (still `orderByProductRows`, still tested
+ * above), but the list now sorts by sales order then AutoCount line number instead of
+ * following the product axis - see the `orderListRows` describe block at the foot of this
+ * file (AC-S4-1). The tests above still hold exactly as written: they exercise the
+ * comparator and the list COMPONENT's own "renders whatever order it is given" behaviour,
+ * neither of which changed: what changed is which comparator `FulfilmentBoardPanel.tsx`
+ * calls before handing the list its `contributions` prop, which this file does not
+ * exercise (it builds `listContributions` itself rather than rendering the panel). None of
+ * the existing tests needed their own assertions changed for that reason.
  */
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { orderByProductRows } from '../../_shared/lib/fulfilmentBoard';
+import { orderByProductRows, orderListRows } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardContribution,
   BoardDateBucket,
@@ -192,5 +203,58 @@ describe('the grid and the list agree about the product order', () => {
 
     // Undated last, the same rule every other listing in this product follows.
     expect(ordered.map((row) => row.key)).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+/**
+ * S4 (owner ruling, fix round #1076): the LIST view reads AutoCount order - sales order,
+ * then the line number AutoCount itself sent - not the grid's product axis. The two views
+ * now legitimately disagree about sequence, the same way the grid and the Lines tab on a
+ * sales order detail page already do (PLAN-so-lines-autocount-order.md 3.5): a planner
+ * comparing the list against the source document reads it top to bottom the way AutoCount
+ * does, and the grid keeps its own product-by-product axis for the cross-order view.
+ *
+ * `orderListRows` takes contributions ALONE - no `productRows` argument - because the
+ * product axis plays no part in this ordering at all; note for the coder implementing
+ * this: if the extracted function ends up named or shaped differently, this test's import
+ * is the one line that needs to move with it.
+ */
+describe('orderListRows (S4): the list sorts by sales order then AutoCount line number', () => {
+  it('AC-S4-1: so_number asc, then line_no asc (null/undefined LAST), then item_code', () => {
+    const ordered = orderListRows([
+      contribution('Z', { key: 'b-1', so_number: 'SO-B', line_no: 1 }),
+      contribution('A', { key: 'a-10', so_number: 'SO-A', line_no: 10 }),
+      contribution('Q', { key: 'a-2', so_number: 'SO-A', line_no: 2 }),
+      contribution('B', {
+        key: 'a-null-b',
+        so_number: 'SO-A',
+        line_no: undefined as unknown as number,
+      }),
+      contribution('A', {
+        key: 'a-null-a',
+        so_number: 'SO-A',
+        line_no: undefined as unknown as number,
+      }),
+    ]);
+
+    // Numeric, never lexicographic (2 before 10, the same trap `orderByProductRows`'s own
+    // date/order tie-break avoids elsewhere in this file) - and the two un-numbered lines
+    // of SO-A resolve by item_code (A before B) since neither carries a line_no to decide
+    // with, THEN by `required_date` only where item_code also ties (not exercised by this
+    // fixture: both un-numbered lines here are different products).
+    expect(ordered.map((row) => row.key)).toEqual([
+      'a-2',
+      'a-10',
+      'a-null-a',
+      'a-null-b',
+      'b-1',
+    ]);
+  });
+
+  it('gives the same order whatever the productRows argument would have been, since there is none', () => {
+    // `orderByProductRows` reads a second argument the grid's axis is built from; this
+    // function takes none, so a caller cannot accidentally influence it by passing the
+    // grid's own row order - the ordering is closed over `contributions` alone.
+    expect(orderListRows.length).toBe(1);
   });
 });
