@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -120,8 +121,8 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
   if (isLoading || !pull) {
     return (
       <Card>
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Loading the pull…
+        <CardContent className="py-10">
+          <SectionSkeleton rows={3} />
         </CardContent>
       </Card>
     );
@@ -212,8 +213,7 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
               </>
             ) : (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Loading…
+                <Loader2 className="size-4 animate-spin" aria-label="Loading" />
               </div>
             )}
           </div>
