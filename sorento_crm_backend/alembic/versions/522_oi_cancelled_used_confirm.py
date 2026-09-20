@@ -27,7 +27,7 @@ cancellation or a used row that is still true - there is no way back that is not
 guess, the same reasoning `oioh_0001_one_header_per_so.py` downgrades on.
 
 Revision ID: 522_oi_cancelled_used_confirm
-Revises: 521_sales_report_month_fix
+Revises: 522_autocount_pull_perms
 Create Date: 2026-09-20
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ from alembic import op
 from app.services.oi_cancelled_used_backfill import backfill_to_confirm
 
 revision = "522_oi_cancelled_used_confirm"
-down_revision = "521_sales_report_month_fix"
+down_revision = "522_autocount_pull_perms"
 branch_labels = None
 depends_on = None
 
