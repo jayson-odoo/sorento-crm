@@ -537,8 +537,8 @@ def _token_key(value: Any) -> str:
     without silently failed the join for EVERY hyphenated code - measured on turn
     bb921451 (hand pass 7, B1): `unresolved_tokens: ["SRTWT165FT"]` against an entity
     whose `raw` is `SRTWT165-FT` gave `unplaced == {}`, so the "I could not find X"
-    sentence, R-c's did-you-mean roster (`unplaced_alternatives`) and the
-    unfiltered-catalogue guard (`_without_guesses`) were all dead for exactly the codes
+    sentence and the unfiltered-catalogue guard (`_without_guesses`) were both dead
+    for exactly the codes
     that need them most. Sorento product codes are hyphenated far more often than not.
 
     The fold itself is `turn.state.fold_token` - the ONE copy, also used by
@@ -550,7 +550,7 @@ def _token_key(value: Any) -> str:
 
 def _entity_token_key(entity: dict[str, Any]) -> str:
     """`_token_key` of whichever of the three names a row spells its code under - the key
-    to join a plan/compatible row against `unplaced_tokens` / `unplaced_alternatives`."""
+    to join a plan/compatible row against `unplaced_tokens`."""
     return _token_key(_code_of(entity))
 
 
@@ -574,32 +574,6 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     # Keyed on the folded token, valued with the word the CUSTOMER typed, so the answer
     # can quote it back rather than a normalised copy of it.
     return {key: raw for key, raw in named.items() if key in missed}
-
-
-def unplaced_alternatives(entities: list[Any], resolved: Any) -> dict[str, list[dict[str, Any]]]:
-    """The resolver's own trigram neighbours for each unplaced token (R-c, owner hand
-    pass 6, 17 Sep 2026).
-
-    `resolved.resolutions[*].alternatives` is the SAME best-effort fuzzy scan
-    `entity_resolver.resolve` already runs for every token that matched nothing
-    (`ENTITY_MISS_SUGGEST_FLOOR`) - never read past that point before today. Keyed the
-    same way `unplaced_tokens` is, so a caller can join the two on the same key.
-    """
-    named: dict[str, str] = {}
-    for entity in jsc.array(entities):
-        raw = jsc.nullish_str(jsc.get(entity, "raw")).strip()
-        key = _token_key(raw)
-        if key and key not in named:
-            named[key] = raw
-    out: dict[str, list[dict[str, Any]]] = {}
-    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
-        key = _token_key(jsc.get(resolution, "token"))
-        if key not in named:
-            continue
-        alts = [a for a in jsc.array(jsc.get(resolution, "alternatives")) if isinstance(a, dict)]
-        if alts:
-            out[key] = alts
-    return out
 
 
 def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
@@ -694,7 +668,6 @@ class ResolveOutcome:
     resolved_candidates: dict[str, list[dict[str, Any]]]
     unplaced_tokens: dict[str, str]
     spec_tier: bool
-    unplaced_alternatives: dict[str, list[dict[str, Any]]]
     payload: dict[str, Any] | None
 
 
@@ -713,23 +686,19 @@ def resolve_kinds(
 ) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
-    Returns a `ResolveOutcome` whose first seven fields are
+    Returns a `ResolveOutcome` whose first six fields are
     `(resolved_kinds, compatible_entities, predicate, resolved_candidates,
-    unplaced_tokens, spec_tier, unplaced_alternatives)`, where `unplaced_tokens` is
+    unplaced_tokens, spec_tier)`, where `unplaced_tokens` is
     `{folded token: the word the customer typed}` for every token this message named
-    that the resolver could not place, `spec_tier` is `spec_tier_matched(resolved)` -
+    that the resolver could not place, and `spec_tier` is `spec_tier_matched(resolved)` -
     which tier of the ONE product ladder answered, and therefore whether this turn
-    renders as a counted set or as a list - and `unplaced_alternatives` is
-    `{folded token: the resolver's own trigram neighbours}` for the SAME unplaced
-    tokens (R-c, owner hand pass 6, 17 Sep 2026).
+    renders as a counted set or as a list.
 
-    **`unplaced_alternatives` has NO reader left** (reviewer S3, review round): its
-    only consumer, `make_tool_runner`'s `alts_by_token`, went with `_alternatives_ask`
-    when production's own did-you-mean took that job back, and the parameter it rode on
-    is deleted. The FIELD and this computation stay only because
-    `test_rearch_r2_resolve_outcome_and_grant.py::
-    test_resolve_outcome_is_a_frozen_dataclass_with_the_contract_fields_in_order`
-    pins the field list by name; retiring it is a test change, not a code change.
+    A seventh field, `unplaced_alternatives`, is gone with its producer (reviewer S3,
+    review round): its only consumer, `make_tool_runner`'s `alts_by_token`, went with
+    `_alternatives_ask` when production's own did-you-mean took that job back, and the
+    resolver's `resolutions[*].alternatives` is still read where it belongs - by
+    `miss_suggest.build_suggest_offer`'s own D1 arm.
 
     The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
@@ -778,7 +747,7 @@ def resolve_kinds(
     # that ANSWERS a tier pick (a bare "1", no entity of its own) reached `_tier_gate`
     # with no entitlement to recompose against at all.
     if not entities and entry != "access_check":
-        return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
+        return ResolveOutcome({}, [], None, {}, {}, False, None)
     if roster_caps is None:
         from app.models.chatbot_policy import ChatbotEntityKind
 
@@ -806,7 +775,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return ResolveOutcome({}, [], None, {}, {}, False, {}, None)
+        return ResolveOutcome({}, [], None, {}, {}, False, None)
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -823,7 +792,6 @@ def resolve_kinds(
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = unplaced_tokens(entities, resolved)
-    unplaced_alts = unplaced_alternatives(entities, resolved)
     compatible = _without_guesses(compatible, resolved, unplaced)
     # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
     # question described, and the count is what the answer's own header says. It rides
@@ -921,7 +889,6 @@ def resolve_kinds(
         ),
         unplaced,
         spec_tier_matched(resolved),
-        unplaced_alts,
         payload,
     )
 
@@ -1620,6 +1587,69 @@ def with_carried_entities(
     if not carried:
         return parse_output
     return {**parse_output, "entities": carried}
+
+
+def answer_parse_output(
+    parse_output: dict[str, Any] | None,
+    *,
+    gate: Any,
+    domains: Any = (),
+) -> dict[str, Any]:
+    """What the ANSWER composers read, which is what the RESOLVER read (AC-1701/AC-1702).
+
+    `lanes/business/__init__.py::complete_answer` takes its `parser` off
+    `ctx["parse"]["output"]`, and on the pre-rearch head that object had ALREADY been
+    post-processed: `head/output_exchange._post_process` restored the open question's
+    own domain onto a bare positional pick, and its section (B) ("product_attachment:
+    re-attach attachment_type if the current turn lacks one") put the conversation's
+    settled document type back on a turn that named none - carrying the RESOLVED type
+    name, not the customer's word for it. A recorded turn's own pending payload still
+    shows that shape verbatim (`{"raw": "Product Photos", "canonical_code": "Product
+    Photos", "uuid": ...}`, `tests/chatbot/replay_turns/console/focus-015-r-c-photo-for-
+    srtwc286-product-pick-keeps-the-attachment-type-no-re-ask.json`), and #750's own
+    decision 3 is the same rule for the stamp surface: the noun the customer reads is
+    the resolved attachment type, never "photo" / "gambar".
+
+    The re-architecture kept the carry on a SEPARATE `resolver_ctx` and handed the
+    composers the bare verdict instead, so `answer.not_found_error_message` saw
+    `domain_hint = None` and no attachment_type entity at all. Two live misses came out
+    of that one gap: "But no null matched these" after a roster pick (turn
+    0f732289-fe38-4a3e-bbd5-d472f32fa524, `jsc.js_string(None)`) and "But no photo
+    matched these" when the type WAS named this turn (turn
+    bf87f9ef-2ebb-49e8-8b29-bc9edd355eb1), both against a breakdown bullet that already
+    printed "attachment_type: Product Photos" two lines above.
+
+    Two narrowings, both safety rather than tidiness. The domain is restored only when
+    the turn restated none AND the plan names exactly one - a two-domain plan has no
+    single answer, and `turn/compose.py` composes those. A type name is taken only when
+    the gate settled exactly one `attachment_type` row: several is still a family, the
+    same rule `tail/compile_state.reconcile_entities` applies to a multi-match token.
+    """
+    out = dict(parse_output) if isinstance(parse_output, dict) else {}
+    g = gate if isinstance(gate, dict) else {}
+    type_names = [
+        jsc.js_string(row.get("code")).strip()
+        for row in jsc.array(g.get("compatible_entities"))
+        if isinstance(row, dict)
+        and jsc.nullish_str(row.get("entity_type")).strip().lower() == "attachment_type"
+        and jsc.truthy(row.get("code"))
+    ]
+    if len(type_names) == 1:
+        entities: list[Any] = []
+        for entity in jsc.array(out.get("entities")):
+            if (
+                isinstance(entity, dict)
+                and jsc.nullish_str(entity.get("hint")).strip().lower() == "attachment_type"
+            ):
+                entities.append({**entity, "raw": type_names[0], "canonical_code": type_names[0]})
+            else:
+                entities.append(entity)
+        out["entities"] = entities
+    if not jsc.truthy(out.get("domain_hint")):
+        named = [d for d in (domains or []) if d]
+        if len(named) == 1:
+            out["domain_hint"] = named[0]
+    return out
 
 
 def _code_of(entity: dict[str, Any]) -> str:

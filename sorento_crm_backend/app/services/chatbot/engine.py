@@ -1480,6 +1480,11 @@ def _run_stages(  # noqa: PLR0915
         # `ResolveOutcome.payload` - `None` until the resolver actually runs. Nothing
         # consumes it yet beyond handing the real gate to `make_tool_runner` below.
         resolver_payload: dict[str, Any] | None = None
+        # AC-1701/AC-1702: the parse output the ANSWER composers read. `complete_answer`
+        # reads the SAME `ctx["parse"]["output"]` the resolver ran on, so the bridge does
+        # too - see `turn_runtime.answer_parse_output`. The bare verdict is the fallback
+        # for a turn that never reaches the resolver at all.
+        answer_parse_output: dict[str, Any] = (ctx.get("parse") or {}).get("output") or {}
         # SF-1: a refused sales-report ask never reaches the resolver at all - no
         # `resolve_gate.run` call, no roster built from what it would have found.
         if not sales_report_grant_refused and (plan.fetch or plan.ask is not None):
@@ -1562,6 +1567,11 @@ def _run_stages(  # noqa: PLR0915
             unplaced_tokens = resolve_outcome.unplaced_tokens
             spec_tier = resolve_outcome.spec_tier
             resolver_payload = resolve_outcome.payload
+            answer_parse_output = turn_runtime.answer_parse_output(
+                resolver_ctx["parse"]["output"],
+                gate=(resolver_payload or {}).get("gate"),
+                domains=plan.domains,
+            )
             if resolved_kinds or resolved_candidates:
                 # The ONE re-entry the plan allows: what the resolver found goes back
                 # into APPLY, so the narrower asks about things that exist and a
@@ -1711,7 +1721,7 @@ def _run_stages(  # noqa: PLR0915
 
             answer = answer_bridge.question_for(
                 resolver_payload,
-                parser=(ctx.get("parse") or {}).get("output"),
+                parser=answer_parse_output,
                 ctx=ctx,
                 canned=copy_mod.resolve(db),
                 db=db,
@@ -1904,7 +1914,7 @@ def _run_stages(  # noqa: PLR0915
                     answer = answer_bridge.question_for(
                         {"_exit_kind": "continue"},
                         fetch=tier_fetch,
-                        parser=(ctx.get("parse") or {}).get("output"),
+                        parser=answer_parse_output,
                         ctx=ctx,
                         canned=copy_mod.resolve(db),
                         db=db,
@@ -1927,7 +1937,7 @@ def _run_stages(  # noqa: PLR0915
                     answer = answer_bridge.answer_for(
                         resolver_payload,
                         envelope=envelopes[0],
-                        parser=(ctx.get("parse") or {}).get("output"),
+                        parser=answer_parse_output,
                         ctx=ctx,
                         canned=copy_mod.resolve(db),
                         services=business_services.production_answer_services(db),

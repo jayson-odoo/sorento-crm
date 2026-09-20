@@ -2799,8 +2799,8 @@ TRGM_LIMIT = 15
 SUGGEST_FLOOR = 0.40
 
 # `resolve()`'s own per-token `alternatives` floor (a token that matched NOTHING at
-# all, read by the ENTITY-miss path - `turn_runtime.unplaced_alternatives`, R-c, owner
-# hand pass 6, 17 Sep 2026) - its OWN constant rather than `SUGGEST_FLOOR` above,
+# all, read by the ENTITY-miss path - `miss_suggest.build_suggest_offer`'s D1 arm, R-c,
+# owner hand pass 6, 17 Sep 2026) - its OWN constant rather than `SUGGEST_FLOOR` above,
 # because that one gates a DIFFERENT caller (the data-miss substitute-product helper)
 # with pinned test fixtures at similarities between the two floors
 # (`tests/test_suggest_neighbours.py::test_ac_n4_below_floor_neighbours_yield_empty`,
