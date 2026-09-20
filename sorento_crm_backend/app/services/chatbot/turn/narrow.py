@@ -378,6 +378,20 @@ def decide(
                 # picker over them asks the customer to choose between accounts they
                 # cannot tell apart.
                 return NarrowOutcome(None, [], list(resolved_candidates), None)
+            if kind == "product":
+                # AC-1690 (PLAN-chatbot-answer-half-reattach.md "Narrowing follows
+                # production"): a product roster is `gate.py`'s own job now, for the
+                # two `REQUIRE_SPECIFIC_DOMAINS` it names (incoming,
+                # product_attachment) - never this narrower's, for ANY domain. Every
+                # candidate settles through as a silent prefix filter; the gate's own
+                # `require_specific`/`gate_passed` read (independent of this policy
+                # value) is what decides whether the fetch's own not_found composes
+                # its richer "search needs to be more specific" text with has/no
+                # stamps (product_attachment, incoming) or the family just answers
+                # unfiltered (purchase_order, spo_allocation - the measured violation:
+                # neither domain is in `REQUIRE_SPECIFIC_DOMAINS` despite sharing this
+                # SAME policy value).
+                return NarrowOutcome(None, [], list(resolved_candidates), None)
             return NarrowOutcome(
                 f"{kind}_pick", _options(resolved_candidates, kind, family_grouping), [], None
             )
@@ -443,10 +457,14 @@ def decide(
             # through, deferred, rather than an ask manufactured from a name alone.
             if candidates and all(c.get("uuid") for c in candidates):
                 return NarrowOutcome(None, [], candidates, None, note="settled_carry")
-            if _choices(candidates, family_grouping) > 1:
+            if kind != "product" and _choices(candidates, family_grouping) > 1:
                 return NarrowOutcome(
                     f"{kind}_pick", _options(candidates, kind, family_grouping), [], None
                 )
+            # AC-1690: a product roster is `gate.py`'s own job (see the identical
+            # guard above, in the `resolved_candidates` branch) - `product_attachment`
+            # is the one domain that configures kind "product" as `must_narrow_one`,
+            # and it settles through unfiltered here the same way.
             return NarrowOutcome(
                 None, [], candidates, None, note="settled_carry" if candidates else None
             )
@@ -463,7 +481,10 @@ def decide(
             # AC-1691: a roster never offers fewer than two choices - one ambiguous
             # candidate is a settled thing to fetch, not a question, the same rule
             # `must_narrow_one` already applies above for its own policy value.
-            if _choices(candidates, family_grouping) > 1:
+            # AC-1690: never for kind "product" either way (the identical guard
+            # above) - `incoming`/`purchase_order`/`spo_allocation` all configure it
+            # as `narrow_to_code`.
+            if kind != "product" and _choices(candidates, family_grouping) > 1:
                 return NarrowOutcome(
                     f"{kind}_pick", _options(candidates, kind, family_grouping), [], None
                 )
