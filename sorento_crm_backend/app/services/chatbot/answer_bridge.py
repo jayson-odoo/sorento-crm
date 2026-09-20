@@ -633,8 +633,8 @@ def _miss_question(
 
 def _answered_fresh(parser: Mapping[str, Any] | None) -> bool:
     """Did THIS message settle its own pick by typing a fresh entity, or by naming a
-    did-you-mean slot specifically - main's own `fresh_typed` gate (`tail/compile_
-    state.py::_picker_carry`, ported to this bridge as `answer_for`'s own roster-
+    did-you-mean slot specifically - main's fresh-typed picker gate
+    (`tail/compile_state.py`, ported to this bridge as `answer_for`'s own roster-
     survival check, hand pass 9 D2). Only reader: the roster-survival patch below.
 
     Two signals, either one retires a still-open roster rather than letting it carry
@@ -981,8 +981,8 @@ def answer_for(
         # `lanes/business/answer.py`'s S5 comment: "on a dym pick the LLM emits the
         # candidate's DYM slot and the parser has already spent it resolving the
         # entity") and its "code" case answers with a genuinely typed entity
-        # (`current_message: True`) - main's own `fresh_typed` gate (`tail/compile_
-        # state.py::_picker_carry`, this test module's docstring measurement note 1)
+        # (`current_message: True`) - main's fresh-typed picker gate (`tail/compile_
+        # state.py`, this test module's docstring measurement note 1)
         # retires a roster on EITHER signal. D2/D3's own bare positional picks
         # (`reference_positions` only, no `reference_target`, no entities) carry
         # neither, so the roster stays open for a later, different position - the

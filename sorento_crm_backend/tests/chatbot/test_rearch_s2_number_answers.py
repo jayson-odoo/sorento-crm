@@ -7,9 +7,10 @@ RIGHT NOW every test is RED with `ModuleNotFoundError: No module named
 Kinds and roster/offer classification: captain ruling, item 1, 16 Sep 2026 -
 `PENDING_KINDS` / `ROSTER_KINDS` / `OFFER_KINDS` are the lane's eight names
 (`product_pick`, `customer_pick`, `tier_pick`, `team_pick`, `company_pick`,
-`member_offer`, `outstanding_scope`, `outstanding_detail`); `product_pick` and
-`customer_pick` are the roster kinds that stay alive with `answered_positions`, the
-other six clear on answer. See `_turn_helpers.py`'s module docstring.
+`member_offer`, `outstanding_scope`, `outstanding_detail`); `product_pick`,
+`customer_pick` and `tier_pick` (hand pass 9, D3 supersession, owner ruling 20 Sep
+2026 - see `_turn_helpers.py`'s module docstring) are the roster kinds that stay
+alive with `answered_positions`, the other five clear on answer.
 """
 from __future__ import annotations
 

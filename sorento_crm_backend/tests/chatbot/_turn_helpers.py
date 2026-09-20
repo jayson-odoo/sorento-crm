@@ -11,8 +11,17 @@ Not itself a test file (no `test_` prefix - pytest never collects it).
 main's - `product_pick`, `customer_pick`, `tier_pick`, `team_pick`, `company_pick`,
 `member_offer`, `outstanding_scope`, `outstanding_detail`, plus `kind_pick` as the ninth
 (reconciliation-only) kind, not counted in the eight. `ROSTER_KINDS` (stay alive after
-their own pick, with `answered_positions`) = `product_pick`, `customer_pick` (+
-`kind_pick`, outside the eight); the other six clear when answered.
+their own pick, with `answered_positions`) = `product_pick`, `customer_pick`, `tier_pick`
+(+ `kind_pick`, outside the eight); the other five clear when answered.
+
+SUPERSEDED for `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026 - the same ruling
+`app/services/chatbot/turn/pending.py::ROSTER_KINDS` already carries): the 16 Sep ruling
+above clocked `tier_pick` as an OFFER kind. Main's fresh-typed picker gate
+(`tail/compile_state.py`) draws no kind-based distinction at all - a `require_specific`
+roster stays answerable across as many picks as the customer makes, and the tier ask is
+the identical shape (a numbered list, one axis), so treating it as a one-off offer that
+clears on its own pick was the gap (live turn 25dcef1d-decc-407b-a6eb-08d8112ee814).
+`ROSTER_KINDS` below now matches the real code.
 """
 from __future__ import annotations
 
@@ -30,8 +39,9 @@ PENDING_KINDS: tuple[str, ...] = (
 )
 
 # Within PENDING_KINDS, which stay alive (with `answered_positions`) after their own
-# pick vs. clear once answered (captain ruling, item 1, 16 Sep 2026).
-ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick"})
+# pick vs. clear once answered (captain ruling, item 1, 16 Sep 2026; `tier_pick` added
+# by the hand pass 9 D3 supersession, see the module docstring).
+ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick", "tier_pick"})
 OFFER_KINDS: frozenset[str] = frozenset(PENDING_KINDS) - ROSTER_KINDS
 
 # `reset_on_topic`'s survivors (PLAN AC-1525 / the ported `test_focus_rules.py` on

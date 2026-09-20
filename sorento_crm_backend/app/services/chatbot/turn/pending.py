@@ -25,11 +25,11 @@ PENDING_KINDS: tuple[str, ...] = (
 
 # Stay alive, tracked by `answered_positions`, after their own pick.
 #
-# `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's `tail/compile_state.py
-# ::_picker_carry` draws no kind-based distinction at all - a `require_specific` roster
-# stays answerable across as many picks as the customer makes, and only a message that
-# TYPES a fresh entity retires it (`_picker_carry`'s own `fresh_typed` gate). The tier
-# ask is the identical shape (a numbered list, one axis), so treating it as a one-off
+# `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's fresh-typed picker
+# gate (`tail/compile_state.py`) draws no kind-based distinction at all - a
+# `require_specific` roster stays answerable across as many picks as the customer
+# makes, and only a message that TYPES a fresh entity retires it (that same gate). The
+# tier ask is the identical shape (a numbered list, one axis), so treating it as a one-off
 # offer that clears on its own pick was the gap: a SECOND, different tier position over
 # the same still-open roster re-printed the FIRST pick's own reply instead of running a
 # fresh fetch for the tier just named (live turn 25dcef1d-decc-407b-a6eb-08d8112ee814).
