@@ -103,7 +103,21 @@ def _rung_grant_missing(ctx: Any, rung: str) -> str | None:
     return None if need in granted else need
 
 
-def run_fetch(plan: Plan, ctx: Any) -> list[dict[str, Any]]:
+def run_fetch(plan: Plan, ctx: Any, *, bridge_owns_ladder: bool = False) -> list[dict[str, Any]]:
+    """`bridge_owns_ladder` (reviewer S1; the plan's own "Deleted" table, row 4): this
+    turn's miss is going to be answered by `answer_bridge.answer_for`, which walks
+    production's OWN ladder (`answer.run_crossdomain`, per product code, over the
+    configured rungs) - so a rung climbed here is fetched and then discarded, because
+    the caller composes from `envelopes[0]` alone. Measured: one incoming miss called
+    `crm_inventory_stock_balance_list` twice, once per MCP seam, for the same fact.
+
+    The CALLER decides, because only it knows: the predicate is exactly the one
+    `engine.py` already uses to gate its own `answer_bridge.answer_for` call, computed
+    once and passed here, so the two can never disagree and a single-domain miss the
+    bridge will NOT answer (an outstanding report, an open ask, no resolver payload)
+    keeps its own climb. Default `False` is today's behaviour unchanged for every
+    caller that has no bridge behind it.
+    """
     envelopes: list[dict[str, Any]] = []
     # Every domain this turn is ASKED about, whichever order they are fetched in. A
     # ladder rung is the bot volunteering a domain nobody asked for, so a domain that IS
@@ -115,7 +129,8 @@ def run_fetch(plan: Plan, ctx: Any) -> list[dict[str, Any]]:
     for spec in plan.fetch:
         envelope = _fetch_one(ctx, spec.domain, spec)
         envelopes.append(envelope)
-        _climb(ctx, spec, envelope, envelopes, planned)
+        if not bridge_owns_ladder:
+            _climb(ctx, spec, envelope, envelopes, planned)
 
     for domain in plan.denied:
         envelopes.append(_denied_envelope(domain))
