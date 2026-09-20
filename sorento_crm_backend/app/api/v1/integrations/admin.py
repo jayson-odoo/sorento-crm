@@ -22,12 +22,20 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.integration_admin import (
     IntegrationCreate,
+    IntegrationTestResponse,
     IntegrationUpdate,
     IssuedKeyResponse,
     RotateKeyRequest,
 )
+from app.services.error_handler import AppException
+from app.services.foundryx_autocount_client import check_connection
 from app.services.integration_admin_service import IntegrationAdminService
 from app.services.uuid_path_param import validate_uuid_path
+
+#: The only integration type the Test action supports today (PLAN-foundryx-pull-
+#: connection-ui.md S2). Trigger for more: another outbound integration grows its
+#: own connection probe.
+_TESTABLE_TYPE = "autocount_esb"
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -51,6 +59,28 @@ async def get_integration(
     integration_id = validate_uuid_path(integration_id, resource="Integration")
     service = IntegrationAdminService(db)
     return service.serialise(service.get(integration_id))
+
+
+@router.post("/{integration_id}/test", response_model=IntegrationTestResponse)
+async def test_integration(
+    integration_id: str = Path(...),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("integration.integrations.edit")),
+):
+    """Probes the PERSISTED row - what this proves is exactly what the next Pull will
+    use. Only `autocount_esb` rows support it today (PLAN-foundryx-pull-connection-
+    ui.md S2); touches neither `last_used_at` nor `last_error` and writes no
+    `integration_logs` row - a probe is not a use."""
+    integration_id = validate_uuid_path(integration_id, resource="Integration")
+    service = IntegrationAdminService(db)
+    row = service.get(integration_id)
+    if row.type != _TESTABLE_TYPE:
+        raise AppException(
+            status_code=400,
+            message="Test is only supported for the FoundryX ESB integration.",
+            code="TEST_NOT_SUPPORTED",
+        )
+    return check_connection(db)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
