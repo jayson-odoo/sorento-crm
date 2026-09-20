@@ -584,6 +584,34 @@ def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, An
     )
 
 
+#: The entity hints whose value IS a code the customer typed, as opposed to a word that
+#: describes a class of them. `inbound_shipment` is here because the parser hands the SAME
+#: typed product code either hint ("srtwt7202-new" came back `product` on one live run and
+#: `inbound_shipment` on the next).
+_CODE_BEARING_HINTS = ("product", "inbound_shipment")
+
+
+def _names_a_typed_code(parse_output: dict[str, Any]) -> bool:
+    """Did this turn name a product CODE, rather than only words that describe a set?
+
+    `gate._is_a_described_word` is the rule, called and never copied: a token with a digit
+    that is code-shaped is a code ("srtwc286"), anything else is a description ("bidet").
+    """
+    from app.services.chatbot.lanes.business.gate import _is_a_described_word
+
+    for entity in parse_output.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if jsc.nullish_str(entity.get("hint")).strip().lower() not in _CODE_BEARING_HINTS:
+            continue
+        raw = jsc.nullish_str(entity.get("canonical_code")).strip() or jsc.nullish_str(
+            entity.get("raw")
+        ).strip()
+        if raw and not _is_a_described_word(raw):
+            return True
+    return False
+
+
 def _token_of(entity: Any) -> Any:
     """`String(x.canonical_code ?? '').trim() || (x.raw ?? '')`, product-folded.
 
@@ -705,22 +733,44 @@ def resolve_entity_body(
     require = derive_require(parse_output, message_text=_query_text(ctx))
     if require is not None and not set(require) <= set(REQUIRE_LEGS):
         require = None
+    # The class word the PARSER named, forwarded as a value (turn re-architecture,
+    # D11): a `product_type` / `category` entity IS "which taps", and reading it off
+    # the verdict is what lets a HAS turn be described by something other than this
+    # turn's own raw text.
+    scope_terms: list[str] = []
+    for entity in parse_output.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if jsc.nullish_str(entity.get("hint")).strip().lower() not in ("product_type", "category"):
+            continue
+        raw = jsc.nullish_str(entity.get("raw")).strip()
+        if raw and raw not in scope_terms:
+            scope_terms.append(raw)
+    # A CODE is not a description (F8 re-check, 20 Sep 2026). `derive_require` maps off
+    # the INTENT alone, so `check_product_attachment` / `check_incoming` / `check_stock`
+    # carried a leg on every turn - including a bare code lookup that describes no set at
+    # all. With no class word to scope by, `resolve_product_set` then answers the leg over
+    # the WHOLE catalogue and `references._emit_spec_matches` emits that population as a
+    # third, whole-query resolution of ordinary product matches (the HAS branch passes no
+    # `attach_to`). Measured on the clone for "SRTWT165-FT CERT": 200 products nobody
+    # named on `gate.compatible_entities`, a 131 KB fetch envelope, and a did-you-mean
+    # probe over 206 entities whose answer came back at the tool's 50-row page cap - which
+    # `miss_suggest._annotate` correctly refuses to attribute (`page_saturated`,
+    # `ok: false`), so the three real neighbours lost their has/no stamps and the reply
+    # fell back to the bare inline sentence (live turns 790d43c3 and 85e536be).
+    #
+    # This is the SAME rule `turn_runtime.set_page_carry` already applies one seam later
+    # and for the same measured incident ("an empty `scope_terms` describes 'every product
+    # that has stock'", turns 92d565a5 / b383d402 / 2e7ca929): a spec tier reached with
+    # nothing to scope by is a miss, not a set. Applied here it stops the population being
+    # READ at all rather than only refusing to page it. A described ask ("which taps have
+    # a cert") names a `product_type` / `category` word and is untouched; a turn naming
+    # both a code and a class word keeps its scope term and is untouched too.
+    if require is not None and not scope_terms and _names_a_typed_code(parse_output):
+        require = None
     if require is not None:
         body["require"] = require
         body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
-        # The class word the PARSER named, forwarded as a value (turn re-architecture,
-        # D11): a `product_type` / `category` entity IS "which taps", and reading it off
-        # the verdict is what lets a HAS turn be described by something other than this
-        # turn's own raw text.
-        scope_terms: list[str] = []
-        for entity in parse_output.get("entities") or []:
-            if not isinstance(entity, dict):
-                continue
-            if jsc.nullish_str(entity.get("hint")).strip().lower() not in ("product_type", "category"):
-                continue
-            raw = jsc.nullish_str(entity.get("raw")).strip()
-            if raw and raw not in scope_terms:
-                scope_terms.append(raw)
         if scope_terms:
             body["scope_terms"] = scope_terms
     return body
