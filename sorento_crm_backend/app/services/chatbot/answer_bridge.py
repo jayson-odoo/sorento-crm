@@ -264,6 +264,28 @@ def _access_ask_answer(
     return turn_compose.Answer(text=text, question=question)
 
 
+def _picker_family_uuids(payload: Mapping[str, Any], uuid_val: Any) -> list[str] | None:
+    """AC-1694/contract 103: a customer roster option's `uuids` must be its WHOLE
+    family (every company's account for that trading name), not just the
+    representative row `gate.py`'s own `compatible_entities` carries.
+
+    `gate.py`'s `compatible_entities` shape is pinned byte-for-byte by
+    `test_replay.py`'s recorded n8n capture, so the family cannot be added there -
+    but `payload["picker_families"]` (`{base name: [every uuid in that family]}`) is
+    gate.py's own GENUINE, pre-existing field for exactly this (already consumed by
+    `session_state.py`'s legacy carry). Invert it once per turn and look the
+    representative's own uuid up in it - a representative is always a member of its
+    own family."""
+    families = payload.get("picker_families")
+    if not isinstance(families, dict) or uuid_val is None:
+        return None
+    key = str(uuid_val)
+    for family in families.values():
+        if isinstance(family, list) and key in {str(u) for u in family}:
+            return [str(u) for u in family]
+    return None
+
+
 def _offer_answer(
     payload: dict[str, Any],
     *,
@@ -288,10 +310,18 @@ def _offer_answer(
     if len(entities) >= _MIN_ROSTER_OPTIONS:
         entity_kind = entities[0].get("entity_type") or "product"
         kind = f"{entity_kind}_pick"
+        rows = entities
+        if entity_kind == "customer":
+            rows = [
+                {**e, "uuids": family} if family else e
+                for e, family in (
+                    (e, _picker_family_uuids(payload, e.get("uuid"))) for e in entities
+                )
+            ]
         options = [
             option
             for option in (
-                _roster_option(e, kind=kind, position=i + 1) for i, e in enumerate(entities)
+                _roster_option(row, kind=kind, position=i + 1) for i, row in enumerate(rows)
             )
             if option
         ]
