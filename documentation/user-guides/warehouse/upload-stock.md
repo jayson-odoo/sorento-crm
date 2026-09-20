@@ -89,6 +89,12 @@ If your company is connected to AutoCount, you can pull the current stock book s
 
 **Who can do this:** anyone holding the **Pull from AutoCount** permission (`inventory.stock.autocount_pull`) - granted automatically to every role that already holds `inventory.stock.import`, plus admin. You need exactly one company selected; with more than one company in scope Sorento refuses with "Select a single company before pulling from AutoCount." and starts nothing.
 
+**The AutoCount connection itself** is not configured here - an admin enters the gateway URL and
+API key on the **FoundryX ESB** record under **Integration Management → Integrations** and clicks
+**Test** to confirm it (**Connected**, or the reason it isn't). See [AutoCount integration
+(ESB)](../system-management/data-analysis.md#autocount-integration-esb---contract-version-21) for
+details, including why a wrong-company key can still show Connected there.
+
 ### Start a pull
 
 1. With one company selected, open **Stock**.

@@ -68,3 +68,14 @@ export interface IntegrationUpdatePayload {
   credentials_json?: Record<string, unknown> | null;
   is_active?: boolean;
 }
+
+/**
+ * The Test action's result (PLAN-foundryx-pull-connection-ui.md S2). A test
+ * RESULT, not an error - `ok: false` is a normal, 200-status answer (a bad key,
+ * an unreachable gateway), never thrown.
+ */
+export interface IntegrationTestResult {
+  ok: boolean;
+  message: string;
+  latency_ms: number;
+}
