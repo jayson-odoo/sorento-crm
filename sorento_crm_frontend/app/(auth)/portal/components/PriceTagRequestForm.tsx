@@ -109,11 +109,6 @@ import {
   type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
-import {
-  printByLabel,
-  type PrintBy,
-} from '@/lib/dealer-kit/print-collection';
 import { cn } from '@/lib/utils';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
@@ -434,7 +429,6 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
-const MISSING_PRINT_BY = 'Say who prints these tags.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
 
 /** Statuses the real design (D11) is visible at, once one exists to show.
@@ -594,7 +588,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     debtor?: string;
     neededBy?: string;
     lines?: string;
-    printBy?: string;
   }>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -609,8 +602,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ever turns on via the header gear's own Revise item (same hooks
   // `SubmissionForm` reads for the legacy kinds), never from status/draft
   // state directly, so Cancel puts the read view back with no round trip.
-  /** Who prints (r9 D7). No default: the salesperson has to answer. */
-  const [printBy, setPrintBy] = useState<PrintBy | null>(null);
+  // r10 S1 (owner: "always i print myself, qty ignore"): the portal no
+  // longer asks - every request the portal creates prints self. The CRM
+  // keeps its own office control (Q7); this constant is what every payload
+  // below sends.
+  const printBy = 'self' as const;
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
@@ -753,7 +749,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
-    setPrintBy((data.print_by as PrintBy | null) ?? null);
     setLines(data.lines.map(lineToDraft));
     setAttachments(data.attachments ?? []);
   }, []);
@@ -940,7 +935,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setPriceModeChosen(true);
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
-        setPrintBy((data.print_by as PrintBy | null) ?? null);
         // A duplicate's lines are new, unsaved rows with no identity of
         // their own yet (nit, review round 2) - the source request's own
         // line ids have no business surviving as this draft's React keys.
@@ -1492,7 +1486,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         debtor?: string;
         neededBy?: string;
         lines?: string;
-        printBy?: string;
       },
       hasRowProblems: boolean,
     ) => {
@@ -1500,7 +1493,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         toggleSection('customer', true);
       } else if (fields.lines || hasRowProblems) {
         toggleSection('sales_order', true);
-      } else if (fields.printBy || fields.neededBy) {
+      } else if (fields.neededBy) {
         toggleSection('need_by', true);
       }
     },
@@ -1549,18 +1542,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       debtor?: string;
       neededBy?: string;
       lines?: string;
-      printBy?: string;
     } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
     if (lines.length === 0) next.lines = MISSING_LINES;
-    // Required at submit, never at Save Draft (D7): a draft is whatever has
-    // been filled in so far.
-    if (!printBy) next.printBy = MISSING_PRINT_BY;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, lines, printBy]);
+  }, [debtorCode, lines]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -1571,15 +1560,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // is the same failure as not showing one at all.
   useEffect(() => {
     setFieldErrors((prev) => {
-      if (!prev.debtor && !prev.neededBy && !prev.lines && !prev.printBy) return prev;
+      if (!prev.debtor && !prev.neededBy && !prev.lines) return prev;
       const next = { ...prev };
       if (next.debtor && debtorCode) delete next.debtor;
       if (next.neededBy && neededByDate) delete next.neededBy;
       if (next.lines && lines.length > 0) delete next.lines;
-      if (next.printBy && printBy) delete next.printBy;
       return next;
     });
-  }, [debtorCode, neededByDate, lines.length, printBy]);
+  }, [debtorCode, neededByDate, lines.length]);
 
   // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
   // clearing the promotion no longer flips the mode back to List. Switching
@@ -2274,12 +2262,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           onOpenChange={(next) => toggleSection('need_by', next)}
         >
           <div className="space-y-1.5">
-            <Label>Printing</Label>
-            <p className="text-sm font-medium py-2">
-              {printByLabel(request.print_by)}
-            </p>
-          </div>
-          <div className="space-y-1.5">
             <Label>Need by</Label>
             <p className="text-sm font-medium py-2">
               {request.needed_by_date ?? '-'}
@@ -2789,19 +2771,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         open={sectionOpen.need_by}
         onOpenChange={(next) => toggleSection('need_by', next)}
       >
-        <div
-          className="space-y-1.5"
-          {...(fieldErrors.printBy ? { 'data-error-anchor': 'print_by' } : {})}
-        >
-          <Label id="print-by-label">Printing *</Label>
-          <PrintBySelect
-            aria-labelledby="print-by-label"
-            value={printBy}
-            onChange={setPrintBy}
-            error={fieldErrors.printBy ?? null}
-          />
-        </div>
-
         <div
           className="space-y-1.5"
           {...(fieldErrors.neededBy
