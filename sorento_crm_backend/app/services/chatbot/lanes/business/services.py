@@ -258,7 +258,7 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
     return call
 
 
-def _mcp_probe(db: Session | None = None) -> McpProbeFn:
+def _mcp_probe(db: Session | None = None, *, call: McpCallFn | None = None) -> McpProbeFn:
     """The PROBE seam: `sub-get-results`' workflowInputs in, the tool's answer out.
 
     The four probe call sites build what the n8n node builds - `crossdomain-probe`'s and
@@ -280,8 +280,14 @@ def _mcp_probe(db: Session | None = None) -> McpProbeFn:
     (`test_s6c_answer_lane.py::TestCrossdomainProbe`). The sub-workflow boundary is the
     seam, so the seam is where its first node runs - which is exactly what `run_fetch`'s
     own tier probe already does inline.
+
+    `call`: the underlying MCP call to transform-and-dispatch through. Defaults to a
+    fresh `_mcp_call(db)`, kept for `answer_services_for`'s no-session bundle. Passed
+    explicitly by `production_answer_services`, which hands in the SAME `mcp_call`
+    `fetch_services(db)` already built for this session, so a rung probe and the
+    primary fetch go through one `MCPRuntimeClient`, not two.
     """
-    call = _mcp_call(db)
+    call = call or _mcp_call(db)
 
     def probe(name: str, args: dict[str, Any]) -> Any:
         from app.services.chatbot.lanes.business.fetch import entity_ids_transformer
@@ -349,8 +355,33 @@ def _family_fetch(db: Session) -> FamilyFetchFn:
 
 
 def production_answer_services(db: Session) -> AnswerServices:
-    """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10)."""
-    return AnswerServices(mcp_probe=_mcp_probe(db), family_fetch=_family_fetch(db))
+    """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10) -
+    `fetch_services(db).mcp_call`, not a second `_mcp_call(db)` instance, so a turn that
+    climbs the ladder through `answer_bridge.answer_for` (`bridge_owns_ladder`, reviewer
+    S1) makes its rung probe through the identical seam a test's `fetch_services` double
+    already covers, the same way `ctx.tool_runner` and `turn/fetch.py::_climb` share one
+    seam for a turn the bridge does NOT own. `fetch_services` is looked up by its bare
+    module name (not re-imported), so a caller that monkeypatches this module's own
+    `fetch_services` attribute - `business_services.fetch_services` from `engine.py` -
+    is picked up here too.
+
+    `parse_mcp_content` wraps it: production's own `_mcp_call(db)` already parses before
+    returning (its docstring: "The PARSE is here too"), so `fetch_services(db).mcp_call`
+    hands back an already-structured dict there and this is a no-op (idempotent on a
+    non-string). A test's `FetchServices(mcp_call=...)` double is the OTHER shape the
+    `McpCallFn` contract allows - the raw MCP wire string, parsed downstream by whatever
+    reads the fetch fragment - so without parsing here too, `_mcp_probe`'s own
+    `run_crossdomain`/`_apply_crossdomain_rung` callers see the STRING where they expect
+    the envelope dict and degrade to `no_envelope` on every double this module does not
+    build itself."""
+    from app.services.chatbot.lanes.business.fetch import parse_mcp_content
+
+    raw_call = fetch_services(db).mcp_call
+
+    def call(name: str, args: dict[str, Any]) -> Any:
+        return parse_mcp_content(raw_call(name, args))
+
+    return AnswerServices(mcp_probe=_mcp_probe(db, call=call), family_fetch=_family_fetch(db))
 
 
 def answer_services_for(session_factory: Any) -> AnswerServices:
