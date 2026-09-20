@@ -280,16 +280,18 @@ def _seed_product(db, *, description: str) -> tuple[str, str]:
 # T1 / T2 - through the real ESB ingest path (MasterIngestService)
 # --------------------------------------------------------------------------------- #
 class TestRederiveThroughMasterIngestService:
-    def test_dry_run_preview_returns_promptly_and_must_not_rederive_mid_savepoint(
+    def test_dry_run_preview_returns_promptly_and_must_never_rederive_at_all(
         self, db, patched_session_local, monkeypatch
     ):
-        """T1: a dry-run preview changing an existing product's description. Today's
-        listener fires `rederive_codes` DURING the record's own savepoint release,
-        while the whole preview's outer transaction (rolled back at the very end of
-        `ingest()`) is still open - the fresh session it opens then blocks on the row
-        lock this same transaction holds. `lock_timeout` bounds the wait to a few
-        seconds; the assertion pins the CONTRACT (must not fire mid-savepoint), not
-        the timing.
+        """T1: a dry-run preview changing an existing product's description - same
+        contract as T3 (a rolled-back preview must never spend a re-derive), but
+        wired to the REAL `rederive_codes` (spied, not replaced) so a regression
+        shows up as the bounded `lock_timeout` wait plus a recorded call, not merely
+        a call count. `MasterIngestService.ingest(..., dry_run=True)` always rolls
+        its own transaction back at the end (never a real commit), so under the
+        fixed listener - which only fires at the session's TRUE outermost commit -
+        nothing here should ever reach `rederive_codes`, during the ingest call OR
+        afterward.
         """
         product_id, code = _seed_product(db, description="Old widget description")
 
@@ -311,28 +313,31 @@ class TestRederiveThroughMasterIngestService:
 
         result, elapsed = _run_guarded(lambda: svc.ingest("products", [record], dry_run=True))
 
-        assert elapsed < 10.0, (
-            f"took {elapsed:.1f}s - lock_timeout ({LOCK_TIMEOUT_MS}ms) should bound "
-            f"the blocked FOR UPDATE to a few seconds, not hang"
+        assert elapsed < 5.0, (
+            f"took {elapsed:.1f}s - a dry run must return promptly, never touching "
+            f"the real derive at all"
         )
         assert result.updated == 1, result.records[0].errors
-        assert len(calls) == 1, "the description change must still queue exactly one code"
-        assert calls[0]["codes"] == {code}
-        assert calls[0]["in_nested"] is False, (
-            "rederive_codes fired while the session was still inside THIS RECORD's "
-            "own SAVEPOINT, before the preview's outer transaction had resolved - a "
-            "fresh SessionLocal() session then blocks on the lock that same "
-            "transaction still holds"
+        assert calls == [], (
+            "a dry run rolls everything back - it must never reach rederive_codes, "
+            "not even once, and not even briefly mid-savepoint"
         )
 
-    def test_real_ingest_rederive_must_wait_until_after_the_outermost_commit(
+        # A later, unrelated commit on the SAME session must not resurrect it either.
+        db.commit()
+        assert calls == [], "a later, unrelated commit on the same session must not replay it"
+
+    def test_real_ingest_rederive_fires_once_after_the_callers_own_commit(
         self, db, patched_session_local, functional_engine, monkeypatch
     ):
-        """T2: same shape, a real (non-dry-run) push. At the moment `rederive_codes`
-        is invoked, a THIRD connection must be able to take a NOWAIT lock on the
-        product row - proof the row is no longer held by an open transaction. Today
-        it fires before the caller's own `db.commit()`, so the row is still locked by
-        the very session that is about to call `rederive_codes`.
+        """T2: same shape, a real (non-dry-run) push. `MasterIngestService.ingest(...,
+        dry_run=False)` never commits - that is the CALLER's job (the route / the
+        task), and RELEASE SAVEPOINT does not release row locks. So: the ingest call
+        itself must return promptly with rederive_codes NOT YET called; only the
+        caller's own `db.commit()` may fire it, exactly once, and at that point a
+        SECOND connection must be able to take a NOWAIT lock on the row (proof it is
+        no longer held by an open transaction) with the session no longer inside a
+        nested transaction.
         """
         product_id, code = _seed_product(db, description="Old widget description")
 
@@ -358,29 +363,27 @@ class TestRederiveThroughMasterIngestService:
             "name": "Newer widget description text",
         }
 
-        try:
-            result, elapsed = _run_guarded(
-                lambda: svc.ingest("products", [record], dry_run=False)
-            )
+        result, elapsed = _run_guarded(lambda: svc.ingest("products", [record], dry_run=False))
 
-            assert elapsed < 10.0, f"took {elapsed:.1f}s - should be bounded by lock_timeout"
-            assert result.updated == 1, result.records[0].errors
-            assert len(calls) == 1
-            assert calls[0]["codes"] == {code}
-            assert calls[0]["in_nested"] is False, (
-                "fired during the record's own savepoint release, before the "
-                "outermost commit"
-            )
-            assert calls[0]["row_locked_by_caller"] is False, (
-                "the product row was STILL LOCKED by this same (uncommitted) "
-                "transaction at the moment rederive_codes ran - proof it fired "
-                "before the outermost commit, not after"
-            )
-        finally:
-            # Never actually reaches a real commit under today's code (dry_run=False
-            # still leaves the caller's own commit to a later step this test never
-            # takes) - rolled back either way so nothing survives this test.
-            db.rollback()
+        assert elapsed < 5.0, f"took {elapsed:.1f}s - ingest() itself must never touch the derive"
+        assert result.updated == 1, result.records[0].errors
+        assert calls == [], (
+            "MasterIngestService.ingest(dry_run=False) never commits its own "
+            "transaction - nothing must have fired before the caller's own commit"
+        )
+
+        _, commit_elapsed = _run_guarded(db.commit)
+
+        assert commit_elapsed < 5.0, f"the caller's commit took {commit_elapsed:.1f}s"
+        assert len(calls) == 1, "the caller's own commit must fire the re-derive exactly once"
+        assert calls[0]["codes"] == {code}
+        assert calls[0]["in_nested"] is False, (
+            "must fire at the outermost commit, not while inside a savepoint"
+        )
+        assert calls[0]["row_locked_by_caller"] is False, (
+            "at call time a SECOND connection must be able to take a NOWAIT lock on "
+            "the row - proof it is no longer held by an open transaction"
+        )
 
 
 # --------------------------------------------------------------------------------- #
