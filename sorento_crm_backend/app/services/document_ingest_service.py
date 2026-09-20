@@ -1288,8 +1288,22 @@ class DocumentIngestService(MasterRefResolver):
         values["source_ref"] = line.source_ref
         # AutoCount's Seq (D11), position only - popped before persistence by
         # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
-        # for it on either line table.
+        # for it on the purchase-order line table.
         values["line_number"] = getattr(line, "line_number", None)
+        # PLAN-so-lines-autocount-order.md 3.1: the SAME `Seq` is now ALSO kept, as
+        # `sales_order_lines.line_no` - the sales-order spec only, a purchase-order line
+        # still has nowhere to put it. A separate key from `line_number` above (which
+        # stays popped everywhere, unconditionally present, for the D11 position
+        # tie-break) so this one flows through the ordinary `setattr`/constructor path at
+        # every call site with no further change there.
+        #
+        # Absent_vs_null, the same rule the V5 fields just below already follow: `_sync_
+        # lines`/`_adopt_lines` only ever see this dict, never `line` itself, so the
+        # `model_fields_set` presence check has to happen here. An omitted `line_number`
+        # on a re-push must leave a stored `line_no` alone - proven by an explicit `null`,
+        # which DOES clear, since `model_fields_set` is presence, not truthiness.
+        if spec.entity_type == "sales_orders" and "line_number" in line.model_fields_set:
+            values["line_no"] = line.line_number
         # V5 (AutoCount linkage widen, B2 review fix - uniform on both line
         # tables): raw pass-through onto `purchase_order_lines` - see the
         # column comments in `app/models/procurement.py`.

@@ -121,6 +121,13 @@ class SalesOrderLinePlanningChange(BaseModel):
 
 class SalesOrderLine(BaseModel):
     id: str
+    #: AutoCount's own line number (`Seq`), kept as it arrives - the address the Lines tab
+    #: sorts and labels by (PLAN-so-lines-autocount-order.md). `None` for a line AutoCount
+    #: never numbered.
+    line_no: Optional[int] = None
+    #: Where THIS LINE came from - never inherited from the header (R2): a line with no
+    #: provenance of its own reads `manual` even under an AutoCount or uploaded header.
+    source: str = "manual"
     sku: str
     product_name: str
     qty_ordered: float

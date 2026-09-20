@@ -348,9 +348,12 @@ class ProjectSOAdoptionService:
     ) -> List[ProjectSalesOrderLine]:
         """One mirror line per core line, in a deterministic order.
 
-        Sorted by required date (undated last), then item code, then the core line id, so
-        two adoptions of the same order produce the same line numbers and a refusal naming
-        "line 3" means the same line to everybody.
+        AutoCount's own `line_no` first (PLAN-so-lines-autocount-order.md 3.5), numeric,
+        nulls last - a fresh adoption numbers the mirror 1..n in the order AutoCount
+        itself uses. A line AutoCount never numbered falls back to the old rule among
+        itself and the other unnumbered lines: required date (undated last), then item
+        code, then the core line id - so two adoptions of the same order still produce the
+        same line numbers and a refusal naming "line 3" means the same line to everybody.
         """
         products = self._products([line.product_id for line in core_lines])
         codes = {key: value[0] for key, value in products.items()}
@@ -359,6 +362,8 @@ class ProjectSOAdoptionService:
         ordered = sorted(
             core_lines,
             key=lambda line: (
+                line.line_no is None,
+                line.line_no or 0,
                 line.required_date is None,
                 line.required_date or _EARLIEST,
                 codes.get(str(line.product_id or ""), ""),
