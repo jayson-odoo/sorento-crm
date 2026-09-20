@@ -1098,11 +1098,20 @@ def outstanding_carry(
     # EVERY carried product, not the first: "all" over a ten-variant roster settles ten
     # codes onto the focus, and carrying one of them re-ran the report for that one under
     # a header naming it (turn 0a6f0379 then f8ed3b97, 16 Sep 2026).
+    #
+    # AC-1692's own rule, one layer up: this function's own docstring says the focus
+    # rides in "already resolved" - `canonical_code` (D10's own settle,
+    # `_settle_question_subject`, or the resolver's own match) is that evidence,
+    # `raw` alone is not. The customer loop below never falls back to a raw guess at
+    # all; this one used to, and a refinement's own unresolvable product word
+    # ("cheaper") rode out as `outstanding_carried_product_code` - the same
+    # never-resolved-code-echoed-back bug `_spec_row` fixes at the fetch seam,
+    # caught here first since this is where it enters `parse_output`.
     carried_codes: list[str] = []
     for entity in focus.products:
         if not isinstance(entity, dict):
             continue
-        code = entity.get("canonical_code") or entity.get("code") or entity.get("raw")
+        code = entity.get("canonical_code") or entity.get("code")
         if code and str(code) not in carried_codes:
             carried_codes.append(str(code))
     if carried_codes:
@@ -1585,12 +1594,21 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
     `code` is the name every code reader downstream (`fetch.outstanding_product_codes`,
     the low-stock prune, the report's typed-code match) reads first: a spec entity that
     reaches the tool without it is a product with no code at all.
+
+    AC-1692's own rule, one layer up: `raw` stands in for a missing `code` ONLY when
+    something else already confirms this row settled to a real record (a `uuid`) - a
+    fully unplaced guess (no `canonical_code`, no `uuid`, `raw` alone) is not a code
+    just because nothing else was typed. Measured live: a refinement's own unresolved
+    product word ("cheaper") reached this fallback with neither, and every downstream
+    code reader then sent it to the tool verbatim as `product_code=cheaper`.
     """
+    uuid = entity.get("uuid") or entity.get("canonical_code")
+    settled_raw = entity.get("raw") if uuid else None
     return {
         "entity_type": entity.get("hint"),
-        "uuid": entity.get("uuid") or entity.get("canonical_code"),
-        "code": entity.get("canonical_code") or entity.get("raw"),
-        "canonical_code": entity.get("canonical_code") or entity.get("raw"),
+        "uuid": uuid,
+        "code": entity.get("canonical_code") or settled_raw,
+        "canonical_code": entity.get("canonical_code") or settled_raw,
         "raw": entity.get("raw"),
         **({"display_name": entity["name"]} if entity.get("name") else {}),
     }
