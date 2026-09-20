@@ -50,17 +50,18 @@
       "name": "incoming-typo-did-you-mean-then-continue",
       "cold": true,
       "comment": "Tester 39 re-check, 20 Sep 2026 (SF-2/MB-2 re-check brief): the incoming domain's own miss lane never reaches `dym_transform` for this shape - `miss_suggest._sibling_gate` (a real match, `gate_debug.domain == 'incoming'` plus a non-uuid product code in scope plus a genuine empty fetch) opens FIRST and short-circuits it, on `origin/main` identically (`answer.py::build_suggest_offer`'s D3 sibling-family picker exists byte-for-byte on both; confirmed via `git show origin/main:.../answer.py`). Measured directly against the production chain (`_expected_miss_text` over `test_rearch_r4_bridge_miss.py::_dym_incoming_sibling_scenario`'s own real-sibling fixture, `test_rearch_r8_recheck_round.py::TestIncomingDidYouMeanUsesTheSiblingFormNotTheProductDymForm`): 'No incoming stock (ETA) found for SRTWT7202. Related products:\\n1. SRTWT7202-BL - has incoming\\n2. SRTWT7202-GM - no incoming\\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.' - production's own form, not the product-did-you-mean wording. Updated to that measured form; the cert and technical-drawings cases above are untouched.",
+      "note": "Captain's ruling, tester 41 (20 Sep 2026): coder 33 measured on live data that main's DOMAIN_PROBE has no incoming row and _sibling_gate needs a uuid product row, so a mistyped incoming code with no real match renders the inline did-you-mean rather than the sibling picker tester 39 pinned from a hand-built fixture, so this case is re-pinned to the inline form.",
       "turns": [
         {
           "text": "Incoming srtwt7202-new",
           "expect": {
             "branch_kind": "business_query",
             "reply_contains": [
-              "Related products:",
-              "has incoming",
-              "no incoming",
-              "Reply with a number to check its incoming"
-            ]
+              "Couldn't find \"srtwt7202-new\" (product). Did you mean SRTWT7202, SRTWT7202-BL, or SRTWT7202-GM?",
+              "Reply with a code to continue",
+              "escalate to purchasing team"
+            ],
+            "reply_not_contains": ["I don't know 'new'"]
           }
         },
         {
