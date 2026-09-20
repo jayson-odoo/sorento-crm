@@ -621,7 +621,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
 
     if decision.declined or (decision.negated and not decision.entities):
         trace.rules_fired.append("answer_pending_decline")
-        if pending.kind in OFFER_KINDS:
+        if pending.kind in ESCALATION_OFFER_KINDS:
             # The offer was answered with a decline: that IS the turn (contract 42, the
             # `escalation_declined` lane), named here off the APPLY outcome rather than
             # off `escalation.escalation_declined` alone, which the parser emits only
@@ -631,14 +631,19 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
             # customer who said "no thanks" got the order list again.
             trace.lane = "escalation_declined"
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
-        if pending.payload.get("escalate_offered") is True:
-            # AC-1703's tail: Item 8's own mirror. A ROSTER kind (`product_pick`, ...)
-            # is never in `OFFER_KINDS` (`OFFER_KINDS = PENDING_KINDS - ROSTER_KINDS`),
-            # so a decline over its OWN attached escalate offer used to fall all the way
-            # through to "the generic rules settle it" below - the pending cleared and
-            # no lane composed anything, silence rather than an acknowledgement. This
-            # is `escalation_declined`'s sibling: R22(a)'s own "offer_declined" registry
-            # copy ("Okay, noted."), never the escalation-specific sentence.
+        if pending.kind in OFFER_KINDS or pending.payload.get("escalate_offered") is True:
+            # AC-1703's tail: `OFFER_KINDS` (`PENDING_KINDS - ROSTER_KINDS`) also holds
+            # `tier_pick`, `outstanding_scope`, `outstanding_detail` and
+            # `sales_report_detail` - the module's own comment on `ESCALATION_OFFER_
+            # KINDS` names these three as BUSINESS questions, never a handover, so
+            # declining one is not the customer refusing an escalation - it is "never
+            # mind", R22(a)'s own `offer_declined` registry copy ("Okay, noted."). A
+            # ROSTER kind's (`product_pick`, ...) own attached escalate offer reaches
+            # the very same copy through `escalate_offered`, since a roster kind is
+            # never IN `OFFER_KINDS` at all (roster kinds stay open across a pick,
+            # contract 36, and used to fall all the way through to "the generic rules
+            # settle it" below with no lane composed at all - silence, not an
+            # acknowledgement).
             trace.lane = "offer_declined"
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
