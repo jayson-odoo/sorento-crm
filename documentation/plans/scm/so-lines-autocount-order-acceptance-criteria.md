@@ -41,6 +41,8 @@ Plan: `PLAN-so-lines-autocount-order.md`. Each AC is one pytest / vitest / brows
 - AC-S2-6 Header primary is **Plan**, linking to
   `/project-sales/fulfilment-planning?orders=<so_number>`; hidden without
   `projects.projects.view`.
+- AC-S2-6b Plan renders only when the order's demand class is project (the board takes
+  project demand only).
 - AC-S2-7 Gear dropdown holds Edit then Delete; Edit opens the edit session.
 - AC-S2-8 In an edit session the header shows only Save / Cancel (unchanged); No. is a
   read-only value; a new session line shows `-`.

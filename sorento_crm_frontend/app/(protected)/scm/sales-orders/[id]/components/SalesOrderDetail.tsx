@@ -1500,9 +1500,11 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 // moved into the gear above, since a record already open has less need for
                 // a second, louder door into changing it. Absent - not disabled - without
                 // the permission the board's own page requires: a door that answers 403 is
-                // worse than no door.
+                // worse than no door. Also absent off a non-project demand class (AC-S2-6b):
+                // the fulfilment board only accepts project demand, so a retail order's Plan
+                // would open onto an empty board.
                 primary={
-                  canPlan ? (
+                  canPlan && so.demand_class === 'project' ? (
                     <Button asChild variant="primary" size="sm" className="gap-1.5">
                       <Link
                         href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
