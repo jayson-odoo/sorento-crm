@@ -16,6 +16,10 @@ vi.mock('../hooks/useAutocountPull', () => ({
   usePull: (...a: unknown[]) => usePull(...a),
   useDownloadPullXlsx: (...a: unknown[]) => useDownloadPullXlsx(...a),
   useConfirmPull: (...a: unknown[]) => useConfirmPull(...a),
+  // No-op here: this file mocks the whole hooks module and never wraps its renders in a
+  // `QueryClientProvider`. The rows-refresh behaviour itself (D1, small-fix track) has its
+  // own coverage, unmocked, in `AutocountPullReview.rowsRefresh.test.tsx`.
+  useRefreshRowsOnReview: vi.fn(),
 }));
 
 vi.mock('./PullChangesTab', () => ({ PullChangesTab: () => <div data-testid="changes-tab-body" /> }));

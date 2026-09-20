@@ -9,7 +9,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useConfirmPull, useDownloadPullXlsx, usePull } from '../hooks/useAutocountPull';
+import {
+  useConfirmPull,
+  useDownloadPullXlsx,
+  usePull,
+  useRefreshRowsOnReview,
+} from '../hooks/useAutocountPull';
 import { isCompareFullMatch } from '../types/compareMatch';
 import { PullChangesTab } from './PullChangesTab';
 import { PullExcelViewTab } from './PullExcelViewTab';
@@ -117,6 +122,10 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
   const { data: pull, isLoading } = usePull(jobId);
   const downloadMutation = useDownloadPullXlsx();
   const confirmMutation = useConfirmPull();
+  // Hooks stay above the early return below (rules of hooks) - this must run on every
+  // render, `building`/`previewing` included, so it sees the transition the instant it
+  // happens rather than only once the review UI itself mounts.
+  useRefreshRowsOnReview(jobId, pull?.phase);
 
   if (isLoading || !pull) {
     return (

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
@@ -14,7 +14,12 @@ import {
   startPull,
   startPullErrorMessage,
 } from '../services/autocountPullService';
-import type { AutocountPull, AutocountPullEntity, AutocountPullRowsQuery } from '../types/autocountPull.types';
+import type {
+  AutocountPull,
+  AutocountPullEntity,
+  AutocountPullPhase,
+  AutocountPullRowsQuery,
+} from '../types/autocountPull.types';
 
 /**
  * Starts (or, per the service's own reuse rule, re-attaches to) a pull. Success is the caller
@@ -80,6 +85,29 @@ export function usePull(jobId: string, enabled = true) {
     retry: 1,
     refetchInterval: pullRefetchInterval,
   });
+}
+
+/** D1 (small-fix track): the pull's captured rows live on `import_job_rows` like any other
+ *  importer's, so `PullChangesTab` reads them through the same shared `useImportJobRows` /
+ *  `import-job-rows` query key every job detail page uses - and that hook's `staleTime` (60s)
+ *  is common to every importer, not pull-specific. A rows fetch that ran while this pull was
+ *  still `building`/`previewing` (or any other mount of the same key inside that window - a
+ *  prior visit, a back/forward nav) can otherwise still be served once the pull reaches
+ *  `review`. Invalidating the moment `phase` reaches `review` or `confirmed` closes that gap
+ *  without touching the shared hook's `staleTime`. Fires once per DISTINCT phase value,
+ *  including the first one observed on mount - never again for a poll tick that reports the
+ *  same phase back. */
+export function useRefreshRowsOnReview(jobId: string, phase: AutocountPullPhase | undefined): void {
+  const queryClient = useQueryClient();
+  const lastPhaseRef = useRef<AutocountPullPhase | undefined>(undefined);
+
+  useEffect(() => {
+    if (!phase || phase === lastPhaseRef.current) return;
+    lastPhaseRef.current = phase;
+    if (phase === 'review' || phase === 'confirmed') {
+      queryClient.invalidateQueries({ queryKey: ['import-job-rows', jobId] });
+    }
+  }, [phase, jobId, queryClient]);
 }
 
 export function usePullRows(jobId: string, params: AutocountPullRowsQuery, enabled = true) {
