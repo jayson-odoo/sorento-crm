@@ -119,16 +119,10 @@ export interface TurnResponseBody {
   actions?: Record<string, unknown>[] | null;
 }
 
-/** One file `actions[].kind === 'send_attachments'` carries (backend
- * `app/services/chatbot/engine.py::_clean_attachments`): `{url, filename, mimeType,
- * attachmentType[, uploadedAt]}` and nothing else. */
-export interface TurnAttachment {
-  url: string;
-  filename: string;
-  mimeType: string;
-  attachmentType: string;
-  uploadedAt?: string | null;
-}
+// `TurnAttachment` moved to `@/components/chatbot/turnAttachments` (round 2) - the
+// chatbot console shares the identical `actions[].kind === 'send_attachments'` shape
+// off its own `ConsoleTurnResponse`, so the type lives with the shared extractor
+// rather than duplicated per screen.
 
 export interface ChatbotTurn {
   id: string;

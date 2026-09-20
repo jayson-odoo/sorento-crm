@@ -6,11 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { ChatMessageRow } from '../types/chatHistory.types';
 import type { ChatbotTurn } from '../types/chatbotTurn.types';
+import { turnAttachments } from '../turnPresentation';
 import { StateTracePanel } from './StateTracePanel';
-import { TurnAttachments } from './TurnAttachments';
 import { TurnPanel } from './TurnPanel';
 
 interface ChatTranscriptProps {
@@ -262,7 +263,11 @@ export function ChatTranscript({
                     one to read; the older raw state trace stays as the fallback for
                     messages that predate the turn engine, and goes when every message has
                     a turn (Phase 2). */}
-                {!outgoing && turn && <TurnAttachments turn={turn} />}
+                {!outgoing && turn && (
+                  <div className="max-w-[85%]">
+                    <TurnAttachments attachments={turnAttachments(turn)} />
+                  </div>
+                )}
                 {!outgoing &&
                   (turn ? (
                     <TurnPanel turn={turn} retryUnavailableReason={retryUnavailableReason} />

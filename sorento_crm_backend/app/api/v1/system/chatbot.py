@@ -553,6 +553,7 @@ def console_turn(
         media_text=result.media_text,
         media_error=result.media_error,
         prompt_version=result.prompt_version,
+        actions=result.actions,
     )
 
 

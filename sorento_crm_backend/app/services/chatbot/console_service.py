@@ -97,6 +97,9 @@ class ConsoleTurnResult:
         "media_error",
         # Item 6: the parser prompt version the turn ran, off the `understood` stage.
         "prompt_version",
+        # The turn's own raw `actions`, carried through unfiltered - see
+        # `ConsoleTurnResponse.actions`'s own docstring.
+        "actions",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -455,6 +458,7 @@ def run_console_turn(
         session_vars=_next_state(body),
         trace_summary=_trace_summary(db, body.get("turn_id")),
         prompt_version=_turn_prompt_version(db, body.get("turn_id")),
+        actions=body.get("actions"),
     )
 
 
