@@ -848,7 +848,7 @@ class TestD1FailedPreviewRowsAreVisible:
         per-row detail was captured for this job".
 
         NOT REPRODUCED: this test builds the exact same shape (a `ReferenceConflict`
-        from a product already linked under a different `source_ref`, the same message
+        from a product already linked to a different SOURCE SYSTEM, the same message
         format the report quoted - `_ingest_one`'s `except ReferenceConflict`, code
         "source_ref", message "source_ref: product_code=... is already linked to
         another source") through the REAL `preview_autocount_pull` task (`task_db`'s own
@@ -880,10 +880,11 @@ class TestD1FailedPreviewRowsAreVisible:
         _patch_foundryx(monkeypatch, fake)
         owner_id = _seed_permitted_user(db, "master_data.products.autocount_pull")
 
-        # A product already linked to a DIFFERENT source - the same shape the live
-        # report named ("product_code='ACC-SRT8001' is already linked to another
-        # source"): a new row for the same code, under a NEW source_ref, hits the
-        # adopt-by-code ladder's ReferenceConflict.
+        # A product already linked under a DIFFERENT source system - the same shape
+        # the live report named ("product_code='ACC-SRT8001' is already linked to
+        # another source"): a same-source-system mismatch is adopted by code and
+        # reported updated instead (code-wins, #1049), so this must be cross-source
+        # to still raise the adopt-by-code ladder's ReferenceConflict.
         category = ProductCategory(category_code=unique_code(MARKER), category_name="cat")
         uom = UnitOfMeasure(uom_code=unique_code(MARKER)[:20], uom_name="unit")
         db.add_all([category, uom])
@@ -900,7 +901,7 @@ class TestD1FailedPreviewRowsAreVisible:
             db.flush()
             refs.link(
                 entity_type="products", entity_id=str(existing.id),
-                source_ref=f"{MARKER}-OTHER-SOURCE-{i}",
+                source_ref=f"{MARKER}-OTHER-SOURCE-{i}", source_system="othersys",
             )
             conflict_rows.append(_canonical_row(conflicted_code))
         db.commit()
