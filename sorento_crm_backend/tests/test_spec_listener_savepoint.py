@@ -465,3 +465,51 @@ class TestListenerFiresOnlyAfterTheOutermostCommit:
         db.commit()
 
         assert calls == [[code]], "an ordinary top-level commit must still queue exactly one code"
+
+
+# --------------------------------------------------------------------------------- #
+# Coder-added (Part A, per the captain's brief): a later sibling's savepoint rollback
+# must not drop an earlier sibling's already-committed code - the shape
+# `MasterIngestService` produces for real, one savepoint per record in sequence.
+# --------------------------------------------------------------------------------- #
+class TestASiblingSavepointsRollbackDoesNotDropAnEarlierOnesCode:
+    def test_record_twos_rollback_leaves_record_ones_code_intact_for_the_outer_commit(
+        self, db, monkeypatch
+    ):
+        """Two sibling SAVEPOINTs directly under the same outer transaction (the shape
+        `MasterIngestService._ingest_one` produces, one per record): the first commits
+        its SAVEPOINT (its code must fold into the outer level and wait there), the
+        second's SAVEPOINT rolls back (its own code must be discarded, but must not
+        touch the first record's already-folded-up one). The outermost commit must
+        then fire with exactly the first record's code.
+        """
+        product_id_1, code_1 = _seed_product(db, description="Old widget one")
+        product_id_2, code_2 = _seed_product(db, description="Old widget two")
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr(listener, "rederive_codes", lambda codes: calls.append(sorted(codes)))
+
+        product_1 = db.get(Product, product_id_1)
+        with db.begin_nested():
+            product_1.description = "Record 1 - committed"
+
+        assert calls == [], "record 1's own savepoint release must not fire it either"
+
+        product_2 = db.get(Product, product_id_2)
+        try:
+            with db.begin_nested():
+                product_2.description = "Record 2 - about to roll back"
+                db.flush()  # force after_update to actually queue code_2 before the failure
+                raise RuntimeError("simulated record 2 failure")
+        except RuntimeError:
+            pass
+
+        assert calls == [], "nothing has reached the outermost commit yet"
+
+        db.commit()
+
+        assert calls == [[code_1]], (
+            "record 2's rollback must discard only its own code - record 1's code, "
+            "already folded up by its own savepoint's commit, must still reach the "
+            "outermost commit undisturbed"
+        )
