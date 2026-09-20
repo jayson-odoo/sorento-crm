@@ -1627,7 +1627,12 @@ export function OrderInquiriesClient() {
             swatchClass="bg-amber-500"
             selected={ackFilter === 'to_confirm'}
             disabled={false}
-            onClick={() => setAckFilter('to_confirm')}
+            // AC-CL-17: toggles off on a second press, the same as the three supply
+            // cards beside it (`setKindFilter` above) - the chip's own `x` already did
+            // this; the card itself never did.
+            onClick={() =>
+              setAckFilter((current) => (current === 'to_confirm' ? ACK_ANY : 'to_confirm'))
+            }
             testId="order-inquiry-strip-to-confirm"
           >
             <span
@@ -1827,7 +1832,11 @@ export function OrderInquiriesClient() {
           // the DataGrid's own row-level hook, not a per-cell wrapper (a
           // `display: contents` wrapper has no box, so `opacity-60` on it
           // never applies). Precedent: PlanRowDialog.tsx's rowClassName.
-          rowClassName={(row) => (row.redirected_to_pool ? 'opacity-60' : undefined)}
+          // AC-CL-2d: a row on a cancelled line reads muted the SAME way a used row
+          // does - one class, two reasons.
+          rowClassName={(row) =>
+            row.redirected_to_pool || row.line_cancelled ? 'opacity-60' : undefined
+          }
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">

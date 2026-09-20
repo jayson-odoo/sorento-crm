@@ -234,6 +234,8 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     // shipped 158 to BRW-IR closed and received on 19 Jan 2026, so a replan could not
     // carry this row forward. It keeps its OLD qty/date/link as history (`redirected_to_
     // pool: true`) and contributes nothing to any card; the fresh need is row-7 below.
+    // `PLAN-oi-cancelled-line-used-confirm.md`, AC-CL-2b: also `line_cancelled: true`, so
+    // this is the one fixture row that shows BOTH pills together.
     id: 'row-6',
     inquiry_no: 'OI-000477',
     so_date: '2025-11-20',
@@ -283,6 +285,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     core_sales_order_id: 'so-314593',
     is_adopted: true,
     redirected_to_pool: true,
+    line_cancelled: true,
   },
   {
     // The fresh Buy the redirect raised (S2, backend - shown here only as what row-6's

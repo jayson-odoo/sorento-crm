@@ -735,6 +735,14 @@ export function useOrderInquiryWorklistColumns({
           <span className="flex min-w-0 items-center gap-1 tabular-nums">
             {formatInquiryQty(row.original.qty)}
             <QtyAnnotationButton row={row.original} />
+            {/* PLAN-oi-cancelled-line-used-confirm.md (AC-CL-2): beside the `used`
+                pill above, never replacing it - a row can be both. A plain mark, not
+                a button: there is no note behind it the way `used` opens one. */}
+            {row.original.line_cancelled ? (
+              <WorklistPill testId={`qty-line-cancelled-${row.original.id}`}>
+                cancelled
+              </WorklistPill>
+            ) : null}
           </span>
         ),
       },

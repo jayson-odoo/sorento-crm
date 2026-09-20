@@ -429,6 +429,14 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * plan is the first writer of the column).
    */
   redirected_to_pool?: boolean;
+  /**
+   * PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true when the sales order line
+   * this row sits on has `line_status = cancelled`. Greyed the same way a used row is,
+   * with its own `cancelled` pill beside the quantity, and excluded from Buy only -
+   * Purchased/Incoming still count it when it holds a link (AC-CL-4). Absent or false
+   * on every row before this plan.
+   */
+  line_cancelled?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */
