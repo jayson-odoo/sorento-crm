@@ -2895,6 +2895,21 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
   }
 
   /**
+   * The list's OPEN expansion panel for one line, by the line's own item code rather than
+   * by its position among however many panels happen to be open (S4, #1076: the list order
+   * moved from product-first to sales-order-then-line-number, so an index into
+   * `findAllByRole` is no longer stable). The DataGrid renders an expanded row as the
+   * clicked row's `<tr>`'s own NEXT SIBLING (`DataGridTableBodyRowExpandded`), never nested
+   * inside it, so the panel is reached from the item code's row rather than containing it.
+   */
+  async function panelFor(itemCode: string): Promise<HTMLElement> {
+    const row = (await screen.findByText(itemCode)).closest('tr');
+    const panel = row?.nextElementSibling as HTMLElement | null;
+    if (!panel) throw new Error(`No expanded panel is open for ${itemCode}`);
+    return panel;
+  }
+
+  /**
    * B1 (code review round 3): "Undo all" used to loop `decide(key, null)`, each call reading
    * `draft` off the SAME stale closure - N batched calls each dropped only their own key and
    * the last write wins, so a second saved line was still reading Saved after Undo all said
@@ -2977,10 +2992,13 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
 
     // The coder's multi-open rework (8d7b06766): opening B never closes A any more, so
     // A's own rejected-and-reopened panel is still up - two "Save decision" buttons on
-    // screen, and B's is the second of them.
+    // screen. Found by B's OWN row rather than by index (S4, #1076): the list now sorts
+    // by sales order then AutoCount line number rather than by product, so which row -
+    // and therefore which "Save decision" button - comes first is no longer something
+    // this test may assume.
     fireEvent.click(await screen.findByText('WESERP20B'));
     fireEvent.click(
-      (await screen.findAllByRole('button', { name: 'Save decision' }))[1],
+      within(await panelFor('WESERP20B')).getByRole('button', { name: 'Save decision' }),
     );
     await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
 
