@@ -20,6 +20,19 @@ be a generic used-row builder). T3 reuses `test_order_inquiry_bundles.py::test_d
 own inline-TestClient pattern (route JSON, never the service directly - `response_model`
 silently drops an undeclared field). T5 is the new backfill callable the brief names:
 `app/services/oi_bundle_used_anchor_backfill.py::rebundle_rows_anchored_on_used_hosts`.
+
+SO314594 (prod, 21 Sep 2026), T6: `OrderInquiryWorklistService._anchor_headline_by_id`
+(`order_inquiry_worklist_service.py` ~1879) sums EVERY entry `links_for_rows` returns
+for the anchor row's own id, and `ProjectOrderInquiryService.links_for_rows` (same file,
+~4113) appends SYNTHETIC `kind="spo"` entries for a linked PO's own open SPO
+allocations of the same product (`_append_derived_spo_entries`, the "via PO" figure) -
+never a real `order_inquiry_links` row. A synthetic entry is the ONLY one carrying
+`"derived": True` (`links_for_rows`'s real entries carry `derived_po`, a different,
+unrelated flag - "this real SPO link names a PO the book itself sourced it from" -
+never the key `"derived"` at all). T6 seeds via `test_order_inquiry_kinds.py`'s
+fixture builders (through `test_order_inquiry_derived_spo.py`'s own `_po_linked_row`/
+`_spo`/`_supplier`, which already build exactly this "PO-linked row with an open
+same-product SPO allocation" shape) rather than the raw-SQL `_World` above.
 """
 from __future__ import annotations
 
@@ -31,6 +44,8 @@ import pytest
 from sqlalchemy import text
 
 from app.models.base import company_scope
+from app.models.project_so import IV_ORDER, INQUIRY_RAISED, OrderInquiryRow
+from app.services import project_seed_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from app.models.product_companion import (
@@ -39,6 +54,8 @@ from app.models.product_companion import (
 )
 
 from ._pg_fixture import blank_session
+from .test_order_inquiry_derived_spo import _po_linked_row, _spo, _supplier
+from .test_order_inquiry_kinds import _project, _sorento, _user
 
 MARKER = "ZZT-BUNHOST"
 SOON = date.today() + timedelta(days=30)
@@ -255,11 +272,12 @@ def _single_host_rule(world):
     return world.rule("CKSW015", ["CKS1050"], supplier=None, ratio="1")
 
 
-def _worklist_rows(world) -> list[dict]:
-    """T3's route call - copied from `test_order_inquiry_bundles.py::test_d7`'s own
+def _worklist_rows(db) -> list[dict]:
+    """T3/T6's route call - copied from `test_order_inquiry_bundles.py::test_d7`'s own
     inline TestClient pattern: `response_model` silently drops an undeclared field, so
     the anchor_headline reading has to be asserted through the ROUTE, never the service
-    return value directly."""
+    return value directly. Takes the raw session (both `world.db` and `dspo_world`'s own
+    `db` work the same way)."""
     from fastapi.testclient import TestClient
 
     from app.database import get_db
@@ -269,7 +287,7 @@ def _worklist_rows(world) -> list[dict]:
     from app.services.user_service import UserPermissionService
 
     actor = {"id": _uid(), "email": "zzt-bunhost@zzt.test"}
-    app.dependency_overrides[get_db] = lambda: world.db
+    app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: dict(actor)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
     app.dependency_overrides[apply_company_scope] = lambda: None
@@ -366,7 +384,7 @@ def test_t3_the_anchor_headline_is_not_the_used_rows_74_of_182(world):
     world.svc.derive_bundles(world.inquiry)
     world.db.commit()
 
-    rows = _worklist_rows(world)
+    rows = _worklist_rows(world.db)
     row = next(r for r in rows if r["id"] == companion.id)
 
     assert row["bundled_with"]["row_id"] == live_host.id, row["bundled_with"]
@@ -451,3 +469,89 @@ def test_t5_backfill_rebundles_rows_anchored_on_a_used_host(world):
 
     again = rebundle_rows_anchored_on_used_hosts(world.db)
     assert again == 0, "idempotent: nothing left anchored on a used host"
+
+
+# =============================================================================================
+# T6: the anchor headline sums real links only, never a synthetic derived-SPO entry
+# =============================================================================================
+
+
+@pytest.fixture()
+def dspo_world():
+    """`test_order_inquiry_derived_spo.py::world`'s own shape (company, raiser,
+    project, supplier), duplicated here under a different fixture name - this file's
+    own `world` fixture above already owns that name for the raw-SQL `_World` harness,
+    and the two shapes are not interchangeable."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        raiser = _user(db, f"{MARKER} raiser")
+        project = _project(db, company_id, raiser, f"{MARKER} project {_uid()[:8]}")
+        supplier = _supplier(db, company_id)
+        with company_scope(db, frozenset({company_id})):
+            yield db, company_id, project, supplier
+
+
+def test_t6_anchor_headline_excludes_a_derived_spo_entry(dspo_world):
+    """SO314594's own shape: a host row of 214, one REAL link of 182 to a PO, and that
+    PO carries an open SPO allocation of 100 for the same product (a SYNTHETIC `kind=
+    "spo", "derived": True` entry `_append_derived_spo_entries` appends, never a real
+    `order_inquiry_links` row). The companion is bundled to this host.
+
+    RED today: `_anchor_headline_by_id` sums every entry regardless of `derived`, so
+    the headline reads "282 of 214" (182 real + 100 derived) instead of "182 of 214".
+    The host row's own ordinary `linked_qty` (control) is real-links-only already and
+    must stay 182 - if a fix broke that instead of the headline, this pins the
+    difference.
+    """
+    db, company_id, project, supplier = dspo_world
+    product, po, host = _po_linked_row(
+        db,
+        company_id,
+        project,
+        supplier,
+        qty="214",
+        linked_qty="182",
+        po_number_suffix="ANCHOR",
+    )
+    _spo(
+        db,
+        company_id,
+        spo_number=f"ZZT-SPO-{_uid()[:6]}",
+        product_id=product.id,
+        from_po_number=po.po_number,
+        allocated_quantity=100,
+    )
+    companion = OrderInquiryRow(
+        id=_uid(),
+        company_id=company_id,
+        order_inquiry_id=host.order_inquiry_id,
+        item_code=f"{MARKER}-COMPANION",
+        qty=Decimal("214"),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        bundled_qty=Decimal("182"),
+        bundled_with_row_id=host.id,
+    )
+    db.add(companion)
+    db.flush()
+    db.commit()
+
+    rows = _worklist_rows(db)
+    host_row = next(r for r in rows if r["id"] == host.id)
+    companion_row = next(r for r in rows if r["id"] == companion.id)
+
+    assert companion_row["bundled_with"]["anchor_headline"] == "182 of 214", (
+        "today this sums the derived SPO's ~100 alongside the real 182, got "
+        f"{companion_row['bundled_with']['anchor_headline']!r}"
+    )
+    # NOTE (measured, not assumed): `_serialize`'s own `linked_qty` reads off the SAME
+    # `links[row.id]` list `_anchor_headline_by_id` does, with no `derived` filter of
+    # its own - so this is NOT a green control today, it fails the same way the
+    # headline does (both read 282, not 182). Left asserted (rather than dropped)
+    # because it states what the field OUGHT to read; see the handback note to the
+    # coordinator about widening the fix's scope.
+    assert host_row["linked_qty"] == "182", (
+        "the ordinary cell also sums the derived entry today, got "
+        f"{host_row['linked_qty']!r}"
+    )

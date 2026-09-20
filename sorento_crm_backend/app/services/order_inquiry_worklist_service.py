@@ -1887,10 +1887,19 @@ class OrderInquiryWorklistService:
         Keyed by row id, for every row that has at least one link of its own; a row
         with none is simply absent, matching the client's own "Not found (new order)"
         fallback for a host nobody has placed anything for yet.
+
+        SO314594 (prod): `links` also carries the SYNTHETIC `derived` entries
+        `_append_derived_spo_entries` appends for a linked PO's own open SPO
+        allocations - real coverage, but not a link on THIS row, so a host with one
+        182-qty PO link and a ~100-qty derived SPO entry must read "182 of 214", never
+        "282 of 214". Only real (non-derived) links count toward the headline; a row
+        left with none once the derived entries are excluded is absent, same as today.
         """
         result: Dict[str, str] = {}
         for row in rows:
-            row_links = links.get(row.id) or []
+            row_links = [
+                link for link in (links.get(row.id) or []) if not link.get("derived")
+            ]
             if not row_links:
                 continue
             linked_qty = sum((_dec(link["qty"]) for link in row_links), _ZERO)
@@ -1927,7 +1936,14 @@ class OrderInquiryWorklistService:
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
-        linked_qty = sum((_dec(link["qty"]) for link in row_links), _ZERO)
+        # SO314594: `linked_qty` is real coverage on THIS row - a synthetic derived-SPO
+        # entry (`_append_derived_spo_entries`) never wrote an `order_inquiry_links`
+        # row, so it stays out of the sum the same way `_anchor_headline_by_id` now
+        # excludes it; the full `row_links` (derived entries included) still goes out
+        # under `"links"` below for the chip that reads them.
+        linked_qty = sum(
+            (_dec(link["qty"]) for link in row_links if not link.get("derived")), _ZERO
+        )
         return {
             "id": row.id,
             "inquiry_no": row.inquiry_no,
