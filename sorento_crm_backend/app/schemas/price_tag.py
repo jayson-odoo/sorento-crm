@@ -145,6 +145,13 @@ class PriceTagRequestTagResponse(BaseModel):
     sell_price: Optional[float] = None
     #: r10 S6, AC-S6-7/S6-9.
     print_excluded: bool = False
+    #: r10 S8: set when master data moved under this tag's pin and the
+    #: change was applied by itself; cleared by Dismiss.
+    data_updated_at: Optional[datetime] = None
+    #: r10 S8: what that auto-update changed, old -> new per field.
+    data_update_changes: Optional[list["LineDataChange"]] = None
+    #: r10 S8: the "Before product update" version number Roll back restores.
+    data_update_version: Optional[int] = None
 
 
 class LinePartCandidateResponse(BaseModel):
@@ -1480,6 +1487,14 @@ class TagPinPayload(BaseModel):
 class TagPinResponse(BaseModel):
     tag_id: str
     pinned_at: Optional[datetime] = None
+
+
+class TagDismissResponse(BaseModel):
+    """r10 S8: the answer to `POST tags/{id}/dismiss` - nothing on the tag
+    moved (the new data is already pinned), so there is nothing to echo
+    beyond which tag it was."""
+
+    tag_id: str
 
 
 class RequestVersionSummary(BaseModel):

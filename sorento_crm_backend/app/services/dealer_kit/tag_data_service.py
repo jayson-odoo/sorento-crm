@@ -1091,7 +1091,128 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
     return None
 
 
-def resolve_request_line_data(db: Session, request) -> list[dict]:
+#: S8 (Q9 ruled, PLAN-price-tag-r10.md S8): the read seam applies a
+#: product-data change by itself in these statuses. A proof already out for
+#: review (`proof_ready` on) keeps today's flag-and-decide (Keep/Update).
+AUTO_UPDATE_STATUSES = {"designing", "changes_requested"}
+
+
+def _auto_update_default_doc() -> dict:
+    """A tag sheet nobody has drawn on yet, matching the designer's own
+    default (``IMPOSITION_PRESETS.auto``) - the same shape
+    ``price_tag_requests._default_tag_sheet_doc`` builds. Needed here too:
+    the auto-apply seam can write a version for a request that has never
+    been opened in the designer, so there may be no document to reuse.
+    """
+    return {
+        "kind": "tag_sheet",
+        "imposition": {
+            "preset": "auto",
+            "page_width_mm": 210,
+            "page_height_mm": 297,
+            "bleed_mm": 3,
+            "gap_mm": 2,
+        },
+        "sheets": [],
+    }
+
+
+def apply_auto_data_updates(db: Session, request, triples: list[tuple]) -> None:
+    """S8: re-pin every ``(tag, live_row, changes)`` in ``triples`` to its live
+    data. ``changes`` is the diff the CALLER already computed (the same list
+    that lands in the read response's ``data_changes``), reused rather than
+    recomputed, so what the person is told just happened and what gets
+    written to ``data_update_changes`` can never disagree.
+
+    The same steps a manual Update always took (D18): one "Before product
+    update" PageVersion snapshotting the pins being replaced, the re-pin
+    itself, then an "after" snapshot of the result - except this call covers
+    a whole SWEEP at once, so N tags changing between two polls fold into
+    ONE before-version and ONE after-version (AC-S8-3), not N of each.
+
+    Each re-pinned tag is stamped with the three S8 columns
+    (``data_updated_at``/``data_update_changes``/``data_update_version``) so
+    the rail's "updated" indicator can name the change and Roll back
+    (``POST versions/{n}/restore``) knows which version undoes it.
+    """
+    if not triples:
+        return
+    from sqlalchemy import func
+
+    from app.models.dealer_kit import Page, PageVersion
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    PriceTagRequestService.ensure_tag_sheet_page(db, request, None)
+    page = db.query(Page).filter(Page.id == request.page_id).first()
+
+    now = datetime.utcnow()
+    changes_by_tag = {tag.id: changes for tag, _live, changes in triples}
+
+    before_version_number = None
+    if page is not None:
+
+        def pins_snapshot() -> dict:
+            return {
+                t.id: t.pinned_tag_data
+                for line in request.lines
+                for t in (line.tags or [])
+                if t.pinned_tag_data is not None
+            }
+
+        latest = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version.desc())
+            .first()
+        )
+        doc = page.draft_doc or (latest.doc if latest else None) or _auto_update_default_doc()
+        fields = sorted({
+            change["label"] for changes in changes_by_tag.values() for change in changes
+        })
+        label_suffix = f": {', '.join(fields)}" if fields else ""
+        current_max = (
+            db.query(func.max(PageVersion.version))
+            .filter(PageVersion.page_id == page.id)
+            .scalar()
+        ) or 0
+        before_version = PageVersion(
+            page_id=page.id,
+            version=current_max + 1,
+            doc=doc,
+            commit_message=f"Before product update{label_suffix}",
+            created_by=None,
+            pinned_line_data=pins_snapshot(),
+        )
+        db.add(before_version)
+        db.flush()
+        before_version_number = before_version.version
+        page.draft_doc = None
+
+    for tag, live, _changes in triples:
+        tag.pinned_tag_data = pin_payload(live)
+        tag.pinned_at = now
+        tag.data_change_ack_hash = None
+        tag.data_updated_at = now
+        tag.data_update_changes = changes_by_tag.get(tag.id) or []
+        tag.data_update_version = before_version_number
+
+    if page is not None:
+        db.flush()
+        after_version = PageVersion(
+            page_id=page.id,
+            version=before_version_number + 1,
+            doc=doc,
+            commit_message=f"Product update{label_suffix}",
+            created_by=None,
+            pinned_line_data=pins_snapshot(),
+        )
+        db.add(after_version)
+        db.flush()
+
+
+def resolve_request_line_data(
+    db: Session, request, *, apply_updates: bool = False
+) -> list[dict]:
     """Display data for every TAG of a price tag request.
 
     The one resolver behind the designer's left panel, both design previews and
@@ -1112,6 +1233,16 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
 
     The marketing override wins over the pinned offer (D9/AC-S5-7) - it is a
     decision somebody made and logged a reason for.
+
+    ``apply_updates`` (S8): the read seam that WRITES an auto-apply for a
+    request in ``AUTO_UPDATE_STATUSES`` - opt-in, defaulting to False, so
+    every plain read (the design canvas, the print/export payload, a version
+    restore, a direct service call) keeps answering the PIN exactly as it
+    stood, and only the two callers that are genuinely a "poll"
+    (``GET data-changes`` and the list's touched-row sweep) pass it. Passing
+    it from every reader would have master data move a tag the instant
+    anyone merely opens the design, which is the r9 pin gate's entire point
+    to prevent.
     """
     from app.services.price_tag_request_service import PriceTagRequestService
 
@@ -1149,6 +1280,14 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
     # request - cached by promotion id, since several lines commonly share
     # the same promotion.
     promotion_live_by_id: dict = {}
+    # S8: every (tag, live, changes) this sweep found changed, for a request
+    # whose status auto-applies. Collected across the WHOLE walk and applied
+    # once at the end, so N tags changing between two polls fold into one
+    # before-version and one after-version (AC-S8-3), not one pair each.
+    auto_update = (
+        apply_updates and not terminal and request.status in AUTO_UPDATE_STATUSES
+    )
+    to_apply: list[tuple] = []
 
     for line_index, tag_index, line, tag in walk:
         pinned = tag.pinned_tag_data
@@ -1164,7 +1303,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
                     # The PIN AS READ, not as stored: the marketing override is
                     # applied to both sides, so the office's own decision is not
                     # read back to it as "master data moved" (S4).
-                    row["data_changes"] = diff_pin_against_live(
+                    changes = diff_pin_against_live(
                         db,
                         line,
                         row,
@@ -1172,6 +1311,9 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
                         tag.data_change_ack_hash,
                         promotion_live=promotion_live_by_id[line.promotion_id],
                     )
+                    row["data_changes"] = changes
+                    if auto_update and changes:
+                        to_apply.append((tag, live, changes))
                 else:
                     row["data_changes"] = []
             rows.append(row)
@@ -1182,6 +1324,9 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             if not terminal:
                 live["data_changes"] = []
             rows.append(live)
+
+    if to_apply:
+        apply_auto_data_updates(db, request, to_apply)
 
     return rows
 

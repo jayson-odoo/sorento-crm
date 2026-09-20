@@ -1699,6 +1699,11 @@ Marketing's own work is not part of the form's payload, so it is captured
             "list_price": (resolved or {}).get("list_price"),
             "sell_price": (resolved or {}).get("sell_price"),
             "print_excluded": bool(tag.print_excluded),
+            # r10 S8: set when the read seam auto-applied a product-data
+            # change; cleared by Dismiss.
+            "data_updated_at": tag.data_updated_at,
+            "data_update_changes": tag.data_update_changes,
+            "data_update_version": tag.data_update_version,
         }
 
     @staticmethod
