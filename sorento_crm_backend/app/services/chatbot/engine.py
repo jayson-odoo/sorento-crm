@@ -1945,9 +1945,17 @@ def _run_stages(  # noqa: PLR0915
                     # of it said the same thing twice - measured live,
                     # `test_outstanding_lane.py`'s own
                     # `test_report_skips_search_scope_header`.
+                    # `not envelope_missed(...)` alone is not "this turn found rows":
+                    # `turn/fetch.py::envelope_missed` returns False for a DENIED
+                    # envelope too (a whole-domain grant refusal, `envelope_of`'s own
+                    # `outcome == "access_denied"` arm), so a refusal was getting the
+                    # Customer/Product/Dates block prepended - and this header's third
+                    # fallback prints the gate row's own DB title, a name the contact
+                    # never typed, over a turn they were refused.
                     if (
                         len(fetch_plan.fetch) == 1
                         and envelopes
+                        and not envelopes[0].get("denied")
                         and not run_fetch_mod.envelope_missed(envelopes[0])
                         and not envelopes[0].get("own_header")
                     ):
@@ -2022,8 +2030,17 @@ def _run_stages(  # noqa: PLR0915
         # plan with nothing to fetch), so `answer is None` cannot tell "the bridge
         # already answered" from "nothing has answered yet" - `bridge_answered` is the
         # one flag that means the former (R3).
+        # `not sales_report_grant_refused` is SF-1's own rule, and this was the one
+        # section that did not carry it - unlike the resolver block, the bridge, the
+        # forced tier fetch and the FETCH/COMPOSE entry. An ungranted sales-report ask
+        # naming TWO customer words builds `narrow.decide`'s `must_narrow_one` roster
+        # from the contact's OWN typed words (the resolver never ran, so no DB names
+        # and no stamps), which set `answer` here and swallowed the refusal composed
+        # below entirely: the contact read "Which one do you mean?" over a question
+        # they were never entitled to ask. The grant comes before ANY question.
         if (
             not bridge_answered
+            and not sales_report_grant_refused
             and plan.ask is not None
             and completes_here
             and branch_kind in _ASK_BRANCH_KINDS
