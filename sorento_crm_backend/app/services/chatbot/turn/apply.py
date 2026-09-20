@@ -1011,7 +1011,15 @@ def _did_you_mean(
     if (candidates or {}).get(kind):
         return None
     row = policy.kind(kind)
-    if row is not None and not row.did_you_mean:
+    # AC-1691/AC-1692's own class, one level up: a kind with no registered policy
+    # row at all (a parser-only attribute marker such as "product_type" - never a
+    # `chatbot_entity_kinds` row, never resolvable by the resolver, never narrowed
+    # by `narrow.py`) has no roster to build a real did-you-mean OVER - minting a
+    # one-option pick that echoes the customer's own unplaced WORD back is the same
+    # bug a hyphenated code's own fold already fixed at the narrowing seam, on a
+    # kind this roster can never legitimately settle. Only a kind the SYSTEM
+    # recognises (a real row, `did_you_mean` true by default) gets this ask.
+    if row is None or not row.did_you_mean:
         return None
     options = [
         {
