@@ -1397,36 +1397,6 @@ def _run_stages(  # noqa: PLR0915
             raw=access,
         )
 
-        # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
-        # an ungranted contact's sales-report ask is refused HERE, before the resolver
-        # ever runs - `order_status` (the parser's own projected field) and this
-        # access read's granted reveals are both already known, the earliest single
-        # seam that has both. Mirrors main's own R-S3 check
-        # (`lanes.business.run_until_exit`'s bypass) for the same reason it exists
-        # there: the ambiguous-customer picker is an interactive, multi-choice prompt
-        # naming real customer matches, and showing it before refusing leaks that
-        # enumeration for nothing. `lanes.business.run_fetch`'s own
-        # `_SALES_REPORT_GRANT` check stays as the second line of defence, for a
-        # re-entry path that calls it directly.
-        from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
-
-        sales_report_grant_refused = (
-            jsc.js_string(verdict.get("order_status") or "").strip() == "sales_report"
-            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
-        )
-        if sales_report_grant_refused:
-            # Same event shape `lanes.business.run_fetch`'s own sales-report grant
-            # check emits (`__init__.py:1216`), so an operator reading the trace sees
-            # one denial shape regardless of which seam refused it.
-            turn_trace.add(
-                "domain_grant",
-                {
-                    "domain": verdict.get("domain_hint"),
-                    "skipped": "not_granted",
-                    "needs": _SALES_REPORT_GRANT,
-                },
-            )
-
         stage[0] = "routed"
         settings_row = switches
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
@@ -1441,26 +1411,62 @@ def _run_stages(  # noqa: PLR0915
         # "Reconciliation lives in E because it needs the resolver, but its RULE is
         # declared in C's policy and its outcome is written back into state' before F
         # runs"). Asked only when the turn named something to resolve.
+        parsed_output = turn_runtime.lane_parse_output(
+            verdict,
+            focus=state_out.focus,
+            pending=state_in.pending,
+            # An accepted escalation offer routes by the team the customer just
+            # picked (contract 108); a multi-team offer's own `pending.team` is
+            # null until one of its options is chosen.
+            accepted_team=plan.trace.team,
+            accepted_assignee=plan.trace.assignee,
+            prior_session=session_block,
+        )
         ctx = build_ctx(
             contact=_contact_block(envelope, known_phone),
             text=_tf_message(envelope),
             session=session_block,
-            parse={
-                "output": turn_runtime.lane_parse_output(
-                    verdict,
-                    focus=state_out.focus,
-                    pending=state_in.pending,
-                    # An accepted escalation offer routes by the team the customer just
-                    # picked (contract 108); a multi-team offer's own `pending.team` is
-                    # null until one of its options is chosen.
-                    accepted_team=plan.trace.team,
-                    prior_session=session_block,
-                ),
-                "_parser_raw": verdict,
-            },
+            parse={"output": parsed_output, "_parser_raw": verdict},
             access=access,
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
+
+        # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
+        # an ungranted contact's sales-report ask is refused HERE, before the resolver
+        # ever runs. Read off `parsed_output` (the PROJECTED `order_status` -
+        # `lane_parse_output` derives it from `focus.status` when this turn's own
+        # verdict names none, exactly the carried-offer/carried-focus shape SF-2's
+        # own tests pin), never the raw verdict alone: a position pick answering a
+        # `sales_report_detail` offer, or a plain message under a carried
+        # `focus.status == "sales_report"`, names no `order_status` of its own, and
+        # checking the raw verdict here let the R4 bridge's own pre-fetch miss arm
+        # (a resolver `not_found` exit needs no fetch to answer) compose a reply
+        # before `lanes.business.run_fetch`'s own second-line check ever ran -
+        # measured, `test_sales_report_grant_security.py::TestSF2...` (SF-2(i)/(ii)).
+        # Mirrors main's own R-S3 check (`lanes.business.run_until_exit`'s bypass) for
+        # the same reason it exists there: the ambiguous-customer picker is an
+        # interactive, multi-choice prompt naming real customer matches, and showing
+        # it before refusing leaks that enumeration for nothing. `lanes.business.
+        # run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
+        # defence, for a re-entry path that calls it directly.
+        from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
+
+        sales_report_grant_refused = (
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_report"
+            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+        )
+        if sales_report_grant_refused:
+            # Same event shape `lanes.business.run_fetch`'s own sales-report grant
+            # check emits (`__init__.py:1216`), so an operator reading the trace sees
+            # one denial shape regardless of which seam refused it.
+            turn_trace.add(
+                "domain_grant",
+                {
+                    "domain": verdict.get("domain_hint"),
+                    "skipped": "not_granted",
+                    "needs": _SALES_REPORT_GRANT,
+                },
+            )
 
         resolved_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
@@ -1707,6 +1713,23 @@ def _run_stages(  # noqa: PLR0915
             and completes_here
             and not sales_report_grant_refused
             and len(plan.domains) <= 1
+            # `narrow.decide`'s own asks (a tier pick with no candidate settled yet,
+            # an entity roster) still win over a resolver `not_found` exit while they
+            # are still live (R6 retires the now-shadowed ones) - measured live,
+            # `prod_sample/check-promotion-477071884...`: a contact entitled to three
+            # tiers resolves the PRODUCT to nothing (`not_found`) on the very turn
+            # `narrow_by_tier` already built its own `tier_pick` ask for, and the
+            # bridge answering here stole precedence from it, replacing the real
+            # three-tier picker with a bare "would you like to escalate" sentence.
+            and plan.ask is None
+            # An outstanding report's own REFINE re-run (`turn/apply.py::
+            # _answer_outstanding`) already built a real `FetchSpec` in the FIRST
+            # apply pass, independent of whatever the resolver says about a location
+            # or status WORD this turn named - that word's own "not_found" is not a
+            # verdict on the report itself. Measured live,
+            # `test_outstanding_lane.py::TestDateNarrowingUnderAnOpenOffer` and
+            # siblings: the bridge answering here skipped the report fetch entirely.
+            and not any(spec.filters.get("outstanding") for spec in plan.fetch)
             and isinstance(resolver_payload, dict)
             and resolver_payload.get("_exit_kind") == "not_found"
         ):
@@ -1848,6 +1871,15 @@ def _run_stages(  # noqa: PLR0915
                     answer is None
                     and len(fetch_plan.fetch) == 1
                     and envelopes
+                    and plan.ask is None
+                    # Same exclusion as the pre-fetch trigger above: an outstanding
+                    # report's own re-run is never a genuine absence just because a
+                    # location/status WORD this turn named did not resolve as an
+                    # entity - `_answered_unfiltered`'s own docstring names the report
+                    # as the one exception to "unfiltered means nothing to narrow by",
+                    # and the SAME carve-out has to hold here or the bridge answers a
+                    # generic escalate offer over a report that never even ran.
+                    and not any(spec.filters.get("outstanding") for spec in fetch_plan.fetch)
                     and isinstance(resolver_payload, dict)
                 ):
                     from app.services.chatbot import answer_bridge

@@ -33,6 +33,15 @@ class Trace:
     # exactly one reader, `engine.run_turn`, which hands it to `lane_parse_output` as
     # the head of the `routing.suggested_team` chain (contract 108).
     team: str | None = None
+    # AC-1700: the SPECIFIC member an accepted `member_offer` pick named
+    # (`option.payload.respond_user_id`), else `None` for a bare "yes" (round robin) or
+    # any other accepted offer kind. Lives beside `team` for the same reason and has the
+    # same one reader, `engine.run_turn`, which hands it to `lane_parse_output` as
+    # `ctx.parse.output.escalation.preferred_assignee_id` - `lanes/escalation.py::
+    # escalation_context`'s own read of that key, the SAME field the retired
+    # `head/output_exchange` used to populate, now written by the seam that replaced it
+    # instead of a second, parallel assignment mechanism.
+    assignee: str | None = None
     # What an ANSWERED outstanding question (contract 38, 39) decided: `{kind, scope,
     # detail}`. It lives beside `lane` and `team` for the same reason they do - the
     # Plan's own field set is the contract (AC-1528) - and it has exactly one reader,

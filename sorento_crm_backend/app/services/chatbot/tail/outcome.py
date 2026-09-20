@@ -201,6 +201,19 @@ def escalate_catalog(
         include_response = True
         is_escalate_offer = False  # -> cs-offer-gate FALSE -> straight to compile-state
 
+    elif kind == "offer_declined":
+        # R22(a), AC-1703's tail: a decline over a NON-escalation offer (a did-you-mean
+        # roster's own attached "would you like me to escalate" sentence, a detail
+        # offer) gets its own short acknowledgement, never the generic
+        # "Escalation declined." line - that sentence names an escalation nobody asked
+        # for; this is `escalation_declined`'s sibling for every other offer the bot
+        # makes (`lanes/business/__init__.py::_outstanding_offer_closed`'s own words,
+        # the old pipeline's copy of the same registry key).
+        response = copy.render("offer_declined")
+        manual_response = True
+        include_response = True
+        is_escalate_offer = False
+
     elif kind == "offer_hold":
         # The clarify ask was composed upstream by `offer-hold-reply` (same body as
         # `clarify-company-reply`); pulled by reference - no LLM, no roster refetch.

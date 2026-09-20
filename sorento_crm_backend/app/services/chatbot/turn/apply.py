@@ -261,6 +261,11 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # the escalation lane routes by - the picked option's when the roster offered
     # several, the offer's own when it was a single-team yes/no.
     trace.team = option_payload.get("team") or pending.team
+    # AC-1700: a POSITION over a `member_offer` names that SPECIFIC member
+    # (`option.payload.respond_user_id`) - a bare "yes" (no position picked, `picked`
+    # stays `None`) leaves `option_payload` empty and assigns nothing, which is what
+    # keeps the round-robin draw for that acceptance unchanged.
+    trace.assignee = option_payload.get("respond_user_id")
     return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
 
 
@@ -625,6 +630,16 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
             # cleared pending fell through to a fetch of the carried focus and the
             # customer who said "no thanks" got the order list again.
             trace.lane = "escalation_declined"
+            return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
+        if pending.payload.get("escalate_offered") is True:
+            # AC-1703's tail: Item 8's own mirror. A ROSTER kind (`product_pick`, ...)
+            # is never in `OFFER_KINDS` (`OFFER_KINDS = PENDING_KINDS - ROSTER_KINDS`),
+            # so a decline over its OWN attached escalate offer used to fall all the way
+            # through to "the generic rules settle it" below - the pending cleared and
+            # no lane composed anything, silence rather than an acknowledgement. This
+            # is `escalation_declined`'s sibling: R22(a)'s own "offer_declined" registry
+            # copy ("Okay, noted."), never the escalation-specific sentence.
+            trace.lane = "offer_declined"
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 

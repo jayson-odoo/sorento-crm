@@ -424,6 +424,7 @@ def lane_parse_output(
     pending: Pending | None = None,
     domain: str | None = None,
     accepted_team: str | None = None,
+    accepted_assignee: str | None = None,
     prior_session: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
@@ -500,6 +501,13 @@ def lane_parse_output(
     # `suggested_agent`'s default is applied once, upstream, by `with_routing_agent_default`
     # (finding 2b) - the access read and the lanes see the same value.
     out["routing"] = routing
+    # AC-1700: a POSITION over an accepted `member_offer` names that SPECIFIC member
+    # (`apply`'s `trace.assignee`) - `lanes/escalation.py::escalation_context` reads
+    # this exact key (`output.escalation.preferred_assignee_id`), the retired
+    # `head/output_exchange`'s own field, now written by the seam that replaced it.
+    # `None` (a bare "yes") leaves whatever the verdict already carried untouched.
+    if accepted_assignee:
+        out["escalation"] = {**(out.get("escalation") or {}), "preferred_assignee_id": accepted_assignee}
     return out
 
 

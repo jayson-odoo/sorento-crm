@@ -348,9 +348,18 @@ def _scoping_from(requires: list, *, gate: Any, resolved: Any) -> list:
 
 #: PLAN-chatbot-answer-half-reattach.md R4, AC-1710: the did-you-mean print cap's own
 #: fallback - a missing kind, or `roster_caps` itself missing/`None` entirely (a caller
-#: with no opinion on the column at all), same convention as `gate.py::_roster_cap`'s own
-#: `legacy_default` for the customer arm.
-_DYM_CAP_DEFAULT = 10
+#: with no opinion on the column at all). MEASURED (not the R3 `gate.py::_roster_cap`
+#: convention of 10): every existing caller of `dym_transform`/`run_miss_lane` - the
+#: still-live `complete_answer` path and `test_s6c_answer_lane.py`'s own byte-for-byte
+#: n8n replay corpus - passes no `roster_caps` at all and is graded against today's
+#: hard `_cap3` (3) print cut; widening the fallback to 10 changed the PRINTED
+#: candidate count for every one of those captures (measured: 11 divergences,
+#: `dym-transform` and `dym-transform-partial` fixtures). AC-1710's own red test
+#: (`test_a_missing_or_none_roster_caps_keeps_a_default`) only asserts `<= 10`, which
+#: 3 already satisfies - so the fallback stays 3, byte-identical to `_cap3`, and only a
+#: caller with a REAL opinion (the bridge, via the entity kind's own `roster_cap`
+#: column) ever prints more.
+_DYM_CAP_DEFAULT = 3
 
 
 def _dym_plan(

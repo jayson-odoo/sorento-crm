@@ -17,6 +17,7 @@ from app.services.chatbot.turn.plan import Plan
 _LANE_BRANCH: dict[str, str] = {
     "escalation": "out_of_scope",
     "escalation_declined": "escalation_declined",
+    "offer_declined": "offer_declined",
     "not_supported": "not_supported",
     "clarification": "clarify_menu",
     "casual": "low_signal",
