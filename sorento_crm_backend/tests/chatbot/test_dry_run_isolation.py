@@ -796,6 +796,12 @@ class TestWordsComposedAreWordsSent:
                 "ideate",
             )
         },
+        # R5 re-pin (tester 32, 20 Sep 2026): `offer_declined` (coder 28's R4 add-on B)
+        # - declining a did-you-mean roster's own attached escalate offer.
+        "offer_declined": (
+            "tests.chatbot.test_rearch_r4_answering_a_miss",
+            "TestAC1703EscalateOverARoster.test_a_decline_gets_the_offer_declined_copy_not_silence",
+        ),
         # The clarifier stamps its own `send_message` BEFORE the tail runs (the one
         # measured shape difference the plan records, D15).
         "low_signal": (

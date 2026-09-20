@@ -53,7 +53,18 @@ def test_every_vocabulary_is_non_empty_and_unique() -> None:
         assert len(set(values)) == len(values), f"{name} has a duplicate member"
 
 
-def test_branch_kinds_are_the_thirteen_the_router_decides() -> None:
+def test_branch_kinds_are_the_fourteen_the_router_decides() -> None:
+    """R5 re-pin (tester 32, 20 Sep 2026): `offer_declined` joins the router's own
+    thirteen. Measured against `origin/main`: `lanes/business/__init__.py::
+    _outstanding_offer_closed` already renders a DIFFERENT canned copy key
+    ("offer_declined") than a plain escalate-offer decline ("escalation_declined") for
+    exactly this case (a roster's own attached escalate offer declined) - main has no
+    `branch_kind` system of its own to carry that distinction, so the rearch engine's
+    branch_kind is the mechanical port of an ALREADY-real main distinction, not a new
+    one invented here. Kept as its own kind rather than folded into
+    `escalation_declined` because the two render different text for different
+    situations, which is the whole reason `branch_kind` exists (AC-1683 - it decides
+    what a fragment renders as)."""
     assert set(contracts.BRANCH_KINDS) == {
         "access_denied",
         "escalate_offer",
@@ -61,6 +72,7 @@ def test_branch_kinds_are_the_thirteen_the_router_decides() -> None:
         "ideate",
         "offer_hold",
         "escalation_declined",
+        "offer_declined",
         "check_promotion",
         "low_signal",
         "clarify_menu",

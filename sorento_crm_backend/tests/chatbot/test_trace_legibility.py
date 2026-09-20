@@ -208,5 +208,10 @@ class TestTraceLegibilityAcrossBranchKinds:
             "offer_hold",
             "stock_denied",
             "demand_qty",
+            # R5 re-pin (tester 32, 20 Sep 2026): `offer_declined` (coder 28's R4
+            # add-on B) has no scenario in THIS file - its own trace/action coverage is
+            # `test_rearch_r4_answering_a_miss.py::TestAC1703EscalateOverARoster::
+            # test_a_decline_gets_the_offer_declined_copy_not_silence`.
+            "offer_declined",
         }
         assert tested | retired_elsewhere_or_flagged == set(BRANCH_KINDS)
