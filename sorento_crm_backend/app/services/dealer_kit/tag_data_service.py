@@ -1293,6 +1293,15 @@ def resolve_request_line_data(
         pinned = tag.pinned_tag_data
         if pinned:
             row = _row_from_pin(db, line, tag, pinned, _tag_label(line_index, tag_index))
+            # AC-S8-13: "seen it or not", not "does a live diff exist right
+            # now" - the row carries the tag's OWN updated-at, read here at
+            # walk time, before this same sweep's own `apply_auto_data_
+            # updates` below might set it fresh. `_row_change_count` counts
+            # on this OR a non-empty live diff, so the poll that just
+            # auto-applied (diff still non-empty, `data_updated_at` not yet
+            # written) and every later poll before Dismiss (diff empty,
+            # `data_updated_at` already set) both count the tag.
+            row["data_updated_at"] = tag.data_updated_at
             if not terminal:
                 live = live_rows.get(tag.id)
                 if live is not None:
@@ -1321,6 +1330,7 @@ def resolve_request_line_data(
 
         live = live_rows.get(tag.id)
         if live is not None:
+            live["data_updated_at"] = tag.data_updated_at
             if not terminal:
                 live["data_changes"] = []
             rows.append(live)
@@ -1438,7 +1448,18 @@ def _row_change_count(row: dict) -> int:
     list). ``changes`` stays as a second key only because the unit tests in
     ``test_price_tag_data_change_cache.py`` exercise this function directly
     with that shorter, hand-written shape.
+
+    AC-S8-13: the badge is "seen it or not", not "does a live diff exist
+    right now" - a tag ``resolve_request_line_data`` just auto-applied
+    re-pins to the live value, so a diff computed on the NEXT poll is empty
+    even though nobody has looked at what changed yet. Counted instead on
+    ``data_updated_at`` (set on apply, cleared only by Dismiss) for that
+    case, OR the live diff for a flag-only status exactly as before - a row
+    with neither key (the hand-written shape above) falls through to the
+    plain diff check unchanged.
     """
+    if row.get("data_updated_at") is not None:
+        return 1
     return 1 if (row.get("changes") or row.get("data_changes")) else 0
 
 
