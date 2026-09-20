@@ -12,13 +12,14 @@ three different path roots (`/products/{id}/...`, `/product-combos/...`,
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.product_combo import (
     ProductComboCreate,
+    ProductComboImageOut,
     ProductComboListOut,
     ProductComboOut,
     ProductComboPartCreate,
@@ -92,6 +93,35 @@ def delete_product_combo(
 ):
     validate_uuid_path(combo_id, resource="Combo")
     ProductComboService(db).delete(combo_id)
+    return None
+
+
+@router.post("/product-combos/{combo_id}/image", response_model=ProductComboImageOut)
+def upload_product_combo_image(
+    combo_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission_with_api_key(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(combo_id, resource="Combo")
+    content = file.file.read()
+    return ProductComboService(db).upload_image(
+        combo_id,
+        content=content,
+        filename=file.filename or "combo-image",
+        content_type=file.content_type,
+        user_id=current_user.get("id"),
+    )
+
+
+@router.delete("/product-combos/{combo_id}/image", status_code=status.HTTP_204_NO_CONTENT)
+def delete_product_combo_image(
+    combo_id: str,
+    current_user: dict = Depends(require_permission_with_api_key(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(combo_id, resource="Combo")
+    ProductComboService(db).delete_image(combo_id)
     return None
 
 

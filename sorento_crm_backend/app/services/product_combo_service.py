@@ -17,17 +17,42 @@ The route contract (the frontend already mocks it, Phase 1, the header of
     PATCH  /api/v1/master-data/product-combo-parts/{id}      -> row
     DELETE /api/v1/master-data/product-combo-parts/{id}      -> 204
     GET    /api/v1/master-data/products/{id}/sold-with       -> {"data": [...]}
+    POST   /api/v1/master-data/product-combos/{id}/image      multipart -> {attachment_id, url}
+    DELETE /api/v1/master-data/product-combos/{id}/image      -> 204
+
+The image pair (S5, PLAN-price-tag-r10.md) is the combo's OWN cover picture -
+stored as an `attachments` row of type ``Combo Image``, linked to the HOST
+product through `product_attachments` (so it shows up in that product's
+gallery too, ranked last - `product_images.gallery_images`) and pointed at by
+`ProductCombo.image_attachment_id`. A second upload REPLACES the first (old
+row deleted, bytes swept); `DELETE` clears the pointer and deletes the row.
 """
 from __future__ import annotations
 
+import hashlib
+import uuid
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.models.product import Product
+from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
+from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException, handle_not_found
+from app.services.company_scope import get_company_scope, resolve_write_company_id
+from app.services.storage_router import (
+    cdn_base_url,
+    default_provider,
+    delete_object_best_effort,
+    get_backend,
+    resolve_signed_url,
+)
+
+#: Combo Image (migration ptag_0013_r10) - images only, 10 MB.
+COMBO_IMAGE_TYPE_CODE = "combo_image"
+MAX_COMBO_IMAGE_BYTES = 10 * 1024 * 1024
+STORAGE_ENTITY_TYPE = "product_combo_image"
 
 
 def _dimensions(product: Optional[Product]) -> Optional[str]:
@@ -60,13 +85,35 @@ def _serialize_part(part: ProductComboPart) -> Dict[str, Any]:
     }
 
 
-def _serialize(combo: ProductCombo) -> Dict[str, Any]:
+def _serialize_image(db: Session, combo: ProductCombo) -> Optional[Dict[str, Any]]:
+    """AC-S5-4: null with no picture, else `{attachment_id, url}` - a strict
+    signed URL, same rule every other tag/catalogue photo follows: absent
+    rather than a link that 403s."""
+    if not combo.image_attachment_id:
+        return None
+    attachment = (
+        db.query(Attachment)
+        .filter(Attachment.id == combo.image_attachment_id, Attachment.is_deleted.is_(False))
+        .first()
+    )
+    if attachment is None:
+        return None
+    url = resolve_signed_url(
+        attachment.file_path, provider=attachment.storage_provider, strict=True
+    )
+    if not url:
+        return None
+    return {"attachment_id": attachment.id, "url": url}
+
+
+def _serialize(combo: ProductCombo, db: Optional[Session] = None) -> Dict[str, Any]:
     return {
         "id": combo.id,
         "host_product_id": combo.host_product_id,
         "name": combo.name,
         "sort_order": combo.sort_order,
         "parts": [_serialize_part(part) for part in combo.parts],
+        "image": _serialize_image(db, combo) if db is not None else None,
         "created_at": combo.created_at,
         "updated_at": combo.updated_at,
     }
@@ -86,7 +133,7 @@ class ProductComboService:
             .order_by(ProductCombo.sort_order.asc(), ProductCombo.name.asc())
             .all()
         )
-        return [_serialize(combo) for combo in rows]
+        return [_serialize(combo, self.db) for combo in rows]
 
     def list_sold_with(self, part_product_id: str) -> List[Dict[str, Any]]:
         """Every host + combo naming this product, across hosts (AC-S1-6).
@@ -163,7 +210,7 @@ class ProductComboService:
         )
         self.db.add(combo)
         self.db.commit()
-        return _serialize(self._combo_or_404(combo.id))
+        return _serialize(self._combo_or_404(combo.id), self.db)
 
     def update(self, combo_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         combo = self._combo_or_404(combo_id)
@@ -190,7 +237,7 @@ class ProductComboService:
         if payload.get("sort_order") is not None:
             combo.sort_order = int(payload["sort_order"])
         self.db.commit()
-        return _serialize(self._combo_or_404(combo.id))
+        return _serialize(self._combo_or_404(combo.id), self.db)
 
     def delete(self, combo_id: str) -> None:
         """Hard delete, per the CRUD standard. The parts cascade with it; the
@@ -199,6 +246,148 @@ class ProductComboService:
         combo = self._combo_or_404(combo_id)
         self.db.delete(combo)
         self.db.commit()
+
+    # ------------------------------------------------------------------ image
+
+    def upload_image(
+        self,
+        combo_id: str,
+        *,
+        content: bytes,
+        filename: str,
+        content_type: Optional[str],
+        user_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """AC-S5-2/S5-3: put the picture in storage, link it to the HOST
+        product (so it shows in that product's own gallery too, ranked last),
+        and point the combo at it - replacing whatever it pointed at before.
+        """
+        combo = self._combo_or_404(combo_id)
+
+        if not content:
+            raise AppException(status_code=422, message="The uploaded file is empty.")
+        if len(content) > MAX_COMBO_IMAGE_BYTES:
+            raise AppException(
+                status_code=422,
+                message=f"Images must be under {MAX_COMBO_IMAGE_BYTES // (1024 * 1024)} MB.",
+            )
+        if not (content_type or "").lower().startswith("image/"):
+            raise AppException(status_code=422, message="Only image files are accepted.")
+
+        combo_type = self._combo_image_type()
+        attachment_id = str(uuid.uuid4())
+        safe_name = (filename or "combo-image").rsplit("/", 1)[-1][:255]
+        key = f"{STORAGE_ENTITY_TYPE}/{attachment_id}/{safe_name}"
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        stored_key, _url = backend.upload_file(
+            file_content=content, file_path=key, content_type=content_type
+        )
+
+        try:
+            attachment = Attachment(
+                id=attachment_id,
+                attachment_type_id=combo_type.id,
+                original_filename=safe_name,
+                stored_filename=safe_name,
+                file_path=cdn_base_url(provider, stored_key),
+                file_size_bytes=len(content),
+                mime_type=content_type,
+                file_hash=hashlib.sha256(content).hexdigest(),
+                entity_type=STORAGE_ENTITY_TYPE,
+                uploaded_by=user_id,
+                uploader_kind="user" if user_id else "system",
+                storage_provider=provider,
+                company_id=resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
+            )
+            self.db.add(attachment)
+            self.db.flush()
+
+            # AC-S5-2: linked to the HOST product, the same table every other
+            # product photo lives in - `gallery_images` already ranks a Combo
+            # Image last (AC-S5-11), so the combo's own picture shows up in
+            # the host's gallery too, just never leading it by accident.
+            self.db.add(
+                ProductAttachment(
+                    id=str(uuid.uuid4()),
+                    product_id=combo.host_product_id,
+                    attachment_id=attachment.id,
+                    is_primary=False,
+                    access_levels=["dealer", "end_user"],
+                    company_id=resolve_write_company_id(
+                        get_company_scope(self.db), ambiguous=None
+                    ),
+                )
+            )
+
+            # AC-S5-3: a second upload replaces the first - old row deleted,
+            # its bytes swept, so a combo never accumulates orphaned pictures.
+            previous_attachment_id = combo.image_attachment_id
+            combo.image_attachment_id = attachment.id
+            self.db.flush()
+            if previous_attachment_id and previous_attachment_id != attachment.id:
+                self._delete_attachment(previous_attachment_id)
+
+            self.db.commit()
+        except Exception:
+            delete_object_best_effort(provider, stored_key)
+            raise
+
+        return _serialize_image(self.db, self._combo_or_404(combo.id))
+
+    def delete_image(self, combo_id: str) -> None:
+        """AC-S5-3: clears the pointer and deletes the attachment row - the
+        picture is the combo's own, not shared with anything that should
+        survive it."""
+        combo = self._combo_or_404(combo_id)
+        attachment_id = combo.image_attachment_id
+        combo.image_attachment_id = None
+        self.db.flush()
+        if attachment_id:
+            self._delete_attachment(attachment_id)
+        self.db.commit()
+
+    def _combo_image_type(self) -> AttachmentType:
+        """The `Combo Image` type row, seeded idempotently by the migration in
+        production - get-or-create here too, the same shape
+        `test_dealer_kit_product_images.py`'s own `_typed_image` helper
+        follows, since a test's blank schema never ran the migration's data
+        step."""
+        row = (
+            self.db.query(AttachmentType)
+            .filter(AttachmentType.code == COMBO_IMAGE_TYPE_CODE)
+            .first()
+        )
+        if row is not None:
+            return row
+        row = AttachmentType(
+            id=str(uuid.uuid4()),
+            code=COMBO_IMAGE_TYPE_CODE,
+            type_name="Combo Image",
+            allowed_extensions="jpg,jpeg,png,webp",
+            max_file_size_mb=MAX_COMBO_IMAGE_BYTES // (1024 * 1024),
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def _delete_attachment(self, attachment_id: str) -> None:
+        """Hard delete: the row, its product link, and its stored bytes."""
+        from app.services.storage_router import extract_key
+
+        attachment = self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        if attachment is None:
+            return
+        self.db.query(ProductAttachment).filter(
+            ProductAttachment.attachment_id == attachment_id
+        ).delete(synchronize_session=False)
+        provider = attachment.storage_provider
+        key = extract_key(attachment.file_path)
+        self.db.delete(attachment)
+        self.db.flush()
+        if key:
+            delete_object_best_effort(provider, key)
 
     # ------------------------------------------------------------------ parts
 

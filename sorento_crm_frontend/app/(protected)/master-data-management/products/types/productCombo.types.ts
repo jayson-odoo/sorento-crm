@@ -28,6 +28,12 @@ export interface ProductComboPartRow {
   sort_order: number;
 }
 
+/** The combo's own cover picture (S5), null with none uploaded yet. */
+export interface ProductComboImage {
+  attachment_id: string;
+  url: string;
+}
+
 export interface ProductComboRow {
   id: string;
   host_product_id: string;
@@ -35,6 +41,9 @@ export interface ProductComboRow {
   name: string;
   sort_order: number;
   parts: ProductComboPartRow[];
+  /** Optional so an older fixture/mock omitting it still type-checks;
+   *  the backend always sends the key (null with no picture). */
+  image?: ProductComboImage | null;
   created_at: string;
   updated_at: string;
 }

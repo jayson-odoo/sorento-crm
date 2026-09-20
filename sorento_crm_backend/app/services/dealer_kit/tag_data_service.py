@@ -941,6 +941,33 @@ def _tag_sell_price_basis(
     return cache[key]
 
 
+def _combo_lead_image(db: Session, line, images: list[dict]) -> list[dict]:
+    """AC-S5-6: when the line's combo names a picture, that photo leads the
+    tag's image list with `is_primary` forced true, followed by the ordinary
+    gallery - the SAME photo `gallery_images` already returns (it ranks a
+    Combo Image last, AC-S5-11), just reordered to the front for lines drawn
+    through THIS combo. A line naming a combo whose image was deleted (the
+    migration's FK is `ON DELETE SET NULL`) or whose picture the viewer
+    cannot see falls straight back to the plain gallery order (AC-S5-9).
+    """
+    combo_id = getattr(line, "combo_id", None)
+    if not combo_id:
+        return images
+    from app.models.product_combo import ProductCombo
+
+    combo = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
+    if combo is None or not combo.image_attachment_id:
+        return images
+    lead = next(
+        (img for img in images if img.get("attachment_id") == combo.image_attachment_id),
+        None,
+    )
+    if lead is None:
+        return images
+    rest = [img for img in images if img is not lead]
+    return [{**lead, "is_primary": True}, *rest]
+
+
 def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict]:
     """The line's own product or set, resolved ONCE for all of its tags.
 
@@ -982,7 +1009,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "dimensions": data["dimensions"],
             "spec_lines_text": "\n".join(data["spec_lines"]),
             "specs": data["specs"],
-            "images": data["images"],
+            "images": _combo_lead_image(db, line, data["images"]),
             "barcode": data["barcode"],
             "price_tag_description": data["price_tag_description"],
             "set_members": "",
@@ -1117,10 +1144,14 @@ def resolve_version_line_data(db: Session, request, pinned_line_data: dict) -> l
 def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     """The pin, as the resolver's own row shape.
 
-    Four things are read fresh rather than from the pin: the photo URLs (a
-    signed link expires within the hour), the marketing override (a decision
-    that must survive whatever the pin says), the tag's quantity, and the
-    label, which is a POSITION - deleting the line above must renumber it.
+    Five things are read fresh rather than from the pin: the photo URLs (a
+    signed link expires within the hour), WHICH photo leads (AC-S5-10: a
+    combo's own cover picture is a catalogue fact, not a product fact the
+    review gate is meant to freeze - a marketing user who swaps it must see
+    the new cover on a request already pinned, the same reasoning that keeps
+    the URLs themselves live), the marketing override (a decision that must
+    survive whatever the pin says), the tag's quantity, and the label, which
+    is a POSITION - deleting the line above must renumber it.
     """
     from app.services.dealer_kit.product_images import resign_images
 
@@ -1128,7 +1159,7 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     row["tag_id"] = tag.id
     row["line_id"] = line.id
     row["tag_label"] = tag_label
-    row["images"] = resign_images(db, pinned.get("images") or [])
+    row["images"] = _combo_lead_image(db, line, resign_images(db, pinned.get("images") or []))
     # D7 gave every PART the host's own photos, and a part's signed link dies
     # on exactly the same hour. Re-signed here, at the one seam both readers
     # go through (`resolve_request_line_data` -> the export media map and
@@ -1250,9 +1281,15 @@ def data_hash(row: dict) -> str:
             "price_tag_description",
         )
     }
-    subject["images"] = sorted(
-        image.get("attachment_id") for image in row.get("images") or []
-    )
+    # AC-S5-10: WHICH photo leads (`is_primary`) is part of what prints - a
+    # combo's picture swapping the lead (the designer's product-image slot
+    # draws `images[0]`) must move the hash even when the underlying set of
+    # attachment ids is unchanged, so order and `is_primary` both count, not
+    # just membership.
+    subject["images"] = [
+        {"attachment_id": image.get("attachment_id"), "is_primary": bool(image.get("is_primary"))}
+        for image in row.get("images") or []
+    ]
     return hashlib.sha256(
         json.dumps(subject, sort_keys=True, default=str).encode()
     ).hexdigest()

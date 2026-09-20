@@ -68,12 +68,23 @@
  *
  * A product named as a host or a part of a combo is RESTRICT on both FKs, so
  * deleting it is refused through the existing product-delete flow, not here.
+ *
+ * ── S5: the combo's own cover picture (PLAN-price-tag-r10.md) ──────────────
+ *
+ *  POST   /api/v1/master-data/product-combos/{combo_id}/image   multipart
+ *    -> ProductComboImage, images only, 10 MB cap. A second upload replaces
+ *    the first (the old attachment is deleted server-side, not orphaned).
+ *
+ *  DELETE /api/v1/master-data/product-combos/{combo_id}/image -> 204
+ *    Clears the picture. Immediate - not a deferred action (the combo itself
+ *    still is); AC-S5-5 gives the block its own Clear button, no confirm.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
   ProductComboCreate,
+  ProductComboImage,
   ProductComboPartCreate,
   ProductComboPartRow,
   ProductComboPartUpdate,
@@ -164,4 +175,28 @@ export async function deleteProductCombo(comboId: string): Promise<void> {
 export async function deleteProductComboPart(partId: string): Promise<void> {
   const res = await apiFetch(`${PARTS}/${encodeURIComponent(partId)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to remove the part'));
+}
+
+/** AC-S5-2/S5-3: upload or replace the combo's own cover picture. */
+export async function uploadProductComboImage(
+  comboId: string,
+  file: File,
+): Promise<ProductComboImage> {
+  const form = new FormData();
+  form.append('file', file);
+  // No Content-Type header: the browser sets the multipart boundary itself.
+  const res = await apiFetch(`${COMBOS}/${encodeURIComponent(comboId)}/image`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to upload the image'));
+  return (await res.json()) as ProductComboImage;
+}
+
+/** AC-S5-3: clear the combo's cover picture - immediate, not deferred. */
+export async function deleteProductComboImage(comboId: string): Promise<void> {
+  const res = await apiFetch(`${COMBOS}/${encodeURIComponent(comboId)}/image`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to clear the image'));
 }
