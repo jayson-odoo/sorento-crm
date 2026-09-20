@@ -516,3 +516,38 @@ class TestASiblingSavepointsRollbackDoesNotDropAnEarlierOnesCode:
             "already folded up by its own savepoint's commit, must still reach the "
             "outermost commit undisturbed"
         )
+
+
+# --------------------------------------------------------------------------------- #
+# Coder-added (N1 correction, opus review, fix round 3): an orphan bucket - one keyed
+# under a `SessionTransaction` no later commit will ever resolve to again, left behind
+# by a session path that closed a transaction level some other way (no matching
+# commit/rollback at that level) - must be swept off `session.info` on the next
+# outermost commit, but never fired: it belongs to a level that ended without its own
+# commit, so whatever it names was never made durable.
+# --------------------------------------------------------------------------------- #
+class TestOrphanBucketIsSweptAndDropped:
+    def test_an_orphan_bucket_is_dropped_not_rederived(self, db, monkeypatch):
+        product_id, code = _seed_product(db, description="Old widget description")
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr(listener, "rederive_codes", lambda codes: calls.append(sorted(codes)))
+
+        # A sentinel key - anything that is not whatever `session.get_nested_transaction()
+        # or session.get_transaction()` will resolve to at the next commit - stands in
+        # for a transaction level that closed some other way, without its own commit.
+        sentinel = object()
+        db.info.setdefault(listener._PENDING_KEY, {})[sentinel] = {"ORPHAN-1"}
+
+        product = db.get(Product, product_id)
+        product.description = "Changed for real, at the outermost level"
+        db.commit()
+
+        assert calls == [[code]], (
+            "the real outermost commit must still fire for its own code - "
+            f"ORPHAN-1 must never appear: {calls}"
+        )
+        assert listener._PENDING_KEY not in db.info, (
+            "the orphan bucket must be swept off session.info even though it was "
+            "never fired"
+        )

@@ -231,22 +231,16 @@ def register_product_spec_listeners() -> None:
                 buckets.setdefault(transaction.parent, set()).update(codes)
             return
         # The outermost commit (or no active transaction to fold into at all): pop
-        # `_PENDING_KEY` UNCONDITIONALLY, before checking whether this transaction's own
-        # bucket had any codes. A session path that closes a transaction level some
-        # other way - without a matching commit/rollback firing at that level - can
-        # leave an ORPHAN bucket keyed under a `SessionTransaction` no later commit will
-        # ever resolve to again; returning early here on "this transaction had no codes"
-        # (N1, opus review, fix round 3) left those buckets, and the whole pending-key
-        # dict holding them, in `session.info` for the rest of the session's life.
-        # Everything else still pending at this point - this transaction's own codes,
-        # plus any such orphans - is folded in before the sweep.
-        remaining = session.info.pop(_PENDING_KEY, None) or {}
-        all_codes = set(codes or [])
-        for leftover in remaining.values():
-            all_codes.update(leftover)
-        if not all_codes:
+        # `_PENDING_KEY` UNCONDITIONALLY, before checking whether THIS transaction's own
+        # bucket had any codes - this sweeps this level AND any ORPHAN bucket a session
+        # path that closed a transaction level some other way (no matching commit/
+        # rollback at that level) may have left behind. An orphan is DROPPED, never
+        # fired: it belongs to a level that ended without its own commit, so whatever it
+        # would re-derive was never made durable (N1, opus review, fix round 3).
+        session.info.pop(_PENDING_KEY, None)
+        if not codes:
             return
-        rederive_codes(all_codes)
+        rederive_codes(codes)
 
     @event.listens_for(Session, "after_rollback")
     def _on_rollback(session):  # noqa: ANN001
