@@ -58,6 +58,13 @@ class ProductCombo(Base):
     )
     name = Column(String(100), nullable=False)
     sort_order = Column(Integer, nullable=False, server_default="0")
+    # PLAN-price-tag-r10.md S5: the package's own picture, separate from the
+    # host product's gallery. SET NULL, not RESTRICT: deleting the attachment
+    # (a replace, or Resource Management) must clear the pointer rather than
+    # block on it.
+    image_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(

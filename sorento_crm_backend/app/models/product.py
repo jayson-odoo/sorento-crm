@@ -193,6 +193,10 @@ class Product(Base, CompanyScopedMixin):
     # `bar_code` overwrites it only when the incoming value is non-empty - see
     # `master_ingest_service._product_columns`.
     barcode = Column(String(100), nullable=True)
+    # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag, never
+    # touched by the AutoCount masters push (`remark` above is the same shape
+    # for AutoCount's own text - the two never overwrite each other).
+    price_tag_description = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
     cost_price = Column(Numeric(12, 2), nullable=True)
     invoice_price = Column(Numeric(12, 2), nullable=True)
