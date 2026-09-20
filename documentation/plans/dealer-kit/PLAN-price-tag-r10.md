@@ -7,7 +7,7 @@ cut", "1. combo image 2. description 3. templates".
 UAC: `price-tag-r10-acceptance-criteria.md` (alongside).
 Measured against: `origin/main 0fb5ec7d1`, prod copy `sorento_ai_automation_0918_1900`.
 Lane: `feat/price-tag-r10` off `origin/main 86547d074`, worktree `.claude/worktrees/price-tag-r10`, one migration
-`ptag_0013_r10` chained on `ptag_0012_data_change_cache`.
+`ptag_0013_r10` chained on the single alembic head at the pre-PR gate (`522_oi_cancelled_used_confirm` on 20 Sep; `./scripts/alembic-reparent.sh` re-parents it). Private pytest DB `sorento_ptr10_ci` (clone of sorento_buc_ci, migrated to head).
 
 ## The seven findings and what exists today
 
