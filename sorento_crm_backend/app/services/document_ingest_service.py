@@ -953,7 +953,7 @@ class DocumentIngestService(MasterRefResolver):
         }
         values["status"] = status
         for column, ref_field, model, code_field, name_field in spec.header_refs:
-            values[column] = self._resolve_master(
+            resolved = self._resolve_master(
                 model=model,
                 ref_field=ref_field,
                 ref=getattr(payload, ref_field),
@@ -962,6 +962,26 @@ class DocumentIngestService(MasterRefResolver):
                 name=getattr(payload, name_field) if name_field else None,
                 warnings=warnings,
             )
+            # Seam 1b (PLAN-demand-class-agent-arrival.md): `sales_agent_id`
+            # only, and only when this push named NO agent at all - measured
+            # on the 0918 prod copy, of 2031 sales-order pushes an agent
+            # followed by a null agent happened 0 times, a null then an agent
+            # 5 times, agent A changed to a DIFFERENT agent B 7 times, so
+            # nothing legitimate relies on an agent-less push blanking a
+            # stored one. Dropping the key here (rather than writing `None`)
+            # keeps it off the setattr loop below AND off `_diff`'s dry-run
+            # report, so an agent-less re-push neither blanks the column nor
+            # is reported as changing it. A push naming a DIFFERENT agent
+            # still overwrites it (A -> B unchanged) and still does not
+            # re-decide the demand class, since `header.sales_agent_id`
+            # stays non-empty for that push.
+            if (
+                column == "sales_agent_id"
+                and resolved is None
+                and getattr(header, "sales_agent_id", None)
+            ):
+                continue
+            values[column] = resolved
         # `debtor_code` (v2, D9): written from `customer_code` whenever it is
         # SENT, independent of whether the customer itself resolved - an
         # order whose debtor Sorento does not (yet) hold still carries the
@@ -1063,19 +1083,37 @@ class DocumentIngestService(MasterRefResolver):
         A stored `demand_class` is a settled fact - possibly set by CS by hand,
         possibly by an order_type this same ladder decided on an earlier push -
         and this ingest never overwrites or blanks it, whatever a fresh run of
-        the ladder would say today (AC-V2-6). Only when NOTHING is stored yet
-        does `classify_document` run at all.
+        the ladder would say today (AC-V2-6), WITH ONE EXCEPTION
+        (PLAN-demand-class-agent-arrival.md): AutoCount pushes a new sales
+        order before its agent is filled in - SO421912 first pushed with
+        `agent_code: null` on 17 Sep 2026, then a second push 78 minutes later
+        carried the agent. When the stored header still has no agent AND this
+        push resolves one whose demand class is known, the ladder is run
+        again exactly as for a new document (so a stored or stated order type
+        still outranks the agent) and the answer, if any, is written - it is
+        never blanked. That includes a class set by hand while the order had
+        no agent yet: it is re-decided, once, the first time an agent with a
+        demand class of its own arrives. A stored class with a stored agent,
+        or an arriving agent with no demand class, is still settled and
+        returns immediately - and `_header_values`' own fill-only guard on
+        `sales_agent_id` (Seam 1b) is what keeps an agent-less re-push from
+        ever blanking a stored agent and re-arming this exception by
+        accident.
         """
         stored_order_type = getattr(header, "order_type", None)
         stated_order_type = payload.order_type
         if not stored_order_type and stated_order_type:
             values["order_type"] = stated_order_type
 
-        if getattr(header, "demand_class", None):
-            return
-
         agent_id = values.get("sales_agent_id")
         agent_demand_class = self._agent_demand_class(agent_id)
+        stored_class = getattr(header, "demand_class", None)
+        agent_arriving = bool(
+            stored_class and not getattr(header, "sales_agent_id", None) and agent_demand_class
+        )
+        if stored_class and not agent_arriving:
+            return
+
         debtor_code = customer_code or getattr(header, "debtor_code", None)
         customer_id = values.get("customer_id")
         if not debtor_code and customer_id:
