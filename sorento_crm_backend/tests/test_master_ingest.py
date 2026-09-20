@@ -381,6 +381,57 @@ class TestBatchSummary:
         assert result.records == []
 
 
+class TestOnProgressCallback:
+    """B3 (small-fix track, PLAN-autocount-pull-review.md): a full-size products preview
+    used to sit 4-5 minutes on a bare spinner - `on_progress` is what the pull tasks use
+    to publish `import_jobs.processed_rows`/`total_rows` while a dry run is still running.
+    """
+
+    def test_reports_every_n_records_and_a_final_call_with_monotonic_counts(self, svc, monkeypatch):
+        monkeypatch.setattr(MasterIngestService, "PROGRESS_REPORT_EVERY", 3)
+        calls: list[tuple[int, int]] = []
+        batch = [_wh(code=f"ZZT-PROG-{i}", ref=f"DK-PROG-{i}") for i in range(7)]
+
+        svc.ingest("warehouses", batch, on_progress=lambda processed, total: calls.append((processed, total)))
+
+        assert calls == [(3, 7), (6, 7), (7, 7)]
+        assert [c[0] for c in calls] == sorted(c[0] for c in calls), "must be monotonically increasing"
+
+    def test_a_batch_shorter_than_the_report_interval_still_gets_one_final_call(self, svc):
+        calls: list[tuple[int, int]] = []
+        batch = [_wh(code=f"ZZT-PROGSHORT-{i}", ref=f"DK-PROGSHORT-{i}") for i in range(2)]
+
+        svc.ingest("warehouses", batch, on_progress=lambda processed, total: calls.append((processed, total)))
+
+        assert calls == [(2, 2)]
+
+    def test_dry_run_still_reports_progress_even_though_it_rolls_back(self, svc):
+        calls: list[tuple[int, int]] = []
+        batch = [_wh(code=f"ZZT-PROGDRY-{i}", ref=f"DK-PROGDRY-{i}") for i in range(2)]
+
+        svc.ingest(
+            "warehouses", batch, dry_run=True,
+            on_progress=lambda processed, total: calls.append((processed, total)),
+        )
+
+        assert calls == [(2, 2)]
+
+    def test_an_empty_batch_with_a_callback_reports_nothing_to_do(self, svc):
+        calls: list[tuple[int, int]] = []
+        svc.ingest("warehouses", [], on_progress=lambda processed, total: calls.append((processed, total)))
+        assert calls == [(0, 0)]
+
+    def test_a_callback_that_raises_never_breaks_the_ingest(self, svc):
+        batch = [_wh(code="ZZT-PROGERR-1", ref="DK-PROGERR-1")]
+
+        def _boom(processed, total):
+            raise RuntimeError("boom")
+
+        result = svc.ingest("warehouses", batch, on_progress=_boom)
+
+        assert result.records[0].outcome in (IngestOutcome.CREATED, IngestOutcome.UPDATED)
+
+
 class TestCategoriesAndUnitsOfMeasure:
     """Both exist so products can be ingested at all.
 

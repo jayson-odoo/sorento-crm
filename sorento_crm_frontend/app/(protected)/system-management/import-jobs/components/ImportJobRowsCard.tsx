@@ -285,18 +285,25 @@ export function ImportJobRowsCard({
                 size="sm"
               />
             </div>
-            <div className="w-full sm:w-64">
-              <SearchableSelect
-                value={codeFilter}
-                onChange={(value) => {
-                  onChangeCode?.(value);
-                  resetPage();
-                }}
-                options={codeOptions}
-                placeholder="All reasons"
-                size="sm"
-              />
-            </div>
+            {/* E1 (small-fix track, fix round 2): options come from `result.breakdown` -
+                a caller with no breakdown (an AutoCount pull's Changes tab) would offer
+                only "All reasons" with nothing to pick, so the select is skipped rather
+                than shown inert. A generic job whose breakdown happens to have no reasons
+                loses the same empty select, which is fine. */}
+            {codeOptions.length > 1 && (
+              <div className="w-full sm:w-64">
+                <SearchableSelect
+                  value={codeFilter}
+                  onChange={(value) => {
+                    onChangeCode?.(value);
+                    resetPage();
+                  }}
+                  options={codeOptions}
+                  placeholder="All reasons"
+                  size="sm"
+                />
+              </div>
+            )}
             <div className="w-full sm:w-auto sm:flex-1">
               <ListSearchInput
                 value={searchInput}

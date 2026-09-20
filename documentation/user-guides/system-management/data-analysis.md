@@ -191,6 +191,13 @@ See also the rules stated once, for every channel, on [Upload the product master
 (container number, inbound-shipment linking) - the AutoCount integration follows the same rules
 as the matching upload and as a manual create/edit, not a separate set of its own.
 
+**A separate, on-demand action** - where a company has it switched on, a checker can also pull a
+fresh snapshot of the items book or the stock book from AutoCount whenever they want, review what
+it would change, and confirm it themselves, instead of waiting for the scheduled push or doing a
+manual upload. See [Pull from AutoCount](../product/manage-products.md#pull-from-autocount) on the
+Products page and [Pull from AutoCount](../warehouse/upload-stock.md#pull-from-autocount) on the
+Stock page.
+
 ---
 
 ## Scheduled Tasks - `scheduled_tasks` (+ `scheduled_task_runs`)

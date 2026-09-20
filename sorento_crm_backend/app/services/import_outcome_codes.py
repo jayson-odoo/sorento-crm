@@ -159,6 +159,25 @@ UPSERT_ERROR = "upsert_error"
 ROW_ERROR = "row_error"
 DB_ERROR = "db_error"
 
+# --- AutoCount pull (PLAN-autocount-pull-review.md) -----------------------
+#: A row FoundryX itself left out of the snapshot (its own `excludedRows` /
+#: `excludedNonzeroCount`, e.g. a mapping failure on their side). Never applied by
+#: either preview or Confirm; rides on OUTCOME_SKIPPED, carrying FoundryX's own
+#: reason/message so the reviewer sees exactly what AutoCount refused and why.
+#: Upper-cased, unlike every other code here: it names FoundryX's own reason
+#: vocabulary rather than one of ours, so it is spelled the way FoundryX's own
+#: `excludedRows[].reason` codes are (see the cross-repo contract, Appendix A).
+AUTOCOUNT_EXCLUDED = "AUTOCOUNT_EXCLUDED"
+#: A stock row whose `location_code` matched a warehouse that exists but is inactive
+#: (AC-SP-2) - never reaches `bulk_import_stock`, FED or otherwise.
+AUTOCOUNT_NOT_APPLIED_INACTIVE = "AUTOCOUNT_NOT_APPLIED_INACTIVE"
+#: A stock row whose `location_code` matched no warehouse in this company at all.
+AUTOCOUNT_NOT_APPLIED_UNKNOWN = "AUTOCOUNT_NOT_APPLIED_UNKNOWN"
+#: A header `negativePairList` entry - FoundryX's own record of an (item, location) it
+#: read as negative on-hand. Display only, from the fetched header, never `bulk_import_
+#: stock`'s input (AC-SP-4).
+AUTOCOUNT_NEGATIVE = "AUTOCOUNT_NEGATIVE"
+
 LABELS: dict[str, str] = {
     CREATED: "Created",
     UPDATED: "Updated",
@@ -209,6 +228,10 @@ LABELS: dict[str, str] = {
     UPSERT_ERROR: "Could not be saved",
     ROW_ERROR: "Row could not be written",
     DB_ERROR: "Database error",
+    AUTOCOUNT_EXCLUDED: "Left out by AutoCount",
+    AUTOCOUNT_NOT_APPLIED_INACTIVE: "Not applied: warehouse is inactive",
+    AUTOCOUNT_NOT_APPLIED_UNKNOWN: "Not applied: unknown location",
+    AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
 }
 
 

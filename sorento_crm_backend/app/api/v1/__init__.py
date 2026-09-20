@@ -38,7 +38,11 @@ from app.api.v1.system import (
     companies as system_companies,
 )
 from app.api.v1.assistant import record_context as assistant_record_context
-from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
+from app.modules.runtime.guards import (
+    require_any_module_enabled,
+    require_module_enabled,
+    require_module_enabled_with_api_key,
+)
 
 api_router = APIRouter()
 
@@ -264,6 +268,17 @@ api_router.include_router(
     prefix="/scm",
     tags=["scm"],
     dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
+)
+
+# AutoCount pull + review (PLAN-autocount-pull-review.md): pull a frozen products/stock
+# snapshot from AutoCount instead of exporting + uploading the workbook by hand. Neither
+# entity's module gates the other (require_any_module_enabled) - each route enforces the
+# permission of ITS OWN entity once the pull is resolved (AC-PM-2).
+api_router.include_router(
+    integrations.autocount_pull.router,
+    prefix="/autocount/pulls",
+    tags=["autocount-pull"],
+    dependencies=[Depends(require_any_module_enabled("product", "inventory"))],
 )
 
 # Dealer Sales Kit - catalogue page builder, collections, brochure export.
