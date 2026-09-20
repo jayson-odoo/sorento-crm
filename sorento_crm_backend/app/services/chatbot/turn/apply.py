@@ -880,6 +880,16 @@ _HELP_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
 #: "hanlim" (an entity), "1" (a reference position), "more" (a continuation) - and must
 #: be planned, not swallowed. Listed by name, from the parser's own schema, so the rule
 #: reads as what it is: nothing in the message but the greeting.
+#:
+#: `scope_intent` is deliberately absent (AC-1704 class, a casual-turn-over-an-open-
+#: offer defect): it is a QUALIFIER of whatever a message is about ("specific" vs
+#: "broaden"), never evidence a question exists - a bare "thanks" over an open
+#: `sales_report_detail`/`outstanding_detail` offer still reads `scope_intent:
+#: "specific"` off the parser's own common default, disqualifying idle chat for
+#: literally nothing said and re-fetching the carried subject instead of leaving the
+#: offer alone. Its one real reader (`_lane`'s own `scope_intent == "broaden"` ->
+#: `"clarification"`) does not depend on this list at all, and the one value worth
+#: disqualifying on (`"broaden"`) is already covered by `broaden_axis` below.
 _IDLE_CHAT_DISQUALIFIERS = (
     "entities",
     "intent_hint",
@@ -891,7 +901,6 @@ _IDLE_CHAT_DISQUALIFIERS = (
     "document",
     "status",
     "sales_channel",
-    "scope_intent",
     "broaden_axis",
     "group_by",
     "top_n",
