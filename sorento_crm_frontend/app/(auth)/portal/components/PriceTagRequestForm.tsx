@@ -1050,7 +1050,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           if (code) notFoundCodes.push(code);
           return;
         }
-        const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
+        // r10 S2 (owner: "qty ignore"): quantity is how many TAGS the
+        // salesperson wants, which the document never says - the extract
+        // never sets it, and a second sighting of the same code merging in
+        // is not a second tag either.
+        const qty = 1;
         const existingIndex = merged.findIndex((l) =>
           match.kind === 'product'
             ? l.product_id === match.id
@@ -1060,7 +1064,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           const existing = merged[existingIndex];
           merged[existingIndex] = {
             ...existing,
-            quantity: existing.quantity + qty,
             remarks: [existing.remarks, p.notes]
               .filter((v) => v && v.trim())
               .join('; '),
