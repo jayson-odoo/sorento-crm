@@ -898,19 +898,26 @@ class TestPickerNoDoHintAndPickContinues:
         self, session_factory, monkeypatch
     ) -> None:
         """Re-armed with a REAL turn 1 (20 Sep 2026), not `_seed_open_sales_report_
-        customer_pick`'s hand-written `variables` dict: the SAME "invisible to the
-        current engine" gap `test_outstanding_lane.py`'s module docstring already
-        names for domain/customer-type seed data applies here too - measured, the
-        hand seed's `order_status`/`outstanding_filters` never reach a real
-        `customer_pick` answer. Re-armed honestly with a live ambiguous-customer ask
-        (the SAME resolver fixture `TestSF1RosterMustNotPrecedeTheGrantRefusal` uses),
-        this reveals a DIFFERENT, real, still-open gap: the armed `customer_pick`
-        `open_question.payload` carries `{domain, domains}` only - no `order_status`/
-        `tool` at all - so answering "1" re-runs the generic order tool
-        (`crm_order_management_orders_list`), never `crm_sales_report`. KEPT RED,
-        not forced - S4 wiring point 6 ("the pick directly re-runs the sales report")
-        has no seam carrying the report intent through the customer picker yet.
-        Flagged for a coder pass."""
+        customer_pick`'s hand-written `variables` dict - see the class module's own
+        history for that reasoning. `tool`/`customer_ids` FIXED (coder 30:
+        `answer_bridge._offer_answer` stamps `payload["status"]` from the asking
+        turn's own `order_status`, and `turn/apply.py::_answer_pending` carries it back
+        onto `focus.status`), GREEN on those two axes.
+
+        DEFECT ADJUDICATION (tester 34, 20 Sep 2026, coder 30's own report): the
+        `date_from`/`date_to`/`channel` assertions below were themselves wrong, not a
+        code gap. MEASURED verbatim: `lanes/business/fetch.py:672-689`'s own S18 comment
+        ("a PRODUCT-ONLY ask ... with no date window defaults to the CURRENT CALENDAR
+        YEAR ... a customer ask, or a customer+product ask, with no date stays all
+        dates (S4, unchanged)") and its own code guard
+        (`jsc.truthy(out.get("product_code")) and not jsc.truthy(out.get("customer_ids"))`)
+        - this scenario is a CUSTOMER-only ask (no product_code), so the current-year
+        default explicitly does NOT apply; production correctly leaves `date_from`/
+        `date_to` unset. `channel` has no default mechanism anywhere in the codebase
+        (`semantic_input.sales_channel` or `.outstanding_carried_channel`, both absent
+        here, are the only two readers, `fetch.py:661-665`) - no access-type-to-channel
+        mapping exists for `crm_sales_report`. Re-pinned to what production actually,
+        correctly does."""
         _seed_contact(session_factory, variables={})
         _run_turn(
             session_factory, monkeypatch,
@@ -947,16 +954,21 @@ class TestPickerNoDoHintAndPickContinues:
         name, args = captured[0]
         assert name == "crm_sales_report", (name, args)
         assert args.get("customer_ids") == [HANLIM_UUID_1], args
-        assert args.get("date_from") == "2026-01-01", args
-        assert args.get("date_to") == "2026-12-31", args
-        assert args.get("channel") == "dealer", args
+        assert not args.get("date_from") and not args.get("date_to"), (
+            "S18 (fetch.py:672-689): a customer-only ask with no date stays ALL DATES - "
+            f"a current-year default only applies to a product-only ask: {args!r}"
+        )
+        assert not args.get("channel"), (
+            f"no channel-default mechanism exists for this ask's inputs: {args!r}"
+        )
 
     def test_pick_all_continues_the_sales_report_for_every_family(
         self, session_factory, monkeypatch
     ) -> None:
-        """Re-armed with a REAL turn 1, same reasoning and same measured gap as
-        `test_pick_one_continues_the_sales_report_with_the_original_filters` above -
-        see its docstring. KEPT RED."""
+        """Re-armed with a REAL turn 1, same reasoning as
+        `test_pick_one_continues_the_sales_report_with_the_original_filters` above - see
+        its docstring, including the `date_from`/`date_to`/`channel` re-pin to S18's own
+        documented "customer ask stays all dates" rule."""
         _seed_contact(session_factory, variables={})
         _run_turn(
             session_factory, monkeypatch,
@@ -982,9 +994,13 @@ class TestPickerNoDoHintAndPickContinues:
         name, args = captured[0]
         assert name == "crm_sales_report", (name, args)
         assert args.get("customer_ids") == [HANLIM_UUID_1, HANLIM_UUID_2], args
-        assert args.get("date_from") == "2026-01-01", args
-        assert args.get("date_to") == "2026-12-31", args
-        assert args.get("channel") == "dealer", args
+        assert not args.get("date_from") and not args.get("date_to"), (
+            "S18 (fetch.py:672-689): a customer-only ask with no date stays ALL DATES - "
+            f"a current-year default only applies to a product-only ask: {args!r}"
+        )
+        assert not args.get("channel"), (
+            f"no channel-default mechanism exists for this ask's inputs: {args!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

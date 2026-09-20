@@ -664,6 +664,60 @@ def _dym_incoming_scenario() -> tuple[dict[str, Any], dict[str, Any], AnswerServ
     return parser, resolved, {"gate": gate, "services": services}
 
 
+def _dym_incoming_sibling_scenario() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """The REAL "incoming domain did-you-mean" shape (`journeys/parity-f8-did-you-mean-
+    and-continue.json`'s own "Incoming srtwt7202-new" case) - the SIBLING-FAMILY picker
+    (`answer.py::build_suggest_offer`'s D3 arm), never `_dym_incoming_scenario`'s own D1/
+    resolver-alternatives shape above (kept untouched; the OTHER test in this class still
+    uses it and stays green).
+
+    `gate.compatible_entities` carries the ONE real (non-uuid) base code the gate accepted
+    in scope (`SRTWT7202`, the customer's typo'd "srtwt7202-new" normalized down to its
+    family root) - `miss_suggest.py::_sibling_gate`'s own requirement. `family_fetch`
+    returns the two real siblings; `mcp_probe` answers "has incoming" for exactly one of
+    them, so the has/no split is genuine, not synthesized text. `build_result` is handed
+    back on the returned dict so the test can pass main's own literal
+    (`{"has_result": False}`, `lanes/business/__init__.py:1588`) to `_expected_miss_text`
+    without the bridge (which never threads it - see the test's own docstring) getting in
+    the way of measuring what production actually does."""
+    raw = "srtwt7202-new"
+    parser = {
+        "domain_hint": "incoming",
+        "intent_hint": "check_incoming",
+        "message_type": "business_query",
+        "entities": [{"raw": raw, "hint": "product", "current_message": True, "confident": True}],
+        "routing": {"suggested_team": "purchasing", "suggested_agent": "certification"},
+        "access_levels": [],
+    }
+    resolved = {
+        "resolutions": [{"token": raw, "matches": [], "alternatives": []}],
+        "unresolved_tokens": [raw],
+        "tokens": [raw],
+    }
+    gate = {
+        "gate_passed": True,
+        "compatible_entities": [{"entity_type": "product", "code": "SRTWT7202", "uuid": None}],
+        "gate_debug": {"domain": "incoming"},
+        "require_specific": False,
+    }
+
+    def family_fetch(query: str) -> dict[str, Any]:
+        return {
+            "data": [
+                {"product_code": "SRTWT7202-BL", "id": "11111111-1111-4111-8111-111111111111"},
+                {"product_code": "SRTWT7202-GM", "id": "22222222-2222-4222-8222-222222222222"},
+            ]
+        }
+
+    def mcp_probe(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        # Only ONE sibling genuinely answers "has incoming" - the other genuinely has none.
+        return {"answers": [{"title": "SRTWT7202-BL"}]}
+
+    services = _services(mcp_probe=mcp_probe, family_fetch=family_fetch)
+    build_result = {"has_result": False}
+    return parser, resolved, {"gate": gate, "services": services, "build_result": build_result}
+
+
 class TestDidYouMeanRosterMintsAProductPick:
     def test_pending_kind_product_pick_domain_and_escalate_offered_carried(self) -> None:
         bridge = _require_answer_for()
@@ -706,38 +760,85 @@ class TestDidYouMeanRosterMintsAProductPick:
         """The printed line's own has/no suffix (computed off the SAME roster the offer
         text prints), carried on each option as `stamp` - AC-1703/AC-1701's own shape.
 
-        DEFECT ADJUDICATION (tester 31, 20 Sep 2026, coder 28's own report): coder 28
-        reported this test failing inside `_expected_miss_text` (the fixture's bare-code
-        `canonical_code` values are not uuid-shaped, so `any_uuid` is False and production
-        falls into the inline "Did you mean A, or B?" sentence, never a numbered list) -
-        MEASURED and UPHELD (`assert numbered` failed with `[]` on the original fixture).
-        Fixed per the brief's own suggested remedy: `_dym_incoming_scenario`'s alternatives
-        are now uuid-shaped `canonical_code`s with a `display.product_name`, which routes
-        production into the unconditional numbered/human-label branch
-        (`answer.py::build_suggest_offer`'s `if any_uuid:` arm). Still RED after the fix,
-        for a DIFFERENT, real, confirmed reason: that branch never bakes a has/no stamp
-        into the rendered text at all (it is the promotion-style "numbered mode", not the
-        product has/no-incoming "code mode" `dym-annotate` wires stamps onto) -
-        `_stamps_by_position` correctly finds nothing to read back. This matches this same
-        session's own LIVE measurement against `:8081` (`parity-f8-did-you-mean-and-continue.json`):
-        a real "SRTWT165-FT CERT" ask today ALSO answers with the unstamped inline sentence,
-        never a stamped numbered roster - stamps on a did-you-mean roster are a genuinely
-        unimplemented feature today, not a fixture artifact. Left RED on purpose."""
-        bridge = _require_answer_for()
-        parser, resolved, extra = _dym_incoming_scenario()
+        DEFECT RE-ADJUDICATION (tester 34, 20 Sep 2026, captain's brief). Tester 31's
+        (20 Sep) prior verdict on THIS fixture ("stamps on a did-you-mean roster are a
+        genuinely unimplemented feature today") is corrected: that verdict was measured
+        against the WRONG production lane. `_dym_incoming_scenario` (the class's OTHER
+        test above, still using it, still green) forces `canonical_code` to be uuid-shaped
+        so `answer.py::build_suggest_offer`'s `any_uuid` branch (the PROMOTION "numbered"
+        mode, ~line 4170) fires - confirmed that branch never stamps, on any engine
+        version, because it never reads `dym_has`/`dym_probed` at all. But that branch's
+        own text ("Couldn't pin down ... Here are the closest matches ... Reply with a
+        number to continue") does not even match AC-1703's literal wording ("Couldn't find
+        ... Did you mean: ... Reply with a code to continue") - it was the wrong shape to
+        begin with, chosen only to satisfy this test's own `assert numbered` sanity check.
+
+        MEASURED (this session): `miss_suggest.py::DOMAIN_PROBE` (line 188) has no
+        `"incoming"` key at all - only `product_attachment`, `inventory`, `promotion` - so
+        the D1 lane's `dym_transform`/`dym_annotate` per-code stamping (the mechanism the
+        captain's brief named at `miss_suggest.py` lines ~428/~532/~673/~1061) can never
+        run for `domain_hint == "incoming"`; those comments are about `product_attachment`
+        specifically. The ONE production mechanism that stamps a NUMBERED incoming roster
+        with "has incoming"/"no incoming" is the SIBLING-FAMILY picker
+        (`answer.py::build_suggest_offer`'s D3 arm, lines 3710-3801:
+        `services.family_fetch` -> `miss_suggest.sibling_transform` ->
+        `services.mcp_probe("crm_incoming_stock_list", ...)`), matching
+        `journeys/parity-f8-did-you-mean-and-continue.json`'s own "Incoming
+        srtwt7202-new" case. Verified directly (throwaway script, not committed): calling
+        `miss_suggest.run_miss_lane` with this scenario's fixture AND
+        `build_result={"has_result": False}` produces
+        `"1. SRTWT7202-BL - has incoming\\n2. SRTWT7202-GM - no incoming"` verbatim - a
+        real, live, stamped numbered roster. Production DOES stamp; the earlier verdict
+        that it does not was measured on the wrong lane.
+
+        STILL RED - REAL CODE GAP, confirmed not a fixture defect, left untouched (never
+        touch `app/`). `miss_suggest.py::_sibling_gate` (lines 1291-1315) requires
+        `build_result is not None` (its own line 1313: `if build_result is None: return
+        False`). Main's own caller, `lanes/business/__init__.py::_run_miss_half`
+        (~line 1787), is ALWAYS given one: `complete_answer` (lines 1569-1588) calls it
+        with the literal `build_result={"has_result": False}` for exactly this bridge's
+        two triggers (`exit_kind == "not_found" or fetch_arm == "error"`), with a comment
+        on that exact line explaining why ("Omitting it left build_result at None and the
+        gate short-circuited, so a partially-typed variant code never got its
+        sibling-family offer"). `answer_bridge.py::answer_for` (this file's own subject,
+        lines 634-645) calls `miss_mod.run_miss_lane(...)` with NO `build_result` kwarg at
+        all - it silently defaults to `None`. Verified directly: through `answer_for`,
+        `services.family_fetch` and `services.mcp_probe("crm_incoming_stock_list", ...)`
+        are NEVER CALLED (the sibling gate short-circuits before either runs), and the
+        reply degrades to a bare `team_pick` escalate ("Yes" only, no roster at all)
+        instead of a `product_pick`. This is the omission for the next coder round: thread
+        a `build_result={"has_result": False}` literal (mirroring main's own literal, since
+        the bridge's two triggers are exactly main's combined not-found/error-fragment arm)
+        into `answer_for`'s own `miss_mod.run_miss_lane(...)` call."""
+        parser, resolved, extra = _dym_incoming_sibling_scenario()
         gate = extra["gate"]
         services = extra["services"]
+        build_result = extra["build_result"]
         payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
 
+        # Sanity: with `build_result` wired the way main's own caller wires it, production's
+        # REAL text ladder stamps every sibling - proving the roster/stamp mechanism itself
+        # is implemented and reachable, never a hand-typed guess.
         expected_text, offer = _expected_miss_text(
-            payload, parser=parser, resolved=resolved, gate=gate, services=services
+            payload,
+            parser=parser,
+            resolved=resolved,
+            gate=gate,
+            services=services,
+            build_result=build_result,
         )
-        # The printed lines carry the stamp; derive the expected per-option stamp from
-        # the SAME text the production chain produced, never a hand-typed guess.
+        assert "has incoming" in expected_text and "no incoming" in expected_text, (
+            "test setup sanity: production's own sibling-family picker must stamp when "
+            f"build_result is correctly wired (main's own literal): {expected_text!r}"
+        )
         printed_lines = [line.strip() for line in expected_text.split("\n") if line.strip()]
         numbered = [line for line in printed_lines if line[:1].isdigit()]
         assert numbered, f"no numbered did-you-mean lines in the production text: {expected_text!r}"
 
+        # The bridge itself never threads `build_result` through (see docstring) - this is
+        # the real, still-open gap. `answer_for` is called with NO `build_result` concept at
+        # all (it has no such parameter), exactly reproducing the omission.
+        bridge = _require_answer_for()
         answer = bridge.answer_for(
             payload,
             envelope=None,

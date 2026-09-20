@@ -75,19 +75,17 @@ Postgres only (`session_factory`, blank schema). Every row seeded here.
    is seeded correctly ALREADY re-runs the fetch in the ORIGINAL domain, scoped to the
    picked option's own uuid (`turn/apply.py`'s contract-121 mechanism, lines ~581-602) -
    for the `incoming` domain. GREEN CONTROL. A TYPED CODE answer (the customer retypes
-   the offered label instead of its number) over the SAME roster reaches
-   `decide()`'s `_positions_by_label` match (so `decision.positions` IS populated, same
-   as a position pick) - but the fetch that actually runs is scoped to NOTHING (the
-   typed entity's own FRESH, uuid-less resolution attempt), never the roster's own
-   already-resolved uuid: measured, the captured MCP call shows
-   `skipped: [{"code": "SRTWT165-FTX", "reason": "missing_or_bad_uuid"}]` and the
-   composed reply says "I could not find SRTWT165-FTX" even though the SAME product's
-   real uuid sits right there on the answered option. RED. The `product_attachment`
-   domain fails BOTH ways (position AND typed code): measured, `CAPTURED == []` (no
-   fetch at all) and the reply RE-PRINTS the identical roster question
-   ("product_attachment search needs to be more specific. Multiple matches found.
-   Please choose:") instead of continuing - a domain-specific gap distinct from (and
-   worse than) the `incoming`+code case. RED.
+   the offered label instead of its number) over the SAME roster originally reached
+   `decide()`'s `_positions_by_label` match but ran its fetch scoped to nothing (the
+   typed entity's own fresh, uuid-less resolution) - FIXED (coder 30, `turn/apply.py::
+   _focus_rules` now skips a kind `trace.picked_kinds` already settled this turn); GREEN.
+   The `product_attachment` domain originally failed BOTH ways (position AND typed code)
+   for a FIXTURE reason, not a code gap - `product_attachment`'s own narrowing policy
+   (`turn/policy_rows.py:61`) narrows `attachment_type` before `product`, and the seed
+   never carried the asking turn's own attachment_type forward, so `attachment_type` was
+   genuinely, correctly unknown and production rightly re-asked for it. FIXED (tester 34,
+   `_seed` now carries `focus.extra["attachment_type"]`, matching what the asking turn
+   would have left); GREEN, the pick continues to a real fetch scoped to that product.
 """
 from __future__ import annotations
 
@@ -465,19 +463,50 @@ class TestAC1704ContinuingTheOriginalAsk:
 
     def _seed(self, session_factory, *, domain: str) -> None:
         _seed_bare_contact(session_factory)
-        _write_session_vars(
-            session_factory,
-            {
-                "open_question": {
-                    "kind": "product_pick",
-                    "expects": "pick",
-                    "options": self._OPTIONS,
-                    "team": "purchasing",
-                    "asked_at_turn": 1,
-                    "payload": {"domain": domain, "escalate_offered": True},
+        sv: dict[str, Any] = {
+            "open_question": {
+                "kind": "product_pick",
+                "expects": "pick",
+                "options": self._OPTIONS,
+                "team": "purchasing",
+                "asked_at_turn": 1,
+                "payload": {"domain": domain, "escalate_offered": True},
+            }
+        }
+        if domain == "product_attachment":
+            # AC-1704 defect adjudication (tester 34, 20 Sep 2026, coder 30's own
+            # report). MEASURED: `product_attachment`'s own narrowing policy dict
+            # (`turn/policy_rows.py:61`, `narrowing={"attachment_type": "narrow_by_type",
+            # "product": "must_narrow_one"}`) narrows `attachment_type` BEFORE `product` -
+            # a real `product_pick` roster for this domain only ever exists once
+            # `attachment_type` is already known (`test_rearch_r5_production_decides.py::
+            # TestRequireSpecificRosterCopy::
+            # test_product_attachment_ambiguous_family_uses_gates_own_header_and_stamps`'s
+            # own seed always pairs the ambiguous product with an explicit
+            # `attachment_type` entity in the SAME asking message). The ORIGINAL fixture
+            # here never carried that forward, so `attachment_type` was genuinely,
+            # correctly unknown on the answering turn and production rightly re-asked for
+            # it - not a bug this test should have pinned. Fixed: seed the carried
+            # attachment type on `focus.extra["attachment_type"]`, exactly what the
+            # asking turn would have left there, so the answering turn's narrowing
+            # reaches `product` (already settled by the pick) instead of re-asking.
+            from app.services.chatbot.turn.state import Focus, focus_to_wire
+
+            focus = Focus(
+                extra={
+                    "attachment_type": [
+                        {
+                            "raw": "product photos",
+                            "hint": "attachment_type",
+                            "canonical_code": "photo",
+                            "current_message": False,
+                            "confident": True,
+                        }
+                    ]
                 }
-            },
-        )
+            )
+            sv["focus"] = focus_to_wire(focus)
+        _write_session_vars(session_factory, sv)
         _enable_business_lane(session_factory)
 
     def test_a_position_continues_the_original_incoming_ask_with_the_picked_uuid(
@@ -539,11 +568,12 @@ class TestAC1704ContinuingTheOriginalAsk:
     def test_product_attachment_domain_reasks_instead_of_continuing(
         self, session_factory, monkeypatch, answer_mode: str
     ) -> None:
-        """RED, both ways. `product_attachment` never reaches a fetch at all - the SAME
-        did-you-mean roster question is re-printed verbatim, matching R3's own measured
-        finding that `if_incoming_picker` (and everything built on its exit) checks
-        `gate_debug.domain == "incoming"` literally and falls through for every other
-        domain, `product_attachment` included."""
+        """DEFECT ADJUDICATION (tester 34, 20 Sep 2026, coder 30's own report): this was
+        RED for a FIXTURE reason, not a code gap - `product_attachment`'s own narrowing
+        policy (`turn/policy_rows.py:61`) narrows `attachment_type` before `product`, and
+        `_seed` never carried the asking turn's own attachment_type forward. Fixed in
+        `_seed` (see its own docstring); GREEN now on both `position` and `code` - the
+        pick continues to a REAL fetch scoped to the picked option's own product uuid."""
         self._seed(session_factory, domain="product_attachment")
         call, captured = _capturing_mcp({"has_result": False, "items": []})
         _wire_business_services(monkeypatch, resolve_services=_resolve_services({}), mcp_call=call)
@@ -577,4 +607,9 @@ class TestAC1704ContinuingTheOriginalAsk:
             f"AC-1704: answering the roster ({answer_mode}) must continue the ORIGINAL "
             f"product_attachment ask with a real fetch - instead nothing was called at "
             f"all and the same roster question was re-printed: {reply_text!r}"
+        )
+        _name, args = captured[0]
+        assert args.get("product_ids") == ["11111111-1111-1111-1111-111111111111"], (
+            "AC-1704: the fetch must be scoped to the PICKED option's own already-"
+            f"resolved product uuid (position 1, SRTWT165-FTX): captured={captured!r}"
         )

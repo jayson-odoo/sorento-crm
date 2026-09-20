@@ -429,7 +429,22 @@ class TestTierVisiblePromotionsOnly:
 class TestUnknownAttributeClarify:
     """Console case "an unknown class word clarifies with the nearest label" (AC-1320):
     "which water tap has cert" -> "I don't know 'water tap'", "Did you mean". No data
-    seed needed - this is a clarify path over an UNRECOGNISED word, never a real set."""
+    seed needed - this is a clarify path over an UNRECOGNISED word, never a real set.
+
+    DEFECT ADJUDICATION (tester 34, 20 Sep 2026, coder 30's own report): coder 30
+    flagged `confident=False` as a possibly-wrong verdict shape for this console case -
+    UPHELD. MEASURED: `confident=False` makes `answer.py::not_found_error_message` take
+    its `vague_unresolved` branch (lines 3178-3212, checked BEFORE the AC-1320 branch) -
+    a real, live copy string ("I captured 'water tap' but couldn't tell which part is
+    which. For a product_attachment enquiry, please give me a labeled specific - e.g.
+    ..."), just the WRONG one for this console case's own name (a "class word" the
+    parser is CONFIDENT is a product_type entity, just an unrecognised one - not an
+    ambiguous, unplaced mash of text). `confident=True` (this fix) reaches AC-1320's own
+    branch instead (`answer.py:3253-3284`, `predicate.qualifying_total == 0` and
+    `unrecognized_terms` non-empty, no near suggestions since no data is seeded):
+    measured verbatim, "I don't know 'water tap' as a product type. Try a product type
+    such as a class or product type I know." - genuinely contains "don't know", the
+    exact AC-1320 copy this console case names. Re-pinned to `confident=True`."""
 
     def test_unknown_attribute_word_clarifies_naming_valid_schemes(
         self, session_factory, stub_parser, stub_access
@@ -438,7 +453,7 @@ class TestUnknownAttributeClarify:
         v = verdict(
             domain_hint="product_attachment",
             requested_attributes=["cert"],
-            entities=[entity("water tap", hint="product_type", confident=False)],
+            entities=[entity("water tap", hint="product_type", confident=True)],
         )
         stub_parser(v)
         stub_access()
@@ -454,8 +469,30 @@ class TestUnknownAttributeClarify:
 class TestAnyXIncomingLeg:
     """Console case "the incoming leg" (AC-1311): "which sink has incoming" -> "kitchen
     sinks have incoming stock". Seeds the PRODUCT side only - see module docstring for
-    why the incoming-shipment schema is not wired here."""
+    why the incoming-shipment schema is not wired here.
 
+    DEFECT ADJUDICATION (tester 34, 20 Sep 2026, coder 30's own report). Coder 30's
+    named cause (R3's own trigram-fallback deletion) is WRONG - MEASURED (this
+    session, `_seed_products` gives "sink" a genuine `ProductCategory.class_label`/
+    `search_synonyms` row, `requested_attributes=["incoming"]` maps to a real,
+    already-shipped `REQUIRE_LEGS["incoming"]` leg, and `resolve_gate.py:711-725`
+    genuinely forwards `scope_terms=["sink"]` into the SAME production
+    `resolve_reference_post` -> `resolve_product_set` call `TestCountedSetAnswer`'s own
+    sibling `class_label="tap"` case reaches): production's ACTUAL reply is "I don't
+    know 'sink' as a product type. Try a product type such as a class or product type I
+    know." - the SAME `answer.py:3253-3284` AC-1320 "genuinely unrecognized, no near
+    suggestions" branch `TestUnknownAttributeClarify` (above) now correctly pins, which
+    only fires once the counted-set resolver ITSELF reports zero matches for a real,
+    seeded class label. That is the SAME "counted-set resolver never wired" gap this
+    file already scopes out via `TestCountedSetAnswer` / `TestPagingByFive`'s own
+    `xfail(strict=True, reason=_XFAIL_ATTRIBUTE_FIRST_NEVER_ROUTES_COUNTED_SET)` (a
+    seeded, real class label still comes back "unrecognized" - the resolver's own
+    embedding-tier climb, unavailable with no key in test env, is what would otherwise
+    confirm the match) - not a fixture defect specific to this test, and not
+    reproducible without the counted-set resolver's own embedding tier. Captain ruling
+    20 Sep 2026: out of #952 scope, tracked with the counted-set resolver."""
+
+    @pytest.mark.xfail(strict=True, reason=_XFAIL_ATTRIBUTE_FIRST_NEVER_ROUTES_COUNTED_SET)
     def test_any_x_incoming_routes_to_incoming_section(
         self, session_factory, stub_parser, stub_access
     ) -> None:
