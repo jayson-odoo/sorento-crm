@@ -41,10 +41,13 @@ from typing import Any, Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 # Reused, not re-implemented (the A5 rule this fake's `contentHash` must satisfy for
 # `fetch_verified_snapshot`'s own warning check to stay clean).
 from app.tasks.autocount_pull_tasks import _content_hash
+from app.models.integration import Integration
+from app.services.integration_admin_service import IntegrationAdminService
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "autocount_pull"
 
@@ -67,6 +70,13 @@ _snapshots: dict[str, dict[str, Any]] = {}
 # behaviour). Once ready, a later POST starts a genuinely new build.
 _in_flight: dict[tuple[str, str], str] = {}
 
+#: The `X-API-Key` header value of the most recent request this fake served, whatever
+#: it was (this fake never validates the value, only its presence - see
+#: `_require_api_key`). SR6's connection tests read this to prove
+#: `FoundryxAutocountClient` actually sent the row's decrypted key, without the fake
+#: needing to grow a real auth check of its own.
+LAST_API_KEY: Optional[str] = None
+
 
 @app.exception_handler(HTTPException)
 async def _flatten_error(_request: Request, exc: HTTPException) -> JSONResponse:
@@ -75,6 +85,8 @@ async def _flatten_error(_request: Request, exc: HTTPException) -> JSONResponse:
 
 
 def _require_api_key(x_api_key: Optional[str] = Header(default=None, alias="X-API-Key")) -> None:
+    global LAST_API_KEY
+    LAST_API_KEY = x_api_key
     if not x_api_key:
         raise HTTPException(
             status_code=401,
@@ -240,3 +252,40 @@ def get_rows(
         "recordCount": len(rows),
         "rows": rows[start:start + pageSize],
     }
+
+
+# ======================================================= SR6 connection UI seam
+
+
+def seed_foundryx_connection(
+    db: Session, *, base_url: str, api_key: str, active: bool = True
+) -> Integration:
+    """Create or update the ``foundryx-esb`` integration row through
+    ``IntegrationAdminService``, so the stored credential is real Fernet ciphertext -
+    never a hand-built row with a plaintext ``credentials_json`` column, which is not
+    what ``FoundryxAutocountClient`` (SR6) will decrypt against.
+
+    Used by ``tests/test_foundryx_connection_ui.py`` in place of the settings
+    monkeypatch SR1-4 used - SR6 retires ``settings.foundryx_base_url`` /
+    ``foundryx_api_key`` entirely, so the row is the only way left to configure a
+    client under test.
+    """
+    service = IntegrationAdminService(db)
+    row = db.query(Integration).filter(Integration.name == "foundryx-esb").first()
+    if row is None:
+        row = service.create(
+            name="foundryx-esb",
+            type_="autocount_esb",
+            config_json={"base_url": base_url},
+            credentials_json={"api_key": api_key},
+            is_active=active,
+        )
+    else:
+        service.update(
+            row,
+            config_json={"base_url": base_url},
+            credentials_json={"api_key": api_key},
+            is_active=active,
+        )
+    db.flush()
+    return row
