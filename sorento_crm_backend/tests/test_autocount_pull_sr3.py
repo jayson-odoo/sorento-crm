@@ -4,8 +4,8 @@ Covers: AC-RV-3, AC-RV-5, AC-CM-2, AC-CM-4, AC-CM-5 (plus the owner/permission
 gate on the compare route), AC-PC-1..5. AC-CM-1/AC-CM-3/AC-CM-6 are FE/stock -
 out of scope here (SR4 does stock).
 
-Plan: documentation/plans/autocount/PLAN-autocount-pull-review.md
-UAC:  documentation/plans/autocount/autocount-pull-review-acceptance-criteria.md
+Plan: documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md
+UAC:  documentation/plans/_archive/autocount/autocount-pull-review-acceptance-criteria.md
 
 Nothing under test here exists yet - the rows/download/compare/confirm routes,
 `app/services/autocount_pull_compare.py`, `app/tasks/autocount_pull_tasks.
