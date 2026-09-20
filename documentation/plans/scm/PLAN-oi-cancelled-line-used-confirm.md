@@ -85,6 +85,19 @@ Nothing new is stored. Three writers flip it, one reader shows the line's status
   `setAckFilter((c) => (c === 'to_confirm' ? ACK_ANY : 'to_confirm'))`. Types + service contract
   comment updated. No motion (dense, high-frequency grid: nothing here animates).
 
+- **3.7 Confirm accepts an `actioned` row (correction, 20 Sep 2026, read on resume).** Section 1
+  said `actioned` rows can be confirmed already. That is true of `acknowledge_scope` (worklist
+  service 1256: eligible = `awaiting` / `changed`, state not `cancelled`) and FALSE of
+  `acknowledge_rows` (inquiry service 4598): its `gone` guard refuses every row whose state is
+  not in `INQUIRY_LINK_STATES` (`raised`, `partly_linked`, `placed`) with 422
+  `order_inquiry_row_not_open`. 340 of the 344 rows are `actioned`, and "select all matching"
+  hands its eligible ids to the same function, so one `actioned` row would 422 the whole press.
+  The two seams already disagree; C1 settles it. Change: the `gone` guard refuses only
+  `state = cancelled`, the same rule `acknowledge_scope` and the route's docstring state. An
+  `actioned` row takes the handshake stamp and nothing else: `_linkable_row_clauses` already
+  keeps it out of the cascade (states `raised` / `partly_linked` only). No test names
+  `order_inquiry_row_not_open` today.
+
 Known consequence, accepted: a flagged row carries `changed_at`, so the sheet rollback keeps it
 (rebuild lane, AC-RB-17). A row the upload raises onto a cancelled line is born `awaiting` with no
 `changed_at`, so a rollback + re-upload asks purchasing to confirm it again.

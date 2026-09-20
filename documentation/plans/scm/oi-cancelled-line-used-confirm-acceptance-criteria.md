@@ -60,7 +60,9 @@ auto-acknowledged; SO314593 CB2828-DIY 90 and SO314594 C-FH12 364 + 364 are the 
 - **AC-CL-9** `[BE]` Confirm (the existing `POST /order-inquiries/acknowledge`, by ids and by
   "select all matching") acknowledges such a row like any other: `acknowledged`, leaves To
   confirm. Nothing else changes: state, quantity, links and claims are untouched, the row is NOT
-  cancelled, `line_cancelled` stays true. Permission stays `projects.order_inquiries.acknowledge`;
+  cancelled, `line_cancelled` stays true. An `actioned` row is accepted by BOTH paths (today the
+  by-ids path answers 422 `order_inquiry_row_not_open` for it, plan 3.7); a row whose own state
+  is `cancelled` is still refused by ids and skipped by filter. Permission stays `projects.order_inquiries.acknowledge`;
   a user without it gets 403.
 - **AC-CL-10** `[BE]` Backfill, one migration, idempotent: every live row on a cancelled line
   that is `acknowledged` becomes `changed` with `changed_at` set (344 on the measured copy, less
