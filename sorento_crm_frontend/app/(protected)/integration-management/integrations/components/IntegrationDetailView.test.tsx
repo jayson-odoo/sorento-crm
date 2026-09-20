@@ -189,8 +189,21 @@ describe('IntegrationDetailView - AC-FE-3 inline result, no toast/dialog', () =>
     const failBadge = await screen.findByText('Key rejected');
     expect(failBadge.closest('[data-slot="badge"]')?.className ?? '').toMatch(/destructive/);
 
-    h.testIntegration.mockResolvedValueOnce({ ok: true, message: 'Connected', latency_ms: 12 });
+    // F5 (reviewer fix round): a new probe clears the stale badge immediately,
+    // not just once the new result lands - otherwise "Key rejected" sits next to
+    // a spinning button as if the NEW attempt had already failed.
+    let resolveSecond: (value: { ok: boolean; message: string; latency_ms: number }) => void =
+      () => {};
+    h.testIntegration.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSecond = resolve;
+      }),
+    );
     fireEvent.click(await screen.findByRole('button', { name: /^test$/i }));
+
+    await waitFor(() => expect(screen.queryByText('Key rejected')).not.toBeInTheDocument());
+
+    resolveSecond({ ok: true, message: 'Connected', latency_ms: 12 });
 
     await screen.findByText('Connected');
     expect(screen.queryByText('Key rejected')).not.toBeInTheDocument();

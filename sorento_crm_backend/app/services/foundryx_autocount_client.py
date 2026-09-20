@@ -81,6 +81,22 @@ class FoundryxAutocountClient:
 
     def __init__(self, db: Session) -> None:
         row = db.query(Integration).filter(Integration.name == _INTEGRATION_NAME).first()
+        self._resolve(db, row)
+
+    @classmethod
+    def from_integration(cls, db: Session, row: Optional[Integration]) -> "FoundryxAutocountClient":
+        """Builds the client from a SPECIFIC row, already resolved by the caller (the
+        Test action's route, which has the row from the path's id - not necessarily
+        the one named ``foundryx-esb``, and not necessarily the only ``autocount_esb``
+        row). ``__init__`` above is the by-name constructor the pull path uses; both
+        share ``_resolve`` so the usability rules (active, base_url, api_key) live in
+        exactly one place.
+        """
+        client = cls.__new__(cls)
+        client._resolve(db, row)
+        return client
+
+    def _resolve(self, db: Session, row: Optional[Integration]) -> None:
         base_url = ""
         api_key = ""
         if row is not None and row.is_active:
@@ -204,13 +220,18 @@ class FoundryxAutocountClient:
         real status and body shape to map (see ``check_connection`` below), not the
         ordinary NOT_CONFIGURED bucket every other call collapses onto.
 
-        Raises ``FoundryxProbeUnreachable`` on a connect/timeout failure only.
+        Raises ``FoundryxProbeUnreachable`` on a connect/timeout failure, OR on a
+        malformed ``base_url`` (``httpx.InvalidURL`` - not a subclass of
+        ``httpx.HTTPError``, so it needs its own branch, and its message is not
+        forwarded verbatim: a URL-parse error can echo back attacker-shaped input).
         """
         try:
             with self._client(_PROBE_TIMEOUT_SECONDS) as client:
                 response = client.get(
                     f"/api/v1/autocount/snapshots/{_NIL_SNAPSHOT_ID}", headers=self._headers()
                 )
+        except httpx.InvalidURL as exc:
+            raise FoundryxProbeUnreachable("invalid base URL") from exc
         except httpx.HTTPError as exc:
             raise FoundryxProbeUnreachable(str(exc) or exc.__class__.__name__) from exc
         try:
@@ -220,23 +241,29 @@ class FoundryxAutocountClient:
         return response.status_code, body if isinstance(body, dict) else None
 
 
-def check_connection(db: Session) -> dict:
+def check_connection(db: Session, row: Integration) -> dict:
     """The Test action's ONE mapping function (PLAN-foundryx-pull-connection-ui.md S2)
     - the gateway-answer table lives here, not in the route, so there is exactly one
     place that decides what "Connected" means.
 
+    Builds the client from ``row`` - the ROW THE CALLER RESOLVED FROM THE PATH, not a
+    by-name lookup: the row on screen might not be named ``foundryx-esb`` (a rename),
+    and it might not be the only ``autocount_esb`` row (a second, rehearsal
+    connection) - either way, Test must answer for the row it was asked about.
+
     Never raises: every outcome, including an unconfigured row or an unreachable
-    gateway, is a `{ok, message, latency_ms}` test RESULT, not an error.
+    gateway, is a `{ok, message, latency_ms}` test RESULT, not an error. Latency
+    covers the probe itself only, not the row lookup/decrypt that precedes it.
     """
+    try:
+        client = FoundryxAutocountClient.from_integration(db, row)
+    except FoundryxPullError:
+        return {"ok": False, "message": "Base URL or key missing", "latency_ms": 0}
+
     started = time.monotonic()
 
     def _latency_ms() -> int:
         return int(round((time.monotonic() - started) * 1000))
-
-    try:
-        client = FoundryxAutocountClient(db)
-    except FoundryxPullError:
-        return {"ok": False, "message": "Base URL or key missing", "latency_ms": _latency_ms()}
 
     try:
         status_code, body = client.probe()

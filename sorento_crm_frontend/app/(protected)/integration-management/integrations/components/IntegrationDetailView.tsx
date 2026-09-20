@@ -59,12 +59,16 @@ function TestConnectionButton({ integration }: { integration: Integration }) {
         size="sm"
         variant="outline"
         disabled={test.isPending}
-        onClick={() =>
+        onClick={() => {
+          // Cleared up front, not just replaced on the next result: a stale
+          // "Key rejected" badge sitting next to a spinning button reads as the
+          // NEW attempt having already failed.
+          setResult(null);
           test.mutate(integration.id, {
             onSuccess: (r) => setResult(r),
             onError: (e: Error) => setResult({ ok: false, message: e.message }),
-          })
-        }
+          });
+        }}
       >
         {test.isPending ? (
           <>
@@ -77,7 +81,14 @@ function TestConnectionButton({ integration }: { integration: Integration }) {
         )}
       </Button>
       {result && (
-        <Badge variant={result.ok ? 'success' : 'destructive'} appearance="light" size="sm">
+        // size="md" + h-auto/whitespace-normal: a long "Unreachable: ..." message
+        // must wrap, not clip, inside the sm pill's fixed h-5.
+        <Badge
+          variant={result.ok ? 'success' : 'destructive'}
+          appearance="light"
+          size="md"
+          className="h-auto whitespace-normal py-0.5 text-left"
+        >
           {result.message}
         </Badge>
       )}

@@ -62,7 +62,7 @@ async def get_integration(
 
 
 @router.post("/{integration_id}/test", response_model=IntegrationTestResponse)
-async def test_integration(
+def test_integration(
     integration_id: str = Path(...),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("integration.integrations.edit")),
@@ -70,7 +70,13 @@ async def test_integration(
     """Probes the PERSISTED row - what this proves is exactly what the next Pull will
     use. Only `autocount_esb` rows support it today (PLAN-foundryx-pull-connection-
     ui.md S2); touches neither `last_used_at` nor `last_error` and writes no
-    `integration_logs` row - a probe is not a use."""
+    `integration_logs` row - a probe is not a use.
+
+    A plain `def`, not `async def`: the probe runs a real, synchronous `httpx` call
+    with up to a 5s timeout, and FastAPI runs a sync path function in a worker
+    thread - an `async def` here would block the whole event loop for that long on
+    every Test click.
+    """
     integration_id = validate_uuid_path(integration_id, resource="Integration")
     service = IntegrationAdminService(db)
     row = service.get(integration_id)
@@ -80,7 +86,10 @@ async def test_integration(
             message="Test is only supported for the FoundryX ESB integration.",
             code="TEST_NOT_SUPPORTED",
         )
-    return check_connection(db)
+    # The ROW resolved from the path - never re-resolved by name inside
+    # check_connection, so a rename or a second autocount_esb row both answer for
+    # themselves (F1, reviewer fix round).
+    return check_connection(db, row)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

@@ -482,8 +482,9 @@ class TestConnectionTestRoute:
 
         monkeypatch.setattr(client_mod, "TRANSPORT", None, raising=False)
 
+        api_key = "fxa_ts5"
         row = fake_foundryx.seed_foundryx_connection(
-            route_env.db, base_url="http://127.0.0.1:9", api_key="fxa_ts5"
+            route_env.db, base_url="http://127.0.0.1:9", api_key=api_key
         )
         route_env.db.commit()
         route_env.as_user(_make_user(route_env.db, "integration.integrations.edit"))
@@ -494,6 +495,37 @@ class TestConnectionTestRoute:
         body = resp.json()
         assert body["ok"] is False
         assert body["message"].startswith("Unreachable: ")
+        # Security fix round (F3): the key must never appear in the response, even
+        # on this failure branch.
+        assert api_key not in resp.text
+
+    def test_ac_ts_5b_malformed_base_url_means_unreachable_not_a_500(self, monkeypatch, route_env):
+        # httpx.InvalidURL is NOT a subclass of httpx.HTTPError - a bad port string
+        # must still come back as a test RESULT, not an unhandled 500, and the raw
+        # parser message ("Invalid port: 'notaport'") must not be echoed verbatim.
+        import app.services.foundryx_autocount_client as client_mod
+
+        monkeypatch.setattr(client_mod, "TRANSPORT", None, raising=False)
+
+        row = fake_foundryx.seed_foundryx_connection(
+            route_env.db, base_url="http://h:notaport", api_key="fxa_ts5b"
+        )
+        route_env.db.commit()
+        route_env.as_user(_make_user(route_env.db, "integration.integrations.edit"))
+
+        resp = route_env.post_test(row.id)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["message"] == "Unreachable: invalid base URL"
+
+    def test_ac_ts_5c_probe_timeout_is_five_seconds(self):
+        # F6 (pytest guard): pins the connect timeout so a regression to something
+        # like 300s goes red here, not as a slow test elsewhere.
+        from app.services.foundryx_autocount_client import _PROBE_TIMEOUT_SECONDS
+
+        assert _PROBE_TIMEOUT_SECONDS == 5
 
     def test_ac_ts_6_not_configured_is_a_200_test_result_not_an_error(self, monkeypatch, route_env):
         _patch_transport(monkeypatch, _no_call_allowed_handler())
@@ -587,3 +619,75 @@ class TestConnectionTestRoute:
         assert api_key not in resp.text
         for record in caplog.records:
             assert api_key not in record.getMessage()
+
+
+# =============================================================================
+# TestConnectionProbesTheRowInThePath - F1, reviewer + security-reviewer fix round
+# =============================================================================
+
+
+class TestConnectionProbesTheRowInThePath:
+    """Test must probe the ROW RESOLVED FROM THE PATH, never a hardcoded lookup by
+    the name "foundryx-esb" - a rename must not break it, and a second
+    `autocount_esb` row (a rehearsal / staging connection) must answer for ITSELF."""
+
+    def test_f1_a_renamed_row_still_tests_correctly(self, monkeypatch, route_env):
+        fake_client = TestClient(fake_foundryx.app)
+        _patch_transport(monkeypatch, _forwarding_handler(fake_client))
+
+        from app.services.integration_admin_service import IntegrationAdminService
+
+        row = fake_foundryx.seed_foundryx_connection(
+            route_env.db, base_url=FAKE_BASE_URL, api_key="fxa_f1_renamed"
+        )
+        # Renamed away from "foundryx-esb" - a by-name lookup inside check_connection
+        # would silently stop finding this row.
+        IntegrationAdminService(route_env.db).update(row, name="FoundryX ESB")
+        route_env.db.commit()
+        route_env.as_user(_make_user(route_env.db, "integration.integrations.edit"))
+
+        resp = route_env.post_test(row.id)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["message"] == "Connected"
+
+    def test_f1_two_autocount_esb_rows_are_tested_independently(self, monkeypatch, route_env):
+        from app.services.integration_admin_service import IntegrationAdminService
+
+        good_key = "fxa_f1_good"
+        good_handler = _forwarding_handler(TestClient(fake_foundryx.app))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.headers.get("X-API-Key") == good_key:
+                return good_handler(request)
+            return httpx.Response(
+                401, json={"code": "INVALID_API_KEY", "message": "bad key"}
+            )
+
+        _patch_transport(monkeypatch, handler)
+
+        canonical = fake_foundryx.seed_foundryx_connection(
+            route_env.db, base_url=FAKE_BASE_URL, api_key=good_key
+        )
+        # A second, independently-named autocount_esb row (e.g. a rehearsal
+        # connection) pointing at the SAME gateway with a WRONG key.
+        second = IntegrationAdminService(route_env.db).create(
+            name=f"{MARKER.lower()}-f1-second",
+            type_="autocount_esb",
+            config_json={"base_url": FAKE_BASE_URL},
+            credentials_json={"api_key": "fxa_f1_wrong"},
+            is_active=True,
+        )
+        route_env.db.commit()
+        route_env.as_user(_make_user(route_env.db, "integration.integrations.edit"))
+
+        resp_second = route_env.post_test(second.id)
+        assert resp_second.status_code == 200
+        assert resp_second.json()["message"] == "Key rejected"
+
+        # The canonical row is untouched by testing the second one.
+        resp_canonical = route_env.post_test(canonical.id)
+        assert resp_canonical.status_code == 200
+        assert resp_canonical.json()["message"] == "Connected"
