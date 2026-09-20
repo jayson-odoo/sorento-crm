@@ -2192,6 +2192,27 @@ def _resolve_input(
         if not has_matches and fb_entry and (fb_entry.get("matches") or []):
             merged.append(fb_entry)
             found_any_fallback = True
+        elif (
+            not has_matches
+            and fb_entry
+            and not (r.get("alternatives") or [])
+            and (fb_entry.get("alternatives") or [])
+        ):
+            # AC-1703 (reviewer MB-3, 20 Sep 2026): a token that resolved NOWHERE keeps
+            # the neighbours the cross-type pass found for it. The whitelist decides
+            # which types a token is scanned against, so it decides the trigram
+            # neighbours too - and the whitelist is built from the PARSER's hint word,
+            # which is a guess about the same typed code ("SRTWT7202-new" came back
+            # hinted `product` on one live run and `inbound_shipment` on the next).
+            # Under the wrong hint the fallback pass below already finds the real
+            # product neighbours (measured: the same two `trgm` rows at 0.76 either
+            # way) and this merge threw them away, because it only carried an entry
+            # that had MATCHES - so the chatbot answered "I don't know 'new' as a
+            # product type" instead of 'Did you mean ...-BL or ...-GM?'. Rescuing the
+            # hint is what this whole fallback block is for; a neighbour is not a
+            # match, so nothing here resolves that did not resolve before, and the
+            # caller's own allow-list still filters what it prints.
+            merged.append({**r, "alternatives": list(fb_entry.get("alternatives") or [])})
         else:
             merged.append(r)
     result["resolutions"] = merged
