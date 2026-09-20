@@ -15,6 +15,10 @@
  *   AC-S2-7  gear dropdown holds Edit then Delete; Edit opens the edit session.
  *   AC-S2-8  in an edit session the header shows only Save / Cancel; No. is a read-only
  *            value, never an input.
+ *   AC-S2-6b (owner-side finding, 21 Sep) the Plan primary additionally requires
+ *            `demand_class === 'project'`; any other demand class (e.g. `retail`) shows no
+ *            Plan link even with the permission, and the gear still holds Edit / Delete - the
+ *            fulfilment board only accepts project demand.
  *
  * Mocking pattern copied wholesale from `SalesOrderDetail.test.tsx` (render helpers, query
  * mocks, DataGrid-in-jsdom fixtures) per the tester brief - this file adds only the
@@ -338,6 +342,36 @@ describe('AC-S2-6: header primary is Plan, gated on projects.projects.view', () 
 
     expect(screen.queryByRole('link', { name: /Plan/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('AC-S2-6b: Plan additionally requires demand_class === project', () => {
+  it('AC-S2-6b-1: permission + retail demand_class -> no Plan link; gear still has Edit and Delete', () => {
+    hasPermission = true;
+    useSalesOrder.mockReturnValue({
+      data: so({ demand_class: 'retail' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.queryByRole('link', { name: /Plan/ })).not.toBeInTheDocument();
+
+    openGear();
+    const items = screen.getAllByRole('menuitem').map((item) => (item.textContent ?? '').trim());
+    expect(items).toEqual(['Edit', 'Delete']);
+  });
+
+  it('AC-S2-6b-2: permission + project demand_class -> Plan link present', () => {
+    hasPermission = true;
+    useSalesOrder.mockReturnValue({
+      data: so({ demand_class: 'project' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByRole('link', { name: /Plan/ })).toBeInTheDocument();
   });
 });
 
