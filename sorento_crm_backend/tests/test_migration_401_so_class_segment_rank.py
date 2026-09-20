@@ -8,6 +8,10 @@ corrects the rows that landed wrong - see the migration module's own docstring.
 Uses `blank_session` rather than `pg_session`: the migration's SQL names only unqualified
 `sales_orders` / `customers`, both public-schema tables the scratch schema's `search_path`
 resolves correctly (same reasoning as migration 397's own test).
+
+Superseded 20 Sep 2026: the ladder now ranks the agent above the segment (captain ruling
+28 Aug 2026, `PLAN-demand-class-agent-arrival.md`); this file still tests the migration's own
+historical SQL, unchanged.
 """
 from __future__ import annotations
 
