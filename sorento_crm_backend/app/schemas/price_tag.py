@@ -115,6 +115,10 @@ class PriceTagRequestTagUpdate(BaseModel):
     quantity: Optional[int] = Field(default=None, ge=1)
     marketing_price_override: Optional[Decimal] = None
     marketing_override_reason: Optional[str] = None
+    #: r10 S6: "Not printed" - skipped by arrange, the print payload and the
+    #: design media map. Refused (409) once the request has reached
+    #: proof_ready (AC-S6-7).
+    print_excluded: Optional[bool] = None
 
 
 class PriceTagRequestTagResponse(BaseModel):
@@ -139,6 +143,8 @@ class PriceTagRequestTagResponse(BaseModel):
     marketing_override_reason: Optional[str] = None
     list_price: Optional[float] = None
     sell_price: Optional[float] = None
+    #: r10 S6, AC-S6-7/S6-9.
+    print_excluded: bool = False
 
 
 class LinePartCandidateResponse(BaseModel):
@@ -1266,6 +1272,11 @@ class TagPartData(BaseModel):
     sell_price: Optional[float] = None
     # AC-A11: this part's OWN product's currency, not the host's.
     currency: str = "MYR"
+    #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
+    #: subject picker groups candidates under it. Absent on a fixed part.
+    role: Optional[str] = None
+    #: r10 S6: true on the candidate THIS tag's own choices name.
+    chosen: Optional[bool] = None
 
 
 class ResolvedLineData(BaseModel):
@@ -1279,7 +1290,13 @@ class ResolvedLineData(BaseModel):
     tag_id: str
     tag_label: str = ""
     open_groups: list[TagOpenGroup] = []
+    #: r10 S6: every product this tag's combo could show - a superset of
+    #: `own_parts`, which is what this tag itself prints and prices.
     parts: list[TagPartData] = []
+    #: r10 S6: the parts this tag itself prints - fixed parts plus its own
+    #: chosen candidate. Absent on a row pinned before r10, where `parts`
+    #: was already this list (AC-S6-11) - the FE falls back to `parts`.
+    own_parts: Optional[list[TagPartData]] = None
     line_id: str
     code: str
     name: str

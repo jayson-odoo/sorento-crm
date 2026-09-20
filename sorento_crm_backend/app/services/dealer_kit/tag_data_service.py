@@ -628,6 +628,62 @@ def _resolved_part_products(db: Session, line, tag) -> list:
     return [products[pid] for pid in wanted if pid in products]
 
 
+def _combo_products(
+    db: Session,
+    line,
+    tag,
+    viewer: ViewerContext,
+    promotion_id,
+    cache: dict,
+    *,
+    price_mode: str = "selling",
+) -> list[dict]:
+    """Every product a slot on this tag may point at (S6, AC-S6-3/S6-4).
+
+    The line's fixed parts plus EVERY candidate of every open choice group,
+    in combo order - a superset of `_resolved_part_products`, which only
+    carries the ONE candidate this tag chose. Each row is a `_part_row`
+    (the same resolver a fixed part already goes through) plus `role` (the
+    group's label, absent on a fixed part) and `chosen` (true on the
+    candidate THIS tag's own `choices` names), so the subject picker can
+    group candidates under their role and mark this tag's own pick.
+    """
+    from app.models.product import Product
+
+    chosen = dict(tag.choices or {})
+    wanted: list[tuple[str, Optional[str], bool]] = []
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        if part.product_id:
+            wanted.append((str(part.product_id), None, False))
+            continue
+        role = part.role or ""
+        chosen_id = chosen.get(role)
+        for candidate in part.candidates or []:
+            candidate_id = str(candidate)
+            wanted.append((candidate_id, role, candidate_id == str(chosen_id)))
+    if not wanted:
+        return []
+
+    products = {
+        product.id: product
+        for product in db.query(Product)
+        .filter(Product.id.in_({product_id for product_id, _, _ in wanted}))
+        .all()
+    }
+    rows: list[dict] = []
+    for product_id, role, chosen_flag in wanted:
+        product = products.get(product_id)
+        if product is None:
+            continue
+        row = dict(
+            _part_row(db, product, viewer, promotion_id, cache, price_mode=price_mode)
+        )
+        row["role"] = role
+        row["chosen"] = chosen_flag
+        rows.append(row)
+    return rows
+
+
 def _part_row(
     db: Session,
     product,
@@ -783,6 +839,14 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             )
             for product in part_products
         ]
+        # S6 (AC-S6-3/S6-4): every product this tag's combo could show - the
+        # subject picker's list, a superset of `part_rows` above, which
+        # stays the narrow "this tag's own choice" list every price sum and
+        # `set_members` below still reads.
+        combo_rows = _combo_products(
+            db, line, tag, viewer, promotion_id, parts_cache,
+            price_mode=request.price_mode,
+        )
 
         # D4. A tag with no parts is exactly today's product tag: the sums below
         # are over an empty list, so both prices and the slot text are the ones
@@ -869,7 +933,14 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "line_id": line.id,
                 "tag_label": _tag_label(line_index, tag_index),
                 "open_groups": open_groups,
-                "parts": part_rows,
+                # S6: `parts` is now the WIDE list (every candidate of every
+                # open group) - a slot may bind to any of them, and the print
+                # payload's image map has to reach a non-chosen candidate's
+                # photo too (AC-S6-5). `own_parts` is what this tag itself
+                # prints and prices - unchanged meaning, so `set_members`,
+                # Tag total and an unmodified template still read it.
+                "parts": combo_rows,
+                "own_parts": part_rows,
                 "code": code,
                 "name": name,
                 "dimensions": dimensions,
@@ -1170,6 +1241,17 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
             {**part, "images": resign_images(db, part.get("images") or [])}
             for part in pinned["parts"]
         ]
+    if pinned.get("own_parts"):
+        row["own_parts"] = [
+            {**part, "images": resign_images(db, part.get("images") or [])}
+            for part in pinned["own_parts"]
+        ]
+    elif "own_parts" not in pinned:
+        # AC-S6-11: a row pinned before r10 has no `own_parts` - its `parts`
+        # was already exactly this narrow list (nothing had widened it yet),
+        # kept as pinned rather than reprocessed, so `set_members`/Tag total
+        # keep reading the right thing.
+        row["own_parts"] = pinned.get("parts") or []
     row["quantity"] = tag.quantity
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
@@ -1289,6 +1371,21 @@ def data_hash(row: dict) -> str:
     subject["images"] = [
         {"attachment_id": image.get("attachment_id"), "is_primary": bool(image.get("is_primary"))}
         for image in row.get("images") or []
+    ]
+    # S6: `parts` is the WIDE combo list (every candidate of every open
+    # group), which `own_parts`'s narrow sum does not cover - a candidate
+    # added or removed, or a non-chosen sibling's price moving, would
+    # otherwise never move the hash and the gate would stay silent even
+    # though `diff_pin_against_live` walks the same wide list per part.
+    subject["parts"] = [
+        {
+            "product_id": part.get("product_id"),
+            "role": part.get("role"),
+            "chosen": bool(part.get("chosen")),
+            "list_price": _plain(part.get("list_price")),
+            "sell_price": _plain(part.get("sell_price")),
+        }
+        for part in row.get("parts") or []
     ]
     return hashlib.sha256(
         json.dumps(subject, sort_keys=True, default=str).encode()

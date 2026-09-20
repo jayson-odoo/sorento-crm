@@ -572,6 +572,7 @@ class PriceTagRequestService:
                             choices=row.get("choices") or {},
                             marketing_price_override=row.get("marketing_price_override"),
                             marketing_override_reason=row.get("marketing_override_reason"),
+                            print_excluded=bool(row.get("print_excluded")),
                         )
                     )
                 return
@@ -927,6 +928,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                     "choices": dict(tag.choices or {}),
                     "marketing_price_override": tag.marketing_price_override,
                     "marketing_override_reason": tag.marketing_override_reason,
+                    # AC-S6-10: "Not printed" survives a revise on a tag whose
+                    # choice set is unchanged, same as quantity and overrides.
+                    "print_excluded": bool(tag.print_excluded),
                 }
                 for tag in sorted(
                     old.tags or [], key=lambda t: (t.sort_order or 0, t.id)
@@ -1694,6 +1698,7 @@ Marketing's own work is not part of the form's payload, so it is captured
             "marketing_override_reason": tag.marketing_override_reason,
             "list_price": (resolved or {}).get("list_price"),
             "sell_price": (resolved or {}).get("sell_price"),
+            "print_excluded": bool(tag.print_excluded),
         }
 
     @staticmethod

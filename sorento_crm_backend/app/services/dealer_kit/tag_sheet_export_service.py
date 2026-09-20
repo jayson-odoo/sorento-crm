@@ -384,6 +384,21 @@ def design_media(
             if request is not None
             else []
         )
+    # AC-S6-8/AC-S6-12: a tag marked Not printed is still open and editable
+    # on the rail/canvas (those go straight through
+    # `resolve_request_line_data`), but this is the ONE resolver behind the
+    # PDF payload, the portal preview and the CRM design preview - a proof
+    # of what will print must never carry a tag that will not, and an image
+    # reachable only through that tag must not be signed into the export.
+    if request is not None:
+        excluded_tag_ids = {
+            tag.id
+            for line in (request.lines or [])
+            for tag in (line.tags or [])
+            if tag.print_excluded
+        }
+        if excluded_tag_ids:
+            rows = [row for row in rows if row["tag_id"] not in excluded_tag_ids]
     images: dict[str, str] = {}
     for row in rows:
         for image in row["images"]:

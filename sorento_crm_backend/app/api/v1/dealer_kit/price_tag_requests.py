@@ -59,7 +59,9 @@ from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
     PRINT_BY_CHOICES,
+    STATUS_CHANGES_REQUESTED,
     STATUS_DESIGNING,
+    STATUS_NEW,
     STATUS_PROOF_READY,
 )
 
@@ -943,6 +945,22 @@ def update_price_tag_request_tag(
     """
     tag = _tag_or_404(db, request_id, tag_id)
     data = payload.model_dump(exclude_unset=True)
+    if "print_excluded" in data:
+        req = PriceTagRequestService.get_request(db, request_id)
+        # AC-S6-7: refused once the request has reached proof_ready (or
+        # later) - a proof already out for review must not silently lose a
+        # tag from what gets printed.
+        if req is not None and req.status not in (
+            STATUS_NEW,
+            STATUS_DESIGNING,
+            STATUS_CHANGES_REQUESTED,
+        ):
+            raise AppException(
+                status_code=409,
+                message="This request's tags can no longer be marked Not printed.",
+                code="INVALID_STATE",
+            )
+        tag.print_excluded = bool(data["print_excluded"])
     if "quantity" in data and data["quantity"] is not None:
         tag.quantity = data["quantity"]
     if "marketing_price_override" in data:
