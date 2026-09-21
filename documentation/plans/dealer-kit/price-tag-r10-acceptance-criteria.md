@@ -88,8 +88,24 @@ left stale.
   itself contains the literal text `{{product.name}}` is never re-expanded (single left-to-right scan, no
   recursion); a template naming a token the data cannot answer renders that token empty; an empty or absent
   template renders empty (Q5, unchanged). (vitest merge-fields.test.tsx)
-- AC-S4-14 (added by the tester, owner amendment 21 Sep, S11) No backend change: `GET`/`PATCH /products/{id}`
-  already carry `price_tag_description` (AC-S4-2); this amendment is FE-only. (no new pytest)
+- AC-S4-14 (added by the tester, owner amendment 21 Sep, S11; corrected by the tester, S11 re-check, 21 Sep)
+  `GET`/`PATCH /products/{id}` already carried `price_tag_description` (AC-S4-2) - no route or schema change
+  there. This AC's original text ("no backend change... no new pytest") undersold the amendment: the
+  RESOLVED-TAG-DATA schemas the canvas and the template designer actually read
+  (`ResolvedLineData`/`TagPartData`/`ProductTagData`) never declared the field at all, so it never reached
+  the designer even though `tag_data_service` always computed it - fixed in 5ce3bd5d8, pytest
+  `test_dealer_kit_tag_data_routes.py::test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts`
+  and `::test_product_tag_data_keeps_every_field`. See AC-S4-15 for the follow-on gap this same investigation
+  found (a part-level edit not reaching the pin at all).
+- AC-S4-15 (added by the tester, S11 re-check, phase 3, 21 Sep) A `price_tag_description` edit on ANY
+  product of a combo line - the line's own host product (AC-S4-8, unchanged), a fixed part, or any
+  open-group candidate, chosen or not - reaches the tag: the next `GET data-changes` flags it (or
+  auto-applies it on a `designing`/`changes_requested` request, same as any other product data change,
+  S8), and the tag's re-pinned row then carries the new template on that part in `parts` (every combo
+  product) and, for a fixed part or the chosen candidate, in `own_parts` too. (pytest
+  `test_price_tag_data_pin.py::TestAcS415APartProductsTemplateEditReachesThePin`,
+  `test_dealer_kit_tag_data.py::test_ac_s4_15_resolve_tags_live_carries_price_tag_description_on_every_part_row`,
+  `test_dealer_kit_tag_data_routes.py::test_resolve_prices_carries_price_tag_description_on_an_open_groups_candidates`)
 
 ## S5. Combo image
 

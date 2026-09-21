@@ -661,6 +661,111 @@ def test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts(
 
 
 # ---------------------------------------------------------------------------
+# AC-S4-15 (S11 re-check, phase 3, 21 Sep): the test above only exercised a
+# FIXED `PriceTagRequestLinePart`. The real browser-observed shape is an
+# OPEN GROUP candidate (r10 S6) - a different branch of `_combo_products`
+# (`part.candidates`, not `part.product_id`) - so it is covered on the wire
+# separately here, chosen and non-chosen both.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_prices_carries_price_tag_description_on_an_open_groups_candidates(
+    api,
+):
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = _product(db)
+    candidate_chosen = _product(db)
+    candidate_chosen.price_tag_description = "{{product.code}} CHOSEN"
+    candidate_other = _product(db)
+    candidate_other.price_tag_description = "{{product.code}} SIBLING"
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="ZZT combo", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    for index, candidate in enumerate([candidate_chosen, candidate_other]):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=candidate.id,
+                choice_group="Group",
+                sort_order=index,
+            )
+        )
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 1,
+                    "parts": [
+                        {
+                            "role": "Group",
+                            "candidates": [candidate_chosen.id, candidate_other.id],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    db.commit()
+    # D6: an open group of two candidates mints two tags - ask for the one
+    # whose `choices` names `candidate_chosen`.
+    tag = next(
+        t
+        for t in request.lines[0].tags
+        if str(candidate_chosen.id) in (t.choices or {}).values()
+    )
+
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
+            json=[tag.id],
+        )
+
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    parts_by_code = {p["code"]: p for p in row["parts"]}
+    assert (
+        parts_by_code[candidate_chosen.product_code]["price_tag_description"]
+        == "{{product.code}} CHOSEN"
+    )
+    # The NON-chosen sibling still rides `parts` (the wide combo list, S6) -
+    # its own template must reach the wire too, chosen or not.
+    assert (
+        parts_by_code[candidate_other.product_code]["price_tag_description"]
+        == "{{product.code}} SIBLING"
+    )
+    own_by_code = {p["code"]: p for p in row["own_parts"]}
+    assert (
+        own_by_code[candidate_chosen.product_code]["price_tag_description"]
+        == "{{product.code}} CHOSEN"
+    )
+    assert candidate_other.product_code not in own_by_code
+
+
+# ---------------------------------------------------------------------------
 # Request DETAIL lines carry what the detail page draws
 # ---------------------------------------------------------------------------
 

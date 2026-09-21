@@ -1422,6 +1422,53 @@ def test_ac_s6_3_tag_1a_parts_lists_every_candidate_own_parts_is_the_narrow_list
         assert all(role == "Kitchen Tap" for role in roles.values())
 
 
+def test_ac_s4_15_resolve_tags_live_carries_price_tag_description_on_every_part_row():
+    """AC-S4-15 (S11 re-check, phase 3, 21 Sep): the fixed part, the CHOSEN
+    candidate and every non-chosen sibling all carry their own
+    `price_tag_description` on `parts`; the fixed part and the chosen
+    candidate also carry it on `own_parts`. Written to eliminate one of the
+    two hypotheses for the "a part template edit never reaches the tag"
+    defect: `_part_row`/`_combo_products` already thread the field through
+    correctly here (confirmed green) - the real gap is `data_hash`/
+    `diff_pin_against_live` never fingerprinting it, covered in
+    `test_price_tag_data_pin.py::TestAcS415APartProductsTemplateEditReachesThePin`."""
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, _cabinet, mirror, taps = _combo_line_request(db)
+        mirror.price_tag_description = "{{product.code}} MIRROR"
+        for index, tap in enumerate(taps):
+            tap.price_tag_description = f"{{{{product.code}}}} TAP-{index}"
+        db.flush()
+        line = request.lines[0]
+        tag_1a = sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))[0]
+        chosen_tap = next(
+            t for t in taps if str(t.id) in (tag_1a.choices or {}).values()
+        )
+
+        rows = tag_data_service.resolve_tags_live(db, request, [tag_1a])
+        row = rows[0]
+
+        parts_by_code = {p["code"]: p for p in row["parts"]}
+        assert parts_by_code[mirror.product_code]["price_tag_description"] == (
+            "{{product.code}} MIRROR"
+        )
+        for tap in taps:
+            assert parts_by_code[tap.product_code]["price_tag_description"] is not None, (
+                tap.product_code,
+                parts_by_code[tap.product_code],
+            )
+
+        own_by_code = {p["code"]: p for p in row["own_parts"]}
+        assert own_by_code[mirror.product_code]["price_tag_description"] == (
+            "{{product.code}} MIRROR"
+        )
+        assert (
+            own_by_code[chosen_tap.product_code]["price_tag_description"]
+            == parts_by_code[chosen_tap.product_code]["price_tag_description"]
+        )
+
+
 def test_ac_s6_3_set_members_still_prints_only_the_tags_own_parts():
     """An unchanged template must keep printing exactly what it printed
     before r10 - `set_members` reads `own_parts`, never the widened `parts`."""

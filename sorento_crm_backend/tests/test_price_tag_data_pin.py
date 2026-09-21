@@ -1985,3 +1985,204 @@ def test_ac_s8_16_apply_auto_data_updates_called_twice_with_the_same_triples_wri
             "no-op, not a duplicate before/after pair",
             [v.commit_message for v in versions],
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-15 (S11 re-check, phase 3, 21 Sep): a template edit on ANY product of
+# the line's combo reaches the tag - not only the line's own host product
+# (AC-S4-8 only ever covered that one). Root cause probed and confirmed:
+# `_part_row`/`_combo_products` already carry `price_tag_description` on
+# every part row correctly (see `test_dealer_kit_tag_data.py` and
+# `test_dealer_kit_tag_data_routes.py`) - the gap is entirely in
+# `data_hash`'s `subject["parts"]` sub-hash (`product_id`, `role`, `chosen`,
+# `list_price`, `sell_price` only, no `price_tag_description`) and in
+# `diff_pin_against_live`'s per-part loop (`list_price`/`sell_price`/images
+# only). A part's own template changing moves neither the hash nor the
+# named diff, so `diff_pin_against_live`'s own `if data_hash(live) ==
+# data_hash(pinned): return []` guard fires and the change is never
+# detected, never listed, and never auto-applied - the tag's pin stays on
+# the OLD template forever.
+# ---------------------------------------------------------------------------
+
+
+def _designing_combo_request(db):
+    """A designing request whose line has a fixed part X and a 2-candidate
+    open group (C chosen, `candidate_other` not) - D6 splits this into two
+    tags, one per candidate, each carrying X as a fixed `own_parts` member."""
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = seed.seed_product(db)
+    part_x = seed.seed_product(db)
+    candidate_c = seed.seed_product(db)
+    candidate_other = seed.seed_product(db)
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="ZZT combo", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()),
+            combo_id=combo.id,
+            part_product_id=part_x.id,
+            choice_group=None,
+            sort_order=0,
+        )
+    )
+    for index, candidate in enumerate([candidate_c, candidate_other]):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=candidate.id,
+                choice_group="Group",
+                sort_order=index + 1,
+            )
+        )
+    db.flush()
+
+    contact_id = seed.seed_portal_contact(db)
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact_id,
+        company_id=seed.SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 1,
+                    "parts": [
+                        {"product_id": part_x.id},
+                        {"role": "Group", "candidates": [candidate_c.id, candidate_other.id]},
+                    ],
+                }
+            ],
+        },
+    )
+    request.portal_draft_at = None
+    request.assigned_to_id = seed.MARKETER_ID
+    request.print_by = "office"
+    request.status = "new"
+    db.flush()
+    db.commit()
+
+    PriceTagRequestService.transition_status(
+        db, request.id, "designing", user_id=seed.MARKETER_ID
+    )
+    db.commit()
+    return request, cabinet, part_x, candidate_c, candidate_other
+
+
+def _tag_choosing(db, request, candidate):
+    """The tag among this request's line whose `choices` names `candidate`."""
+    for tag in _tags(db, request.id):
+        if str(candidate.id) in (tag.choices or {}).values():
+            return tag
+    raise AssertionError(f"no tag chose {candidate.id}")
+
+
+def _part_row_of(pinned_tag_data, key, product):
+    rows = pinned_tag_data.get(key) or []
+    return next((row for row in rows if str(row.get("product_id")) == str(product.id)), None)
+
+
+class TestAcS415APartProductsTemplateEditReachesThePin:
+    def test_a_fixed_parts_own_template_edit_flags_and_auto_applies_on_every_tag(
+        self, crm
+    ):
+        client, db = crm
+        request, _cabinet, part_x, candidate_c, candidate_other = (
+            _designing_combo_request(db)
+        )
+        seed.attach_design(db, request)
+        tags = _tags(db, request.id)
+        assert len(tags) == 2, "one tag per open-group candidate (D6)"
+
+        part_x.price_tag_description = "{{product.code}} FIXED-NEW"
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        for tag_id in [t.id for t in tags]:
+            tag = next(t for t in _tags(db, request.id) if t.id == tag_id)
+            assert tag.data_updated_at is not None, (
+                "X is a FIXED part on every tag of this line - editing its "
+                "own template must flag/auto-apply every one of them",
+                tag_id,
+            )
+            own_row = _part_row_of(tag.pinned_tag_data, "own_parts", part_x)
+            assert own_row is not None, tag.pinned_tag_data
+            assert own_row["price_tag_description"] == "{{product.code}} FIXED-NEW"
+            wide_row = _part_row_of(tag.pinned_tag_data, "parts", part_x)
+            assert wide_row is not None
+            assert wide_row["price_tag_description"] == "{{product.code}} FIXED-NEW"
+
+    def test_the_chosen_candidates_own_template_edit_flags_and_auto_applies_its_tag(
+        self, crm
+    ):
+        client, db = crm
+        request, _cabinet, _part_x, candidate_c, _candidate_other = (
+            _designing_combo_request(db)
+        )
+        seed.attach_design(db, request)
+        tag = _tag_choosing(db, request, candidate_c)
+
+        candidate_c.price_tag_description = "{{product.code}} CHOSEN-NEW"
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        tag = next(t for t in _tags(db, request.id) if t.id == tag.id)
+        assert tag.data_updated_at is not None, (
+            "the CHOSEN candidate's own template edit must flag/auto-apply "
+            "the tag that chose it"
+        )
+        own_row = _part_row_of(tag.pinned_tag_data, "own_parts", candidate_c)
+        assert own_row is not None, tag.pinned_tag_data
+        assert own_row["price_tag_description"] == "{{product.code}} CHOSEN-NEW"
+        wide_row = _part_row_of(tag.pinned_tag_data, "parts", candidate_c)
+        assert wide_row is not None
+        assert wide_row["price_tag_description"] == "{{product.code}} CHOSEN-NEW"
+
+    def test_a_non_chosen_candidates_own_template_edit_still_flags_the_tag(
+        self, crm
+    ):
+        """`parts` is the WIDE per-tag list (every candidate of the line's
+        open group, D6/S6) - a non-chosen sibling's own template still rides
+        on every tag's `parts`, even though it never reaches `own_parts`
+        there, so its own edit must still flag/auto-apply."""
+        client, db = crm
+        request, _cabinet, _part_x, candidate_c, candidate_other = (
+            _designing_combo_request(db)
+        )
+        seed.attach_design(db, request)
+        tag = _tag_choosing(db, request, candidate_c)
+
+        candidate_other.price_tag_description = "{{product.code}} SIBLING-NEW"
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        tag = next(t for t in _tags(db, request.id) if t.id == tag.id)
+        assert tag.data_updated_at is not None, (
+            "a NON-chosen sibling's own template edit must still flag/auto-"
+            "apply the tag - it is still on that tag's wide `parts` list"
+        )
+        wide_row = _part_row_of(tag.pinned_tag_data, "parts", candidate_other)
+        assert wide_row is not None, tag.pinned_tag_data
+        assert wide_row["price_tag_description"] == "{{product.code}} SIBLING-NEW"
+        # Never chosen on THIS tag, so it must not be in `own_parts` either
+        # before or after - the point under test is only that the CHANGE
+        # was detected, not that ownership moved.
+        assert _part_row_of(tag.pinned_tag_data, "own_parts", candidate_other) is None
