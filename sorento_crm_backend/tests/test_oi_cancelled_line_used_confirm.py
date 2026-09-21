@@ -30,6 +30,10 @@ reinvented:
   (`_redirect_row_if_received`, AC-CL-12/15) and the sheet importer's `World`/`sheet()` from
   `tests/test_project_order_inquiry_import_migration.py` for the birth-state tests
   (AC-CL-8/13) and the whole journey (AC-CL-18).
+
+`test_sheet_row_onto_an_already_cancelled_line_is_born_awaiting` (AC-CL-8's importer half)
+retired under R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: see the retirement
+note left in its place.
 """
 from __future__ import annotations
 
@@ -931,23 +935,15 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
 # ---------------------------------------------------------------------------
 
 
-def test_sheet_row_onto_an_already_cancelled_line_is_born_awaiting():
-    """AC-CL-8: a row the sheet upload raises ONTO an already cancelled line (the
-    fallback pass, `_run_pass`'s own R7 rule - only the fallback may take a cancelled
-    line) is born `awaiting`, not the importer's ordinary `acknowledged`."""
-    with mig_world() as w:
-        order = w.order()
-        w.line(order, qty_ordered="50", line_status="cancelled")
-        data = mig_sheet([
-            (order.so_number, w.product.product_code, 30, MIG_D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        assert row.ack_state == ACK_AWAITING
+# test_sheet_row_onto_an_already_cancelled_line_is_born_awaiting (AC-CL-8) retired under
+# R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: its whole premise - the sheet
+# importer's fallback pass raising a row ONTO an already-cancelled line - is unreachable now
+# that a cancelled line is never a line-pick candidate at all (AC-S4-3): the sheet row in
+# this fixture (a lone cancelled line, nothing else in the order) is refused
+# `no_line_for_item`, exactly the shape
+# `tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_3_closed_or_cancelled_line_never_paired`
+# pins. The control below (an open line still raises `acknowledged`) is untouched and still
+# proves the importer's ordinary birth state.
 
 
 def test_ordinary_sheet_row_is_still_born_acknowledged():

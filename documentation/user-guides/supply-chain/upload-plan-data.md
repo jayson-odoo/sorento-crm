@@ -366,7 +366,10 @@ This is the migration tool for the order inquiry Excel you have been keeping by 
 orders, purchase orders and shipping orders already arrive from AutoCount on their own, so the
 sheet is no longer read for any of those: every row on it becomes an **order inquiry** on the
 sales order line it names, linked to the purchase order or shipping order that line is waiting
-on. Completed history migrates too, so you can load the whole workbook, not just this month.
+on. Load the whole workbook, not just this month's tab - every tab with a recognisable header row
+is read - but only an order's still-open lines can take a row: a closed sales order, or one whose
+lines are all closed or cancelled, has nothing left to pair a row to (see "Rows with no matching
+line" below).
 
 ### What the sheet must contain
 
@@ -416,7 +419,9 @@ three lists:
   or has no room left. The rows are still raised, just unlinked.
 * **Rows with no matching line** - one entry per row as `SO · item · qty · reason`, with the
   reason in the same words the job page uses: "No sales order line for this item", "No line for
-  this item at that stock location", "Quantity exceeds what the line ordered".
+  this item at that stock location", "Quantity exceeds what the line ordered", or, when every
+  line of the order is closed or cancelled, "No open line left: every line is closed or
+  cancelled".
 
 A list with nothing in it is absent rather than shown empty. **Confirm upload** is disabled when
 **Will raise** is 0: there is nothing left for it to do, and pressing it would only queue a job
@@ -424,13 +429,19 @@ that writes nothing.
 
 ### What gets created
 
-* **One order inquiry row per sheet row**, on the sales order line matched by SO number, item
-  code, stock location, and a quantity that fits what that line ordered. A line with no
-  warehouse of its own accepts any stock location.
-* **Whether the line is still open makes no difference.** A closed sales order and a fully
-  delivered line migrate the same as an open one, which is the point of loading the history.
-* **Two rows for the same line are both raised** when their quantities together still fit what
-  the line ordered. The sheet is what splits a line, never the upload.
+* **One order inquiry row per sheet row**, paired within its own sales order to an open line by
+  date: every open line sorted by its own required date, this upload's own sheet rows for that
+  order sorted by delivery date, matched earliest to earliest, one each. Item and stock location
+  still have to fit; a line with no warehouse of its own accepts any stock location. A line's own
+  ordered quantity does not stop the pairing - a row bigger (or smaller) than what the line
+  ordered still lands there, and the difference shows as the usual "Was {qty} on {date}" note;
+  only a row bigger than everything the order has left open in total is refused as exceeding the
+  order.
+* **A closed or cancelled line is never paired.** Only an order's still-open lines are
+  candidates.
+* **A second sheet row for the same item becomes a second row** on the line its date order gives
+  it, once every open line already has one row from this upload - the sheet is what splits a
+  line, never the upload.
 * **The upload never creates a sales order or a sales order line**, and never writes a location
   onto one. AutoCount owns the order book.
 * **A row the sheet raises onto a line that is already cancelled** lands on **To confirm**

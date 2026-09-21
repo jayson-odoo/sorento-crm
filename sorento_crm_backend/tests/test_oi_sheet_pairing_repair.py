@@ -30,6 +30,15 @@ order + lines, purchase orders + lines, allocations, claims - because CI's datab
 empty and nothing may be read off an existing row. The seed helpers are IMPORTED from
 `tests/test_project_order_inquiry_import_migration.py` rather than copied, so the two files
 cannot drift about what a seeded world is.
+
+`test_ac_r_10_cancelled_ghost_loses_to_real_line`, `test_ac_r_22_ambiguous_ref_never_promotes_a_ghost`,
+`test_ac_r_32_bought_line_outranks_unbought_without_citation`,
+`test_ac_r_33_bought_beats_open_but_not_cancelled`, `test_ac_r_41_exact_date_beats_bought_line`
+and `test_ac_r_42_bought_decides_when_no_line_matches_sheet_date` retired under R4,
+PLAN-board-received-stock-own-arrival, 21 Sep 2026 - each pinned R2's citation-ranked line
+pick (or D1's "cancelled still matches when lone"), both superseded by
+`_pick_lines_by_date_order`'s date-order pairing and AC-S4-3; see the retirement notes left
+in their place, in file order.
 """
 from __future__ import annotations
 
@@ -474,76 +483,14 @@ def test_ac_r_9_cited_spo_chain_picks_the_named_line():
         assert w.links(row) == [], "the cited shipping order linked the row anyway"
 
 
-def test_ac_r_10_cancelled_ghost_loses_to_real_line():
-    """AC-R-10. A cancelled August-extract ghost line loses to any real line that fits - and
-    still matches when it is the only one that does (D1 kept).
-
-    This is prod row 772 of tab "JAN - APR 26". 10,499 cancelled Aug-extract lines are still
-    in the book with a `source_ref` like `'40'` rather than an `AED_SORENTO:` one, and 13,222
-    claims point at them; the row landed on the ghost because it was the older row and
-    nothing else told the two apart. `created_at` is stated explicitly here so the ghost IS
-    the older one and the new rule is what moves the row, not a tie.
-    """
-    with world() as w:
-        order = w.order()
-        ghost = _born_at(
-            w,
-            _with_ref(
-                w,
-                w.line(order, qty_ordered="50", required_date=D_OCT,
-                       line_status="cancelled"),
-                "40",
-            ),
-            datetime(2026, 1, 5, 9, 0, 0),
-        )
-        real = _born_at(
-            w,
-            _with_ref(
-                w,
-                w.line(order, qty_ordered="50", required_date=D_OCT,
-                       line_status="closed", qty_delivered="50"),
-                _ref(),
-            ),
-            datetime(2026, 6, 5, 9, 0, 0),
-        )
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        mirror = w.mirror_of(real)
-        assert mirror is not None, (
-            "the real line was never even mirrored: the row landed on the cancelled "
-            "Aug-extract ghost"
-        )
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "the row landed on the cancelled Aug-extract ghost"
-        )
-        ghost_mirror = w.mirror_of(ghost)
-        assert ghost_mirror is None or str(w.one_row().so_line_id) != str(ghost_mirror.id)
-
-    with world() as w:
-        order = w.order()
-        lonely = _with_ref(
-            w,
-            w.line(order, qty_ordered="50", required_date=D_OCT, line_status="cancelled"),
-            "41",
-        )
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        assert result["rows_line_not_found"] == 0, result
-        assert str(w.one_row().so_line_id) == str(w.mirror_of(lonely).id), (
-            "a lone cancelled line still matches - it is where the history is"
-        )
+# test_ac_r_10_cancelled_ghost_loses_to_real_line (AC-R-10, D1) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: both its scenarios relied on D1's
+# "cancelled ranks last but still matches over nothing" - explicitly overturned by AC-S4-3
+# ("a closed or cancelled core line is never paired, even when it is the only qty fit").
+# Its first scenario's own "real" line was itself CLOSED, so under R4 NEITHER candidate is
+# open any more and the row is refused `no_line_for_item`; its second scenario (a lone
+# cancelled line) is the identical shape AC-S4-3 already pins
+# (`tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_3_closed_or_cancelled_line_never_paired`).
 
 
 # --------------------------------------------------------------------------- #
@@ -1222,70 +1169,13 @@ def test_ac_r_21_chain_walks_the_exact_po_line():
         )
 
 
-def test_ac_r_22_ambiguous_ref_never_promotes_a_ghost():
-    """AC-R-22. A reference that names more than one sales order line names none of them.
-
-    `sales_order_lines.source_ref` is not unique: the August extract wrote bare ordinals, and
-    `'1'` alone sits on 3,364 lines across 3,364 different sales orders on the prod copy. The
-    pairing already drops an ambiguous ref before it links anything; the LINE PICK has to
-    drop it too, or a cancelled ghost carrying the ordinal is "named by the cited document"
-    and outranks the real line the operator meant - which is the very row this lane was
-    opened for (tab "JAN - APR 26" row 772).
-    """
-    with world() as w:
-        order = w.order()
-        ghost = _with_ref(
-            w,
-            w.line(order, qty_ordered="50", required_date=D_OCT, line_status="cancelled"),
-            "1",
-        )
-        real = _with_ref(
-            w,
-            w.line(
-                order, qty_ordered="50", required_date=D_OCT,
-                line_status="closed", qty_delivered="50",
-            ),
-            _ref(),
-        )
-        # The same ordinal on ANOTHER sales order is what makes it ambiguous.
-        elsewhere = w.order()
-        _with_ref(w, w.line(elsewhere, qty_ordered="50"), "1")
-
-        # A purchase order line naming the AMBIGUOUS ordinal - proves it links nothing,
-        # not even by the ref (source 1 drops it, same guard `_ref_targets` applies).
-        ambiguous_po, ambiguous_line = w.po_line(qty_ordered="50")
-        _names(w, ambiguous_line, "1")
-        # A SEPARATE purchase order line naming `real`'s own, UNAMBIGUOUS ref - issue #915
-        # retired the sheet's citation as a link source, so the row's own book link is
-        # stated through this instead (coordinator round 2, group 3).
-        real_po, real_po_line = w.po_line(qty_ordered="50")
-        _names(w, real_po_line, real.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror = w.mirror_of(real)
-        assert mirror is not None, (
-            "the real line was never mirrored: the ordinal promoted the cancelled ghost"
-        )
-        assert str(row.so_line_id) == str(mirror.id), (
-            "an ambiguous ref made the cancelled ghost outrank the real line"
-        )
-        ghost_mirror = w.mirror_of(ghost)
-        assert ghost_mirror is None or str(row.so_line_id) != str(ghost_mirror.id)
-        links = w.links(row)
-        assert [str(link.po_line_id) for link in links] == [str(real_po_line.id)], (
-            _documents(links)
-        )
-        assert all(
-            str(link.po_line_id) != str(ambiguous_line.id) for link in links
-        ), "the ambiguous ref paired the row as though the book had stated it"
-        assert result["links_from_autocount"] == 1
+# test_ac_r_22_ambiguous_ref_never_promotes_a_ghost (AC-R-22) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: its whole premise was an ambiguous
+# citation "promoting" a cancelled ghost line ahead of a real one in the LINE PICK, which no
+# longer reads citations at all (`_pick_lines_by_date_order` reads only `required_date` /
+# `delivery_date`). Its own "real" line was also CLOSED, so under AC-S4-3 neither candidate
+# in this fixture is open and the row is refused `no_line_for_item` regardless of any
+# citation.
 
 
 # AC-R-23 ("the citation a restatement lends has to reach the LINE PICK, not just the
@@ -1329,159 +1219,14 @@ def test_ac_r_24_ref_shared_by_two_orders_pairs_nothing():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_r_32_bought_line_outranks_unbought_without_citation():
-    """AC-R-32. R2 finished: the line the row means is the one AutoCount bought for,
-    whether or not the sheet says so (`PLAN-scm-oi-sheet-pairing-repair.md` section 7).
-
-    Seen on prod after #886 deployed and the file was re-uploaded. SO395635 / SRTWC8317-RL
-    holds five open lines of the item and PO 202603-S0123 names four of them; the sheet's
-    November row cites nothing, so the pick fell through to the date and id tiebreak and
-    landed on the one line no purchase order ever bought for. Source 1 then had nothing to
-    follow, and a row that could have been linked was raised bare. 220 rows on the 3am copy
-    sit like that - on an unbought line with a free, bought sibling of the same sales order
-    and item standing beside it.
-
-    The sheet's date here carries a THIRD date neither line owns (issue #915, section 8.1
-    change 2 promoted "required_date == sheet date" ABOVE "bought" - AC-R-41's own ruling -
-    so a sheet date equal to the unbought line's own date would land there on the date term
-    alone, before "bought" is ever consulted, and this criterion would stop testing what it
-    names). With the date term tied for both lines, "bought" is what moves the row.
-    """
-    with world() as w:
-        order = w.order()
-        third_date = date(2026, 12, 1)
-        unbought = _born_at(
-            w,
-            _with_ref(w, w.line(order, qty_ordered="50", required_date=D_OCT), _ref()),
-            datetime(2026, 1, 5, 9, 0, 0),
-        )
-        bought = _born_at(
-            w,
-            _with_ref(w, w.line(order, qty_ordered="50", required_date=D_NOV), _ref()),
-            datetime(2026, 6, 5, 9, 0, 0),
-        )
-        po, po_line = w.po_line(qty_ordered="50")
-        _names(w, po_line, bought.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, third_date,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror = w.mirror_of(bought)
-        assert mirror is not None, (
-            "the line the purchase order was raised for was never mirrored: the row landed "
-            "on the line nothing bought for"
-        )
-        assert str(row.so_line_id) == str(mirror.id)
-        unbought_mirror = w.mirror_of(unbought)
-        assert unbought_mirror is None or str(row.so_line_id) != str(unbought_mirror.id)
-        links = w.links(row)
-        assert [str(link.po_line_id) for link in links] == [str(po_line.id)], (
-            _documents(links)
-        )
-        assert links[0].document == po.po_number
-        assert result["links_from_autocount"] == 1
-
-
-def test_ac_r_33_bought_beats_open_but_not_cancelled():
-    """AC-R-33. Where the new term sits: above "open before closed", below "cancelled last".
-
-    A closed line the book bought for is still the line that quantity belongs to - the sheet
-    is history, and D8 is explicit that a closed line is exactly what it names. A CANCELLED
-    line is different in kind: 10,499 August-extract ghosts are still in the book, and a
-    ghost that happens to carry a `from_so_line_ref` must not outrank a real open line. So
-    the ordering the two halves pin is `cancelled-last` first, then `bought`, then `open`.
-
-    The sheet's date is a THIRD date neither line owns (issue #915: "required_date == sheet
-    date" now ranks above "bought", AC-R-41's own ruling - a sheet date equal to the open
-    line's own date would win on the date term alone, before "bought" is ever reached, and
-    this half would stop proving what it names).
-    """
-    third_date = date(2026, 12, 1)
-    with world() as w:
-        open_line = _born_at(
-            w,
-            _with_ref(w, w.line(order := w.order(), qty_ordered="50", required_date=D_OCT), _ref()),
-            datetime(2026, 1, 5, 9, 0, 0),
-        )
-        closed_bought = _born_at(
-            w,
-            _with_ref(
-                w,
-                w.line(
-                    order, qty_ordered="50", required_date=D_NOV,
-                    line_status="closed", qty_delivered="50",
-                ),
-                _ref(),
-            ),
-            datetime(2026, 6, 5, 9, 0, 0),
-        )
-        _po, po_line = w.po_line(qty_ordered="50")
-        _names(w, po_line, closed_bought.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, third_date,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror = w.mirror_of(closed_bought)
-        assert mirror is not None, (
-            "the closed line the book bought for was never even mirrored, so the row landed "
-            "on the open line nothing bought for"
-        )
-        assert str(row.so_line_id) == str(mirror.id), (
-            "an open line nothing bought for outranked the closed line that was bought"
-        )
-        open_mirror = w.mirror_of(open_line)
-        assert open_mirror is None or str(row.so_line_id) != str(open_mirror.id)
-        assert [str(link.po_line_id) for link in w.links(row)] == [str(po_line.id)]
-
-    with world() as w:
-        order = w.order()
-        real = _born_at(
-            w,
-            _with_ref(w, w.line(order, qty_ordered="50", required_date=D_OCT), _ref()),
-            datetime(2026, 1, 5, 9, 0, 0),
-        )
-        ghost_bought = _born_at(
-            w,
-            _with_ref(
-                w,
-                w.line(
-                    order, qty_ordered="50", required_date=D_NOV,
-                    line_status="cancelled",
-                ),
-                _ref(),
-            ),
-            datetime(2026, 6, 5, 9, 0, 0),
-        )
-        _po, po_line = w.po_line(qty_ordered="50")
-        _names(w, po_line, ghost_bought.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror = w.mirror_of(real)
-        assert mirror is not None, "the real open line was never mirrored"
-        assert str(row.so_line_id) == str(mirror.id), (
-            "a cancelled ghost outranked a real open line because a purchase order named it"
-        )
-        assert w.links(row) == [], (
-            "the row was linked through a cancelled line's reference"
-        )
-        assert result["links_written"] == 0
+# test_ac_r_32_bought_line_outranks_unbought_without_citation (AC-R-32) and
+# test_ac_r_33_bought_beats_open_but_not_cancelled (AC-R-33) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: both pinned the "bought" term of the
+# line-pick rank (`_rank_for`'s `plan.bought_refs` check), which no longer runs -
+# `_pick_lines_by_date_order` never consults which document bought for a line, only
+# `required_date` / `delivery_date` order. AC-R-33's second scenario (a cancelled line the
+# book bought for must not outrank a real open line) is superseded even more directly: a
+# cancelled line is never a candidate at all now (AC-S4-3), not merely outranked.
 
 
 # --------------------------------------------------------------------------- #
@@ -1895,102 +1640,15 @@ def test_ac_r_40_remark_does_not_link():
         assert row.note.endswith(cited.po_number), row.note
 
 
-def test_ac_r_41_exact_date_beats_bought_line():
-    """AC-R-41. The exact date beats a bought line - the part of section 7's ranking this
-    lane reverses.
-
-    Two lines: A closed and fully delivered, dated the sheet's own date, with no document
-    naming it; B closed, dated later, named by purchase order P which shipping order S
-    shipped in full. Under #904, section 7 put "bought" above "date equals the sheet date"
-    in `_rank_for`, so B won even though nothing about the sheet's own date points at it.
-    The row now lands on A, unlinked, and the raised row's `delivery_date` is A's own date
-    (7.4, unaffected by this lane). B is not touched by this row at all.
-    """
-    with world() as w:
-        order = w.order()
-        a = w.line(
-            order, qty_ordered="50", required_date=D_OCT,
-            line_status="closed", qty_delivered="50",
-        )
-        b = _with_ref(
-            w,
-            w.line(
-                order, qty_ordered="50", required_date=D_NOV,
-                line_status="closed", qty_delivered="50",
-            ),
-            _ref(),
-        )
-        po, po_line = w.po_line(qty_ordered="50")
-        _names(w, po_line, b.source_ref)
-        w.spo_allocation(quantity=50, from_po_number=po.po_number)
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror_a = w.mirror_of(a)
-        assert mirror_a is not None, (
-            "A is closed and fully delivered, so it is mirrored only if a row lands on "
-            "it or it is named - and neither happened: the row went to the bought line"
-        )
-        assert str(row.so_line_id) == str(mirror_a.id), (
-            "a line the book bought for outranked the line whose date matches the sheet"
-        )
-        mirror_b = w.mirror_of(b)
-        assert mirror_b is None or str(row.so_line_id) != str(mirror_b.id)
-        assert w.links(row) == [], (
-            "the row on the exact-date line took a link meant for the bought line"
-        )
-        assert row.delivery_date == D_OCT
-
-
-def test_ac_r_42_bought_decides_when_no_line_matches_sheet_date():
-    """AC-R-42. Bought still decides when no line carries the sheet's date - section 7
-    preserved, AC-R-32's premise restated against the new term order.
-
-    Same two lines as AC-R-41, but the sheet row is dated a THIRD date neither line
-    carries: the date term ties for both, and the bought term - unchanged in meaning,
-    only moved one place down - still picks B and links it to the shipping order.
-    """
-    third_date = date(2026, 12, 1)
-    with world() as w:
-        order = w.order()
-        w.line(
-            order, qty_ordered="50", required_date=D_OCT,
-            line_status="closed", qty_delivered="50",
-        )
-        b = _with_ref(
-            w,
-            w.line(
-                order, qty_ordered="50", required_date=D_NOV,
-                line_status="closed", qty_delivered="50",
-            ),
-            _ref(),
-        )
-        po, po_line = w.po_line(qty_ordered="50")
-        _names(w, po_line, b.source_ref)
-        allocation = w.spo_allocation(quantity=50, from_po_number=po.po_number)
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, third_date,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror_b = w.mirror_of(b)
-        assert mirror_b is not None
-        assert str(row.so_line_id) == str(mirror_b.id), (
-            "the bought line no longer decides once no line carries the sheet's date"
-        )
-        links = w.links(row)
-        assert len(links) == 1, _documents(links)
-        assert str(links[0].spo_allocation_id) == str(allocation.id)
+# test_ac_r_41_exact_date_beats_bought_line (AC-R-41) and
+# test_ac_r_42_bought_decides_when_no_line_matches_sheet_date (AC-R-42) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: both pinned the ordering between the
+# "exact date" and "bought" terms of `_rank_for`, neither of which the date-order pick
+# consults any more. Both fixtures also seed only CLOSED lines (fully delivered), so under
+# AC-S4-3 there is no open candidate in either order at all and the row is refused
+# `no_line_for_item` regardless of date or citation - the same fully-delivered-order
+# collision reported in the tester's handback for
+# `test_project_order_inquiry_import_migration.py`.
 
 
 def _cascade_world(w: World):

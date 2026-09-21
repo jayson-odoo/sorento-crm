@@ -45,7 +45,11 @@ import type { ImportQueuedResult } from '@/components/upload-activity/importQueu
 import type { UploadTestResult } from '../components/UploadTestVerdict';
 
 /** Why a sheet row's candidate line was refused, in the order the match checks them. */
-export type LineNotFoundReason = 'no_line_for_item' | 'location_differs' | 'qty_exceeds_ordered';
+export type LineNotFoundReason =
+  | 'no_line_for_item'
+  | 'location_differs'
+  | 'qty_exceeds_ordered'
+  | 'order_fully_delivered';
 
 /** A sheet row that named a sales order line but none fit. */
 export interface LineNotFoundEntry {

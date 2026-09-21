@@ -252,60 +252,18 @@ def _assert_uac_landing(w: World, lines: dict[str, SalesOrderLine]) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_1_exact_month_po_fallback_lands_every_2026_line():
-    """AC-LP-1. Clean database, the UAC fixture: six rows raise, one per 2026 line - three
-    of them (01-02, 05-04, 06-01) by an exact date match, one (04-01) by the same-month
-    pass, two (02-02, 03-02) only by the sheet's own PO - and the 2025-12-01 line, bought
-    for but never cited or dated by the sheet, carries none."""
-    with world() as w:
-        order, lines, pos = _uac_book(w)
-        data = _uac_month_and_rollup(_uac_rows(w, order, pos))
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 6, result
-        assert result["rows_line_not_found"] == 0, result
-        _assert_uac_landing(w, lines)
-
-
-def test_ac_lp_2_exact_date_beats_file_order():
-    """AC-LP-2. The two rows that can only be settled by the PO pass (02-02, 03-02) are
-    stated in the FIRST tab, well ahead of the tab carrying the exact-date rows they could
-    otherwise steal from under a single file-order pass - the landing does not move."""
-    with world() as w:
-        order, lines, pos = _uac_book(w)
-        rows = _uac_rows(w, order, pos)
-        data = book(
-            FIRST=[rows["02-02"], rows["03-02"]],
-            SECOND=[
-                rows["01-02"], rows["04-01"], rows["05-04-month"], rows["06-01-month"],
-            ],
-            ROLLUP=[rows["05-04-rollup"], rows["06-01-rollup"]],
-        )
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 6, result
-        _assert_uac_landing(w, lines)
-
-
-def test_ac_lp_3_same_month_beats_file_order():
-    """AC-LP-3. 02-02 - whose line pick can only be settled in the PO pass - is stated
-    ahead of 04-01, whose own same-month pick is 04-02, and still does not take it."""
-    with world() as w:
-        order, lines, pos = _uac_book(w)
-        rows = _uac_rows(w, order, pos)
-        data = book(
-            FIRST=[rows["02-02"]],
-            SECOND=[rows["04-01"]],
-            THIRD=[rows["01-02"], rows["03-02"], rows["05-04-month"], rows["06-01-month"]],
-            ROLLUP=[rows["05-04-rollup"], rows["06-01-rollup"]],
-        )
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 6, result
-        _assert_uac_landing(w, lines)
+# test_ac_lp_1_exact_month_po_fallback_lands_every_2026_line (AC-LP-1),
+# test_ac_lp_2_exact_date_beats_file_order (AC-LP-2) and
+# test_ac_lp_3_same_month_beats_file_order (AC-LP-3) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: each pinned the UAC fixture's landing
+# under the five-pass exact-date/same-month/PO pick, which `_pick_lines_by_date_order`
+# replaces with pure positional date-order pairing (candidate lines sorted by
+# `required_date`, sheet rows sorted by `delivery_date`, paired one to one) - the very
+# defect (S0's own measurement against SO372176) R4 was ruled to fix. Under the new pick the
+# UAC fixture's 2025-12-01 line, bought for but never cited or dated close by the sheet, is
+# no longer skipped: it is simply the earliest candidate line and takes whichever sheet row
+# sorts first, which is exactly the shape AC-S4-1
+# (`tests/scm/test_board_received_stock_s4_import_pairing.py`) now pins instead.
 
 
 # --------------------------------------------------------------------------- #
@@ -313,83 +271,12 @@ def test_ac_lp_3_same_month_beats_file_order():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_4_same_month_two_lines_po_then_nearest_date():
-    """AC-LP-4. Two lines fall in the same month as the row: the sheet's own PO decides
-    between them - here the FARTHER line's PO is cited, which only a PO-aware tie-break can
-    honour - and with neither bought by anything, the nearer date decides instead."""
-    with world() as w:
-        order = w.order()
-        near = _with_ref(
-            w, w.line(order, qty_ordered="80", required_date=date(2026, 4, 2)), _ref(),
-        )
-        far = _with_ref(
-            w, w.line(order, qty_ordered="80", required_date=date(2026, 4, 20)), _ref(),
-        )
-        _po_near, po_line_near = w.po_line(qty_ordered="80")
-        _names(w, po_line_near, near.source_ref)
-        po_far, po_line_far = w.po_line(qty_ordered="80")
-        _names(w, po_line_far, far.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 80, date(2026, 4, 1),
-             w.warehouse.warehouse_code, po_far.po_number),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        mirror = w.mirror_of(far)
-        assert mirror is not None
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "the month pass used date proximity ahead of the sheet's own cited PO"
-        )
-
-    with world() as w:
-        order = w.order()
-        near = w.line(order, qty_ordered="80", required_date=date(2026, 4, 2))
-        w.line(order, qty_ordered="80", required_date=date(2026, 4, 20))
-        data = sheet([
-            (order.so_number, w.product.product_code, 80, date(2026, 4, 1),
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        mirror = w.mirror_of(near)
-        assert mirror is not None
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "with no PO to tell the two lines apart, the nearer date should have won"
-        )
-
-    with world() as w:
-        # The row's own date (04-20) sits BEFORE the earlier line and AFTER the later one
-        # is impossible with only two candidates, so instead the row sits BETWEEN them,
-        # much closer to the later one - "earliest" and "nearest" disagree here, and only
-        # "nearest" is the UAC's own rule.
-        order = w.order()
-        earliest_by_date = _with_ref(
-            w, w.line(order, qty_ordered="80", required_date=date(2026, 4, 2)), _ref(),
-        )
-        nearest_by_proximity = _with_ref(
-            w, w.line(order, qty_ordered="80", required_date=date(2026, 4, 25)), _ref(),
-        )
-        po_a, po_line_a = w.po_line(qty_ordered="80")
-        _names(w, po_line_a, earliest_by_date.source_ref)
-        po_b, po_line_b = w.po_line(qty_ordered="80")
-        _names(w, po_line_b, nearest_by_proximity.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 80, date(2026, 4, 20),
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        mirror = w.mirror_of(nearest_by_proximity)
-        assert mirror is not None
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "the month pass picked the EARLIEST line rather than the NEAREST one"
-        )
+# test_ac_lp_4_same_month_two_lines_po_then_nearest_date (AC-LP-4) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned the same-month tie-break
+# (citation, then nearest date) of the superseded five-pass pick. `_pick_lines_by_date_order`
+# pairs candidate lines to sheet rows purely positionally by sort order (required_date /
+# delivery_date), so neither a cited PO nor "nearest date" plays any role in which of two
+# same-month lines a row lands on any more.
 
 
 def test_ac_lp_5_sheet_po_pass_hands_out_in_date_order():
@@ -482,32 +369,18 @@ def test_ac_lp_6_no_po_or_po_names_no_free_line_falls_to_today_rank():
 
 
 def test_ac_lp_7_link_follows_the_book_never_the_sheets_po():
-    """AC-LP-7. Every link AC-LP-1 writes is the book's own (`links_from_autocount`), and a
-    row whose sheet PO differs from the book's own PO for the line it landed on links to
-    the BOOK's document - the sheet's citation still pairs nothing (R2 kept)."""
-    with world() as w:
-        order, lines, pos = _uac_book(w)
-        data = _uac_month_and_rollup(_uac_rows(w, order, pos))
+    """AC-LP-7. A row whose sheet PO differs from the book's own PO for the line it landed
+    on links to the BOOK's document - the sheet's citation still pairs nothing (R2 kept).
 
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 6, result
-        assert result["links_from_autocount"] == 6, result
-        rows_by_date = _rows_by_date(w)
-        expected_po = {
-            date(2026, 1, 2): pos["oct"],
-            date(2026, 4, 1): pos["oct"],
-            date(2026, 2, 2): pos["oct"],
-            date(2026, 3, 2): pos["oct"],
-            date(2026, 5, 4): pos["mar"],
-            date(2026, 6, 1): pos["mar"],
-        }
-        for when, po_number in expected_po.items():
-            row = rows_by_date[when][0]
-            links = w.links(row)
-            assert len(links) == 1, (when, [link.document for link in links])
-            assert links[0].document == po_number, (when, links[0].document)
-
+    The UAC-fixture half of this test (six rows, per-line expected link) retired under R4,
+    PLAN-board-received-stock-own-arrival, 21 Sep 2026: it asserted the landing AC-LP-1
+    pinned, which `_pick_lines_by_date_order`'s positional pairing changes (see
+    `test_ac_lp_1_exact_month_po_fallback_lands_every_2026_line`'s retirement note above).
+    The single-line half below is untouched: it seeds only ONE open line, so the line pick
+    picks it however it is reached, and this test's own point - that the LINK still follows
+    `plan.bought_rows`, unchanged by R4's date-order pick, never the sheet's own citation -
+    is unaffected and still verified here.
+    """
     with world() as w:
         order = w.order()
         line = _with_ref(
@@ -539,8 +412,20 @@ def test_ac_lp_7_link_follows_the_book_never_the_sheets_po():
 
 def test_ac_lp_8_cancelled_ranks_last_in_every_pass():
     """AC-LP-8. D1, restated for the five-pass pick: a cancelled line loses to any live
-    line that fits - in the exact-date pass, in the PO pass - and, when it is the only
-    line at all, is still taken rather than refusing the row."""
+    line that fits - in the exact-date pass, in the PO pass.
+
+    Both scenarios below still hold their OUTCOME (the live line wins) after R4,
+    PLAN-board-received-stock-own-arrival, 21 Sep 2026, even though the REASON changed: the
+    cancelled line is no longer merely ranked behind a live one, it is excluded from the
+    candidate pool entirely (AC-S4-3), so `_pick_lines_by_date_order` never offers it a
+    chance to lose in the first place. The third scenario this test used to carry ("a lone
+    cancelled line still matches - it is where the history is", D1) asserted the OPPOSITE of
+    AC-S4-3 ("a closed or cancelled core line is never paired, even when it is the only qty
+    fit") and is retired; that exact shape (a lone cancelled line, nothing else in the
+    order) is now covered by
+    `tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_3_closed_or_cancelled_line_never_paired`,
+    which asserts the row is refused `no_line_for_item` rather than matched.
+    """
     with world() as w:
         order = w.order()
         _with_ref(
@@ -593,63 +478,14 @@ def test_ac_lp_8_cancelled_ranks_last_in_every_pass():
             "the PO pass took the cancelled line over the live one it also names"
         )
 
-    with world() as w:
-        order = w.order()
-        lonely = _with_ref(
-            w,
-            w.line(order, qty_ordered="50", required_date=D_MATCH, line_status="cancelled"),
-            _ref(),
-        )
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_MATCH,
-             w.warehouse.warehouse_code, ""),
-        ])
 
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        assert result["rows_line_not_found"] == 0, result
-        mirror = w.mirror_of(lonely)
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "a lone cancelled line still matches - it is where the history is (D1)"
-        )
-
-
-def test_ac_lp_9_order_back_lands_on_the_cited_po_line():
-    """AC-LP-9. An ORDER BACK row carries no delivery date, so it takes part in no date
-    pass and no month pass - it lands through the PO pass alone, even against a line dated
-    EARLIER than the one its own citation names (proving the pick, not a date tie-break,
-    decided it)."""
-    with world() as w:
-        order = w.order()
-        cited = _with_ref(
-            w, w.line(order, qty_ordered="80", required_date=date(2026, 7, 15)), _ref(),
-        )
-        earlier_uncited = _with_ref(
-            w, w.line(order, qty_ordered="80", required_date=date(2026, 7, 1)), _ref(),
-        )
-        po_cited, po_line_cited = w.po_line(qty_ordered="80")
-        _names(w, po_line_cited, cited.source_ref)
-        po_other, po_line_other = w.po_line(qty_ordered="80")
-        _names(w, po_line_other, earlier_uncited.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 80, "ORDER BACK",
-             w.warehouse.warehouse_code, po_cited.po_number),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        # Existing behaviour, not this lane's: an ORDER BACK row adopts the delivery date
-        # of the line it lands on, so this is the CITED line's own required date.
-        assert row.delivery_date == date(2026, 7, 15)
-        mirror = w.mirror_of(cited)
-        assert mirror is not None
-        assert str(row.so_line_id) == str(mirror.id), (
-            "an ORDER BACK row landed on the earlier-dated line instead of the one its "
-            "own citation names"
-        )
+# test_ac_lp_9_order_back_lands_on_the_cited_po_line (AC-LP-9) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned the PO-citation pass
+# deciding which line an undated ORDER BACK row lands on. `_pick_lines_by_date_order` sorts
+# undated rows LAST within one order's file-order walk and still pairs purely positionally
+# (candidate open lines sorted by `required_date`), so a citation no longer has any say in
+# an ORDER BACK row's landing either - it lands on whichever open line the positional walk
+# reaches it at.
 
 
 # --------------------------------------------------------------------------- #
@@ -657,80 +493,13 @@ def test_ac_lp_9_order_back_lands_on_the_cited_po_line():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_10_restatement_lends_its_po_to_the_first_statement():
-    """AC-LP-10. A restatement that carries a PO lends it to the first statement when that
-    one carries none - and the line pick, which can only be settled by the PO pass here,
-    actually reads it. A first statement that already cites its own PO keeps it.
-
-    `line_lent` is dated LATER than `line_other` (2026-10-01 against 2026-08-01)
-    deliberately: the fallback's own "earliest date" term would otherwise pick
-    `line_lent` on its own, and this criterion would pass whether or not the lending ever
-    reached the line pick at all.
-    """
-    with world() as w:
-        order = w.order()
-        line_lent = _with_ref(
-            w, w.line(order, qty_ordered="70", required_date=date(2026, 10, 1)), _ref(),
-        )
-        line_other = _with_ref(
-            w, w.line(order, qty_ordered="70", required_date=date(2026, 8, 1)), _ref(),
-        )
-        po_lent, po_line_lent = w.po_line(qty_ordered="70")
-        _names(w, po_line_lent, line_lent.source_ref)
-        po_other, po_line_other = w.po_line(qty_ordered="70")
-        _names(w, po_line_other, line_other.source_ref)
-        # The row's own date (Feb) is neither an exact match nor a same-month match for
-        # EITHER candidate, so only the PO pass - and therefore only the lent citation -
-        # can settle it.
-        stated = (
-            order.so_number, w.product.product_code, 70, date(2026, 2, 1),
-            w.warehouse.warehouse_code, "",
-        )
-        restated = (
-            order.so_number, w.product.product_code, 70, date(2026, 2, 1),
-            w.warehouse.warehouse_code, po_lent.po_number,
-        )
-        outcome = ImportOutcome(None, persist=False)
-
-        result = w.apply(book(MONTH=[stated], ROLLUP=[restated]), outcome=outcome)
-
-        assert result["rows_raised"] == 1, result
-        assert outcome.count_of("restates_an_instalment") == 1, outcome.breakdown()
-        assert len(w.rows()) == 1, "lending changed the duplicate count"
-        mirror = w.mirror_of(line_lent)
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "the restatement's citation never reached the line pick"
-        )
-
-    with world() as w:
-        order = w.order()
-        line_first = _with_ref(
-            w, w.line(order, qty_ordered="70", required_date=date(2026, 8, 1)), _ref(),
-        )
-        line_second = _with_ref(
-            w, w.line(order, qty_ordered="70", required_date=date(2026, 10, 1)), _ref(),
-        )
-        po_first, po_line_first = w.po_line(qty_ordered="70")
-        _names(w, po_line_first, line_first.source_ref)
-        po_second, po_line_second = w.po_line(qty_ordered="70")
-        _names(w, po_line_second, line_second.source_ref)
-        stated = (
-            order.so_number, w.product.product_code, 70, date(2026, 2, 1),
-            w.warehouse.warehouse_code, po_first.po_number,
-        )
-        restated = (
-            order.so_number, w.product.product_code, 70, date(2026, 2, 1),
-            w.warehouse.warehouse_code, po_second.po_number,
-        )
-
-        result = w.apply(book(MONTH=[stated], ROLLUP=[restated]))
-
-        assert result["rows_raised"] == 1, result
-        mirror = w.mirror_of(line_first)
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "a first statement that already cited its own PO lost it to the "
-            "restatement's citation"
-        )
+# test_ac_lp_10_restatement_lends_its_po_to_the_first_statement (AC-LP-10) retired under
+# R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned "a restatement's cited
+# PO reaches the line pick" (the PO pass), which is unreachable now - the line pick reads
+# `required_date`/`delivery_date` only. Its own docstring already flagged the risk this
+# retirement realises: with the PO pass gone, its assertions hold or fail purely on the
+# fixture's POSITIONAL date order (the earlier-required-date candidate wins either way),
+# which would make a kept copy pass for a reason its own text no longer describes.
 
 
 # --------------------------------------------------------------------------- #
@@ -738,35 +507,14 @@ def test_ac_lp_10_restatement_lends_its_po_to_the_first_statement():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_11_reupload_reports_the_same_line_every_time():
-    """AC-LP-11. Re-upload of the same file after AC-LP-1: nothing new raises, all six
-    dates report `rows_already_raised`, and every one names the SAME line it landed on the
-    first time - no two rows ever end up on one line.
-
-    `_assert_uac_landing` is asserted after BOTH applies, not just the counts: the UAC's
-    own fixture has a line (2025-12-01) that a wrong line pick lands on instead of one of
-    the six named lines, and a wrong pick there still leaves the counts alone (still six
-    raised, still zero already-raised the second time) - only the landing map catches it.
-    """
-    with world() as w:
-        order, lines, pos = _uac_book(w)
-        data = _uac_month_and_rollup(_uac_rows(w, order, pos))
-
-        first = w.apply(data)
-        assert first["rows_raised"] == 6, first
-        _assert_uac_landing(w, lines)
-        first_landing = {row.delivery_date: str(row.so_line_id) for row in w.rows()}
-
-        second = w.apply(data)
-
-        assert second["rows_raised"] == 0, second
-        assert second["rows_already_raised"] == 6, second
-        assert len(w.rows()) == 6, "a re-upload raised a second row on some line"
-        _assert_uac_landing(w, lines)
-        second_landing = {row.delivery_date: str(row.so_line_id) for row in w.rows()}
-        assert second_landing == first_landing, (
-            "the re-upload reported a different line than the first upload did"
-        )
+# test_ac_lp_11_reupload_reports_the_same_line_every_time (AC-LP-11) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: `_assert_uac_landing` pinned the
+# five-pass landing map (see the AC-LP-1/2/3 retirement note above), so this test's re-upload
+# comparison would only ever be comparing two runs of the WRONG landing to each other. The
+# general property it was proving - re-upload is idempotent, nothing raises twice, no row
+# ever moves - is covered instead by AC-S4-4
+# (`tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_4_reupload_of_both_books_restates_in_place_never_drops`),
+# under the current date-order pick.
 
 
 # --------------------------------------------------------------------------- #
@@ -805,17 +553,22 @@ def test_ac_lp_12_charge_already_raised_line():
         ], result
 
 
-def test_ac_lp_12_bumped_row_takes_the_next_free_line():
-    """AC-LP-12 (bumped, re-upload = first upload). Line A is already raised; the sheet's
-    first row (150) lands there and charges the ledger, leaving only 50 - too little for
-    the second row's 100 - so the second row is bumped onto line B, the next free line
-    that fits.
+def test_ac_lp_12_bumped_row_becomes_a_second_row_on_the_taken_line():
+    """AC-LP-12 (bumped). Line A already carries a row from an earlier import; line B is
+    free. The sheet states two rows, both dated Oct: 150 then 100. The 150 row is
+    processed first and pairs onto B, the free candidate; the 100 row is then bumped onto
+    A - not skipped as `already_raised`, but raised as a genuine SECOND row on A
+    (`already_raised` False, an ordinary migration note), because A's own item DID have a
+    free candidate (B) before this walk spent it on the earlier row. Nothing is dropped:
+    two rows raised, zero already-raised, zero line-not-found; the DB ends up holding the
+    old row on A, the new 100 on A, and the 150 on B.
 
-    This is exactly the landing a FIRST upload of this sheet would give against a clean
-    line A: charging the ledger on an already-raised line (AC-LP-12's own "charge" half)
-    is what makes a RE-upload land the rest of its rows the same way the first upload
-    would have, rather than silently absorbing every same-item row onto the one already-
-    raised line no matter how many the file states.
+    Re-pinned under R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: the
+    "bumped row" fix round in `_pick_lines_by_date_order`
+    (`app/services/project_order_inquiry_import_service.py`, `row_has_free`) closes the
+    silent drop this test used to pin as a known regression - a row bumped off a free line
+    by an earlier row of the SAME walk is now raised honestly as a second row instead of
+    being absorbed into `rows_already_raised` with no report at all.
     """
     with world() as w:
         order = w.order()
@@ -832,15 +585,25 @@ def test_ac_lp_12_bumped_row_takes_the_next_free_line():
 
         result = w.apply(data)
 
-        assert result["rows_already_raised"] == 1, result
-        assert result["rows_raised"] == 1, result
+        assert result["rows_raised"] == 2, result
+        assert result["rows_already_raised"] == 0, result
         assert result["rows_line_not_found"] == 0, result
+        mirror_a = w.mirror_of(line_a)
         mirror_b = w.mirror_of(line_b)
-        assert mirror_b is not None
-        bumped = [row for row in w.rows() if Decimal(str(row.qty)) == Decimal("100")]
-        assert len(bumped) == 1, [str(row.qty) for row in w.rows()]
-        assert str(bumped[0].so_line_id) == str(mirror_b.id), (
-            "the bumped row did not land on the next free line"
+        assert mirror_a is not None and mirror_b is not None
+        qtys_by_line: dict[str, list[Decimal]] = {}
+        for row in w.rows():
+            qtys_by_line.setdefault(str(row.so_line_id), []).append(
+                Decimal(str(row.qty))
+            )
+        assert sorted(qtys_by_line.get(str(mirror_a.id), [])) == [
+            Decimal("5"), Decimal("100"),
+        ], (
+            "line A should hold both the old already-raised row and the new bumped "
+            f"second row: {qtys_by_line}"
+        )
+        assert qtys_by_line.get(str(mirror_b.id)) == [Decimal("150")], (
+            f"line B should hold only the first, unbumped row: {qtys_by_line}"
         )
 
 
@@ -882,28 +645,12 @@ def test_ac_lp_12_legitimate_split_still_lands_both_rows():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_13_preview_and_apply_land_every_row_the_same():
-    """AC-LP-13. `preview` forecasts exactly what `apply` commits: a second `preview` after
-    the upload reports every one of the six lines as already raised, nothing left over and
-    nothing double-counted - which only holds if both runs picked the SAME line for every
-    row (the result carries no per-row line id, so this is the strongest check available
-    through the public contract alone)."""
-    with world() as w:
-        order, lines, pos = _uac_book(w)
-        data = _uac_month_and_rollup(_uac_rows(w, order, pos))
-
-        before = w.preview(data)
-        assert before["rows_raised"] == 6, before
-        assert before["rows_already_raised"] == 0, before
-
-        applied = w.apply(data)
-        assert applied["rows_raised"] == 6, applied
-        _assert_uac_landing(w, lines)
-
-        after = w.preview(data)
-        assert after["rows_raised"] == 0, after
-        assert after["rows_already_raised"] == 6, after
-        assert after["rows_line_not_found"] == 0, after
+# test_ac_lp_13_preview_and_apply_land_every_row_the_same (AC-LP-13) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it used `_assert_uac_landing` (the
+# five-pass landing) as its "same line every time" check. `preview`/`apply` agreement is
+# covered independently under the current date-order pick by AC-S4-2
+# (`tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_2_fifth_row_beyond_last_line_lands_as_second_row_on_it`),
+# which calls `importer.preview` then `_apply` on the same data and compares `rows_raised`.
 
 
 # --------------------------------------------------------------------------- #
@@ -966,67 +713,12 @@ def test_serial_dated_rows_are_not_restatements():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_14_sheet_po_outranks_same_month():
-    """AC-LP-14 (R4, 19 Sep 2026, prod C-FH14 / SO324265). The 04-01 row cites PO B while
-    the only line in its own month books PO A - under the old single month pass that line
-    still won it (nothing outranked "same month" for a citation-less tie), stealing it from
-    the row that actually cites A and cascading every later row onto the wrong line: 02-02
-    finds its A line taken and slides to 05-02, 03-02 finds NOTHING free and falls all the
-    way back to the 2025-12-01 line the sheet never cites. Stating the 04-01 row FIRST in
-    the file, ahead of the exact-date rows it could otherwise starve, proves the outcome is
-    the pass order, not file order (AC-LP-2/3's own point, restated for this defect)."""
-    with world() as w:
-        order = w.order()
-        line_dec = _with_ref(
-            w, w.line(order, qty_ordered="130", required_date=date(2025, 12, 1)), _ref(),
-        )
-        line_jan = _with_ref(
-            w, w.line(order, qty_ordered="130", required_date=date(2026, 1, 2)), _ref(),
-        )
-        line_apr = _with_ref(
-            w, w.line(order, qty_ordered="130", required_date=date(2026, 4, 2)), _ref(),
-        )
-        line_may_2 = _with_ref(
-            w, w.line(order, qty_ordered="130", required_date=date(2026, 5, 2)), _ref(),
-        )
-        line_may_1 = _with_ref(
-            w, w.line(order, qty_ordered="130", required_date=date(2026, 5, 1)), _ref(),
-        )
-
-        po_x, po_line_x = w.po_line(qty_ordered="130", number=_po_number("202508"))
-        _names(w, po_line_x, line_dec.source_ref)
-
-        po_a, po_line_a = w.po_line(qty_ordered="130", number=_po_number("202509"))
-        _names(w, po_line_a, line_jan.source_ref)
-        _sibling_po_line(w, po_a, qty_ordered="130", from_so_line_ref=line_apr.source_ref)
-        _sibling_po_line(w, po_a, qty_ordered="130", from_so_line_ref=line_may_2.source_ref)
-
-        po_b, po_line_b = w.po_line(qty_ordered="130", number=_po_number("202510"))
-        _names(w, po_line_b, line_may_1.source_ref)
-
-        p, loc, so = w.product.product_code, w.warehouse.warehouse_code, order.so_number
-        # The 04-01 row stated FIRST, ahead of the three exact-date rows it could otherwise
-        # starve if the outcome depended on file order rather than the pass order.
-        data = sheet([
-            (so, p, 130, date(2026, 4, 1), loc, po_b.po_number),
-            (so, p, 130, date(2026, 1, 2), loc, po_a.po_number),
-            (so, p, 130, date(2026, 2, 2), loc, po_a.po_number),
-            (so, p, 130, date(2026, 3, 2), loc, po_a.po_number),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 4, result
-        assert result["rows_line_not_found"] == 0, result
-        rows_by_date = _rows_by_date(w)
-        _assert_lands_on(w, rows_by_date, date(2026, 1, 2), line_jan)
-        _assert_lands_on(w, rows_by_date, date(2026, 2, 2), line_apr)
-        _assert_lands_on(w, rows_by_date, date(2026, 3, 2), line_may_2)
-        _assert_lands_on(w, rows_by_date, date(2026, 4, 1), line_may_1)
-        december_mirror = w.mirror_of(line_dec)
-        assert december_mirror is None or not any(
-            str(row.so_line_id) == str(december_mirror.id) for row in w.rows()
-        ), "a row landed on the 2025-12-01 line the sheet never cites"
+# test_ac_lp_14_sheet_po_outranks_same_month (AC-LP-14) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned the 19 Sep 2026 R4 ruling
+# that the sheet's own cited PO outranks a bare same-month tie in the five-pass pick - a
+# DIFFERENT, now-superseded R4 from `PLAN-oi-sheet-line-pick-month-po.md`, not the 21 Sep
+# ruling this lane implements. The citation/month passes it exercised are unreachable under
+# `_pick_lines_by_date_order`'s positional date-order pairing.
 
 
 # --------------------------------------------------------------------------- #
@@ -1089,58 +781,10 @@ def test_ac_lp_15_roll_up_with_fewer_repeats_adds_nothing():
         assert {str(r.so_line_id) for r in rows} == {str(mirror_a.id), str(mirror_b.id)}
 
 
-def test_ac_lp_15_lending_goes_to_the_matching_repeat():
-    """AC-LP-15 (lending). The month tab's two identical rows are two SEPARATE instructions
-    (this criterion's own point) - so when the roll-up restates them with two DIFFERENT
-    purchase orders, each lent citation must reach the SAME-POSITION month instruction, not
-    either one at random or both landing on the first. Neither line is an exact-date or
-    same-month match for the row's own date, so only the PO pass can settle either - proving
-    the lending, not a date tie, decided it. A THIRD, decoy line the book also bought for
-    stands ready to catch a citation-less instruction via the plain fallback (earliest date
-    among bought lines): if either lending went to the wrong position, the row it starved
-    would land on the decoy instead of its own line, which the closing assertion catches."""
-    with world() as w:
-        order = w.order()
-        line_x = _with_ref(
-            w, w.line(order, qty_ordered="25", required_date=date(2026, 7, 1)), _ref(),
-        )
-        line_y = _with_ref(
-            w, w.line(order, qty_ordered="25", required_date=date(2026, 9, 1)), _ref(),
-        )
-        decoy = _with_ref(
-            w, w.line(order, qty_ordered="25", required_date=date(2026, 1, 1)), _ref(),
-        )
-        po_x, po_line_x = w.po_line(qty_ordered="25", number=_po_number("202508"))
-        _names(w, po_line_x, line_x.source_ref)
-        po_y, po_line_y = w.po_line(qty_ordered="25", number=_po_number("202509"))
-        _names(w, po_line_y, line_y.source_ref)
-        po_decoy, po_line_decoy = w.po_line(qty_ordered="25", number=_po_number("202510"))
-        _names(w, po_line_decoy, decoy.source_ref)
-
-        stated = (
-            order.so_number, w.product.product_code, 25, date(2026, 2, 1),
-            w.warehouse.warehouse_code, "",
-        )
-        restated_x = (
-            order.so_number, w.product.product_code, 25, date(2026, 2, 1),
-            w.warehouse.warehouse_code, po_x.po_number,
-        )
-        restated_y = (
-            order.so_number, w.product.product_code, 25, date(2026, 2, 1),
-            w.warehouse.warehouse_code, po_y.po_number,
-        )
-        data = book(MONTH=[stated, stated], ROLLUP=[restated_x, restated_y])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 2, result
-        rows = w.rows()
-        assert len(rows) == 2, [str(r.qty) for r in rows]
-        mirror_x, mirror_y = w.mirror_of(line_x), w.mirror_of(line_y)
-        assert {str(r.so_line_id) for r in rows} == {str(mirror_x.id), str(mirror_y.id)}, (
-            "a citation lent to the wrong position starved one instruction, which fell to "
-            "the plain fallback and landed on the decoy line instead of its own"
-        )
+# test_ac_lp_15_lending_goes_to_the_matching_repeat (AC-LP-15, lending) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned citation lending reaching
+# the SAME-POSITION month instruction through the PO pass, which no longer exists - the line
+# pick reads only `required_date` / `delivery_date` now.
 
 
 def test_single_sheet_variant_never_dedupes_a_repeat():
@@ -1175,91 +819,20 @@ def test_single_sheet_variant_never_dedupes_a_repeat():
 # --------------------------------------------------------------------------- #
 
 
-def test_ac_lp_16_equal_quantity_line_before_a_bigger_one():
-    """AC-LP-16 (R6, prod CB2805A-DIY / SO324265, 19 Sep 2026). Two lines share ONE exact
-    date, qty 230 (created FIRST, so it wins today's created-at tie-break) and qty 150; the
-    sheet's own 150 row is stated FIRST, ahead of the 230 row. `_rank_for` carries no
-    quantity term at all, so today the bigger line takes the 150 row on nothing but that
-    tie-break, and the 230 row then finds every line too small or already spent and reads
-    `qty_exceeds_ordered` - CB2805A-DIY's own defect (whole order, 18 Sep prod copy: 184
-    instructions, only 180 landed)."""
-    with world() as w:
-        order = w.order()
-        line_230 = _born_at(
-            w, w.line(order, qty_ordered="230", required_date=date(2026, 1, 2)),
-            datetime(2026, 6, 1, 8, 0, 0),
-        )
-        line_150 = _born_at(
-            w, w.line(order, qty_ordered="150", required_date=date(2026, 1, 2)),
-            datetime(2026, 6, 1, 9, 0, 0),
-        )
-        data = sheet([
-            (order.so_number, w.product.product_code, 150, date(2026, 1, 2),
-             w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 230, date(2026, 1, 2),
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 2, result
-        assert result["rows_line_not_found"] == 0, result
-        rows_by_qty = {Decimal(str(row.qty)): row for row in w.rows()}
-        assert len(rows_by_qty) == 2, [str(r.qty) for r in w.rows()]
-        assert str(rows_by_qty[Decimal("150")].so_line_id) == str(
-            w.mirror_of(line_150).id
-        ), "the 150 row did not land on the 150 line"
-        assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
-            w.mirror_of(line_230).id
-        ), "the 230 row did not land on the 230 line"
-
-
-def test_ac_lp_16_equal_quantity_wins_the_po_pass_too():
-    """AC-LP-16 (PO pass). The same defect, reached through pass 3 instead of pass 1: two
-    lines share one month-mismatched date and one book PO, so only the citation pass can
-    settle either. `_rank_for_po` carries no quantity term either, so the tie-break
-    (earliest date, then oldest, then id) alone would hand ONE line to both rows and starve
-    the other - the equal-quantity step has to settle it first."""
-    with world() as w:
-        order = w.order()
-        line_230 = _with_ref(
-            w,
-            _born_at(
-                w, w.line(order, qty_ordered="230", required_date=date(2026, 5, 2)),
-                datetime(2026, 6, 1, 8, 0, 0),
-            ),
-            _ref(),
-        )
-        line_150 = _with_ref(
-            w,
-            _born_at(
-                w, w.line(order, qty_ordered="150", required_date=date(2026, 5, 2)),
-                datetime(2026, 6, 1, 9, 0, 0),
-            ),
-            _ref(),
-        )
-        po_a, po_line_230 = w.po_line(qty_ordered="230", number=_po_number("202509"))
-        _names(w, po_line_230, line_230.source_ref)
-        _sibling_po_line(w, po_a, qty_ordered="150", from_so_line_ref=line_150.source_ref)
-        data = sheet([
-            (order.so_number, w.product.product_code, 150, date(2026, 2, 2),
-             w.warehouse.warehouse_code, po_a.po_number),
-            (order.so_number, w.product.product_code, 230, date(2026, 2, 2),
-             w.warehouse.warehouse_code, po_a.po_number),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 2, result
-        assert result["rows_line_not_found"] == 0, result
-        rows_by_qty = {Decimal(str(row.qty)): row for row in w.rows()}
-        assert len(rows_by_qty) == 2, [str(r.qty) for r in w.rows()]
-        assert str(rows_by_qty[Decimal("150")].so_line_id) == str(
-            w.mirror_of(line_150).id
-        ), "the 150 row did not land on the 150 line"
-        assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
-            w.mirror_of(line_230).id
-        ), "the 230 row did not land on the 230 line"
+# test_ac_lp_16_equal_quantity_line_before_a_bigger_one and
+# test_ac_lp_16_equal_quantity_wins_the_po_pass_too (AC-LP-16, R6 of the OLDER
+# `PLAN-oi-sheet-line-pick-month-po.md`, 19 Sep 2026) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: both pinned an "equal-quantity"
+# tie-break step layered onto the now-fully-retired five-pass pick's exact-date and PO
+# passes. `_pick_lines_by_date_order` has no quantity-aware tie-break at all - two
+# same-required-date candidate lines are ordered only by `created_at` then `id` - which is
+# R4's OWN explicitly simple design (date order alone, per the plan and AC-S4), not a
+# regression it forbids: the resulting `qty_exceeds_ordered` refusal, when it happens, is
+# reported honestly through `line_not_found`, never a silent drop (see
+# `test_ac_lp_12_bumped_row_becomes_a_second_row_on_the_taken_line` above, re-pinned
+# 21 Sep 2026, for the sibling shape - a row bumped off a free line - which the same fix
+# round now raises honestly instead of dropping). Worth the owner's awareness as a known
+# trade-off of the simpler pick, not reported as a defect here.
 
 
 # --------------------------------------------------------------------------- #
@@ -1324,35 +897,12 @@ def test_ac_lp_16_equal_quantity_never_prefers_a_cancelled_line():
         )
 
 
-def test_ac_lp_16_equal_quantity_in_the_fallback():
-    """AC-LP-16 (should-fix, review round 2, 19 Sep 2026). The fallback pass runs the SAME
-    two-step `_attempt` every other pass does: neither line shares the row's date or month,
-    and neither row cites anything, so only pass 5 can ever place either. Pinned here so a
-    future change that scopes the equal-quantity step OUT of the fallback specifically has
-    somewhere to go red - every other test in this file stays green with it removed from
-    pass 5 alone."""
-    with world() as w:
-        order = w.order()
-        line_230 = w.line(order, qty_ordered="230", required_date=date(2026, 3, 1))
-        line_150 = w.line(order, qty_ordered="150", required_date=date(2026, 4, 1))
-        data = sheet([
-            (order.so_number, w.product.product_code, 150, date(2026, 7, 5),
-             w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 230, date(2026, 7, 5),
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 2, result
-        rows_by_qty = {Decimal(str(row.qty)): row for row in w.rows()}
-        assert len(rows_by_qty) == 2, [str(r.qty) for r in w.rows()]
-        assert str(rows_by_qty[Decimal("150")].so_line_id) == str(
-            w.mirror_of(line_150).id
-        ), "the 150 row did not land on the 150 line"
-        assert str(rows_by_qty[Decimal("230")].so_line_id) == str(
-            w.mirror_of(line_230).id
-        ), "the 230 row did not land on the 230 line"
+# test_ac_lp_16_equal_quantity_in_the_fallback (AC-LP-16, should-fix, review round 2,
+# 19 Sep 2026) retired under R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: same
+# ground as the two AC-LP-16 tests retired above - it pinned the fallback pass's own
+# equal-quantity tie-break, unreachable now that the whole five-pass pick is gone. The
+# `qty_exceeds_ordered` a mismatched positional pairing can still produce here is the same
+# honestly-reported trade-off noted above, not a silent drop.
 
 
 # --------------------------------------------------------------------------- #
@@ -1457,26 +1007,10 @@ def test_ac_lp_17_no_citation_still_prefers_the_live_line():
         )
 
 
-def test_ac_lp_17_lone_cancelled_line_still_matches():
-    """AC-LP-17 (D1 kept). With no live line anywhere in the order, the cancelled line is
-    still where the history is: the fallback still takes it rather than refusing the row,
-    exactly as before R7."""
-    with world() as w:
-        order = w.order()
-        lonely = w.line(
-            order, qty_ordered="25", required_date=date(2026, 3, 2),
-            line_status="cancelled",
-        )
-        data = sheet([
-            (order.so_number, w.product.product_code, 25, date(2026, 3, 2),
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        assert result["rows_line_not_found"] == 0, result
-        mirror = w.mirror_of(lonely)
-        assert str(w.one_row().so_line_id) == str(mirror.id), (
-            "a lone cancelled line still matches - it is where the history is (D1)"
-        )
+# test_ac_lp_17_lone_cancelled_line_still_matches (AC-LP-17, D1) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it asserted the exact opposite of
+# AC-S4-3 ("a closed or cancelled core line is never paired, even when it is the only qty
+# fit") - D1's "a lone cancelled line still matches" is explicitly overturned. The identical
+# shape (a lone cancelled line, nothing else in the order) is covered instead by
+# `tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_3_closed_or_cancelled_line_never_paired[cancelled]`,
+# which asserts the row is refused `no_line_for_item`.

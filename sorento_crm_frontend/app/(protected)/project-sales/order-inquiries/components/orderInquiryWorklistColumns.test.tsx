@@ -1655,3 +1655,50 @@ describe('the Raised at cell carries its own history in a tooltip (PLAN-oi-workl
     expect(within(row).queryByLabelText('Previously raised')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * AC-S5-2 (`board-received-stock-own-arrival-acceptance-criteria.md` S5,
+ * `PLAN-board-received-stock-own-arrival.md` R2/AC-S3-7 "Path B"): a row the own-arrival
+ * credit settles IN PLACE - still linked to the received document, `redirected_to_pool`
+ * stays false, note gains "Was {qty} on {date}" - reads Received exactly as any other
+ * received link does today. NO NEW COMPONENT: this is a guard, not a new chip, so it is
+ * written to PASS against the existing `received` pill
+ * (`DocumentsCell`/`backing-documents-received-*`, AC-RL-02) - if it already passes, S5
+ * needs no board-side or OI-side rendering change for this row shape, only the backend
+ * wiring that produces it (S3).
+ */
+describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as a received link does today', () => {
+  it('a row settled in place under Path B (redirected_to_pool false, note carries "Was N on date") still shows the "received" pill on its linked document', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-own-arrival-retained',
+          qty: '40',
+          linked_qty: '40',
+          redirected_to_pool: false,
+          note: 'Was 40 on 2026-10-01',
+          links: [
+            {
+              id: 'l1',
+              kind: 'spo',
+              document: 'SPO-2026/01-0138',
+              qty: '40',
+              location: 'BRW-BB',
+              received: true,
+              received_qty: '40',
+            },
+          ],
+        }),
+      ],
+      'spo_number',
+    );
+
+    const row = screen.getByTestId('row-row-own-arrival-retained');
+    const mark = within(row).getByTestId(
+      'backing-documents-received-spo-row-own-arrival-retained',
+    );
+    expect(mark.textContent).toBe('received');
+    // Path B is a RETAIN, never a redirect: the row stays active, not muted.
+    expect(row.className).not.toContain('opacity-60');
+  });
+});

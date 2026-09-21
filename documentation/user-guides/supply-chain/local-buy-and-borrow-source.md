@@ -14,6 +14,35 @@ The board offers **Grid** and **List** views; on **List**, the **Verdict** colum
 Saved / Confirmed / Rejected) sorts like any other column - click its header to order lines by
 where they stand.
 
+## Stock that already landed for this line
+
+When goods bought specifically for a sales-order line have already been received, the board
+treats them as stock for that line before it looks at anything else - the group pool, a borrow,
+or a fresh Buy.
+
+* The line's suggestion reads, for example, **Use own location** "11 from BRW-BB", with the
+  sentence underneath naming why: "11 landed for this line on PO 202510-S0101, taken first at
+  BRW-BB."
+* Expand the row's breakdown and a **Received N** badge sits beside the other components; hover
+  it to see the purchase order (or orders) the stock came in on.
+* This credited quantity is a Reserve, never a Buy, and the board never suggests moving it onto
+  another order's pool - it stays put for the line it was bought for.
+* Turning a credited Reserve into a Buy by hand is refused, whether you're amending a row inside
+  a planning change or deciding it straight on the board. The message names the quantity and the
+  purchase order, for example "11 landed for this line on PO 202510-S0101; nothing to buy for
+  it."
+* A line due beyond the lead-time window is bought, not credited with landed stock, so the
+  board's Buy for such a line is accepted at Confirm.
+
+## Confirm no longer fails the whole order over a vanished placement
+
+When a suggestion named a purchase order or shipping order placement that is no longer on the
+line by the time you press **Confirm** - someone else moved or cleared it in the meantime -
+Confirm no longer refuses the whole order over that one piece. It simply records that there was
+nothing left to move for that part and carries on with the rest of the order. A row sitting on a
+sales-order line that has since been closed is dropped the same way, rather than blocking
+Confirm for everything else on the order.
+
 ## The Local pill
 
 The **Local** pill is off unless an admin turns it on under **System Settings → General**,

@@ -749,6 +749,34 @@ class ProjectOrderInquiryService:
         # `Project`, `Customer` or `users` while a confirm is raising rows against them.
         self._handover_order_facts_cache: Dict[str, Dict[str, Any]] = {}
         self._handover_actor_cache: Dict[str, Optional[Dict[str, str]]] = {}
+        # R7's own-arrival credit, asked once per ROW by the path picker
+        # (`_own_arrival_credit_for_row`). A replan settles every row of an order in one
+        # call, and each row used to build a fresh `ProjectSupplyService` (throwing away
+        # its own memos) and a fresh `netting_for_products` read of the same product
+        # (review round, SF3). Both live for the instance now - the same lifetime every
+        # other cache above has, and nothing here writes stock or purchase-order receipts.
+        self._own_arrival_supply: Optional[Any] = None
+        self._own_arrival_netting: Dict[str, List[Any]] = {}
+        # S2 (second review round): `own_arrival_credit_for`'s own running ledger,
+        # `location code -> what is left of it` (plus sibling-spare keys), product-scoped
+        # the same way `_own_arrival_netting` above is. A replan settles several rows of
+        # ONE order in one call, and without a ledger threaded through, each row re-read
+        # the SAME physical floor fresh and could each be credited off it in full. Rows
+        # are processed in the order the caller iterates them (date order), so the first
+        # row a bin's credit covers spends it and a later row at the same bin sees what
+        # is left, not the whole pile again.
+        self._own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
+        # B2 (round 3): `_own_arrival_credit_for_row`'s own THEORETICAL credit
+        # (`_own_arrival_credit_components`'s read-only answer - tier1_qty/tier2 kept
+        # alongside so a later charge spends the SAME components a first call sized),
+        # memoised per ROW id so a second call never re-reads `_own_arrival_left` and
+        # sizes a smaller theoretical off its own prior charge to itself.
+        self._own_arrival_row_theoretical: Dict[str, Tuple[Any, ...]] = {}
+        # S-2 (round 5): what has actually been CHARGED for this row so far, so a second
+        # call with a LARGER `need` than the first charges only the delta beyond it
+        # (never double-charging, never exceeding the theoretical above) instead of
+        # freezing the first call's answer forever.
+        self._own_arrival_row_charged: Dict[str, Decimal] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -1646,6 +1674,132 @@ class ProjectOrderInquiryService:
             )
         return True
 
+    def _own_arrival_credit_for_row(self, row: OrderInquiryRow, need: Decimal) -> Decimal:
+        """R2/R7: what landed FOR this row's line, the SAME credit the board's own ladder
+        reads (`ProjectSupplyService.own_arrival_credit_for`) - reused rather than
+        restated. Built off a MINIMAL `_LineFacts` (this call is a single-row question,
+        not a walk) that carries no `required_date`, so this credit applies no
+        reserve-window gate the way the board's own ladder does - a filed follow-up
+        (plan), not a claim that the picker and the board agree on every case.
+
+        AC-S3-14 (round-4 fix round): `_redirect_row_if_received` compares this credit
+        against `linked_qty` (the row's LINKED total), not the row's own `qty` - the two
+        diverge whenever a row's links do not sum to its own quantity. `need` is that
+        caller-supplied number, required (round 5, S-2) - every caller already states
+        what it is asking the credit to cover.
+
+        `open_qty` is `qty_ordered - qty_delivered` (review round, SF1), the SAME reading
+        of "open" every other `_LineFacts` builder in this codebase uses
+        (`project_supply_service.py` `_facts_for` / `demand_facts`). A line ordered 40 and
+        delivered 30 owes 10, so 10 is the most a credit may cover for it - reading the
+        original 40 would settle a row in place off stock the line no longer needs.
+
+        S2 (second review round): `self._own_arrival_left` is threaded through as the
+        SAME per-instance ledger `own_arrival_credit_for` charges - without it, a replan
+        settling several rows of one order in one call would re-read the same physical
+        floor fresh for each row and could credit each of them off it in full. Rows are
+        processed in the order the caller iterates them (date order).
+
+        B2 (round 3): this is a per-ROW question, not a per-LINE one - two rows of the
+        SAME line each carry their own, smaller need. Calling `own_arrival_credit_for`
+        charged the ledger with the whole LINE's theoretical credit on the first row
+        asked, so a second row of the same line read an already-drained ledger and was
+        wrongly refused. Sized the same way `walk()` fixed this (S5): read the
+        THEORETICAL credit with `_own_arrival_credit_components` (no charge, memoised per
+        row id in `self._own_arrival_row_theoretical` - a SECOND call for the same row
+        must judge against the SAME theoretical the first call sized, never a smaller one
+        re-read off a ledger this row's own earlier charge already reduced), then charge
+        only the DELTA beyond what this row was already charged.
+
+        S-2 (round 5): the memo used to be on the ANSWER, keyed by row id, so a row asked
+        first with a small `need` (an artificial probe, or an earlier caller with a
+        smaller ask) froze that answer for every later call regardless of what `need` it
+        was asked with - `_redirect_row_if_received`'s own `>= linked_qty` check could
+        then read a stale, too-small credit and wrongly redirect a row landed stock
+        covers in full. The memo is on the THEORETICAL credit and how much of it THIS row
+        has been CHARGED so far (`self._own_arrival_row_charged`); each call answers
+        `min(theoretical, need)` and charges only the wedge beyond the previous charge -
+        never double-charging the ledger, never exceeding the theoretical, and a call
+        with a larger `need` than before is answered in full rather than replaying the
+        smaller one's cached number.
+        """
+        row_key = str(row.id)
+        cached = self._own_arrival_row_theoretical.get(row_key)
+        if cached is None:
+            from app.services.project_supply_service import (
+                ProjectSupplyService,
+                _LineFacts,
+            )
+
+            if not row.so_line_id:
+                return _ZERO
+            project_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
+            if project_line is None or not project_line.core_sales_order_line_id:
+                return _ZERO
+            core_line = self.db.get(
+                SalesOrderLine, project_line.core_sales_order_line_id
+            )
+            if core_line is None or not core_line.warehouse_id:
+                return _ZERO
+            warehouse = self.db.get(Warehouse, core_line.warehouse_id)
+            if warehouse is None:
+                return _ZERO
+            if self._own_arrival_supply is None:
+                self._own_arrival_supply = ProjectSupplyService(self.db)
+            supply = self._own_arrival_supply
+            product_id = str(core_line.product_id) if core_line.product_id else None
+            group_code = group_of_warehouse_code(warehouse.warehouse_code)
+            by_location: List[Any] = []
+            if product_id and group_code:
+                key = f"{product_id}\x00{group_code}"
+                if key not in self._own_arrival_netting:
+                    netting = netting_for_products(self.db, [product_id])
+                    self._own_arrival_netting[key] = list(
+                        netting.group_net(product_id, group_code).by_location
+                    )
+                by_location = self._own_arrival_netting[key]
+            fact = _LineFacts(
+                unit_core_line_ids=[str(core_line.id)],
+                product_id=product_id,
+                warehouse=warehouse,
+                group_code=group_code,
+                group_net_by_location=by_location,
+                open_qty=max(
+                    _dec(core_line.qty_ordered) - _dec(core_line.qty_delivered), _ZERO
+                ),
+            )
+            ledger = (
+                self._own_arrival_left.setdefault(product_id, {})
+                if product_id
+                else None
+            )
+            theoretical, _po, tier1_qty, tier2 = supply._own_arrival_credit_components(
+                fact, own_arrival_left=ledger
+            )
+            cached = (theoretical, tier1_qty, tier2, fact, ledger, supply)
+            self._own_arrival_row_theoretical[row_key] = cached
+
+        theoretical, tier1_qty, tier2, fact, ledger, supply = cached
+        target = min(theoretical, max(_dec(need), _ZERO))
+        charged_before = self._own_arrival_row_charged.get(row_key, _ZERO)
+        delta = target - charged_before
+        if ledger is not None and delta > _ZERO:
+            # Charge only what THIS call adds beyond the previous charge, against
+            # whatever tier 1 this row has not already spent - `_charge_own_arrival_
+            # credit`'s own tier1-then-tier2 split (`tier2_used = drawn - tier1_qty`)
+            # is written for a single, whole draw, so a delta call states its own
+            # REMAINING tier 1 room rather than the row's full tier1_qty, which would
+            # double-count tier 1 on every call after the first.
+            tier1_remaining = max(tier1_qty - min(charged_before, tier1_qty), _ZERO)
+            supply._charge_own_arrival_credit(
+                fact, delta, tier1_remaining, tier2, ledger
+            )
+        # A later, smaller `need` must never LOWER the recorded charge - a following
+        # larger need for the SAME row would then re-charge the bin for ground already
+        # covered.
+        self._own_arrival_row_charged[row_key] = max(charged_before, target)
+        return target
+
     def _redirect_row_if_received(
         self,
         row: OrderInquiryRow,
@@ -1669,10 +1823,31 @@ class ProjectOrderInquiryService:
         named in this row's own note) - Opus review round 1: `_release_fragment` reuses
         this list (cached on the row) rather than re-deriving it with a second,
         identical query.
+
+        AC-S3-12 (owner ruling R2, second review round): a mixed row (a received link
+        plus a still-open PO link) whose own-arrival credit covers the row's WHOLE
+        linked total is retained WITH BOTH LINKS - the received link stays as history,
+        and the still-open PO link stays too, because shifting it off the row is
+        purchasing's own decision at Order Inquiries, not something a replan's
+        credit-covered settle should make for them as a side effect. (Review round one,
+        SF10, had this branch release the still-open link the same way the ordinary
+        not-fully-covered branch below does; that was reversed by this ruling.)
         """
         received = self._received_documents_for(links)
         received_links = [link for link in links if str(link.id) in received]
         if not received_links:
+            return None
+        # R2/R7: own landed stock covers the link - settle in place, links kept, no
+        # redirect (Path B). Measured against the WHOLE of `links`' quantity, not only the
+        # received part: the row's demand is what the credit has to cover to make a fresh
+        # row unnecessary. AC-S3-12: this branch must not touch any OTHER link on the
+        # row - a still-open PO link is left exactly as it was; only the ordinary,
+        # not-fully-covered branch below redirects an open link.
+        linked_qty = sum((_dec(link.qty) for link in links), _ZERO)
+        if (
+            linked_qty > _ZERO
+            and self._own_arrival_credit_for_row(row, need=linked_qty) >= linked_qty
+        ):
             return None
         open_links = [link for link in links if str(link.id) not in received]
         if open_links:

@@ -54,6 +54,13 @@ QTY_EXCEEDS_ORDERED = "qty_exceeds_ordered"
 #: The sales order is not project demand, so it is not planned here and no order inquiry
 #: row can hang off it.
 ORDER_NOT_PLANNABLE = "order_not_plannable"
+#: The sales order the row names DOES exist, and DOES carry lines, but every one of them is
+#: closed or cancelled - no open line survives at all (AC-S4-6, R9). Its own code rather
+#: than `NO_LINE_FOR_ITEM`, whose three reasons (catalogue, warehouse, quantity) all assume
+#: an open line exists to be checked against: here there is none, so the row is refused
+#: before any of those three checks ever runs, and the reader is sent to a fourth place -
+#: the order's own status - instead of one of those three.
+ORDER_FULLY_DELIVERED = "order_fully_delivered"
 
 # --- written, and destructive: the half a job detail exists to show ------
 #: An order line that is no longer on the uploaded book, so the upload closed it. Its own
@@ -201,6 +208,7 @@ LABELS: dict[str, str] = {
     LOCATION_DIFFERS: "No line for this item at that stock location",
     QTY_EXCEEDS_ORDERED: "Quantity exceeds what the line ordered",
     ORDER_NOT_PLANNABLE: "Not project demand, so it is not planned here",
+    ORDER_FULLY_DELIVERED: "No open line left: every line is closed or cancelled",
     LINE_CLOSED: "Closed: no longer on the uploaded book",
     LINE_WITHDRAWN: "Withdrawn: this sheet no longer lists it",
     REORDER_LEVEL_CLEARED: "Reorder level cleared: blank in the file",
