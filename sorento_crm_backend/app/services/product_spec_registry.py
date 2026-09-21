@@ -845,7 +845,18 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "rain_shower": ["rain shower", "rainfall shower", "overhead shower"],
             "shower_set": ["shower set", "shower kit", "complete shower"],
             "shower_head": ["shower head", "showerhead"],
-            "close_coupled": ["close coupled", "close-coupled", "two piece", "coupled"],
+            # "close couple" is how a customer actually wrote it (live turn 7c39e638,
+            # "close couple wc available stock in p trap"): with only the inflected
+            # spellings here, the phrase bound no `product_type` at all, so the answer
+            # was every water closet with stock, wall-hung ones included. Migration
+            # `spec_vocab_close_couple` re-seeds this row onto an installed DB.
+            "close_coupled": [
+                "close coupled",
+                "close-coupled",
+                "close couple",
+                "two piece",
+                "coupled",
+            ],
             "one_piece": ["one piece", "one-piece", "single piece"],
             "art_basin": ["art basin", "vessel basin", "designer basin"],
             "mirror_cabinet": ["mirror cabinet", "cabinet mirror"],

@@ -573,7 +573,16 @@ def resolve_product_set(
         )
 
     scoping_terms = [*(free_terms or []), *(scope_terms or [])]
-    verdict = filter_specs(db, specs=specs, free_terms=scoping_terms)
+    # The two kinds stay APART here (hand pass 12 R8): a scope term's own registry
+    # bindings define membership, a free term's value-key binding stays boost-only.
+    # Folding them into one list is what left "close couple wc" scoping nothing but
+    # the class, so a set answer spanned wall-hung and s-trap water closets.
+    verdict = filter_specs(
+        db,
+        specs=specs,
+        free_terms=list(free_terms or []),
+        scope_terms=list(scope_terms or []),
+    )
     unrecognized = list(verdict["unrecognized_terms"])
 
     require_echo: dict[str, Any] = {}

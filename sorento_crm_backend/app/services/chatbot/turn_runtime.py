@@ -729,9 +729,22 @@ def _without_guesses(
 
     A row a REAL token also matched stays, because then it is that token's answer and the
     guess merely agreed.
+
+    A COUNTED DESCRIBED SET is not a guess either (hand pass 12 R8, owner ruling, turn
+    7c39e638 "close couple wc available stock in p trap"): when the resolver's own answer
+    carries a `predicate` with a positive `qualifying_total`, the phrase-shaped resolution
+    IS that set - `references._emit_spec_matches` emits exactly the qualifying candidates
+    `resolve_product_set` counted, over membership the described words actually bound, not
+    a similarity reach at a token nothing placed. Turn 11476016's own defect (the
+    `similarity: 0.0` catalogue sweep this function exists for) carries no predicate at
+    all: `resolve_gate.resolve_entity_body` withholds `require` for a turn that names a
+    typed CODE and no class word, so the guard below still fires there unchanged.
     """
     if not unplaced:
         return compatible
+    described = jsc.get(resolved, "predicate")
+    qualifying = jsc.get(described, "qualifying_total") if isinstance(described, dict) else None
+    set_answered = isinstance(qualifying, int) and not isinstance(qualifying, bool) and qualifying > 0
     asked = {_token_key(t) for t in jsc.array(jsc.get(resolved, "tokens"))} - {""}
     placed: set[str] = set()
     guessed: set[str] = set()
@@ -740,7 +753,7 @@ def _without_guesses(
         # `asked` is only evidence when the answer carries it: a stub or an older
         # recording that lists no `tokens` at all must not turn every resolution it
         # DOES carry into a guess.
-        phrase = bool(asked) and token not in asked
+        phrase = bool(asked) and token not in asked and not set_answered
         bucket = guessed if (token in unplaced or phrase) else placed
         for match in jsc.array(jsc.get(resolution, "matches")):
             uuid = jsc.nullish_str(jsc.get(match, "uuid")).strip()
@@ -1482,14 +1495,22 @@ def make_tool_runner(
         # tool ran (`unplaced`/`entities`) are read HERE, before it runs, so the call
         # never goes out at all - scoped to inventory/incoming only (never `order`,
         # whose outstanding-report ask filters by CODE, not id, and is narrowed by
-        # exactly an unplaced token, `_answered_unfiltered`'s own carve-out). A
-        # genuinely entity-less ask ("what's on promotion") still calls its tool:
-        # `entities` is empty, so `all(...)` over it is vacuously true but the `and
-        # entities` guard refuses the empty case first.
+        # exactly an unplaced token, `_answered_unfiltered`'s own carve-out).
+        #
+        # Hand pass 12 round 4, R8 (owner ruling, turn 7c39e638 "close couple wc
+        # available stock in p trap"): NO entity at all is the same unfiltered read
+        # when the message NAMED tokens and the resolver placed none of them - the
+        # two `category`-hinted phrases resolved to nothing placeable, the narrower
+        # had no candidate to hand the fetch, and `crm_inventory_stock_balance_list`
+        # ran with zero filters over 97 products ("+96 more"). `unplaced` IS the
+        # "this message named something the resolver could not place" verdict, so a
+        # genuinely entity-less ask ("what's on promotion") names no token, leaves
+        # `unplaced` empty and still calls its tool - which is the distinction the
+        # old `and bool(entities)` was standing in for, and got wrong for the case
+        # where nothing survived to be counted at all.
         would_be_unfiltered = (
             domain in ("inventory", "incoming")
             and bool(unplaced)
-            and bool(entities)
             and all(_entity_token_key(e) in unplaced for e in entities)
         )
         if (
