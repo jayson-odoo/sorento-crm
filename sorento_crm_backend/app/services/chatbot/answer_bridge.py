@@ -722,6 +722,35 @@ def member_option(row: dict[str, Any], position: int) -> dict[str, Any] | None:
     }
 
 
+def _cs_offer_eligible(catalog: Any, routing: Mapping[str, Any], gate: Any) -> bool:
+    """`tail/outcome.py::cs_offer_gate`'s own g1/g2/g3/g4, minus its g4b - the ONE
+    condition this bridge deliberately does not inherit (hand pass 12 round 3, owner
+    ruling R2): g4b blocks `cs_offer_gate` outright whenever a did-you-mean roster
+    already exists, which is exactly the shape this bridge now COMBINES rather than
+    drops. `cs_offer_gate` itself stays untouched - `engine.run_tail`'s own canned /
+    escalation / casual lanes still walk it unmodified, and this bridge is where the
+    plan's own "Bridge home" ruling put every divergence from that shared ladder."""
+    g1 = isinstance(catalog, Mapping) and catalog.get("is_escalate_offer") is True
+    g2 = routing.get("suggested_team") == "customer_service"
+    g3 = routing.get("suggested_agent") == "order_enquiries"
+    g4 = gate is None or not (isinstance(gate, Mapping) and gate.get("require_specific") is True)
+    return g1 and g2 and g3 and g4
+
+
+def _cs_roster_text_block(member_options: list[dict[str, Any]]) -> str:
+    """The escalation-offer sentence a combined roster appends to the did-you-mean text,
+    production wording verbatim off turn 99c114fd's own second message (`.claude/
+    handpass/hp12-turns-21sep.json`): "To escalate, choose who to route to. Reply the
+    number or name: ... Or just reply 'yes' and we'll assign automatically." Positions
+    are read straight off the ALREADY-COMBINED options, so the printed numbers and the
+    pending's own `option.position` can never disagree."""
+    lines = "\n".join(f"{o.get('position')}. {o.get('label')}" for o in member_options)
+    return (
+        "\n\nTo escalate, choose who to route to. Reply the number or name:\n"
+        f"{lines}\n\nOr just reply 'yes' and we'll assign automatically."
+    )
+
+
 def _stamped_roster_options(rows: list[Any], *, kind: str, text: str) -> list[dict[str, Any]]:
     """`rows` (a `suggest_last_result_set` or a require-specific picker's own
     `compatible_entities`) -> options in `_roster_option`'s shape, each carrying the
@@ -818,23 +847,24 @@ def _miss_question(
     asked_at_turn: int | None,
     text: str,
     resolved: Any = None,
+    combined_member_rows: list[Any] | None = None,
 ) -> pending.Pending | None:
     """AC-1684: every question the miss arm raises, in the SAME precedence
     `tail.reply_ladder.compose_reply`'s own `result_set` already reads (member offer
-    first, then the roster a producer built, then a bare escalate offer)."""
+    first, then the roster a producer built, then a bare escalate offer).
+
+    `combined_member_rows` is hand pass 12 round 3's own addition (owner ruling R2): a
+    `cs_last_result_set`, pre-fetched by the CALLER (`answer_for`, via `tail/member_
+    offer.py`'s own `cs_roster_plan -> fetch_rosters -> build_cs_member_offer` chain -
+    the SAME one `producers["build-cs-member-offer"]` would have carried had `cs_offer_
+    gate`'s own g4b not suppressed it for THIS exact shape, a did-you-mean roster that
+    also earns a CS offer). When both a did-you-mean/require-specific roster AND this
+    exist, they mint ONE pending, continuously numbered - the did-you-mean/customer
+    options first, the CS members continuing after (`idx` on each row is overwritten
+    with its post-offset position before `member_option` reads it, since `member_
+    option` always prefers a row's own `idx` over the position it is called with)."""
     routing = (parser or {}).get("routing") or {}
     team = routing.get("suggested_team")
-
-    member = producers.get("build-cs-member-offer")
-    if isinstance(member, Mapping) and member.get("member_offer") is True:
-        rows = member.get("cs_last_result_set") or []
-        options = [
-            option
-            for option in (member_option(row, i + 1) for i, row in enumerate(rows))
-            if option
-        ]
-        if options:
-            return pending.ask("member_offer", options, asked_at_turn=asked_at_turn)
 
     # The did-you-mean roster (`build_suggest_offer`'s D1/D2/D3 arms all populate
     # `suggest_last_result_set`). The require-specific PICKER (F6/AC-1701) is a FOURTH
@@ -845,21 +875,65 @@ def _miss_question(
     rows = offer.get("suggest_last_result_set") or None
     if not rows and isinstance(gate, Mapping) and gate.get("require_specific") is True:
         rows = [e for e in (gate.get("compatible_entities") or []) if isinstance(e, dict)]
+    roster_kind: str | None = None
+    roster_options: list[dict[str, Any]] = []
     if rows:
         entity_kind = next(
             (row.get("entity_type") for row in rows if isinstance(row, dict) and row.get("entity_type")),
             None,
         ) or "product"
-        kind = f"{entity_kind}_pick"
-        options = _stamped_roster_options(rows, kind=kind, text=text)
+        roster_kind = f"{entity_kind}_pick"
+        roster_options = _stamped_roster_options(rows, kind=roster_kind, text=text)
+
+    # Owner ruling R2, hand pass 12 round 3: a did-you-mean/require-specific roster that
+    # ALSO earns a CS member offer mints ONE pending, not two - the member half CONTINUES
+    # the roster's own numbering rather than restarting at 1. Checked first, ahead of
+    # both the "member alone" and "roster alone" arms below (either would otherwise fire
+    # instead, dropping half the offer).
+    if (
+        roster_options
+        and len(roster_options) >= _MIN_ROSTER_OPTIONS
+        and combined_member_rows
+    ):
+        offset = len(roster_options)
+        member_options = [
+            option
+            for option in (
+                member_option({**row, "idx": offset + i + 1}, offset + i + 1)
+                for i, row in enumerate(combined_member_rows)
+                if isinstance(row, Mapping)
+            )
+            if option
+        ]
+        if member_options:
+            return pending.ask(
+                roster_kind,
+                roster_options + member_options,
+                team=team,
+                asked_at_turn=asked_at_turn,
+                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+            )
+
+    member = producers.get("build-cs-member-offer")
+    if isinstance(member, Mapping) and member.get("member_offer") is True:
+        member_rows = member.get("cs_last_result_set") or []
+        options = [
+            option
+            for option in (member_option(row, i + 1) for i, row in enumerate(member_rows))
+            if option
+        ]
+        if options:
+            return pending.ask("member_offer", options, asked_at_turn=asked_at_turn)
+
+    if roster_options:
         # AC-1691's umbrella, "in any domain and for any entity kind" - the SAME guard
         # `_tier_options` and `_offer_answer` already carry, and the one arm of this
         # module that was missing it (reviewer S5). A one-row `suggest_last_result_set`
         # is not a choice; the escalate offer below is the honest question for it.
-        if len(options) >= _MIN_ROSTER_OPTIONS:
+        if len(roster_options) >= _MIN_ROSTER_OPTIONS:
             return pending.ask(
-                kind,
-                options,
+                roster_kind,
+                roster_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
                 payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
@@ -1389,6 +1463,34 @@ def answer_for(
     text = composed.get("text") or ""
     producers = composed.get("producers") or {}
 
+    # Owner ruling R2, hand pass 12 round 3: a did-you-mean/require-specific roster that
+    # ALSO earns a CS member offer must show the roster IN THIS SAME REPLY, not drop it -
+    # `cs_offer_gate`'s own g4b (round 2) suppressed `producers["build-cs-member-offer"]`
+    # outright whenever this roster exists, so it never rides `composed` at all. Fetched
+    # independently here, off the SAME roster-builder chain `cs_offer_gate` itself would
+    # have driven, only when that producer is genuinely absent (i.e. g4b, not one of its
+    # other three conditions, is the reason it is missing) and a roster is actually on
+    # offer - `_miss_question` does the combining; this only supplies the extra rows.
+    combined_member_rows: list[Any] | None = None
+    already_member = producers.get("build-cs-member-offer")
+    if not (isinstance(already_member, Mapping) and already_member.get("member_offer") is True):
+        combine_rows = offer.get("suggest_last_result_set") if isinstance(offer, Mapping) else None
+        if not combine_rows and isinstance(gate, Mapping) and gate.get("require_specific") is True:
+            combine_rows = [e for e in (gate.get("compatible_entities") or []) if isinstance(e, dict)]
+        if (
+            combine_rows
+            and len(combine_rows) >= _MIN_ROSTER_OPTIONS
+            and db is not None
+            and _cs_offer_eligible(producers.get("escalate-catalog"), routing=(parser or {}).get("routing") or {}, gate=gate)
+        ):
+            from app.services.chatbot.tail import member_offer as member_mod
+
+            plan = member_mod.cs_roster_plan(gate if isinstance(gate, Mapping) else None)
+            responses = member_mod.fetch_rosters(db, plan, ctx if isinstance(ctx, Mapping) else {})
+            fetched = member_mod.build_cs_member_offer({}, plan, responses)
+            if fetched.get("member_offer") is True:
+                combined_member_rows = fetched.get("cs_last_result_set") or None
+
     question = _miss_question(
         offer,
         producers,
@@ -1397,7 +1499,15 @@ def answer_for(
         parser=parser,
         asked_at_turn=asked_at_turn,
         text=text,
+        combined_member_rows=combined_member_rows,
     )
+    if combined_member_rows and question is not None:
+        member_options = [o for o in question.options if o.get("entity_type") == "member"]
+        if member_options and any(o.get("entity_type") != "member" for o in question.options):
+            # The combine actually happened (the pending carries BOTH groups) - append
+            # the CS roster's own sentence, continuing the SAME positions the pending's
+            # options already carry.
+            text = f"{text}{_cs_roster_text_block(member_options)}"
     if (
         question is not None
         and question.kind == "team_pick"

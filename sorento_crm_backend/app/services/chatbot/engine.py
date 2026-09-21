@@ -2475,42 +2475,13 @@ def _run_stages(  # noqa: PLR0915
         return hard_failure
 
     if branch_kind == "out_of_scope" and completes_here:
-        # Hand pass 12 round 2, Group B2CD (owner ruling): a customer_service accept
-        # shows the CS roster first, not an immediate assignment - EXCEPT:
-        # - the answer just named a SPECIFIC company (`plan.trace.company`, a
-        #   POSITION pick over a `company_pick` clarify,
-        #   `test_rearch_r11_company_routing.py::TestThirdTurnClarifyAnswerRoutesByCompanyId`);
-        # - the offer still SPANS more than one company with none picked yet
-        #   (`roster_plan`, already computed above off the pending's own
-        #   company-carrying options - hand pass 11's own multi-company clarify,
-        #   `_clarify_gate`, owns that turn instead, per the captain's own
-        #   instruction that the clarify comes BEFORE the roster);
-        # - the pending just answered was ALREADY a `member_offer` (a number or a
-        #   bare "yes" over the roster the customer is already looking at keeps
-        #   today's round-robin/named-member behaviour, `turn/apply.py:268`'s own
-        #   `trace.assignee` read, pinned green by B2CD b/c).
-        # A bare accept with no company named and no multi-company pool open is the
-        # only shape B2CD(a)/(d) exercise.
-        roster_companies = {
-            row.get("company_id") for row in (roster_plan or []) if row.get("company_id")
-        }
-        if (
-            plan.trace.team == "customer_service"
-            and plan.trace.company is None
-            and len(roster_companies) <= 1
-            and (state_in.pending is None or state_in.pending.kind != "member_offer")
-        ):
-            return _run_member_offer_arm(
-                turn_id=turn_id,
-                ctx=ctx,
-                item=item,
-                actions=actions,
-                dry_run=dry_run,
-                session_factory=session_factory,
-                turn_trace=turn_trace,
-                stage=stage,
-                state=state_out,
-            )
+        # Owner correction, 21 Sep (hand pass 12 round 3): reverts hand pass 12 round
+        # 2's `_run_member_offer_arm` detour (commit 8e4ecdac7). A "yes" accepting a
+        # customer_service escalation offer with no member preference assigns by
+        # ROUND ROBIN IMMEDIATELY, exactly as production - the CS roster does not
+        # show on a SEPARATE later turn. Where the roster belongs instead: riding IN
+        # THE SAME REPLY as the offer itself (see `tail/outcome.py::cs_offer_gate`
+        # and `answer_bridge.py::_miss_question`, Group B2, hand pass 12 round 3).
         return _run_escalation_arm(
             turn_id=turn_id,
             ctx=ctx,
@@ -3211,131 +3182,6 @@ def _run_escalation_arm(
         session_patch=completed.session_patch,
         status=completed.status,
         stage=completed.stage,
-    )
-
-
-def _run_member_offer_arm(
-    *,
-    turn_id: str,
-    ctx: dict[str, Any],
-    item: dict[str, Any],
-    actions: list[dict[str, Any]],
-    dry_run: bool,
-    session_factory: SessionFactory,
-    turn_trace: Any,
-    stage: list[str],
-    state: Any = None,
-) -> TurnResult:
-    """Hand pass 12 round 2, Group B2CD (owner ruling): a "yes" that ACCEPTS an
-    escalation offer whose TEAM is `customer_service` shows the CS member roster
-    THIS turn instead of assigning - unless the pending it just answered was ALREADY
-    a `member_offer` (that answer - a number or a bare "yes" - keeps today's
-    behaviour, `_run_escalation_arm` unchanged). The caller (`_run_stages`) is the
-    one place that already knows both facts (`plan.trace.team`, `plan.trace.company`
-    is None for a bare accept, and `state_in.pending.kind`), so the branch is taken
-    there, before either arm runs.
-
-    Reuses `tail/member_offer.py`'s own `cs_roster_plan -> fetch_rosters ->
-    build_cs_member_offer` chain - the SAME roster fetch `answer_bridge.py::
-    _miss_question`'s did-you-mean-miss member branch and `tail/reply.py::
-    compose_from_fragments`'s `cs_offer_gate` merge already call one layer up -
-    rather than a second roster-fetch mechanism. `gate=None` (no resolver ran on a
-    bare accept) is `cs_roster_plan`'s own single-workspace fallback shape, the same
-    one a null-guarded single call always used.
-
-    No assignment happens on this turn - `_assign`/`post_next_assignee` are never
-    reached, which is the whole point (a member picked next turn, or a bare "yes"
-    over the roster, round-robins through the EXISTING `member_offer` answering
-    path, `turn/apply.py:268`'s own `trace.assignee` read).
-    """
-    from app.services.chatbot.answer_bridge import member_option
-    from app.services.chatbot.tail import member_offer as member_mod
-    from app.services.chatbot.turn import pending as turn_pending
-    from app.services.chatbot.turn.state import focus_to_wire
-
-    stage[0] = "looked_up"
-    routing = ((ctx.get("parse") or {}).get("output") or {}).get("routing") or {}
-    team = routing.get("suggested_team") or "customer_service"
-    with _session(session_factory) as db:
-        roster_plan = member_mod.cs_roster_plan(None)
-        responses = member_mod.fetch_rosters(db, roster_plan, ctx)
-    offer = member_mod.build_cs_member_offer({}, roster_plan, responses)
-
-    rows = offer.get("cs_last_result_set") or []
-    options = [o for o in (member_option(row, i + 1) for i, row in enumerate(rows)) if o]
-    text = offer.get("response") or "Would you like me to escalate to customer service team?"
-
-    turn_trace.record(
-        "looked_up",
-        summary="Showed the customer service roster before assigning.",
-        why=(
-            "An accepted customer_service escalation shows who is available before "
-            "handing the conversation over, rather than round-robining immediately "
-            "(owner ruling, hand pass 12 round 2)."
-        ),
-        facts={
-            "lane": "out_of_scope",
-            "arm": "member_offer",
-            "members": len(options),
-            "dry_run": dry_run,
-        },
-        raw={"response": text},
-    )
-
-    send_action = {
-        "kind": "send_message",
-        "text": text,
-        "quick_replies": None,
-        "result_set": options,
-        "dry_run": dry_run,
-    }
-    all_actions = [*actions, send_action]
-    reply = {"text": text, "quick_replies": None, "result_set": options}
-
-    new_pending = (
-        turn_pending.ask("member_offer", options, team=team) if options else None
-    )
-    session_patch = {
-        "focus": focus_to_wire(state.focus) if state is not None else {},
-        "open_question": turn_pending.to_wire(new_pending),
-        "ideation": None,
-        "access_levels": [],
-        "contains_flyer": False,
-    }
-
-    if not dry_run:
-        from app.services.conversation_variables_service import overwrite_for_contact
-
-        contact_respond_id = (ctx.get("contact") or {}).get("id")
-        with _session(session_factory) as db:
-            overwrite_for_contact(db, respond_io_id=contact_respond_id, state=session_patch)
-            _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
-
-    with _session(session_factory) as db:
-        _close_turn(
-            db,
-            turn_id,
-            status="done",
-            stage="remembered",
-            branch_kind="out_of_scope",
-            error=None,
-            records=turn_trace.persisted(),
-            response={"ctx": ctx, "item": item, "actions": all_actions, "reply": reply},
-        )
-
-    return TurnResult(
-        turn_id=turn_id,
-        ctx=ctx,
-        item=item,
-        branch_kind="out_of_scope",
-        delegate=None,
-        reply=reply,
-        actions=all_actions,
-        # D14: on a dry run nothing was written - the would-be patch, same contract
-        # every other arm's `session_patch` carries.
-        session_patch=session_patch if dry_run else None,
-        status="done",
-        stage="remembered",
     )
 
 

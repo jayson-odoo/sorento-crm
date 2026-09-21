@@ -214,6 +214,22 @@ def _domain_of_kind(policy: Policy, kind: str | None) -> str | None:
     return None
 
 
+def _picks_a_member_option(pending: Pending, decision: Decision) -> bool:
+    """Hand pass 12 round 3, owner ruling R3: a position pick landing on a MEMBER-typed
+    option reaches the escalation-acceptance path (`_answer_offer`) even when the
+    pending's own KIND is not one of `ESCALATION_OFFER_KINDS`. The combined did-you-mean
+    + CS-member pending this round mints (`answer_bridge.py::_miss_question`'s owner-R2
+    combine) is a `{entity_kind}_pick` - a ROSTER kind, never `member_offer` - because
+    its FIRST half is a business roster, not an escalation offer; only the SECOND half,
+    the options this checks, are."""
+    if not decision.positions:
+        return False
+    return any(
+        o.get("position") in decision.positions and o.get("entity_type") == "member"
+        for o in pending.options
+    )
+
+
 def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
     """An escalation offer, ACCEPTED - the mirror of `answer_pending_decline`.
 
@@ -519,9 +535,12 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         if answered is not None:
             return answered
 
-    if pending.kind in ESCALATION_OFFER_KINDS:
+    if pending.kind in ESCALATION_OFFER_KINDS or _picks_a_member_option(pending, decision):
         # BEFORE the roster path: an accepted escalation offer is a handover, never a
-        # fetch, whichever of the three ways it was accepted.
+        # fetch, whichever of the three ways it was accepted. The second disjunct (hand
+        # pass 12 round 3, R3) is the combined roster's own member half: its KIND is the
+        # business roster's, not `member_offer`, but a pick landing on one of its
+        # member-typed options is still an escalation acceptance, not an entity pick.
         accepted = _answer_offer(pending, decision, focus, trace)
         if accepted is not None:
             return accepted
