@@ -159,6 +159,7 @@ class TestRungBlockZeroNoteNamesOnlyTheRenderedCode:
             attributes=LIVE_GRANTED_ATTRIBUTES,
         )
         said = _said(result)
+        reply_text = _reply_text(result)
         assert result.status == "done", result.error
 
         # Test setup sanity: the ladder genuinely climbed (matches the live trace's own
@@ -170,7 +171,9 @@ class TestRungBlockZeroNoteNamesOnlyTheRenderedCode:
             f"probe_calls={probe_calls!r}"
         )
 
-        assert "No stock for SRTWC6022-SH-UF-NEW." in said, said
+        # EXACTLY one "No stock for <NEW only>." line - never zero, never repeated, and
+        # never naming the family sibling too.
+        assert reply_text.count("No stock for SRTWC6022-SH-UF-NEW.") == 1, reply_text
         assert "SRTWC6022-SH-UF, SRTWC6022-SH-UF-NEW" not in said, (
             f"the zero note must name ONLY the code the rung's own rendered rows carry "
             f"(SRTWC6022-SH-UF-NEW) - production never names the family sibling "
