@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
   Download,
@@ -17,16 +16,6 @@ import {
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import BackToList from '@/components/common/BackToList';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
@@ -57,10 +47,7 @@ import {
   orderInquiryHeaderStatusVariant,
 } from '../../../_shared/lib/orderInquiryHeaderStatus';
 import { saveBlobAs } from '../../../_shared/services/fileDownload';
-import {
-  downloadOrderInquiryWorklistXlsx,
-  unplaceOrderInquiryRow,
-} from '../../../_shared/services/orderInquiryService';
+import { downloadOrderInquiryWorklistXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
@@ -90,7 +77,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const queryClient = useQueryClient();
 
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
@@ -105,12 +91,27 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  // Unlink selected (W): mirrors `OrderInquriesClient.tsx`'s OWN "Unlink selected" -
-  // a plain confirm dialog, no countdown - because that is the real mechanism the
-  // worklist itself uses today; there is no server-deferred `order_inquiry_line.unlink`
-  // pending action to register against (reported to the captain, not invented here).
-  const [unlinkOpen, setUnlinkOpen] = useState(false);
-  const [unlinking, setUnlinking] = useState(false);
+  // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
+  // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
+  // ONE countdown rendered inline in the header card (`useDeferredBulkAction`'s own
+  // `inline` surface). Cancel withdraws every park and leaves the ticked lines ticked;
+  // the selection clears only once every park has actually settled (`onFinished`),
+  // never at park time.
+  const unlinkSelectedAction = useDeferredBulkAction({
+    actionKey: 'order_inquiry_row.unlink',
+    entityType: 'order_inquiry_row',
+    surface: 'inline',
+    verb: 'Unlinking',
+    pastVerb: 'unlinked',
+    describe: (count) => `${count} line${count === 1 ? '' : 's'}`,
+    invalidateKeys: [
+      [ORDER_INQUIRY_HEADER_LINES_KEY, id],
+      [ORDER_INQUIRY_HEADER_KEY, id],
+      [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY, id],
+      [ORDER_INQUIRY_HEADERS_KEY],
+    ],
+    onFinished: () => setRowSelection({}),
+  });
 
   const tab = searchParams.get('tab') || 'lines';
   function handleTabChange(next: string) {
@@ -229,34 +230,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   /**
-   * Unlink selected (W): the SAME mechanism `OrderInquiriesClient.tsx`'s own "Unlink
-   * selected" uses today - an `AlertDialog` confirm, committed immediately on "Unlink",
-   * no countdown. Reported to the captain rather than invented: the worklist has no
-   * server-deferred `order_inquiry_line.unlink` pending action to register against, so
-   * this mirrors what the worklist itself does instead of introducing a different
-   * mechanism on this one screen. Cancel leaves the ticked lines ticked; the selection
-   * clears only once the unlink actually commits.
+   * Unlink selected (AC-DP-06, fix round UL): one `order_inquiry_row.unlink` pending
+   * action per ticked line, behind the one inline countdown `unlinkSelectedAction`
+   * renders in the header card. No dialog, no immediate commit.
    */
-  async function unlinkSelected() {
+  function unlinkSelected() {
     if (selectedLinked.length === 0) return;
-    setUnlinking(true);
-    try {
-      for (const line of selectedLinked) {
-        // One row at a time, as the worklist's own `unlinkSelected` does.
-        await unplaceOrderInquiryRow(line.id);
-      }
-      toast.success(`Unlinked ${selectedLinked.length}`);
-      setUnlinkOpen(false);
-      setRowSelection({});
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to unlink');
-    } finally {
-      setUnlinking(false);
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY, id] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY, id] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
-    }
+    unlinkSelectedAction.run(selectedLinked.map((line) => ({ id: line.id })));
   }
 
   async function handleExport() {
@@ -380,14 +360,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={selectedLinked.length === 0}
-                        onSelect={
-                          selectedLinked.length
-                            ? (e) => {
-                                e.preventDefault();
-                                setUnlinkOpen(true);
-                              }
-                            : undefined
-                        }
+                        onSelect={selectedLinked.length ? unlinkSelected : undefined}
                       >
                         <Unlink className="size-4" aria-hidden />
                         Unlink selected
@@ -435,6 +408,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
               }
             />
           </div>
+          {unlinkSelectedAction.countdown ? (
+            <div className="mt-3">{unlinkSelectedAction.countdown}</div>
+          ) : null}
         </CardHeader>
       </Card>
 
@@ -508,33 +484,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         onOpenChange={setRejectOpen}
         onRejected={() => setRowSelection({})}
       />
-
-      {/* Unlink selected (W): the same confirm dialog `OrderInquiriesClient.tsx`'s own
-          "Unlink selected" uses - see the note on `unlinkSelected` above. */}
-      <AlertDialog open={unlinkOpen} onOpenChange={setUnlinkOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unlink selected</AlertDialogTitle>
-            <AlertDialogDescription>
-              {selectedLinked.length === 1
-                ? "Remove this line’s links? That quantity goes back to demand, and the next reorder suggestion counts it again."
-                : `Remove every link on the ${selectedLinked.length} selected lines? Those quantities go back to demand, and the next reorder suggestion counts them again.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={unlinking}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void unlinkSelected();
-              }}
-              disabled={unlinking}
-            >
-              Unlink
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
