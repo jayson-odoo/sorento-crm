@@ -116,15 +116,14 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
     first, so B's plain need is served by the ordinary `RUNG_GROUP_TAKE` rung before A is
     even reached.
 
-    MEASURED red today: the drawdown loop that charges `own_group` for every
-    `RUNG_GROUP_TAKE` component (`compose_lines` :1737-1766) explicitly skips an own-arrival
-    one (:1741-1745, "never drawn from `own_group`'s own SA-assignment pile in the first
-    place... so it must not spend it here either") - so B's ordinary 40 is charged
-    correctly and leaves nothing, but A's `_own_arrival_credit_for` reads RAW physical on
-    hand (still 40, `LocationNet.on_hand`, :2671-2677) rather than what B's sibling unit
-    already spent of it, and hands A a SECOND, uncharged Reserve of 40 at the identical bin
-    (`source: own_arrival`). Total Reserve across the two contributions: 80, from an on-hand
-    of 40 - the exact double book the security review named.
+    MEASURED green after the fix: `compose_lines`'s own-arrival drawdown loop
+    (:1737-1766) now charges the SAME `own_arrival_left` ledger `own_arrival_credit_for`
+    reads, for every ORDINARY `RUNG_GROUP_TAKE` Reserve at that bin - not only for the
+    credit's own component. B is walked first (its `so_number` wins the tie), its ordinary
+    Reserve of 40 takes the whole bin AND spends the own-arrival ledger for that bin down to
+    0. When A is walked, `own_arrival_credit_for` finds nothing left of the physical pile to
+    credit, so A's credit is 0 and its 40 composes elsewhere (Buy, since this world offers
+    no other rung) - never a second, uncharged Reserve of 40 at the identical bin.
     """
     with blank_session() as db:
         group, product = own_arrival_group(db)
@@ -162,18 +161,25 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
             f"A={reserved_a} B={reserved_b}, sources A={by_so[order_a.so_number]['sources']} "
             f"B={by_so[order_b.so_number]['sources']}"
         )
-        # Today's actual (buggy) ladder outcome, pinned exactly so a coder's fix is caught by
-        # a CHANGED number here rather than a silent pass: B wins the tie ordinarily (40,
-        # rung group_take, no own_arrival source) and A's credit hands it a second, uncharged
-        # 40 (rung group_take, source own_arrival) - 80 total from 40 on hand.
+        # The fixed ladder's actual outcome, pinned exactly so a regression is caught by a
+        # CHANGED number here rather than a silent pass: B wins the tie ordinarily and takes
+        # the whole 40 (rung group_take, no own_arrival source) - the line served first by
+        # the ordinary rung takes the bin, and the credit finds nothing left. A's own-arrival
+        # credit is therefore 0, and its 40 composes as Buy instead of a second Reserve.
         assert reserved_b == Decimal("40"), by_so[order_b.so_number]["sources"]
-        assert reserved_a == Decimal("40"), by_so[order_a.so_number]["sources"]
+        assert reserved_a == Decimal("0"), by_so[order_a.so_number]["sources"]
         own_arrival_sources = [
             s
             for s in by_so[order_a.so_number]["sources"]
             if s.get("rung") == "group_take" and s.get("source") == "own_arrival"
         ]
-        assert own_arrival_sources and Decimal(own_arrival_sources[0]["qty"]) == Decimal("40")
+        assert not own_arrival_sources, own_arrival_sources
+        buy_sources = [
+            s for s in by_so[order_a.so_number]["sources"] if s.get("kind") == "buy"
+        ]
+        assert buy_sources and Decimal(buy_sources[0]["qty"]) == Decimal("40"), by_so[
+            order_a.so_number
+        ]["sources"]
 
 
 def test_ac_s3_11_confirm_never_covers_the_same_units_twice():

@@ -63,6 +63,7 @@ Postgres only (`tests/_pg_fixture.py`, via `world()`). Every FK is seeded here t
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
@@ -296,10 +297,11 @@ def test_ac_s4_6_mixed_closed_and_cancelled_lines_report_order_fully_delivered()
 
 
 def test_ac_s4_7_row_larger_than_its_line_still_pairs_by_date():
-    """AC-S4-7 (R10). Open lines d1 (qty 20) < d2 (qty 40); sheet rows 70 @ d1 and 40 @ d2.
-    The 70-row still lands on line 1 - the line the date-order pick would otherwise give
-    it - even though 70 exceeds line 1's OWN qty_ordered of 20; the 40-row lands on line 2.
-    Nothing is refused as `qty_exceeds_ordered`.
+    """AC-S4-7 (R10). Open lines d1 (qty 20) < d2 (qty 60), order total 80; sheet rows 70 @
+    d1 and 40 @ d2. The 70-row still lands on line 1 - the line the date-order pick would
+    otherwise give it - even though 70 exceeds line 1's OWN qty_ordered of 20 (it does not
+    exceed the ORDER's total open qty of 80, R10's actual ceiling); the 40-row lands on
+    line 2. Nothing is refused as `qty_exceeds_ordered`.
 
     Note wording pinned: `f"Was 20 on {d1.isoformat()}"` - the UAC's own literal example
     ('note "Was 20 on d1" style qty difference'), reusing the SAME `f"Was {qty} on {date}"`
@@ -308,22 +310,25 @@ def test_ac_s4_7_row_larger_than_its_line_still_pairs_by_date():
     note shape. Here 20 is line 1's own `qty_ordered` and d1 its `required_date` - the
     fragment records the mismatch between what the LINE was booked for and what this row
     actually states (70), not a prior LIVE row's previous state (this is a first-time raise,
-    there is no earlier row to restate).
+    there is no earlier row to restate). The note fires because the row EXCEEDS the line's
+    own ordered qty (R10 wording), not merely because it differs from it - a row landing
+    short of or equal to the line's own qty carries no such note.
 
-    RED today: `_match_row`'s `fits` filter
-    (`app/services/project_order_inquiry_import_service.py:638-643`) requires
-    `qty_ordered - taken >= qty` PER CANDIDATE LINE. A row of 70 never fits a line of 20, so
-    line 1 is filtered out of `same_place` before rank/date order ever gets a say; only line
-    2 (capacity 40) remains as a candidate for the 70-row, which also does not fit, so
-    `_match_row` reports `qty_exceeds_ordered` for the 70-row and it is dropped - never the
-    two-rows-on-two-lines outcome AC-S4-7 pins. Expect `rows_raised == 1` (only the 40-row)
-    and a `qty_exceeds_ordered` entry in `line_not_found` today.
+    RED before the fix: `_match_row`'s `fits` filter
+    (`app/services/project_order_inquiry_import_service.py:638-643`) required
+    `qty_ordered - taken >= qty` PER CANDIDATE LINE. A row of 70 never fit a line of 20, so
+    line 1 was filtered out of `same_place` before rank/date order ever got a say; only
+    line 2 (capacity 60) remained as a candidate for the 70-row, which also did not fit, so
+    `_match_row` reported `qty_exceeds_ordered` for the 70-row and it was dropped - never the
+    two-rows-on-two-lines outcome AC-S4-7 pins. `rows_raised == 1` (only the 40-row) and a
+    `qty_exceeds_ordered` entry in `line_not_found` was the pre-fix outcome; R10 replaced the
+    per-line ceiling with the order-wide one for the line the date pick lands a row on.
     """
     d1, d2 = date(2026, 1, 1), date(2026, 6, 1)
     with world() as w:
         order = w.order()
         line1 = w.line(order, qty_ordered="20", required_date=d1)
-        line2 = w.line(order, qty_ordered="40", required_date=d2)
+        line2 = w.line(order, qty_ordered="60", required_date=d2)
 
         data = book_of(w, order, [(70, d1), (40, d2)])
 
@@ -355,8 +360,8 @@ def test_ac_s4_7_row_larger_than_its_line_still_pairs_by_date():
             "the 40-row must land on line 2",
             [(str(r.so_line_id), str(r.qty)) for r in rows],
         )
-        assert str(row_on_line1.qty) == "70", row_on_line1.qty
-        assert str(row_on_line2.qty) == "40", row_on_line2.qty
+        assert row_on_line1.qty == Decimal("70"), row_on_line1.qty
+        assert row_on_line2.qty == Decimal("40"), row_on_line2.qty
 
         expected_fragment = f"Was 20 on {d1.isoformat()}"
         assert expected_fragment in (row_on_line1.note or ""), row_on_line1.note
