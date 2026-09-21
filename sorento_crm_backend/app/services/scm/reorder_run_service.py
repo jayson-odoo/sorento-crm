@@ -1260,10 +1260,17 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     so_join = ""
     params: dict[str, Any] = {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}
     if so_numbers:
+        # `sso.id = sol.sales_order_id` (security N1, 21 Sep 2026) - the "equivalent
+        # alias" to `oir.company_id` this query has no `oir` row to compare against: it
+        # pins `sso` to the EXACT core SO the claim's own line belongs to, which is
+        # strictly tighter than a company match and needs no extra join. A bare
+        # `so_number` match alone would let a same-numbered SO in ANOTHER company (SO
+        # numbers are unique per company, not globally) satisfy the filter.
         so_join = (
             "JOIN projects.sales_orders spso ON spso.id = d.project_sales_order_id\n"
             "        JOIN sales_orders sso ON sso.id = spso.so_id "
-            "AND sso.so_number = ANY(:so_numbers)"
+            "AND sso.so_number = ANY(:so_numbers)\n"
+            "        AND sso.id = sol.sales_order_id"
         )
         params["so_numbers"] = list(so_numbers)
     found = db.execute(text(f"""

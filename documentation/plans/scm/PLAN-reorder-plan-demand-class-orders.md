@@ -1,6 +1,6 @@
 # PLAN: Start Plan scoped by demand class and by sales order (21 Sep 2026)
 
-Status: DRAFT (grilled 21 Sep evening, owner rulings R1-R5 taken), lane starting. Feature
+Status: BUILT 21 Sep 2026, Phase 3 fix round 1 folded; browser pass pending. Feature
 track (one seam plus a 2-column migration plus one list endpoint; too wide for the small
 fix track because of the migration and the browser pass).
 UAC: `reorder-plan-demand-class-orders-acceptance-criteria.md`.
@@ -71,7 +71,8 @@ a range, done; no order list.
 1. Migration `524_reorder_run_demand_scope`: `scm.reorder_run` gains
    `demand_class VARCHAR(16) NULL` (CHECK in `('project','retail')`) and
    `so_numbers JSONB NULL` (list of SO numbers; NULL = no order scope asked for).
-   `down_revision = '523_so_line_no'`. Model columns beside `plan_horizon_start`
+   `down_revision = 'ptag_0013_r10'` (main moved past `523_so_line_no` before the lane
+   landed; re-parented at merge time). Model columns beside `plan_horizon_start`
    (`scm.py:291`).
 2. `CreateReorderRunRequest` and `ReplanReorderRunRequest` gain
    `demand_class: Optional[Literal['project','retail']] = None` and
@@ -93,12 +94,19 @@ a range, done; no order list.
    and the frozen `inputs.committed` speak the same scope (the "run the whole inquiry
    family" lesson).
 4. `GET /api/v1/scm/reorder-runs/candidate-orders?from=&to=` (permission
-   `scm.reorder.run`, company scoped). One query over the project legs' population WITHOUT
-   the ack and date predicates, grouped by SO:
-   `{so_number, project_label, customer_name, rows_total, rows_in_range, rows_awaiting,
-   first_delivery, last_delivery}`; `rows_in_range` uses the same date rule as the legs
-   (an omitted bound is open). Ordered by `so_number`. ~321 rows on the prod copy, one
-   call, no paging, no search param (the FE filters client-side).
+   `scm.reorder.run`, company scoped). Fix round 1 (reviewer S1/S2, security N2): the
+   population is the SAME one `horizon_committed_select_sql`'s two project legs draw from,
+   minus `ack_state` and `delivery_date` - reusing `_OWED_SQL`/`_OWED_FORM_SQL` (a row with
+   nothing left owed does not count, matching the run's own predicate) and the form leg's
+   retail-shadow `NOT EXISTS` guard, never restating the arithmetic. No `so.status='open'`
+   or `so.demand_class='project'` predicate - the legs carry neither, so adding either
+   would narrow the picker's universe past what the run itself counts. Each row leg pins
+   `so.company_id = oir.company_id`, and the outer `projects.projects` join pins
+   `pj.company_id`, so a same-numbered SO or project in another company can never surface.
+   Grouped by SO: `{so_number, project_label, customer_name, rows_total, rows_in_range,
+   rows_awaiting, first_delivery, last_delivery}`; `rows_in_range` uses the same date rule
+   as the legs (an omitted bound is open). Ordered by `so_number`. ~321 rows on the prod
+   copy, one call, no paging, no search param (the FE filters client-side).
 5. `GET /reorder-runs/{id}` and the run list serializer (`reorder_runs.py:327, 531`)
    expose `demand_class` and `so_numbers` so the header shows the scope and a replan
    pre-fills it.
@@ -110,8 +118,9 @@ a range, done; no order list.
    `SearchableMultiSelect` appears under the dates, options from
    `getCandidateOrders(from, to)` (new function in `reorderRunService.ts`, one
    `useQuery` keyed on the range). Option label `SO419517 - OTM GROUP / TAT LIAN`,
-   description `7 lines in range` or `7 lines, 7 awaiting ack` (awaiting > 0 renders the
-   count in the warning colour). Pre-selected = every SO with `rows_in_range > 0`; the
+   description `7 lines in range` or, when `rows_awaiting > 0`, `7 lines in range, 7
+   awaiting ack` (the awaiting count renders in the warning colour). Pre-selected = every
+   SO with `rows_in_range > 0`; the
    selection is re-derived when the range changes until the user has touched the list,
    then kept. Empty selection with Project chosen = "plan every project order in range"
    (send `[]`); the helper copy says so. Dealer / All: no Orders field.

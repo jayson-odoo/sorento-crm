@@ -71,6 +71,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.error_handler import AppException
 from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
 from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
@@ -223,8 +224,16 @@ def _scope_for(db: Session, rec,
 def demand_for_recommendation(db: Session, rec_id: str,
                               limit: int = DEFAULT_LIMIT,
                               channel: Optional[str] = None,
-                              scope: Optional[str] = None) -> dict[str, Any]:
+                              scope: Optional[str] = None,
+                              run_id: Optional[str] = None) -> dict[str, Any]:
     """Open demand behind one recommendation, newest-needed first.
+
+    `run_id` (security fix, 21 Sep 2026), when given, binds the rec fetch to a SPECIFIC
+    run - every route caller passes it (it already ran `assert_run_visible` on it), so a
+    `rec_id` that exists but belongs to a DIFFERENT run reads identically to one that does
+    not exist at all (404), never leaking another company's demand rows by an id a caller
+    merely guessed. Omitted (every existing direct/test caller) keeps the unscoped lookup,
+    unchanged.
 
     `channel` narrows the list to ONE of `project`/`retail` - anything else
     (None, an unrecognised string, the retired `unclassified`) is unfiltered, so a caller that never asks for a channel
@@ -247,9 +256,16 @@ def demand_for_recommendation(db: Session, rec_id: str,
     rec = db.execute(text(
         "SELECT run_id::text AS run_id, product_id::text AS product_id, "
         "       warehouse_id::text AS warehouse_id, rec_type, inputs, allocation "
-        "FROM scm.reorder_recommendation WHERE id = :id"
-    ), {"id": rec_id}).mappings().first()
+        "FROM scm.reorder_recommendation WHERE id = :id "
+        "  AND (CAST(:run_id AS uuid) IS NULL OR run_id = CAST(:run_id AS uuid))"
+    ), {"id": rec_id, "run_id": run_id}).mappings().first()
     if rec is None:
+        # A caller that named a specific run (every route caller) gets a REAL 404 - the
+        # same one a missing run/rec gets everywhere else - rather than a quietly empty
+        # 200 that would let it tell "wrong run" apart from "genuinely empty" by response
+        # shape. A direct/test caller that never named a run keeps the old graceful shape.
+        if run_id is not None:
+            raise AppException(404, "Recommendation not found.")
         return {"lines": [], "total": 0, "shown": 0, "committed_total": 0.0,
                 "unlocated_total": 0.0, "locations": [], "scope": "warehouse",
                 "pool_code": None, "project_total": 0.0, "retail_total": 0.0,
@@ -282,9 +298,19 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # `create_run`), so this alone is the same test.
     run_so_scoped = bool(run_so_numbers)
     # Both project legs read `so.so_number` off a core sales order already joined into each
-    # of their own queries below - no new join needed, unlike `demand.py`'s bare SQL.
+    # of their own queries below - no new join needed, unlike `demand.py`'s bare SQL. The
+    # CONFIRMED leg reaches it via `sol.sales_order_id` and the FORM leg via `pso.so_id`;
+    # `_SO_SCOPE_JOIN_SQL`'s own walk (`order_inquiry_id -> order_inquiries ->
+    # project_sales_order_id -> so_id`) resolves the SAME row - every open OI row traces to
+    # exactly one core SO by both paths (measured 5,127/5,127 on the 21 Sep prod copy, plan
+    # section 2) - so reusing the leg's OWN already-joined alias here is the simpler of two
+    # correct options, not a second, divergent resolution.
+    # `so.company_id = oir.company_id` (security N1, 21 Sep 2026): the CONFIRMED leg's own
+    # `co` predicate already scopes `so`, but the FORM leg's does not (its `so` is reached
+    # through a LEFT JOIN with no company guard of its own) - stated once, here, so a
+    # same-numbered SO in another company can never satisfy either leg's filter.
     so_filter = (
-        "AND so.so_number = ANY(:so_numbers)"
+        "AND so.so_number = ANY(:so_numbers) AND so.company_id = oir.company_id"
         if (run_demand_class == "project" and run_so_numbers) else ""
     )
 
@@ -328,6 +354,9 @@ def demand_for_recommendation(db: Session, rec_id: str,
         loc = "cv.warehouse_id::text = ANY(:members)"
         if include_unloc:
             loc = f"({loc} OR cv.warehouse_id IS NULL)"
+        # No company predicate needed here (unlike `_sql_for` below): `rec["product_id"]`
+        # and `candidate` are already resolved off THIS company-scoped `rec`/`_scope_for`,
+        # so a cross-company row could never match `:pid`/`:members` in the first place.
         cv_params: dict[str, Any] = {
             "pid": rec["product_id"], "members": candidate,
             "horizon": horizon, "horizon_start": horizon_start,

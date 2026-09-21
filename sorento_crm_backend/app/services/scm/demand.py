@@ -465,11 +465,14 @@ _FORM_CORE_LINE_JOIN_SQL = (
 #: its number against the bound list. R1: the key is the WHOLE SO, intersected with every
 #: other predicate already on the leg (a row outside the range or unacknowledged is still
 #: excluded even when its SO is named). Never applied to the retail leg: an SO scope only
-#: ever narrows the project leg.
+#: ever narrows the project leg. `sso.company_id = oir.company_id` (security N1, 21 Sep
+#: 2026): a bare `so_number` match would let a same-numbered SO in ANOTHER company match
+#: this row - SO numbers are unique per company, not globally.
 _SO_SCOPE_JOIN_SQL = (
     "JOIN projects.order_inquiries soi ON soi.id = oir.order_inquiry_id\n"
     "    JOIN projects.sales_orders spso ON spso.id = soi.project_sales_order_id\n"
-    "    JOIN sales_orders sso ON sso.id = spso.so_id AND sso.so_number = ANY(:so_numbers)"
+    "    JOIN sales_orders sso ON sso.id = spso.so_id AND sso.so_number = ANY(:so_numbers)\n"
+    "        AND sso.company_id = oir.company_id"
 )
 
 COMMITTED_V_SQL = f"""

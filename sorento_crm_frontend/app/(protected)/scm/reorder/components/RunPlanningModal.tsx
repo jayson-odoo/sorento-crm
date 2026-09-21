@@ -335,7 +335,7 @@ export function RunPlanningModal({
                       <span className="break-words text-xs text-muted-foreground">
                         {opt.description}
                         {awaiting > 0 ? (
-                          <span className="text-[var(--color-warning-accent,var(--color-yellow-600))]">
+                          <span className="text-warning">
                             {`, ${awaiting} awaiting ack`}
                           </span>
                         ) : null}
@@ -345,7 +345,7 @@ export function RunPlanningModal({
                 }}
               />
               <p className="mt-1 text-2xs text-muted-foreground">
-                Untick an order to leave it out. Empty = every project order in range.
+                Empty = every project order in range.
               </p>
             </div>
           ) : null}

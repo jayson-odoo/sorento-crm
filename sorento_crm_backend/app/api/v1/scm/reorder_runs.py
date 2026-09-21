@@ -53,7 +53,6 @@ from app.services.scm import demand_source_service
 from app.services.scm import location_stock_service
 from app.services.scm import unplanned_demand_service
 from app.services.scm import demand_breakdown_service
-from app.services.scm.demand import NOT_REDIRECTED_SQL
 from app.services.scm.money import BASE_CURRENCY
 from app.services.scm.reorder_policy import resolve_global_cover_scope
 
@@ -101,7 +100,9 @@ def create_reorder_run(
         plan_horizon_date=payload.plan_horizon_date,
         plan_horizon_start=payload.plan_horizon_start,
         demand_class=payload.demand_class,
-        so_numbers=payload.so_numbers or None,
+        # `create_run` owns the []/None rule (N4) - `[]` and `None` are already the same
+        # falsy "nothing to narrow" case to it, so there is nothing to normalise here.
+        so_numbers=payload.so_numbers,
     )
     if response is not None:
         response.status_code = 202
@@ -133,7 +134,8 @@ def replan_reorder_run(
         plan_horizon_date=payload.plan_horizon_date,
         plan_horizon_start=payload.plan_horizon_start,
         demand_class=payload.demand_class,
-        so_numbers=payload.so_numbers or None,
+        # Same reasoning as `create_reorder_run` above (N4).
+        so_numbers=payload.so_numbers,
         actor=(_user or {}).get("id"),
     )
     if response is not None:
@@ -508,51 +510,119 @@ def get_candidate_orders(
     """Every open project SO with an Order Inquiry row - the Orders picker in Start Plan's
     Demand = Project field (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026).
 
-    ONE query over the project legs' own population, WITHOUT the ack/date predicates that
-    narrow what a RUN actually buys: an SO belongs on this list even when every one of its
-    rows sits outside the range or awaits acknowledgement, because leaving it off would
-    hide the very orders the buyer opens this picker to reconcile against the sheet (R2 -
-    the awaiting count is shown here so that stays visible before Start). `rows_in_range`
-    applies the SAME open-bound date rule the run itself applies to `:horizon`/
-    `:horizon_start` (an omitted bound is open; a NULL `delivery_date` always counts, G2).
-    Not scoped to confirmed rows alone - a row still awaiting a supply decision (the form
-    leg) belongs to its SO the same way a confirmed one does, so both surface here off the
-    row's own `order_inquiry_id` rather than off `supply_decision_id`.
+    The SAME population as `demand.horizon_committed_select_sql`'s two project legs
+    (confirmed + form), minus `ack_state` and `delivery_date` - reusing its owed-quantity
+    constants (`_OWED_SQL`/`_OWED_FORM_SQL`) rather than restating the arithmetic, so this
+    picker and the run it feeds can never disagree about which rows exist to choose from.
+    An SO belongs on this list even when every one of its rows sits outside the range or
+    awaits acknowledgement, because leaving it off would hide the very orders the buyer
+    opens this picker to reconcile against the sheet (R2 - the awaiting count is shown here
+    so that stays visible before Start). `rows_in_range` applies the SAME open-bound date
+    rule the run itself applies to `:horizon`/`:horizon_start` (an omitted bound is open; a
+    NULL `delivery_date` always counts, G2). Not scoped to confirmed rows alone - a row
+    still awaiting a supply decision (the form leg) belongs to its SO the same way a
+    confirmed one does.
 
     No paging (~321 rows measured on the prod copy) - the FE filters/searches client-side.
     """
-    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dco")
+    co, co_params = company_sql_predicate(db, "cr.company_id", param_prefix="dco")
     rows = db.execute(text(f"""
-        SELECT so.so_number,
+        WITH candidate_rows AS (
+            -- The CONFIRMED leg - verbatim in predicate against horizon_committed_select_
+            -- sql's own, minus the horizon/horizon_start binds and ack_state.
+            SELECT so.so_number AS so_number,
+                   spso.project_id AS project_id,
+                   so.customer_id AS customer_id,
+                   so.company_id AS company_id,
+                   oir.delivery_date AS delivery_date,
+                   oir.ack_state AS ack_state
+            FROM projects.order_inquiry_rows oir
+            JOIN projects.so_supply_decisions d
+              ON d.id = oir.supply_decision_id AND d.state = 'active'
+            JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+            JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+            JOIN projects.sales_orders spso ON spso.id = psl.project_sales_order_id
+            -- `so.company_id = oir.company_id` (security N1/N2, 21 Sep 2026): a bare
+            -- `so_id` match is not enough to rule out a same-numbered SO in another
+            -- company; this row leg states the guard directly.
+            JOIN sales_orders so ON so.id = spso.so_id AND so.company_id = oir.company_id
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(l.qty), 0) AS linked
+                FROM projects.order_inquiry_links l
+                WHERE l.row_id = oir.id
+            ) lk ON TRUE
+            WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
+              AND oir.state IN ('raised', 'partly_linked')
+              {demand.NOT_REDIRECTED_SQL}
+              AND oir.qty > 0
+              AND {demand._OWED_SQL} > 0
+
+            UNION ALL
+
+            -- The FORM leg - same population `horizon_committed_select_sql`'s own third
+            -- leg counts (no supply decision, the retail-shadow NOT EXISTS guard), reached
+            -- by its own `order_inquiry_id` walk to a so_number the way
+            -- `demand_breakdown_service`'s form leg already does (that leg has no core SO
+            -- of its own to read one off).
+            SELECT so.so_number AS so_number,
+                   spso.project_id AS project_id,
+                   so.customer_id AS customer_id,
+                   so.company_id AS company_id,
+                   oir.delivery_date AS delivery_date,
+                   oir.ack_state AS ack_state
+            FROM projects.order_inquiry_rows oir
+            JOIN projects.order_inquiries oi ON oi.id = oir.order_inquiry_id
+            JOIN projects.sales_orders spso ON spso.id = oi.project_sales_order_id
+            JOIN sales_orders so ON so.id = spso.so_id AND so.company_id = oir.company_id
+            {demand._FORM_CORE_LINE_JOIN_SQL}
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(l.qty), 0) AS linked
+                FROM projects.order_inquiry_links l
+                WHERE l.row_id = oir.id
+            ) flk ON TRUE
+            WHERE oir.supply_decision_id IS NULL
+              -- The retail-shadow guard, verbatim from `demand.py`'s own form leg: disjoint
+              -- from the BOOK leg, which already counts this row's line if it names one
+              -- that is still open, undecided retail demand.
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM projects.sales_order_lines fpsl
+                  JOIN sales_order_lines fsol ON fsol.id = fpsl.core_sales_order_line_id
+                  JOIN sales_orders fso ON fso.id = fsol.sales_order_id
+                  WHERE fpsl.id = oir.so_line_id
+                    AND fso.demand_class IS DISTINCT FROM 'project'
+                    AND fso.status = 'open'
+                    AND fsol.line_status = 'open'
+                    AND fsol.purchasing_status <> 'covered'
+                    AND GREATEST(COALESCE(fsol.qty_required, fsol.qty_ordered)
+                               - COALESCE(fsol.qty_delivered, 0), 0) > 0)
+              AND oir.verb IN ('ORDER', 'ORDER_BACK')
+              AND oir.state IN ('raised', 'partly_linked')
+              {demand.NOT_REDIRECTED_SQL}
+              AND oir.qty > 0
+              AND {demand._OWED_FORM_SQL} > 0
+        )
+        SELECT cr.so_number,
                pj.title AS project_label,
                c.customer_name AS customer_name,
                count(*) AS rows_total,
                count(*) FILTER (
-                   WHERE (CAST(:from_date AS date) IS NULL OR oir.delivery_date IS NULL
-                          OR oir.delivery_date >= CAST(:from_date AS date))
-                     AND (CAST(:to_date AS date) IS NULL OR oir.delivery_date IS NULL
-                          OR oir.delivery_date <= CAST(:to_date AS date))
+                   WHERE (CAST(:from_date AS date) IS NULL OR cr.delivery_date IS NULL
+                          OR cr.delivery_date >= CAST(:from_date AS date))
+                     AND (CAST(:to_date AS date) IS NULL OR cr.delivery_date IS NULL
+                          OR cr.delivery_date <= CAST(:to_date AS date))
                ) AS rows_in_range,
                count(*) FILTER (
-                   WHERE NOT (oir.ack_state = ANY(:planned_ack_states))
+                   WHERE NOT (cr.ack_state = ANY(:planned_ack_states))
                ) AS rows_awaiting,
-               MIN(oir.delivery_date) AS first_delivery,
-               MAX(oir.delivery_date) AS last_delivery
-        FROM projects.order_inquiry_rows oir
-        JOIN projects.order_inquiries soi ON soi.id = oir.order_inquiry_id
-        JOIN projects.sales_orders spso ON spso.id = soi.project_sales_order_id
-        JOIN sales_orders so ON so.id = spso.so_id
-        LEFT JOIN projects.projects pj ON pj.id = spso.project_id
-        LEFT JOIN customers c ON c.id = so.customer_id AND c.company_id = so.company_id
-        WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
-          AND oir.state IN ('raised', 'partly_linked')
-          {NOT_REDIRECTED_SQL}
-          AND oir.qty > 0
-          AND so.status = 'open'
-          AND so.demand_class = 'project'
-          {("AND " + co) if co else ""}
-        GROUP BY so.id, so.so_number, pj.title, c.customer_name
-        ORDER BY so.so_number
+               MIN(cr.delivery_date) AS first_delivery,
+               MAX(cr.delivery_date) AS last_delivery
+        FROM candidate_rows cr
+        LEFT JOIN projects.projects pj ON pj.id = cr.project_id AND pj.company_id = cr.company_id
+        LEFT JOIN customers c ON c.id = cr.customer_id AND c.company_id = cr.company_id
+        WHERE {co or 'true'}
+        GROUP BY cr.so_number, pj.title, c.customer_name
+        ORDER BY cr.so_number
     """), {
         "from_date": from_date, "to_date": to_date,
         "planned_ack_states": list(demand.PLANNED_ACK_STATES),
@@ -660,7 +730,7 @@ def recommendation_demand(
     row itself: pooled netting is the reason, and the orders are the evidence."""
     svc.assert_run_visible(db, run_id)
     return demand_breakdown_service.demand_for_recommendation(
-        db, rec_id, limit, channel, scope
+        db, rec_id, limit, channel, scope, run_id=run_id
     )
 
 

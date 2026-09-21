@@ -8,9 +8,15 @@ supplier resolve to human codes/names (ids stay on the request path only).
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+#: One sales order number, capped like `canonical_documents.py`'s own `_SoNumber` - a
+#: bound on the STRING, not the list (that is `so_numbers`'s own `Field(max_length=...)`
+#: below). Human-typed SO numbers are short; a caller sending a pathological string is a
+#: request to reject, not one to store.
+_SoNumber = Annotated[str, Field(max_length=100)]
 
 
 def require_start_on_or_before_end(start: Optional[date], end: Optional[date]) -> None:
@@ -69,8 +75,9 @@ class CreateReorderRunRequest(BaseModel):
     demand_class: Optional[Literal["project", "retail"]] = None
     # The SO scope, project only. Omitted/empty means every project order in range - not
     # narrowed to none - so it is a real narrowing only when both non-empty AND
-    # demand_class='project'.
-    so_numbers: List[str] = []
+    # demand_class='project'. Capped at 500 - the measured universe is ~321 SOs (plan
+    # section 2), so 500 is headroom, not a real limit - and each number at 100 chars.
+    so_numbers: List[_SoNumber] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def _start_before_end(self):
@@ -98,7 +105,8 @@ class ReplanReorderRunRequest(BaseModel):
     # Same demand scope as `CreateReorderRunRequest`; the FE re-submits it unchanged from
     # the run being replanned when the header edit form never touched it.
     demand_class: Optional[Literal["project", "retail"]] = None
-    so_numbers: List[str] = []
+    # Same cap as `CreateReorderRunRequest.so_numbers` - see its own comment.
+    so_numbers: List[_SoNumber] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def _start_before_end(self):
