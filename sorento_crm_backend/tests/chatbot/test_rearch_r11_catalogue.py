@@ -40,11 +40,14 @@ from typing import Any
 
 import pytest
 
+from app.models.access import RespondContact
+from app.models.company import RespondContactCompany
 from app.models.resources import Attachment, AttachmentType
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
+from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures re-exported by name
     _envelope,
     _parser_output,
@@ -231,6 +234,23 @@ def _seed_catalogue_library(session_factory: Any) -> dict[str, str]:
     }
 
 
+def _scope_seeded_contact_to_default_company(session_factory: Any) -> None:
+    """The `seeded` fixture's contact (`tests.chatbot.test_engine.CONTACT_ID`) carries no
+    `RespondContactCompany` row, so `engine._session`'s scope stamping
+    (`_contact_company_scope` -> `company_scope_resolver.resolve_contact_company_scope`)
+    resolves an EMPTY frozenset (fail-closed by design, AC-F3) and blocks every seeded
+    attachment below - they all carry `company_id = DEFAULT_COMPANY_ID`. On the real
+    clone this contact IS scoped to DEFAULT_COMPANY_ID (Sorento), so this seeds the same
+    link the real data has, the same one-line insert
+    `tests.chatbot.test_engine_company_scope._seed_contact(..., company_ids=[...])`
+    already does for its own from-scratch contacts - reused here rather than duplicated,
+    since this contact already exists via the `seeded` fixture's raw-SQL insert."""
+    db = session_factory()
+    contact = db.query(RespondContact).filter(RespondContact.respond_io_id == str(CONTACT_ID)).one()
+    db.add(RespondContactCompany(respond_contact_id=contact.id, company_id=DEFAULT_COMPANY_ID))
+    db.commit()
+
+
 def _wire_real(session_factory, monkeypatch) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, str]]:
     """The REAL resolver (`entity_resolver.resolve_references_intersection`'s
     filename-coverage AND, `_and_probe_attachment(coverage_mode=True)`, opt-in for
@@ -247,6 +267,7 @@ def _wire_real(session_factory, monkeypatch) -> tuple[list[tuple[str, dict[str, 
         row.chatbot_completed_lanes = ["business_query"]
     db.commit()
 
+    _scope_seeded_contact_to_default_company(session_factory)
     ids = _seed_catalogue_library(session_factory)
 
     def _bundle(db: Any, *, space_id: str | None = None) -> ResolveGateServices:
