@@ -1,6 +1,6 @@
 # PLAN - Fulfilment board: received goods are stock, bought-for-this-line first
 
-Status: in progress, Phase 2 tester-first (started 21 Sep 2026 evening); lane `feat/board-received-stock-own-arrival`, worktree `sorento_crm-own-arrival` off origin/main cc6c09f19, private DB `sorento_buc_ci`. Rulings taken 21 Sep 2026 (lavish alignment page, owner "ok go").
+Status: in review, PR #1092 ready for review (22 Sep 2026); S0..S5 green, five review rounds folded, browser E1/E2 on the 0921 copy; awaiting owner go to merge, then deploy and the SO372176 confirm on prod. Lane `feat/board-received-stock-own-arrival`, worktree `sorento_crm-own-arrival`, private DB `sorento_buc_ci`. Rulings R1..R10 (owner, 21 Sep 2026).
 Domain: SCM, fulfilment planning board + planning-change engine + order inquiries + OI sheet importer.
 UAC: `board-received-stock-own-arrival-acceptance-criteria.md`.
 Evidence: prod dump 21 Sep 03:49 UTC restored as `sorento_ai_automation_0921`; SO372176 / MHS1025.
