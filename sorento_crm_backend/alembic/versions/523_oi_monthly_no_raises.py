@@ -182,13 +182,19 @@ def renumber_inquiries(bind) -> int:
 
     Two passes, a TEMP TABLE holding the rank in between - a single UPDATE straight to
     the final `OI-YYMM-NNNN` risks tripping `uq_project_order_inquiry_no` mid-statement
-    if an old and a new number ever collided; the intermediate `ZZTMP-<id>` value never
+    if an old and a new number ever collided; the intermediate `ZTMP-<grn>` value never
     can, since no real number is ever shaped that way.
 
-    Guarded on `legacy_inquiry_no IS NULL` - a header already renumbered by an earlier
-    run of this same function keeps the value it got, so re-running (the shared dev
-    DB's own by-hand apply, per `sorento_crm_backend/CLAUDE.md`) is a no-op the second
-    time.
+    Guarded on `legacy_inquiry_no IS NULL` AND the old number still being LEGACY-shaped
+    (`OI-NNNNNN`, six digits, no month) - a header already renumbered by an earlier run
+    of this same function keeps the value it got, so re-running (the shared dev DB's own
+    by-hand apply, per `sorento_crm_backend/CLAUDE.md`) is a no-op the second time. The
+    shape guard matters on top of the NULL one: a header born AFTER this migration (the
+    ORM's own `before_insert` mints it a dated number directly, `legacy_inquiry_no` stays
+    NULL forever) would otherwise still match `legacy_inquiry_no IS NULL` on a second run
+    and be renumbered again as if it were rank 1 of its own one-row partition - landing on
+    a number an already-renumbered header already holds, a real collision on
+    `uq_project_order_inquiry_no`.
 
     `inquiry_no` is `VARCHAR(20)` (`OI-2609-0001` is 12), so pass 1's placeholder is
     `ZTMP-<row's own global rank in this run>` rather than the row's own id (a UUID is
@@ -217,6 +223,7 @@ def renumber_inquiries(bind) -> int:
                ROW_NUMBER() OVER () AS grn
         FROM {inquiries}
         WHERE legacy_inquiry_no IS NULL
+          AND inquiry_no ~ '^OI-[0-9]{{6}}$'
         """
     )
     touched = bind.exec_driver_sql(
@@ -244,6 +251,77 @@ def renumber_inquiries(bind) -> int:
         """
     )
     bind.exec_driver_sql("DROP TABLE zzt_oi_renumber_targets")
+    return int(touched)
+
+
+def restore_legacy_numbers(bind) -> int:
+    """Downgrade's own data step (AC-S3), exposed so a test can drive it directly rather
+    than only through `downgrade()`'s inline SQL.
+
+    Two passes:
+
+    1. Every header that still holds a `legacy_inquiry_no` gets it back verbatim - these
+       values were unique before `renumber_inquiries` ever ran, so writing them back
+       cannot collide with each other, and they never collide with a dated
+       `OI-YYMM-NNNN` number either (different shape entirely).
+    2. A header with NO `legacy_inquiry_no` was born AFTER this migration (the ORM's own
+       `before_insert` minted it a dated number directly) and has no old number to
+       restore, yet the reverted `next_inquiry_no` (MAX+1 over the flat `OI-NNNNNN`
+       series) must never be able to hand its number to someone else. So it is minted
+       its own legacy-shaped number here, per company, ordered by `raised_at` then `id`,
+       strictly PAST the highest number just restored for that company - anything at or
+       below that max is a number the old minter could still reissue.
+
+    `legacy_inquiry_no` is cleared once restored, so the column reads empty even if a
+    caller (this migration's own `downgrade()`) leaves the column in place a moment
+    longer before dropping it.
+    """
+    inquiries = _inquiries(bind)
+
+    bind.exec_driver_sql(
+        f"""
+        UPDATE {inquiries}
+        SET inquiry_no = legacy_inquiry_no
+        WHERE legacy_inquiry_no IS NOT NULL
+        """
+    )
+
+    bind.exec_driver_sql("DROP TABLE IF EXISTS zzt_oi_restore_targets")
+    bind.exec_driver_sql(
+        f"""
+        CREATE TEMP TABLE zzt_oi_restore_targets AS
+        SELECT h.id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY h.company_id ORDER BY h.raised_at ASC, h.id ASC
+               ) AS rn,
+               COALESCE(mx.max_tail, 0) AS company_max_tail
+        FROM {inquiries} h
+        LEFT JOIN (
+            SELECT company_id, MAX(substring(inquiry_no from 4)::int) AS max_tail
+            FROM {inquiries}
+            WHERE inquiry_no ~ '^OI-[0-9]{{6}}$'
+            GROUP BY company_id
+        ) mx ON mx.company_id = h.company_id
+        WHERE h.legacy_inquiry_no IS NULL
+        """
+    )
+    touched = bind.exec_driver_sql(
+        "SELECT COUNT(*) FROM zzt_oi_restore_targets"
+    ).scalar() or 0
+
+    bind.exec_driver_sql(
+        f"""
+        UPDATE {inquiries} h
+        SET inquiry_no = 'OI-' || lpad((t.company_max_tail + t.rn)::text, 6, '0')
+        FROM zzt_oi_restore_targets t
+        WHERE h.id = t.id
+        """
+    )
+    bind.exec_driver_sql("DROP TABLE zzt_oi_restore_targets")
+
+    bind.exec_driver_sql(
+        f"UPDATE {inquiries} SET legacy_inquiry_no = NULL WHERE legacy_inquiry_no IS NOT NULL"
+    )
     return int(touched)
 
 
@@ -304,10 +382,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     # The old number survives on `legacy_inquiry_no` for exactly this - restore it,
-    # never re-derive it.
-    op.execute(
-        f"UPDATE {_inquiries(bind)} SET inquiry_no = legacy_inquiry_no "
-        "WHERE legacy_inquiry_no IS NOT NULL"
-    )
+    # never re-derive it. A header born after this migration never held one; it is
+    # minted its own legacy-shaped number, past every restored one, so the reverted
+    # MAX+1 minter cannot reissue it (`restore_legacy_numbers`, AC-S3).
+    restore_legacy_numbers(bind)
     op.execute(f"ALTER TABLE {_inquiries(bind)} DROP COLUMN IF EXISTS legacy_inquiry_no")
     op.execute(f"DROP TABLE IF EXISTS {_raises(bind)}")
