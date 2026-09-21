@@ -1,6 +1,6 @@
 # PLAN: fulfilment board - a left-out line is loud, reachable, and fixable
 
-Status: in progress. Track: small fix (FE only, no migration, no endpoint, no auth change).
+Status: in progress, fix round 2 after review. Track: small fix (FE only, no migration, no endpoint, no auth change).
 Branch `fix/board-confirm-left-out`, worktree `sorento_crm-board-confirm-leftout`.
 UAC: `board-confirm-left-out-acceptance-criteria.md`.
 

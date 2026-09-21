@@ -162,16 +162,26 @@ export function FulfilmentBoardListView({
    * clearing `focusKey` on the caller's side alone: a second click naming the SAME already-
    * open row has to scroll again, and this is what tells "still the same request" apart from
    * "asked for again".
+   *
+   * S3 (fix round 2, reviewer): the ref is set and `onFocusHandled` fired only once the QUERY
+   * ACTUALLY FOUND A NODE, not merely once the row is "open" - `openKeys` says the row is
+   * expanded, not that it is currently RENDERED, and a search still narrowing the list to
+   * something else (B1 above) or a page still on its way to the right one both leave `open`
+   * true with nothing in the DOM yet. Marking it done regardless left later renders - the
+   * search settling, the page landing - with no signal left to scroll on. `filteredContributions`
+   * is an explicit dependency for the same reason: `openKeys` alone does not change when the
+   * ROWS do (a search settling, a fresher board read), so a miss on THAT account would
+   * otherwise never get a second attempt.
    */
   React.useEffect(() => {
     if (!focusKey || !openKeys.includes(focusKey)) return;
     if (lastScrolledFocusKey.current === focusKey) return;
+    const node = document.querySelector(`[data-testid="line-decision-${focusKey}"]`);
+    if (!node) return;
     lastScrolledFocusKey.current = focusKey;
-    document
-      .querySelector(`[data-testid="line-decision-${focusKey}"]`)
-      ?.scrollIntoView({ block: 'center' });
+    node.scrollIntoView({ block: 'center' });
     onFocusHandled?.();
-  }, [focusKey, openKeys, onFocusHandled]);
+  }, [focusKey, openKeys, onFocusHandled, filteredContributions]);
 
   /**
    * D14 (the captain: a quick save for the lines that need nothing amended). Selection is

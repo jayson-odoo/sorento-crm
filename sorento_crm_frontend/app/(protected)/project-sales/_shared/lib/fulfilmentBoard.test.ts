@@ -1199,6 +1199,52 @@ describe('confirmLinesFor reads the engine’s numbers', () => {
     });
   });
 
+  /**
+   * S1 (fix round 2, reviewer): this is the path SO420745 itself takes - an uncovered,
+   * approved line whose Save carried a reason the planner typed on a suggested borrow row
+   * (`BoardLineDecisionPanel`'s approving `save()`, board-confirm-left-out AC-3). Rebuilding
+   * `borrow` straight off `contribution.sources` (the engine's own auto-proposed borrow, with
+   * the engine's own sentence) posted that sentence back regardless of what the SAVED decision
+   * actually carried.
+   */
+  it('carries the reason the approving decision typed for a suggested borrow row', () => {
+    const withBorrow = [
+      {
+        ...base,
+        qty_proposed_reserve: '0',
+        qty_proposed_incoming: '0',
+        qty_proposed_buy: '0',
+        sources: [
+          {
+            kind: 'borrow' as const,
+            qty: '100',
+            location: 'MWH-IB',
+            warehouse_id: 'wh-mwh-ib',
+            reason: 'Cross-group cap allows this.',
+          },
+        ],
+      },
+    ];
+    const lines = confirmLinesFor(withBorrow, 'so-a', {
+      [base.key]: {
+        verdict: 'approved',
+        borrow: [
+          {
+            source: 'other_location',
+            warehouse_id: 'wh-mwh-ib',
+            qty: '100',
+            reason: 'Confirmed with the other site on WhatsApp.',
+          },
+        ],
+      },
+    });
+    expect(lines[0].borrow[0]).toMatchObject({
+      warehouse_id: 'wh-mwh-ib',
+      qty: '100',
+      reason: 'Confirmed with the other site on WhatsApp.',
+    });
+  });
+
   it('still moves an amendment’s difference into the Buy', () => {
     const withProposal = [
       { ...base, qty_proposed_reserve: '60', qty_proposed_incoming: '10', qty_proposed_buy: '30' },

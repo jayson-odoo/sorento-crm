@@ -1751,11 +1751,71 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
   });
 
   /**
+   * Fix round 2 (reviewer, B1, blocking): `setProductSearchInput('')` only moved the BOX -
+   * `productSearch` (`useDebouncedSearch`'s `debouncedValue`, what the list actually filters
+   * by) still lagged it by 200ms, so a banner click made while an excluding search was active
+   * found the row still filtered out, the page jump saw index -1, the scroll no-op'd, and the
+   * search only caught up a beat later - too late for anything still waiting on it.
+   * `focusLeftOutLine` now calls the hook's own `reset('')`, which clears both halves
+   * synchronously.
+   */
+  it('reaches the left-out line even while a search that excludes it is still active (AC-5, fix round 2, B1)', async () => {
+    const scrollSpy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {});
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({
+          ...entry,
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        }),
+      ),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const searchBox = screen.getByPlaceholderText(
+      'Search sales order, customer, project or product',
+    );
+    // A search that EXCLUDES the left-out line - not just typed, but SETTLED: waiting for the
+    // grid to actually narrow is what proves the debounced value (not only the box) now reads
+    // "WESERP10B", which is the state the bug needed to reproduce.
+    fireEvent.change(searchBox, { target: { value: 'WESERP10B' } });
+    await waitFor(() => expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument());
+
+    const banner = await screen.findByTestId('board-left-out-banner');
+    fireEvent.click(within(banner).getByRole('button', { name: 'TPE-9204 line 2' }));
+
+    expect(
+      await screen.findByTestId(/^line-decision-so-a\|2\|TPE-9204/),
+    ).toBeInTheDocument();
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    // The search box itself reads the reset too - not left holding a term that would filter
+    // the very row it just landed on straight back out on the next render.
+    expect(searchBox).toHaveValue('');
+
+    scrollSpy.mockRestore();
+  });
+
+  /**
    * Board-confirm-left-out AC-6: the owner's own words - "confirming silently is dangerous".
    * The success toast already states what Confirm committed; once a press leaves lines out it
    * states that too, in the SAME toast rather than a second one.
    */
-  it('states both counts in the Confirm toast when a line is left out (AC-6)', async () => {
+  it('states both counts in an AMBER toast when a line is left out (AC-6, fix round 2, S4)', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1786,8 +1846,11 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
-    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('1 line confirmed'));
-    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('1 left out'));
+    // S4: a press that left something out is not an unqualified success (the owner's own
+    // words: "confirming silently is dangerous") - `toast.warning`, never `toast.success`.
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('1 line confirmed'));
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('1 left out'));
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   // The "no planning record, so no Confirm" state is deliberately GONE: pressing Confirm on

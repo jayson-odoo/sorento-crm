@@ -68,6 +68,7 @@ function renderView(
     annotations?: Map<string, BoardChangeAnnotation[]>;
     externalSearch?: string;
     focusKey?: string | null;
+    onFocusHandled?: () => void;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -96,6 +97,7 @@ function renderView(
       annotations={overrides.annotations}
       externalSearch={overrides.externalSearch}
       focusKey={overrides.focusKey}
+      onFocusHandled={overrides.onFocusHandled}
     />,
   );
   return { ...utils, onDecide, onDecideMany };
@@ -1372,5 +1374,63 @@ describe('FulfilmentBoardListView: the banner reaches a line beyond page 1 (AC-5
     expect(
       await screen.findByTestId(`line-decision-${target.key}`),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 2 (reviewer, S3): the scroll effect used to mark itself
+ * done (the ref, and `onFocusHandled`) the instant the row was OPEN (`openKeys`), not the
+ * instant it was actually FOUND in the DOM - open and rendered are not the same moment while a
+ * search is still narrowing the list out from under it (B1) or the page has not landed yet
+ * (fix round 1). Marking it done regardless left nothing to retry on once the row actually
+ * showed up.
+ */
+describe('FulfilmentBoardListView: the focus effect waits for the row to actually render (fix round 2, S3)', () => {
+  it('does not report focus handled for a row not yet in the list, then reports it once when the row appears', async () => {
+    const other = contribution({
+      key: 'so-1:line-1',
+      so_number: 'SO000001',
+      line_no: 1,
+    });
+    const target = contribution({
+      key: 'so-1:line-2',
+      so_number: 'SO000002',
+      line_no: 2,
+    });
+    const onFocusHandled = vi.fn();
+    const onDecide = vi.fn();
+    const onDecideMany = vi.fn();
+
+    const { rerender } = render(
+      <FulfilmentBoardListView
+        contributions={[other]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await screen.findByText('SO000001');
+    expect(screen.queryByTestId(`line-decision-${target.key}`)).not.toBeInTheDocument();
+    expect(onFocusHandled).not.toHaveBeenCalled();
+
+    // The row appears - the same board read a moment later would hand down.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[other, target]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    expect(
+      await screen.findByTestId(`line-decision-${target.key}`),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(onFocusHandled).toHaveBeenCalledTimes(1));
   });
 });

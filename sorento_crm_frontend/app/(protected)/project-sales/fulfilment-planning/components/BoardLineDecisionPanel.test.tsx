@@ -460,6 +460,73 @@ describe('BoardLineDecisionPanel: an approving save carries the reasons the plan
         ]),
       }),
     );
+    // Fix round 2 (reviewer, nit c - kill test K2): the BORROW half of the reseed was never
+    // actually asserted on screen, only the outgoing payload - this is the same box the Buy
+    // reason test above checks, for the row the save just carried a reason for.
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue(
+      'Confirmed with the other site on WhatsApp.',
+    );
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 2 (reviewer, S2): "same silent drop one field over" - a
+ * wholly-bought approving line shows the Order back switch and the Document cited box, but the
+ * approving branch used to take both from `suggestionDraftFrom`'s own draft (always false/''),
+ * and the reseed blanked them the same way it used to blank the Buy reason and the borrow
+ * reason (measured cause 1).
+ */
+describe('BoardLineDecisionPanel: an approving save carries Order back and the cited document (S2, fix round 2)', () => {
+  it('keeps Order back and Document cited after Save, and after the reseed', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|9|BUY9|2026-09-10',
+          line_no: 9,
+          item_code: 'BUY9',
+          qty: '5',
+          qty_ordered: '5',
+          qty_outstanding: '5',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '5',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '5',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Order back' }));
+    fireEvent.change(screen.getByLabelText('Document cited'), {
+      target: { value: 'SPO-2026/09-0042' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        order_back: true,
+        cited_document: 'SPO-2026/09-0042',
+      }),
+    );
+
+    // The reseed: both still on screen, the same guard the reason boxes already have.
+    expect(screen.getByRole('switch', { name: 'Order back' })).toBeChecked();
+    expect(screen.getByLabelText('Document cited')).toHaveValue('SPO-2026/09-0042');
   });
 });
 

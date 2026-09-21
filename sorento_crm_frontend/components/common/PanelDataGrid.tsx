@@ -275,6 +275,13 @@ export function PanelDataGrid<TRow extends object>({
   // ascending/descending while a jump is pending. Only depends on `focusRowId`: a caller sets
   // it once per row, and re-running this every time `table` is rebuilt (every render) would
   // fight the reader's own page changes once they have navigated away from the jump.
+  //
+  // DECLARED AFTER the `pageResetKey` effect above (nit, fix round 2 review): React runs one
+  // component's own `useEffect`s in DECLARATION order on a commit where both fire - `focusKey`
+  // and `pageResetKey` (a parent-side search clearing, `FulfilmentBoardListView`'s own B1 fix)
+  // can change in the SAME commit, and the pageReset effect's `setPagination(... pageIndex: 0)`
+  // would otherwise win the race and strand the jump on page 1. Declared after it, THIS one's
+  // `setPagination` is the later call in that flush, so its target page is what survives.
   React.useEffect(() => {
     if (!focusRowId || !paginate) return;
     const rows = table.getPrePaginationRowModel().rows;

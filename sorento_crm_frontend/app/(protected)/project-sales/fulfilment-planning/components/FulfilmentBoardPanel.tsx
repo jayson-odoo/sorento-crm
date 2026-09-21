@@ -230,6 +230,7 @@ export function FulfilmentBoardPanel({
     value: productSearchInput,
     setValue: setProductSearchInput,
     debouncedValue: productSearch,
+    reset: resetProductSearch,
   } = useDebouncedSearch(searchParams.get('product') ?? '');
   const [rowAxis, setRowAxis] = React.useState<BoardRowAxis>(() =>
     rowAxisFrom(searchParams.get('rows')),
@@ -263,15 +264,23 @@ export function FulfilmentBoardPanel({
    * contributing line has its own row, unlike the grid's per-cell/per-product pivot), clears
    * whatever would otherwise hide the row - the kind-strip filter and the product search box -
    * and hands the key to the list, which expands that row and scrolls it into view.
+   *
+   * B1 (fix round 2, reviewer): `reset('')`, never `setProductSearchInput('')`. `setValue`
+   * alone only moves the BOX; `debouncedValue` (what `productSearch` actually reads, and what
+   * `visibleListContributions` filters by) still lags it by 200ms
+   * (`hooks/useDebouncedSearch.ts`), so the row this press is trying to reach was still
+   * filtered out at the moment `PanelDataGrid` went looking for it - the jump found no such
+   * row, the scroll no-op'd, and the box only caught up a beat later, too late to help.
+   * `reset` sets both halves synchronously, the same escape hatch the hook exists for.
    */
   const focusLeftOutLine = React.useCallback(
     (contribution: BoardContribution) => {
       setView('list');
       setKindFilter(null);
-      setProductSearchInput('');
+      resetProductSearch('');
       setFocusKey(contribution.key);
     },
-    [setProductSearchInput],
+    [resetProductSearch],
   );
 
   // The granularity and the product filter travel in the URL, beside the selection the
@@ -1144,13 +1153,20 @@ export function FulfilmentBoardPanel({
       const kept = ok.reduce((total, entry) => total + (entry.transfers_kept ?? 0), 0);
       const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
       if (ok.length > 0) {
-        toast.success(
+        const summary =
           `${linesConfirmed} line${linesConfirmed === 1 ? '' : 's'} confirmed · ` +
-            `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
-            (kept > 0 ? `${kept} kept · ` : '') +
-            `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}` +
-            (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : ''),
-        );
+          `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
+          (kept > 0 ? `${kept} kept · ` : '') +
+          `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}` +
+          (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : '');
+        // S4 (fix round 2, reviewer): a press that left something out is not an unqualified
+        // success, the owner's own words on SO420745 were "confirming silently is dangerous" -
+        // so the toast that SAYS so reads amber, not the plain green every other Confirm gets.
+        if (leftOutAtConfirm > 0) {
+          toast.warning(summary);
+        } else {
+          toast.success(summary);
+        }
       }
 
       const committedPsoIds = new Set(
@@ -1700,7 +1716,11 @@ export function FulfilmentBoardPanel({
                         type="button"
                         variant="link"
                         size="sm"
-                        className="h-auto min-h-0 p-0 align-baseline text-sm"
+                        // `Button`'s own base class carries `whitespace-nowrap`
+                        // (`components/ui/button.tsx`) - fine for a short label, but a long
+                        // item code has nowhere to wrap at 375px without overriding it back
+                        // (design nit, fix round 2 review).
+                        className="h-auto min-h-0 whitespace-normal break-words p-0 text-left align-baseline text-sm"
                         onClick={() => focusLeftOutLine(name.line.contribution)}
                       >
                         {name.label}

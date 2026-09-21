@@ -440,41 +440,54 @@ export function borrowReasonKeyOf(row: {
 }
 
 /**
- * The engine's suggestion, with the REASONS a planner typed for it carried onto it: the Buy
- * reason a discontinued line needs, and any suggested borrow row's own reason.
+ * The engine's suggestion, with what the PLANNER carried onto it: the Buy reason a
+ * discontinued line needs, any suggested borrow row's own reason, and the order-back
+ * instruction (S2, fix round 2, reviewer: "same silent drop one field over").
  *
  * Board-confirm-left-out (measured cause 1): an approving Save used to post
  * `decisionFromAmendDraft(suggestionDraftFrom(contribution), '')` verbatim, which seeds
- * `buy_reason` from nothing and every borrow row's `reason` from the ENGINE's own sentence -
- * so a reason the planner had just typed into the box never reached the server, and the box
- * emptied on the reseed that followed. ONE function composes the suggestion WITH those
- * reasons, used by both the panel's approving `save()` (the reasons come off the draft still
- * on screen) and `confirmLinesFor`'s approved-covered branch (they come off the SAVED
- * decision) - so the two can never compose two different suggestions for the same approval.
+ * `buy_reason` from nothing, every borrow row's `reason` from the ENGINE's own sentence, and
+ * `order_back`/`cited_document` from FALSE/EMPTY (`suggestionDraftFrom`'s own draft, section
+ * "An engine proposal is never an order back") - so anything the planner had actually typed
+ * or ticked never reached the server, and the reseed that followed put the same blank state
+ * back on screen. ONE function composes the suggestion WITH what the planner added, used by
+ * both the panel's approving `save()` (it comes off the draft still on screen) and
+ * `confirmLinesFor`'s approved-covered branch (it comes off the SAVED decision) - so the two
+ * can never compose two different suggestions for the same approval.
+ *
+ * `order_back`/`cited_document` are gated the SAME way `decisionFromAmendDraft` gates them for
+ * an amendment: an order back with nothing bought is not an instruction, and a cited document
+ * with no order back names nothing.
  */
 export function suggestionWithReasons(
   contribution: BoardContribution,
-  reasons: {
+  planner: {
     buy_reason?: string;
     borrow: {
       warehouse_id?: string | null;
       donor_project_id?: string | null;
       reason: string;
     }[];
+    order_back?: boolean;
+    cited_document?: string;
   },
 ): BoardDecision {
   const suggested = decisionFromAmendDraft(suggestionDraftFrom(contribution), '');
   const typedReasons = new Map(
-    reasons.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
+    planner.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
   );
+  const orderBack =
+    toMinor(suggested.buy_qty ?? '0') > 0 && Boolean(planner.order_back) ? true : undefined;
   return {
     ...suggested,
     verdict: 'approved',
-    buy_reason: reasons.buy_reason?.trim() || undefined,
+    buy_reason: planner.buy_reason?.trim() || undefined,
     borrow: suggested.borrow?.map((row) => ({
       ...row,
       reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
     })),
+    order_back: orderBack,
+    cited_document: orderBack ? planner.cited_document?.trim() || undefined : undefined,
   };
 }
 

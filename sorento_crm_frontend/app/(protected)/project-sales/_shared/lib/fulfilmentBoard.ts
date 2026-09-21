@@ -31,7 +31,12 @@ import type {
   ConfirmLine,
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
-import { borrowPassThrough, confirmLineFrom, suggestionWithReasons } from './boardAmend';
+import {
+  borrowPassThrough,
+  borrowReasonKeyOf,
+  confirmLineFrom,
+  suggestionWithReasons,
+} from './boardAmend';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -371,6 +376,11 @@ function lineFor(
     const suggested = suggestionWithReasons(contribution, {
       buy_reason: decision.buy_reason ?? undefined,
       borrow: decision.borrow ?? [],
+      // S2 (fix round 2, reviewer): the same reasons this branch already carries across
+      // (measured cause 1) apply to the order-back instruction too - it is part of what the
+      // SAVED decision recorded, not a detail riding beside it.
+      order_back: decision.order_back,
+      cited_document: decision.cited_document ?? undefined,
     });
     suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
     const suggestedBuy = toMinor(suggested.buy_qty ?? '0');
@@ -426,8 +436,12 @@ function lineFor(
     reserve,
     // Ladder v2 (section E rules 4/5): group borrow and cross-group borrow are now
     // AUTO-PROPOSED, so an approved-as-is line can carry one - posted verbatim, the same
-    // way `reserve` is, because it was the engine's own donor and reason, not a person's.
-    borrow: borrowComponents(contribution),
+    // way `reserve` is, UNLESS the SAVED decision typed its own reason over the engine's
+    // (S1, fix round 2, reviewer): the approving Save (`BoardLineDecisionPanel`) already
+    // carries `decision.borrow` with whatever the planner typed on a suggested row, and this
+    // derivation used to rebuild straight off `contribution.sources` and drop it - the
+    // reason it posted was always the engine's own sentence, however this Save actually read.
+    borrow: borrowComponents(contribution, decision?.borrow ?? []),
     buy_qty: fromMinor(buy),
     buy_reason: buyReason,
     // Present only on the legacy single-number amendment, which is still an override.
@@ -439,12 +453,23 @@ function lineFor(
 
 /**
  * The engine's own auto-proposed borrows (group / cross-group, section E rules 4/5),
- * posted exactly as the proposal named them - donor, warehouse and reason included. An
+ * posted exactly as the proposal named them - donor, warehouse and quantity included. An
  * approved line never edits these, so there is nothing to re-derive: a source without an
  * addressable warehouse is dropped rather than posted as a guess, the same rule
  * `reserveWarehouses` follows.
+ *
+ * The REASON is the one field that can differ from the source: `decisionSaved`, when it names
+ * the same row (warehouse + donor, `borrowReasonKeyOf` - the same key `matchesSuggestion`
+ * compares by), is what the SAVED approval actually carries, and the engine's own sentence is
+ * only the fallback for a row the save never touched (S1, fix round 2, reviewer).
  */
-function borrowComponents(contribution: BoardContribution): ConfirmBorrowComponent[] {
+function borrowComponents(
+  contribution: BoardContribution,
+  decisionSaved: { warehouse_id?: string | null; donor_project_id?: string | null; reason: string }[],
+): ConfirmBorrowComponent[] {
+  const typedReasons = new Map(
+    decisionSaved.map((row) => [borrowReasonKeyOf(row), row.reason]),
+  );
   return contribution.sources
     .filter((source) => source.kind === 'borrow' && source.warehouse_id && toMinor(source.qty) > 0)
     .map((source) => ({
@@ -452,7 +477,10 @@ function borrowComponents(contribution: BoardContribution): ConfirmBorrowCompone
       warehouse_id: source.warehouse_id as string,
       donor_project_id: null,
       qty: source.qty,
-      reason: source.reason,
+      reason:
+        typedReasons.get(
+          borrowReasonKeyOf({ warehouse_id: source.warehouse_id, donor_project_id: null }),
+        ) ?? source.reason,
       // The donor and the document, through the one spread every mapper in this chain uses
       // (`borrowPassThrough`): approved as it stands, the borrow still moves the placement
       // the engine named rather than being re-checked against free stock at a bin holding a
@@ -698,11 +726,10 @@ export function amendNeedsReason(
     !sameRows(baseline.reserve, composition.reserve, (row) => row.warehouse_id ?? '') ||
     toMinor(composition.timely_spo_qty) !== toMinor(baseline.timely_spo_qty) ||
     toMinor(composition.buy_qty) !== toMinor(baseline.buy_qty) ||
-    !sameRows(
-      baseline.borrow,
-      composition.borrow,
-      (row) => `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`,
-    )
+    // The same key `borrowComponents` and `suggestionWithReasons` (`boardAmend.ts`) match a
+    // typed reason by - one function, so the three can never quietly disagree about which
+    // row is which (nit, fix round 2 review).
+    !sameRows(baseline.borrow, composition.borrow, borrowReasonKeyOf)
   );
 }
 
@@ -761,11 +788,10 @@ export function matchesSuggestion(
     sameRows(baseline.reserve, composition.reserve, (row) => row.warehouse_id ?? '') &&
     toMinor(composition.timely_spo_qty) === toMinor(baseline.timely_spo_qty) &&
     toMinor(composition.buy_qty) === toMinor(baseline.buy_qty) &&
-    sameRows(
-      baseline.borrow,
-      composition.borrow,
-      (row) => `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`,
-    )
+    // The SAME key `borrowComponents`/`suggestionWithReasons` (`boardAmend.ts`) match a typed
+    // reason by (nit, fix round 2 review): this is the comparison their own doc comments
+    // claim it is, not a second literal that could quietly drift from it.
+    sameRows(baseline.borrow, composition.borrow, borrowReasonKeyOf)
   );
 }
 

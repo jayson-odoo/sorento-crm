@@ -395,6 +395,12 @@ export function BoardLineDecisionPanel({
         ...suggestionWithReasons(contribution, {
           buy_reason: draft.buy_reason,
           borrow: draft.borrow,
+          // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on
+          // screen for this exact line - a wholly-bought approving save used to take them
+          // from the SUGGESTION draft (always false/'') and drop whatever the planner had
+          // actually ticked or typed.
+          order_back: draft.order_back,
+          cited_document: draft.cited_document,
         }),
         suspected_system_issue: suspected,
       });
@@ -435,6 +441,10 @@ export function BoardLineDecisionPanel({
           ...row,
           reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
         })),
+        // S2: the same reseed gap one field over - Order back and Document cited went back to
+        // the suggestion's own false/'' the instant the save that just carried them landed.
+        order_back: draft.order_back,
+        cited_document: draft.cited_document,
       });
       setReason('');
     }
