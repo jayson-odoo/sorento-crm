@@ -55,6 +55,7 @@ from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
+from types import SimpleNamespace
 from typing import (
     Any,
     Callable,
@@ -708,6 +709,18 @@ class _LineFacts:
     #: for. A unit of one is its own line; `_unit_fact` stamps every member's for a unit of
     #: several, because step 1's date-aware pile is what the assignment gave THOSE lines.
     unit_core_line_ids: List[str] = field(default_factory=list)
+    #: R7 (review round, query-count): the CORE line's own `source_ref` / `sales_order_id`
+    #: / `company_id`, carried on the fact for the BOARD path (`demand_facts`'s row is
+    #: already the full `SalesOrderLine` the board's own demand read fetched - see
+    #: `project_fulfilment_board_service._demand_rows` - so stamping them here costs no
+    #: second query). `own_arrival_credit_for`'s own read used to look its representative
+    #: core line up by id, fresh, once per FACT the walk asked about; a board of 76 lines
+    #: split into ten cells still paid ten identical-shaped round trips for it. `None` for
+    #: any caller that has not threaded them through yet - `_prefetch_own_arrival` falls
+    #: back to the old per-id read for those, so nothing regresses, only costs more.
+    source_ref: Optional[str] = None
+    sales_order_id: Optional[str] = None
+    line_company_id: Optional[str] = None
     #: The group's position location by location (`group_netting.LocationNet`), the evidence
     #: behind `group_net`.
     group_net_by_location: List[Any] = field(default_factory=list)
@@ -1618,6 +1631,13 @@ class ProjectSupplyService:
             ],
             as_of=self._walk_as_of,
         )
+        # R7's own-arrival reads, batched for the WHOLE walk (review round, query-count):
+        # `_own_arrival_credit_components` used to look up its own representative core
+        # line by id lazily, one round trip per FACT it was asked about - a board of 76
+        # lines split into ten weekly units still paid ten identical-shaped queries for
+        # ten different rows. Seeded here off every entry's own core line id, before the
+        # per-unit walk below ever calls it.
+        self._prefetch_own_arrival(entries)
 
         # product id -> POOL LOCATION -> what is LEFT of that pool's FREE FLOOR in this
         # walk (AC-N.12, the R-N leftover). One ledger for EVERY pool, the asking bin's own
@@ -2764,6 +2784,142 @@ class ProjectSupplyService:
             total, held = out.get(str(ref), (_ZERO, None))
             out[str(ref)] = (total + _dec(qty), held or po_number)
         return out
+
+    def _prefetch_own_arrival(
+        self, entries: Sequence[Tuple[Any, _LineFacts, Any]]
+    ) -> None:
+        """`compose_lines`'s own batch: seeds `_own_arrival_line_memo` and
+        `_own_arrival_order_memo` for the WHOLE walk in a handful of round trips, so
+        `_own_arrival_credit_components` (called once per unit from `walk()`) finds every
+        answer already memoized rather than paying for its own representative core line
+        one row at a time.
+
+        Up to two reads, however many entries the walk holds - and often none for the
+        first:
+
+        1. every entry's own core line, by id (`_own_arrival_line_memo`). A fact already
+           carrying its own core line at ZERO extra cost - the sheet's `core`, or the
+           board's `source_ref`/`sales_order_id`/`line_company_id` (`demand_facts`,
+           threaded off the same row `project_fulfilment_board_service._demand_rows`
+           already fetched) - is resolved from the fact itself, never queried; only a
+           fact from a caller that has not threaded them through falls back to one `IN`
+           fetch for whatever is left;
+        2. every one of those lines' siblings - same sales order, same product (MB3) - in
+           one query keyed by every sales order and product the walk actually names,
+           filtered client-side back down to the exact (order, product, company) triples
+           `_own_arrival_order_facts` would have asked for one at a time, plus what has
+           landed against every one of those siblings' own purchase-order lines
+           (`_po_received_by_so_line_ref`'s own shape), split back out by (product,
+           company) so a company-scoped key never sees another company's receipt.
+
+        A line with no `source_ref` never reaches `_own_arrival_order_facts` at all
+        (`_own_arrival_credit_components`'s own early return), so it costs this prefetch
+        nothing beyond resolving its own core line.
+        """
+        resolved: Dict[str, Any] = {}
+        unresolved: Set[str] = set()
+        for _key, fact, _unit_key in entries:
+            cid = self._core_id_of(fact)
+            if not cid or cid in self._own_arrival_line_memo or cid in resolved:
+                continue
+            if fact.core is not None:
+                resolved[cid] = fact.core
+            elif fact.sales_order_id and fact.product_id:
+                resolved[cid] = SimpleNamespace(
+                    id=cid,
+                    source_ref=fact.source_ref,
+                    sales_order_id=fact.sales_order_id,
+                    product_id=fact.product_id,
+                    company_id=fact.line_company_id,
+                )
+            else:
+                unresolved.add(cid)
+        for cid, line in resolved.items():
+            self._own_arrival_line_memo[cid] = line
+        fetched: List[Any] = []
+        if unresolved:
+            fetched = (
+                self.db.query(SalesOrderLine)
+                .filter(SalesOrderLine.id.in_(unresolved))
+                .all()
+            )
+            by_id = {str(line.id): line for line in fetched}
+            for cid in unresolved:
+                self._own_arrival_line_memo[cid] = by_id.get(cid)
+        core_lines = list(resolved.values()) + fetched
+        if not core_lines:
+            return
+
+        keys: Dict[Tuple[str, str, str], List[Any]] = {}
+        for line in core_lines:
+            if not line.source_ref or not line.sales_order_id or not line.product_id:
+                continue
+            key = (
+                str(line.sales_order_id), str(line.product_id),
+                str(getattr(line, "company_id", None) or ""),
+            )
+            keys.setdefault(key, [])
+        if not keys:
+            return
+
+        order_ids = {key[0] for key in keys}
+        product_ids = {key[1] for key in keys}
+        sibling_rows = (
+            self.db.query(SalesOrderLine)
+            .filter(
+                SalesOrderLine.sales_order_id.in_(order_ids),
+                SalesOrderLine.product_id.in_(product_ids),
+            )
+            .all()
+        )
+        siblings_by_key: Dict[Tuple[str, str, str], List[Any]] = {}
+        for row in sibling_rows:
+            row_key = (
+                str(row.sales_order_id), str(row.product_id),
+                str(getattr(row, "company_id", None) or ""),
+            )
+            siblings_by_key.setdefault(row_key, []).append(row)
+
+        refs = {str(row.source_ref).strip() for row in sibling_rows if row.source_ref}
+        received_all: Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]] = {}
+        received_scoped: Dict[Tuple[str, str], Dict[str, Tuple[Decimal, Optional[str]]]] = {}
+        if refs and product_ids:
+            rows = (
+                self.db.query(
+                    PurchaseOrderLine.from_so_line_ref,
+                    PurchaseOrderLine.qty_received,
+                    PurchaseOrderLine.product_id,
+                    PurchaseOrderLine.company_id,
+                    PurchaseOrder.po_number,
+                )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(
+                    PurchaseOrderLine.from_so_line_ref.in_(refs),
+                    PurchaseOrderLine.product_id.in_(product_ids),
+                )
+                .all()
+            )
+            for ref, qty, product_id, company_id, po_number in rows:
+                ref = str(ref)
+                bucket_all = received_all.setdefault(str(product_id), {})
+                total, held = bucket_all.get(ref, (_ZERO, None))
+                bucket_all[ref] = (total + _dec(qty), held or po_number)
+                if company_id is not None:
+                    bucket_scoped = received_scoped.setdefault(
+                        (str(product_id), str(company_id)), {}
+                    )
+                    total, held = bucket_scoped.get(ref, (_ZERO, None))
+                    bucket_scoped[ref] = (total + _dec(qty), held or po_number)
+
+        for key in keys:
+            sales_order_id, product_id, company_id = key
+            siblings = siblings_by_key.get(key, [])
+            received = (
+                received_scoped.get((product_id, company_id), {})
+                if company_id
+                else received_all.get(product_id, {})
+            )
+            self._own_arrival_order_memo[key] = (siblings, received)
 
     def _own_arrival_order_facts(
         self, core_line: Any
@@ -4003,6 +4159,15 @@ class ProjectSupplyService:
                 # a board fact with none would read step 1 as empty on every line.
                 unit_core_line_ids=(
                     [str(row["line_id"])] if row.get("line_id") else []
+                ),
+                # R7 (query-count): the same row already carries these off the board's own
+                # demand read - see the field's own docstring.
+                source_ref=row.get("source_ref"),
+                sales_order_id=(
+                    str(row["sales_order_id"]) if row.get("sales_order_id") else None
+                ),
+                line_company_id=(
+                    str(row["company_id"]) if row.get("company_id") else None
                 ),
                 item_code=row.get("item_code"),
                 product_id=product_id,

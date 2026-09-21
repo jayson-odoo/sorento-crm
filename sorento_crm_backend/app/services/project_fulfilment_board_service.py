@@ -409,6 +409,11 @@ class _Row:
         #: it back onto the board instead, read-only and at zero (`_cancelled_pending_
         #: change_rows`). `False`/`None` for every ordinary row.
         "cancelled", "pending_change_batch_id",
+        #: R7 (query-count): the core line's own `source_ref` / `company_id`, off the SAME
+        #: `SalesOrderLine` this row's own demand read already fetched - threaded onto
+        #: `_LineFacts` (`ProjectSupplyService.demand_facts`) so the own-arrival credit's
+        #: prefetch never pays a second query for a row this one already carries.
+        "source_ref", "company_id",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -1491,6 +1496,10 @@ class FulfilmentBoardService:
                 outside_planning=outside_fulfilment_planning(warehouse),
                 priority=line.priority,
                 demand_class=order.demand_class,
+                # R7 (query-count): off the SAME `line` row this read already fetched -
+                # see `_Row.__slots__`'s own docstring.
+                source_ref=line.source_ref,
+                company_id=str(line.company_id) if line.company_id else None,
             )
             addressing = self._addressing.get(str(line.id), {})
             # Null when nobody has adopted this sales order: there is no record to confirm
@@ -1654,6 +1663,10 @@ class FulfilmentBoardService:
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=change_row.kind == "cancelled",
                     pending_change_batch_id=str(change_row.batch_id),
+                    source_ref=core_line.source_ref,
+                    company_id=(
+                        str(core_line.company_id) if core_line.company_id else None
+                    ),
                 )
             )
         return rows
@@ -2411,6 +2424,12 @@ class FulfilmentBoardService:
                     "so_number": row.so_number,
                     "line_no": row.line_no,
                     "item_code": row.item_code,
+                    # R7 (query-count): off the same row's own core line - see `_Row
+                    # .__slots__`'s own docstring - so the own-arrival credit prefetch
+                    # never queries for a fact this payload already names.
+                    "sales_order_id": row.sales_order_id,
+                    "source_ref": row.source_ref,
+                    "company_id": row.company_id,
                 }
                 for row in plannable
             ],
