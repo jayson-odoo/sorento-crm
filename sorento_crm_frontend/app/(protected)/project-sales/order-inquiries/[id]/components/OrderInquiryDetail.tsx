@@ -17,6 +17,16 @@ import {
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import BackToList from '@/components/common/BackToList';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,8 +35,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import { DeferredCountdown } from '@/components/common/DeferredActionButton';
-import type { PendingAction } from '@/services/pendingActionService';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
@@ -34,6 +42,8 @@ import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRe
 import {
   ORDER_INQUIRY_HEADER_KEY,
   ORDER_INQUIRY_HEADER_LINES_KEY,
+  ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY,
+  ORDER_INQUIRY_HEADERS_KEY,
   orderInquiryHeadersPagerQuery,
   useAutoPlaceOrderInquiryRows,
   useOrderInquiryHandshake,
@@ -76,17 +86,6 @@ function isLinkable(row: OrderInquiryWorklistRow): boolean {
   return Number(row.qty || '0') - linked > 0;
 }
 
-/**
- * The Unlink countdown is a LOCAL mock (Phase 1, `PLAN-oi-header-list-detail.md`): there
- * is no `order_inquiry_line.unlink` pending-action handler on the server yet, so this
- * timer - not `useDeferredAction` - is what stands in for it. It renders the SAME
- * `DeferredCountdown` primitive every other deferred action in the product uses, so it
- * looks and behaves identically, but it does not survive a closed tab the way a real
- * parked action does; Phase 2 registers the action key server-side and this hook is
- * deleted in favour of `useDeferredAction`.
- */
-const UNLINK_WINDOW_MS = 10_000;
-
 export function OrderInquiryDetail({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -106,11 +105,12 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [unlinkState, setUnlinkState] = useState<{
-    ids: string[];
-    pending: PendingAction;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
+  // Unlink selected (W): mirrors `OrderInquriesClient.tsx`'s OWN "Unlink selected" -
+  // a plain confirm dialog, no countdown - because that is the real mechanism the
+  // worklist itself uses today; there is no server-deferred `order_inquiry_line.unlink`
+  // pending action to register against (reported to the captain, not invented here).
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
 
   const tab = searchParams.get('tab') || 'lines';
   function handleTabChange(next: string) {
@@ -144,6 +144,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [selectedLines],
   );
+  // W (coordinator's ruling): nothing ticked means every confirmed line of the WHOLE
+  // OI, the same ticked/whole-OI symmetry Confirm and Auto link already have - not just
+  // "nothing to unconfirm". `activeLines` already holds every non-cancelled line of this
+  // header (`useOrderInquiryHeaderLines` reads every page of the worklist's own
+  // `inquiry_id` filter), so no extra fetch is needed for the "all" scope.
+  const allUnconfirmable = useMemo(
+    () =>
+      activeLines.filter((l) => {
+        const state = ackStateOf(l);
+        return state === 'acknowledged' || state === 'changed';
+      }),
+    [activeLines],
+  );
+  const unconfirmScope = selectedIds.length > 0 ? selectedUnconfirmable : allUnconfirmable;
   const selectedRejectable = useMemo(
     () =>
       selectedLines.filter(
@@ -179,7 +193,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
   function runUnconfirm() {
     unacknowledge.mutate(
-      selectedUnconfirmable.map((l) => l.id),
+      unconfirmScope.map((l) => l.id),
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -214,52 +228,44 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     );
   }
 
-  async function commitUnlink(ids: string[]) {
-    setUnlinkState(null);
-    // AC-DP-06 (fix round): cleared HERE, on commit - not when the countdown starts.
-    // Clearing early left Cancel with nothing to restore, since the lines it was about
-    // to give back were already un-ticked the moment the press fired.
-    setRowSelection({});
+  /**
+   * Unlink selected (W): the SAME mechanism `OrderInquiriesClient.tsx`'s own "Unlink
+   * selected" uses today - an `AlertDialog` confirm, committed immediately on "Unlink",
+   * no countdown. Reported to the captain rather than invented: the worklist has no
+   * server-deferred `order_inquiry_line.unlink` pending action to register against, so
+   * this mirrors what the worklist itself does instead of introducing a different
+   * mechanism on this one screen. Cancel leaves the ticked lines ticked; the selection
+   * clears only once the unlink actually commits.
+   */
+  async function unlinkSelected() {
+    if (selectedLinked.length === 0) return;
+    setUnlinking(true);
     try {
-      await Promise.all(ids.map((lineId) => unplaceOrderInquiryRow(lineId)));
-      toast.success(`${ids.length} line${ids.length === 1 ? '' : 's'} unlinked`);
+      for (const line of selectedLinked) {
+        // One row at a time, as the worklist's own `unlinkSelected` does.
+        await unplaceOrderInquiryRow(line.id);
+      }
+      toast.success(`Unlinked ${selectedLinked.length}`);
+      setUnlinkOpen(false);
+      setRowSelection({});
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to unlink');
     } finally {
+      setUnlinking(false);
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY, id] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY, id] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
     }
-  }
-
-  function startUnlink() {
-    if (selectedLinked.length === 0 || unlinkState) return;
-    const ids = selectedLinked.map((l) => l.id);
-    const pending: PendingAction = {
-      id: `local-unlink-${Date.now()}`,
-      action_key: 'order_inquiry_line.unlink',
-      entity_type: 'order_inquiry_line',
-      entity_id: ids.join(','),
-      commit_at: new Date(Date.now() + UNLINK_WINDOW_MS).toISOString(),
-      window_seconds: UNLINK_WINDOW_MS / 1000,
-    };
-    const timer = setTimeout(() => void commitUnlink(ids), UNLINK_WINDOW_MS);
-    setUnlinkState({ ids, pending, timer });
-  }
-
-  function cancelUnlink() {
-    if (!unlinkState) return;
-    clearTimeout(unlinkState.timer);
-    setUnlinkState(null);
-    toast.success('Cancelled. Nothing was applied.');
   }
 
   async function handleExport() {
     if (!header) return;
     setExporting(true);
     try {
-      // Phase 2 filters by `inquiry_id` (the plan's own contract); Phase 1 stands in with
-      // the number search the worklist export already reads.
-      const blob = await downloadOrderInquiryWorklistXlsx({ query: header.inquiry_no });
+      // W: filtered by `inquiry_id`, the plan's own contract - every non-cancelled row
+      // of exactly this header, the same filter the Lines tab itself reads by.
+      const blob = await downloadOrderInquiryWorklistXlsx({ inquiry_id: id });
       saveBlobAs(blob, `${header.inquiry_no}.xlsx`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to export the order inquiry');
@@ -373,8 +379,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Link selected
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={selectedLinked.length === 0 || Boolean(unlinkState)}
-                        onSelect={selectedLinked.length ? startUnlink : undefined}
+                        disabled={selectedLinked.length === 0}
+                        onSelect={
+                          selectedLinked.length
+                            ? (e) => {
+                                e.preventDefault();
+                                setUnlinkOpen(true);
+                              }
+                            : undefined
+                        }
                       >
                         <Unlink className="size-4" aria-hidden />
                         Unlink selected
@@ -394,8 +407,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Reject selected
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={selectedUnconfirmable.length === 0}
-                        onSelect={selectedUnconfirmable.length ? runUnconfirm : undefined}
+                        disabled={unconfirmScope.length === 0}
+                        onSelect={unconfirmScope.length ? runUnconfirm : undefined}
                       >
                         <Undo2 className="size-4" aria-hidden />
                         Unconfirm
@@ -408,16 +421,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                     Export Excel
                   </DropdownMenuItem>
                 </DetailActionsMenu>
-              }
-              pendingAction={
-                unlinkState ? (
-                  <DeferredCountdown
-                    pending={unlinkState.pending}
-                    verb="Unlinking"
-                    subject={`${unlinkState.ids.length} line${unlinkState.ids.length === 1 ? '' : 's'}`}
-                    onCancel={cancelUnlink}
-                  />
-                ) : undefined
               }
               primary={
                 canAcknowledge ? (
@@ -505,6 +508,33 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         onOpenChange={setRejectOpen}
         onRejected={() => setRowSelection({})}
       />
+
+      {/* Unlink selected (W): the same confirm dialog `OrderInquiriesClient.tsx`'s own
+          "Unlink selected" uses - see the note on `unlinkSelected` above. */}
+      <AlertDialog open={unlinkOpen} onOpenChange={setUnlinkOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink selected</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedLinked.length === 1
+                ? "Remove this line’s links? That quantity goes back to demand, and the next reorder suggestion counts it again."
+                : `Remove every link on the ${selectedLinked.length} selected lines? Those quantities go back to demand, and the next reorder suggestion counts them again.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={unlinking}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void unlinkSelected();
+              }}
+              disabled={unlinking}
+            >
+              Unlink
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

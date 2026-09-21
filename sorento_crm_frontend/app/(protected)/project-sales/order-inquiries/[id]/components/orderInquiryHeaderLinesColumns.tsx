@@ -54,7 +54,9 @@ export function useOrderInquiryHeaderLinesColumns(): ColumnDef<OrderInquiryWorkl
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         size: 220,
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-32" /> },
-        cell: ({ row }) => <ItemCodeCell row={row.original} />,
+        // AC-DP-03, owner ruling 21 Sep: code only, one line - never the second
+        // `product_name` line the worklist's own cell prints for a real row.
+        cell: ({ row }) => <ItemCodeCell row={row.original} codeOnly />,
       },
       {
         accessorKey: 'qty',

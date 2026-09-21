@@ -626,13 +626,27 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
  * `OrderInquiryDocumentDialog` (AC-DP-04), not this worklist's bundling/reallocate-aware
  * `DocumentsCell`, which reasons about columns this single-header screen has no use for.
  */
-export function ItemCodeCell({ row }: { row: OrderInquiryWorklistRow }) {
+export function ItemCodeCell({
+  row,
+  codeOnly = false,
+}: {
+  row: OrderInquiryWorklistRow;
+  /**
+   * AC-DP-03, owner ruling 21 Sep: the OI detail page's own Lines tab shows the
+   * product CODE only, one line - "in Sorento the product code IS the product
+   * name" - even though a real worklist row DOES carry `product_name`. Defaults to
+   * `false` so this cell's every OTHER caller (the Lines worklist itself) renders
+   * exactly as it always has; only `orderInquiryHeaderLinesColumns.tsx` passes
+   * `true`.
+   */
+  codeOnly?: boolean;
+}) {
   return (
     <div className="min-w-0">
       <span className="block truncate font-medium" title={row.item_code ?? ''}>
         {row.item_code || <Muted>Unresolved</Muted>}
       </span>
-      {row.product_name && row.product_name !== row.item_code && (
+      {!codeOnly && row.product_name && row.product_name !== row.item_code && (
         <span className="block truncate text-xs text-muted-foreground" title={row.product_name}>
           {row.product_name}
         </span>

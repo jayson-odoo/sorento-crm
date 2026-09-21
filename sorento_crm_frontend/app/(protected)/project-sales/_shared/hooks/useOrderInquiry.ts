@@ -344,6 +344,13 @@ export function useOrderInquiryPlacementMutations() {
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
     // A single link/unlink moves the linked count "Unlink all" reads too.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+    // W (`PLAN-oi-header-list-detail.md`): the OI detail page's own Choose document /
+    // Link selected / Unlink selected all move the Related PO/SPO tabs and the Lines
+    // tab's own document chips - and Related PO/SPO's own footer totals.
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY] });
   }
 
   const place = useMutation({
@@ -411,6 +418,12 @@ export function useAutoPlaceOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+      // W: the OI detail page's own "Auto link" / "Link selected" run through this same
+      // mutation - the Related PO/SPO tabs and the Lines tab's own document chips move.
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY] });
       toast.success(linkOutcomeText(result));
     },
     onError: (error: Error) => toast.error(error.message),
@@ -497,9 +510,11 @@ export function useOrderInquiryHandshake() {
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
     // A confirm/reject/unconfirm moves the HEADER between Outstanding and Completed too
     // (AC-CF-01/02): the detail page's own counts and the Documents list both read it.
+    // Link now (the cascade) also moves the Related PO/SPO tabs, the same as Auto link.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY] });
   }
 
   const acknowledge = useMutation({

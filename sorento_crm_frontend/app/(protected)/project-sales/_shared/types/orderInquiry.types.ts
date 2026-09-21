@@ -486,11 +486,9 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
 export interface OrderInquiryWorklistParams {
   query?: string;
   /**
-   * `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: every non-cancelled row of ONE header,
-   * for its detail page's Lines tab and for a whole-OI Confirm's `filter` payload
-   * (AC-CF-01). FE-typed ahead of Phase 2, which is the slice that makes the backend
-   * read it - sending it today reaches nothing, the same way every other filter here
-   * did before its own route existed.
+   * `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: every non-cancelled row of ONE header -
+   * the OI detail page's own Lines tab, Export Excel, and a whole-OI Confirm's `filter`
+   * payload (AC-CF-01).
    */
   inquiry_id?: string;
   /** `YYYY-MM`, the delivery month, which is the sheet tab. */
@@ -936,8 +934,7 @@ export interface AutoPlaceRequest {
    * `PLAN-oi-header-list-detail.md`, AC-AL-01: the OI detail page's own "Auto link" with
    * nothing ticked - runs the cascade over that header's linkable rows only, touching no
    * row of another header. Mutually exclusive with `row_ids` on the wire, same as the
-   * acknowledge endpoint's own `filter`. FE-typed ahead of Phase 2, which is the slice
-   * that makes the backend read it.
+   * acknowledge endpoint's own `filter`.
    */
   filter?: { inquiry_id: string };
 }
@@ -1116,9 +1113,9 @@ export interface OrderInquiryBulkRejectResult {
  *
  * `PLAN-oi-header-list-detail.md` (contract section). One row per order inquiry HEADER -
  * one sales order's whole set of purchasing instructions - as distinct from the per-LINE
- * worklist above. Phase 1 reads these off `orderInquiryHeaders.mock.ts`; Phase 2 (S2/S3)
- * swaps the service functions to the real `GET /api/v1/projects/order-inquiry-headers*`
- * routes without touching this shape or anything above it.
+ * worklist above. `orderInquiryService.ts`'s header functions call the real
+ * `GET /api/v1/project-sales/order-inquiry-headers*` routes; this shape matches the
+ * backend response models field for field.
  */
 
 export type OrderInquiryHeaderStatus = 'outstanding' | 'completed';

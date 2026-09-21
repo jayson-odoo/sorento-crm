@@ -484,6 +484,13 @@ def export_order_inquiry_worklist(
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     delivery_from: Optional[str] = Query(None),
     delivery_to: Optional[str] = Query(None),
+    inquiry_id: Optional[str] = Query(
+        None,
+        description=(
+            "S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own Export "
+            "Excel - exactly this header's own rows."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -514,6 +521,7 @@ def export_order_inquiry_worklist(
                 delivery_from,
                 delivery_to,
                 project=project,
+                inquiry_id=inquiry_id,
             )
         )
         return Response(

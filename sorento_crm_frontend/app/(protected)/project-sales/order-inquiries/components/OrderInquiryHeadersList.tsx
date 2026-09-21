@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -27,8 +28,12 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { useOrderInquiryHeaders } from '../../_shared/hooks/useOrderInquiry';
-import { mockOrderInquiryHeaderFilterOptions } from '../../_shared/services/orderInquiryHeaders.mock';
+import { getUsersSelect } from '@/services/userSelectService';
+import {
+  useOrderInquiryHeaders,
+  useOrderInquiryWorklistSummary,
+} from '../../_shared/hooks/useOrderInquiry';
+import { useProjects } from '../../_shared/hooks/useProjects';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import {
   orderInquiryHeaderStatusLabel,
@@ -162,13 +167,50 @@ export function OrderInquiryHeadersList() {
   const { data, isLoading, isPlaceholderData, isFetching, refetch } =
     useOrderInquiryHeaders(params);
 
-  // Raised by, Agent, Project options (AC-HL-05). Off the feature's OWN mock fixture in
-  // Phase 1, deliberately NOT the shared `userSelectService` (the CLAUDE.md default for
-  // a person picker): the header rows themselves are mocked, so a real user id from that
-  // service would never match a mocked `raised_by_name` and the filter would silently
-  // return nothing. Phase 2 (once the headers are real) is what makes `raised_by` swap
-  // to the shared service correctly - see `orderInquiryService.ts`'s header section.
-  const filterOptions = useMemo(() => mockOrderInquiryHeaderFilterOptions(), []);
+  // Raised by, Agent, Project options (AC-HL-05, W). `raised_by` is the shared
+  // `services/userSelectService` (CLAUDE.md's own default for a person picker) - the
+  // header contract's own `raised_by` is `users.id`, exact. Agent and Project reuse the
+  // SAME hooks the Lines worklist already calls for its own Agent/Project filters
+  // (`OrderInquiriesClient.tsx`'s `summary.data?.agents`/`useProjects`), not a new
+  // endpoint - but the VALUE each option carries differs from the worklist's own use of
+  // it, because the header endpoint's filter contract is not the worklist's:
+  //   - Agent: the worklist's own `agent` filter is `sales_agents.id` (equality); the
+  //     header endpoint's is the agent's NAME (`SalesAgent.person_label`, exact) - the
+  //     plan's own contract, `&agent=<agent name>`. So the option's `value` is the
+  //     LABEL text here, not the summary facet's `id`.
+  //   - Project: the worklist's own `project` filter is free TEXT on `_PROJECT_TITLE`
+  //     (an adopted order has no registered project to hold an id); the header
+  //     endpoint's `project_id` is a real `projects.id` UUID
+  //     (`ProjectSalesOrder.project_id == project_id`, pattern-validated - a title
+  //     string there is a 422, not a silent no-match). `useProjects` (the REGISTERED
+  //     project list `PipelineClient.tsx` already reads) is the one hook in this module
+  //     that actually holds that id, so it is what this filter uses instead of the
+  //     worklist's own project facet.
+  const usersQuery = useQuery({
+    queryKey: ['oi-header-raised-by-users'],
+    queryFn: () => getUsersSelect(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const worklistSummary = useOrderInquiryWorklistSummary({});
+  const projectsQuery = useProjects({ limit: 200 });
+
+  const filterOptions = useMemo(
+    () => ({
+      raisedBy: (usersQuery.data ?? []).map((user) => ({
+        value: user.id,
+        label: user.name || user.email,
+      })),
+      agents: (worklistSummary.data?.agents ?? []).map((entry) => ({
+        value: entry.label,
+        label: entry.label,
+      })),
+      projects: (projectsQuery.data?.data ?? []).map((project) => ({
+        value: project.id,
+        label: project.title,
+      })),
+    }),
+    [usersQuery.data, worklistSummary.data, projectsQuery.data],
+  );
 
   const rows = useMemo<OrderInquiryHeader[]>(() => data?.data ?? [], [data]);
 

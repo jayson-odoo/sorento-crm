@@ -6,6 +6,7 @@ import type {
   AutoPlaceRequest,
   AutoPlaceResult,
   OrderInquiryDetail,
+  OrderInquiryHeader,
   OrderInquiryHeaderDetail,
   OrderInquiryHeaderListEnvelope,
   OrderInquiryHeaderListParams,
@@ -29,12 +30,6 @@ import type {
   UnplaceAllResult,
   UploadJobScope,
 } from '../types/orderInquiry.types';
-import {
-  mockGetOrderInquiryHeader,
-  mockGetOrderInquiryHeaderLines,
-  mockGetOrderInquiryHeaderRelatedDocuments,
-  mockListOrderInquiryHeaders,
-} from './orderInquiryHeaders.mock';
 
 const BASE = '/api/v1/project-sales';
 
@@ -622,6 +617,9 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       searchQuery: params.query ?? '',
     },
     {
+      // `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: the OI detail page's own Lines
+      // tab and whole-OI Export Excel - every non-cancelled row of ONE header.
+      inquiry_id: params.inquiry_id,
       delivery_month: params.delivery_month,
       raised_date: params.raised_date,
       state: params.state,
@@ -777,15 +775,13 @@ export async function downloadOrderInquiryXlsx(
  * `PLAN-oi-header-list-detail.md`. One row per order inquiry HEADER - one sales order's
  * whole set of purchasing instructions - as distinct from every row-level function above.
  *
- * PHASE 1 (this slice): every function below reads `orderInquiryHeaders.mock.ts`, an
- * in-process fixture - no `apiFetch`, no network. PHASE 2 (S2/S3) swaps each function's
- * BODY to the real route below; the hooks in `useOrderInquiry.ts` and every component that
- * calls them are untouched, because the swap happens at this service boundary and nowhere
- * else.
+ * PHASE 2 (this slice, W): every function below calls the real route. The hooks in
+ * `useOrderInquiry.ts` and every component that calls them are unchanged from Phase 1 -
+ * the swap happened at this service boundary and nowhere else.
  *
- * API CONTRACT (Phase 2):
+ * API CONTRACT:
  *
- *   GET /api/v1/projects/order-inquiry-headers
+ *   GET /api/v1/project-sales/order-inquiry-headers
  *     ?state=outstanding|completed|all (default outstanding)
  *     &query= (OI no, legacy no, SO no, customer, project, agent, any line's product or
  *       location) &raised_by=<user id> &agent=<agent name> &project_id=<uuid>
@@ -795,64 +791,97 @@ export async function downloadOrderInquiryXlsx(
  *     -> { data: OrderInquiryHeader[], pagination: { total, page, limit } }
  *     Permission `projects.projects.view`.
  *
- *   GET /api/v1/projects/order-inquiry-headers/{id}
+ *   GET /api/v1/project-sales/order-inquiry-headers/{id}
  *     -> OrderInquiryHeaderDetail (the header + Order/Customer blocks, counts, status and
  *     `raise_history`). 404 for an unknown id or another company's header.
  *
- *   GET /api/v1/projects/order-inquiry-headers/{id}/related-documents
+ *   GET /api/v1/project-sales/order-inquiry-headers/{id}/related-documents
  *     -> OrderInquiryHeaderRelatedDocuments. Empty lists when nothing is linked.
  *
- * The Lines tab reads the EXISTING worklist list, `listOrderInquiryWorklist`, with a new
- * `inquiry_id` filter (Phase 2 adds it to `OrderInquiryWorklistParams`/`worklistParams`
- * above) - not a new endpoint. Phase 1 stands in with `mockGetOrderInquiryHeaderLines`.
+ * The Lines tab reads the EXISTING worklist list, `listOrderInquiryWorklist`, with the
+ * `inquiry_id` filter `worklistParams` now sends - not a second worklist fetcher.
  */
-
-// Phase 2 route: `/api/v1/projects/order-inquiry-headers` (see the contract above). Every
-// function below is mocked ONLY - Phase 2 replaces each body with an `apiFetch` call
-// against that route and the mock module is deleted, the same way `fulfilmentPlanningService
-// .ts`'s own Phase 1 seams were retired once their routes went live.
 
 export async function listOrderInquiryHeaders(
   params: OrderInquiryHeaderListParams = {},
 ): Promise<OrderInquiryHeaderListEnvelope> {
-  return mockListOrderInquiryHeaders(params);
+  const limit = params.limit ?? 25;
+  const search = buildDataGridParams(
+    {
+      pageIndex: (params.page ?? 1) - 1,
+      pageSize: limit,
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : [],
+      searchQuery: params.query ?? '',
+    },
+    {
+      state: params.state,
+      raised_by: params.raised_by,
+      agent: params.agent,
+      project_id: params.project_id,
+    },
+  );
+  const response = await apiFetch(`${BASE}/order-inquiry-headers?${search.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the order inquiries'));
+  const body = (await response.json()) as {
+    data?: OrderInquiryHeader[];
+    pagination?: { total?: number; page?: number; limit?: number };
+  };
+  const rows = Array.isArray(body.data) ? body.data : [];
+  return {
+    data: rows,
+    total: body.pagination?.total ?? rows.length,
+    page: body.pagination?.page ?? params.page ?? 1,
+    limit: body.pagination?.limit ?? limit,
+  };
 }
 
 export async function getOrderInquiryHeader(
   id: string,
 ): Promise<OrderInquiryHeaderDetail> {
-  const detail = mockGetOrderInquiryHeader(id);
-  if (!detail) throw new Error('This order inquiry no longer exists');
-  return detail;
+  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}`);
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'This order inquiry no longer exists'),
+    );
+  return response.json();
 }
 
 /**
- * Phase 1 stand-in for the Lines tab, ahead of the real `inquiry_id` worklist filter
- * (Phase 2 - see the module doc comment above). Cancelled lines are NOT filtered here;
- * the Lines tab hides them the same way the worklist does (S5), client-side.
+ * The Lines tab's own read: every page of the worklist's `inquiry_id` filter, concatenated
+ * - the tab paginates CLIENT-side over the whole set (`OrderInquiryLinesTab.tsx`'s own
+ * `getPaginationRowModel`), and Unconfirm's "nothing ticked" scope needs every confirmed
+ * line of this header, not just whichever page a server response happened to return
+ * first. `limit` is the backend's own `MAX_PAGE_LIMIT` (1000); a header past that many
+ * lines (max measured, 242) pages again rather than truncating.
  *
- * AC-DP-03 (owner, 21 Sep): the Product cell on THIS screen shows the code only, one
- * line - "in Sorento the product code IS the product name" - so the mock carries no
- * `product_name` for a line (`orderInquiryHeaders.mock.ts`'s `buildLine` leaves it
- * `null`). `ItemCodeCell` itself is untouched: it already only prints a second line
- * when `product_name` differs from `item_code`, which is the worklist's OWN real
- * behaviour off real backend data and stays exactly as it is (do not disturb it for
- * this screen's sake). Phase 2, reusing that same worklist row shape for `inquiry_id`,
- * inherits whatever `product_name` the row actually carries - if a real product's name
- * differs from its code, the sub-line would appear here too; the owner's ruling was
- * read as "reflect it, don't force-null a value production may still hand back", but
- * that reconciliation only becomes visible once Phase 2 is live and needs the owner's
- * call.
+ * Cancelled lines are NOT filtered here; the Lines tab hides them the same way the
+ * worklist does (S5), client-side.
  */
 export async function getOrderInquiryHeaderLines(
   id: string,
 ): Promise<OrderInquiryWorklistRow[]> {
-  return mockGetOrderInquiryHeaderLines(id);
+  const limit = 1000;
+  let page = 1;
+  let rows: OrderInquiryWorklistRow[] = [];
+  for (;;) {
+    // Pages are read in order, not fanned out - each one depends on the last.
+    const envelope = await listOrderInquiryWorklist({ inquiry_id: id, limit, page });
+    rows = rows.concat(envelope.data);
+    if (envelope.data.length === 0 || rows.length >= envelope.total) break;
+    page += 1;
+  }
+  return rows;
 }
 
 export async function getOrderInquiryHeaderRelatedDocuments(
   id: string,
 ): Promise<OrderInquiryHeaderRelatedDocuments> {
-  return mockGetOrderInquiryHeaderRelatedDocuments(id);
+  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}/related-documents`);
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'Failed to load the related documents'),
+    );
+  return response.json();
 }
 
