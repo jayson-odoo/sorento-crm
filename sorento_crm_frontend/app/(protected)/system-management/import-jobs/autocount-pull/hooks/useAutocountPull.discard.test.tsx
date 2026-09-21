@@ -86,4 +86,25 @@ describe('useDiscardPull (AC-DS-10)', () => {
       expect(toastError).toHaveBeenCalledWith("Pull is in phase 'confirmed'; it cannot be discarded."),
     );
   });
+
+  it('DH3: also invalidates the generic job query (S3, Phase 3 fix round 1) - the Job Summary card and its Cancel Job button, which read `[\'import-job\', id]`, must refresh after a discard from `building` too', async () => {
+    discardPull.mockResolvedValue({ job_id: 'job-1', entity: 'products', phase: 'discarded' });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    function localWrapper({ children }: { children: React.ReactNode }) {
+      return React.createElement(QueryClientProvider, { client }, children);
+    }
+
+    const { result } = renderHook(() => autocountPullHooks.useDiscardPull(), { wrapper: localWrapper });
+
+    await act(async () => {
+      result.current.mutate('job-1');
+    });
+
+    // Prefix form (no `id`) - `[id]/page.tsx`'s own job query key is `['import-job', id]`,
+    // and this hook only ever sees `pull.job_id`, not the URL's own (possibly different,
+    // per E2) `id` param - a prefix invalidates every query keyed under `import-job`
+    // regardless of which id it was mounted with.
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['import-job'] }));
+  });
 });

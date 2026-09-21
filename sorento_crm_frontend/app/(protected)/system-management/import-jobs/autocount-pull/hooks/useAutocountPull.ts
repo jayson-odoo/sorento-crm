@@ -168,7 +168,14 @@ export function useConfirmPull() {
 
 /** AC-DS-10: mirrors `useConfirmPull` - invalidates the pull itself plus the current-pull
  *  query (a discarded pull is no longer "open", so `GET /current` must stop finding it),
- *  toasts "Pull discarded" on success, the extracted API error message on failure. */
+ *  toasts "Pull discarded" on success, the extracted API error message on failure.
+ *
+ *  S3 (Phase 3 fix round 1): also invalidates `['import-job']` (prefix form, no `id` -
+ *  this hook only ever sees `pull.job_id`, not the job page's OWN `id` URL param, which
+ *  E2 already notes can differ) so the generic Job Summary card and its Cancel Job
+ *  button (`[id]/page.tsx`'s own `useQuery({ queryKey: ['import-job', id], ... })`)
+ *  refresh too - a discard from `building`/`previewing` leaves that card showing a
+ *  `canCancel` Cancel Job button and a stale status otherwise. */
 export function useDiscardPull() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -177,6 +184,7 @@ export function useDiscardPull() {
       queryClient.setQueryData(['autocount-pull', pull.job_id], pull);
       queryClient.invalidateQueries({ queryKey: ['autocount-pull', pull.job_id] });
       queryClient.invalidateQueries({ queryKey: ['autocount-pull-current', pull.entity] });
+      queryClient.invalidateQueries({ queryKey: ['import-job'] });
       toast.success('Pull discarded');
     },
     onError: (error) => {

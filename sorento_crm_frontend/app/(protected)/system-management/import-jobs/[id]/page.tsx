@@ -211,7 +211,11 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   // stay "Back to Import Jobs" always. A `page` param means the caller came from the
   // Import Jobs list, so that trail wins whatever the job type; otherwise a pull job goes
   // back to wherever it was pulled FROM (Products / Stock), never the generic list.
-  const pullEntity = isPullJob ? pullStatus?.entity ?? pullEntityFromJobType(job.job_type) : null;
+  // N4 (Phase 3 review): `job.job_type` alone, never `pullStatus?.entity` - the pull's own
+  // `entity` is set once at `start_pull` from the SAME job type this derives from, so the
+  // two can never disagree, and reading it straight off `job` needs no extra `usePull`
+  // fetch to have resolved first.
+  const pullEntity = isPullJob ? pullEntityFromJobType(job.job_type) : null;
   const backToOwnList = isPullJob && pageIndex === null && pullEntity;
   const backLabel = backToOwnList
     ? pullEntity === 'products'

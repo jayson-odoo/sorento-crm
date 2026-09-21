@@ -135,6 +135,12 @@ def preview_autocount_pull(db_job_id: str) -> None:
         pull = dict((job.job_metadata or {}).get("autocount_pull") or {})
         entity = pull.get("entity")
 
+        if pull.get("phase") != "previewing":
+            # Discarded (or otherwise moved on) before the worker even picked this job up
+            # (S2, Phase 3 fix round) - never fetch the snapshot / run a full dry-run
+            # ingest for a pull already thrown away; a products pull is ~12k rows.
+            return
+
         try:
             if entity == "products":
                 counts = _preview_products(db, job, pull)

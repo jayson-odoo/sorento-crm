@@ -258,6 +258,32 @@ class TestPreviewTaskRespectsDiscard:
         assert row_after["metadata"]["autocount_pull"]["phase"] == "discarded"
         assert row_after["status"] == "cancelled"
 
+    def test_ds_8c_preview_skips_entirely_when_already_discarded_before_it_runs(
+        self, task_db, monkeypatch
+    ):
+        """S2 (Phase 3 fix round 1): a pull discarded BEFORE the worker ever picks up the
+        preview job (never mid-flight, as in ds_8a above) must never fetch the snapshot or
+        run the dry-run ingest at all - the task re-reads the row right after it loads it
+        and bails immediately when the stored phase is not `previewing`, so a discarded
+        products pull never pays for a ~12k row fetch + dry-run it will just discard."""
+        db, factory = task_db
+        fake = _FakeFoundryX()
+        _patch_foundryx(monkeypatch, fake, db)
+        job_id = _seed_pull_job(
+            db, job_type="autocount_products_pull", user_id=str(uuid.uuid4()),
+            company_id=DEFAULT_COMPANY_ID, entity="products", company_code="SRT",
+            snapshot_id=f"{MARKER}-discarded-before-run", phase="discarded",
+        )
+        job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+        job.status = JobStatus.CANCELLED.value
+        db.commit()
+
+        _run_preview(monkeypatch, factory, job_id)
+
+        assert fake.calls == [], "a discarded pull must never call the FoundryX gateway"
+        row_after = _job_row(db, job_id)
+        assert row_after["metadata"]["autocount_pull"]["phase"] == "discarded"
+
     def test_ds_8b_find_open_pull_skips_a_cancelled_job_even_if_its_phase_still_says_building(
         self, env
     ):
