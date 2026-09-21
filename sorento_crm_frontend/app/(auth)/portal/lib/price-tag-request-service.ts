@@ -794,10 +794,14 @@ export async function downloadPriceTagPdf(id: string): Promise<void> {
  *
  * ```
  * POST /api/v1/public/portal/submissions/price_tag_request/{id}/export
- *   200/202 { status: "queued" }
+ *   202 { download_id: string }
  *   404 wrong contact's request
- *   409 request not `approved` or later, or an export is already pending
+ *   409 request not `approved` or later
  * ```
+ *
+ * A double click (or the poll racing a slow one) is idempotent server-side
+ * (AC-S9-7): a second call while one is still pending answers 202 with the
+ * SAME `download_id`, never a second queued render.
  *
  * The caller polls `getRequest` for `latest_export_status` to flip to
  * `ready` (or `failed`), same as the designer's own export button.

@@ -1933,8 +1933,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // Poll every 5 s while an export is preparing; stream it the moment the
   // refetched request says ready, surface a toast on failed.
+  //
+  // AC-S9-8: gated on `exportPreparing`, not the LOCAL `exportPending` alone -
+  // a request that loads (or refreshes) already `pending` on the server (a
+  // reload mid-export, or a second tab that queued it) must also poll, not
+  // just show the right label and then sit dead.
   useEffect(() => {
-    if (!exportPending || !requestId) return;
+    if (!exportPreparing || !requestId) return;
     let cancelled = false;
     const timer = setInterval(() => {
       getRequest(requestId)
@@ -1960,7 +1965,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [exportPending, requestId, streamDownload]);
+  }, [exportPreparing, requestId, streamDownload]);
 
   // ---- Loading skeleton ----
   if (loading) {
