@@ -388,3 +388,195 @@ describe('Live preview against a REAL product shape - S11 browser check (AC-S4-1
     expect(screen.getByText('Sorento Kitchen Sink')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S4-16 (owner test pass, 21 Sep): a multi-line template - the read-only
+// box and "Prints as:" must both keep the line breaks, not collapse them
+// into one run-on line the way a plain `<p>` renders whitespace by default.
+// ---------------------------------------------------------------------------
+
+const TYPE_ROW = {
+  specKey: 'product_type',
+  label: 'Type',
+  value: 'kitchen_tap',
+  unit: null,
+  dataType: 'enum',
+  options: [],
+  source: 'human',
+  evidence: null,
+  unknownKey: false,
+  valueLabels: { kitchen_tap: 'Kitchen Tap' },
+};
+const TYPE_KEY = {
+  spec_key: 'product_type',
+  label: 'Type',
+  data_type: 'enum',
+  unit: null,
+  allowed_values: [],
+  synonyms: {},
+  value_labels: { kitchen_tap: 'Kitchen Tap' },
+};
+const STEEL_GRADE_KEY = {
+  spec_key: 'steel_grade',
+  label: 'Steel grade',
+  data_type: 'text',
+  unit: null,
+  allowed_values: [],
+  synonyms: {},
+};
+
+/** Multiple elements can carry the class Tailwind's whitespace utilities
+ *  live on; find the one whose RAW (non-normalized) textContent is the
+ *  multi-line text under test. */
+function boxContaining(needle: string): HTMLElement {
+  const matches = screen.getAllByText((_, el) => Boolean(el?.textContent?.includes(needle)));
+  // The function matcher above matches every ANCESTOR whose aggregated
+  // textContent also contains the needle, not only the leaf `<p>` that
+  // actually renders the text - narrow to the leaf.
+  const leaf = matches.find((el) => el.tagName === 'P');
+  if (!leaf) throw new Error(`no <p> containing "${needle}"`);
+  return leaf;
+}
+
+describe('Multi-line templates (AC-S4-16)', () => {
+  it('the read-only box keeps a 3-line template as 3 lines, not collapsed', () => {
+    mockSpecHook(baseDetail(), { rows: [TYPE_ROW], registry: [TYPE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({
+        product_code: 'CBF3612',
+        price_tag_description: '{{product.code}}\n{{spec.product_type}}\nMade in Malaysia',
+      }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    const box = boxContaining('{{product.code}}');
+    expect(box.className).toMatch(/whitespace-pre-(line|wrap)/);
+    expect(box.textContent).toBe(
+      '{{product.code}}\n{{spec.product_type}}\nMade in Malaysia',
+    );
+  });
+
+  it('"Prints as:" resolves the same 3-line template as 3 lines, not collapsed', () => {
+    mockSpecHook(baseDetail(), { rows: [TYPE_ROW], registry: [TYPE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({
+        product_code: 'CBF3612',
+        price_tag_description: '{{product.code}}\n{{spec.product_type}}\nMade in Malaysia',
+      }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    const box = boxContaining('CBF3612');
+    expect(box.className).toMatch(/whitespace-pre-(line|wrap)/);
+    expect(box.textContent).toBe('CBF3612\nKitchen Tap\nMade in Malaysia');
+  });
+
+  it('Save sends the multi-line text with its newlines intact', async () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.change(descriptionTextarea(), { target: { value: 'Line1\nLine2\nLine3' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+    expect(updateMutateAsync).toHaveBeenCalledWith({
+      id: 'p-1',
+      data: { price_tag_description: 'Line1\nLine2\nLine3' },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S4-17 (owner test pass, 21 Sep): a line whose ENTIRE content came from
+// a token that resolved to nothing is dropped along with its newline - the
+// "Prints as:" half of this rule, in the tab. The merge-fields.ts half (the
+// rule itself, and its Product/Specs-only scope) is
+// `lib/dealer-kit/merge-fields.test.tsx`.
+// ---------------------------------------------------------------------------
+
+describe('An all-empty line is dropped, in the tab preview (AC-S4-17)', () => {
+  it('a line whose only token has no value on this product is dropped, not left blank', () => {
+    mockSpecHook(baseDetail(), { rows: [TYPE_ROW], registry: [TYPE_KEY, STEEL_GRADE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({
+        product_code: 'CBF3612',
+        price_tag_description: '{{product.code}}\n{{spec.steel_grade}}\n{{spec.product_type}}',
+      }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    const box = boxContaining('CBF3612');
+    expect(box.textContent).toBe('CBF3612\nKitchen Tap');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S4-18 (owner test pass, 21 Sep): a token naming a field the catalog
+// does not offer - `{{spec.type}}` when the real key is `product_type` - is
+// named under "Prints as:" instead of silently vanishing. "Known" = the
+// SAME restricted catalog Insert field offers
+// (`mergeFieldCatalog(specKeys, ['Product', 'Specs'])`).
+// ---------------------------------------------------------------------------
+
+describe('An unknown field is named under "Prints as:" (AC-S4-18)', () => {
+  it('a single unknown {{spec.*}} token is named', () => {
+    mockSpecHook(baseDetail(), { rows: [], registry: [TYPE_KEY, STEEL_GRADE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({ price_tag_description: '{{spec.type}}' }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    const warning = screen.getByText('Unknown field: {{spec.type}}');
+    expect(warning.className).toMatch(/text-destructive/);
+  });
+
+  it('an unknown {{product.*}} token is named too', () => {
+    mockSpecHook(baseDetail(), { rows: [], registry: [TYPE_KEY, STEEL_GRADE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({ price_tag_description: '{{product.nope}}' }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.getByText('Unknown field: {{product.nope}}')).toBeInTheDocument();
+  });
+
+  it('several unknown tokens are listed comma separated, in one line', () => {
+    mockSpecHook(baseDetail(), { rows: [], registry: [TYPE_KEY, STEEL_GRADE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({ price_tag_description: '{{spec.type}} {{product.nope}}' }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(
+      screen.getByText('Unknown field: {{spec.type}}, {{product.nope}}'),
+    ).toBeInTheDocument();
+  });
+
+  it('a KNOWN field with no value on this product is never flagged unknown', () => {
+    mockSpecHook(baseDetail(), { rows: [], registry: [TYPE_KEY, STEEL_GRADE_KEY] });
+    useProduct.mockReturnValue({
+      data: baseProduct({ price_tag_description: '{{spec.steel_grade}}' }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.queryByText(/Unknown field/)).not.toBeInTheDocument();
+  });
+
+  it('Save stays enabled with an unknown field in the template', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.change(descriptionTextarea(), { target: { value: '{{spec.type}}' } });
+
+    expect(screen.getByRole('button', { name: /^save$/i })).not.toBeDisabled();
+  });
+});

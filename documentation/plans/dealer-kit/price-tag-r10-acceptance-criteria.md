@@ -106,6 +106,28 @@ left stale.
   `test_price_tag_data_pin.py::TestAcS415APartProductsTemplateEditReachesThePin`,
   `test_dealer_kit_tag_data.py::test_ac_s4_15_resolve_tags_live_carries_price_tag_description_on_every_part_row`,
   `test_dealer_kit_tag_data_routes.py::test_resolve_prices_carries_price_tag_description_on_an_open_groups_candidates`)
+- AC-S4-16 (added by the tester, owner test pass, 21 Sep) A multi-line stored template (embedded `\n`)
+  shows as separate lines, not collapsed onto one run-on line: the read-only box and "Prints as:" both
+  carry a whitespace-preserving style (`whitespace-pre-line` or `whitespace-pre-wrap`) and their rendered
+  text keeps every `\n`; Save sends the typed text with its newlines intact. (vitest
+  ProductSpecificationsTab.priceTagDescription.test.tsx)
+- AC-S4-17 (added by the tester, owner test pass, 21 Sep) A LINE of the template whose entire content came
+  from a token that resolved to nothing is dropped, together with its newline - not left as a blank line:
+  `{{product.code}}\n{{spec.steel_grade}}\n{{spec.product_type}}` on a product with no `steel_grade`
+  resolves to two lines, `<code>\n<type>`, with no gap between them. A line mixing literal text with an
+  empty token keeps its text, trimmed (`Grade: {{spec.steel_grade}}` -> `Grade:`). A line the author left
+  blank ON PURPOSE - no token on it at all - is kept exactly as typed. The rule is scoped to
+  `product.price_tag_description`'s own nested resolve only: an ordinary text layer's own
+  `renderMergeFields` call is unaffected (`A\n{{spec.steel_grade}}\nB` still renders `A\n\nB`). (vitest
+  merge-fields.test.tsx + one assertion in ProductSpecificationsTab.priceTagDescription.test.tsx)
+- AC-S4-18 (added by the tester, owner test pass, 21 Sep) A token naming a field outside the restricted
+  catalog Insert field offers (`mergeFieldCatalog(specKeys, ['Product', 'Specs'])`) - e.g. `{{spec.type}}`
+  when the registered key is `product_type` - is named under "Prints as:": `Unknown field: {{spec.type}}`
+  in destructive text (`text-destructive`); several unknown tokens in one template are listed
+  comma-separated on one line. A KNOWN key with no value on this particular product (`{{spec.steel_grade}}`
+  when the product carries no `steel_grade` row) is never flagged - only a path the catalog does not offer
+  at all is "unknown". Save stays enabled regardless. (vitest
+  ProductSpecificationsTab.priceTagDescription.test.tsx)
 
 ## S5. Combo image
 

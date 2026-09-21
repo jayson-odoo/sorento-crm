@@ -815,6 +815,57 @@ describe('renderMergeFields - product.price_tag_description on a LIVE line bindi
   });
 });
 
+// ---------------------------------------------------------------------------
+// AC-S4-17 (owner test pass, 21 Sep): a LINE of a `price_tag_description`
+// template whose entire content came from a token that resolved to nothing
+// is dropped, along with its newline - not left as a blank line. Scoped
+// tightly: a line the AUTHOR left blank on purpose (no token on it at all)
+// is kept exactly as typed, and the rule applies ONLY inside
+// `product.price_tag_description`'s own nested resolve, never to an
+// ordinary text layer's `renderMergeFields` call.
+// ---------------------------------------------------------------------------
+
+describe('product.price_tag_description drops an all-empty line (AC-S4-17)', () => {
+  it('a line whose only token has no value on this product is dropped, not left blank', () => {
+    const data = product({
+      price_tag_description: '{{product.code}}\n{{spec.steel_grade}}\n{{spec.product_type}}',
+      specs: [{ key: 'product_type', label: 'Type', value: 'Kitchen Tap', unit: null }],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'CBF3612\nKitchen Tap',
+    );
+  });
+
+  it('a line with literal text plus an empty token keeps its text, trimmed', () => {
+    const data = product({
+      price_tag_description: 'Grade: {{spec.steel_grade}}',
+      specs: [],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Grade:',
+    );
+  });
+
+  it('a line the author left blank ON PURPOSE - no token on it at all - is kept', () => {
+    const data = product({
+      price_tag_description: 'Line1\n\nLine2',
+      specs: [],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Line1\n\nLine2',
+    );
+  });
+
+  it('the rule does NOT apply to an ordinary text layer - unchanged behaviour', () => {
+    const data = product({ specs: [] } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('A\n{{spec.steel_grade}}\nB', data, 'print')).toBe('A\n\nB');
+  });
+});
+
 describe('mergeFieldCatalog - Price tag description (AC-S4-7)', () => {
   it('lists Price tag description in group Product, directly after Spec lines', () => {
     const catalog = mergeFieldCatalog([]);
