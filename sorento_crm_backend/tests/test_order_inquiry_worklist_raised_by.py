@@ -528,10 +528,27 @@ def test_a_reconfirm_by_somebody_else_leaves_the_earlier_rows_attributed_to_who_
     )
     db.commit()
 
-    # The header is re-stamped (AC-H4) - it is the SO detail's own answer.
+    # Owner ruling R5 (`PLAN-oi-header-list-detail.md`, 21 Sep 2026), superseding this
+    # test's own former AC-H4 comment: the header's `raised_by`/`raised_at` are the
+    # FIRST raise, fixed for life - a reconfirm never re-stamps them. B's reconfirm
+    # instead adds its own `reconfirmed` row to the raise history (AC-RD-01), which is
+    # where "who last confirmed this" is answered now.
+    from app.models.project_so import OrderInquiryRaise
+
     db.refresh(inquiry)
-    assert inquiry.raised_by == seeded["johnson"].id
-    assert inquiry.raised_at >= first_raised_at
+    assert inquiry.raised_by == seeded["cindy"].id
+    assert inquiry.raised_at == first_raised_at
+    # This fixture's own header is built by a raw insert (`_inquiry` above), never
+    # through `ensure_inquiry`, so it holds no `raised` row of its own - only what
+    # `refresh_for_decision`'s reconfirm branch just added.
+    raises = (
+        db.query(OrderInquiryRaise)
+        .filter(OrderInquiryRaise.order_inquiry_id == inquiry.id)
+        .order_by(OrderInquiryRaise.raised_at.asc())
+        .all()
+    )
+    assert [r.kind for r in raises] == ["reconfirmed"]
+    assert raises[-1].raised_by == seeded["johnson"].id
 
     response = client.get(LIST, params={"query": inquiry.inquiry_no})
     assert response.status_code == 200, response.text
