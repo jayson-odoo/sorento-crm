@@ -736,6 +736,14 @@ class ProjectOrderInquiryService:
         # `Project`, `Customer` or `users` while a confirm is raising rows against them.
         self._handover_order_facts_cache: Dict[str, Dict[str, Any]] = {}
         self._handover_actor_cache: Dict[str, Optional[Dict[str, str]]] = {}
+        # R7's own-arrival credit, asked once per ROW by the path picker
+        # (`_own_arrival_credit_for_row`). A replan settles every row of an order in one
+        # call, and each row used to build a fresh `ProjectSupplyService` (throwing away
+        # its own memos) and a fresh `netting_for_products` read of the same product
+        # (review round, SF3). Both live for the instance now - the same lifetime every
+        # other cache above has, and nothing here writes stock or purchase-order receipts.
+        self._own_arrival_supply: Optional[Any] = None
+        self._own_arrival_netting: Dict[str, List[Any]] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -1634,10 +1642,16 @@ class ProjectOrderInquiryService:
 
     def _own_arrival_credit_for_row(self, row: OrderInquiryRow) -> Decimal:
         """R2/R7: what landed FOR this row's line, the SAME credit the board's own ladder
-        reads (`ProjectSupplyService._own_arrival_credit_for`) - reused rather than
+        reads (`ProjectSupplyService.own_arrival_credit_for`) - reused rather than
         restated, so the path picker and the board cannot come to disagree about what
         counts as covered. Built off a MINIMAL `_LineFacts` (this call is a single-row
         question, not a walk - no shared ledger to thread through).
+
+        `open_qty` is `qty_ordered - qty_delivered` (review round, SF1), the SAME reading
+        of "open" every other `_LineFacts` builder in this codebase uses
+        (`project_supply_service.py` `_facts_for` / `demand_facts`). A line ordered 40 and
+        delivered 30 owes 10, so 10 is the most a credit may cover for it - reading the
+        original 40 would settle a row in place off stock the line no longer needs.
         """
         from app.services.project_supply_service import ProjectSupplyService, _LineFacts
 
@@ -1652,22 +1666,31 @@ class ProjectOrderInquiryService:
         warehouse = self.db.get(Warehouse, core_line.warehouse_id)
         if warehouse is None:
             return _ZERO
-        supply = ProjectSupplyService(self.db)
+        if self._own_arrival_supply is None:
+            self._own_arrival_supply = ProjectSupplyService(self.db)
+        supply = self._own_arrival_supply
         product_id = str(core_line.product_id) if core_line.product_id else None
         group_code = group_of_warehouse_code(warehouse.warehouse_code)
         by_location: List[Any] = []
         if product_id and group_code:
-            netting = netting_for_products(self.db, [product_id])
-            by_location = list(netting.group_net(product_id, group_code).by_location)
+            key = f"{product_id}\x00{group_code}"
+            if key not in self._own_arrival_netting:
+                netting = netting_for_products(self.db, [product_id])
+                self._own_arrival_netting[key] = list(
+                    netting.group_net(product_id, group_code).by_location
+                )
+            by_location = self._own_arrival_netting[key]
         fact = _LineFacts(
             unit_core_line_ids=[str(core_line.id)],
             product_id=product_id,
             warehouse=warehouse,
             group_code=group_code,
             group_net_by_location=by_location,
-            open_qty=_dec(core_line.qty_ordered),
+            open_qty=max(
+                _dec(core_line.qty_ordered) - _dec(core_line.qty_delivered), _ZERO
+            ),
         )
-        credit, _po = supply._own_arrival_credit_for(fact)
+        credit, _po = supply.own_arrival_credit_for(fact)
         return credit
 
     def _redirect_row_if_received(
@@ -1704,6 +1727,15 @@ class ProjectOrderInquiryService:
         # row unnecessary.
         linked_qty = sum((_dec(link.qty) for link in links), _ZERO)
         if linked_qty > _ZERO and self._own_arrival_credit_for_row(row) >= linked_qty:
+            # Review round (SF10): the STILL-OPEN documents on a mixed row are released
+            # all the same. Landed stock now covers the row's whole need, so a reservation
+            # on a purchase-order line that has not shipped is holding capacity this row
+            # will never take - the same `_remove_links` the ordinary branch below uses,
+            # freeing it for the next row that does need it. The RECEIVED links stay: they
+            # are the history of how this row came to be covered.
+            still_open = [link for link in links if str(link.id) not in received]
+            if still_open:
+                self._remove_links(row, still_open)
             return None
         open_links = [link for link in links if str(link.id) not in received]
         if open_links:

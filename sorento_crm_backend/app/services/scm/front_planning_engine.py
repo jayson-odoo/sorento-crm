@@ -1221,6 +1221,11 @@ def walk_line(
     if remainder > ZERO and own_arrival_candidates:
         _draw_group(step_own_arrival, own_arrival_candidates, need, group_code, group_offer)
         own_arrival_qty = step_own_arrival.qty
+        # AC-S3-11: the credit is a claim ON the bin's pile, not a second pile beside it.
+        # What it just took comes OFF the ordinary group-take candidates at that same bin
+        # before question 1 reads them - otherwise a line needing 80, with 40 received for
+        # it and 40 on hand, is told Reserve 80 off a floor holding 40.
+        group_take_candidates = _less_drawn(group_take_candidates, step_own_arrival)
     ladder_remainder = need - own_arrival_qty
     ladder_need = ladder_remainder if ladder_remainder > ZERO else need
 
@@ -1438,6 +1443,48 @@ class _Offer:
             self.donor_qty = component.qty
             self.donor_so_number = component.donor_so_number
             self.donor_required_date = component.donor_required_date
+
+
+def _less_drawn(
+    candidates: Optional[Sequence[Mapping[str, Any]]],
+    drawn: "_Offer",
+) -> Optional[Sequence[Mapping[str, Any]]]:
+    """`candidates` with what `drawn` already took off each bin's FLOOR subtracted
+    (AC-S3-11, 21 Sep 2026).
+
+    Used for one thing: the own-arrival credit (R7) is drawn ahead of question 1 off the
+    same physical bins question 1 is about, so the ordinary rung must not be offered those
+    units a second time. The WATER of a bin is left alone - a credit is landed stock, and
+    subtracting it from an incoming promise would net two different things against each
+    other.
+
+    Returns a new list; the caller's own candidates are never mutated (`use_candidates_for`
+    hands the same list to more than one reader).
+    """
+    if not candidates:
+        return candidates
+    left: Dict[str, Decimal] = {}
+    for component in drawn.components:
+        code = component.source_location
+        if not code:
+            continue
+        left[code] = left.get(code, ZERO) + component.qty
+    if not left:
+        return candidates
+    out: List[Mapping[str, Any]] = []
+    for candidate in candidates:
+        code = str(candidate.get("location") or "")
+        spend = left.get(code, ZERO)
+        if candidate.get("water") or spend <= ZERO:
+            out.append(candidate)
+            continue
+        qty = max(_dec(candidate.get("qty")), ZERO)
+        taken = min(qty, spend)
+        left[code] = spend - taken
+        if qty - taken <= ZERO:
+            continue
+        out.append({**candidate, "qty": qty - taken})
+    return out
 
 
 def _draw_group(

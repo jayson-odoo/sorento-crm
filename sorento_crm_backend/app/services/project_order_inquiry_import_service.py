@@ -35,25 +35,24 @@ documents AutoCount stated only by NUMBER: a claim is one row per
 `(so_number, po_number, item_code)` and never repoints, so it cannot say "line 3 to purchase
 order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep prod copy the
 August `po_history` extract already held the claim key for 28,397 pairings the column states
-exactly, which is why `po_history` pairs nothing any more. WHICH line of the order a row lands
-on, when several are open, used to be decided by five citation/month passes in order
-(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R7, 19 Sep 2026, `_match_in_passes`
-- the line whose required date IS the sheet's date; failing that, a line in the sheet's own
-month whose book document the sheet ALSO cites; failing that, any line among the book's own
-documents the sheet cites; failing that, any line left in the sheet's own month with no PO to
-decide it; and only then the line the book bought for at all). **Superseded 21 Sep 2026 by R4**
-(`PLAN-board-received-stock-own-arrival.md` S4, `_pick_lines_by_date_order`): the S0 measurement
-against SO372176 on the 21 Sep prod copy found that fallback ranking a defect on its own terms -
-a row's own delivery date lost to whichever open line of the order happened to be earliest
-overall, landing deliveries more than a year off - and the five passes' own citation/month
-machinery is now unused by the line pick (kept, and still read by `_pair`'s document linking).
-The pick is now one thing for the whole order: its OPEN lines sorted by `required_date`, this
-upload's own rows for it sorted by `delivery_date`, paired one to one in that order; a row
-beyond the last open line lands on the LAST one as a second row. The five passes' own helper
-functions (`_run_pass`, `_narrow_*`, `_rank_for*`) stay defined, unused by the line pick, in
-case a citation signal is ever reinstated as a narrower filter ahead of the date order - nothing
-here reads them today. Item, location and quantity still gate a candidate exactly as before
-(`_match_row`, unchanged).
+exactly, which is why `po_history` pairs nothing any more.
+
+**WHICH line of the order a row lands on** is R4 (owner, 21 Sep 2026,
+`PLAN-board-received-stock-own-arrival.md` S4, `_pick_lines_by_date_order`), and it is one
+rule for the whole order: its OPEN lines sorted by `required_date`, this upload's own rows for
+that order sorted by `delivery_date`, paired one to one in that order; a row beyond the last
+open line lands on the LAST one as a second row. A closed or cancelled line is never a
+candidate (AC-S4-3). An order with no open line at all refuses its rows with their own reason,
+`order_fully_delivered` (R9, AC-S4-6), never the genuine-item-mismatch `no_line_for_item`.
+Item and location still gate a candidate as they always have (`_match_row`); **quantity gates
+the ORDER, not the line** (R10, AC-S4-7): a row bigger than the line its date order gives it
+still lands there, with a "Was {qty} on {date}" note recording what the book holds, and only a
+row bigger than the whole order's remaining open quantity is refused `qty_exceeds_ordered`.
+
+The five citation/month passes this pick replaced (`PLAN-oi-sheet-line-pick-month-po.md`, 19
+Sep 2026) and every helper that served them are GONE from this file as of the 21 Sep review
+round; nothing read them after R4 landed. `_pair`'s own document linking still reads
+`plan.bought_rows`, which is a different question and unchanged.
 
 Three honest limits, each counted and named rather than smoothed over.
 
@@ -61,19 +60,20 @@ Three honest limits, each counted and named rather than smoothed over.
 is named under `sales_orders_not_found` and nothing is invented for it; a row whose item,
 location or quantity fits no line of that order is reported with the FIRST reason it failed.
 
-**A line that already carries an order inquiry row is left exactly as it is, unless the sheet
-names a genuinely different delivery** (D2, narrowed 21 Sep 2026 by R4/AC-S4-2: a line that
-already carries a row is no longer a FREE candidate, but it still takes a second row when the
-date-order pick runs out of open lines before it runs out of sheet rows). The sheet is a
-migration, not a source of truth about rows somebody has since worked on, so a re-upload of the
-SAME instruction (`_restated_existing`) writes nothing new.
+**A row whose item had a free line before this walk began raises as a SECOND row on whichever
+line the date order gives it; otherwise it restates the line's existing row.** A line already
+carrying a row is not a FREE candidate, but it still takes a second row once the date-order
+pick runs out of free ones (AC-S4-2) - and a row pushed onto an occupied line purely because
+an earlier row of this same walk claimed its own item's free line first is genuinely new news,
+never absorbed as `already_raised` (AC-LP-12). Where the row's item had no free line at all,
+the sheet is a migration rather than a source of truth about rows somebody has since worked
+on, so the existing row is restated in place (`_restated_existing`, D2) and a re-upload of the
+SAME instruction writes nothing new.
 
 **A genuine typo inside one tab still raises twice** (R5, 19 Sep 2026: a restatement is only
 ever across tabs, never within one). A row a person mistyped rather than meant to split is
 indistinguishable here from a real second delivery, so it raises like one, and is only reported
-(`qty_exceeds_ordered`) once it overflows the line it and its twin both want. Measured on the
-owner's book, 18 Sep prod copy: lines holding more than one sheet row went from 183 to 285, and
-`qty_exceeds_ordered` from 531 to 619.
+(`qty_exceeds_ordered`) once it overflows what the ORDER can hold.
 
 `SOURCE_SYSTEM` below stays the literal `'scm_order_inquiry'`. The string is baked into raw
 SQL (`scm/demand.py`), into migration 346's backfill and into the `OrderLinkClaim` CHECK
@@ -288,17 +288,10 @@ class _Plan:
     orders_in_play: List[str] = field(default_factory=list)
     #: Of those, the ones with no planning record yet - what `orders_adopted` will be.
     orders_to_adopt: int = 0
-    #: `(source_ref, product_id)` for every candidate line the book BOUGHT for (section 7).
-    #: The fallback pass of the line pick reads it, before any pairing happens.
-    bought_refs: set = field(default_factory=set)
-    #: The rows that set was derived from, kept so `_pair` groups them into the pairing's
-    #: first source rather than reading the same two queries a second time.
+    #: The purchase and shipping rows the book holds for every candidate line of every
+    #: order the sheet names, read once and kept so `_pair` groups them into the pairing's
+    #: first source rather than running the same two queries a second time.
     bought_rows: Optional[Tuple[List[Any], List[Any]]] = None
-    #: `(source_ref, product_id)` -> the document NUMBERS the book bought it with
-    #: (`_bought_documents`, PLAN-oi-sheet-line-pick-month-po.md section 2, "Book PO per
-    #: line"), off the SAME rows `bought_rows` holds. The month and sheet-PO passes read it
-    #: to tell whether a candidate line is one the sheet's own citation also names.
-    bought_documents: Dict[tuple, set] = field(default_factory=dict)
     #: How many rows `matches` actually holds, once a `+` cell has been split into one row
     #: per member (`_members`, plan section 2). `None` for a plan `_plan` never ran on -
     #: `_empty`'s unreadable-file / no-actor shapes - where `_result` falls back to
@@ -493,9 +486,9 @@ def _unambiguous_refs(db: Session, refs: set) -> set:
     `source_ref` is not unique. The August extract wrote bare ordinals, so `'1'` sits on
     3,364 lines across 3,364 different sales orders, and 25,771 lines on the prod copy share
     a ref with another line. A ref that names 3,364 lines is not a statement about any of
-    them: it must neither pair a document to a line (`_ref_targets`) nor tell the line pick
-    that the book bought for one (`_bought_refs`), where it would mark thousands of unrelated
-    lines, cancelled August ghosts among them, as the line a document names.
+    them: it must not pair a document to a line (`_ref_targets`), where it would mark
+    thousands of unrelated lines, cancelled August ghosts among them, as the line a
+    document names.
 
     One query. Company scope applies, which is the right unit: the pairing it guards is
     company-scoped too.
@@ -512,79 +505,6 @@ def _unambiguous_refs(db: Session, refs: set) -> set:
     }
 
 
-def _rank_for(row, bought: set) -> Callable[[tuple], tuple]:
-    """The line this row means, when several fit (D1, AC-S1-8, as section 8 leaves it).
-
-    Read by two of the five passes the line pick now runs (`_match_in_passes`,
-    `PLAN-oi-sheet-line-pick-month-po.md` section 2): pass 1, exact date, where every term
-    below the first is moot because the candidates already share the row's own date; and
-    pass 5, the fallback, over every line of the order once passes 1 to 4 have placed what
-    they can - which is the only place the "date matches no line" and "book bought for it"
-    stories below still happen. Passes 2, 3 and 4 read their OWN rank instead
-    (`_rank_for_month`, `_rank_for_po`, just below `_match_row`): the month passes need the
-    NEAREST date ahead of "earliest", since every candidate there already shares the row's
-    month, and carry no citation term of their own any more (review round 2, 19 Sep 2026:
-    pass 2's own narrow already guarantees every candidate it sees cites the row, and pass 4
-    can never still tie on one either, since pass 3 already tried every candidate that
-    could). The PO pass needs no date term at all, since `_narrow_sheet_po` already means
-    every candidate it sees is one the row itself cites. There is no plain "same month, no
-    citation to break the tie" pass left for this function to rank any more either: R4
-    (19 Sep 2026, prod C-FH14, SO324265) split the old single month pass into pass 2 (month
-    AND the sheet's own citation) and pass 4 (month alone, after the PO pass), precisely so
-    a row's citation always outranks the month rather than losing a tie inside it.
-
-    A real line before a cancelled one, first of all - 10,499 cancelled August-extract ghosts
-    are still in the book, and a ghost is never what a live sheet row means while a real line
-    fits. This term only ever has anything to rank in pass 5, the fallback (R7, 19 Sep 2026):
-    `_run_pass` now drops a cancelled candidate before pass 1 ever reaches this function, so a
-    ghost that happens to carry the row's own exact date no longer wins on that account -
-    only the fallback, where every line of the order is still offered, can still hand a row a
-    cancelled one, and only when it is the only line that fits (D1 kept).
-
-    Then the line whose required date IS the sheet's date. The sheet states a delivery, and a
-    line carrying that very date is the delivery it states - section 7 had put "the book
-    bought for it" above this, and on SO388822 / C-FHSS12 that cascaded a whole sales order:
-    the 31/03 row took the 14/04 line because somebody had bought for it, the 14/04 row found
-    it occupied and slid to 28/04, every later row slid one delivery, and the last pair landed
-    on the 1414 @ 01/01/2030 balance line. Whole sheet, 1,180 rows sat on a line whose date
-    was not the sheet's while a same-item sibling carrying it stood free. An ORDER BACK row
-    states NO date, and a row with no date has nothing to match: without the `wanted is not
-    None` guard `None == None` would read as an exact match and hand the row to an undated
-    line over the one the book bought for. The undated-last term below still applies.
-
-    Then a line the book BOUGHT for (section 7, unchanged in meaning and one place lower):
-    where NO line carries the sheet's date the term above ties, and "the line the row means is
-    the one AutoCount bought for" is still the best answer left. SO395635 / SRTWC8317-RL's
-    November row is that case - its date matches no line, and it lands on the bought one.
-
-    Then the terms that were always here: an open line before a closed one, the earliest
-    required date (undated last), and the oldest line, so two runs of the same sheet land the
-    same way.
-
-    The line's own id has the last word. Every term above it can tie - a whole AutoCount
-    ingest shares one `created_at`, because Postgres freezes `now()` for the transaction that
-    wrote it - and a tie left to the read order is a sheet that pairs differently on the
-    preview and on the apply.
-    """
-    wanted = row.delivery_date
-
-    def key(candidate: tuple) -> tuple:
-        line = candidate[0]
-        ref = (line.source_ref or "").strip()
-        return (
-            0 if (line.line_status or "open") != "cancelled" else 1,
-            0 if (wanted is not None and line.required_date == wanted) else 1,
-            0 if (ref and (ref, str(line.product_id or "")) in bought) else 1,
-            0 if (line.line_status or "open") == "open" else 1,
-            line.required_date is None,
-            line.required_date or date.min,
-            line.created_at or datetime.min,
-            str(line.id),
-        )
-
-    return key
-
-
 def _match_row(
     row,
     candidates: List[tuple],
@@ -593,29 +513,36 @@ def _match_row(
     rank: Callable[[tuple], tuple],
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, against `candidates` exactly as given, or the FIRST filter
-    that refused it. `candidates` and `rank` are the caller's to narrow: `_run_pass`, the only
-    caller, hands over a NARROWED list and the pass's own rank for passes 1 to 4 of the
-    five-pass line pick (PLAN section 2), and every line of the order, unnarrowed, with
-    `_rank_for(row, plan.bought_refs)` built fresh, for pass 5, the fallback.
+    that refused it. `candidates` and `rank` are the caller's to narrow;
+    `_pick_lines_by_date_order` is the only caller, and hands over the order's OPEN lines
+    with the date-order rank it built for this row.
 
     Item, then location, then quantity - reported in that order because that is the order a
     person checks them in, and "no line for this item" and "location differs" send them to
     two different places.
 
-    The quantity test is against what the line ORDERED, less what EARLIER rows of this same
-    file already took of it: the sheet may split one line across several rows (AC-S1-2), and
-    the importer never splits one itself.
+    R10 (owner, 21 Sep 2026, `PLAN-board-received-stock-own-arrival.md`): **line quantity
+    does not gate the pairing.** The quantity test is against what the ORDER still holds
+    open across every line this row could land on - each candidate's `qty_ordered` less what
+    EARLIER rows of this same file already took of it, summed - never against one line's
+    own. A sheet row bigger than the line its date order gives it still lands there, and the
+    difference is the ordinary "Was {qty} on {date}" note the raise writes; what stays
+    refused as `qty_exceeds_ordered` is a row bigger than the order itself can hold, which is
+    a true report about the sheet rather than an accident of how the order was split into
+    lines. Before R10 the per-line test filtered the row's own line out of `same_place`
+    before the date order ever got a say, and SO372176's OCT26/70 landed on L11 (120 @ Dec
+    2027) instead of L2 (20 @ Oct 2026) for want of 50 units of line capacity.
 
     The ledger is charged for whatever line a row lands on, ALREADY RAISED or not - reversing
     review finding 9 (14 Sep) on purpose (PLAN section 2, "Ledger"). Finding 9 had this skip
     the charge on an already-raised line so the NEXT row of the same file would not read
-    `qty_exceeds_ordered` for quantity nobody used, but the five-pass pick runs the identical
-    ledger on a fresh upload and on every re-upload of the same file (a line raised by an
-    EARLIER run is "already raised" on both), so a charge that only happens sometimes is a
-    charge that lets the two runs place a later row on two different lines (AC-LP-11,
-    AC-LP-13). Charging always keeps them in step; the only new `qty_exceeds_ordered` this can
-    produce is a sheet that states more against a line than the order actually holds, which is
-    a true report (AC-LP-12).
+    `qty_exceeds_ordered` for quantity nobody used, but the pick runs the identical ledger on
+    a fresh upload and on every re-upload of the same file (a line raised by an EARLIER run
+    is "already raised" on both), so a charge that only happens sometimes is a charge that
+    lets the two runs place a later row on two different lines (AC-LP-11, AC-LP-13).
+    Charging always keeps them in step; the only new `qty_exceeds_ordered` this can produce
+    is a sheet that states more against an order than the order actually holds, which is a
+    true report (AC-LP-12).
     """
     wanted_item = (row.item_code or "").strip()
     same_item = [c for c in candidates if c[1] == wanted_item]
@@ -635,392 +562,23 @@ def _match_row(
         return None, oc.LOCATION_DIFFERS
 
     qty = _dec(row.qty)
-    fits = [
-        c for c in same_place
-        if _dec(c[0].qty_ordered) - taken.get(str(c[0].id), _ZERO) >= qty
-    ]
-    if not fits:
+    # R10: ONE ceiling for the whole order, not one per line. Each candidate contributes
+    # what it still has open (floored at zero, so a line an earlier over-sized row already
+    # outgrew simply stops contributing rather than lending the shortfall back).
+    order_left = sum(
+        (
+            max(_dec(c[0].qty_ordered) - taken.get(str(c[0].id), _ZERO), _ZERO)
+            for c in same_place
+        ),
+        _ZERO,
+    )
+    if qty > order_left:
         return None, oc.QTY_EXCEEDS_ORDERED
 
-    found = sorted(fits, key=rank)[0]
+    found = sorted(same_place, key=rank)[0]
     taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
     return found, None
 
-
-# --------------------------------------------------------------------------- #
-# the five-pass line pick: exact date, month and PO, PO, month, fallback      #
-# --------------------------------------------------------------------------- #
-
-
-def _document_key(number: Any) -> str:
-    """A document number, stripped and upper-cased, so the book's own numbers and whatever
-    case the sheet's remark cell happened to be typed in still compare equal (PLAN section 2,
-    "Book PO per line")."""
-    return str(number or "").strip().upper()
-
-
-def _bought_documents(
-    db: Session, rows: Tuple[Sequence[Any], Sequence[Any]]
-) -> Dict[tuple, set]:
-    """`(source_ref, product_id)` -> the document NUMBERS the book bought it with, off the
-    SAME rows `_bought_refs` already read (`plan.bought_rows` from `_bought_rows`):
-    `SPOAllocation.spo_number` directly; a `PurchaseOrderLine` through the `po_number` of its
-    own `purchase_order_id`, in one extra query over the purchase orders those lines actually
-    named - never more ids than `_bought_rows` itself already saw.
-
-    Wider than the line pick will ever ask of it, exactly like `_bought_refs`: a key nothing
-    looks up costs nothing.
-    """
-    allocations, po_lines = rows
-    held: Dict[tuple, set] = {}
-
-    def _add(ref: Any, product_id: Any, number: Any) -> None:
-        # Stripped so a `from_so_line_ref` with stray whitespace still keys the same as the
-        # reader's own `(line.source_ref or "").strip()` (`_narrow_sheet_po`) - a mismatch
-        # here would silently drop the candidate from the month-and-PO and PO passes rather
-        # than raise.
-        ref = str(ref or "").strip()
-        if not ref or not number:
-            return
-        held.setdefault((ref, str(product_id or "")), set()).add(_document_key(number))
-
-    for allocation in allocations:
-        _add(allocation.from_so_line_ref, allocation.product_id, allocation.spo_number)
-
-    po_ids = sorted({
-        str(line.purchase_order_id) for line in po_lines if line.purchase_order_id
-    })
-    numbers_by_po: Dict[str, str] = {}
-    if po_ids:
-        numbers_by_po = {
-            str(po_id): number
-            for po_id, number in db.query(PurchaseOrder.id, PurchaseOrder.po_number)
-            .filter(PurchaseOrder.id.in_(po_ids))
-            .all()
-        }
-    for line in po_lines:
-        _add(
-            line.from_so_line_ref,
-            line.product_id,
-            numbers_by_po.get(str(line.purchase_order_id or "")),
-        )
-    return held
-
-
-def _narrow_exact_date(row) -> Callable[[tuple], bool]:
-    """Pass 1: keep only candidates whose `required_date` IS the row's own delivery date.
-    `wanted is not None` keeps an ORDER BACK row, which states no date at all, out of this
-    pass entirely (AC-LP-9) - every candidate answers `False` for it, so `_run_pass` finds no
-    candidates and moves the row on without a reason."""
-    wanted = row.delivery_date
-
-    def keep(candidate: tuple) -> bool:
-        return wanted is not None and candidate[0].required_date == wanted
-
-    return keep
-
-
-def _narrow_same_month(row) -> Callable[[tuple], bool]:
-    """Keep candidates in the row's own year and month, whatever the day. Read alone by
-    pass 4 (a row whose citation named no free line, or named nothing at all, still gets the
-    month's own terms before the blanket fallback) and, composed with `_narrow_sheet_po`
-    (`_narrow_month_and_po`), by pass 2. The same `wanted is not None` guard keeps an ORDER
-    BACK row out of both (AC-LP-9)."""
-    wanted = row.delivery_date
-
-    def keep(candidate: tuple) -> bool:
-        required = candidate[0].required_date
-        return (
-            wanted is not None
-            and required is not None
-            and (required.year, required.month) == (wanted.year, wanted.month)
-        )
-
-    return keep
-
-
-def _narrow_sheet_po(row, documents: Dict[tuple, set]) -> Callable[[tuple], bool]:
-    """Keep candidates whose OWN book document (`_bought_documents`) is one the row itself
-    cites (R2, 19 Sep 2026: the sheet's PO may pick the line). Read alone by pass 3, and
-    composed with `_narrow_same_month` (`_narrow_month_and_po`) by pass 2. A row that cites
-    nothing keeps no candidate at all in either shape - which is exactly what sends it on to
-    the next pass rather than reporting a reason here (AC-LP-6)."""
-    cited = {_document_key(number) for number in row.po_numbers}
-
-    def keep(candidate: tuple) -> bool:
-        if not cited:
-            return False
-        line = candidate[0]
-        ref = (line.source_ref or "").strip()
-        if not ref:
-            return False
-        held = documents.get((ref, str(line.product_id or "")))
-        return bool(held and held & cited)
-
-    return keep
-
-
-def _narrow_month_and_po(row, documents: Dict[tuple, set]) -> Callable[[tuple], bool]:
-    """Pass 2's own narrow (R4, 19 Sep 2026, prod C-FH14, SO324265): a candidate must clear
-    BOTH `_narrow_same_month` and `_narrow_sheet_po`, composed rather than duplicated, so a
-    row only lands here when the month and its own citation agree. On C-FH14 the sheet's
-    04-01 row cited PO B while the only line in its month books PO A: under the old single
-    month pass that line still ranked first (nothing else in the month outranked it), which
-    stole it from the row that actually cited A and cascaded every later row onto the wrong
-    line. Splitting the narrow in two lets pass 3 (the citation alone) catch a row like this
-    one BEFORE pass 4, the plain month test the single pass used to be, ever gets a chance to
-    rank the wrong line back in for it."""
-    same_month = _narrow_same_month(row)
-    same_po = _narrow_sheet_po(row, documents)
-
-    def keep(candidate: tuple) -> bool:
-        return same_month(candidate) and same_po(candidate)
-
-    return keep
-
-
-def _rank_for_month(row) -> Callable[[tuple], tuple]:
-    """Passes 2 and 4's own tie-break (AC-LP-4): live before cancelled, then the NEAREST
-    date rather than the earliest - every candidate here already shares the row's month, so
-    "earliest" would only ever prefer the first of the month - then the terms `_rank_for`
-    always closes a tie on.
-
-    The live-before-cancelled term never actually has a cancelled candidate to rank against
-    any more (R7, 19 Sep 2026): both passes are narrowed (`narrow is not None`), so
-    `_run_pass` has already dropped every cancelled line before either ever reaches this
-    function. Kept rather than removed - a defensive term costs nothing and the passes'
-    own narrow, not this rank, is what R7 actually leans on.
-
-    NO citation term (review round 2, 19 Sep 2026 - dropped, 106 tests stayed green): pass
-    2's own narrow (`_narrow_month_and_po`) already means every candidate it sees cites the
-    row, so the term would only ever tie there; pass 4's candidates are a SUPERSET of pass
-    2's, over the SAME ledger, which only ever GROWS between them, so any candidate that
-    could still satisfy the row's citation was already offered to this row in pass 2 - a
-    candidate reaching pass 4 that still ties on citation here can never exist."""
-    wanted = row.delivery_date
-
-    def key(candidate: tuple) -> tuple:
-        line = candidate[0]
-        required = line.required_date
-        # Unreachable in practice: `_narrow_same_month` only ever lets a candidate through
-        # once both dates are known, so the distance below always has two real dates to
-        # compare. Kept defensive rather than assumed.
-        distance = abs((required - wanted).days) if required and wanted else 10**6
-        return (
-            0 if (line.line_status or "open") != "cancelled" else 1,
-            distance,
-            0 if (line.line_status or "open") == "open" else 1,
-            required is None,
-            required or date.min,
-            line.created_at or datetime.min,
-            str(line.id),
-        )
-
-    return key
-
-
-def _rank_for_po(candidate: tuple) -> tuple:
-    """Pass 3's own tie-break (AC-LP-5): live before cancelled, open before closed, the
-    earliest required date, the oldest line, the id - `_narrow_sheet_po` already decided
-    WHICH candidates reached this pass, so nothing about the row itself is read here.
-
-    Pass 3 is narrowed too, so the live-before-cancelled term here is likewise moot in
-    practice (R7, 19 Sep 2026): `_run_pass` never hands this function a cancelled
-    candidate. Kept for the same reason `_rank_for_month`'s does."""
-    line = candidate[0]
-    return (
-        0 if (line.line_status or "open") != "cancelled" else 1,
-        0 if (line.line_status or "open") == "open" else 1,
-        line.required_date is None,
-        line.required_date or date.min,
-        line.created_at or datetime.min,
-        str(line.id),
-    )
-
-
-def _run_pass(
-    matches: List[_Match],
-    plan: _Plan,
-    lines: Dict[str, List[tuple]],
-    taken: Dict[str, Decimal],
-    raised_already: set,
-    *,
-    narrow: Optional[Callable[[Any], Callable[[tuple], bool]]],
-    rank: Callable[[Any], Callable[[tuple], tuple]],
-    order: Sequence[_Match],
-) -> List[_Match]:
-    """Attempt every match in `order`, against candidates `narrow` allows - every line of
-    the row's own order, unnarrowed, when `narrow` is `None` (pass 5, the fallback). A match
-    this places is mutated in place (`core_line`, `line_location`, `already_raised`); a
-    REASON is kept only for the fallback's own final step, because a narrowed attempt that
-    finds nothing has said nothing about the row - the fallback's own unnarrowed read is the
-    first filter that actually refused it (PLAN section 2).
-
-    TWO steps over the same `order`, in every pass including the fallback (R6, 19 Sep 2026,
-    prod CB2805A-DIY / SO324265): first with candidates further narrowed to a line whose
-    `qty_ordered` EQUALS the row's own quantity, then - for whatever is still unplaced - with
-    the pass's ordinary candidates, unnarrowed by quantity, exactly as before. Today's single
-    step carries no quantity term at all, so a sheet row for the SMALLER of two same-date
-    lines could take the BIGGER one on nothing but a created-at tie-break, leaving the
-    bigger row's own line too small or already spent - CB2805A-DIY's own 150-line and
-    230-line, on the SAME date, landed exactly that way; book-wide, 490 rows across 97 sales
-    orders land differently once the equal-quantity line is tried first. A row that splits a
-    line (its own quantity smaller than every candidate, AC-S1-2) never matches the first
-    step and is unaffected, landing in the second exactly as it does today.
-
-    A CANCELLED line may only be taken by the fallback (R7, 19 Sep 2026, prod comparison
-    workbook): dropped from `candidates` before either step of a narrowed pass (`narrow is
-    not None`) ever runs, not merely ranked last inside them. The August-extract ghosts
-    carry their line's ORIGINAL delivery date, so a ghost was routinely the only exact-date
-    candidate a row had, and won pass 1 outright before a live line elsewhere in the order -
-    one the row's own citation named - was ever offered in a later pass (measured,
-    18 Sep prod copy, SO324265 / CB2807-DIY read off the owner's comparison workbook: rows
-    sitting on a cancelled line fell 1,028 to 299; 817 rows moved line, 736 of them off a
-    cancelled line onto a live one; the net landed-row count held at 9,307 and
-    `qty_exceeds_ordered` at 572, but the SET underneath is not the same one - 30 rows that
-    used to land lost their line and 30 others gained one, an accepted cost of running each
-    row through one narrowed pass at a time rather than a global best assignment (PLAN
-    section 5, "Trigger for more machinery")). The equal step still never offers a cancelled
-    line either (review round 2, 19 Sep 2026, blocker 2), but that term now only ever bites
-    in the fallback, since a narrowed pass has nothing cancelled left to filter by the time
-    it gets there - a lone cancelled line still matches through the fallback's second step,
-    exactly as it always has (D1 kept).
-
-    An EMPTY candidate list skips only a NARROWED attempt (review round 2, blocker 1): the
-    equal step is narrowed by definition, and a genuinely narrowed pass finding nothing has
-    said nothing about the row either - but the fallback's own final, UNNARROWED step must
-    still reach `_match_row` even against an empty list, or an order with no lines at all
-    (44 such project-class orders on the 18 Sep prod copy; a line whose product is gone
-    falls out of `_lines_of`'s own inner join the same way) leaves `match.reason` `None`
-    forever, and `apply` unconditionally calls `raiser.raise_row`, which dereferences
-    `match.core_line.id` on a match nothing ever set: an AttributeError that rolls back the
-    whole upload, where the row should simply read `no_line_for_item`.
-
-    Returns the matches from `matches` still unplaced, in `matches`' OWN order - `order` may
-    attempt them in a different sequence (pass 3, AC-LP-5) without disturbing the file order
-    the later passes, and the final reason, rely on.
-    """
-
-    def _attempt(
-        attempt_order: Sequence[_Match], *, equal_qty_only: bool, may_set_reason: bool,
-    ) -> set:
-        placed_ids: set = set()
-        for match in attempt_order:
-            row = match.row
-            candidates = lines.get(str(plan.orders[row.so_number].id)) or []
-            if narrow is not None:
-                # R7 (19 Sep 2026, prod comparison workbook): a cancelled line may only be
-                # taken by the fallback (`narrow is None`). Dropped before the pass's own
-                # narrow runs, so a cancelled line that happens to be the only exact-date
-                # or same-month candidate never wins passes 1 to 4 on that account alone -
-                # it is invisible to them, not merely ranked last inside them.
-                candidates = [
-                    c for c in candidates if (c[0].line_status or "open") != "cancelled"
-                ]
-                keep = narrow(row)
-                candidates = [c for c in candidates if keep(c)]
-            if equal_qty_only:
-                # The `cancelled` term here now only ever bites in the fallback
-                # (`narrow is None`): a narrowed pass has already dropped every cancelled
-                # candidate above (R7), so this is a no-op there and kept only because
-                # duplicating the branch on `narrow` to skip it would cost more than it
-                # saves.
-                wanted = _dec(row.qty)
-                candidates = [
-                    c for c in candidates
-                    if _dec(c[0].qty_ordered) == wanted
-                    and (c[0].line_status or "open") != "cancelled"
-                ]
-            if (narrow is not None or equal_qty_only) and not candidates:
-                continue
-            found, reason = _match_row(row, candidates, taken, rank=rank(row))
-            if found is not None:
-                match.core_line, match.line_location = found[0], found[2] or None
-                match.already_raised = str(found[0].id) in raised_already
-                placed_ids.add(id(match))
-            elif may_set_reason:
-                match.reason = reason
-        return placed_ids
-
-    placed = _attempt(order, equal_qty_only=True, may_set_reason=False)
-    still_pending = [m for m in order if id(m) not in placed]
-    placed |= _attempt(still_pending, equal_qty_only=False, may_set_reason=narrow is None)
-    return [m for m in matches if id(m) not in placed]
-
-
-def _match_in_passes(
-    plan: _Plan,
-    lines: Dict[str, List[tuple]],
-    taken: Dict[str, Decimal],
-    raised_already: set,
-    pending: List[_Match],
-) -> None:
-    """The five passes (PLAN-oi-sheet-line-pick-month-po.md section 2, owner rulings R1 to
-    R7, 19 Sep 2026): exact date; same month AND the sheet's own citation agreeing; the
-    sheet's own citation alone; same month alone; then today's fallback rank - over the ONE
-    `taken` ledger the caller built, so a row placed in an earlier pass takes no further
-    part in a later one. Every one of the five runs its OWN candidate whose `qty_ordered`
-    equals the row's quantity before it ever falls back to its ordinary rank (R6, prod
-    CB2805A-DIY / SO324265: see `_run_pass`, which is the one seam all five passes share).
-    The first four never offer a CANCELLED candidate at all (R7: see `_run_pass`) - only
-    the fifth, the fallback, may still take one.
-
-    R4 (prod C-FH14, SO324265): the sheet's own citation outranks the month when they
-    disagree. Under the old single month pass, a row whose citation named a DIFFERENT
-    purchase order than the only line in its month could still steal that line from a row
-    whose citation actually named it, because nothing in that pass's own rank read the
-    citation ahead of the month itself; splitting it into "month AND citation" (pass 2,
-    ahead of the citation-alone pass) and "month alone" (pass 4, behind it) means a row only
-    ever wins a month-mate's line on citation grounds when its OWN citation is the one that
-    line's book document actually names.
-
-    Passes 1, 2, 4 and 5 attempt `pending` in FILE order, exactly as before. Pass 3 (the
-    citation alone) attempts its own leftovers by the row's OWN delivery date instead
-    (AC-LP-5, the earliest row to the earliest free line), undated rows last, ties broken by
-    file order - but it still RETURNS what is left in `pending`'s own order, so passes 4 and
-    5 read FILE order too.
-    """
-    remaining = _run_pass(
-        pending, plan, lines, taken, raised_already,
-        narrow=_narrow_exact_date,
-        rank=lambda row: _rank_for(row, plan.bought_refs),
-        order=pending,
-    )
-    remaining = _run_pass(
-        remaining, plan, lines, taken, raised_already,
-        narrow=lambda row: _narrow_month_and_po(row, plan.bought_documents),
-        rank=_rank_for_month,
-        order=remaining,
-    )
-    po_order = [
-        match
-        for _, match in sorted(
-            enumerate(remaining),
-            key=lambda pair: (
-                pair[1].row.delivery_date is None,
-                pair[1].row.delivery_date or date.max,
-                pair[0],
-            ),
-        )
-    ]
-    remaining = _run_pass(
-        remaining, plan, lines, taken, raised_already,
-        narrow=lambda row: _narrow_sheet_po(row, plan.bought_documents),
-        rank=lambda row: _rank_for_po,
-        order=po_order,
-    )
-    remaining = _run_pass(
-        remaining, plan, lines, taken, raised_already,
-        narrow=_narrow_same_month,
-        rank=_rank_for_month,
-        order=remaining,
-    )
-    _run_pass(
-        remaining, plan, lines, taken, raised_already,
-        narrow=None,
-        rank=lambda row: _rank_for(row, plan.bought_refs),
-        order=remaining,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1084,14 +642,11 @@ def _pick_lines_by_date_order(
     pending: List[_Match],
 ) -> None:
     """R4 (21 Sep 2026, `PLAN-board-received-stock-own-arrival.md` S4): the whole line pick,
-    replacing `_match_in_passes` and the five citation/month passes above, which this file
-    used for the line pick until 21 Sep 2026. D8 ("closed and fully delivered lines migrate
-    too") and R7's "a cancelled line may still be taken by the fallback, when it is the only
-    line that fits" are BOTH superseded for this pick: a closed or cancelled line is never a
-    candidate here, not even as a last resort (AC-S4-3). The passes' own helpers
-    (`_bought_refs`, `_bought_documents`, `_narrow_sheet_po`, `_rank_for` and the rest) stay
-    defined and are still read for OTHER inputs - `_pair`'s own document linking reads
-    `plan.bought_rows` unchanged - only the LINE pick itself no longer calls them.
+    replacing the five citation/month passes this file used until 21 Sep 2026 (now deleted,
+    along with every helper only they read - the review round of the same day). D8 ("closed
+    and fully delivered lines migrate too") and R7's "a cancelled line may still be taken by
+    the fallback, when it is the only line that fits" are BOTH superseded for this pick: a
+    closed or cancelled line is never a candidate here, not even as a last resort (AC-S4-3).
 
     One sales order at a time: its OPEN lines, sorted by `required_date`; this upload's own
     pending rows for that order, sorted by `delivery_date` (undated last, file order
@@ -1126,12 +681,17 @@ def _pick_lines_by_date_order(
     repair (`_resolve_delivery_date_repairs`), used-row and top-up recovery
     (`_resolve_recovery_matches`) still get first say over the row, unchanged - `row_has_
     free` is a distinction the OLD per-line `already_raised` never had a reason to draw, so
-    gating on it touches nothing that mechanism already owned. `_match_row`'s own quantity
-    gate is likewise untouched (see the comment at its call site below): a row this walk's
-    own earlier rows genuinely outgrew still reports `qty_exceeds_ordered`, at the SAME
-    line (AC-M-8) or any other (AC-S1-5, AC-S1-40) - R4's "never dropped" is about a row
-    losing its OWN line to the free-preferred rank, not a licence to overcharge a line past
-    what it can hold.
+    gating on it touches nothing that mechanism already owned.
+
+    R10 (owner, 21 Sep 2026, same plan) then took the LINE's quantity out of this pick
+    altogether: `_match_row`'s ceiling is now what the whole ORDER still holds open across
+    the lines this row could land on, never one line's own. A row larger than the line its
+    date order gives it lands there regardless, and the difference is written as a "Was
+    {qty} on {date}" note (`_note_for`) - on SO372176 that is what puts OCT26's 70 on L2 (20
+    @ Oct 2026) rather than a year away on L11 (120 @ Dec 2027), which was the last thing
+    still mis-pairing after R4. A row larger than the order itself can hold is still
+    refused `qty_exceeds_ordered` (AC-S1-5, AC-M-8): that is a true statement about the
+    sheet, not an accident of how the order was split into lines.
     """
     by_order: Dict[str, List[Tuple[int, _Match]]] = {}
     for index, match in enumerate(pending):
@@ -1201,12 +761,28 @@ def _pick_lines_by_date_order(
             }
             row_has_free = bool(item_candidate_ids - raised_already)
 
-            def _rank(candidate: tuple, free_ids=candidate_ids - raised_already - used_this_walk) -> tuple:
+            def _rank(
+                candidate: tuple,
+                free_ids=candidate_ids - raised_already - used_this_walk,
+                want=_dec(match.row.qty),
+            ) -> tuple:
                 line = candidate[0]
                 line_id = str(line.id)
                 free = line_id in free_ids
+                # R10 (21 Sep 2026): room is a PREFERENCE among the lines nobody has
+                # claimed yet, never a filter - `_match_row`'s ceiling is the order's now,
+                # so an over-full line is still a legal landing place. Read only for a
+                # NON-free candidate, so it can never reorder the free ones: among free
+                # lines the date order is the whole rule (SO372176's OCT26/70 belongs on
+                # L2, 20 @ Oct 2026, not on whichever far-off line happens to be big
+                # enough to hold 70). Among lines this walk has already spent, a line that
+                # still has room takes the bumped row ahead of one this walk has already
+                # filled (AC-LP-12 "bumped"), and where none has room the last open line
+                # takes it as a second row (AC-S4-2).
+                room = _dec(line.qty_ordered) - taken.get(line_id, _ZERO) >= want
                 return (
                     0 if free else 1,
+                    0 if (free or room) else 1,
                     0 if (free or line_id == last_id) else 1,
                     line.required_date is None,
                     line.required_date or date.max,
@@ -1215,16 +791,12 @@ def _pick_lines_by_date_order(
                 )
 
             found, reason = _match_row(match.row, candidates, taken, rank=_rank)
-            # `_match_row`'s own qty gate (`fits`) is left exactly as it is: a genuine
-            # `qty_exceeds_ordered` - this walk's OWN earlier rows already spent a
-            # candidate's capacity, whether at the SAME line (AC-S1-40, AC-M-8) or because
-            # the row's raw quantity never fit anything at all (AC-S1-5) - stays a reported
-            # refusal, never bypassed. Trying to bypass it generally (an earlier draft of
-            # this fix round did, "when order_has_free, ignore capacity") turned three
-            # genuine `qty_exceeds_ordered` facts into silent over-charges instead; the
-            # ONE thing this fix round actually needed - AC-LP-12 "bumped" - never reaches
-            # this branch at all (its second row fits its paired line on ordinary, unspent
-            # capacity; only `already_raised`, below, was ever wrong for it).
+            # `_match_row`'s quantity gate is the ORDER's since R10 (21 Sep 2026): the
+            # date order decides the line, and the row lands there whatever that one line
+            # was booked for. A genuine `qty_exceeds_ordered` - this walk's own earlier
+            # rows have spent everything the order still held open (AC-S1-40, AC-M-8), or
+            # the row's raw quantity never fit the order at all (AC-S1-5) - is still a
+            # reported refusal, never bypassed.
             if found is not None:
                 match.core_line, match.line_location = found[0], found[2] or None
                 # AC-LP-12 "bumped": a row landing on a line ALREADY carrying a row is the
@@ -2109,16 +1681,10 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     plan.bought_rows = _bought_rows(
         db, [held[0] for group in lines.values() for held in group]
     )
-    plan.bought_refs = _bought_refs(plan.bought_rows)
-    #: The same rows, this time by the document NUMBER the book bought each line with
-    #: (`_bought_documents`) - what the same-month and sheet-PO passes read to tell a
-    #: candidate line the sheet's own citation also names (PLAN section 2, "Book PO per
-    #: line").
-    plan.bought_documents = _bought_documents(db, plan.bought_rows)
-    #: How much of each line this FILE has already spoken for, in file order - shared by all
-    #: five passes of the line pick below, so a row placed by an earlier pass is unavailable
-    #: to a later one, and a re-upload charges exactly what the first upload charged
-    #: (`_match_row`, "Ledger", reversing review finding 9 of 14 Sep on purpose).
+    #: How much of each line this FILE has already spoken for, in file order - read by the
+    #: date-order line pick below, so a row placed by an earlier row of this same file is
+    #: unavailable to a later one, and a re-upload charges exactly what the first upload
+    #: charged (`_match_row`, "Ledger", reversing review finding 9 of 14 Sep on purpose).
     taken: Dict[str, Decimal] = {}
 
     #: The instructions stated for each `_restates` key so far, in the order they were
@@ -2150,10 +1716,12 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             # one ever seen" (D7, R5). Counted, never matched: a restatement must not take
             # the line's quantity from the row it restates, or the second tab would read
             # `qty_exceeds_ordered`.
-            first = instructions[position]
             match.duplicate = True
-            if row.po_numbers and not first.row.po_numbers:
-                first.row = replace(first.row, po_numbers=row.po_numbers)
+            # The sheet's own PO citation used to be LENT to the row this one restates
+            # (a duplicate carrying a remark the first row lacked). Nothing reads a
+            # citation any more - the five citation/month passes it fed were retired by
+            # R4's date-order pick, and `cited_document` on a raised row has been `None`
+            # since section 8 - so lending it moved a field nobody looks at.
             continue
         # `position == len(instructions)`: no earlier tab reached this many rows of this key,
         # so this row is a NEW instruction - whether or not this same tab already stated the
@@ -2349,20 +1917,6 @@ def _bought_rows(
         .all()
     )
     return allocations, po_lines
-
-
-def _bought_refs(rows: Tuple[Sequence[Any], Sequence[Any]]) -> set:
-    """`(ref, product)` for every line the book BOUGHT for (section 7, R2 finished).
-
-    The product is part of the key, exactly as it is in `_ref_targets`: a stale ref on a
-    document for another item says nothing about this line.
-    """
-    allocations, po_lines = rows
-    return {
-        (str(row.from_so_line_ref), str(row.product_id or ""))
-        for row in list(allocations) + list(po_lines)
-        if row.from_so_line_ref
-    }
 
 
 def _ref_targets(
@@ -2993,11 +2547,45 @@ def _stamp_orders(plan: _Plan) -> int:
     return stamped
 
 
-def _note_for(row, file_name: Optional[str]) -> str:
-    """The migration stamp, with the operator's own remark kept after it (AC-S1-28)."""
-    stamp = f"{_MIGRATION_STAMP} {file_name}".strip() if file_name else _MIGRATION_STAMP
+def _note_for(row, file_name: Optional[str], core_line: Any = None) -> str:
+    """The migration stamp, with the operator's own remark kept after it (AC-S1-28), and -
+    where this row states MORE than the line it landed on was booked for - R10's own
+    "Was {qty} on {date}" fragment naming what that line holds.
+
+    R10 (owner, 21 Sep 2026) let a sheet row land on the line its date order gives it even
+    when the row is bigger than that line's `qty_ordered` (`_match_row`), so the note is
+    where the difference is recorded: "Was 20 on 2026-01-01" beside a row of 70 says the
+    book holds 20 on that date and the sheet states 70. The same `f"Was {qty} on {date}"`
+    fragment every other Was/Now writer in this file uses, so nothing new has to be taught
+    to read it.
+
+    EXCEEDS, not merely differs: a row SMALLER than its line is the ordinary shape the sheet
+    has always had - one line split across several deliveries (AC-S1-2) - and there is no
+    mismatch to record for it. R10's own wording is "even when its qty exceeds that line's
+    ordered qty; the difference is the ordinary Was note", and a note written for every
+    partial row would also break the bare-stamp premise the rollback tool rests on
+    (AC-R-18: an upload with no file name and no remark carries the stamp alone).
+
+    The operator's own remark STILL ends the note (AC-S1-28): the fragment goes between the
+    stamp and the remark, because the remark is what a person reads last (AC-R-19,
+    `test_cited_po_is_linked_in_full`).
+    """
+    from app.services.project_order_inquiry_service import _qty_str
+
+    parts = [f"{_MIGRATION_STAMP} {file_name}".strip() if file_name else _MIGRATION_STAMP]
+    if (
+        core_line is not None
+        and core_line.required_date is not None
+        and _dec(row.qty) > _dec(core_line.qty_ordered)
+    ):
+        parts.append(
+            f"Was {_qty_str(_dec(core_line.qty_ordered))} on "
+            f"{core_line.required_date.isoformat()}"
+        )
     remark = (getattr(row, "remark", "") or "").strip()
-    return f"{stamp}; {remark}" if remark else stamp
+    if remark:
+        parts.append(remark)
+    return "; ".join(parts)
 
 
 class _Raiser:
@@ -3156,7 +2744,7 @@ class _Raiser:
             # links, so there is nothing this row could honestly say it cites. The operator's
             # own words are on the note, which is where a person reads what the sheet said.
             cited_document=None,
-            note=_note_for(row, file_name),
+            note=_note_for(row, file_name, match.core_line),
             state=INQUIRY_RAISED,
             # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1): this is a
             # migration of instructions purchasing has been working from for months, not a

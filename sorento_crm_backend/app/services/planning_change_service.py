@@ -1463,13 +1463,18 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
     see nothing placed there and the suggestion would offer to drop a real purchase order.
 
     `qty` is the SUM of every link, unchanged (arrival/late maths still reads the whole of
-    it). `po_qty` (D1, R1) is the OPEN part - link qty on a `po_line_id` link whose PO line
-    is not yet fully received, `_received_documents_for`'s own test
-    (`project_order_inquiry_service.py`) - the only part a suggestion may still reallocate.
-    `received_qty` is the rest: link qty on a received PO line, or on an SPO allocation
-    judged received (the negation of `scm.spo_supply.open_incoming_clauses`, reused via
-    `_received_documents_for` rather than restated a second time). A received link is stock
-    in hand for this line (R1) - it is never offered back to `reallocate_to`.
+    it). `po_qty` (D1, R1) is what a suggestion may still reallocate: link qty on a link
+    that CARRIES a `po_line_id` and whose PO line is not yet fully received
+    (`_received_documents_for`'s own test, `project_order_inquiry_service.py`). Both halves
+    of that are load-bearing (AC-S2-4, review round SF12): `_document_links_by_row` filters
+    `OrderInquiryLink.po_line_id.isnot(None)`, so an SPO-allocation link is something
+    Confirm can never re-deal no matter how OPEN it is, and counting it here would offer a
+    planner a move the apply would then refuse. `received_qty` is the landed part: link qty
+    on a received PO line, or on an SPO allocation judged received (the negation of
+    `scm.spo_supply.open_incoming_clauses`, reused via `_received_documents_for` rather
+    than restated a second time). A received link is stock in hand for this line (R1) - it
+    is never offered back to `reallocate_to`. An OPEN SPO-allocation link is in `qty`
+    alone, and in neither of the other two.
 
     `arrival_date` is when that supply is expected: the purchase order LINE's own date,
     else the order's, else the date the inquiry row was raised against - the date the
@@ -1510,7 +1515,14 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
     received_qty = sum(
         (_dec(link.qty) for link in links if str(link.id) in received), _ZERO,
     )
-    po_qty = total - received_qty
+    po_qty = sum(
+        (
+            _dec(link.qty)
+            for link in links
+            if link.po_line_id and str(link.id) not in received
+        ),
+        _ZERO,
+    )
     po_line_ids = [str(link.po_line_id) for link in links if link.po_line_id]
     arrivals: List[date] = []
     if po_line_ids:
@@ -2769,6 +2781,12 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
     each naming the PO. The amend still stands for whatever reserve at that SAME warehouse
     it keeps; only the part that would drop BELOW what is credited is refused, so amending
     the remainder (an ordinary reserve or Buy beside the credit) is untouched.
+
+    A credit source carrying NO `warehouse_id` names no pile the composition can be judged
+    against, so it is logged and treated as NOT credited (security review, nit 5). It used
+    to compare against zero and therefore refuse EVERY amend of such a row - one malformed
+    proposal would have locked a planner out of amending that line at all, with a message
+    naming a PO they could do nothing about.
     """
     credit_sources = [
         s for s in (row.proposal_json or {}).get("sources") or []
@@ -2786,7 +2804,14 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
         if credited <= _ZERO:
             continue
         wh = source.get("warehouse_id")
-        still_reserved = reserved_by_wh.get(wh, _ZERO) if wh else _ZERO
+        if not wh:
+            logger.warning(
+                "own_arrival credit source on planning row %s names no warehouse_id; "
+                "not treated as credited (qty=%s document=%s)",
+                row.id, source.get("qty"), source.get("supply_document"),
+            )
+            continue
+        still_reserved = reserved_by_wh.get(wh, _ZERO)
         if still_reserved < credited:
             po = source.get("supply_document")
             message = (
