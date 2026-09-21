@@ -466,12 +466,18 @@ def _clarify_gate(context_item: dict[str, Any], ctx: dict[str, Any]) -> bool:
     * The n8n arm, unchanged: the previous turn left a MEMBER offer open and it carried
       rows (`selection_context` + `last_result_set`, the pair `compile-current-state`
       persists).
-    * The re-arch arm (hand pass 11, blocker 2; owner ruling "we clarify the company with
-      the user when it is not clear"): a multi-company ROSTER PLAN, which is the pool the
-      escalate offer itself listed. It cannot fire on the n8n path - `sub_answer.
-      miss_roster_plan:318-323` caps that producer's plan at ONE row, so a plan of two or
-      more only exists where this engine minted the offer itself
-      (`turn_runtime.escalation_roster_plan`, off the accepted offer's own options).
+    * The re-arch arm: a multi-company ROSTER PLAN, which is the pool the escalate offer
+      itself listed. Reachable on EITHER path, deliberately (reviewer SF-1, hand pass 11
+      final re-check): this engine mints its own offer
+      (`turn_runtime.escalation_roster_plan`, off the accepted offer's own options), but
+      `tail/member_offer.cs_roster_plan` also emits one row per `gate.routing_companies`
+      entry, which `compile-current-state` persists verbatim as the SAME
+      `variables.routing_roster_plan` (`sub_answer.miss_roster_plan` caps only ITS OWN
+      producer's plan at one row). So a carried-over n8n session with a 2-row plan and no
+      `selection_context == "member_offer"` - its own member-roster read came back empty -
+      now clarifies where it used to fall through to a blind round robin. Fail-safe by
+      direction (a clarify beats a wrong assignment); the owner ruling above ("we clarify
+      the company with the user when it is not clear") covers this arm too.
     """
     prev = _prev_variables(ctx)
     if jsc.get(context_item, "routing_source") != "multi_company_unpicked":

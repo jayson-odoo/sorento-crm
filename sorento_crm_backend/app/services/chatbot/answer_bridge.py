@@ -276,23 +276,6 @@ def _crossdomain_offer_pending(
     )
 
 
-def _brand_by_company(gate: Any) -> dict[str, Any]:
-    """`gate.routing_companies`, keyed by company id, valued with that company's own
-    `brand_code` - the ONE place either escalate offer reads a brand from.
-
-    `run_gate` (`lanes/business/gate.py:1636-1660`) computes this axis from the same
-    compatible entities the "checked in X and Y" sentence is built from, and production's
-    own `sub_answer.miss_roster_plan:388-410` joins against it for exactly this field on
-    exactly this row shape. A second derivation here would be a chance for the two to
-    disagree about a company's brand.
-    """
-    return {
-        str(row.get("company_id")): row.get("brand_code")
-        for row in (gate.get("routing_companies") if isinstance(gate, Mapping) else None) or []
-        if isinstance(row, Mapping) and row.get("company_id")
-    }
-
-
 def apply_silent_company_offer(
     answer: turn_compose.Answer,
     *,
@@ -401,12 +384,11 @@ def apply_silent_company_offer(
                     "payload": {
                         "company": company["name"],
                         "company_id": company["id"],
-                        # The SAME join production's `sub_answer.miss_roster_plan:388-410`
-                        # makes for the identical roster row: the brand off the gate's own
-                        # per-company axis, never a second derivation. It only narrows the
-                        # assignee pool (`next-assignee` keeps brand-tagged plus untagged
-                        # members), so an absent gate degrades to the wider draw.
-                        "brand_code": _brand_by_company(gate).get(str(company["id"])),
+                        # Reviewer SF-3 (hand pass 11 final): no join against
+                        # `gate.routing_companies` any more - a brand nothing verified
+                        # for the SILENT company was scope beyond this offer's own
+                        # blocker. Key kept so the roster row shape stays the same.
+                        "brand_code": None,
                     },
                 }
             ],
@@ -940,9 +922,10 @@ def _searched_companies(resolved: Any, gate: Any) -> list[dict[str, Any]]:
     One row per company, in the `routing_roster_plan` shape routing already speaks
     (`company_id` / `company_name` / `brand_code`): the ID is what
     `lanes/escalation.py::_next_assignee_body` posts and the NAME routes nothing at all
-    (hand pass 11, blocker 1). `brand_code` is joined off `gate.routing_companies` - the
-    SAME join production's own `sub_answer.miss_roster_plan:388-410` makes for the
-    identical row, rather than a second derivation of a fact the gate already computed.
+    (hand pass 11, blocker 1). `brand_code` is always `None` (reviewer SF-3, hand pass 11
+    final): a join against `gate.routing_companies` narrowed the assignee draw by a brand
+    nothing verified for the silent company, and it was scope beyond this offer's own
+    blocker. The key stays so the row shape matches `routing_roster_plan` elsewhere.
 
     Mirrors the join `lanes/business/answer.py:2941-2954` performs for the "checked in X
     and Y" SENTENCE, including its `_NO_TOOL_ID` skip (SF-3, hand pass 11 review): a
@@ -955,18 +938,17 @@ def _searched_companies(resolved: Any, gate: Any) -> list[dict[str, Any]]:
     `resolutions`, but an AND-mode hit reports them under `intersection` instead, and
     this reader must not care which).
     """
-    from app.services.chatbot.lanes.business.answer import _NO_TOOL_ID
+    from app.services.chatbot.lanes.business.answer import NO_TOOL_ID
     from app.services.chatbot.turn_runtime import companies_by_uuid
 
     co_by_uuid = companies_by_uuid(resolved)
-    brand_by_company = _brand_by_company(gate)
     compat = gate.get("compatible_entities") if isinstance(gate, Mapping) else None
     searched: list[dict[str, Any]] = []
     seen: set[str] = set()
     for c in compat if isinstance(compat, list) else []:
         if not isinstance(c, Mapping):
             continue
-        if str(c.get("entity_type") or "") in _NO_TOOL_ID:
+        if str(c.get("entity_type") or "") in NO_TOOL_ID:
             continue
         company = co_by_uuid.get(c.get("uuid"))
         if not company or company["company_name"] in seen:
@@ -976,7 +958,7 @@ def _searched_companies(resolved: Any, gate: Any) -> list[dict[str, Any]]:
             {
                 "company_id": company.get("company_id"),
                 "company_name": company["company_name"],
-                "brand_code": brand_by_company.get(str(company.get("company_id"))),
+                "brand_code": None,
             }
         )
     return searched

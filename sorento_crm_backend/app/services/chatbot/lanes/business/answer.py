@@ -2250,6 +2250,9 @@ _CODE_FIRST_TYPES = frozenset({"product"})
 # allowed type does carry a param today, so if the CRM later gives `category` one this
 # UNDER-claims instead of over-claiming. Silence is recoverable; a false statement is not.
 _NO_TOOL_ID = frozenset({"brand", "category"})
+#: Public alias (reviewer nit, hand pass 11 final): `answer_bridge._searched_companies`
+#: imports this across modules and a private name should not cross that boundary.
+NO_TOOL_ID = _NO_TOOL_ID
 
 _SCOPE_WORD = {
     "order": "delivery order",

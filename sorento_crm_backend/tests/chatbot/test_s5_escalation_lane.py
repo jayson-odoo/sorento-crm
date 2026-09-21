@@ -432,6 +432,41 @@ def test_clarify_company_ask_always_in_reply() -> None:
     services.next_assignee.assert_not_called()
 
 
+def test_clarify_gate_fires_on_multi_row_roster_with_no_member_offer_state() -> None:
+    """Reviewer SF-1 (hand pass 11 final re-check): the multi-row-roster arm IS reachable
+    on the n8n path, contrary to `_clarify_gate`'s old comment. `sub_answer.miss_roster_plan`
+    caps ITS OWN producer's plan at one row, but `tail/member_offer.cs_roster_plan` (the
+    OTHER producer of `variables.routing_roster_plan`) emits one row per
+    `gate.routing_companies` entry, and `compile-current-state` persists that verbatim - so
+    a session carrying a 2-row plan with NO `selection_context == "member_offer"` (its own
+    member roster read came back empty) must still clarify, not fall through to a blind
+    round robin. `test_clarify_company_ask_always_in_reply` above also carries
+    `selection_context: "member_offer"`, so it cannot tell the two arms apart; this ctx is
+    the SAME shape `test_escalation_context_ladder`'s `multi_company_unpicked` rank case
+    uses, run through the lane instead of just `escalation_context`."""
+    from app.services.chatbot.lanes.escalation import run
+
+    ctx = _ctx(
+        routing={"suggested_team": "customer_service"},
+        prev_variables={
+            "routing": {"suggested_team": "customer_service"},
+            "routing_roster_plan": [
+                {"company_id": "c-mocha", "company_name": "Mocha"},
+                {"company_id": "c-sorento", "company_name": "Sorento"},
+            ],
+        },
+    )
+    item = _item(brand_code=None, company_id=None, company_name=None, routing_source="multi_company_unpicked", team="customer_service")
+    services = _services()
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "clarify"
+    assert result["pending"] is not None
+    assert result["pending"]["kind"] == "company_clarify"
+    services.next_assignee.assert_not_called()
+
+
 # --------------------------------------------------------------------------- #
 # AC-502: the assignment path, in order (unchanged - `sub-human-intervention` has no
 # Code nodes, so the live bodies are byte-identical to the first pass)

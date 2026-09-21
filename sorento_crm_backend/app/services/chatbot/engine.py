@@ -766,9 +766,8 @@ def run_turn(
     # read, and the offload path's row close - carries the contact's company scope.
     # Resolved once, on a session of its own, from the same rule the X-API-Key
     # dependency uses. An unknown contact fails closed to zero rows.
-    session_factory = _scoped_factory(
-        session_factory, _contact_company_scope(session_factory, contact_respond_id)
-    )
+    contact_scope = _contact_company_scope(session_factory, contact_respond_id)
+    session_factory = _scoped_factory(session_factory, contact_scope)
 
     if offload is None:
         offload = bool(getattr(settings, "chatbot_turn_on_worker", False))
@@ -910,6 +909,7 @@ def run_turn(
                 turn_trace=turn_trace,
                 turn_id=turn_id,
                 contact_respond_id=contact_respond_id,
+                contact_scope=contact_scope,
                 dry_run=dry_run,
                 actions=actions,
                 stage=stage,
@@ -1144,6 +1144,7 @@ def _run_stages(  # noqa: PLR0915
     turn_trace: trace_mod.TurnTrace,
     turn_id: str,
     contact_respond_id: str,
+    contact_scope: frozenset,
     dry_run: bool,
     actions: list[dict[str, Any]],
     stage: list[str],
@@ -1153,7 +1154,9 @@ def _run_stages(  # noqa: PLR0915
 
     `switches` is the settings snapshot `run_turn` already read (AC-810): this function
     does not read the singleton itself, because S7 mode is needed before the ticket, which
-    is before this runs.
+    is before this runs. `contact_scope` is the SAME frozenset `run_turn` already resolved
+    to build the scoped `session_factory` - threaded through rather than re-queried, for
+    the roster-plan re-validation below (security SF-1, hand pass 11 final).
     """
     with _session(session_factory) as db:
         # AC-108: today's `set-human-intervened` path. The turn CONTINUES; the caller
@@ -1473,6 +1476,19 @@ def _run_stages(  # noqa: PLR0915
             accepted_lane=plan.trace.lane,
             accepted_rules=plan.trace.rules_fired,
         )
+        # Security SF-1 (hand pass 11 final): the plan is minted from a PERSISTED offer,
+        # which can be turns old, so a row's company must still be in the contact's
+        # CURRENT scope before it drives routing - a revoked membership must not keep
+        # routing to the company it lost. Filtered here, at the one injection point, so
+        # the printed clarify pool and the routed id can never disagree. An emptied plan
+        # degrades to `None`, which is the contact-derived company in
+        # `resolve_routing_company` - the pre-feature behaviour.
+        if roster_plan:
+            roster_plan = [
+                row
+                for row in roster_plan
+                if row.get("company_id") and str(row["company_id"]) in contact_scope
+            ] or None
         if roster_plan:
             session_vars = session_block.get("session_vars") if isinstance(session_block, dict) else None
             prior_variables = (session_vars or {}).get("variables") or {}
@@ -3857,6 +3873,12 @@ def _question_offered(
             if not jsc.truthy(row):
                 continue
             label = jsc.get(row, "label") or jsc.get(row, "company_name") or jsc.get(row, "name")
+            # Security N-2 (hand pass 11 final): for `kind == "company"` this `value` is a
+            # COMPANY id, not an entity uuid. It is safe here only because
+            # `ESCALATION_OFFER_KINDS` routes `company_pick` to `turn/apply.py::
+            # _answer_offer` BEFORE the generic roster path, so it never reaches
+            # `focus.uuids` or a tool call - removing `company_pick` from that set would
+            # change that.
             value = jsc.get(row, "team") or jsc.get(row, "uuid") or jsc.get(row, "company_id")
             built.append(
                 {

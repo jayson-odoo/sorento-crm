@@ -62,6 +62,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.models.access import RespondContact
+from app.models.company import RespondContactCompany
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes import escalation as escalation_mod
 from app.services.chatbot.lanes.business.services import FetchServices
@@ -114,6 +116,19 @@ def _open_question_for(session_factory: Any, contact_id: str) -> dict[str, Any]:
     raw = row.session_vars if row is not None else {}
     sv = json.loads(raw) if isinstance(raw, str) else (raw or {})
     return sv.get("open_question") or {}
+
+
+def _focus_for(session_factory: Any, contact_id: str) -> dict[str, Any]:
+    from sqlalchemy import text as _sql_text
+
+    db = session_factory()
+    row = db.execute(
+        _sql_text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
+        {"cid": contact_id},
+    ).first()
+    raw = row.session_vars if row is not None else {}
+    sv = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    return sv.get("focus") or {}
 
 
 # --------------------------------------------------------------------------- #
@@ -179,6 +194,95 @@ class TestBlocker1SilentCompanyOfferRoutesByRealCompanyId:
             f"with no assignee answer overriding it, the SLA row must fall back to the "
             f"SAME real company id the round robin was asked to draw from: {sla_body!r}"
         )
+
+
+def _revoke_company(session_factory: Any, *, contact_id: str, company_id: str) -> None:
+    """Simulates a membership revoked BETWEEN turns - `respond_contact_companies` is
+    admin-managed, not derived, so this is a real state a contact's scope can reach."""
+    db = session_factory()
+    contact = db.query(RespondContact).filter(RespondContact.respond_io_id == contact_id).one()
+    db.query(RespondContactCompany).filter(
+        RespondContactCompany.respond_contact_id == contact.id,
+        RespondContactCompany.company_id == company_id,
+    ).delete()
+    db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Security SF-1 (hand pass 11 final re-check) - a company carried on a PERSISTED
+# offer must be re-validated against the contact's CURRENT scope on the answering
+# turn, not just trusted because it was in scope when the offer was minted.
+# --------------------------------------------------------------------------- #
+
+
+class TestSF1RevokedCompanyScopeDoesNotRoute:
+    def test_membership_revoked_between_turns_does_not_route_to_the_lost_company(
+        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        """Same scenario as `TestBlocker1SilentCompanyOfferRoutesByRealCompanyId` (that
+        test is the "an in-scope id still routes" half of this finding - unmodified,
+        still green with the fix in place) - Mocha hit, Sorento silent, EXCEPT the
+        contact's membership in Sorento is revoked between the offer and the bare
+        "yes" that would have escalated to it. The carried `company_id` must not
+        survive that: `_next_assignee_body`'s `company_id` must NOT be Sorento's id
+        (None, or the contact-derived default - never the company the contact lost)."""
+        ids = _two_company_chain(session_factory)
+        envelope = _orders_envelope(
+            [_order_row(MOCHA, "ZZTM2609-0901"), _order_row(MOCHA, "ZZTM2609-0902")],
+            [{"id": ids["a"], "name": MOCHA}, {"id": ids["b"], "name": SORENTO}],
+        )
+        _wire(session_factory, system_settings_row, monkeypatch, envelope=envelope)
+        stub_parser(_order_verdict())
+        stub_access()
+
+        result = engine_mod.run_turn(
+            _scope_envelope(MULTICO_CONTACT_ID, message_id="zzt-sf1-1", text=f"{PRODUCT_CODE} kim seng jaya send yet"),
+            session_factory=session_factory,
+        )
+        assert result.status == "done", result.error
+        assert f"escalate to *{SORENTO}*" in _said(result), _said(result)
+        pending = _open_question(session_factory)
+        assert pending, pending
+
+        # Membership revoked BEFORE the answering turn - the pending option still
+        # carries Sorento's id, but the contact can no longer see Sorento at all.
+        _revoke_company(session_factory, contact_id=MULTICO_CONTACT_ID, company_id=ids["b"])
+
+        calls: list[tuple[Any, Any]] = []
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", _fake_escalation_lane(calls))
+        stub_parser(
+            _parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                is_affirmative=True, escalation={"is_escalation_confirmation": True, "company_pick": None},
+            )
+        )
+        result2 = engine_mod.run_turn(
+            _scope_envelope(MULTICO_CONTACT_ID, message_id="zzt-sf1-2", text="yes"),
+            session_factory=session_factory,
+        )
+        assert result2.branch_kind == "out_of_scope", (result2.branch_kind, result2.error)
+        assert len(calls) == 1, calls
+        ctx, item = calls[0]
+        ec = escalation_context(item, ctx=ctx)
+
+        next_body = _next_assignee_body(ctx, ec)
+        assert next_body.get("company_id") != ids["b"], (
+            f"a company the contact is no longer scoped to must never reach the "
+            f"round-robin body just because it rode along on a stale pending: {next_body!r}"
+        )
+
+        sla_body = _sla_body(ctx, ec, assignee={})
+        assert sla_body.get("company_id") != ids["b"], sla_body
+
+    # Kill-test proof (measured this session, reverted and restored, `git diff`
+    # confirmed clean before committing): reverting `engine.py`'s roster-plan scope
+    # filter (the `if roster_plan: roster_plan = [row for row in roster_plan if ...]
+    # or None` block, hoisted from `contact_scope`) back to an unconditional pass-
+    # through makes `test_membership_revoked_between_turns_does_not_route_to_the_lost_
+    # company` fail at `next_body.get("company_id") != ids["b"]` (Sorento's revoked id
+    # comes back anyway), and leaves `TestBlocker1SilentCompanyOfferRoutesByRealCompanyId`
+    # and the rest of this file green (the mutation only removes a filter that this
+    # test is the sole one to exercise a REVOKED scope against).
 
 
 # --------------------------------------------------------------------------- #
@@ -382,6 +486,7 @@ class TestThirdTurnClarifyAnswerRoutesByCompanyId:
             f"positions follow the printed order (Mocha first) - the offer's own "
             f"printed pool: {options!r}"
         )
+        focus_before = _focus_for(session_factory, MULTICO_CONTACT_ID)
 
         # T3 - "1" answers the persisted company_pick by POSITION.
         calls: list[tuple[Any, Any]] = []
@@ -411,6 +516,19 @@ class TestThirdTurnClarifyAnswerRoutesByCompanyId:
         assert next_body.get("company_id") == ids["a"], (
             f"the round robin must be handed Mocha's real company id: {next_body!r}"
         )
+
+        # Security N-2 (hand pass 11 final): Mocha's `company_id` is a COMPANY id, not a
+        # product/customer entity - it must never reach `focus.uuids`.
+        # `ESCALATION_OFFER_KINDS` routes `company_pick` to `_answer_offer` before the
+        # generic roster path, so a casual "1" over this pending leaves focus exactly
+        # where T1's resolve left it.
+        focus_after = _focus_for(session_factory, MULTICO_CONTACT_ID)
+        assert [p.get("uuid") for p in focus_after.get("products") or []] == [
+            p.get("uuid") for p in focus_before.get("products") or []
+        ], (focus_before, focus_after)
+        assert [c.get("uuid") for c in focus_after.get("customers") or []] == [
+            c.get("uuid") for c in focus_before.get("customers") or []
+        ], (focus_before, focus_after)
 
     # Kill-test proof (measured this session, reverted and restored, `git diff`
     # confirmed clean before committing): reverting
