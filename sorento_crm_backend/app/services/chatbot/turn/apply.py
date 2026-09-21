@@ -50,7 +50,7 @@ from app.services.chatbot.turn.pending import (
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.reconcile import apply_reconciliation
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, State
+from app.services.chatbot.turn.state import EXTRA_KIND_ALIASES, KIND_FIELD_MAP, Focus, State
 
 RESET_KEEPS = {"tier", "brands"}
 
@@ -128,7 +128,10 @@ def _set_kind_field(focus: Focus, kind: str, entities: list[dict[str, Any]]) -> 
     if attr:
         setattr(focus, attr, entities)
     else:
-        focus.extra[kind] = entities
+        # EXTRA_KIND_ALIASES: "customer_order"/"order_number" share the "order" bucket
+        # (hand pass 12, Group B) - a pick REPLACES the whole bucket, which is what
+        # retires the missed raws it settles rather than leaving them beside the answer.
+        focus.extra[EXTRA_KIND_ALIASES.get(kind, kind)] = entities
 
 
 def _names_a_subject(verdict: dict[str, Any]) -> bool:
@@ -585,7 +588,15 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
                     "current_message": True,
                     "confident": True,
                 }
-                if name:
+                # Hand pass 12, Group F: `name` only when this option is ONE identity
+                # (a single uuid) - the resolver's own name for the one row it matched.
+                # An option covering SEVERAL uuids (a ledger family/company rollup) has
+                # no name of its own for any ONE of them, and stamping the family's
+                # rollup label onto every ledger is what printed "Customer: ZZT-B094"
+                # for three distinct ledgers - the code twice, no ledger ever named.
+                # Left absent, `turn_runtime.fill_customer_names` (DB access, which
+                # this pure module may not have) fills each row's OWN name by its uuid.
+                if name and len(uuids) <= 1:
                     entity["name"] = name
                 built.append(entity)
         kind_for_focus = matched[0].get("entity_type")
@@ -596,7 +607,12 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
             # over a ten-variant roster is an explicit answer, and `narrow_to_code`'s
             # "ten codes is still ten codes" re-ask (written for a CARRY) printed the
             # very roster that had just been answered straight back.
-            trace.picked_kinds.append(str(kind_for_focus))
+            #
+            # The ALIASED kind, not the option's raw `entity_type` - `_narrow_and_plan`'s
+            # `just_picked = kind in picked` reads the policy's own kind name ("order"),
+            # and a "customer_order" pick that recorded itself under the unaliased name
+            # would never match it (hand pass 12, Group B).
+            trace.picked_kinds.append(str(EXTRA_KIND_ALIASES.get(kind_for_focus, kind_for_focus)))
 
         trace.rules_fired.append("answer_pending")
         # Contract 121: a pick never re-domains the turn. The question recorded the

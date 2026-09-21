@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile, fold_token
+from app.services.chatbot.turn.state import (
+    EXTRA_KIND_ALIASES,
+    KIND_FIELD_MAP,
+    Focus,
+    Profile,
+    fold_token,
+)
 
 # Which suffix an ask carries, by policy value.
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
@@ -26,7 +32,9 @@ def _candidates(focus: Focus, kind: str) -> list[dict[str, Any]]:
     if attr:
         value = getattr(focus, attr, [])
         return list(value) if isinstance(value, list) else []
-    return list(focus.extra.get(kind, []))
+    # EXTRA_KIND_ALIASES: "customer_order"/"order_number" read the SAME "order" bucket
+    # `apply._set_kind_field` writes them to (hand pass 12, Group B).
+    return list(focus.extra.get(EXTRA_KIND_ALIASES.get(kind, kind), []))
 
 
 def _choices(candidates: list[dict[str, Any]], grouping: str | None) -> int:

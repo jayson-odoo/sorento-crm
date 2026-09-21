@@ -1303,6 +1303,13 @@ def make_tool_runner(
             if page_predicate is not None
             else _entities_for(spec, compatible_entities)
         )
+        # Hand pass 12, Group F: a multi-ledger customer pick's own entities carry no
+        # `display_name` at all (`turn/apply.py::_answer_pending` leaves it off on
+        # purpose for an option covering several uuids) - filled in here, the same
+        # DB-backed read `resolve_kinds` already does for a freshly-resolved customer
+        # (line ~906 above), so the miss header can name each ledger rather than
+        # falling back to the option's own rollup code.
+        fill_customer_names(db, entities)
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
         # and `predicate` are still set exactly as today, below, overriding whatever

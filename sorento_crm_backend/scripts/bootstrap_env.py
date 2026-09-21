@@ -641,19 +641,20 @@ def seed_chatbot_policy() -> None:
     `chatbot_rearch_s0` seeds `chatbot_domains` / `chatbot_entity_kinds`,
     `chatbot_rearch_s4` publishes the first `chatbot_semantic_parser` version with the
     policy blocks rendered from those two tables, and `chatbot_rearch_s6d` /
-    `chatbot_rearch_s6e` / `chatbot_rearch_s7` / `chatbot_rearch_s8` update five
-    domains' narrowing and `chatbot_rearch_s9` appends `crm_sales_report` to the order
-    domain's tools. All seven are migration-BODY work: `create_all` gives a
-    bootstrapped database the TABLES and COLUMNS (every one is a plain model default)
-    but none of the rows these migrations INSERT/UPDATE, so a fresh CI database has
-    empty policy tables and no published parser version at all.
+    `chatbot_rearch_s6e` / `chatbot_rearch_s7` / `chatbot_rearch_s8` / `chatbot_rearch_
+    s11` update six domains' narrowing and `chatbot_rearch_s9` appends
+    `crm_sales_report` to the order domain's tools. All eight are migration-BODY work:
+    `create_all` gives a bootstrapped database the TABLES and COLUMNS (every one is a
+    plain model default) but none of the rows these migrations INSERT/UPDATE, so a
+    fresh CI database has empty policy tables and no published parser version at all.
 
     Each migration's own function is imported and called directly, in the same order
-    the real migration chain applies them (s0 -> s4 -> s6d -> s6e -> s7 -> s8 -> s9 - s4's
-    publish reads whatever `chatbot_domains` holds at the moment it runs, same as a
-    real `alembic upgrade head` replay would), so the two paths can never drift and
-    bootstrap produces the identical row set a genuinely migrated database has. Every
-    step is idempotent (see each migration's own docstring); safe to call twice.
+    the real migration chain applies them (s0 -> s4 -> s6d -> s6e -> s7 -> s8 -> s9 ->
+    s11 - s4's publish reads whatever `chatbot_domains` holds at the moment it runs,
+    same as a real `alembic upgrade head` replay would), so the two paths can never
+    drift and bootstrap produces the identical row set a genuinely migrated database
+    has. Every step is idempotent (see each migration's own docstring); safe to call
+    twice.
     """
     import importlib.util
     import sys
@@ -686,6 +687,7 @@ def seed_chatbot_policy() -> None:
     s7 = _load("_chatbot_rearch_s7", "chatbot_rearch_s7.py")
     s8 = _load("_chatbot_rearch_s8", "chatbot_rearch_s8.py")
     s9 = _load("_chatbot_rearch_s9", "chatbot_rearch_s9.py")
+    s11 = _load("_chatbot_rearch_s11", "chatbot_rearch_s11.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -701,6 +703,8 @@ def seed_chatbot_policy() -> None:
         s8.apply_narrowing(conn)
     with engine.begin() as conn:
         s9.apply_tools(conn)
+    with engine.begin() as conn:
+        s11.apply_narrowing(conn)
     log.info(
         "chatbot policy seeded -> domains=%d kinds=%d (narrowing + first prompt "
         "version applied)",

@@ -141,7 +141,21 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         # S6d (owner hand pass 2, item 6): the product token on an order ask resolves
         # and FILTERS the answer. Without a policy of its own it contributed neither an
         # entity nor a filter, and the outstanding report ran over every product.
-        narrowing={"customer": "must_narrow_one", "product": "optional_filter"},
+        #
+        # Hand pass 12, Group B: "order" narrows `narrow_to_code`, the same policy
+        # value `incoming`/`purchase_order` already give their own `product` kind - a
+        # did-you-mean pick over an order token is ALREADY SETTLED the moment it is
+        # picked (it carries a uuid), so this is the `just_picked` shortcut
+        # (`turn/narrow.py::decide`) most of the time in practice, falling through to
+        # the ordinary `narrow_to_code` rules on any later turn that still carries it.
+        # `EXTRA_KIND_ALIASES` (`turn/state.py`) folds "customer_order"/"order_number"
+        # onto this SAME "order" bucket, so one row covers every entity_type the
+        # resolver types an order token with.
+        narrowing={
+            "customer": "must_narrow_one",
+            "product": "optional_filter",
+            "order": "narrow_to_code",
+        },
         # answer._OUTSTANDING_SO_GRANT ("sales_orders.outstanding"): the SO arm of an
         # outstanding-order answer is refused without it.
         reveal_key="sales_orders.outstanding",

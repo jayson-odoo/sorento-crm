@@ -2962,6 +2962,15 @@ def not_found_error_message(
             entity_type = entity_type if jsc.truthy(entity_type) else "item"
             base = disp_by_uuid.get(jsc.get(c, "uuid"))
             if not jsc.truthy(base):
+                # Hand pass 12, Group F: `disp_by_uuid` is built from the RESOLVER's own
+                # matches (`r["resolutions"]`), empty on a turn that resolved nothing
+                # fresh (a pure pick). The row's OWN `display_name` - `turn_runtime.
+                # fill_customer_names`'s DB-resolved per-ledger name - is the same fact
+                # by a different route, and outranks the code for the same reason
+                # `disp_by_uuid` does: a code is not a name, and a multi-ledger pick's
+                # own code names EVERY ledger it covers at once.
+                base = jsc.get(c, "display_name")
+            if not jsc.truthy(base):
                 base = jsc.get(c, "code")
             # A uuid is not a name. When neither the resolver display nor the code yields a
             # human-readable identifier the candidate is DROPPED, never printed raw - the
@@ -3191,8 +3200,19 @@ def not_found_error_message(
                         words.append(value)
             if not words:  # 3. last resort: the gate's own label
                 for row in rows:
+                    # Hand pass 12, Group F: a multi-ledger customer pick's own rows
+                    # carry a real per-row `display_name` (`turn_runtime.
+                    # fill_customer_names`, DB-resolved by uuid) - preferred over
+                    # `title`/`code`, neither of which a customer row has ever set to
+                    # anything but the shared account CODE, so a three-ledger pick
+                    # named the same code three times instead of three ledgers.
+                    display_name = jsc.get(row, "display_name")
                     title = jsc.get(row, "title")
-                    value = jsc.nullish_str(title if title is not None else jsc.get(row, "code")).strip()
+                    value = jsc.nullish_str(
+                        display_name
+                        if jsc.truthy(display_name)
+                        else (title if title is not None else jsc.get(row, "code"))
+                    ).strip()
                     if value and value not in words:
                         words.append(value)
             return ", ".join(words)
