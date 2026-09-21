@@ -7,25 +7,19 @@ implementation to look at - none of `OrderInquiryHeaderService`, the
 fail today for a real reason (404 - the route is not mounted - or a body key missing on a
 404 payload), never an import typo or a fixture bug.
 
-**Envelope shape**: the plan's own "Contract" section states
-``-> { items: [Header], total, page, limit }``. The Phase 1 FE service's own doc comment
-(`orderInquiryService.ts`) instead states ``{ data: [...], pagination: { total, page,
-limit } }`` - the shape this backend's `ListResponse` schema (`app/schemas/common.py`)
-already uses for every OTHER list route in this module, including the worklist's own
-`GET /order-inquiries`. This is a genuine PLAN vs FE-contract disagreement (report to the
-captain) - per the tester brief, THE PLAN WINS for these tests, so every assertion below
-reads `body["items"]` / `body["total"]` / `body["page"]` / `body["limit"]`, not
-`body["data"]` / `body["pagination"]`.
+**Envelope shape** (captain's ruling): the module convention wins over the plan's own
+draft "Contract" text. `GET /order-inquiry-headers` returns the SAME `ListResponse`
+shape (`app/schemas/common.py`) every other list route in this module already uses,
+including the worklist's own `GET /order-inquiries` - `{ data: [Header], pagination:
+{ total, page, limit }, ... }`. Every assertion below reads `body["data"]` /
+`body["pagination"]["total"]` / `["page"]` / `["limit"]`.
 
-**Router prefix**: the brief's own `/api/v1/projects/order-inquiry-headers` does not
-match how this module is actually mounted. `app/api/v1/__init__.py` mounts
-`app/api/v1/projects/order_inquiries.py`'s router under `/project-sales` (not
-`/projects`), and every route inside it is declared bare (`/order-inquiries`, ...). The
-worklist's own `GET /order-inquiries` therefore lives at
+**Router prefix**: confirmed as `/api/v1/project-sales/order-inquiry-headers*` (not
+`/api/v1/projects/...`) - `app/api/v1/__init__.py` mounts
+`app/api/v1/projects/order_inquiries.py`'s router under `/project-sales`, and every
+route inside it is declared bare. The worklist's own `GET /order-inquiries` lives at
 `/api/v1/project-sales/order-inquiries` today (confirmed against `test_planning_changes.
-py`'s own `BASE`), so the new header routes are expected at
-`/api/v1/project-sales/order-inquiry-headers*`. Used throughout below; reported to the
-captain.
+py`'s own `BASE`). Used throughout below.
 
 Postgres only, via `tests/_pg_fixture.py`'s `blank_session` - an EMPTY scratch schema, not
 the shared prod-copy database. Several of these ACs need an EXACT partition/count over
@@ -278,7 +272,11 @@ def test_every_contract_field_is_on_the_wire_AC_LS_01(api):
     response = client.get(HEADERS)
     assert response.status_code == 200, response.text
     body = response.json()
-    row = next(item for item in body["items"] if item["id"] == seeded["inquiry"].id)
+    assert "data" in body, "the envelope is ListResponse, same as every other list route"
+    assert "pagination" in body
+    for key in ("total", "page", "limit"):
+        assert key in body["pagination"], f"pagination.{key} missing from the envelope"
+    row = next(item for item in body["data"] if item["id"] == seeded["inquiry"].id)
 
     # response_model silently drops a field it was not told about - assert each one.
     for key in (
@@ -348,22 +346,22 @@ def test_state_partitions_outstanding_completed_and_all_AC_LS_02(api):
 
     default = client.get(HEADERS)
     assert default.status_code == 200, default.text
-    default_ids = {item["id"] for item in default.json()["items"]} & every_id
+    default_ids = {item["id"] for item in default.json()["data"]} & every_id
     assert default_ids == seeded["outstanding"], "default is Outstanding"
 
     outstanding = client.get(HEADERS, params={"state": "outstanding"})
     assert outstanding.status_code == 200, outstanding.text
-    ids = {item["id"] for item in outstanding.json()["items"]} & every_id
+    ids = {item["id"] for item in outstanding.json()["data"]} & every_id
     assert ids == seeded["outstanding"]
 
     completed = client.get(HEADERS, params={"state": "completed"})
     assert completed.status_code == 200, completed.text
-    ids = {item["id"] for item in completed.json()["items"]} & every_id
+    ids = {item["id"] for item in completed.json()["data"]} & every_id
     assert ids == seeded["completed"]
 
     everything = client.get(HEADERS, params={"state": "all"})
     assert everything.status_code == 200, everything.text
-    ids = {item["id"] for item in everything.json()["items"]} & every_id
+    ids = {item["id"] for item in everything.json()["data"]} & every_id
     assert ids == every_id
 
     bogus = client.get(HEADERS, params={"state": "bogus"})
@@ -388,7 +386,7 @@ def test_default_order_is_raised_at_asc_with_id_tiebreak_AC_LS_03(api):
 
     response = client.get(HEADERS, params={"state": "all"})
     assert response.status_code == 200, response.text
-    ids_in_order = [item["id"] for item in response.json()["items"]]
+    ids_in_order = [item["id"] for item in response.json()["data"]]
     seeded_ids = {earlier["inquiry"].id, tie_a["inquiry"].id, tie_b["inquiry"].id}
     seeded_in_order = [i for i in ids_in_order if i in seeded_ids]
 
@@ -437,7 +435,7 @@ class TestQueryAndFilters:
         needle = seeded["inquiry"].inquiry_no
         response = client.get(HEADERS, params={"query": needle, "state": "all"})
         assert response.status_code == 200, response.text
-        ids = {item["id"] for item in response.json()["items"]}
+        ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id in ids
 
     def test_query_matches_legacy_inquiry_no_AC_LS_04(self, api):
@@ -451,7 +449,7 @@ class TestQueryAndFilters:
             HEADERS, params={"query": seeded["inquiry"].legacy_inquiry_no, "state": "all"}
         )
         assert response.status_code == 200, response.text
-        ids = {item["id"] for item in response.json()["items"]}
+        ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id in ids
 
     def test_query_matches_so_number_customer_project_agent_AC_LS_04(self, api):
@@ -472,7 +470,7 @@ class TestQueryAndFilters:
         for needle in (so_number, customer.customer_name, "Tuju Residences", "Sean"):
             response = client.get(HEADERS, params={"query": needle, "state": "all"})
             assert response.status_code == 200, response.text
-            ids = {item["id"] for item in response.json()["items"]}
+            ids = {item["id"] for item in response.json()["data"]}
             assert seeded["inquiry"].id in ids, f"query {needle!r} should have matched"
 
     def test_query_matches_a_non_cancelled_rows_item_code_and_location_returned_once(
@@ -494,7 +492,7 @@ class TestQueryAndFilters:
         for needle in (item_code, location):
             response = client.get(HEADERS, params={"query": needle, "state": "all"})
             assert response.status_code == 200, response.text
-            items = response.json()["items"]
+            items = response.json()["data"]
             matches = [item for item in items if item["id"] == seeded["inquiry"].id]
             assert len(matches) == 1, "one header, however many of its rows match"
 
@@ -508,7 +506,7 @@ class TestQueryAndFilters:
         )
         response = client.get(HEADERS, params={"query": item_code, "state": "all"})
         assert response.status_code == 200, response.text
-        ids = {item["id"] for item in response.json()["items"]}
+        ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id not in ids
 
     def test_raised_by_agent_project_id_filter_exactly_AC_LS_04(self, api):
@@ -524,13 +522,13 @@ class TestQueryAndFilters:
             HEADERS, params={"raised_by": raiser, "state": "all"}
         )
         assert response.status_code == 200, response.text
-        ids = {item["id"] for item in response.json()["items"]}
+        ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id in ids
         assert other["inquiry"].id not in ids
 
         response = client.get(HEADERS, params={"agent": agent.person_label, "state": "all"})
         assert response.status_code == 200, response.text
-        ids = {item["id"] for item in response.json()["items"]}
+        ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id in ids
         assert other["inquiry"].id not in ids
 
@@ -553,7 +551,7 @@ def test_aggregates_ignore_cancelled_rows_AC_LS_05(api):
     )
     response = client.get(HEADERS, params={"state": "all"})
     assert response.status_code == 200, response.text
-    row = next(item for item in response.json()["items"] if item["id"] == seeded["inquiry"].id)
+    row = next(item for item in response.json()["data"] if item["id"] == seeded["inquiry"].id)
     assert row["lines_total"] == 2, "the cancelled row is excluded"
     assert row["lines_to_confirm"] == 2
     assert Decimal(row["qty_total"]) == Decimal("15"), "999 (cancelled) excluded"
@@ -603,6 +601,6 @@ def test_a_header_from_another_company_is_invisible_AC_LS_07(api):
 
     response = client.get(HEADERS, params={"state": "all"})
     assert response.status_code == 200, response.text
-    ids = {item["id"] for item in response.json()["items"]}
+    ids = {item["id"] for item in response.json()["data"]}
     assert mine["inquiry"].id in ids
     assert theirs["inquiry"].id not in ids

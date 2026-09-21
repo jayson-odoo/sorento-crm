@@ -100,7 +100,7 @@ existing and already granted.
 
 ### S2 - header list endpoint [BE]
 
-`GET /api/v1/projects/order-inquiry-headers` in `app/api/v1/projects/order_inquiries.py`,
+`GET /api/v1/project-sales/order-inquiry-headers` in `app/api/v1/project-sales/order_inquiries.py`,
 service `OrderInquiryHeaderService` in a new `app/services/order_inquiry_header_service.py`
 (the worklist service is already 1.7k+ lines). One grouped query: header join project sales order
 join core sales order / customer / project / agent / raised-by user, plus one aggregate subquery
@@ -154,13 +154,14 @@ SO detail's "Order inquiries" field and per-line column link to the OI detail pa
 ## Contract
 
 ```
-GET /api/v1/projects/order-inquiry-headers
+GET /api/v1/project-sales/order-inquiry-headers
   ?state=outstanding|completed|all (default outstanding)
   &query= (OI no, legacy no, SO no, customer, project, agent, any line's product or location)
   &raised_by=<user id> &agent=<agent name> &project_id=<uuid>
   &sort=raised_at|inquiry_no|so_number|raised_by|lines_total|qty_total|customer|project|agent|so_date|status
   &dir=asc|desc (default raised_at asc) &page=1 &limit=25
--> { items: [Header], total, page, limit }
+-> { data: [Header], pagination: { total, page, limit } }   (`app/schemas/common.py::ListResponse`, the
+   envelope every other list in this module already uses, the worklist included)
 
 Header = {
   id, inquiry_no, legacy_inquiry_no,
@@ -171,16 +172,16 @@ Header = {
   status: "outstanding" | "completed"
 }
 
-GET /api/v1/projects/order-inquiry-headers/{id}
+GET /api/v1/project-sales/order-inquiry-headers/{id}
 -> Header + { order_type, raise_history: [{ kind: "raised"|"reconfirmed", by_name, at }] }
 
-GET /api/v1/projects/order-inquiry-headers/{id}/related-documents
+GET /api/v1/project-sales/order-inquiry-headers/{id}/related-documents
 -> { purchase_orders: [{ po_id, po_number, supplier_name, po_date, lines_linked, qty_linked }],
      spos: [{ spo_number, supplier_name, lines_linked, qty_linked }] }
 
-GET  /api/v1/projects/order-inquiries?inquiry_id=<id>          (existing list, one new filter)
-POST /api/v1/projects/order-inquiries/acknowledge   { filter: { inquiry_id } } | { row_ids }
-POST /api/v1/projects/order-inquiries/unacknowledge { filter: { inquiry_id } } | { row_ids }
+GET  /api/v1/project-sales/order-inquiries?inquiry_id=<id>          (existing list, one new filter)
+POST /api/v1/project-sales/order-inquiries/acknowledge   { filter: { inquiry_id } } | { row_ids }
+POST /api/v1/project-sales/order-inquiries/unacknowledge { filter: { inquiry_id } } | { row_ids }
 ```
 
 Every field is declared on the response model and asserted in a test (`response_model` drops

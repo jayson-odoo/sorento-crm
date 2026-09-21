@@ -338,7 +338,7 @@ def test_acknowledge_filter_inquiry_id_scopes_and_skips_rejected_cancelled_AC_CF
 
         listing = client.get(HEADERS, params={"state": "completed"})
         assert listing.status_code == 200, listing.text
-        ids = {item["id"] for item in listing.json()["items"]}
+        ids = {item["id"] for item in listing.json()["data"]}
         assert header["inquiry"].id in ids, "a whole-OI confirm lists the header as completed"
     finally:
         _restore(originals)

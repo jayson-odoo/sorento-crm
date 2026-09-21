@@ -117,7 +117,7 @@ across many sales orders) stays, one toggle away, unchanged.
   holds three entries (`raised`, `reconfirmed`, `reconfirmed`) with person name and time, newest
   first. A header that predates the migration holds at least its first raise and, when it
   differs, its last reconfirm.
-- **AC-LS-01 [BE]** `GET /api/v1/projects/order-inquiry-headers` returns one item per header
+- **AC-LS-01 [BE]** `GET /api/v1/project-sales/order-inquiry-headers` returns one item per header
   with the contract fields (plan, "Contract"), paged, permission `projects.projects.view`; 403
   without it.
 - **AC-LS-02 [BE]** `state=outstanding` returns exactly the headers having a non-cancelled row

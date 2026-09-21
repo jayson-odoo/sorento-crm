@@ -285,6 +285,46 @@ class TestMonthlyNumber:
             assert reused.id == header.id
             assert reused.inquiry_no == minted_in_september, "never re-minted on reconfirm"
 
+    def test_a_preset_number_survives_a_reconfirm_without_burning_an_october_slot_AC_NO_03(
+        self,
+    ):
+        """Makes the reconfirm guard bite on its own, independent of AC-NO-01: a header
+        already carrying a dated September number, reconfirmed later (in October), must
+        neither change that number NOR silently reserve an October slot for the
+        non-event - the next REAL new October header must still open at -0001, not
+        -0002."""
+        with blank_session() as db:
+            company_id = _sorento(db)
+            preset_header = _header(
+                db,
+                company_id,
+                inquiry_no="OI-2609-0007",
+                raised_at=datetime(2026, 9, 5),
+            )
+            actor = _user(db, f"{MARKER} Joey")
+            db.commit()
+
+            pso = (
+                db.query(ProjectSalesOrder)
+                .filter(ProjectSalesOrder.id == preset_header.project_sales_order_id)
+                .one()
+            )
+            reused = ProjectOrderInquiryService(db).ensure_inquiry(pso, actor_user_id=actor)
+            db.commit()
+            assert reused.id == preset_header.id
+            assert reused.inquiry_no == "OI-2609-0007", (
+                "a reconfirm, even narratively in October, must not touch the number"
+            )
+
+            fresh_october_header = _header(
+                db, company_id, raised_at=datetime(2026, 10, 16)
+            )
+            db.commit()
+            assert fresh_october_header.inquiry_no == "OI-2610-0001", (
+                "the reconfirm above must not have consumed an October slot - a burned "
+                "slot would leave this at -0002"
+            )
+
     def test_renumber_migration_gives_gapless_per_company_per_month_numbers_AC_NO_04(
         self,
     ):
