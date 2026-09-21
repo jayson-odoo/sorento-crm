@@ -1346,7 +1346,24 @@ def _drop_focus_entities(focus: Focus, dropped: list[dict[str, Any]]) -> None:
             codes_by_kind.setdefault(kind, set()).add(str(code))
     for kind, codes in codes_by_kind.items():
         attr = KIND_FIELD_MAP.get(kind)
+        # P6 (hand pass 12 Phase 3): `KIND_FIELD_MAP` only names the four plural
+        # fields - an "order"/"inbound_shipment"/etc kind lives in `focus.extra`
+        # instead (through the SAME `EXTRA_KIND_ALIASES` fold `apply._set_kind_field`
+        # writes it through), and used to be silently skipped here, so a dropped
+        # extra-bucket entity rode straight into the next turn.
         if not attr:
+            extra_key = EXTRA_KIND_ALIASES.get(kind, kind)
+            current = focus.extra.get(extra_key)
+            if not isinstance(current, list):
+                continue
+            focus.extra[extra_key] = [
+                row
+                for row in current
+                if not (
+                    isinstance(row, dict)
+                    and str(row.get("canonical_code") or row.get("code") or row.get("raw")) in codes
+                )
+            ]
             continue
         current = getattr(focus, attr, None)
         if not isinstance(current, list):

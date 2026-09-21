@@ -1607,5 +1607,9 @@ def _kind_field(focus: Focus, kind: str) -> list[Any]:
     if attr:
         value = getattr(focus, attr, [])
         return list(value) if isinstance(value, list) else []
-    value = focus.extra.get(kind, [])
+    # P5 (hand pass 12 Phase 3): the SAME fold `_set_kind_field` applies on the write
+    # side - "customer_order"/"order_number" share the "order" bucket - or a
+    # `customer_order_pick`'s own entities, written to `focus.extra["order"]`, read
+    # back as an always-empty `focus.extra["customer_order"]`.
+    value = focus.extra.get(EXTRA_KIND_ALIASES.get(kind, kind), [])
     return list(value) if isinstance(value, list) else []

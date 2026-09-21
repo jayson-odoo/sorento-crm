@@ -2407,17 +2407,28 @@ def _token_requests(norm_code: str, tokens: set[str], all_norm_codes: set[str]) 
     product, never its siblings) must not ALSO sweep every sibling sharing its prefix
     into the crossdomain probe, the way `_TOKEN_PREFIX_MIN_LEN`'s own loose rule still
     does for a token that resolves to no exact code at all (SRTWT6236, this function's
-    own founding case, is not itself a real product - only its variants are). Once ANY
-    token in this ask exactly names a real candidate SOMEWHERE in the pool
-    (`all_norm_codes`, every candidate's own normalised code, computed once by the
-    caller), the prefix half is refused for every candidate - "requested" narrows to
-    the one thing actually typed, not its whole family.
+    own founding case, is not itself a real product - only its variants are). A token
+    that exactly names a real candidate SOMEWHERE in the pool (`all_norm_codes`, every
+    candidate's own normalised code, computed once by the caller) refuses the prefix
+    half FOR THAT TOKEN - "requested" narrows to the one thing actually typed, not its
+    whole family.
+
+    Hand pass 12 Phase 3 finding P4 (reviewer S2): the refusal used to be GLOBAL
+    (`tokens & all_norm_codes: return False`) rather than scoped to the exact match's
+    own token - one unrelated token being a real code ANYWHERE in the whole pool
+    refused the prefix half for every OTHER candidate too, so "mfg6661 srtwt6236bl"
+    (mfg6661 an exact code elsewhere in the pool) lost srtwt6236's own prefix match
+    against srtwt6236bl, a different family entirely. Scoped per-token: a token that is
+    itself an exact code is excluded from the PREFIX check (the `norm_code in tokens`
+    line above already grants the exact candidate its own True), every OTHER token
+    still gets to request a prefix match.
     """
     if norm_code in tokens:
         return True
-    if tokens & all_norm_codes:
-        return False
-    return any(len(t) >= _TOKEN_PREFIX_MIN_LEN and norm_code.startswith(t) for t in tokens)
+    return any(
+        len(t) >= _TOKEN_PREFIX_MIN_LEN and t not in all_norm_codes and norm_code.startswith(t)
+        for t in tokens
+    )
 
 
 def _prettify_type(value: Any) -> str:
