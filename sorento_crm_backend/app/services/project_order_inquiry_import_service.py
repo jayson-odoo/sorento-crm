@@ -80,7 +80,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -2842,7 +2842,8 @@ class _Raiser:
         inquiry page name whoever last sent a spreadsheet as the person who decided the
         order - which is the one question that column exists to answer.
         """
-        from app.models.project_so import INQUIRY_RAISED, OrderInquiry
+        from app.models.project_so import INQUIRY_RAISED, OI_RAISE_RAISED, OrderInquiry
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         inquiry = (
             self.db.query(OrderInquiry)
@@ -2863,6 +2864,11 @@ class _Raiser:
         )
         self.db.add(inquiry)
         self.db.flush()
+        # S4b (AC-RD-01): the sheet's own header minter, not `ensure_inquiry` - so it
+        # writes its own raise-history row the same guarded way `_record_raise` does.
+        ProjectOrderInquiryService(self.db)._record_raise(
+            inquiry, actor_user_id=self.actor, kind=OI_RAISE_RAISED
+        )
         return inquiry
 
     def _mirrors(self, pso_id: str) -> Dict[str, str]:
@@ -3160,7 +3166,16 @@ def apply(
         on_total_rows(plan.rows_expanded)
     links, not_linkable = _pair(db, plan)
 
-    now = _now()
+    # S5a fix round: `_now()` returns a naive MYT WALL CLOCK, but every other writer of
+    # `raised_at` / `acknowledged_at` (the model's own `func.now()` default,
+    # `datetime.utcnow()` in `project_order_inquiry_service.py`) stores naive UTC, and
+    # `_stamp_inquiry_no` (`app/models/project_so.py`) treats a naive value as UTC and adds
+    # +8 to reach the Asia/Kuala_Lumpur month. Storing the naive-MYT value as-is double-
+    # shifts it (a header raised at 20:00 MYT would number under the NEXT month). Converted
+    # here, at the write site, rather than in the minter: MALAYSIA_TZ has no DST, so
+    # subtracting its fixed 8-hour offset turns the wall clock back into the same instant's
+    # naive UTC.
+    now = _now() - timedelta(hours=8)
     stamped = _stamp_orders(plan)
     raiser = _Raiser(db, actor, now, _matched_lines_by_order(plan))
     service = None

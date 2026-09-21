@@ -3450,6 +3450,7 @@ class ProjectOrderInquiryService:
             )
             self.db.add(inquiry)
             self.db.flush()
+            self._record_raise(inquiry, actor_user_id=actor_user_id, kind=OI_RAISE_RAISED)
         # S3 (AC-OH-30..32): a caller passing an EXISTING header (`derive_for_book_change`,
         # onto the order's own amendment_id IS NULL inquiry) is appending to a header
         # something else already raised or re-stamped this apply - re-stamping raised_by
