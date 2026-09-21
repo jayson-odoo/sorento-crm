@@ -4321,6 +4321,12 @@ class ProjectSupplyService:
         # (S7: every pool AND every group-take sibling, not only this line's own pool).
         capacity_left = _CapacityLedger()
         borrow_left: _BorrowLedger = _BorrowLedger()
+        # AC-S3-10: the same product -> location -> remaining ledger `compose_lines` keeps
+        # for `_own_arrival_credit_for` (R7), scoped to this ONE confirm call - a confirm
+        # may name several lines of one order, and credit `_check_line` already granted an
+        # earlier line in this same call must not be re-offered to a later one at the same
+        # bin.
+        own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
         # THE COVERED SET, computed once and read twice: by the recheck below (which unit
         # each line was proposed in) and by the frozen proposal in `_write_decision`. It is
         # what an active revision still holds, less the lines this payload REPLACES and less
@@ -4373,6 +4379,7 @@ class ProjectSupplyService:
                 stale,
                 invalid,
                 carried_holds,
+                own_arrival_left,
             )
 
         # A line the payload does not name is NOT a failure any more (13.4). It is
@@ -4616,6 +4623,7 @@ class ProjectSupplyService:
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
+        own_arrival_left: Optional[Dict[str, Dict[str, Decimal]]] = None,
     ) -> None:
         """Recheck one line against authoritative facts (PLAN 3.1 steps 3 to 5).
 
@@ -4794,6 +4802,33 @@ class ProjectSupplyService:
             capacity[location] = capacity.get(location, _ZERO) + capacity_left.capacity(
                 fact.product_id, str(source.id), offer
             )
+        # AC-S3-10: the own-arrival credit (R7) is a rung the composer walks OUTSIDE
+        # `use_candidates_for` (`walk`'s own `own_arrival_candidates`, drawn ahead of the
+        # ordinary group-take pile), so a recheck seeded only from `own_use`/`other_use`
+        # never hears about it and refuses the very Reserve the board proposed - "ZZT-OWN
+        # has nothing free for this line now" in front of a composition the ladder credited
+        # for exactly this reason. Read with the LINE's own fact, never the unit's: the
+        # credit is this line's own purchase order, not something its unit siblings share.
+        # `own_arrival_left` is product -> location -> what is left, the same shape
+        # `compose_lines` keeps, scoped to this one confirm call so a second line of the
+        # same payload cannot be offered units an earlier line already drew off the same
+        # bin.
+        if own_arrival_left is not None and fact.own_code:
+            ledger = (
+                own_arrival_left.setdefault(fact.product_id, {})
+                if fact.product_id
+                else None
+            )
+            credit_qty, _credit_po = self._own_arrival_credit_for(
+                fact, own_arrival_left=ledger
+            )
+            if credit_qty > _ZERO:
+                source = self._warehouse_by_code(fact.own_code)
+                if source is not None:
+                    location_ids[fact.own_code] = str(source.id)
+                    capacity[fact.own_code] = (
+                        capacity.get(fact.own_code, _ZERO) + credit_qty
+                    )
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
         allowed = ", ".join(sorted(reserve_locations))
