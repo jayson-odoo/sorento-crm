@@ -67,6 +67,7 @@ function renderView(
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
     annotations?: Map<string, BoardChangeAnnotation[]>;
     externalSearch?: string;
+    focusKey?: string | null;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -94,6 +95,7 @@ function renderView(
       onDecideMany={onDecideMany}
       annotations={overrides.annotations}
       externalSearch={overrides.externalSearch}
+      focusKey={overrides.focusKey}
     />,
   );
   return { ...utils, onDecide, onDecideMany };
@@ -1344,5 +1346,31 @@ describe('FulfilmentBoardListView: the Verdict column sorts (AC-7)', () => {
         screen.getAllByText(/^SO00000[1-3]$/).map((el) => el.textContent),
       ).toEqual(['SO000001', 'SO000002', 'SO000003']),
     );
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 1 (AC-5): a jump that lands on whatever page happens to
+ * be open is a dead link once an order runs past the 25-row first page - common on a large
+ * order. `focusKey` now moves `PanelDataGrid`'s own page to wherever the row actually sits, in
+ * the SAME (default, unsorted) row order the pager reads.
+ */
+describe('FulfilmentBoardListView: the banner reaches a line beyond page 1 (AC-5, fix round 1)', () => {
+  it('jumps to the page holding focusKey when it sits beyond the first 25 rows', async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      contribution({
+        key: `so-1:line-${index + 1}`,
+        so_number: `SO${String(index + 1).padStart(6, '0')}`,
+        line_no: index + 1,
+      }),
+    );
+    // The 28th row: index 27, page floor(27 / 25) = page 2 (0-based page 1).
+    const target = rows[27];
+
+    renderView({ contributions: rows, focusKey: target.key });
+
+    expect(
+      await screen.findByTestId(`line-decision-${target.key}`),
+    ).toBeInTheDocument();
   });
 });

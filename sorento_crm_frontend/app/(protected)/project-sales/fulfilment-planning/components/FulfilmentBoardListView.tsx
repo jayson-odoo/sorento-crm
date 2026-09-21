@@ -682,6 +682,10 @@ export function FulfilmentBoardListView({
       // column opts back out above (`enableSorting: false`) so this is a change to Verdict
       // alone, not a live control appearing on eight headers nobody asked to sort.
       sortable
+      // AC-5, fix round 1: the banner's link names a ROW, not a page - `PanelDataGrid` jumps
+      // to whichever page currently holds it, in its own sorted order, so a left-out line
+      // beyond page 1 is reachable rather than a dead link.
+      focusRowId={focusKey}
     />
     <UnsavedDecisionPrompt state={expansion} />
     </>

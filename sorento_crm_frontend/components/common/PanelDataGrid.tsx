@@ -66,6 +66,7 @@ export function PanelDataGrid<TRow extends object>({
   paginate = true,
   scrollerMaxHeight,
   pageResetKey,
+  focusRowId,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -172,6 +173,14 @@ export function PanelDataGrid<TRow extends object>({
    * which already resets itself.
    */
   pageResetKey?: string;
+  /**
+   * Jump to the PAGE holding this row id (`getRowId`'s own id), in the row order paging
+   * itself already reads - sorted, then filtered, before pagination slices it. A caller
+   * whose own link names a row rather than a page (`FulfilmentBoardPanel`'s left-out banner,
+   * board-confirm-left-out AC-5) sets this instead of computing a page index by hand, which
+   * would need to duplicate whatever sort this grid is currently under.
+   */
+  focusRowId?: string | null;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -260,6 +269,23 @@ export function PanelDataGrid<TRow extends object>({
     ...(paginate ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     columnResizeMode: 'onChange',
   });
+
+  // `getPrePaginationRowModel` is filtered-then-sorted, exactly what paging itself slices -
+  // no second implementation of sorting here, and it stays right if a column is later sorted
+  // ascending/descending while a jump is pending. Only depends on `focusRowId`: a caller sets
+  // it once per row, and re-running this every time `table` is rebuilt (every render) would
+  // fight the reader's own page changes once they have navigated away from the jump.
+  React.useEffect(() => {
+    if (!focusRowId || !paginate) return;
+    const rows = table.getPrePaginationRowModel().rows;
+    const index = rows.findIndex((row) => row.id === focusRowId);
+    if (index === -1) return;
+    const targetPage = Math.floor(index / pagination.pageSize);
+    setPagination((current) =>
+      current.pageIndex === targetPage ? current : { ...current, pageIndex: targetPage },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRowId]);
 
   return (
     <DataGrid
