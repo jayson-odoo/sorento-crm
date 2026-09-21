@@ -1456,10 +1456,31 @@ def _run_stages(  # noqa: PLR0915
             declined_offer_copy=plan.trace.lane == "offer_declined",
             prior_session=session_block,
         )
+        # Security N-3/S2 (hand pass 11 security review): an accepted team_pick whose
+        # options carry a COMPANY needs that company to reach `escalation_context`'s
+        # `same_team` arm - see `turn_runtime.escalation_roster_plan`'s own docstring.
+        # A copy of `session_block` for `ctx` only; `lane_parse_output` above already
+        # read the UNPATCHED one, so this cannot change what this turn's own team
+        # resolved to.
+        ctx_session = session_block
+        roster_plan = turn_runtime.escalation_roster_plan(state_in.pending, accepted_lane=plan.trace.lane)
+        if roster_plan:
+            session_vars = session_block.get("session_vars") if isinstance(session_block, dict) else None
+            ctx_session = {
+                **session_block,
+                "session_vars": {
+                    **(session_vars if isinstance(session_vars, dict) else {}),
+                    "variables": {
+                        **((session_vars or {}).get("variables") or {}),
+                        "routing_roster_plan": roster_plan,
+                        "routing": {"suggested_team": plan.trace.team},
+                    },
+                },
+            }
         ctx = build_ctx(
             contact=_contact_block(envelope, known_phone),
             text=_tf_message(envelope),
-            session=session_block,
+            session=ctx_session,
             parse={"output": parsed_output, "_parser_raw": verdict},
             access=access,
             media=getattr(envelope, "media", None),

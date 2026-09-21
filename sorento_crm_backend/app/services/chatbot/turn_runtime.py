@@ -348,6 +348,38 @@ def _prior_suggested_team(session_block: Any) -> str | None:
         return None
 
 
+def escalation_roster_plan(pending: Any, *, accepted_lane: str | None) -> list[dict[str, Any]] | None:
+    """`variables.routing_roster_plan`, for an accepted `team_pick` this turn is about
+    to hand to escalation (security N-3/S2, hand pass 11 review): `escalation_context`'s
+    own `same_team` arm (`lanes/escalation.py:277-283`) reads this EXACT legacy field,
+    unchanged, to resolve `company_name` off a single-company roster - the field
+    `compile-current-state` (the kept n8n-mirroring path) writes from `cs_roster_plan`'s
+    member-offer roster. This engine mints its OWN `team_pick` directly
+    (`answer_bridge.apply_silent_company_offer`) with no `compile-current-state`
+    equivalent, so the company its single option carried never reached escalation on a
+    bare "yes" - `option_payload` is empty on that arm by design (`turn/decide.py::
+    picked_positions`, defect 4: a yes/no offer is answered by the word alone, never a
+    position, so `turn/apply.py::_answer_offer`'s `picked` stays `None`).
+
+    Built straight off the pending's OWN options - no new pending kind, no new field,
+    the SAME shape `cs_roster_plan` already produces (`company_id`/`company_name`/
+    `brand_code`), one entry per option that carries a company. `None` for a plain
+    (no-company) yes/no offer - the zero-stock ladder's own bare "Yes" needs no roster
+    at all, `team` alone already reaches `escalation_context` through `lane_parse_
+    output`'s existing `accepted_team` chain.
+    """
+    if accepted_lane != "escalation" or pending is None or pending.kind != "team_pick":
+        return None
+    plan = [
+        {"company_id": None, "company_name": company, "brand_code": None}
+        for opt in pending.options
+        if isinstance(opt, dict)
+        for company in [(opt.get("payload") or {}).get("company")]
+        if company
+    ]
+    return plan or None
+
+
 def with_routing_agent_default(verdict: dict[str, Any]) -> dict[str, Any]:
     """The verdict with `routing.suggested_agent` filled in ONCE, before access.
 
