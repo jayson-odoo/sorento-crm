@@ -640,6 +640,26 @@ def _entity_token_key(entity: dict[str, Any]) -> str:
     return _token_key(_code_of(entity))
 
 
+def _entity_is_unplaced(entity: dict[str, Any], unplaced: dict[str, str]) -> bool:
+    """Does this entity carry NOTHING real - no uuid of its own, and its own token key
+    is one the resolver could not place THIS turn?
+
+    Hand pass 12 Phase 3 finding F10 (AC-1704 regression): a roster PICK already gives
+    its built entity a real `uuid` (`turn/apply.py::_answer_pending`) straight from the
+    option the customer chose - by TYPING BACK the roster's own offered code, exactly
+    like a position pick. The resolver is independently asked about the SAME raw text
+    this message typed (`with_carried_entities` hands over the message's own entities
+    untouched, never the focus carry, whenever the message names any at all) and can
+    report that exact text as unplaced - the two facts are not in conflict, a pick
+    settled it and a fresh, parallel resolve of the same text found nothing new. The
+    two `would_be_unfiltered`/`_answered_unfiltered` guards below used to read ONLY the
+    token-key membership, so an entity that already carried a real uuid was still
+    counted as "nothing placed" the moment its own text also failed the resolver,
+    which silently dropped the second tool call a continued roster pick needs.
+    """
+    return not entity.get("uuid") and _entity_token_key(entity) in unplaced
+
+
 def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     """The tokens THIS message named that the resolver could not place, lower-cased.
 
@@ -1533,7 +1553,7 @@ def make_tool_runner(
         would_be_unfiltered = (
             domain in ("inventory", "incoming")
             and bool(unplaced)
-            and all(_entity_token_key(e) in unplaced for e in entities)
+            and all(_entity_is_unplaced(e, unplaced) for e in entities)
         )
         if (
             (
@@ -2161,7 +2181,7 @@ def _answered_unfiltered(
     """
     if not unplaced:
         return False
-    if entities and not all(_entity_token_key(e) in unplaced for e in entities):
+    if entities and not all(_entity_is_unplaced(e, unplaced) for e in entities):
         return False
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
     if fetched.get("outstanding_report"):
