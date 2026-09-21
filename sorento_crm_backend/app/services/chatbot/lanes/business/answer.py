@@ -856,6 +856,17 @@ def crossdomain_render(
     origin_incoming = zs.get("origin_domain") == "incoming"
 
     blocks: list[str] = []
+    # Hand pass 11 defect 1 (owner retest, live turn 27f60a71): a probe row is printed
+    # ONCE per block, however many `missing` entries claim it. The zero-entry lookup
+    # below deliberately matches a prefixed sibling's rows (finding 7, so a typed family
+    # prefix still finds its members on the other side), so for "check stock srtwc6022"
+    # the ONE incoming row the probe returned - SRTWC6022-SH-UF-NEW, container
+    # IAAU1697450 - was collected by SRTWC6022-SH-UF's entry AND by its own, and the
+    # customer read the same container twice off a tool envelope holding one item.
+    # Identity, not rendered text: `by_code` holds the probe's own row dicts, so the
+    # same row reached through two entries is the same object, while two genuinely
+    # different rows that happen to render alike stay two rows.
+    seen_rows: set[int] = set()
     # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
     # offer an escalation, rather than dropping them so the reply lists only the codes that
     # had something to show. "Positive facts only" still holds for a code the probe never
@@ -929,6 +940,8 @@ def crossdomain_render(
         elif any(eta(it) for it in rows):
             rows.sort(key=eta)
         for it in rows:
+            if id(it) in seen_rows:
+                continue
             field_lines = "\n".join(
                 f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(_field_render_value(f))}"
                 for f in (jsc.get(it, "fields") or [])
@@ -946,6 +959,7 @@ def crossdomain_render(
             elif jsc.truthy(jsc.get(flags, "partially_allocated")):
                 line += "\n\U0001f6a9  *(PARTIAL ALLOCATION)*"
             blocks.append(line)
+            seen_rows.add(id(it))
 
     lead = (
         "But here are the stock details for the requested products:"
