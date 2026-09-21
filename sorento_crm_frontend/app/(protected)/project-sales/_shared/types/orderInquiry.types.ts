@@ -1166,7 +1166,10 @@ export interface OrderInquiryHeaderListParams {
   query?: string;
   raised_by?: string;
   agent?: string;
-  project_id?: string;
+  /** Exact match on the Project column's own text (reviewer B2, fix round 22 Sep
+   * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
+   * registered project. */
+  project?: string;
   page?: number;
   limit?: number;
   sort?: string;

@@ -1,11 +1,15 @@
 /**
  * AC-FE-01 (`PLAN-oi-header-list-detail.md`, W): the header list's own params builder -
- * `state`/`sort`/`dir`/`query`/`raised_by`/`agent`/`project_id` must map onto the exact
+ * `state`/`sort`/`dir`/`query`/`raised_by`/`agent`/`project` must map onto the exact
  * query string the backend contract names (the plan's own "Contract" section), and the
  * values `OrderInquiryHeadersList` sends on first render (`state=outstanding`,
  * `sort=raised_at`, `dir=asc`) must survive unchanged. `buildDataGridParams` is kept
  * REAL here (not mocked) - the whole point is pinning what it actually produces, not
  * what a stub says it produces.
+ *
+ * `project` (not `project_id`) since 22 Sep 2026 (reviewer B2, fix round): 0 of 738
+ * headers on the prod copy carry a registered `projects.id`, so the filter matches on
+ * the Project column's own TEXT instead - see `order_inquiry_header_service.py`.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -36,7 +40,7 @@ describe('listOrderInquiryHeaders params builder (AC-LS contract)', () => {
       query: 'CB6633',
       raised_by: 'user-1',
       agent: 'Sean',
-      project_id: 'proj-1',
+      project: 'Tuju Residences',
       sort: 'customer',
       dir: 'desc',
       page: 2,
@@ -48,7 +52,7 @@ describe('listOrderInquiryHeaders params builder (AC-LS contract)', () => {
     expect(search.get('query')).toBe('CB6633');
     expect(search.get('raised_by')).toBe('user-1');
     expect(search.get('agent')).toBe('Sean');
-    expect(search.get('project_id')).toBe('proj-1');
+    expect(search.get('project')).toBe('Tuju Residences');
     expect(search.get('sort')).toBe('customer');
     expect(search.get('dir')).toBe('desc');
     expect(search.get('page')).toBe('2');
@@ -64,7 +68,7 @@ describe('listOrderInquiryHeaders params builder (AC-LS contract)', () => {
     expect(search.get('state')).toBe('all');
     expect(search.has('raised_by')).toBe(false);
     expect(search.has('agent')).toBe(false);
-    expect(search.has('project_id')).toBe(false);
+    expect(search.has('project')).toBe(false);
   });
 
   it('defaults to state=outstanding, sort=raised_at, dir=asc - what the list sends on first render', async () => {

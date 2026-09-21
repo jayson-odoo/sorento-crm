@@ -128,7 +128,9 @@ across many sales orders) stays, one toggle away, unchanged.
   so_date, status`; anything else is a 422.
 - **AC-LS-04 [BE]** `query` matches inquiry no, legacy inquiry no, SO number, customer name,
   project title, agent name, and the `item_code` or `stock_location` of any non-cancelled row of
-  the header (one header returned once, however many rows match), case-insensitive; `raised_by`, `agent`, `project_id` filter exactly.
+  the header (one header returned once, however many rows match), case-insensitive; `raised_by`, `agent`, `project` filter exactly (`project` matches the Project column's own text,
+  never `ProjectSalesOrder.project_id` - reviewer B2, fix round 22 Sep 2026: 0 of 738
+  headers on the prod copy carry a registered project, so a uuid filter never matched).
 - **AC-LS-05 [BE]** `lines_total`, `lines_to_confirm` and `qty_total` ignore cancelled rows.
 - **AC-LS-06 [BE]** The list runs in a bounded number of queries regardless of page size (no
   per-row query), asserted with a query counter.

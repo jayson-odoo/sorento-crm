@@ -511,11 +511,12 @@ class TestQueryAndFilters:
         ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id not in ids
 
-    def test_raised_by_agent_project_id_filter_exactly_AC_LS_04(self, api):
+    def test_raised_by_agent_project_filter_exactly_AC_LS_04(self, api):
         client, db, company_id = api
         agent = _agent(db, f"{MARKER} Exact")
         raiser = _user(db, f"{MARKER} Raiser")
-        seeded = _header(db, company_id, agent=agent)
+        project_label = f"{MARKER} Exact Project"
+        seeded = _header(db, company_id, agent=agent, project_label=project_label)
         seeded["inquiry"].raised_by = raiser
         other = _header(db, company_id)
         db.commit()
@@ -532,6 +533,47 @@ class TestQueryAndFilters:
         assert response.status_code == 200, response.text
         ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id in ids
+        assert other["inquiry"].id not in ids
+
+        # B2 (reviewer): `project` is free TEXT on `_PROJECT_TITLE`, not
+        # `ProjectSalesOrder.project_id` - an adopted order (this fixture's own shape)
+        # never carries a registered project, so a uuid-shaped filter could never match
+        # any header a real company has.
+        response = client.get(HEADERS, params={"project": project_label, "state": "all"})
+        assert response.status_code == 200, response.text
+        ids = {item["id"] for item in response.json()["data"]}
+        assert seeded["inquiry"].id in ids
+
+    def test_agent_with_no_person_label_falls_back_to_the_agent_code_AC_LS_04(self, api):
+        """B1 (reviewer): `person_label` is NULL for every one of the 80 agents on the
+        prod copy - `sales_agents.sales_agent` is the name purchasing actually knows.
+        Seeded directly rather than through `_agent()`, which always sets a label."""
+        client, db, company_id = api
+        agent = SalesAgent(
+            id=_uid(), sales_agent=f"ZZT{_uid()[:6]}".upper(), person_label=None
+        )
+        db.add(agent)
+        db.flush()
+        seeded = _header(db, company_id, agent=agent)
+        other = _header(db, company_id)
+        db.commit()
+
+        response = client.get(HEADERS, params={"state": "all"})
+        assert response.status_code == 200, response.text
+        row = next(item for item in response.json()["data"] if item["id"] == seeded["inquiry"].id)
+        assert row["agent_name"] == agent.sales_agent
+
+        response = client.get(HEADERS, params={"agent": agent.sales_agent, "state": "all"})
+        assert response.status_code == 200, response.text
+        ids = {item["id"] for item in response.json()["data"]}
+        assert seeded["inquiry"].id in ids
+        assert other["inquiry"].id not in ids
+
+        response = client.get(HEADERS, params={"query": agent.sales_agent, "state": "all"})
+        assert response.status_code == 200, response.text
+        ids = {item["id"] for item in response.json()["data"]}
+        assert seeded["inquiry"].id in ids
+        assert other["inquiry"].id not in ids
         assert other["inquiry"].id not in ids
 
 

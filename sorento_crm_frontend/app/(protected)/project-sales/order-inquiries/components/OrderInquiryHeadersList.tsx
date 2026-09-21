@@ -33,7 +33,6 @@ import {
   useOrderInquiryHeaders,
   useOrderInquiryWorklistSummary,
 } from '../../_shared/hooks/useOrderInquiry';
-import { useProjects } from '../../_shared/hooks/useProjects';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import {
   orderInquiryHeaderStatusLabel,
@@ -63,7 +62,7 @@ const DEFAULT_SORTING: SortingState = [{ id: 'raised_at', desc: false }];
  * purchasing already uses stays one toggle away, unchanged (AC-HL-01, `?view=lines`).
  *
  * Every piece of screen state that narrows or orders the list travels in the URL
- * (AC-HL-03) - `?state=&sort=&dir=&query=&page=&limit=&raised_by=&agent=&project_id=` -
+ * (AC-HL-03) - `?state=&sort=&dir=&query=&page=&limit=&raised_by=&agent=&project=` -
  * so a reload or a shared link reopens on exactly what was on screen, the same
  * `router.replace` pattern `OrderInquiriesClient.tsx` (the Lines view) already uses for
  * its own filters.
@@ -92,7 +91,7 @@ export function OrderInquiryHeadersList() {
   );
   const [agentFilter, setAgentFilter] = useState(() => searchParams.get('agent') ?? '');
   const [projectFilter, setProjectFilter] = useState(
-    () => searchParams.get('project_id') ?? '',
+    () => searchParams.get('project') ?? '',
   );
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: Math.max(0, Number(searchParams.get('page') ?? '1') - 1),
@@ -114,7 +113,7 @@ export function OrderInquiryHeadersList() {
     if (pagination.pageSize !== 25) next.set('limit', String(pagination.pageSize));
     if (raisedByFilter) next.set('raised_by', raisedByFilter);
     if (agentFilter) next.set('agent', agentFilter);
-    if (projectFilter) next.set('project_id', projectFilter);
+    if (projectFilter) next.set('project', projectFilter);
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
@@ -146,7 +145,7 @@ export function OrderInquiryHeadersList() {
       query: searchQuery || undefined,
       raised_by: raisedByFilter || undefined,
       agent: agentFilter || undefined,
-      project_id: projectFilter || undefined,
+      project: projectFilter || undefined,
       sort: sorting[0]?.id ?? 'raised_at',
       dir: sorting[0]?.desc ? 'desc' : 'asc',
       page: pagination.pageIndex + 1,
@@ -167,32 +166,28 @@ export function OrderInquiryHeadersList() {
   const { data, isLoading, isPlaceholderData, isFetching, refetch } =
     useOrderInquiryHeaders(params);
 
-  // Raised by, Agent, Project options (AC-HL-05, W). `raised_by` is the shared
-  // `services/userSelectService` (CLAUDE.md's own default for a person picker) - the
-  // header contract's own `raised_by` is `users.id`, exact. Agent and Project reuse the
-  // SAME hooks the Lines worklist already calls for its own Agent/Project filters
-  // (`OrderInquiriesClient.tsx`'s `summary.data?.agents`/`useProjects`), not a new
-  // endpoint - but the VALUE each option carries differs from the worklist's own use of
-  // it, because the header endpoint's filter contract is not the worklist's:
-  //   - Agent: the worklist's own `agent` filter is `sales_agents.id` (equality); the
-  //     header endpoint's is the agent's NAME (`SalesAgent.person_label`, exact) - the
-  //     plan's own contract, `&agent=<agent name>`. So the option's `value` is the
-  //     LABEL text here, not the summary facet's `id`.
-  //   - Project: the worklist's own `project` filter is free TEXT on `_PROJECT_TITLE`
-  //     (an adopted order has no registered project to hold an id); the header
-  //     endpoint's `project_id` is a real `projects.id` UUID
-  //     (`ProjectSalesOrder.project_id == project_id`, pattern-validated - a title
-  //     string there is a 422, not a silent no-match). `useProjects` (the REGISTERED
-  //     project list `PipelineClient.tsx` already reads) is the one hook in this module
-  //     that actually holds that id, so it is what this filter uses instead of the
-  //     worklist's own project facet.
+  // Raised by, Agent, Project options (AC-HL-05, W; B1/B2 reviewer, fix round 22 Sep
+  // 2026). `raised_by` is the shared `services/userSelectService` (CLAUDE.md's own
+  // default for a person picker) - the header contract's own `raised_by` is `users.id`,
+  // exact. Agent and Project both reuse the worklist's own summary facet
+  // (`useOrderInquiryWorklistSummary`, `OrderInquiriesClient.tsx`'s own
+  // `summary.data?.agents`/`summary.data?.projects`), never a second endpoint - and both
+  // option VALUEs are now the same TEXT the backend compares to:
+  //   - Agent: `entry.label` is already `person_label or sales_agent` (the facet's own
+  //     Python fallback, `order_inquiry_worklist_service.py::_agents`) - the SQL-side
+  //     equivalent (`_AGENT_NAME`, `order_inquiry_header_service.py`) is what
+  //     `&agent=<name>` compares against, so the two always agree even when an agent
+  //     carries no `person_label` (80 of 80 on the prod copy).
+  //   - Project: `entry.id` (the facet's own `_PROJECT_TITLE` text, not a `projects.id`)
+  //     is what `&project=<title>` compares against - an adopted AutoCount order has no
+  //     registered `Project` row (0 of 738 headers on the prod copy), so the REGISTERED
+  //     project list (`useProjects`) matched nothing and is dropped here.
   const usersQuery = useQuery({
     queryKey: ['oi-header-raised-by-users'],
     queryFn: () => getUsersSelect(),
     staleTime: 5 * 60 * 1000,
   });
   const worklistSummary = useOrderInquiryWorklistSummary({});
-  const projectsQuery = useProjects({ limit: 200 });
 
   const filterOptions = useMemo(
     () => ({
@@ -204,12 +199,12 @@ export function OrderInquiryHeadersList() {
         value: entry.label,
         label: entry.label,
       })),
-      projects: (projectsQuery.data?.data ?? []).map((project) => ({
-        value: project.id,
-        label: project.title,
+      projects: (worklistSummary.data?.projects ?? []).map((entry) => ({
+        value: entry.id,
+        label: entry.label,
       })),
     }),
-    [usersQuery.data, worklistSummary.data, projectsQuery.data],
+    [usersQuery.data, worklistSummary.data],
   );
 
   const rows = useMemo<OrderInquiryHeader[]>(() => data?.data ?? [], [data]);
@@ -222,7 +217,7 @@ export function OrderInquiryHeadersList() {
           state: stateFilter !== 'outstanding' ? stateFilter : undefined,
           raised_by: raisedByFilter || undefined,
           agent: agentFilter || undefined,
-          project_id: projectFilter || undefined,
+          project: projectFilter || undefined,
         },
       ),
     [
@@ -247,11 +242,17 @@ export function OrderInquiryHeadersList() {
       {
         accessorKey: 'raised_at',
         header: ({ column }) => <DataGridColumnHeader title="Raised at" column={column} />,
-        size: 160,
+        // S2 (reviewer, fix round 22 Sep 2026): 185, wide enough for the full
+        // date-time string not to truncate at 1280; `title` so a narrower viewport
+        // still carries the full value on hover/long-press.
+        size: 185,
         meta: { headerTitle: 'Raised at', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) =>
           row.original.raised_at ? (
-            <span className="whitespace-nowrap">
+            <span
+              className="block truncate whitespace-nowrap"
+              title={formatDateTimeInMalaysia(row.original.raised_at)}
+            >
               {formatDateTimeInMalaysia(row.original.raised_at)}
             </span>
           ) : (
@@ -356,7 +357,9 @@ export function OrderInquiryHeadersList() {
         id: 'customer',
         accessorFn: (row) => row.customer_name ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
-        size: 170,
+        // S2 (reviewer, fix round 22 Sep 2026): trimmed 170->150 so Status still fits
+        // at 1280 once Raised at widened.
+        size: 150,
         meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) =>
           row.original.customer_name ? (
@@ -371,7 +374,8 @@ export function OrderInquiryHeadersList() {
         id: 'project',
         accessorFn: (row) => row.project_title ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
-        size: 190,
+        // S2 (reviewer, fix round 22 Sep 2026): trimmed 190->150, same reason.
+        size: 150,
         meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) =>
           row.original.project_title ? (

@@ -1269,7 +1269,12 @@ def list_order_inquiry_headers(
     agent: Optional[str] = Query(
         None, max_length=200, description="By the agent's own name, exact."
     ),
-    project_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
+    # B2 (reviewer): free TEXT on the Project column's own value (`_PROJECT_TITLE`),
+    # never `project_id` - 0 of 738 headers on the prod copy carry a
+    # `ProjectSalesOrder.project_id` (an adopted AutoCount order has no registered
+    # `Project` row), so a uuid-pattern filter never matched anything. Same shape
+    # `order_inquiry_worklist_service.py`'s own `project` filter already uses.
+    project: Optional[str] = Query(None, max_length=200, description="Exact match on the Project column's text."),
     sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
     direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),
     page: int = Query(1, ge=1),
@@ -1284,7 +1289,7 @@ def list_order_inquiry_headers(
             query=query,
             raised_by=raised_by,
             agent=agent,
-            project_id=project_id,
+            project=project,
             sort=sort,
             direction=direction,
             page=page,

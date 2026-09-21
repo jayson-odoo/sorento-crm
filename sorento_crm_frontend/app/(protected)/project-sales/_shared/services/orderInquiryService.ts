@@ -784,7 +784,9 @@ export async function downloadOrderInquiryXlsx(
  *   GET /api/v1/project-sales/order-inquiry-headers
  *     ?state=outstanding|completed|all (default outstanding)
  *     &query= (OI no, legacy no, SO no, customer, project, agent, any line's product or
- *       location) &raised_by=<user id> &agent=<agent name> &project_id=<uuid>
+ *       location) &raised_by=<user id> &agent=<agent name> &project=<project title text,
+ *       exact match on the Project column - never `project_id` (reviewer B2, fix round
+ *       22 Sep 2026)>
  *     &sort=raised_at|inquiry_no|so_number|raised_by|lines_total|qty_total|customer|
  *       project|agent|so_date|status
  *     &dir=asc|desc (default raised_at asc) &page=1 &limit=25
@@ -817,7 +819,7 @@ export async function listOrderInquiryHeaders(
       state: params.state,
       raised_by: params.raised_by,
       agent: params.agent,
-      project_id: params.project_id,
+      project: params.project,
     },
   );
   const response = await apiFetch(`${BASE}/order-inquiry-headers?${search.toString()}`);

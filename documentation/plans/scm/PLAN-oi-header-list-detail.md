@@ -157,7 +157,9 @@ SO detail's "Order inquiries" field and per-line column link to the OI detail pa
 GET /api/v1/project-sales/order-inquiry-headers
   ?state=outstanding|completed|all (default outstanding)
   &query= (OI no, legacy no, SO no, customer, project, agent, any line's product or location)
-  &raised_by=<user id> &agent=<agent name> &project_id=<uuid>
+  &raised_by=<user id> &agent=<agent name> &project=<project title text, exact match on
+  the Project column's own `_PROJECT_TITLE` - never `project_id`: 0 of 738 headers on the
+  prod copy carry `ProjectSalesOrder.project_id`, reviewer B2, fix round 22 Sep 2026>
   &sort=raised_at|inquiry_no|so_number|raised_by|lines_total|qty_total|customer|project|agent|so_date|status
   &dir=asc|desc (default raised_at asc) &page=1 &limit=25
 -> { data: [Header], pagination: { total, page, limit } }   (`app/schemas/common.py::ListResponse`, the

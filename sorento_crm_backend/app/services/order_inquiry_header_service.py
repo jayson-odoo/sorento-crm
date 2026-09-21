@@ -93,6 +93,16 @@ _SO_DATE = func.coalesce(
 # An adopted order's customer is the core SO's own; an authored one's is the party the
 # purchase order was issued to (`order_inquiry_worklist_service.py`'s own `_CUSTOMER_ID`).
 _CUSTOMER_ID = func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id)
+# The Agent column's text (reviewer B1): `person_label` is NULL for every one of the 80
+# agents on the prod copy - the name purchasing actually knows an agent by is
+# `sales_agents.sales_agent`. `person_label` is kept as the PREFERRED value (it groups
+# several codes under one person for reporting, `app/models/sales_agent.py`), so a
+# company that DOES populate it still gets that grouping; the fallback only covers the
+# common case where it never was. The worklist's own Agent facet
+# (`order_inquiry_worklist_service.py::_agents`) already computes `label or code` in
+# Python for the same reason - this is the SQL-side equivalent, used everywhere this
+# file reads or filters on the agent's name.
+_AGENT_NAME = func.coalesce(SalesAgent.person_label, SalesAgent.sales_agent)
 
 HeaderSort = Literal[
     "raised_at",
@@ -182,7 +192,7 @@ class OrderInquiryHeaderService:
         query: Optional[str] = None,
         raised_by: Optional[str] = None,
         agent: Optional[str] = None,
-        project_id: Optional[str] = None,
+        project: Optional[str] = None,
         state: HeaderState = "outstanding",
     ):
         """`agg` is ALWAYS the caller's own `_rows_agg()` instance, never one built in
@@ -208,7 +218,7 @@ class OrderInquiryHeaderService:
                 Customer.customer_code.label("customer_code"),
                 ProjectSalesOrder.project_id.label("project_id"),
                 _PROJECT_TITLE.label("project_title"),
-                SalesAgent.person_label.label("agent_name"),
+                _AGENT_NAME.label("agent_name"),
                 lines_total.label("lines_total"),
                 lines_to_confirm.label("lines_to_confirm"),
                 qty_total.label("qty_total"),
@@ -229,9 +239,15 @@ class OrderInquiryHeaderService:
         if raised_by:
             base = base.filter(OrderInquiry.raised_by == raised_by)
         if agent:
-            base = base.filter(SalesAgent.person_label == agent)
-        if project_id:
-            base = base.filter(ProjectSalesOrder.project_id == project_id)
+            base = base.filter(_AGENT_NAME == agent)
+        if project:
+            # B2 (reviewer): filter on the SAME text the Project column prints
+            # (`_PROJECT_TITLE`), not `ProjectSalesOrder.project_id` - 0 of 738 headers
+            # on the prod copy carry a `project_id` (an adopted AutoCount order has no
+            # registered `Project` row), so that filter never matched anything. Same
+            # rule `order_inquiry_worklist_service.py`'s own `project` filter already
+            # applies.
+            base = base.filter(_PROJECT_TITLE == project)
         if query:
             like = f"%{_escape_like(str(query))}%"
             row_match = (
@@ -254,7 +270,7 @@ class OrderInquiryHeaderService:
                     _SO_NUMBER.ilike(like, escape=_LIKE_ESCAPE),
                     Customer.customer_name.ilike(like, escape=_LIKE_ESCAPE),
                     _PROJECT_TITLE.ilike(like, escape=_LIKE_ESCAPE),
-                    SalesAgent.person_label.ilike(like, escape=_LIKE_ESCAPE),
+                    _AGENT_NAME.ilike(like, escape=_LIKE_ESCAPE),
                     row_match,
                 )
             )
@@ -294,7 +310,7 @@ class OrderInquiryHeaderService:
         query: Optional[str] = None,
         raised_by: Optional[str] = None,
         agent: Optional[str] = None,
-        project_id: Optional[str] = None,
+        project: Optional[str] = None,
         sort: Optional[str] = None,
         direction: Optional[str] = "asc",
         page: int = 1,
@@ -327,7 +343,7 @@ class OrderInquiryHeaderService:
             "qty_total": func.coalesce(agg.c.qty_total, 0),
             "customer": Customer.customer_name,
             "project": _PROJECT_TITLE,
-            "agent": SalesAgent.person_label,
+            "agent": _AGENT_NAME,
             "so_date": _SO_DATE,
             "status": case(
                 (func.coalesce(agg.c.lines_to_confirm, 0) > 0, "outstanding"),
@@ -337,7 +353,7 @@ class OrderInquiryHeaderService:
 
         base = self._base(
             agg=agg, state=state, query=query, raised_by=raised_by, agent=agent,
-            project_id=project_id,
+            project=project,
         )
         total = int(
             base.with_entities(func.count(OrderInquiry.id)).order_by(None).scalar() or 0
