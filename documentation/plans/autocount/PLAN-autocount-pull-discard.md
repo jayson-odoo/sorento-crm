@@ -1,6 +1,6 @@
 # PLAN: discard an AutoCount pull, pull again, back to where the pull started
 
-Status: tests being written (light lane: tester reds, one coder, one reviewer, browser pass on the lane stack; no migration, no auth change)
+Status: built, review READY, browser pass running (light lane: tester reds, one coder, one reviewer, browser pass on the lane stack; no migration, no auth change)
 
 UAC: `autocount-pull-discard-acceptance-criteria.md`
 
