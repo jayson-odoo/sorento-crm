@@ -10,6 +10,10 @@ Open **[Supply Chain → Planning → Project Demand → Fulfilment Planning](/p
 The same board is also reachable from **Procurement → Supply Chain → Order Inquiries** once a
 line has been raised there.
 
+The board offers **Grid** and **List** views; on **List**, the **Verdict** column (Suggested /
+Saved / Confirmed / Rejected) sorts like any other column - click its header to order lines by
+where they stand.
+
 ## The Local pill
 
 The **Local** pill is off unless an admin turns it on under **System Settings → General**,
@@ -48,6 +52,17 @@ Turning the setting on brings back the earlier behaviour:
 * **A line that was already raised on Order Inquiries before its product became local is left
   exactly as it was** the next time the order is confirmed - it is not re-raised and it is not
   cancelled. Purchasing closes an old row like that by hand once it no longer applies.
+
+A reason typed on a line whose quantities still match the suggestion - the discontinued-Buy
+**Reason**, or a borrow row's own reason - now stays in the box on **Save** instead of clearing,
+and carries through to Confirm; the line's **Order back** switch and **Document cited** text
+reach the saved decision the same way.
+
+When Confirm would leave one or more lines out - a discontinued product bought with no reason
+given, or a reserve at a warehouse the board cannot address - a warning banner names each one
+above the summary cards; click a line's name to jump to it on the List view with its decision
+panel already open. The Confirm toast then names both counts, ending for example "... 1 left
+out", and turns amber instead of the plain success green when something was left out.
 
 ## Add a borrow
 
