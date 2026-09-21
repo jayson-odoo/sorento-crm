@@ -924,10 +924,20 @@ def _run_crossdomain_ladder(
 
 
 #: `crossdomain_render`'s own per-row grammar (`answer.py`, `f"*{label}:* {value}"`) for
-#: the field the incoming / PO rungs key their rows by. Read line-anchored, so a code
-#: that is a string PREFIX of the code on the line (SRTWC6022-SH-UF inside
-#: SRTWC6022-SH-UF-NEW) can never be mistaken for it.
-_RUNG_ROW_CODE_RE = re.compile(r"^\*Product Code:\*\s*(.+?)\s*$", re.MULTILINE)
+#: the field the incoming / PO rungs key their rows by. Anchored to the line START and to
+#: the line END, so the value read is the WHOLE code: a code that is a string PREFIX of
+#: the one on the line (SRTWC6022-SH-UF inside SRTWC6022-SH-UF-NEW) is never mistaken
+#: for it, and a code that merely extends it is not either.
+#:
+#: The leading `- ` is REQUIRED in the alternation, not decorative: `crossdomain_render`
+#: renders a row as `f"- {field_lines}"`, so the FIRST field's line carries the bullet
+#: and every later one does not. Product Code is the first field on a live incoming rung
+#: row (measured, turn 27f60a71 on the clone: the block reads
+#: `- *Product Code:* SRTWC6022-SH-UF-NEW`), so a pattern anchored on `^\*Product Code:`
+#: alone matched NOTHING there, `_block_product_codes` returned the empty "no opinion"
+#: set, and the note fell back to naming every zero code - which is the defect this
+#: function was added to close, reappearing through its own anchor.
+_RUNG_ROW_CODE_RE = re.compile(r"^(?:-[ \t]*)?\*Product Code:\*[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 
 
 def _block_product_codes(block_text: Any) -> set[str]:
