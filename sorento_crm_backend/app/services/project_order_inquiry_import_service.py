@@ -357,10 +357,11 @@ def _lines_of(db: Session, order_ids: set) -> Dict[str, List[tuple]]:
     line is exactly what it names. The warehouse is outer-joined because a line with no
     location matches whatever the sheet states for it (D1).
 
-    ORDERED, because `_rank_for` sorts these candidates and a sort is only as stable as what
-    it is given: a whole AutoCount ingest shares one `created_at` (Postgres freezes `now()`
-    per transaction), so without an explicit order the tie fell to whatever order the read
-    happened to return and `preview` and `apply` could pick different lines for the same row.
+    ORDERED, because `_line_pick_key` sorts these candidates by date order and a sort is only
+    as stable as what it is given: a whole AutoCount ingest shares one `created_at` (Postgres
+    freezes `now()` per transaction), so without an explicit order the tie fell to whatever
+    order the read happened to return and `preview` and `apply` could pick different lines for
+    the same row.
     """
     if not order_ids:
         return {}
@@ -582,14 +583,14 @@ def _match_row(
 
 
 # --------------------------------------------------------------------------- #
-# the line pick, from 21 Sep 2026: date order, replacing the five passes above #
+#      the line pick, from 21 Sep 2026: sheet rows placed in date order       #
 # --------------------------------------------------------------------------- #
 
 
 def _line_pick_key(candidate: tuple) -> tuple:
     """R4's own tie-break once a candidate line has been placed in date order: undated
-    last, the earliest required date, the oldest line, the id - the same terms `_rank_for`
-    always closed a tie on, so two runs of the same sheet still land the same way."""
+    last, the earliest required date, the oldest line, the id - so two runs of the same
+    sheet still land the same way."""
     line = candidate[0]
     return (
         line.required_date is None,
@@ -1723,8 +1724,8 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     #: or not an earlier tab already stated the key twice.
     seen: Dict[tuple, int] = {}
 
-    #: Rows that cleared the file-level checks below and are left for the five passes to
-    #: place (`_match_in_passes`).
+    #: Rows that cleared the file-level checks below and are left for the date-order pick
+    #: to place (`_pick_lines_by_date_order`).
     pending: List[_Match] = []
 
     for match in plan.matches:

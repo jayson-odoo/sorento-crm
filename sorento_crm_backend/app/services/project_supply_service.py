@@ -839,6 +839,31 @@ class _CapacityLedger:
             self._basis[key] = claimed
         return self._left[key]
 
+    def state_at_least(
+        self, product_id: Optional[str], warehouse_id: str, qty: Decimal
+    ) -> Decimal:
+        """State that this location's pile holds AT LEAST `qty` in total (S1, security
+        review round two) - a single re-statement about the bin ("N of this floor landed
+        for this line"), never a date-aware SLICE of demand the way `offer`'s `share` is.
+
+        `offer` folds its `share` into `_claimed`, the running sum every unit's own dated
+        slice at this bin is added to - right for another unit's genuine slice, wrong for
+        the own-arrival credit: `offer` grants the credit nothing when the pile's stated
+        basis already covers it (the common case), yet still adds it to `_claimed`, so a
+        LATER unit's own dated slice at the SAME bin can then sum past `_basis` by the
+        credit's own amount even though nothing physical backs that excess. `state_at_least`
+        raises `_basis` to `max(_basis, qty)` and `_left` by the same delta, and never
+        touches `_claimed` at all.
+        """
+        key = (product_id or "", warehouse_id)
+        if key not in self._left:
+            self._left[key] = _ZERO
+            self._basis[key] = _ZERO
+        if qty > self._basis[key]:
+            self._left[key] += qty - self._basis[key]
+            self._basis[key] = qty
+        return self._left[key]
+
     def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
         key = (product_id or "", warehouse_id)
         self._left[key] = max(self._left.get(key, _ZERO) - qty, _ZERO)
@@ -1395,6 +1420,12 @@ class ProjectSupplyService:
         pools: List[Dict[str, Any]] = []
         own_offer = _ZERO
         other_group_short: Dict[str, Decimal] = {}
+        # S5: sized inside `if not outside_window` below; kept defined out here too, since
+        # the deferred own-arrival charge after `walk_line` returns reads them
+        # unconditionally.
+        credit_qty = _ZERO
+        credit_tier1_qty = _ZERO
+        credit_tier2: List[Tuple[str, Decimal, Optional[str]]] = []
         if not outside_window:
             pools = self._pool_chain(fact, pool_free_left=pool_free_left)
             group_take, other_group, own_offer, other_group_short = (
@@ -1412,8 +1443,18 @@ class ProjectSupplyService:
             # (AC-S3-11), because the credit is a claim ON that pile, not a second pile
             # beside it: a line needing 80 with 40 received and 40 on hand composes Reserve
             # 40 plus Buy 40, never Reserve 80.
-            credit_qty, credit_po = self.own_arrival_credit_for(
-                fact, own_arrival_left=own_arrival_left
+            #
+            # S5: `_own_arrival_credit_components` only SIZES this candidate here - it does
+            # NOT charge `own_arrival_left` yet. `walk_line`'s own pool-share sub-step (0)
+            # runs BEFORE the own-arrival sub-step and may already cover part of the line,
+            # so what `walk_line` actually draws off this candidate (below, after it
+            # returns) can be smaller than the theoretical figure computed here - charging
+            # the theoretical amount would overcharge the ledger a sibling line at the same
+            # bin reads afterwards.
+            credit_qty, credit_po, credit_tier1_qty, credit_tier2 = (
+                self._own_arrival_credit_components(
+                    fact, own_arrival_left=own_arrival_left
+                )
             )
             if credit_qty > _ZERO:
                 own_arrival_candidates = [{
@@ -1433,7 +1474,7 @@ class ProjectSupplyService:
             )
         pools_net = fact.pools_net if pools_net_left is None else pools_net_left
         settings = self._fulfilment_settings()
-        return walk_line(
+        walked = walk_line(
             open_qty=fact.open_qty,
             line_no=fact.line_no,
             required_date=fact.required_date,
@@ -1476,6 +1517,25 @@ class ProjectSupplyService:
             # and one number across the five pools spent them all at once.
             pool_share_left=pool_share_left,
         )
+        # S5: charge `own_arrival_left` with what `walk_line` ACTUALLY drew off the
+        # own-arrival candidate above, never the theoretical figure it was sized with -
+        # the pool-share sub-step may have already covered part of the line, leaving less
+        # than `credit_qty` for own-arrival to draw. Tier 1 (this line's own PO) first,
+        # only the rest off the siblings' tier-2 spare, same order as before (MB2).
+        if own_arrival_left is not None and credit_qty > _ZERO:
+            drawn = next(
+                (
+                    component.qty
+                    for component in walked.components
+                    if getattr(component, "source", None) == "own_arrival"
+                ),
+                _ZERO,
+            )
+            if drawn > _ZERO:
+                self._charge_own_arrival_credit(
+                    fact, drawn, credit_tier1_qty, credit_tier2, own_arrival_left
+                )
+        return walked
 
     # ----------------------------------------------------- ladder v6: order units
 
@@ -2764,10 +2824,45 @@ class ProjectSupplyService:
 
         Returns `(credit_qty, po_number)` - `po_number` is tier 1's own PO where there is
         one, else the first tier-2 PO the credit actually drew from a spare on.
+
+        S5: this method charges `own_arrival_left` immediately with the credit it
+        returns, because for THIS caller the credit IS the final draw (`_check_line`'s
+        confirm-time recheck, `project_order_inquiry_service`'s path picker). `walk()`'s
+        own candidate-build-time call is different - `walk_line` may draw LESS than the
+        theoretical credit once its pool-share sub-step is netted out - so `walk()` reads
+        `_own_arrival_credit_components` directly (no charge) and charges
+        `_charge_own_arrival_credit` itself, afterwards, with what was actually drawn.
+        """
+        credit, po_number, tier1_qty, tier2 = self._own_arrival_credit_components(
+            fact, own_arrival_left=own_arrival_left
+        )
+        if own_arrival_left is not None and credit > _ZERO:
+            self._charge_own_arrival_credit(
+                fact, credit, tier1_qty, tier2, own_arrival_left
+            )
+        return credit, po_number
+
+    def _own_arrival_credit_components(
+        self,
+        fact: _LineFacts,
+        *,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> Tuple[Decimal, Optional[str], Decimal, List[Tuple[str, Decimal, Optional[str]]]]:
+        """S5: the READ-ONLY half of `own_arrival_credit_for` - tier 1's own PO receipt,
+        tier 2's sibling spare (netted against `own_arrival_left`'s own running balance,
+        MB2, via `setdefault` - a READ that seeds the ledger's starting point, not a
+        charge), and the THEORETICAL credit those two and the bin's on hand cap the
+        line's open qty to. Nothing is SPENT off `own_arrival_left` here - that is
+        `_charge_own_arrival_credit`'s job, called with whatever was actually drawn,
+        which for `walk()`'s own caller can be less than what is returned here.
+
+        Returns `(credit_qty, po_number, tier1_qty, tier2)` - `tier2` is the
+        `(source_ref, spare, po_number)` list a deferred charge walks in the SAME order
+        this computed it, so tier 1 is always spent before any sibling's tier-2 spare.
         """
         core_line_id = fact.unit_core_line_ids[0] if fact.unit_core_line_ids else None
         if not core_line_id or not fact.own_code:
-            return _ZERO, None
+            return _ZERO, None, _ZERO, []
         if core_line_id in self._own_arrival_line_memo:
             core_line = self._own_arrival_line_memo[core_line_id]
         else:
@@ -2778,16 +2873,17 @@ class ProjectSupplyService:
             )
             self._own_arrival_line_memo[core_line_id] = core_line
         if core_line is None or not core_line.source_ref:
-            return _ZERO, None
+            return _ZERO, None, _ZERO, []
         if not core_line.sales_order_id or not core_line.product_id:
-            return _ZERO, None
+            return _ZERO, None, _ZERO, []
 
         siblings, received = self._own_arrival_order_facts(core_line)
         tier1_qty, tier1_po = received.get(
             str(core_line.source_ref).strip(), (_ZERO, None)
         )
         # The siblings' spare, one entry each, kept as a LIST rather than a running sum so
-        # the ledger below can charge exactly the ones the credit actually drew on (MB2).
+        # a charge (immediate or deferred) can spend exactly the ones the credit actually
+        # drew on (MB2).
         tier2: List[Tuple[str, Decimal, Optional[str]]] = []
         for sibling in siblings:
             if str(sibling.id) == str(core_line.id) or not sibling.source_ref:
@@ -2818,18 +2914,16 @@ class ProjectSupplyService:
         tier2_qty = sum((spare for _ref, spare, _po in tier2), _ZERO)
         tier2_po = next((po for _ref, _spare, po in tier2 if po), None)
 
-        # Capped by what the LINE itself still needs, before anything is drawn off the
-        # shared on-hand ledger (AC-S3-4): `_draw_group` would trim the actual draw to the
-        # line's own need regardless, but the ledger has to be charged for the SAME amount
-        # that is trimmed to, or a line whose own PO received more than it needs would
-        # over-spend the location's on hand and starve a sibling of headroom it never used.
+        # Capped by what the LINE itself still needs (AC-S3-4): a line whose own PO
+        # received more than it needs must not be sized a candidate bigger than what it
+        # could ever draw.
         theoretical = min(tier1_qty + tier2_qty, max(_dec(fact.open_qty), _ZERO))
         if theoretical <= _ZERO:
-            return _ZERO, None
+            return _ZERO, None, tier1_qty, tier2
 
         on_hand = self._on_hand_at(fact, fact.own_code)
         if on_hand is None:
-            return _ZERO, None
+            return _ZERO, None, tier1_qty, tier2
 
         if own_arrival_left is not None:
             remaining = own_arrival_left.get(fact.own_code)
@@ -2840,22 +2934,42 @@ class ProjectSupplyService:
 
         credit = min(theoretical, max(remaining, _ZERO))
         if credit <= _ZERO:
-            return _ZERO, None
-        if own_arrival_left is not None:
-            own_arrival_left[fact.own_code] = max(remaining - credit, _ZERO)
-            # Tier 1 is drawn first, so only what the credit took BEYOND it came off the
-            # siblings - charged to them in the order they were read (MB2).
-            tier2_used = credit - tier1_qty
-            for ref, spare, _po in tier2:
-                if tier2_used <= _ZERO:
-                    break
-                spend = min(spare, tier2_used)
-                key = _own_arrival_spare_key(ref)
-                own_arrival_left[key] = max(
-                    _dec(own_arrival_left.get(key, spare)) - spend, _ZERO
-                )
-                tier2_used -= spend
-        return credit, tier1_po or tier2_po
+            return _ZERO, None, tier1_qty, tier2
+        return credit, tier1_po or tier2_po, tier1_qty, tier2
+
+    @staticmethod
+    def _charge_own_arrival_credit(
+        fact: _LineFacts,
+        drawn: Decimal,
+        tier1_qty: Decimal,
+        tier2: List[Tuple[str, Decimal, Optional[str]]],
+        own_arrival_left: MutableMapping[str, Decimal],
+    ) -> None:
+        """S5: charge `own_arrival_left` with what was ACTUALLY drawn (`drawn`), never
+        the theoretical credit `_own_arrival_credit_components` sized a candidate with -
+        `walk()`'s own caller learns `drawn` only after `walk_line` returns, once its
+        pool-share sub-step has told it how much of the line's need the own-arrival
+        sub-step was even asked to cover. Tier 1 (this line's own PO) is charged first,
+        exactly as `_own_arrival_credit_components` measured it; only what `drawn` takes
+        BEYOND tier 1 comes off the siblings' tier-2 spare, in the order they were read
+        (MB2) - unchanged from the charge `own_arrival_credit_for` used to do inline.
+        """
+        if not fact.own_code:
+            return
+        remaining = own_arrival_left.get(fact.own_code)
+        if remaining is None:
+            remaining = ProjectSupplyService._on_hand_at(fact, fact.own_code) or _ZERO
+        own_arrival_left[fact.own_code] = max(_dec(remaining) - drawn, _ZERO)
+        tier2_used = drawn - tier1_qty
+        for ref, spare, _po in tier2:
+            if tier2_used <= _ZERO:
+                break
+            spend = min(spare, tier2_used)
+            key = _own_arrival_spare_key(ref)
+            own_arrival_left[key] = max(
+                _dec(own_arrival_left.get(key, spare)) - spend, _ZERO
+            )
+            tier2_used -= spend
 
     @staticmethod
     def _on_hand_at(fact: _LineFacts, code: Optional[str]) -> Optional[Decimal]:
@@ -4998,10 +5112,17 @@ class ProjectSupplyService:
         # AC-S3-11 (security review, 21 Sep 2026): the credit is stated THROUGH
         # `capacity_left`, the ledger every other rung's capacity draws through, and never
         # added straight onto the local `capacity` dict beside it. It is a second READING
-        # of one bin - "N of this floor landed for this line" - not a second pile, so
-        # `offer` is the right verb: the pile becomes whichever statement about it is
-        # larger, never their sum, and a bin another line of the same confirmation has
-        # already emptied grants the credit nothing at all.
+        # of one bin - "N of this floor landed for this line" - not a second pile, so the
+        # pile becomes whichever statement about it is larger, never their sum, and a bin
+        # another line of the same confirmation has already emptied grants the credit
+        # nothing at all.
+        #
+        # S1 (second review round): `offer` is the WRONG verb for this - it folds the
+        # credit into `_claimed`, the running sum a later unit's own DATED slice at this
+        # same bin is added to, so a credit that granted this line 0 (the pile's stated
+        # basis already covered it) still inflates `_claimed` by its own amount, letting
+        # that later slice cross `_basis` by units nothing physical backs. `state_at_least`
+        # states the pile is at least `before + credit_qty` without touching `_claimed`.
         if own_arrival_left is not None and fact.own_code:
             ledger = (
                 own_arrival_left.setdefault(fact.product_id, {})
@@ -5018,8 +5139,8 @@ class ProjectSupplyService:
                     before = capacity_left.capacity(
                         fact.product_id, str(source.id), _ZERO
                     )
-                    after = capacity_left.offer(
-                        fact.product_id, str(source.id), credit_qty
+                    after = capacity_left.state_at_least(
+                        fact.product_id, str(source.id), before + credit_qty
                     )
                     capacity[fact.own_code] = capacity.get(
                         fact.own_code, _ZERO

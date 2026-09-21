@@ -744,6 +744,15 @@ class ProjectOrderInquiryService:
         # other cache above has, and nothing here writes stock or purchase-order receipts.
         self._own_arrival_supply: Optional[Any] = None
         self._own_arrival_netting: Dict[str, List[Any]] = {}
+        # S2 (second review round): `own_arrival_credit_for`'s own running ledger,
+        # `location code -> what is left of it` (plus sibling-spare keys), product-scoped
+        # the same way `_own_arrival_netting` above is. A replan settles several rows of
+        # ONE order in one call, and without a ledger threaded through, each row re-read
+        # the SAME physical floor fresh and could each be credited off it in full. Rows
+        # are processed in the order the caller iterates them (date order), so the first
+        # row a bin's credit covers spends it and a later row at the same bin sees what
+        # is left, not the whole pile again.
+        self._own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -1645,13 +1654,19 @@ class ProjectOrderInquiryService:
         reads (`ProjectSupplyService.own_arrival_credit_for`) - reused rather than
         restated, so the path picker and the board cannot come to disagree about what
         counts as covered. Built off a MINIMAL `_LineFacts` (this call is a single-row
-        question, not a walk - no shared ledger to thread through).
+        question, not a walk).
 
         `open_qty` is `qty_ordered - qty_delivered` (review round, SF1), the SAME reading
         of "open" every other `_LineFacts` builder in this codebase uses
         (`project_supply_service.py` `_facts_for` / `demand_facts`). A line ordered 40 and
         delivered 30 owes 10, so 10 is the most a credit may cover for it - reading the
         original 40 would settle a row in place off stock the line no longer needs.
+
+        S2 (second review round): `self._own_arrival_left` is threaded through as the
+        SAME per-instance ledger `own_arrival_credit_for` charges - without it, a replan
+        settling several rows of one order in one call would re-read the same physical
+        floor fresh for each row and could credit each of them off it in full. Rows are
+        processed in the order the caller iterates them (date order).
         """
         from app.services.project_supply_service import ProjectSupplyService, _LineFacts
 
@@ -1690,7 +1705,10 @@ class ProjectOrderInquiryService:
                 _dec(core_line.qty_ordered) - _dec(core_line.qty_delivered), _ZERO
             ),
         )
-        credit, _po = supply.own_arrival_credit_for(fact)
+        ledger = (
+            self._own_arrival_left.setdefault(product_id, {}) if product_id else None
+        )
+        credit, _po = supply.own_arrival_credit_for(fact, own_arrival_left=ledger)
         return credit
 
     def _redirect_row_if_received(
@@ -1716,6 +1734,15 @@ class ProjectOrderInquiryService:
         named in this row's own note) - Opus review round 1: `_release_fragment` reuses
         this list (cached on the row) rather than re-deriving it with a second,
         identical query.
+
+        AC-S3-12 (owner ruling R2, second review round): a mixed row (a received link
+        plus a still-open PO link) whose own-arrival credit covers the row's WHOLE
+        linked total is retained WITH BOTH LINKS - the received link stays as history,
+        and the still-open PO link stays too, because shifting it off the row is
+        purchasing's own decision at Order Inquiries, not something a replan's
+        credit-covered settle should make for them as a side effect. (Review round one,
+        SF10, had this branch release the still-open link the same way the ordinary
+        not-fully-covered branch below does; that was reversed by this ruling.)
         """
         received = self._received_documents_for(links)
         received_links = [link for link in links if str(link.id) in received]
@@ -1724,18 +1751,11 @@ class ProjectOrderInquiryService:
         # R2/R7: own landed stock covers the link - settle in place, links kept, no
         # redirect (Path B). Measured against the WHOLE of `links`' quantity, not only the
         # received part: the row's demand is what the credit has to cover to make a fresh
-        # row unnecessary.
+        # row unnecessary. AC-S3-12: this branch must not touch any OTHER link on the
+        # row - a still-open PO link is left exactly as it was; only the ordinary,
+        # not-fully-covered branch below redirects an open link.
         linked_qty = sum((_dec(link.qty) for link in links), _ZERO)
         if linked_qty > _ZERO and self._own_arrival_credit_for_row(row) >= linked_qty:
-            # Review round (SF10): the STILL-OPEN documents on a mixed row are released
-            # all the same. Landed stock now covers the row's whole need, so a reservation
-            # on a purchase-order line that has not shipped is holding capacity this row
-            # will never take - the same `_remove_links` the ordinary branch below uses,
-            # freeing it for the next row that does need it. The RECEIVED links stay: they
-            # are the history of how this row came to be covered.
-            still_open = [link for link in links if str(link.id) not in received]
-            if still_open:
-                self._remove_links(row, still_open)
             return None
         open_links = [link for link in links if str(link.id) not in received]
         if open_links:
