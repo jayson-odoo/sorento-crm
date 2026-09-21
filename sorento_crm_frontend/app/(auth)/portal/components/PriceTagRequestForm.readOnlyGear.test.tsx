@@ -285,15 +285,31 @@ describe('read-only gear: Download PDF poll starts on a server-side pending (r10
     });
     downloadPriceTagPdf.mockResolvedValue(undefined);
 
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    expect(
-      screen.getByRole('button', { name: /preparing your pdf/i }),
-    ).toBeInTheDocument();
-
+    // Fake timers go on BEFORE render, not after: the poll's `setInterval`
+    // is armed the moment `exportPreparing` reads true off the FIRST
+    // `getRequest` response - on mount here, not on a later click like the
+    // AC-S9-3 sibling above. An interval created under real timers is never
+    // advanced by `vi.advanceTimersByTimeAsync`, so the render itself has to
+    // happen under fake time; `findByText`/`waitFor`'s own real-timer
+    // polling would then deadlock, so the initial async render is flushed by
+    // hand with repeated zero-length `advanceTimersByTimeAsync` ticks (the
+    // same idiom `page.pollBurst.test.tsx` uses), not `findBy*`.
     vi.useFakeTimers();
     try {
+      await act(async () => {
+        render(<PriceTagRequestForm requestId="req-1" />);
+      });
+      for (let i = 0; i < 20; i += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+      }
+
+      expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /preparing your pdf/i }),
+      ).toBeInTheDocument();
+
       asMock(getRequest).mockResolvedValueOnce({
         ...baseRequest,
         status: 'approved',
