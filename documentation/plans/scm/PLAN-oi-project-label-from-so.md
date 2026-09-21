@@ -1,6 +1,6 @@
 # PLAN: Order inquiry Project column and handover email read the sales order's project label
 
-Status: in progress (Track: small fix)
+Status: in review, draft PR (Track: small fix). Browser AC-8 passed 21 Sep 2026 on :3080 / :8080.
 Branch: `fix/oi-project-label-from-so` (worktree `sorento_crm-oi-project-label`, off origin/main 170d6ece3)
 UAC: `oi-project-label-from-so-acceptance-criteria.md`
 
