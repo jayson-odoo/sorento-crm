@@ -36,6 +36,10 @@ import {
   downloadPullXlsx,
   startPullErrorMessage,
 } from './autocountPullService';
+// Discard (AC-DS-1..8, PLAN-autocount-pull-discard.md): a NAMESPACE import, not a named one,
+// so a missing `discardPull` export reds only the tests below - never the ~20 tests above,
+// which a named import of a not-yet-existing export would take down at module collection.
+import * as autocountPullService from './autocountPullService';
 
 function ok(body: unknown, status = 200) {
   return {
@@ -320,5 +324,27 @@ describe('SR2 DoD: the Phase 1 mock is gone (AC item 1)', () => {
 
     walk(appRoot);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('discardPull (AC-DS-1, AC-DS-10 - PLAN-autocount-pull-discard.md)', () => {
+  it('DS-S1: POSTs to /api/v1/autocount/pulls/{id}/discard and returns the mapped pull', async () => {
+    apiFetch.mockResolvedValue(ok({ ...REVIEW_PULL, phase: 'discarded' }));
+
+    const result = await autocountPullService.discardPull(REVIEW_PULL.job_id);
+
+    expect(calledUrl().pathname).toBe(`/api/v1/autocount/pulls/${REVIEW_PULL.job_id}/discard`);
+    expect(lastInit().method).toBe('POST');
+    expect(result.phase).toBe('discarded');
+  });
+
+  it('DS-S2: a failure throws the extracted API error message (AC-DS-10)', async () => {
+    apiFetch.mockResolvedValue(
+      fail(409, { code: 'NOT_DISCARDABLE', message: "Pull is in phase 'confirmed'; it cannot be discarded." }),
+    );
+
+    await expect(autocountPullService.discardPull(REVIEW_PULL.job_id)).rejects.toThrow(
+      "Pull is in phase 'confirmed'; it cannot be discarded.",
+    );
   });
 });

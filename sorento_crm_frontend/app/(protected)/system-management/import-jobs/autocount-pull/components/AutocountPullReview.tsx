@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
+import { toast } from '@/lib/toast';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,10 +13,13 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   useConfirmPull,
+  useDiscardPull,
   useDownloadPullXlsx,
   usePull,
   useRefreshRowsOnReview,
+  useStartPull,
 } from '../hooks/useAutocountPull';
+import { startPullErrorMessage } from '../services/autocountPullService';
 import { isCompareFullMatch } from '../types/compareMatch';
 import { PullChangesTab } from './PullChangesTab';
 import { PullExcelViewTab } from './PullExcelViewTab';
@@ -34,15 +39,20 @@ const PHASE_LABEL: Record<AutocountPullPhase, string> = {
   confirmed: 'Confirmed',
   failed: 'Failed',
   expired: 'Expired',
+  discarded: 'Discarded',
 };
 
-const PHASE_VARIANT: Record<AutocountPullPhase, 'info' | 'warning' | 'success' | 'destructive'> = {
+const PHASE_VARIANT: Record<
+  AutocountPullPhase,
+  'info' | 'warning' | 'success' | 'destructive' | 'secondary'
+> = {
   building: 'info',
   previewing: 'info',
   review: 'warning',
   confirmed: 'success',
   failed: 'destructive',
   expired: 'destructive',
+  discarded: 'secondary',
 };
 
 const ENTITY_LABEL: Record<AutocountPullEntity, string> = {
@@ -118,10 +128,13 @@ export interface AutocountPullReviewProps {
 }
 
 export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
+  const router = useRouter();
   const [tab, setTab] = useState('changes');
   const { data: pull, isLoading } = usePull(jobId);
   const downloadMutation = useDownloadPullXlsx();
   const confirmMutation = useConfirmPull();
+  const discardMutation = useDiscardPull();
+  const startMutation = useStartPull();
   // Hooks stay above the early return below (rules of hooks) - this must run on every
   // render, `building`/`previewing` included, so it sees the transition the instant it
   // happens rather than only once the review UI itself mounts.
@@ -139,7 +152,23 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
 
   const isBuilding = pull.phase === 'building' || pull.phase === 'previewing';
   const inReview = pull.phase === 'review' || pull.phase === 'confirmed';
-  const isDead = pull.phase === 'failed' || pull.phase === 'expired';
+  // AC-DS-9: the same set `discard_pull` itself allows (`_OPEN_PHASES`, backend).
+  const isDiscardable =
+    pull.phase === 'building' || pull.phase === 'previewing' || pull.phase === 'review';
+  // AC-DS-11: `failed`/`expired`/`discarded` are the three dead ends "Pull again" answers -
+  // `discarded` is not a FAILURE though, so the "pull failed" message below stays scoped to
+  // the narrower `failed`/`expired` pair rather than this flag.
+  const isDead = pull.phase === 'failed' || pull.phase === 'expired' || pull.phase === 'discarded';
+
+  const handlePullAgain = async () => {
+    try {
+      const newPull = await startMutation.mutateAsync(pull.entity);
+      router.push(`/system-management/import-jobs/${newPull.job_id}`);
+    } catch (error) {
+      toast.error(startPullErrorMessage(error));
+    }
+  };
+
   const counts = pull.counts;
   const counters = counts
     ? pull.entity === 'products'
@@ -177,6 +206,16 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
               {downloadMutation.isPending ? 'Preparing…' : downloadLabel}
             </Button>
           )}
+          {isDiscardable && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => discardMutation.mutate(jobId)}
+              disabled={discardMutation.isPending}
+            >
+              {discardMutation.isPending ? 'Discarding…' : 'Discard'}
+            </Button>
+          )}
           {pull.phase === 'review' && (
             <Button
               size="sm"
@@ -191,6 +230,11 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
               <Link href={`/system-management/import-jobs/${pull.apply_job_id}`}>
                 View apply job
               </Link>
+            </Button>
+          )}
+          {isDead && (
+            <Button size="sm" onClick={handlePullAgain} disabled={startMutation.isPending}>
+              {startMutation.isPending ? 'Starting…' : 'Pull again'}
             </Button>
           )}
         </div>
@@ -242,7 +286,7 @@ export function AutocountPullReview({ jobId }: AutocountPullReviewProps) {
           </div>
         )}
 
-        {isDead && (
+        {(pull.phase === 'failed' || pull.phase === 'expired') && (
           <p className="text-sm text-destructive">
             {pull.error ?? 'The pull failed.'}
           </p>
