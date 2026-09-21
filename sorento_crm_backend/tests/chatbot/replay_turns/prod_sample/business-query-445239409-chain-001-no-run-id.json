@@ -140,7 +140,11 @@
           "1e31814d-832f-4235-be9a-8e0060b2a26b"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "option_labels": [
+            "Yes"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTSCBD319-UF\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 27\n\n_Data last updated: 14/09/2026 17:25:40_\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* SRTSCBD319-UF\n*Container:* DFSU6642819\n*ETA:* 2026-08-20\n*Incoming Quantity:* 50\n*Warehouse Allocations:* BRW (50)\n\nWould you like me to escalate to warehouse team?",
         "tools": [
           {
@@ -194,6 +198,7 @@
         "db": "sorento_ai_automation_rearch",
         "expected_from": "recorded",
         "hand_pass_11_update": "2026-09-21: added the crm_incoming_stock_list tool_results entry the recorded expected.text already implied (the zero-stock ladder now climbs to incoming on this turn; the reply text itself is unchanged from the original recording, byte-for-byte). Incoming row shape (container/ETA/qty/warehouse label keys) copied verbatim from this corpus's own business-query-445239415 turn's real crm_incoming_stock_list entry, values substituted from this turn's own recorded reply text. Not a re-record - the parser verdict, resolutions, access and stock tool_results are untouched.",
+        "hand_pass_11_update_2": "2026-09-21: corrected expected.pending from null to {\"option_labels\": [\"Yes\"]} - hand pass 11 made the zero-stock HIT ladder offer (\"Would you like me to escalate to warehouse team?\") mint an answerable team_pick pending, the same shape the miss arm already mints, so the recorded expectation \"no pending\" went stale. Measured directly against engine.run_turn on this exact turn before changing anything: reply text is unchanged (still ends with the escalate offer, byte-for-byte), session_patch.open_question is {\"kind\": \"team_pick\", \"expects\": \"yes_no\", \"options\": [{\"position\": 1, \"label\": \"Yes\", \"entity_type\": \"team\", \"payload\": {}}], \"team\": \"warehouse\", \"asked_at_turn\": 1, \"payload\": {}} - exactly the shape captain ruling 21 Sep 2026 names. Captain ruling: HIT-arm escalate offers mint a pending, owner-visible defect \"yes after the offer had nothing to answer\" - fixture updated to match, not a code change.",
         "prompt_version": 17,
         "recorded_at": "2026-09-14T22:57:28.251606+09:00",
         "turn_id": "170f38d2-042b-4266-8945-363e6b9ecce1"

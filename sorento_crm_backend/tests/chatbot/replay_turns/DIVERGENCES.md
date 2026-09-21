@@ -722,3 +722,32 @@ corrected to `["Yes"]` on that step in each file (single-field diff, verified vi
 - console/case-043-stock-then-po-carries-the-product.json: step 2: pending: `["outstanding purchase orders"]` -> `["Yes"]`, same trigger, same fix (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
 - console/case-058-d17-parser-driven-word-answers-to-the-open-scope-detail-questions-and-a-new-ask.json: step 4: pending: `["orders"]` -> `["Yes"]`, same trigger, same fix - steps 5/6 of this same chain still match the recording unchanged, confirming the divergence is this ONE step's own fetch outcome, not a chain-wide cascade (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
 - console/case-072-r24-a-business-query-under-an-open-offer-is-a-new-ask-hanlim-delivery.json: step 2: pending: `["orders"]` -> `["Yes"]`, same trigger, same fix (signed tester33 2026-09-20, AC-1707: PLAN-chatbot-answer-half-reattach R5 via_fetched_empty)
+
+## Zero-stock ladder HIT-arm escalate offer now mints a pending, 21 Sep 2026 (tester 48)
+
+Hand pass 11 made the zero-stock HIT ladder's own escalate offer ("Would you like me
+to escalate to {team} team?", the rung the ladder falls through to when a RESOLVED
+product reads zero stock at every location) mint an answerable `team_pick` pending -
+the same shape the miss arm already mints - so a case recorded before that change
+still carries the old `expected.pending: null`. Directly corrected in place (not
+merely excused, same convention as R1/R5 above), measured directly against the
+current engine before changing anything: reply text is unchanged (still ends with the
+escalate offer, byte-for-byte); `session_patch.open_question` is `{"kind": "team_pick",
+"expects": "yes_no", "options": [{"position": 1, "label": "Yes", "entity_type": "team",
+"payload": {}}], "team": "<rung's team>", "asked_at_turn": N, "payload": {}}`.
+Owner-visible defect this closes: a bare "yes" after the offer previously had nothing
+to answer.
+
+- prod_sample/business-query-445239409-chain-001-no-run-id.json: pending: `null` -> `{"option_labels": ["Yes"]}`, the incoming-rung HIT-arm escalate offer ("Would you like me to escalate to warehouse team?") now mints a `team_pick` pending with `team: "warehouse"`; measured directly against the current engine, reply text unchanged (signed tester48 2026-09-21, captain ruling 21 Sep 2026: HIT-arm escalate offers mint a pending, owner-visible defect "yes after the offer had nothing to answer")
+
+Four more cases match the same pattern by grep (a resolved product reading zero
+stock at every location, `expected.pending: null`, and an escalate-offer sentence in
+`expected.text`/`canned`) but are NOT corrected here: all four are already listed
+under PENDING-LIVE-RERUN.md's "Composite / cascading chains" style headings for
+broader, unrelated multi-field staleness (`prod_sample/business-query-477071885`,
+`prod_sample/business-query-477071886`, `prod_sample/check-promotion-445239384`,
+`prod_sample/escalation-declined-477071886`) and SKIP before this comparison ever
+runs (confirmed: `pytest -k` on each reports `SKIPPED`, not a divergence) - this
+specific fixture move does not apply to them today, and hand-correcting only their
+`pending` field would not make them green regardless (they each fail on 3+ other
+fields per the composite-chain note they are already filed under).
