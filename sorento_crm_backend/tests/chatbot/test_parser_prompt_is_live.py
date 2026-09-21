@@ -135,7 +135,15 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # plus coder 24's earlier typo-tolerance bullets for a garbled "outstanding"/"quantity"
 # spelling. Measured via `_without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)`, not
 # derived; full prompt (all four addenda included) is 84160 chars.
-CONSTANT_CHARS = 62981
+# 62981 -> 63657 (21 Sep 2026, hand pass 12 round 2, C7(ii), coder 44, `e58f3bea9`):
+# `entity_op`'s OUTPUT SCHEMA enum gains `"replace"` (was `"clear|replace_combine|
+# modify|reuse"` only) plus one new bullet beside `replace_combine` in the entity_op
+# explanation list - "only X"/"just X" sets entity_op "replace" when X is not the
+# whole subject already, explicitly distinguished from `replace_combine` (which keeps
+# every OTHER carried axis; `replace` drops the whole scope to this message's own
+# entities alone). Net +676. Measured via `_without_growth_r1_addendum
+# (SEMANTIC_PARSER_PROMPT)` against the coder's landed change, not derived.
+CONSTANT_CHARS = 63657
 
 
 def _without_growth_r1_addendum(text: str) -> str:
