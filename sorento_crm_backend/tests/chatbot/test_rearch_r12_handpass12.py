@@ -314,6 +314,70 @@ def _said(result) -> str:
     return (result.reply or {}).get("text") or ""
 
 
+def _run_turn_dry(session_factory, monkeypatch, *, qf, text_body: str, msg_id: str) -> Any:
+    """`test_rearch_r12_handpass12_b.py::_run_turn_dry`, duplicated locally rather than
+    imported (that file imports FROM this one, so importing it back would be
+    circular) - a dry run (`is_test=True`, D14) so an escalation-outcome test does not
+    fall through to `conversation_variables_service.overwrite_for_contact`'s own
+    real-commit write path, which this pass measured crashes on a PRE-EXISTING,
+    unrelated `respond_io_id` int/text mismatch (`text = integer`) the moment a turn
+    actually reaches the escalation lane for real - not the defect this file targets."""
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.chatbot.lanes.business.services import AnswerServices, FetchServices
+    from tests.chatbot.test_engine import _envelope as _mk_envelope
+    from tests.chatbot.test_outstanding_lane import _enable_business_lane
+
+    _enable_business_lane(session_factory)
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General",
+            "attributes": [],
+            "all_attributes_allowed": None,
+        },
+    )
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub",
+            prompt_version=1,
+            provider="openai",
+            model="gpt-test",
+            api_key="sk-test",
+        )
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf)
+    monkeypatch.setattr(
+        engine_mod.business_services,
+        "fetch_services",
+        lambda db: FetchServices(mcp_call=lambda name, args: _unknown_envelope()),
+    )
+    monkeypatch.setattr(
+        engine_mod.business_services,
+        "answer_services_for",
+        lambda session_factory: AnswerServices(
+            mcp_probe=lambda name, args: {"data": []}, family_fetch=lambda query: {"data": []}
+        ),
+    )
+    monkeypatch.setattr(
+        engine_mod.business_services,
+        "production_answer_services",
+        lambda db: AnswerServices(
+            mcp_probe=lambda name, args: {"data": []}, family_fetch=lambda query: {"data": []}
+        ),
+    )
+    envelope = _mk_envelope(is_test=True)
+    envelope.message["message"]["messageId"] = msg_id
+    envelope.message["message"]["message"]["text"] = text_body
+    return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+
 # --------------------------------------------------------------------------- #
 # GROUP A - remembered order facets are not USED outside the order domain.
 # --------------------------------------------------------------------------- #
@@ -818,15 +882,142 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
     roster chain (for the member offer) both live, which no existing fixture in this
     suite stands up; `list_team_roster` (the roster read) is doubled here instead, the
     SAME "the MCP tool boundary is the double" convention this whole file already
-    uses one layer up."""
+    uses one layer up.
+
+    owner correction 21 Sep: yes = round robin, roster rides the offer reply. The
+    captain's original two-step proposal (roster shows only AFTER a bare "yes") is
+    wrong - replying "yes" to a customer service escalation offer with no member
+    preference means assign by round robin IMMEDIATELY, exactly as production. The
+    member roster instead rides IN THE SAME REPLY as the offer (production wording,
+    turn 99c114fd's own second message: "To escalate, choose who to route to. ... Or
+    just reply 'yes' and we'll assign automatically."), continuing the did-you-mean
+    roster's OWN numbering (orders 1..6, members 7..11) - numbers never repeat inside
+    one reply, and ONE pending carries both option groups (each option already
+    carrying its own `entity_type`, `customer_order` or `member`)."""
+
+    OPTION_1 = "PS202609-0320"
+    OPTION_1_UUID = str(uuid.uuid4())
+    OPTION_2 = "PS202609-0325"
+    OPTION_2_UUID = str(uuid.uuid4())
+    OPTION_3 = "PS202609-0321"
+    OPTION_3_UUID = str(uuid.uuid4())
+    OPTION_4 = "PS202609-0263"
+    OPTION_4_UUID = str(uuid.uuid4())
+    OPTION_5 = "PS202609-0330"
+    OPTION_5_UUID = str(uuid.uuid4())
+    OPTION_6 = "PS202609-0310"
+    OPTION_6_UUID = str(uuid.uuid4())
+    MISSED_RAW_1 = "PS202609-0374"
+    MISSED_RAW_2 = "PS202609-0363"
+    # The five-member CS roster, real recorded names/ids off turn 99c114fd's own live
+    # `result_set` (`.claude/handpass/hp12-turns-21sep.json`) - continuous numbering
+    # means they land at positions 7..11, right after the six order options above.
+    MEMBER_7_LABEL = "Sandy Lim"
+    MEMBER_7_RESPOND_ID = "1136807"
+    MEMBER_8_LABEL = "Lin"
+    MEMBER_8_RESPOND_ID = "1136805"
+    MEMBER_9_LABEL = "Nur"
+    MEMBER_9_RESPOND_ID = "1136799"
+    MEMBER_10_LABEL = "Emily"
+    MEMBER_10_RESPOND_ID = "1136808"
+    MEMBER_11_LABEL = "Zilin Poon"
+    MEMBER_11_RESPOND_ID = "1204233"
+
+    def _order_options(self) -> list[dict[str, Any]]:
+        codes = [
+            (self.OPTION_1, self.OPTION_1_UUID, 1),
+            (self.OPTION_2, self.OPTION_2_UUID, 2),
+            (self.OPTION_3, self.OPTION_3_UUID, 3),
+            (self.OPTION_4, self.OPTION_4_UUID, 4),
+            (self.OPTION_5, self.OPTION_5_UUID, 5),
+            (self.OPTION_6, self.OPTION_6_UUID, 6),
+        ]
+        return [
+            {
+                "code": code,
+                "uuid": uid,
+                "label": code,
+                "uuids": [uid],
+                "payload": {"value": code},
+                "position": pos,
+                "entity_type": "customer_order",
+            }
+            for code, uid, pos in codes
+        ]
+
+    def _member_options(self) -> list[dict[str, Any]]:
+        rows = [
+            (self.MEMBER_7_LABEL, self.MEMBER_7_RESPOND_ID, 7),
+            (self.MEMBER_8_LABEL, self.MEMBER_8_RESPOND_ID, 8),
+            (self.MEMBER_9_LABEL, self.MEMBER_9_RESPOND_ID, 9),
+            (self.MEMBER_10_LABEL, self.MEMBER_10_RESPOND_ID, 10),
+            (self.MEMBER_11_LABEL, self.MEMBER_11_RESPOND_ID, 11),
+        ]
+        return [
+            {
+                "position": pos,
+                "label": label,
+                "entity_type": "member",
+                "uuid": str(uuid.uuid4()),
+                "payload": {"respond_user_id": respond_id},
+            }
+            for label, respond_id, pos in rows
+        ]
+
+    def _seed_combined_pending(self, session_factory) -> None:
+        """The state AFTER turn 99c114fd's own reply, under the owner's correction: a
+        single `customer_order_pick` pending whose 11 options span both groups -
+        hand-seeded (not chained off a dry-run preview, which writes nothing a second
+        turn could read back), the same convention `TestGroupB2CDCustomerService
+        EscalationAlwaysShowsTheMemberPicker` uses one file over."""
+        _seed_contact_and_get(session_factory)
+        _seed_state(
+            session_factory,
+            focus=_focus(
+                domains=["order"],
+                extra={
+                    "order": [
+                        {
+                            "raw": self.MISSED_RAW_1,
+                            "hint": "order",
+                            "confident": True,
+                            "canonical_code": None,
+                            "hint_confident": True,
+                            "current_message": False,
+                        },
+                        {
+                            "raw": self.MISSED_RAW_2,
+                            "hint": "order",
+                            "confident": True,
+                            "canonical_code": None,
+                            "hint_confident": True,
+                            "current_message": False,
+                        },
+                    ],
+                    "category": [],
+                    "customer_order": [],
+                    "attachment_type": [],
+                    "inbound_shipment": [],
+                },
+            ),
+            open_question={
+                "kind": "customer_order_pick",
+                "team": "customer_service",
+                "expects": None,
+                "options": self._order_options() + self._member_options(),
+                "payload": {"domain": "order", "escalate_offered": True},
+                "asked_at_turn": 1,
+            },
+        )
 
     def test_the_reply_prints_exactly_one_numbered_list_and_keeps_the_dym_pending(
         self, session_factory, monkeypatch
     ) -> None:
+        """owner correction 21 Sep: yes = round robin, roster rides the offer reply."""
         from app.services import team_roster_service
         from app.services.chatbot import answer_bridge
 
-        raw1, raw2 = "PS202609-0374", "PS202609-0363"
+        raw1, raw2 = self.MISSED_RAW_1, self.MISSED_RAW_2
 
         def _alt(code: str) -> dict[str, Any]:
             return {
@@ -857,18 +1048,18 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
                     "token": raw1,
                     "matches": [],
                     "alternatives": [
-                        _alt("PS202609-0320"),
-                        _alt("PS202609-0325"),
-                        _alt("PS202609-0321"),
+                        _alt(self.OPTION_1),
+                        _alt(self.OPTION_2),
+                        _alt(self.OPTION_3),
                     ],
                 },
                 {
                     "token": raw2,
                     "matches": [],
                     "alternatives": [
-                        _alt("PS202609-0263"),
-                        _alt("PS202609-0330"),
-                        _alt("PS202609-0310"),
+                        _alt(self.OPTION_4),
+                        _alt(self.OPTION_5),
+                        _alt(self.OPTION_6),
                     ],
                 },
             ],
@@ -888,18 +1079,39 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
             "list_team_roster",
             lambda *a, **k: [
                 {
-                    "user_id": "zzt-u1",
-                    "name": "Zzt Sandy",
-                    "respond_user_id": "r1",
+                    "user_id": "zzt-b2a-u1",
+                    "name": self.MEMBER_7_LABEL,
+                    "respond_user_id": self.MEMBER_7_RESPOND_ID,
                     "email": "s@zzt.example",
                     "sort_order": 1,
                 },
                 {
-                    "user_id": "zzt-u2",
-                    "name": "Zzt Lin",
-                    "respond_user_id": "r2",
+                    "user_id": "zzt-b2a-u2",
+                    "name": self.MEMBER_8_LABEL,
+                    "respond_user_id": self.MEMBER_8_RESPOND_ID,
                     "email": "l@zzt.example",
                     "sort_order": 2,
+                },
+                {
+                    "user_id": "zzt-b2a-u3",
+                    "name": self.MEMBER_9_LABEL,
+                    "respond_user_id": self.MEMBER_9_RESPOND_ID,
+                    "email": "n@zzt.example",
+                    "sort_order": 3,
+                },
+                {
+                    "user_id": "zzt-b2a-u4",
+                    "name": self.MEMBER_10_LABEL,
+                    "respond_user_id": self.MEMBER_10_RESPOND_ID,
+                    "email": "e@zzt.example",
+                    "sort_order": 4,
+                },
+                {
+                    "user_id": "zzt-b2a-u5",
+                    "name": self.MEMBER_11_LABEL,
+                    "respond_user_id": self.MEMBER_11_RESPOND_ID,
+                    "email": "z@zzt.example",
+                    "sort_order": 5,
                 },
             ],
         )
@@ -927,26 +1139,224 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
         text = answer.text or ""
 
         # Test setup sanity - the did-you-mean roster's own text is present.
-        assert "PS202609-0320" in text, f"test setup sanity, did-you-mean text: {text!r}"
+        assert self.OPTION_1 in text, f"test setup sanity, did-you-mean text: {text!r}"
 
         numbered_list_starts = re.findall(r"(?m)^\s*1\.\s", text)
         assert len(numbered_list_starts) <= 1, (
-            "exactly ONE numbered list may appear in a single reply - owner ruling "
-            f"'numbers never repeat inside a reply': {text!r}"
+            "exactly ONE numbered list may appear in a single reply, continuously "
+            f"numbered 1..11 - owner correction 21 Sep: {text!r}"
         )
-        assert "zzt sandy" not in text.lower() and "zzt lin" not in text.lower(), (
-            f"the member roster's own names must not print in the SAME reply as an "
-            f"unrelated did-you-mean roster: {text!r}"
+        numbers = [int(n) for n in re.findall(r"(?m)^\s*(\d+)\.\s", text)]
+        assert numbers == list(range(1, len(numbers) + 1)), (
+            f"numbers must never repeat inside one reply - ONE continuous numbering "
+            f"1..11, orders first then members: {text!r}"
+        )
+        assert len(numbers) == 11, (
+            f"6 did-you-mean order options + 5 CS members must land in ONE list: {text!r}"
+        )
+        assert self.MEMBER_8_LABEL.lower() in text.lower(), (
+            f"the member roster must ride in the SAME reply as the did-you-mean offer, "
+            f"not a later follow-up: {text!r}"
         )
         assert "customer service" in text.lower() or "'yes'" in text.lower(), (
             f"the reply must still offer to escalate to customer service: {text!r}"
         )
+        assert "assign automatically" in text.lower() or "we'll assign" in text.lower(), (
+            f"the bare-'yes' auto-assign sentence must be present, production wording "
+            f"off turn 99c114fd: {text!r}"
+        )
+
         assert answer.question is not None
-        assert answer.question.kind == "customer_order_pick", (
-            "the roster the text just showed (did-you-mean) must be the pending the "
-            "NEXT turn answers against, not 'member_offer' - a customer picking by "
-            "the position the text just showed them must land on that same roster: "
-            f"{answer.question.kind!r}"
+        options = answer.question.options or []
+        assert len(options) == 11, (
+            f"the pending must let BOTH option groups be answered - 11 entries total: "
+            f"{options!r}"
+        )
+        positions_seen = sorted(o.get("position") for o in options)
+        assert positions_seen == list(range(1, 12)), (
+            f"no position may repeat and none may be skipped: {options!r}"
+        )
+        member_at_8 = next((o for o in options if o.get("position") == 8), None)
+        assert member_at_8 is not None and member_at_8.get("entity_type") == "member", (
+            f"position 8 must be a member option: {options!r}"
+        )
+        assert (member_at_8.get("payload") or {}).get("respond_user_id") == self.MEMBER_8_RESPOND_ID, (
+            f"position 8 must be Lin, respond_user_id {self.MEMBER_8_RESPOND_ID}: "
+            f"{options!r}"
+        )
+
+    def test_follow_up_1_and_4_settles_orders_1_and_4(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """owner correction 21 Sep: yes = round robin, roster rides the offer reply.
+        The combined pending's ORDER half must still answer the same way the
+        6-option-only roster does (`TestGroupB2OneNumberedListPerMessage`) - the
+        member half riding at 7..11 must not disturb it."""
+        self._seed_combined_pending(session_factory)
+        verdict = _parser_output(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+            entity_op="reuse",
+            reference_target="dym",
+            reference_positions=[1, 4],
+            document=[],
+            status=None,
+            order_status=None,
+        )
+        mcp_call, calls = _mcp_double(other=lambda name, args: json.dumps(_order_envelope([])))
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=verdict,
+            text_body="1 and 4",
+            msg_id="zzt-b2a-1-and-4",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+
+        order_calls = [args for name, args in calls if name in ORDER_TOOLS_LOCAL]
+        assert order_calls, f"no order tool was ever called: {calls!r}"
+        order_ids = {str(u) for u in (order_calls[0].get("order_ids") or [])}
+        assert order_ids == {self.OPTION_1_UUID, self.OPTION_4_UUID}, (
+            f"positions 1 and 4 are both order options - the member half riding "
+            f"alongside must not change which uuids reach the tool: {order_calls[0]!r}"
+        )
+
+    def test_follow_up_8_assigns_the_member_at_position_8_no_order_pick(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """owner correction 21 Sep: yes = round robin, roster rides the offer reply.
+        A position pick into the MEMBER half of the SAME combined roster assigns that
+        member directly this turn - no order tool call, no member_offer follow-up."""
+        from app.services.chatbot import engine as engine_mod
+
+        self._seed_combined_pending(session_factory)
+        assign_calls: list[dict[str, Any]] = []
+
+        def _escalation_double(ctx, item, *, dry_run, session_factory):
+            escalation = (((ctx or {}).get("parse") or {}).get("output") or {}).get("escalation") or {}
+            assignee_id = escalation.get("preferred_assignee_id") or None
+            assign_calls.append({"preferred_assignee_id": assignee_id})
+            return {
+                "arm": "assign",
+                "actions": [
+                    {
+                        "kind": "assign_conversation",
+                        "respond_user_id": assignee_id or "zzt-round-robin",
+                        "dry_run": dry_run,
+                    },
+                ],
+                "pending": None,
+            }
+
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", _escalation_double)
+
+        verdict = _parser_output(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+            entity_op="reuse",
+            reference_target="result",
+            reference_positions=[8],
+            document=[],
+            status=None,
+            order_status=None,
+        )
+        mcp_call, calls = _mcp_double(other=lambda name, args: json.dumps(_order_envelope([])))
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=verdict,
+            text_body="8",
+            msg_id="zzt-b2a-pick-8",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+
+        order_calls = [args for name, args in calls if name in ORDER_TOOLS_LOCAL]
+        assert not order_calls, (
+            f"picking the member at position 8 must not also make an order pick: "
+            f"{order_calls!r}"
+        )
+        assert any(
+            a.get("kind") == "assign_conversation"
+            and a.get("respond_user_id") == self.MEMBER_8_RESPOND_ID
+            for a in (result.actions or [])
+        ), (
+            f"position 8 (Lin, respond_user_id {self.MEMBER_8_RESPOND_ID}) must be "
+            f"assigned directly, no roster shown again: {result.actions!r}"
+        )
+
+    def test_follow_up_yes_assigns_round_robin_immediately_no_roster_reply(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """owner correction 21 Sep: yes = round robin, roster rides the offer reply.
+        A bare "yes" over the SAME combined pending (`payload.escalate_offered: True`,
+        unaffected by the member half riding alongside) assigns by round robin on
+        THIS turn - no second roster, no member_offer follow-up pending."""
+        from app.services.chatbot import engine as engine_mod
+
+        self._seed_combined_pending(session_factory)
+        assign_calls: list[dict[str, Any]] = []
+
+        def _escalation_double(ctx, item, *, dry_run, session_factory):
+            escalation = (((ctx or {}).get("parse") or {}).get("output") or {}).get("escalation") or {}
+            assignee_id = escalation.get("preferred_assignee_id") or None
+            assign_calls.append({"preferred_assignee_id": assignee_id})
+            return {
+                "arm": "assign",
+                "actions": [
+                    {"kind": "send_message", "text": "Escalated.", "dry_run": dry_run},
+                    {
+                        "kind": "assign_conversation",
+                        "respond_user_id": assignee_id or "zzt-round-robin",
+                        "dry_run": dry_run,
+                    },
+                ],
+                "pending": None,
+            }
+
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", _escalation_double)
+
+        verdict = _parser_output(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            domain_in_message=False,
+            entities=[],
+            entity_op="reuse",
+            is_affirmative=True,
+            document=[],
+            status=None,
+            order_status=None,
+        )
+        result = _run_turn_dry(
+            session_factory,
+            monkeypatch,
+            qf=verdict,
+            text_body="yes",
+            msg_id="zzt-b2a-yes-round-robin",
+        )
+        assert result.status == "done", result.error
+        said = _said(result)
+
+        assert assign_calls, (
+            f"a bare 'yes' must reach the escalation lane and assign THIS turn, not "
+            f"show a second roster: {result.actions!r}"
+        )
+        assert not assign_calls[-1]["preferred_assignee_id"], (
+            f"a bare yes round-robins, it does not target a specific member: "
+            f"{assign_calls!r}"
+        )
+        assert any(a.get("kind") == "assign_conversation" for a in (result.actions or [])), (
+            f"the assignment action must be in THIS turn's actions: {result.actions!r}"
+        )
+        assert not re.search(r"(?m)^\s*1\.\s", said), (
+            f"no roster may print on the acceptance turn - assignment is immediate: "
+            f"{said!r}"
         )
 
 

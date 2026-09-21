@@ -945,18 +945,36 @@ class TestGroupB2CDCustomerServiceEscalationAlwaysShowsTheMemberPicker:
     OUTCOME (the reply text, the actions the executor would run, the PREVIEWED
     session_patch) - never on which internal function got called - so it targets
     whatever shape the coder's fix takes rather than a shape this pass invents.
-    """
 
-    def test_a_did_you_mean_miss_customer_service_yes_shows_roster_not_assignment(
+    owner correction 21 Sep: yes = round robin, roster rides the offer reply. The
+    two-step above (roster shows first, THEN a follow-up pick/yes assigns) is
+    WRONG and is retired by (a) and (d) below - a "yes" over a customer_service
+    accept, with no member preference named, assigns by round robin IMMEDIATELY,
+    the exact same turn, exactly as production (coder 44's own `engine.py::
+    _run_member_offer_arm`, commit 8e4ecdac7, implemented the two-step; that arm
+    must be reverted). The member roster rides in the SAME reply as the OFFER
+    instead (see `test_rearch_r12_handpass12.py::
+    TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList` for the
+    did-you-mean-miss half of this fix; (f) below is the plain customer-pick-miss
+    half). b/c/e are UNCHANGED: a NUMBER or NAME picked over an already-open
+    `member_offer` roster still assigns that specific member (b) or round-robins on
+    a bare "yes" (c) - existing, correct behaviour, read not invented - and a
+    non-customer_service team offer keeps today's immediate escalation (e, green
+    guard)."""
+
+    def test_a_did_you_mean_miss_customer_service_yes_assigns_immediately(
         self, session_factory, monkeypatch
     ) -> None:
-        """Turn 99c114fd's own did-you-mean pending (`customer_order_pick`, team
+        """owner correction 21 Sep: yes = round robin, roster rides the offer reply.
+
+        Turn 99c114fd's own did-you-mean pending (`customer_order_pick`, team
         `customer_service`, `payload.escalate_offered: true` - `_seed_pending`,
         reused from the sibling file's Group B) -> a bare "yes" (turn e6f6d6c3's own
         recorded verdict shape: `is_affirmative: true`, `message_type: "casual"`,
-        `entities: []`, `entity_op: "reuse"`). TODAY `apply.py:625` sends this
-        straight to the escalation lane. NEW: the roster shows instead, numbered
-        from 1, no assignment this turn, pending becomes `member_offer`."""
+        `entities: []`, `entity_op: "reuse"`) assigns by round robin on THIS turn,
+        exactly as production and as `apply.py:625`'s own `answer_pending_accept`
+        arm already does - the roster-first two-step (this test's own PRIOR
+        assertions, tester 51's original write) is retired."""
         from app.services import team_roster_service
 
         fixture = _DidYouMeanPendingFixture()
@@ -1002,19 +1020,26 @@ class TestGroupB2CDCustomerServiceEscalationAlwaysShowsTheMemberPicker:
         assert result.status == "done", result.error
         said = _said(result)
 
-        assert not any(a.get("kind") == "assign_conversation" for a in (result.actions or [])), (
-            f"a customer_service accept must NOT assign this turn - the roster "
-            f"shows first: {result.actions!r}"
+        assert spy_calls, (
+            f"a customer_service accept must reach the escalation lane and assign "
+            f"THIS turn - no roster-first two-step: {result.actions!r}"
         )
-        assert "zzt amy" in said.lower(), f"the roster's own member name must print: {said!r}"
-        assert re.search(r"(?m)^\s*1\.\s", said) is not None, (
-            f"the roster must be numbered from 1: {said!r}"
+        assert any(a.get("kind") == "assign_conversation" for a in (result.actions or [])), (
+            f"the assignment action must be in THIS turn's actions: {result.actions!r}"
+        )
+        assert "zzt amy" not in said.lower(), (
+            f"no member roster may print on the acceptance turn - assignment is "
+            f"immediate: {said!r}"
+        )
+        assert re.search(r"(?m)^\s*1\.\s", said) is None, (
+            f"no numbered roster on this turn: {said!r}"
         )
 
         patch = result.session_patch or {}
         oq_after = patch.get("open_question") or {}
-        assert oq_after.get("kind") == "member_offer", (
-            f"pending must become member_offer: {oq_after!r}"
+        assert oq_after.get("kind") != "member_offer", (
+            f"the pending must not become member_offer - assignment already "
+            f"happened this turn: {oq_after!r}"
         )
 
     def test_b_number_pick_over_member_offer_escalates_to_that_specific_member(
@@ -1146,13 +1171,18 @@ class TestGroupB2CDCustomerServiceEscalationAlwaysShowsTheMemberPicker:
             f"a bare yes must round-robin, not target a specific member: {spy_calls!r}"
         )
 
-    def test_d_plain_customer_service_offer_yes_shows_roster_first(
+    def test_d_plain_customer_service_offer_yes_assigns_immediately(
         self, session_factory, monkeypatch
     ) -> None:
-        """Turn 002a8f5b's own tail (its reply's own escalate offer: "Would you
-        like me to escalate to customer service team?", a plain `team_pick`/
-        `yes_no` with NO did-you-mean list riding alongside it) -> "yes" -> the
-        SAME roster-first behaviour as (a), over a DIFFERENT pending shape."""
+        """owner correction 21 Sep: yes = round robin, roster rides the offer reply.
+
+        Turn 002a8f5b's own tail (its reply's own escalate offer: "Would you like
+        me to escalate to customer service team?", a plain `team_pick`/`yes_no`
+        with NO did-you-mean list riding alongside it) -> "yes" -> assigns by round
+        robin on THIS turn, the SAME flip as (a), over a DIFFERENT pending shape
+        (`team_pick`, already in `ESCALATION_OFFER_KINDS`, so `apply.py::
+        _answer_offer` already routes this correctly once the roster-first arm is
+        reverted)."""
         from app.services import team_roster_service
 
         _seed_contact_and_get(session_factory)
@@ -1209,16 +1239,194 @@ class TestGroupB2CDCustomerServiceEscalationAlwaysShowsTheMemberPicker:
         assert result.status == "done", result.error
         said = _said(result)
 
-        assert not spy_calls, (
-            f"the escalation lane must not run this turn - the roster shows "
-            f"first: {spy_calls!r}"
+        assert spy_calls, (
+            f"the escalation lane must run and assign THIS turn - no roster-first "
+            f"two-step: {result.actions!r}"
         )
-        assert "zzt cara" in said.lower(), f"the roster's own member name must print: {said!r}"
+        assert "zzt cara" not in said.lower(), (
+            f"no member roster may print on the acceptance turn: {said!r}"
+        )
 
         patch = result.session_patch or {}
         oq_after = patch.get("open_question") or {}
-        assert oq_after.get("kind") == "member_offer", (
-            f"pending must become member_offer: {oq_after!r}"
+        assert oq_after.get("kind") != "member_offer", (
+            f"the pending must not become member_offer - assignment already "
+            f"happened this turn: {oq_after!r}"
+        )
+
+    def test_f_plain_customer_pick_miss_reply_carries_member_roster_continuing_numbering(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """(d)'s own additional half, owner correction 21 Sep: a plain customer-pick
+        MISS reply (4 customer options, turn 42e57c4e's own live count) must ALSO
+        earn the CS member roster IN THE SAME REPLY, continuing the customer
+        options' own numbering: customers 1..4 stay open under contract 36, members
+        5..9 - the same fix as B2A(a), applied to a `customer`-typed roster instead
+        of an `order`-typed one.
+
+        Modelled via `_miss_question`'s `suggest_last_result_set` roster surface
+        (`resolved.resolutions[].alternatives`, entity_type `customer` - the SAME
+        surface B2A(a) exercises one file over, proven to reach `_miss_question`),
+        not `gate.compatible_entities`/`require_specific` (turn 42e57c4e's own
+        actual live surface, "Which customer do you mean?" - that TEXT is composed
+        in `lanes/business/gate.py`/`lanes/business/answer.py`, outside
+        `answer_bridge.py` entirely, and reproducing it exactly was beyond this
+        pass's budget - flagged, not silently substituted). `_miss_question`'s own
+        combining logic is the ONE function this fix touches either way, so the
+        OUTCOME under test (numbering continues across the group boundary) is the
+        same regardless of which roster surface fed it."""
+        from app.services import team_roster_service
+        from app.services.chatbot import answer_bridge
+        from app.services.chatbot import copy as copy_mod
+        from app.services.chatbot.lanes.business.services import AnswerServices
+
+        ids = [str(uuid.uuid4()) for _ in range(4)]
+        names = [
+            "BATHIDEA BATHROOM & KITCHEN MARKETING SDN BHD (MCH)",
+            "BATH IDEA BATHROOM & KITCHEN SPECIALIST (SRT)",
+            "BATH IDEA (KEMAMAN OUTLET) (SRT)",
+            "BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD (SRT)",
+        ]
+        raw1, raw2 = "bath idea kl", "bath idea kemaman"
+
+        def _alt(name: str, uid: str) -> dict[str, Any]:
+            return {
+                "canonical_code": name,
+                "entity_type": "customer",
+                "uuid": uid,
+                "display": {"customer_name": name},
+                "match_tier": "fuzzy",
+            }
+
+        parser = {
+            "domain_hint": "order",
+            "intent_hint": "check_order",
+            "message_type": "business_query",
+            "entities": [
+                {
+                    "raw": raw1,
+                    "hint": "customer",
+                    "current_message": True,
+                    "confident": True,
+                },
+                {
+                    "raw": raw2,
+                    "hint": "customer",
+                    "current_message": True,
+                    "confident": True,
+                },
+            ],
+            "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "order_enquiries",
+            },
+            "access_levels": [],
+        }
+        # TWO tokens, TWO alternatives each - the SAME shape B2A(a) exercises (two
+        # missed raws, three alternatives each) at a smaller scale, confirmed to
+        # reach `_miss_question`'s numbered did-you-mean roster; a single token
+        # with several alternatives renders as a comma sentence instead
+        # (`not_found_error_message`'s own multi-alternative-same-token shape),
+        # measured directly and not the numbered shape turn 42e57c4e needs.
+        resolved = {
+            "resolutions": [
+                {
+                    "token": raw1,
+                    "matches": [],
+                    "alternatives": [_alt(names[0], ids[0]), _alt(names[1], ids[1])],
+                },
+                {
+                    "token": raw2,
+                    "matches": [],
+                    "alternatives": [_alt(names[2], ids[2]), _alt(names[3], ids[3])],
+                },
+            ],
+            "unresolved_tokens": [raw1, raw2],
+            "tokens": [raw1, raw2],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [],
+            "require_specific": False,
+            "gate_debug": {"domain": "order"},
+        }
+        payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
+
+        member_names = ["Sandy Lim", "Lin", "Nur", "Emily", "Zilin Poon"]
+        member_ids = ["1136807", "1136805", "1136799", "1136808", "1204233"]
+        monkeypatch.setattr(
+            team_roster_service,
+            "list_team_roster",
+            lambda *a, **k: [
+                {
+                    "user_id": f"zzt-f-u{i}",
+                    "name": n,
+                    "respond_user_id": rid,
+                    "email": f"{i}@zzt.example",
+                    "sort_order": i,
+                }
+                for i, (n, rid) in enumerate(zip(member_names, member_ids), start=1)
+            ],
+        )
+
+        _seed_contact_and_get(session_factory)
+        db = session_factory()
+        answer = answer_bridge.answer_for(
+            payload,
+            envelope=None,
+            parser=parser,
+            ctx={
+                "parse": {"output": parser},
+                "contact": {"id": "zzt-f-contact"},
+                "session": {},
+            },
+            canned=copy_mod.fallback_copy(),
+            services=AnswerServices(
+                mcp_probe=lambda name, args: {"has_result": False, "answers": []},
+                family_fetch=lambda query: {"data": []},
+            ),
+            db=db,
+            asked_at_turn=3,
+        )
+        assert answer is not None
+        text = answer.text or ""
+
+        assert names[0] in text, f"test setup sanity, customer roster text: {text!r}"
+
+        numbered_list_starts = re.findall(r"(?m)^\s*1\.\s", text)
+        assert len(numbered_list_starts) <= 1, (
+            f"exactly ONE numbered list, continuing the customer options' own "
+            f"numbering into the member roster: {text!r}"
+        )
+        numbers = [int(n) for n in re.findall(r"(?m)^\s*(\d+)\.\s", text)]
+        assert numbers == list(range(1, len(numbers) + 1)), (
+            f"numbers must never repeat inside one reply - customers 1..4 "
+            f"continuing into members 5..9: {text!r}"
+        )
+        assert len(numbers) == 9, (
+            f"4 customer options + 5 CS members must land in ONE list: {text!r}"
+        )
+        assert "lin" in text.lower(), (
+            f"the member roster must ride in the SAME reply as the customer-pick "
+            f"offer: {text!r}"
+        )
+
+        assert answer.question is not None
+        options = answer.question.options or []
+        assert len(options) == 9, (
+            f"the pending must let BOTH option groups be answered - 9 entries: "
+            f"{options!r}"
+        )
+        positions_seen = sorted(o.get("position") for o in options)
+        assert positions_seen == list(range(1, 10)), (
+            f"no position may repeat and none may be skipped: {options!r}"
+        )
+        member_at_6 = next((o for o in options if o.get("position") == 6), None)
+        assert member_at_6 is not None and member_at_6.get("entity_type") == "member", (
+            f"position 6 (Lin) must be a member option: {options!r}"
+        )
+        assert (member_at_6.get("payload") or {}).get("respond_user_id") == "1136805", (
+            f"position 6 must be Lin, respond_user_id 1136805: {options!r}"
         )
 
     def test_e_green_guard_purchasing_offer_yes_still_escalates_immediately(
