@@ -753,12 +753,17 @@ class ProjectOrderInquiryService:
         # row a bin's credit covers spends it and a later row at the same bin sees what
         # is left, not the whole pile again.
         self._own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
-        # B2 (round 3): `_own_arrival_credit_for_row`'s own answer, memoised per ROW id -
-        # the credit it charges `_own_arrival_left` with is capped by, and charged as,
-        # what THIS row itself used, so asking the same row's own credit a second time
-        # must return that same answer rather than reading an already-drained ledger and
-        # charging it again (or reading nothing left and returning 0).
-        self._own_arrival_row_credit: Dict[str, Decimal] = {}
+        # B2 (round 3): `_own_arrival_credit_for_row`'s own THEORETICAL credit
+        # (`_own_arrival_credit_components`'s read-only answer - tier1_qty/tier2 kept
+        # alongside so a later charge spends the SAME components a first call sized),
+        # memoised per ROW id so a second call never re-reads `_own_arrival_left` and
+        # sizes a smaller theoretical off its own prior charge to itself.
+        self._own_arrival_row_theoretical: Dict[str, Tuple[Any, ...]] = {}
+        # S-2 (round 5): what has actually been CHARGED for this row so far, so a second
+        # call with a LARGER `need` than the first charges only the delta beyond it
+        # (never double-charging, never exceeding the theoretical above) instead of
+        # freezing the first call's answer forever.
+        self._own_arrival_row_charged: Dict[str, Decimal] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -1655,23 +1660,18 @@ class ProjectOrderInquiryService:
             )
         return True
 
-    def _own_arrival_credit_for_row(
-        self, row: OrderInquiryRow, need: Optional[Decimal] = None
-    ) -> Decimal:
+    def _own_arrival_credit_for_row(self, row: OrderInquiryRow, need: Decimal) -> Decimal:
         """R2/R7: what landed FOR this row's line, the SAME credit the board's own ladder
         reads (`ProjectSupplyService.own_arrival_credit_for`) - reused rather than
         restated, so the path picker and the board cannot come to disagree about what
         counts as covered. Built off a MINIMAL `_LineFacts` (this call is a single-row
-        question, not a walk). Charges what the row was measured against.
+        question, not a walk).
 
         AC-S3-14 (round-4 fix round): `_redirect_row_if_received` compares this credit
         against `linked_qty` (the row's LINKED total), not the row's own `qty` - the two
         diverge whenever a row's links do not sum to its own quantity. `need` is that
-        caller-supplied number; when omitted (the idempotence probe, asking a row's own
-        credit outside the redirect check) the row's own `qty` is used, unchanged from
-        before this fix. Memoised per row id, so the SECOND call for a row (whichever
-        `need` it is asked with) returns the same number the FIRST call computed and
-        charged the ledger with - the memo is on the answer, not the question.
+        caller-supplied number, required (round 5, S-2) - every caller already states
+        what it is asking the credit to cover.
 
         `open_qty` is `qty_ordered - qty_delivered` (review round, SF1), the SAME reading
         of "open" every other `_LineFacts` builder in this codebase uses
@@ -1690,65 +1690,97 @@ class ProjectOrderInquiryService:
         charged the ledger with the whole LINE's theoretical credit on the first row
         asked, so a second row of the same line read an already-drained ledger and was
         wrongly refused. Sized the same way `walk()` fixed this (S5): read the
-        THEORETICAL credit with `_own_arrival_credit_components` (no charge), then charge
-        `_charge_own_arrival_credit` with only `min(theoretical, row.qty)` - what THIS row
-        itself needed, never more. The answer is memoised per row id so asking the same
-        row's own credit twice returns the same number without charging the ledger a
-        second time.
+        THEORETICAL credit with `_own_arrival_credit_components` (no charge, memoised per
+        row id in `self._own_arrival_row_theoretical` - a SECOND call for the same row
+        must judge against the SAME theoretical the first call sized, never a smaller one
+        re-read off a ledger this row's own earlier charge already reduced), then charge
+        only the DELTA beyond what this row was already charged.
+
+        S-2 (round 5): the memo used to be on the ANSWER, keyed by row id, so a row asked
+        first with a small `need` (an artificial probe, or an earlier caller with a
+        smaller ask) froze that answer for every later call regardless of what `need` it
+        was asked with - `_redirect_row_if_received`'s own `>= linked_qty` check could
+        then read a stale, too-small credit and wrongly redirect a row landed stock
+        covers in full. The memo is on the THEORETICAL credit and how much of it THIS row
+        has been CHARGED so far (`self._own_arrival_row_charged`); each call answers
+        `min(theoretical, need)` and charges only the wedge beyond the previous charge -
+        never double-charging the ledger, never exceeding the theoretical, and a call
+        with a larger `need` than before is answered in full rather than replaying the
+        smaller one's cached number.
         """
         row_key = str(row.id)
-        if row_key in self._own_arrival_row_credit:
-            return self._own_arrival_row_credit[row_key]
+        cached = self._own_arrival_row_theoretical.get(row_key)
+        if cached is None:
+            from app.services.project_supply_service import (
+                ProjectSupplyService,
+                _LineFacts,
+            )
 
-        from app.services.project_supply_service import ProjectSupplyService, _LineFacts
+            if not row.so_line_id:
+                return _ZERO
+            project_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
+            if project_line is None or not project_line.core_sales_order_line_id:
+                return _ZERO
+            core_line = self.db.get(
+                SalesOrderLine, project_line.core_sales_order_line_id
+            )
+            if core_line is None or not core_line.warehouse_id:
+                return _ZERO
+            warehouse = self.db.get(Warehouse, core_line.warehouse_id)
+            if warehouse is None:
+                return _ZERO
+            if self._own_arrival_supply is None:
+                self._own_arrival_supply = ProjectSupplyService(self.db)
+            supply = self._own_arrival_supply
+            product_id = str(core_line.product_id) if core_line.product_id else None
+            group_code = group_of_warehouse_code(warehouse.warehouse_code)
+            by_location: List[Any] = []
+            if product_id and group_code:
+                key = f"{product_id}\x00{group_code}"
+                if key not in self._own_arrival_netting:
+                    netting = netting_for_products(self.db, [product_id])
+                    self._own_arrival_netting[key] = list(
+                        netting.group_net(product_id, group_code).by_location
+                    )
+                by_location = self._own_arrival_netting[key]
+            fact = _LineFacts(
+                unit_core_line_ids=[str(core_line.id)],
+                product_id=product_id,
+                warehouse=warehouse,
+                group_code=group_code,
+                group_net_by_location=by_location,
+                open_qty=max(
+                    _dec(core_line.qty_ordered) - _dec(core_line.qty_delivered), _ZERO
+                ),
+            )
+            ledger = (
+                self._own_arrival_left.setdefault(product_id, {})
+                if product_id
+                else None
+            )
+            theoretical, _po, tier1_qty, tier2 = supply._own_arrival_credit_components(
+                fact, own_arrival_left=ledger
+            )
+            cached = (theoretical, tier1_qty, tier2, fact, ledger, supply)
+            self._own_arrival_row_theoretical[row_key] = cached
 
-        if not row.so_line_id:
-            return _ZERO
-        project_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
-        if project_line is None or not project_line.core_sales_order_line_id:
-            return _ZERO
-        core_line = self.db.get(SalesOrderLine, project_line.core_sales_order_line_id)
-        if core_line is None or not core_line.warehouse_id:
-            return _ZERO
-        warehouse = self.db.get(Warehouse, core_line.warehouse_id)
-        if warehouse is None:
-            return _ZERO
-        if self._own_arrival_supply is None:
-            self._own_arrival_supply = ProjectSupplyService(self.db)
-        supply = self._own_arrival_supply
-        product_id = str(core_line.product_id) if core_line.product_id else None
-        group_code = group_of_warehouse_code(warehouse.warehouse_code)
-        by_location: List[Any] = []
-        if product_id and group_code:
-            key = f"{product_id}\x00{group_code}"
-            if key not in self._own_arrival_netting:
-                netting = netting_for_products(self.db, [product_id])
-                self._own_arrival_netting[key] = list(
-                    netting.group_net(product_id, group_code).by_location
-                )
-            by_location = self._own_arrival_netting[key]
-        fact = _LineFacts(
-            unit_core_line_ids=[str(core_line.id)],
-            product_id=product_id,
-            warehouse=warehouse,
-            group_code=group_code,
-            group_net_by_location=by_location,
-            open_qty=max(
-                _dec(core_line.qty_ordered) - _dec(core_line.qty_delivered), _ZERO
-            ),
-        )
-        ledger = (
-            self._own_arrival_left.setdefault(product_id, {}) if product_id else None
-        )
-        theoretical, _po, tier1_qty, tier2 = supply._own_arrival_credit_components(
-            fact, own_arrival_left=ledger
-        )
-        charge_against = _dec(row.qty) if need is None else _dec(need)
-        credit = min(theoretical, max(charge_against, _ZERO))
-        if ledger is not None and credit > _ZERO:
-            supply._charge_own_arrival_credit(fact, credit, tier1_qty, tier2, ledger)
-        self._own_arrival_row_credit[row_key] = credit
-        return credit
+        theoretical, tier1_qty, tier2, fact, ledger, supply = cached
+        target = min(theoretical, max(_dec(need), _ZERO))
+        charged_before = self._own_arrival_row_charged.get(row_key, _ZERO)
+        delta = target - charged_before
+        if ledger is not None and delta > _ZERO:
+            # Charge only what THIS call adds beyond the previous charge, against
+            # whatever tier 1 this row has not already spent - `_charge_own_arrival_
+            # credit`'s own tier1-then-tier2 split (`tier2_used = drawn - tier1_qty`)
+            # is written for a single, whole draw, so a delta call states its own
+            # REMAINING tier 1 room rather than the row's full tier1_qty, which would
+            # double-count tier 1 on every call after the first.
+            tier1_remaining = max(tier1_qty - min(charged_before, tier1_qty), _ZERO)
+            supply._charge_own_arrival_credit(
+                fact, delta, tier1_remaining, tier2, ledger
+            )
+        self._own_arrival_row_charged[row_key] = target
+        return target
 
     def _redirect_row_if_received(
         self,

@@ -5145,7 +5145,15 @@ class ProjectSupplyService:
         # not a second, possibly-inconsistent read.
         credit_qty = _ZERO
         credit_po: Optional[str] = None
-        if own_arrival_left is not None and fact.own_code:
+        # AC-S3-16: same verdict as the composer - `walk()` builds no own-arrival
+        # candidate at all for a line outside the reserve window, so the recheck must
+        # not credit one either. A line due beyond the window is never credited,
+        # composed or confirmed.
+        if (
+            own_arrival_left is not None
+            and fact.own_code
+            and not self.outside_reserve_window(fact)
+        ):
             ledger = (
                 own_arrival_left.setdefault(fact.product_id, {})
                 if fact.product_id
@@ -5319,7 +5327,10 @@ class ProjectSupplyService:
         # sheet marks for every other refusal. "Nothing was written" holds because this
         # raises before `_write_decision` is ever reached (a draft save never calls
         # `_check_line` at all, so it stays lenient as designed).
-        if credit_qty > _ZERO and buy > _ZERO and fact.warehouse is not None:
+        # `credit_qty > _ZERO` already implies `fact.warehouse is not None`
+        # (`fact.own_code`, gating `credit_qty` above, is
+        # `fact.warehouse.warehouse_code if fact.warehouse else None`).
+        if credit_qty > _ZERO and buy > _ZERO:
             reserved_at_credit_bin = sum(
                 (
                     _dec(item.qty)
@@ -5330,11 +5341,14 @@ class ProjectSupplyService:
             )
             uncovered = credit_qty - reserved_at_credit_bin
             if uncovered > _ZERO:
+                # S-1 (round-5): names the CREDITED quantity, the same figure
+                # `_refuse_buy_over_own_arrival` states for its own seam - not
+                # whatever a partial Reserve happened to leave uncovered of it.
                 message = (
-                    f"{qty_text(uncovered)} landed for this line on PO {credit_po}; "
+                    f"{qty_text(credit_qty)} landed for this line on PO {credit_po}; "
                     "nothing to buy for it"
                     if credit_po
-                    else f"{qty_text(uncovered)} landed for this line; nothing to buy "
+                    else f"{qty_text(credit_qty)} landed for this line; nothing to buy "
                     "for it"
                 )
                 raise SupplyLinesRefused(
