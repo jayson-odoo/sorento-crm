@@ -42,9 +42,10 @@ from __future__ import annotations
 import io
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import event, func, or_, tuple_
 from sqlalchemy.orm import Session, aliased
@@ -87,10 +88,13 @@ from app.models.project_so import (
     IV_ORDER_BACK,
     IV_PRE_ORDERED,
     IV_RESERVE_AND_ORDER,
+    OI_RAISE_RAISED,
+    OI_RAISE_RECONFIRMED,
     SO_STATUS_AMENDED,
     SO_STATUS_PUBLISHED,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryRaise,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -137,6 +141,9 @@ from app.services.project_order_inquiry_engine import (
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
+#: Every date the inquiry number is minted by is Asia/Kuala_Lumpur (S1, R3) - matches
+#: `app.models.project_so`'s own `_MY_TZ`.
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 #: `Session.info` key for `order_inquiry_changed_with_links` dispatches queued mid-
 #: transaction and fired once the session actually commits - see
@@ -447,19 +454,25 @@ _DELTA_VERB_CHANGE = {
 }
 
 
-def next_inquiry_no(db: Session, company_id: str) -> str:
-    """`OI-000001` for this company, from the ONE minting function (`app.models.project_so`).
+def next_inquiry_no(db: Session, company_id: str, ref_date: Optional[date] = None) -> str:
+    """`OI-2609-0001` for this company and month, from the ONE minting function
+    (`app.models.project_so`).
 
     Re-exported here rather than reimplemented: the `before_insert` stamp on the model
     already guarantees every inquiry gets a number, and a second series generator in this
     file would be a second answer to the same question the day the two drifted.
+
+    `ref_date` defaults to today, Asia/Kuala_Lumpur (S1, R3) - the same timezone the
+    model's own `before_insert` listener converts `raised_at` through.
 
     Deliberately NOT routed through `NumberingService` the way `PSO-000001` optionally is:
     nothing seeds a rule for this document type, so that branch would be a configuration
     surface with no configuration behind it. If a client ever wants to word their own
     inquiry numbers, that is the moment to add it.
     """
-    return _next_inquiry_no(db, company_id)
+    if ref_date is None:
+        ref_date = datetime.now(timezone.utc).astimezone(_MY_TZ).date()
+    return _next_inquiry_no(db, company_id, ref_date)
 
 
 def flag_rows_for_cancelled_lines(
@@ -836,14 +849,15 @@ class ProjectOrderInquiryService:
                 }
             inquiry = self.ensure_inquiry(order, actor_user_id=actor_user_id)
         elif actor_user_id:
-            # A reconfirm RE-STAMPS the header (PLAN section H, AC-H4). The inquiry is
-            # deliberately reused so purchasing keeps quoting one number, which means
-            # without this the screen would name whoever confirmed revision 1 forever,
-            # long after somebody else decided what purchasing is actually holding. The
-            # rows keep their own `actioned_by` - that is purchasing's answer, not CS's
-            # instruction.
-            inquiry.raised_by = actor_user_id
-            inquiry.raised_at = datetime.utcnow()
+            # A reconfirm no longer RE-STAMPS the header (S1, R5 - superseding PLAN
+            # section H, AC-H4): `raised_at`/`raised_by` are the header's fixed FIRST
+            # raise for life, and every later reconfirm is its own
+            # `order_inquiry_raises` row instead, so the General tab can still say who
+            # reconfirmed and when without losing who raised it in the first place. The
+            # inquiry is still deliberately reused so purchasing keeps quoting one
+            # number; the rows keep their own `actioned_by` - that is purchasing's
+            # answer, not CS's instruction.
+            self._record_raise(inquiry, actor_user_id=actor_user_id, kind=OI_RAISE_RECONFIRMED)
 
         created = 0
         raised = 0
@@ -3486,6 +3500,45 @@ class ProjectOrderInquiryService:
         )
         return query.first()
 
+    def _record_raise(
+        self, inquiry: OrderInquiry, *, actor_user_id: Optional[str], kind: str
+    ) -> None:
+        """One `order_inquiry_raises` row for this raise/reconfirm (R5, S1
+        `PLAN-oi-header-list-detail.md`).
+
+        Guarded so ONE confirmation adds ONE row (AC-RD-01), never two: two calls that
+        land inside the same uncommitted unit of work (`refresh_for_decision`'s own gate
+        and `project_supply_service`'s step-3 borrow fallback can both reach the SAME
+        header in one HTTP confirm) must not double-count, while two calls separated by
+        a real commit (a reconfirm days later) each earn their own row. `Session.
+        get_transaction()` is what tells the two apart: it is the SAME object across
+        every call inside one uncommitted pass and a DIFFERENT one the moment a commit
+        (or a rollback) ends it and the session autobegins the next - which holds
+        whether that commit is a real one or, under `tests/_pg_fixture.py`'s
+        `join_transaction_mode="create_savepoint"`, a savepoint release. A `session.
+        info` set cleared by an `after_commit` listener was the other way to say this,
+        but it depends on that listener having been registered in whatever process is
+        running (`register_order_inquiry_post_commit_dispatch` is only ever called from
+        `app.main`'s startup event, which several of this service's own test modules
+        never trigger) - reading the transaction's own identity needs nothing to have
+        registered anything first.
+        """
+        txn = self.db.get_transaction()
+        marker = self.db.info.setdefault("_oi_raise_marker", {})
+        if marker.get(inquiry.id) is txn:
+            return
+        marker[inquiry.id] = txn
+        self.db.add(
+            OrderInquiryRaise(
+                company_id=inquiry.company_id,
+                order_inquiry_id=inquiry.id,
+                kind=kind,
+                raised_by=actor_user_id,
+                raised_at=datetime.utcnow(),
+            )
+        )
+        self.db.flush()
+
     def ensure_inquiry(
         self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
     ) -> OrderInquiry:
@@ -3502,9 +3555,13 @@ class ProjectOrderInquiryService:
         header for a planning-change reaction rather than minting its own. Callers must
         not call this unless they are about to write at least one row: an empty header is
         exactly the defect this method's sibling gate exists to avoid.
+
+        `raised_at`/`raised_by` are written ONCE, here, at insert (R5, S1) - a reuse
+        records a `reconfirmed` raise-history row instead of re-stamping either column.
         """
         existing = self._existing(order.id, None)
         if existing is not None:
+            self._record_raise(existing, actor_user_id=actor_user_id, kind=OI_RAISE_RECONFIRMED)
             return existing
         inquiry = OrderInquiry(
             company_id=order.company_id,
@@ -3519,6 +3576,7 @@ class ProjectOrderInquiryService:
         )
         self.db.add(inquiry)
         self.db.flush()
+        self._record_raise(inquiry, actor_user_id=actor_user_id, kind=OI_RAISE_RAISED)
         return inquiry
 
     # ----------------------------------------------------------- covering pools
