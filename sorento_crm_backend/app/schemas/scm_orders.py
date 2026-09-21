@@ -328,12 +328,15 @@ class LinkedPurchaseOrder(BaseModel):
 class SalesOrderInquiry(BaseModel):
     """One order inquiry raised against this sales order.
 
-    By NUMBER (`OI-000001`), never by id: this is what the screen prints and links from.
-    `rows_placed` against `rows_total` is how far purchasing has got with it - the one fact
-    a buyer looking at the sales order actually wants, and the reason the column is not
-    just a list of numbers.
+    By NUMBER (`OI-2609-0001`) for what the screen PRINTS - but `id` is what it now
+    LINKS with (S3, AC-LK-01, `PLAN-oi-header-list-detail.md`): the header detail page
+    is addressed by id in the URL, never shown, the same as every other `rowHref` in
+    this product. `rows_placed` against `rows_total` is how far purchasing has got with
+    it - the one fact a buyer looking at the sales order actually wants, and the reason
+    the column is not just a list of numbers.
     """
 
+    id: Optional[str] = None
     inquiry_no: Optional[str] = None
     state: str
     raised_at: Optional[str] = None

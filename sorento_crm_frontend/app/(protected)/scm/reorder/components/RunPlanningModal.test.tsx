@@ -14,6 +14,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -21,12 +22,16 @@ if (!window.matchMedia) {
   });
 }
 
-type StubOption = { value: string; label: string };
+type StubOption = { value: string; label: string; description?: string };
 
 // Stub the multi-select as a group of checkboxes so selection is deterministic. There
 // are now TWO of them on this modal, so the group is labelled by its placeholder
 // rather than a hard-coded name. Async mode (`fetchOptions`) is stubbed as well: a search
 // box drives the fetch, exactly as the real component does after its debounce.
+//
+// `description` (V2, PLAN-reorder-plan-demand-class-orders) is rendered as a sibling text
+// node beside the checkbox label - the Orders field's "N lines in range[, N awaiting ack]"
+// caption.
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: ({
     value,
@@ -35,6 +40,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     fetchOptions,
     selectedOptions,
     placeholder,
+    renderOption,
   }: {
     value: string[];
     onChange: (v: string[]) => void;
@@ -42,6 +48,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     fetchOptions?: (query: string) => Promise<StubOption[]>;
     selectedOptions?: StubOption[];
     placeholder?: string;
+    renderOption?: (opt: StubOption) => React.ReactNode;
   }) => {
     const [fetched, setFetched] = React.useState<StubOption[]>([]);
     const [query, setQuery] = React.useState('');
@@ -77,7 +84,19 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
                 )
               }
             />
-            {o.label}
+            {/* `data-testid` rather than a `getByText` string match: `renderOption` (real
+                component) nests the description in its own <span>, and a match on
+                `element.textContent` sidesteps guessing at that DOM shape. */}
+            <span data-testid={`option-body-${o.value}`}>
+              {renderOption ? (
+                renderOption(o)
+              ) : (
+                <>
+                  {o.label}
+                  {o.description ? <span>{o.description}</span> : null}
+                </>
+              )}
+            </span>
           </label>
         ))}
         {(selectedOptions ?? []).map((o) => (
@@ -86,6 +105,45 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
           </span>
         ))}
       </div>
+    );
+  },
+}));
+
+// The Demand field (V1-V4): a single SearchableSelect. Stubbed as a plain native <select>
+// with a fixed test id - there is only ever ONE single-select on this modal, so the id does
+// not need to route on whatever placeholder/label text the real field ends up using.
+// `clearable` options are prepended with an empty-value row reading `placeholder` (mirrors
+// the real component's "clear -> placeholder" reading), so a caller passing three explicit
+// options (Project/Dealer/All) and a caller passing two options + `clearable` both render as
+// the same three rows here.
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    clearable,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    options: StubOption[];
+    placeholder?: string;
+    clearable?: boolean;
+  }) => {
+    const rows = clearable ? [{ value: '', label: placeholder ?? 'All' }, ...options] : options;
+    return (
+      <select
+        data-testid="demand-select"
+        aria-label={placeholder ?? 'Demand'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {rows.map((o) => (
+          <option key={o.value || '__all__'} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
     );
   },
 }));
@@ -122,13 +180,41 @@ vi.mock('../../services/scmOptionsService', () => ({
   searchProductOptions: (query: string) => searchProductOptions(query),
 }));
 
+/** V1-V4 (PLAN-reorder-plan-demand-class-orders): the Orders field's candidates, keyed on
+ *  the From/To range. `RunPlanningModal.tsx` calls
+ *  `getCandidateOrders({ from: horizonStart || undefined, to: horizon || undefined })` -
+ *  ONE object argument, `undefined` (not `''`) when a bound is unset. */
+type CandidateOrder = {
+  so_number: string;
+  project_label: string;
+  customer_name: string;
+  rows_total: number;
+  rows_in_range: number;
+  rows_awaiting: number;
+  first_delivery: string;
+  last_delivery: string;
+};
+const getCandidateOrders = vi.fn(
+  async (_range: { from?: string; to?: string }): Promise<CandidateOrder[]> => [],
+);
+getCandidateOrders.mockResolvedValue([]);
+vi.mock('../services/reorderRunService', () => ({
+  getCandidateOrders: (range: { from?: string; to?: string }) => getCandidateOrders(range),
+}));
+
 import { RunPlanningModal } from './RunPlanningModal';
 
 async function renderModal(over: Partial<React.ComponentProps<typeof RunPlanningModal>> = {}) {
   const onSubmit = vi.fn();
   const onOpenChange = vi.fn();
+  // The Orders field's candidate-orders fetch (V1-V4) goes through `useQuery`, which needs
+  // a QueryClientProvider ancestor - a fresh client per render, retries off so a red (the
+  // endpoint/mock not wired yet) surfaces immediately instead of retrying for seconds.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <RunPlanningModal open onOpenChange={onOpenChange} onSubmit={onSubmit} isSubmitting={false} {...over} />,
+    <QueryClientProvider client={client}>
+      <RunPlanningModal open onOpenChange={onOpenChange} onSubmit={onSubmit} isSubmitting={false} {...over} />
+    </QueryClientProvider>,
   );
   // Wait out the products field's first server search, so nothing resolves after the test.
   await screen.findByLabelText(FIRST_PAGE[0].label);
@@ -377,6 +463,206 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           plan_horizon_start: '2026-01-01',
           plan_horizon_date: '2026-12-31',
         }),
+      );
+    });
+  });
+
+  // ===========================================================================
+  // V1-V4 (PLAN-reorder-plan-demand-class-orders, UAC J1-J3) - Demand = Project / Dealer /
+  // All, gating a new Orders picker sourced from `getCandidateOrders({ from, to })`.
+  // ===========================================================================
+
+  describe('Demand scope - Project / Dealer / All (V1-V4)', () => {
+    it('V1: Demand defaults to All; Orders is absent for All and Dealer, present for Project', async () => {
+      await renderModal();
+      expect(screen.queryByText('Orders')).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      expect(await screen.findByText('Orders')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
+      await waitFor(() => expect(screen.queryByText('Orders')).not.toBeInTheDocument());
+    });
+
+    it('V2: Project options come from getCandidateOrders({from,to}); rows_in_range>0 is pre-selected; label + description', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO419517',
+          project_label: 'OTM GROUP / TAT LIAN',
+          customer_name: 'OTM',
+          rows_total: 7,
+          rows_in_range: 7,
+          rows_awaiting: 2,
+          first_delivery: '2026-08-01',
+          last_delivery: '2026-10-01',
+        },
+        {
+          so_number: 'SO420374',
+          project_label: 'ARC RESIDENCE',
+          customer_name: 'ARC',
+          rows_total: 3,
+          rows_in_range: 0,
+          rows_awaiting: 0,
+          first_delivery: '2026-11-02',
+          last_delivery: '2027-01-04',
+        },
+      ]);
+      const { onSubmit } = await renderModal();
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+
+      await waitFor(() =>
+        expect(getCandidateOrders).toHaveBeenCalledWith({ from: '2026-08-01', to: '2026-10-31' }),
+      );
+
+      expect(
+        await screen.findByLabelText('SO419517 - OTM GROUP / TAT LIAN'),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId('option-body-SO419517').textContent).toContain(
+        '7 lines in range',
+      );
+      expect(screen.getByTestId('option-body-SO419517').textContent).toContain(
+        '2 awaiting ack',
+      );
+      expect(screen.getByTestId('option-body-SO420374').textContent).toContain(
+        '0 lines in range',
+      );
+      expect(screen.getByTestId('option-body-SO420374').textContent).not.toContain(
+        'awaiting ack',
+      );
+
+      // Pre-selected: only the SO with rows_in_range > 0.
+      expect(
+        (screen.getByLabelText('SO419517 - OTM GROUP / TAT LIAN') as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(
+        (screen.getByLabelText('SO420374 - ARC RESIDENCE') as HTMLInputElement).checked,
+      ).toBe(false);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ demand_class: 'project', so_numbers: ['SO419517'] }),
+      );
+    });
+
+    it('V3: submit sends demand_class + so_numbers for Project (final selection), demand_class only for Dealer, neither for All', async () => {
+      getCandidateOrders.mockResolvedValue([
+        {
+          so_number: 'SO1',
+          project_label: 'P1',
+          customer_name: 'C1',
+          rows_total: 2,
+          rows_in_range: 2,
+          rows_awaiting: 0,
+          first_delivery: '2026-08-01',
+          last_delivery: '2026-08-05',
+        },
+      ]);
+      const { onSubmit } = await renderModal();
+
+      // All (default): neither key present.
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('demand_class');
+      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('so_numbers');
+      onSubmit.mockClear();
+
+      // Dealer: demand_class='retail', no so_numbers - there is no Orders field to pick from.
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit.mock.calls[0][0].demand_class).toBe('retail');
+      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('so_numbers');
+      onSubmit.mockClear();
+
+      // Project, untick the pre-selected order: empty so_numbers means "every project
+      // order in range", sent as `[]`, never omitted.
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.click(await screen.findByLabelText('SO1 - P1'));
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit.mock.calls[0][0].demand_class).toBe('project');
+      expect(onSubmit.mock.calls[0][0].so_numbers).toEqual([]);
+    });
+
+    it('V4: changing the range re-derives the pre-selection until the user edits the list, then the edit is kept', async () => {
+      getCandidateOrders
+        .mockResolvedValueOnce([
+          {
+            so_number: 'SO1',
+            project_label: 'P1',
+            customer_name: 'C1',
+            rows_total: 2,
+            rows_in_range: 2,
+            rows_awaiting: 0,
+            first_delivery: '2026-08-01',
+            last_delivery: '2026-08-05',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            so_number: 'SO2',
+            project_label: 'P2',
+            customer_name: 'C2',
+            rows_total: 1,
+            rows_in_range: 1,
+            rows_awaiting: 0,
+            first_delivery: '2026-09-01',
+            last_delivery: '2026-09-05',
+          },
+        ]);
+      const { onSubmit } = await renderModal();
+      // From/To are set BEFORE Demand switches to Project (mirrors V2): the fetch is
+      // `enabled: demand === 'project'`, so setting the range first means exactly ONE
+      // fetch happens for the full range, rather than one per keystroke against an
+      // empty range that a Demand-first order would trigger.
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-08-31' } });
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      expect(await screen.findByLabelText('SO1 - P1')).toBeInTheDocument();
+
+      // Range changes BEFORE the user has touched the list: the new pre-selection replaces
+      // the old one. Only `To` moves, so this is exactly one more fetch (one new queryKey).
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-30' } });
+      expect(await screen.findByLabelText('SO2 - P2')).toBeInTheDocument();
+      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(true);
+
+      // Now the user edits the list by hand.
+      fireEvent.click(screen.getByLabelText('SO2 - P2'));
+
+      // A further range change - even one whose candidates would re-select SO2 (still
+      // rows_in_range > 0) - must not override the user's own edit. `rows_awaiting` is
+      // bumped to 4 (was 0) so the fresh payload's own arrival is independently
+      // observable in the DOM - waiting on the CALL COUNT alone (the review-kill finding,
+      // B3) proves only that the fetch fired, not that its result was applied, so a build
+      // that dropped `touchedOrdersRef.current` from the guard could still slip through if
+      // the click happened before the state update flushed.
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO2',
+          project_label: 'P2',
+          customer_name: 'C2',
+          rows_total: 1,
+          rows_in_range: 1,
+          rows_awaiting: 4,
+          first_delivery: '2026-09-01',
+          last_delivery: '2026-09-05',
+        },
+      ]);
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+
+      // Wait on the EFFECT'S VISIBLE RESULT - the third payload's own awaiting count has
+      // rendered, so the re-derive effect has definitely run again with fresh
+      // `rows_in_range > 0` data for SO2 - before checking the guard held.
+      await waitFor(() =>
+        expect(screen.getByTestId('option-body-SO2').textContent).toContain('4 awaiting ack'),
+      );
+      // Fresh data says SO2 qualifies for pre-selection again; the user's own untick must
+      // still win. Removing `touchedOrdersRef.current` from the guard (RunPlanningModal.tsx)
+      // re-checks SO2 here and fails this assertion.
+      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(false);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ demand_class: 'project', so_numbers: [] }),
       );
     });
   });

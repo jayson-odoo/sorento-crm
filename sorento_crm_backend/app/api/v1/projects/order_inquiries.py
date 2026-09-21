@@ -28,10 +28,13 @@ from app.schemas.project_order_inquiry import (
     LinkNowRequest,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
+    OrderInquiryHeaderDetailOut,
+    OrderInquiryHeaderOut,
     OrderInquiryMatrixResponse,
     OrderInquiryPoCandidate,
     OrderInquiryPoCandidatesResponse,
     OrderInquiryPoDetail,
+    OrderInquiryRelatedDocumentsOut,
     OrderInquiryRowOut,
     OrderInquirySpoDetail,
     OrderInquirySummary,
@@ -53,6 +56,7 @@ from app.schemas.project_order_inquiry import (
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
+from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
@@ -129,6 +133,10 @@ def _validate_worklist_filter_uuids(filters: dict) -> None:
     agent = filters.get("agent")
     if agent:
         validate_uuid_path(agent, resource="Sales agent")
+    # S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own scope.
+    inquiry_id = filters.get("inquiry_id")
+    if inquiry_id:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
 
 
 def _worklist_filters(
@@ -158,6 +166,8 @@ def _worklist_filters(
     # exact match on the SAME `_PROJECT_TITLE` the column and `_projects()` facet read -
     # separate from `project_id`, which stays UUID-validated for any existing deep link.
     project: Optional[str] = None,
+    # S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own Lines tab.
+    inquiry_id: Optional[str] = None,
 ) -> dict:
     filters = {
         "query": query,
@@ -179,6 +189,7 @@ def _worklist_filters(
         "spo_number": spo_number,
         "delivery_from": delivery_from,
         "delivery_to": delivery_to,
+        "inquiry_id": inquiry_id,
     }
     _validate_worklist_filter_uuids(filters)
     # `axis_key` is NOT validated here: it is compared against a UUID column on every
@@ -333,6 +344,13 @@ def list_order_inquiry_worklist(
             "syntax for type uuid`, a 500 carrying the statement."
         ),
     ),
+    inquiry_id: Optional[str] = Query(
+        None,
+        description=(
+            "S3: the OI detail page's own Lines tab - every row of exactly this header, "
+            "by `order_inquiries.id`."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -372,6 +390,7 @@ def list_order_inquiry_worklist(
                 delivery_to,
                 axis=axis,
                 axis_key=axis_key,
+                inquiry_id=inquiry_id,
                 project=project,
             ),
         )
@@ -465,6 +484,13 @@ def export_order_inquiry_worklist(
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     delivery_from: Optional[str] = Query(None),
     delivery_to: Optional[str] = Query(None),
+    inquiry_id: Optional[str] = Query(
+        None,
+        description=(
+            "S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own Export "
+            "Excel - exactly this header's own rows."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -495,6 +521,7 @@ def export_order_inquiry_worklist(
                 delivery_from,
                 delivery_to,
                 project=project,
+                inquiry_id=inquiry_id,
             )
         )
         return Response(
@@ -1059,17 +1086,25 @@ async def auto_place_order_inquiries(
 
     `redeal_drafts=True, include_awaiting=True`: this is one of the DRAFT re-deal doors
     (section 5.4) - it reaches rows nobody has confirmed yet and may move a draft off a
-    document a nearer one has since beaten, never a confirmed row's link (R2)."""
+    document a nearer one has since beaten, never a confirmed row's link (R2).
+
+    `filter.inquiry_id` (S3, `PLAN-oi-header-list-detail.md`) is the OI detail page's
+    own gear > Auto link: scopes the whole cascade to that header's rows, on top of
+    whichever of `product_ids` / `row_ids` is also given."""
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")
         for row_id in payload.row_ids or []:
             validate_uuid_path(row_id, resource="Order inquiry row")
+        inquiry_id = payload.filter.inquiry_id if payload.filter else None
+        if inquiry_id:
+            validate_uuid_path(inquiry_id, resource="Order inquiry")
         body = ProjectOrderInquiryService(db).auto_place_for_products(
             payload.product_ids,
             actor_user_id=current_user["id"],
             trigger="worklist",
             row_ids=payload.row_ids,
+            inquiry_id=inquiry_id,
             link_up_to=payload.link_up_to,
             link_horizon=payload.link_horizon,
             redeal_drafts=True,
@@ -1181,4 +1216,124 @@ async def unplace_order_inquiry_rows_in_scope(
         return {"unplaced": unplaced}
     except Exception as exc:
         db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# =============================================================================
+# The order inquiry HEADER list, detail and related documents (S2/S3,
+# `PLAN-oi-header-list-detail.md`). One row per OI, its own routes under
+# `/order-inquiry-headers` rather than under the crowded `/order-inquiries/*` family
+# (`/summary`, `/export`, `/matrix`, `/po/{id}`, `/spo/{n}`, `/upload-jobs/{id}`) -
+# a bare `/order-inquiries/{id}` would shadow one of those (LESSONS: SLA route
+# shadowing).
+# =============================================================================
+
+HeaderListSort = Literal[
+    "raised_at",
+    "inquiry_no",
+    "so_number",
+    "raised_by",
+    "lines_total",
+    "qty_total",
+    "customer",
+    "project",
+    "agent",
+    "so_date",
+    "status",
+]
+_MAX_HEADER_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
+
+
+@router.get(
+    "/order-inquiry-headers", response_model=ListResponse[OrderInquiryHeaderOut]
+)
+def list_order_inquiry_headers(
+    state: Literal["outstanding", "completed", "all"] = Query(
+        "outstanding",
+        description=(
+            "Outstanding = a non-cancelled row still awaiting/changed; Completed = "
+            "every non-cancelled row confirmed (or none at all); All = both."
+        ),
+    ),
+    query: Optional[str] = Query(
+        None,
+        max_length=_MAX_HEADER_QUERY_LENGTH,
+        description=(
+            "OI no, legacy OI no, S/O no, customer, project, agent, or the product "
+            "code / location of any of the header's own non-cancelled lines."
+        ),
+    ),
+    raised_by: Optional[str] = Query(
+        None, max_length=200, description="By `users.id`, exact."
+    ),
+    agent: Optional[str] = Query(
+        None, max_length=200, description="By the agent's own name, exact."
+    ),
+    # B2 (reviewer): free TEXT on the Project column's own value (`_PROJECT_TITLE`),
+    # never `project_id` - 0 of 738 headers on the prod copy carry a
+    # `ProjectSalesOrder.project_id` (an adopted AutoCount order has no registered
+    # `Project` row), so a uuid-pattern filter never matched anything. Same shape
+    # `order_inquiry_worklist_service.py`'s own `project` filter already uses.
+    project: Optional[str] = Query(None, max_length=200, description="Exact match on the Project column's text."),
+    sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
+    direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """One row per order inquiry - Documents view, default (AC-LS-01..07)."""
+    try:
+        result = OrderInquiryHeaderService(db).list(
+            state=state,
+            query=query,
+            raised_by=raised_by,
+            agent=agent,
+            project=project,
+            sort=sort,
+            direction=direction,
+            page=page,
+            limit=limit,
+        )
+        return {
+            "data": result.items,
+            "pagination": {"total": result.total, "page": result.page, "limit": result.limit},
+        }
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiry-headers/{inquiry_id}", response_model=OrderInquiryHeaderDetailOut
+)
+def get_order_inquiry_header(
+    inquiry_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The detail page's own header card + Order/Customer blocks + raise history
+    (AC-DT-01). 404 for an unknown id or another company's header - company scoping is
+    the session's own `do_orm_execute` listener, not a filter written here."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        return OrderInquiryHeaderService(db).get(inquiry_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiry-headers/{inquiry_id}/related-documents",
+    response_model=OrderInquiryRelatedDocumentsOut,
+)
+def get_order_inquiry_related_documents(
+    inquiry_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Related PO / Related SPO tabs (AC-DT-03): every document this header's own
+    non-cancelled rows are linked to, empty lists when nothing is linked yet."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        return OrderInquiryHeaderService(db).related_documents(inquiry_id)
+    except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

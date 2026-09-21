@@ -14,6 +14,11 @@
  *                                          //   Human codes. Phase 2 adds the field to
  *                                          //   the backend schema; sent only when the
  *                                          //   user narrowed the run.
+ *      demand_class?: 'project' | 'retail', // Start Plan (21 Sep) - which leg of demand
+ *                                          //   to net. Omitted = both (today's behaviour).
+ *      so_numbers?: string[],              // SO scope, project only. Sent only when
+ *                                          //   demand_class === 'project'; [] means every
+ *                                          //   project order in range, not narrowed to none.
  *      budget_id?: string | null           // M4 - always null/omitted in M3
  *    }
  *    Planning scope is fixed server-side (M8-D5) - no `buy_scope` in the request.
@@ -330,6 +335,44 @@ export async function getSetAsideDemand(): Promise<SetAsideDemand> {
   return res.json();
 }
 
+/** One project sales order the Orders picker in Start Plan (Demand = Project) can scope
+ *  a run to (`reorder-plan-demand-class-orders`, 21 Sep). `rows_total` is unfiltered - a
+ *  row the chosen range excludes still counts toward it, so the picker can say why an SO
+ *  it lists shows zero in-range lines. */
+export interface CandidateOrder {
+  so_number: string;
+  project_label: string | null;
+  customer_name: string | null;
+  rows_total: number;
+  rows_in_range: number;
+  rows_awaiting: number;
+  first_delivery: string | null;
+  last_delivery: string | null;
+}
+
+/**
+ * Every open project sales order with an Order Inquiry row - the option list for Start
+ * Plan's Orders field. `from`/`to` narrow `rows_in_range` to the same date rule the run
+ * itself applies (an omitted bound is open); omitted entirely returns every open project
+ * SO with `rows_in_range === rows_total`.
+ *
+ * GET /api/v1/scm/reorder-runs/candidate-orders?from=&to=
+ */
+export async function getCandidateOrders(params: {
+  from?: string;
+  to?: string;
+}): Promise<CandidateOrder[]> {
+  const qs = new URLSearchParams();
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/candidate-orders${suffix}`);
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load candidate orders'));
+  }
+  return res.json();
+}
+
 /** Raw shape returned by POST /reorder-runs (202). */
 interface ReorderRunAcceptedDto {
   run_id: string;
@@ -358,6 +401,8 @@ interface ReorderRunStatusDto {
   product_codes?: string[] | null;
   supersedes_run_id?: string | null;
   superseded_by_run_id?: string | null;
+  demand_class?: 'project' | 'retail' | null;
+  so_numbers?: string[] | null;
 }
 
 const DEFAULT_STAGE: ReorderRunStage = 'resolving_policies';
@@ -387,6 +432,15 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       ...(req.plan_horizon_date ? { plan_horizon_date: req.plan_horizon_date } : {}),
       // S4 (9 Sep 2026): the window's START, same "omit when empty" rule.
       ...(req.plan_horizon_start ? { plan_horizon_start: req.plan_horizon_start } : {}),
+      // Demand scope (21 Sep 2026): same "omit when unset" rule - a run that never
+      // narrowed by demand class sends a byte-identical request to before this existed.
+      ...(req.demand_class ? { demand_class: req.demand_class } : {}),
+      // SO scope is project-only and sent only when the user narrowed to it: an empty
+      // list under Project means every project order in range, not narrowed to none, so
+      // it still has to travel - but only ever alongside demand_class === 'project'.
+      ...(req.so_numbers?.length && req.demand_class === 'project'
+        ? { so_numbers: req.so_numbers }
+        : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));
@@ -426,6 +480,11 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     product_codes: dto.product_codes ?? null,
     supersedes_run_id: dto.supersedes_run_id ?? null,
     superseded_by_run_id: dto.superseded_by_run_id ?? null,
+    // Demand scope (21 Sep 2026): the run carries its own stamped class + SO list, same
+    // reasoning as the grain/cut-off above - the header and a replan read THIS run's
+    // scope, never today's default.
+    demand_class: dto.demand_class ?? null,
+    so_numbers: dto.so_numbers ?? null,
   };
 }
 
@@ -449,6 +508,12 @@ export async function replanReorderRun(
         product_codes: req.product_codes ?? [],
         plan_horizon_date: req.plan_horizon_date || null,
         plan_horizon_start: req.plan_horizon_start || null,
+        // Same "omit when unset" rule as `createReorderRun` - a re-plan of a run that
+        // carries no demand scope sends a byte-identical request to before this existed.
+        ...(req.demand_class ? { demand_class: req.demand_class } : {}),
+        ...(req.so_numbers?.length && req.demand_class === 'project'
+          ? { so_numbers: req.so_numbers }
+          : {}),
       }),
     },
   );

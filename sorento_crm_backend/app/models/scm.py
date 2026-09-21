@@ -35,6 +35,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 from app.models.base import CompanyScopedMixin
+from app.services.scm.demand_class import check_constraint_sql
 import uuid
 
 
@@ -262,7 +263,10 @@ class PurchasingBudget(Base, CompanyScopedMixin):
 class ReorderRun(Base, CompanyScopedMixin):
     """One planning run; recommendations freeze their inputs against it."""
     __tablename__ = "reorder_run"
-    __table_args__ = {"schema": "scm"}
+    __table_args__ = (
+        CheckConstraint(check_constraint_sql("demand_class"), name="ck_scm_reorder_run_demand_class"),
+        {"schema": "scm"},
+    )
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     created_by = Column(String, nullable=True)
@@ -289,6 +293,17 @@ class ReorderRun(Base, CompanyScopedMixin):
     # all is always counted (G2, 9 Sep ruling), the same reading the end date already gives
     # it.
     plan_horizon_start = Column(Date, nullable=True)
+    # Demand scope (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026): which leg of
+    # demand this run nets. NULL (the default) nets BOTH legs, unchanged from before this
+    # column existed - the closed vocabulary is the same one `demand_class.py` already
+    # governs for sales_orders/sales_agents, so the check constraint is built off it rather
+    # than restated here.
+    demand_class = Column(String(16), nullable=True)
+    # The SO scope this run was launched with, project runs only. NULL means none was
+    # asked for; an EMPTY list means Project was chosen with no SO narrowed (every project
+    # order in range), the same "asked for nothing vs asked for everything" split
+    # `product_ids` above already carries.
+    so_numbers = Column(JSONB, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)

@@ -438,13 +438,18 @@ register(
 )
 
 
-def build_order_inquiry_link(so_number: Optional[str]) -> str:
-    """The Order Inquiries worklist, narrowed to the sales order the row belongs to.
+def build_order_inquiry_link(inquiry_id: Optional[str]) -> str:
+    """The OI detail page, for the header this email is about (S3, AC-LK-01,
+    `PLAN-oi-header-list-detail.md`).
 
-    There is no per-row detail page (`documentation/plans/scm/PLAN-scm-oi-handshake.md`) -
-    the worklist's own search IS the way in, exactly as `orderInquiryRowHref` reaches it
-    from every other screen. A row with no SO number (a claim-only or free-standing row)
-    gets the unfiltered list rather than a broken query string.
+    Before this lane there was no per-row detail page
+    (`documentation/plans/scm/PLAN-scm-oi-handshake.md`), so every email pointed at the
+    worklist's own search narrowed by the SO number instead - `orderInquiryRowHref`'s
+    own fallback everywhere else on this screen. Every one of these emails is now about
+    ONE header (a raise, a reconfirm, a handover, an undo), so the header id it already
+    holds is a better link than a search that can miss when a second amendment raises a
+    second header on the same SO. A caller with no id (nothing to point at - a fully
+    covered decision that raised no header) gets the unfiltered list.
 
     PUBLIC (nit, review of PR #471), unlike its `_build_*_link` siblings above: every one
     of those is also called from ITS OWN trigger function inside this module, so the
@@ -454,10 +459,8 @@ def build_order_inquiry_link(so_number: Optional[str]) -> str:
     """
     base = (settings.frontend_base_url or "").rstrip("/")
     path = "/project-sales/order-inquiries"
-    if so_number:
-        from urllib.parse import quote
-
-        path = f"{path}?query={quote(so_number)}"
+    if inquiry_id:
+        path = f"{path}/{inquiry_id}"
     return f"{base}{path}" if base else path
 
 
