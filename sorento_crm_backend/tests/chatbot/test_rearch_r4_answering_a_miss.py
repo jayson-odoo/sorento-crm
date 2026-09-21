@@ -214,12 +214,16 @@ class TestAC1700AnsweringAMemberOfferMiss:
             output.get("routing")
         )
         assignee_id = (output.get("escalation") or {}).get("preferred_assignee_id")
-        assert assignee_id == "ru1", (
-            "AC-1700: a position over an open member_offer must assign THAT member "
-            "(respond_user_id 'ru1' for Ah Chong, position 1) - the escalation call "
-            f"carries no assignee at all today (escalation={output.get('escalation')!r}); "
-            "turn/apply.py::_answer_offer only ever threads pending.team through, never "
-            "the picked option's own payload.respond_user_id"
+        assert assignee_id == "u1", (
+            "AC-1700 (re-pinned for security finding M2, fixed lane commit "
+            "f724be767): a position over an open member_offer must assign THAT "
+            "member by their own uuid 'u1' for Ah Chong, position 1 (a real "
+            "users.id) - never the respond_user_id 'ru1'. "
+            "app/api/v1/external/next_assignee.py:460-476 resolves "
+            "preferred_assignee_id via TeamMember.user_id, and "
+            "lanes/escalation.py:219-221 matches it against a roster row's own "
+            f"uuid, both users.id, never a respond.io id (escalation="
+            f"{output.get('escalation')!r})"
         )
         stored = _session_of(session_factory)
         assert (stored.get("open_question") or {}).get("kind") != "member_offer", (

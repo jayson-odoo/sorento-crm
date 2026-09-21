@@ -1046,26 +1046,31 @@ class TestGroupB2CDCustomerServiceEscalationAlwaysShowsTheMemberPicker:
         self, session_factory, monkeypatch
     ) -> None:
         """The FOLLOWING turn after (a): a `member_offer` pending answered by a
-        NUMBER assigns that SPECIFIC member - EXISTING behaviour (`turn/apply.py:
-        268`'s own `trace.assignee = option_payload.get("respond_user_id")` ->
-        `lanes/escalation.py::run`'s own `preferred_assignee_id` read, line 219) -
-        read and pinned, not invented. Hand-seeded directly rather than chained off
-        (a)'s own dry-run preview (D14 writes nothing a second turn could read
-        back)."""
+        NUMBER assigns that SPECIFIC member. Re-pinned for security finding M2
+        (fixed lane commit f724be767): `preferred_assignee_id` must carry the
+        picked option's own `uuid` (a real `users.id`), never its
+        `respond_user_id` - `app/api/v1/external/next_assignee.py:460-476`
+        resolves `preferred_assignee_id` via `TeamMember.user_id`, and
+        `lanes/escalation.py:219-221` matches it against a roster row's own
+        `uuid`, both of which are `users.id`, never a respond.io id. Hand-seeded
+        directly rather than chained off (a)'s own dry-run preview (D14 writes
+        nothing a second turn could read back)."""
         _seed_contact_and_get(session_factory)
+        amy_uuid = str(uuid.uuid4())
+        ben_uuid = str(uuid.uuid4())
         options = [
             {
                 "position": 1,
                 "label": "Zzt Amy",
                 "entity_type": "member",
-                "uuid": str(uuid.uuid4()),
+                "uuid": amy_uuid,
                 "payload": {"respond_user_id": "r-amy"},
             },
             {
                 "position": 2,
                 "label": "Zzt Ben",
                 "entity_type": "member",
-                "uuid": str(uuid.uuid4()),
+                "uuid": ben_uuid,
                 "payload": {"respond_user_id": "r-ben"},
             },
         ]
@@ -1105,9 +1110,10 @@ class TestGroupB2CDCustomerServiceEscalationAlwaysShowsTheMemberPicker:
         assert spy_calls, (
             f"the escalation lane must be reached to assign a named member: {spy_calls!r}"
         )
-        assert spy_calls[-1]["preferred_assignee_id"] == "r-ben", (
+        assert spy_calls[-1]["preferred_assignee_id"] == ben_uuid, (
             f"a numbered pick over a member_offer roster must assign THAT option's "
-            f"own respond_user_id, existing behaviour: {spy_calls!r}"
+            f"own uuid (a real users.id), never its respond_user_id (M2, "
+            f"f724be767): {spy_calls!r}"
         )
 
     def test_c_yes_over_member_offer_auto_assigns_round_robin(

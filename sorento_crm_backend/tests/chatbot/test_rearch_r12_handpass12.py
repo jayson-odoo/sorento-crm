@@ -964,12 +964,17 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
             for label, respond_id, pos in rows
         ]
 
-    def _seed_combined_pending(self, session_factory) -> None:
+    def _seed_combined_pending(
+        self, session_factory, member_options: list[dict[str, Any]] | None = None
+    ) -> None:
         """The state AFTER turn 99c114fd's own reply, under the owner's correction: a
         single `customer_order_pick` pending whose 11 options span both groups -
         hand-seeded (not chained off a dry-run preview, which writes nothing a second
         turn could read back), the same convention `TestGroupB2CDCustomerService
-        EscalationAlwaysShowsTheMemberPicker` uses one file over."""
+        EscalationAlwaysShowsTheMemberPicker` uses one file over. An explicit
+        `member_options` lets a caller keep its own reference to the seeded rows
+        (each carrying a fresh random `uuid` from `_member_options`) instead of
+        calling `_member_options()` a second time and getting different uuids."""
         _seed_contact_and_get(session_factory)
         _seed_state(
             session_factory,
@@ -1004,7 +1009,7 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
                 "kind": "customer_order_pick",
                 "team": "customer_service",
                 "expects": None,
-                "options": self._order_options() + self._member_options(),
+                "options": self._order_options() + (member_options or self._member_options()),
                 "payload": {"domain": "order", "escalate_offered": True},
                 "asked_at_turn": 1,
             },
@@ -1229,22 +1234,41 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
     ) -> None:
         """owner correction 21 Sep: yes = round robin, roster rides the offer reply.
         A position pick into the MEMBER half of the SAME combined roster assigns that
-        member directly this turn - no order tool call, no member_offer follow-up."""
+        member directly this turn - no order tool call, no member_offer follow-up.
+
+        Re-pinned for security finding M2 (fixed lane commit f724be767):
+        `preferred_assignee_id` must carry the picked option's own `uuid` (a real
+        `users.id`), never its `respond_user_id`
+        (`app/api/v1/external/next_assignee.py:460-476` resolves it via
+        `TeamMember.user_id`; `lanes/escalation.py:219-221` matches it against a
+        roster row's own `uuid`). This test's own escalation-lane double is made
+        to behave like the real endpoint: given a `users.id` it looks up THAT
+        member's own `respond_user_id` for the assign action, rather than
+        echoing the uuid straight back as `respond_user_id`."""
         from app.services.chatbot import engine as engine_mod
 
-        self._seed_combined_pending(session_factory)
+        member_options = self._member_options()
+        respond_id_by_uuid = {
+            opt["uuid"]: opt["payload"]["respond_user_id"] for opt in member_options
+        }
+        self._seed_combined_pending(session_factory, member_options=member_options)
         assign_calls: list[dict[str, Any]] = []
 
         def _escalation_double(ctx, item, *, dry_run, session_factory):
             escalation = (((ctx or {}).get("parse") or {}).get("output") or {}).get("escalation") or {}
             assignee_id = escalation.get("preferred_assignee_id") or None
             assign_calls.append({"preferred_assignee_id": assignee_id})
+            # The real `/external/next-assignee` handler resolves a `users.id`
+            # to that member's own respond id (`user_service.get_member_assignee`)
+            # - this double does the same lookup instead of echoing the uuid
+            # straight back as `respond_user_id`.
+            respond_user_id = respond_id_by_uuid.get(assignee_id) or "zzt-round-robin"
             return {
                 "arm": "assign",
                 "actions": [
                     {
                         "kind": "assign_conversation",
-                        "respond_user_id": assignee_id or "zzt-round-robin",
+                        "respond_user_id": respond_user_id,
                         "dry_run": dry_run,
                     },
                 ],
@@ -1280,6 +1304,14 @@ class TestGroupB2AMissThatAlsoEarnsACsMemberOfferPrintsOneNumberedList:
         assert not order_calls, (
             f"picking the member at position 8 must not also make an order pick: "
             f"{order_calls!r}"
+        )
+        member_8_uuid = next(
+            opt["uuid"] for opt in member_options if opt["position"] == 8
+        )
+        assert assign_calls and assign_calls[-1]["preferred_assignee_id"] == member_8_uuid, (
+            f"the escalation lane must be asked to assign by the picked option's "
+            f"own uuid (a real users.id), never its respond_user_id (M2, "
+            f"f724be767): {assign_calls!r}"
         )
         assert any(
             a.get("kind") == "assign_conversation"
