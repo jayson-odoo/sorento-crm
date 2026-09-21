@@ -386,6 +386,38 @@ def _field_pref(it: Any, k: str, *labels: str) -> Any:
     return None
 
 
+_ON_HAND_WITH_OUTSTANDING = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*\(O/S:")
+
+
+def _on_hand_number(value: Any) -> Any:
+    """The ON-HAND part of a compact Total that already carries its outstanding suffix.
+
+    MEASURED, hand pass 11 defect 1 (live turn cfee5933, contact 437264483 on the
+    0921 clone): `_stock_compact` (sorento_crm_mcp/presenters.py) publishes the
+    compact per-product total as `{"key": "total_on_hand", "value": 0,
+    "granted_value": "0 (O/S: 0)"}` and restricts it behind `inventory.sellable`, and
+    `fetch.py::_keep_field` SWAPS the granted string INTO `value` (`f["value"] =
+    f.pop("granted_value")`) for a contact that holds the grant. So by the time any
+    reader here sees the row, a granted compact total's `value` is the STRING
+    `"0 (O/S: 0)"`, not the number `0` - `Number("0 (O/S: 0)")` is NaN, which made
+    `_rows_all_zero` below answer False for a reply that plainly read "Total: 0" and
+    the cross-domain ladder never probed. The DETAILED row is unaffected (its
+    `quantity_on_hand` is never restricted; its outstanding is a separate
+    `open_so_qty` field), which is why the ladder has always worked for a detailed
+    zero reply and never for a compact granted one.
+
+    The leading number IS the on-hand total in that string, so reading it is the same
+    fact the ungranted reader gets from `value` verbatim - not a second definition of
+    "on hand". Anything else passes through untouched, so a plain numeric value keeps
+    `jsc.js_number`'s own reading exactly.
+    """
+    if isinstance(value, str):
+        m = _ON_HAND_WITH_OUTSTANDING.match(value)
+        if m:
+            return m.group(1)
+    return value
+
+
 def _row_qty(it: Any) -> float:
     """A row's own quantity, `NaN` when it carries none at all.
 
@@ -395,9 +427,10 @@ def _row_qty(it: Any) -> float:
     "Total: 0" is exactly as zero as a detailed row reading 0 at every location. AVAILABLE
     mode carries no quantity field at all, by design (the point of that mode is never
     stating one), so it stays unreachable here on purpose - `value` there is always the
-    plain number even under `include_sellable`; only the COMPACT presenter's own
-    `granted_value` ever carries the "(O/S: n)" suffix (`_stock_compact`,
-    sorento_crm_mcp/presenters.py), and this function never reads that key.
+    plain number even under `include_sellable`. The COMPACT total's own "(O/S: n)"
+    suffix arrives IN `value` (never as `granted_value`, which the field drop has
+    already consumed by now) for a contact holding `inventory.sellable`, so
+    `_on_hand_number` above unwraps it back to the on-hand figure first.
 
     `?? NaN`, not `?? 0`: `fieldPref` returns `None` when every key/label tried is
     ABSENT, and `Number(None)` is 0 in JS - which would make "some row has a quantity"
@@ -408,7 +441,7 @@ def _row_qty(it: Any) -> float:
     value = _field_pref(it, "quantity_on_hand", "quantity on hand")
     if value is None:
         value = _field_pref(it, "total_on_hand", "Total")
-    n = jsc.js_number(jsc.UNDEFINED if value is None else value)
+    n = jsc.js_number(jsc.UNDEFINED if value is None else _on_hand_number(value))
     return float("nan") if jsc.is_nan(n) else float(n)
 
 
@@ -850,6 +883,7 @@ def crossdomain_render(
         # typed prefix code, e.g. "SRTWC8517" flagged zero from its own "-PJ" sibling's
         # rows, must find that SAME sibling's rows on the OTHER side too). A plain entry
         # keeps the exact lookup - pre-existing, untouched.
+        #
         if zero:
             rows = [it for code_key, its in by_code.items() if code_key == n or code_key.startswith(n) for it in its]
         else:

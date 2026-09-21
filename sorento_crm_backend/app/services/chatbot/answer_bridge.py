@@ -923,6 +923,37 @@ def _run_crossdomain_ladder(
     )
 
 
+#: `crossdomain_render`'s own per-row grammar (`answer.py`, `f"*{label}:* {value}"`) for
+#: the field the incoming / PO rungs key their rows by. Read line-anchored, so a code
+#: that is a string PREFIX of the code on the line (SRTWC6022-SH-UF inside
+#: SRTWC6022-SH-UF-NEW) can never be mistaken for it.
+_RUNG_ROW_CODE_RE = re.compile(r"^\*Product Code:\*\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _block_product_codes(block_text: Any) -> set[str]:
+    """The product codes the rung's rendered block actually NAMES.
+
+    MEASURED on live turn 8781cd47 ("check stock srtwc6022", ONE typed family token
+    onto TWO real products, BOTH reading 0 on hand): the incoming rung renders rows
+    for SRTWC6022-SH-UF-NEW only, yet `crossdomain_render`'s own zero-entry lookup
+    deliberately ALSO matches a prefixed sibling's rows (its finding-7 arm, so a typed
+    family prefix finds the family's rows on the other side) - so SRTWC6022-SH-UF ends
+    up in neither `nothing_codes` nor the block, and `_prefix_zero_note` below named
+    both codes where production names one ("No stock for SRTWC6022-SH-UF-NEW.", owner's
+    prod paste, `tests/chatbot/journeys/hp11-zero-stock.json`).
+
+    Read off the rendered TEXT rather than carried on `_xdBlock`: that dict is graded
+    key-for-key against the n8n crossdomain-render capture corpus
+    (`test_s6c_answer_lane.py` / `test_s6c_engine_paths.py`, 13 captures), so a new key
+    there is a parity failure - measured, not assumed. An EMPTY result means the rung's
+    rows are not product-keyed at all, which every caller must read as "no opinion"
+    rather than as "none of them".
+    """
+    if not isinstance(block_text, str) or not block_text:
+        return set()
+    return {m.group(1) for m in _RUNG_ROW_CODE_RE.finditer(block_text) if m.group(1)}
+
+
 def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
     """Hand pass 11, defect 1: `"No {primary_word} for {codes}."`, the SAME string
     template `answer.py::crossdomain_render`'s own `only_other_note` already uses
@@ -949,13 +980,17 @@ def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(xd, Mapping) or not isinstance(block, Mapping):
         return result
     nothing_codes = {c for c in (block.get("nothing_codes") or []) if isinstance(c, str)}
+    rendered_codes = _block_product_codes(block.get("block"))
     codes: list[str] = []
     for m in xd.get("missing") or []:
         if not (isinstance(m, Mapping) and m.get("zero") is True):
             continue
         code = m.get("code") or m.get("_n")
-        if isinstance(code, str) and code and code not in nothing_codes and code not in codes:
-            codes.append(code)
+        if not (isinstance(code, str) and code) or code in nothing_codes or code in codes:
+            continue
+        if rendered_codes and code not in rendered_codes:
+            continue
+        codes.append(code)
     if not codes:
         return result
     primary_word = "incoming" if xd.get("origin_domain") == "incoming" else "stock"
