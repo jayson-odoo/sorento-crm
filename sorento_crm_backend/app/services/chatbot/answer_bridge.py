@@ -706,7 +706,7 @@ def _stamps_by_position(text: str) -> dict[int, str]:
     return stamps
 
 
-def _member_option(row: dict[str, Any], position: int) -> dict[str, Any] | None:
+def member_option(row: dict[str, Any], position: int) -> dict[str, Any] | None:
     """A `cs_last_result_set` row as a `member_offer` option - `respond_user_id` rides
     on the payload (not `session_state._legacy_option`'s own value/team pair) because an
     answering turn assigns the escalation BY that id, never by the roster's `uuid`
@@ -830,7 +830,7 @@ def _miss_question(
         rows = member.get("cs_last_result_set") or []
         options = [
             option
-            for option in (_member_option(row, i + 1) for i, row in enumerate(rows))
+            for option in (member_option(row, i + 1) for i, row in enumerate(rows))
             if option
         ]
         if options:
