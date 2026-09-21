@@ -340,6 +340,7 @@ def portal_export_price_tag_pdf(
     `request_tag_sheet_export`'s own guards (status, promotion, page/version)
     pass their 409 straight through as the toast text.
     """
+    _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
     from app.services.dealer_kit.tag_sheet_export_service import (
         request_tag_sheet_export,

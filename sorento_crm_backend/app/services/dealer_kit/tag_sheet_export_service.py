@@ -144,6 +144,30 @@ def request_tag_sheet_export(
             code="NOT_FOUND",
         )
 
+    # AC-S9-7: one export in flight per REQUEST, whoever asks - a double
+    # click (or the portal's own poll racing a slow click) must not queue a
+    # second render of the same request. The SAME in-flight download comes
+    # back and nothing new is enqueued. Keyed on the ENTITY
+    # (`source_entity_type`/`source_entity_id`), never the caller's own user
+    # id (unlike `DownloadService.has_in_flight`): the CRM export route and
+    # the portal export route can each trigger this same request's export,
+    # and the second one to arrive must see the first's, not its own.
+    in_flight = (
+        db.query(UserDownload)
+        .filter(
+            UserDownload.source_entity_type == "price_tag_request",
+            UserDownload.source_entity_id == str(request_id),
+            UserDownload.kind == KIND,
+            UserDownload.status.in_(
+                [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
+            ),
+        )
+        .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
+        .first()
+    )
+    if in_flight is not None:
+        return in_flight, sheet_ids
+
     # Every finished status can be exported (D8): the office reprints a lost
     # sheet after collection, and asking for a PDF is not a step in the
     # hand-over.
