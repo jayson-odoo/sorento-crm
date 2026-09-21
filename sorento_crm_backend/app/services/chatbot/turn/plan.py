@@ -42,6 +42,14 @@ class Trace:
     # `head/output_exchange` used to populate, now written by the seam that replaced it
     # instead of a second, parallel assignment mechanism.
     assignee: str | None = None
+    # Hand pass 11, blocker 2: the COMPANY a POSITION over a company-carrying escalate
+    # offer named (`option.payload.company`), else `None` for a bare "yes" or an offer
+    # whose options name no company. Lives beside `assignee` for the same reason and has
+    # the same one reader, `engine.run_turn`, which hands it to `lane_parse_output` as
+    # `ctx.parse.output.escalation.company_pick` - the key `lanes/escalation.py::
+    # escalation_context` already validates a TYPED company name through, so a tapped
+    # number and a typed word route through one seam rather than two.
+    company: str | None = None
     # What an ANSWERED outstanding question (contract 38, 39) decided: `{kind, scope,
     # detail}`. It lives beside `lane` and `team` for the same reason they do - the
     # Plan's own field set is the contract (AC-1528) - and it has exactly one reader,

@@ -322,21 +322,43 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
 # --------------------------------------------------------------------------- #
 
 
+def _company_clarify_rows(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """The company POOL this clarify offers, in printed order, one row per name.
+
+    The rows, not just the names, because the numbered pick the customer answers with
+    has to route: `engine._question_offered` mints the `company_pick` options off these
+    and `turn/apply.py::_answer_offer` hands the picked row's `company_id` back to
+    `escalation_context` (hand pass 11, blocker 2). Two pool rows sharing one name
+    collapse to one option, exactly as they collapse to one printed name.
+    """
+    prev = _prev_variables(ctx)
+    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
+    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
+    rows: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for entry in pools:
+        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
+        if not jsc.truthy(name) or name in seen:
+            continue
+        seen.add(name)
+        rows.append(
+            {
+                "idx": len(rows) + 1,
+                "company_id": jsc.get(entry, "company_id") or None,
+                "company_name": name,
+                "brand_code": jsc.get(entry, "brand_code") or None,
+            }
+        )
+    return rows
+
+
 def _company_clarify_options(ctx: dict[str, Any]) -> list[str]:
     """The company names this clarify offers, in printed order.
 
     Extracted so the ASK and the quick replies that answer it cannot list different
     companies: `clarify_company_reply` prints these and `_clarify_actions` taps them.
     """
-    prev = _prev_variables(ctx)
-    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
-    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
-    names: list[str] = []
-    for entry in pools:
-        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-    return names
+    return [row["company_name"] for row in _company_clarify_rows(ctx)]
 
 
 def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -349,7 +371,8 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
     per name). With no names at all the ask degrades to number-or-name: never invite a
     reply that cannot resolve.
     """
-    names = _company_clarify_options(ctx)
+    rows = _company_clarify_rows(ctx)
+    names = [row["company_name"] for row in rows]
     bold = [f"*{name}*" for name in names]
     listed = " / ".join(bold)
     if len(bold) > 1:
@@ -369,7 +392,16 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
         if names
         else f"{lead} - reply a number or a name and I'll assign automatically."
     )
-    return {**item, "clarify_company": True, "clarify_text": clarify_text}
+    # `clarify_company_options` rides beside the text for the SAME reason
+    # `clarify_team_options` does on the team clarify: the question the customer sees and
+    # the numbered options the next turn resolves against are built from ONE list, so
+    # they cannot name different companies (hand pass 11, blocker 2).
+    return {
+        **item,
+        "clarify_company": True,
+        "clarify_text": clarify_text,
+        "clarify_company_options": rows,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -425,17 +457,29 @@ def _malaysia(value: Any) -> str:
 
 
 def _clarify_gate(context_item: dict[str, Any], ctx: dict[str, Any]) -> bool:
-    """`clarify-company-gate`: an OPEN member picker whose pool nobody chose from.
+    """`clarify-company-gate`: an offer whose company pool nobody chose from.
 
-    Three conditions, all of them state: the previous turn left a member offer open, it
-    carried rows, and `escalation-context` came out of the ladder at
-    `multi_company_unpicked`. Assigning here would round-robin a pool the customer was
-    never shown a choice from, which is the live bug this arm exists to close.
+    `multi_company_unpicked` is the trigger on both arms, and it means one thing:
+    assigning now would round-robin a pool the customer was never asked to choose from,
+    which is the live bug this arm exists to close.
+
+    * The n8n arm, unchanged: the previous turn left a MEMBER offer open and it carried
+      rows (`selection_context` + `last_result_set`, the pair `compile-current-state`
+      persists).
+    * The re-arch arm (hand pass 11, blocker 2; owner ruling "we clarify the company with
+      the user when it is not clear"): a multi-company ROSTER PLAN, which is the pool the
+      escalate offer itself listed. It cannot fire on the n8n path - `sub_answer.
+      miss_roster_plan:318-323` caps that producer's plan at ONE row, so a plan of two or
+      more only exists where this engine minted the offer itself
+      (`turn_runtime.escalation_roster_plan`, off the accepted offer's own options).
     """
     prev = _prev_variables(ctx)
+    if jsc.get(context_item, "routing_source") != "multi_company_unpicked":
+        return False
+    if len(jsc.array(jsc.get(prev, "routing_roster_plan"))) > 1:
+        return True
     return (
-        jsc.get(context_item, "routing_source") == "multi_company_unpicked"
-        and jsc.get(prev, "selection_context") == "member_offer"
+        jsc.get(prev, "selection_context") == "member_offer"
         and len(jsc.array(jsc.get(prev, "last_result_set"))) > 0
     )
 

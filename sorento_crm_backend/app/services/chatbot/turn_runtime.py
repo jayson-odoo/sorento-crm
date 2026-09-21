@@ -348,35 +348,70 @@ def _prior_suggested_team(session_block: Any) -> str | None:
         return None
 
 
-def escalation_roster_plan(pending: Any, *, accepted_lane: str | None) -> list[dict[str, Any]] | None:
-    """`variables.routing_roster_plan`, for an accepted `team_pick` this turn is about
-    to hand to escalation (security N-3/S2, hand pass 11 review): `escalation_context`'s
-    own `same_team` arm (`lanes/escalation.py:277-283`) reads this EXACT legacy field,
-    unchanged, to resolve `company_name` off a single-company roster - the field
-    `compile-current-state` (the kept n8n-mirroring path) writes from `cs_roster_plan`'s
-    member-offer roster. This engine mints its OWN `team_pick` directly
-    (`answer_bridge.apply_silent_company_offer`) with no `compile-current-state`
-    equivalent, so the company its single option carried never reached escalation on a
-    bare "yes" - `option_payload` is empty on that arm by design (`turn/decide.py::
-    picked_positions`, defect 4: a yes/no offer is answered by the word alone, never a
-    position, so `turn/apply.py::_answer_offer`'s `picked` stays `None`).
+#: The two offer kinds whose options can name a COMPANY - the escalate offer this engine
+#: mints itself (`answer_bridge`) and the company clarify the escalation lane asks back
+#: (`engine._question_offered`). `member_offer`'s options name a PERSON, so it carries no
+#: roster of its own and is not listed.
+_COMPANY_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "company_pick"})
 
-    Built straight off the pending's OWN options - no new pending kind, no new field,
-    the SAME shape `cs_roster_plan` already produces (`company_id`/`company_name`/
-    `brand_code`), one entry per option that carries a company. `None` for a plain
-    (no-company) yes/no offer - the zero-stock ladder's own bare "Yes" needs no roster
-    at all, `team` alone already reaches `escalation_context` through `lane_parse_
-    output`'s existing `accepted_team` chain.
+
+def escalation_roster_plan(
+    pending: Any, *, accepted_lane: str | None, accepted_rules: Any = None
+) -> list[dict[str, Any]] | None:
+    """`variables.routing_roster_plan`, for an ACCEPTED company-carrying offer this turn
+    is about to hand to escalation (security N-3/S2, hand pass 11 review):
+    `escalation_context` (`lanes/escalation.py:236-299`) reads this EXACT legacy field,
+    unchanged, for BOTH of its company arms - the `company_pick` pool a named company is
+    validated against, and the single-row `same_team` roster a bare "yes" routes by. It
+    is the field `compile-current-state` (the kept n8n-mirroring path) writes from
+    `cs_roster_plan`'s member-offer roster. This engine mints its OWN offers directly
+    (`answer_bridge.apply_silent_company_offer` / `_miss_question`) with no
+    `compile-current-state` equivalent, so the company those options carried never
+    reached escalation on a bare "yes" - `option_payload` is empty on that arm by design
+    (`turn/decide.py::picked_positions`, defect 4: a yes/no offer is answered by the word
+    alone, never a position, so `turn/apply.py::_answer_offer`'s `picked` stays `None`).
+
+    Built straight off the pending's OWN options - no new pending kind, no new field, the
+    SAME row shape `cs_roster_plan` / `sub_answer.miss_roster_plan` already produce
+    (`plan_idx`/`company_id`/`company_name`/`brand_code`), one entry per option that
+    carries a company. The **id** is the point (hand pass 11 blocker 1): routing reads
+    `company_id` and nothing else, so a row carrying only the NAME routes exactly as if
+    no company had been named at all.
+
+    `None` for a plain (no-company) yes/no offer - the zero-stock ladder's own bare "Yes"
+    needs no roster at all, `team` alone already reaches `escalation_context` through
+    `lane_parse_output`'s existing `accepted_team` chain.
+
+    Gated on the ACCEPT rule, not on the lane alone (security nit, hand pass 11): a FRESH
+    handover request is also `lane == "escalation"` (`turn/apply.py::_lane`) while a
+    still-live offer sits in state, and that turn accepted nothing - its pool is not a
+    roster anybody was just shown.
     """
-    if accepted_lane != "escalation" or pending is None or pending.kind != "team_pick":
+    rules = accepted_rules if isinstance(accepted_rules, (list, tuple, set, frozenset)) else ()
+    if (
+        accepted_lane != "escalation"
+        or "answer_pending_accept" not in rules
+        or pending is None
+        or pending.kind not in _COMPANY_OFFER_KINDS
+    ):
         return None
-    plan = [
-        {"company_id": None, "company_name": company, "brand_code": None}
-        for opt in pending.options
-        if isinstance(opt, dict)
-        for company in [(opt.get("payload") or {}).get("company")]
-        if company
-    ]
+    plan: list[dict[str, Any]] = []
+    for opt in pending.options:
+        # Mapping guard (reviewer N-b): a persisted option that is not a dict must not
+        # take the turn down on its way through a roster read.
+        payload = opt.get("payload") if isinstance(opt, Mapping) else None
+        payload = payload if isinstance(payload, Mapping) else {}
+        company = payload.get("company")
+        if not company:
+            continue
+        plan.append(
+            {
+                "plan_idx": len(plan),
+                "company_id": payload.get("company_id") or None,
+                "company_name": company,
+                "brand_code": payload.get("brand_code") or None,
+            }
+        )
     return plan or None
 
 
@@ -457,6 +492,7 @@ def lane_parse_output(
     domain: str | None = None,
     accepted_team: str | None = None,
     accepted_assignee: str | None = None,
+    accepted_company: str | None = None,
     declined_offer_copy: bool = False,
     prior_session: Any = None,
 ) -> dict[str, Any]:
@@ -541,6 +577,16 @@ def lane_parse_output(
     # `None` (a bare "yes") leaves whatever the verdict already carried untouched.
     if accepted_assignee:
         out["escalation"] = {**(out.get("escalation") or {}), "preferred_assignee_id": accepted_assignee}
+    # The company half of the same idiom (hand pass 11, blocker 2): a POSITION over the
+    # company clarify names a COMPANY the customer just picked, and `escalation_context`
+    # resolves a named company through ONE key - `output.escalation.company_pick`, which
+    # it then validates against the offered pool (`escalation.py:232-255`). Writing the
+    # picked option's name here means the position and the typed word reach routing
+    # through the SAME seam instead of two, and the validation still runs on both. The
+    # verdict's own `company_pick` (the customer typed the name) outranks it: this only
+    # fills what the message itself did not say.
+    if accepted_company and not (out.get("escalation") or {}).get("company_pick"):
+        out["escalation"] = {**(out.get("escalation") or {}), "company_pick": accepted_company}
     # AC-1703's tail, captain's ruling 20 Sep 2026: a decline over a NON-escalation
     # offer (a did-you-mean roster's own attached escalate sentence, a detail offer)
     # finishes on the SAME `escalation_declined` branch kind as an actual escalation
@@ -608,9 +654,12 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     return {key: raw for key, raw in named.items() if key in missed}
 
 
-def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
-    """R-g (owner hand pass 7, 19 Sep 2026): the resolver's own `company_name` per match,
-    keyed by uuid - read straight off the RAW resolver payload (never off `gate.py`'s own
+def companies_by_uuid(resolved: Any) -> dict[str, dict[str, Any]]:
+    """R-g (owner hand pass 7, 19 Sep 2026): the resolver's own COMPANY per match, keyed
+    by uuid - `{"company_id", "company_name"}`, both stamped by the same pass
+    (`entity_resolver._attach_company_info`, which writes the id and the name together).
+
+    Read straight off the RAW resolver payload (never off `gate.py`'s own
     `compatible_entities`/`by_uuid`, which `tests/chatbot/test_replay.py`'s frozen corpus
     compares byte-for-byte; an extra key there broke 100+ recorded fixtures that carry a
     `company_name` on a match with nothing to do with this feature). Flattened the same
@@ -618,15 +667,26 @@ def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
     by_entity_type), so a match this module never reads through `compatible_entities`
     still contributes its company - `candidates_by_kind` below only reads the entry for a
     uuid that IS in `compatible`.
+
+    The ID is what ROUTES (`lanes/escalation.py::_next_assignee_body` posts `company_id`
+    and nothing else; `external/next_assignee.py` falls back to the CONTACT's company
+    when it is absent), so a reader that carries only the name carries nothing routable -
+    the hand pass 11 blocker this pair exists to close.
     """
-    out: dict[str, str] = {}
+    out: dict[str, dict[str, Any]] = {}
 
     def _consume(matches: Any) -> None:
         for m in jsc.array(matches):
             uuid = jsc.nullish_str(jsc.get(m, "uuid")).strip()
             company = jsc.get(m, "company_name")
             if uuid and isinstance(company, str) and company.strip():
-                out.setdefault(uuid, company.strip())
+                out.setdefault(
+                    uuid,
+                    {
+                        "company_id": jsc.nullish_str(jsc.get(m, "company_id")).strip() or None,
+                        "company_name": company.strip(),
+                    },
+                )
 
     from app.services.chatbot.lanes.business.gate import _flatten_by_entity_type
 
@@ -635,6 +695,15 @@ def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
     _consume(jsc.get(resolved, "intersection"))
     _consume(_flatten_by_entity_type(jsc.get(resolved, "by_entity_type")))
     return out
+
+
+def company_names_by_uuid(resolved: Any) -> dict[str, str]:
+    """`companies_by_uuid`, names only - the shape `candidates_by_kind` has always read.
+
+    Public (reviewer N-a, hand pass 11): `answer_bridge` imported the private name across
+    module boundaries, which is a fact about this seam's audience, not about its privacy.
+    """
+    return {uuid: row["company_name"] for uuid, row in companies_by_uuid(resolved).items()}
 
 
 def _without_guesses(
@@ -917,7 +986,7 @@ def resolve_kinds(
         compatible,
         predicate,
         candidates_by_kind(
-            stamps_from, compatible, customer_bases, product_stamp, _company_names_by_uuid(resolved)
+            stamps_from, compatible, customer_bases, product_stamp, company_names_by_uuid(resolved)
         ),
         unplaced,
         spec_tier_matched(resolved),
@@ -1028,7 +1097,7 @@ def candidates_by_kind(
         if isinstance(display, str) and display.strip():
             built["name"] = display.strip()
         # R-g (owner hand pass 7, 19 Sep 2026): the same additive carry as `name`
-        # above, off the RAW resolver's own `company_name` (`_company_names_by_uuid`,
+        # above, off the RAW resolver's own `company_name` (`company_names_by_uuid`,
         # read off `resolved` rather than off `gate.py`'s own `compatible_entities` -
         # see that function's own docstring for why) - `turn/narrow.py::_options` reads
         # it so a code that is a SEPARATE record in two companies stays two options,

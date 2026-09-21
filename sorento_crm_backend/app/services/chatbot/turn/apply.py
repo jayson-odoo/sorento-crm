@@ -266,6 +266,11 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # stays `None`) leaves `option_payload` empty and assigns nothing, which is what
     # keeps the round-robin draw for that acceptance unchanged.
     trace.assignee = option_payload.get("respond_user_id")
+    # Hand pass 11, blocker 2: the same rule for the COMPANY a numbered pick named
+    # (`option.payload.company`, the company clarify's own options). A bare "yes" picks
+    # no position, so this stays `None` and the pool travels instead - which is exactly
+    # what makes the clarify ask happen rather than a blind assign.
+    trace.company = option_payload.get("company")
     return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
 
 

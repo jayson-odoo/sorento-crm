@@ -99,6 +99,7 @@ from app.services.chatbot.tail import compose as tail_compose
 from app.services.chatbot.tail import reply as reply_mod
 from app.services.chatbot.tail import scope_block
 from app.services.chatbot.turn import compose as turn_compose
+from app.services.chatbot.turn import fetch as run_fetch
 from app.services.chatbot.turn import pending
 
 # AC-1691's umbrella: no roster is ever asked with fewer than two options, in any
@@ -242,8 +243,11 @@ def apply_crossdomain_hit(
         text = _apply_crossdomain_render(answer.text, result, answered=True)
         if text == answer.text:
             return answer
-        question = _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
-        return replace(answer, text=text, question=question if question is not None else answer.question)
+        # Reviewer N-d: no `else answer.question` arm, because it was unreachable -
+        # `_apply_crossdomain_render` changed the text, and that is the SAME `_xdBlock`
+        # `any`/`block` gate `_crossdomain_offer_pending` reads, so the pending is never
+        # `None` past the equality check above.
+        return replace(answer, text=text, question=_crossdomain_offer_pending(result, asked_at_turn=asked_at_turn))
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning(
             "chatbot turn %s: the cross-domain zero-stock ladder did not run", turn_id, exc_info=True
@@ -272,11 +276,29 @@ def _crossdomain_offer_pending(
     )
 
 
+def _brand_by_company(gate: Any) -> dict[str, Any]:
+    """`gate.routing_companies`, keyed by company id, valued with that company's own
+    `brand_code` - the ONE place either escalate offer reads a brand from.
+
+    `run_gate` (`lanes/business/gate.py:1636-1660`) computes this axis from the same
+    compatible entities the "checked in X and Y" sentence is built from, and production's
+    own `sub_answer.miss_roster_plan:388-410` joins against it for exactly this field on
+    exactly this row shape. A second derivation here would be a chance for the two to
+    disagree about a company's brand.
+    """
+    return {
+        str(row.get("company_id")): row.get("brand_code")
+        for row in (gate.get("routing_companies") if isinstance(gate, Mapping) else None) or []
+        if isinstance(row, Mapping) and row.get("company_id")
+    }
+
+
 def apply_silent_company_offer(
     answer: turn_compose.Answer,
     *,
     envelope: Mapping[str, Any] | None,
     parser: Mapping[str, Any] | None,
+    gate: Mapping[str, Any] | None = None,
     asked_at_turn: int | None = None,
     turn_id: str | None = None,
 ) -> turn_compose.Answer:
@@ -303,13 +325,36 @@ def apply_silent_company_offer(
     follow-up reached escalation only through the parser's generic
     `is_escalation_confirmation`, with no company at all. This mints the SAME
     `team_pick` shape `_miss_question`'s escalate-catalog arm mints for a miss - one
-    option per silent company, `payload: {"company": name}` - so a later "yes"
-    escalates WITH the company already named, through the EXISTING
+    option per silent company, `payload: {"company": name, "company_id": id}` - so a
+    later "yes" escalates WITH the company already named, through the EXISTING
     `parser.escalation.company_pick` seam (`lanes/escalation.py:232-252`); no new
-    pending kind.
+    pending kind. The **id** is what routes (`_next_assignee_body` posts `company_id`
+    and nothing else), and `lookup_companies` entries carry it already
+    (`app/services/company_scope.py:437-439`, `{"id", "name"}`).
+
+    ONE silent company, never two (hand pass 11, reviewer blocker 2): production caps
+    the identical derivation at one for a measured reason - `sub_answer.miss_roster_plan
+    :318-323`, "two or more would persist a multi-entry `routing_roster_plan`, which the
+    escalation lane turns into `routing_source: multi_company_unpicked` ... and hands to
+    a real round-robin assign on a pool the customer never picked". The MISS arm has a
+    clarify to fall back on because its own sentence already names the companies it
+    searched; a HIT's sentence names none, so the honest offer is the single one.
     """
     try:
         if not answer.text or not isinstance(envelope, Mapping):
+            return answer
+        if answer.question is not None:
+            # SF-4 / security should-fix 1: the lane already has an open question of its
+            # own (the outstanding / sales-report detail offers, `turn/compose.py::
+            # _lane_question`, contracts 38 and 39, or the zero-stock ladder's own rung
+            # offer one bridge up). ONE escalate question per turn: appending a second
+            # discarded the first, and the customer's follow-up then answered a question
+            # they were never asked.
+            return answer
+        if envelope.get("denied") or run_fetch.envelope_missed(dict(envelope)):
+            # Security N-2: this function's own guard, not just the call site's. It mints
+            # a PENDING now, so a second caller would hang an answerable escalate offer
+            # off a refusal or a miss - neither of which has rows to be silent about.
             return answer
         raw_fragment = envelope.get("raw_fragment")
         fetched = raw_fragment.get("fetch") if isinstance(raw_fragment, Mapping) else None
@@ -333,27 +378,37 @@ def apply_silent_company_offer(
         if not shown:
             return answer
         silent = [
-            str(c.get("name") or "").strip()
+            {"name": str(c.get("name") or "").strip(), "id": c.get("id")}
             for c in lookup_cos
             if isinstance(c, Mapping) and str(c.get("name") or "").strip() and str(c.get("name") or "").strip() not in shown
         ]
-        if not silent:
+        if len(silent) != 1:
+            # Production's own cap, and its own degradation: exactly one, or nothing at
+            # all (`sub_answer.miss_roster_plan:318-323`).
             return answer
+        company = silent[0]
         routing = (parser or {}).get("routing") if isinstance(parser, Mapping) else None
         raw_team = (routing or {}).get("suggested_team") or "customer_service"
         team = answer_mod._pretty_team(raw_team)
-        names = silent[0] if len(silent) == 1 else f"{', '.join(silent[:-1])} and {silent[-1]}"
-        offer = f"Would you like me to escalate to *{names}* {team} team?"
+        offer = f"Would you like me to escalate to *{company['name']}* {team} team?"
         question = pending.ask(
             "team_pick",
             [
                 {
-                    "position": i + 1,
-                    "label": name,
+                    "position": 1,
+                    "label": company["name"],
                     "entity_type": "team",
-                    "payload": {"company": name},
+                    "payload": {
+                        "company": company["name"],
+                        "company_id": company["id"],
+                        # The SAME join production's `sub_answer.miss_roster_plan:388-410`
+                        # makes for the identical roster row: the brand off the gate's own
+                        # per-company axis, never a second derivation. It only narrows the
+                        # assignee pool (`next-assignee` keeps brand-tagged plus untagged
+                        # members), so an absent gate degrades to the wider draw.
+                        "brand_code": _brand_by_company(gate).get(str(company["id"])),
+                    },
                 }
-                for i, name in enumerate(silent)
             ],
             team=raw_team,
             asked_at_turn=asked_at_turn,
@@ -835,6 +890,14 @@ def _miss_question(
         # before escalating - `escalation.py::_clarify_over`'s own company pairs.
         # `_searched_companies` (security SF-2) reads the resolver/gate structures
         # directly, never the already-composed sentence.
+        #
+        # The offer itself stays production's own sentence (owner ruling, hand pass
+        # 11: "we clarify the company with the user when it is not clear") - the
+        # COMPANIES ride on the options, so the answering turn can resolve a named
+        # one against the offered pool, and a bare "yes" over more than one reaches
+        # the escalation lane's own company clarify instead of a blind assign
+        # (`escalation.py::_clarify_gate`). `company_id` is what routes; the label is
+        # what the customer reads and what `escalation.company_pick` matches on.
         companies = _searched_companies(resolved, gate)
         if len(companies) >= _MIN_ROSTER_OPTIONS:
             return pending.ask(
@@ -842,11 +905,15 @@ def _miss_question(
                 [
                     {
                         "position": i + 1,
-                        "label": name,
+                        "label": row["company_name"],
                         "entity_type": "team",
-                        "payload": {"company": name},
+                        "payload": {
+                            "company": row["company_name"],
+                            "company_id": row.get("company_id"),
+                            "brand_code": row.get("brand_code"),
+                        },
                     }
-                    for i, name in enumerate(companies)
+                    for i, row in enumerate(companies)
                 ],
                 team=team,
                 asked_at_turn=asked_at_turn,
@@ -862,7 +929,7 @@ def _miss_question(
     return None
 
 
-def _searched_companies(resolved: Any, gate: Any) -> list[str]:
+def _searched_companies(resolved: Any, gate: Any) -> list[dict[str, Any]]:
     """Which companies this turn's fetch actually searched, off the RESOLVER/GATE
     structures - never off the already-composed reply text (security SF-2, hand pass
     11 security review: that text quotes the customer's own raw token back verbatim,
@@ -870,26 +937,48 @@ def _searched_companies(resolved: Any, gate: Any) -> list[str]:
     could mint attacker-labelled escalate options if this reader ever regexed the
     sentence for "checked in X and Y" instead).
 
-    Mirrors the join `lanes/business/answer.py:2941-2954` performs for that SAME
-    sentence: a per-match `company_name` keyed by uuid, then the gate's own
-    `compatible_entities` walked in order, keeping the first company seen per uuid -
-    the set actually sent to the tool, never the caller's wider access list.
-    `turn_runtime._company_names_by_uuid` already builds that per-uuid map (resolutions,
-    intersection and by_entity_type alike - the OR-mode fallback this lane's own
-    multi-company miss takes reports its matches under `resolutions`, but an AND-mode
-    hit reports them under `intersection` instead, and this reader must not care which).
-    """
-    from app.services.chatbot.turn_runtime import _company_names_by_uuid
+    One row per company, in the `routing_roster_plan` shape routing already speaks
+    (`company_id` / `company_name` / `brand_code`): the ID is what
+    `lanes/escalation.py::_next_assignee_body` posts and the NAME routes nothing at all
+    (hand pass 11, blocker 1). `brand_code` is joined off `gate.routing_companies` - the
+    SAME join production's own `sub_answer.miss_roster_plan:388-410` makes for the
+    identical row, rather than a second derivation of a fact the gate already computed.
 
-    co_by_uuid = _company_names_by_uuid(resolved)
+    Mirrors the join `lanes/business/answer.py:2941-2954` performs for the "checked in X
+    and Y" SENTENCE, including its `_NO_TOOL_ID` skip (SF-3, hand pass 11 review): a
+    `brand` / `category` match reaches `compatible_entities` but `entity-ids-transformer`
+    maps neither to a tool param, so counting its company here offered to escalate to a
+    company the sentence never claimed to have searched - "a false statement ... not
+    recoverable", in `_NO_TOOL_ID`'s own words. `turn_runtime.companies_by_uuid` builds
+    the per-uuid map (resolutions, intersection and by_entity_type alike - the OR-mode
+    fallback this lane's own multi-company miss takes reports its matches under
+    `resolutions`, but an AND-mode hit reports them under `intersection` instead, and
+    this reader must not care which).
+    """
+    from app.services.chatbot.lanes.business.answer import _NO_TOOL_ID
+    from app.services.chatbot.turn_runtime import companies_by_uuid
+
+    co_by_uuid = companies_by_uuid(resolved)
+    brand_by_company = _brand_by_company(gate)
     compat = gate.get("compatible_entities") if isinstance(gate, Mapping) else None
-    searched: list[str] = []
+    searched: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for c in compat if isinstance(compat, list) else []:
         if not isinstance(c, Mapping):
             continue
+        if str(c.get("entity_type") or "") in _NO_TOOL_ID:
+            continue
         company = co_by_uuid.get(c.get("uuid"))
-        if company and company not in searched:
-            searched.append(company)
+        if not company or company["company_name"] in seen:
+            continue
+        seen.add(company["company_name"])
+        searched.append(
+            {
+                "company_id": company.get("company_id"),
+                "company_name": company["company_name"],
+                "brand_code": brand_by_company.get(str(company.get("company_id"))),
+            }
+        )
     return searched
 
 

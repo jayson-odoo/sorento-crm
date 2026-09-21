@@ -1453,27 +1453,48 @@ def _run_stages(  # noqa: PLR0915
             # null until one of its options is chosen.
             accepted_team=plan.trace.team,
             accepted_assignee=plan.trace.assignee,
+            # The company a numbered pick over the company clarify named - written onto
+            # `escalation.company_pick`, the one key `escalation_context` validates a
+            # named company through (hand pass 11, blocker 2).
+            accepted_company=plan.trace.company,
             declined_offer_copy=plan.trace.lane == "offer_declined",
             prior_session=session_block,
         )
-        # Security N-3/S2 (hand pass 11 security review): an accepted team_pick whose
-        # options carry a COMPANY needs that company to reach `escalation_context`'s
-        # `same_team` arm - see `turn_runtime.escalation_roster_plan`'s own docstring.
+        # Security N-3/S2 (hand pass 11 security review): an accepted offer whose options
+        # carry a COMPANY needs that company - and above all its `company_id` - to reach
+        # `escalation_context`, whose two company arms both read this one legacy field.
+        # See `turn_runtime.escalation_roster_plan`'s own docstring.
         # A copy of `session_block` for `ctx` only; `lane_parse_output` above already
         # read the UNPATCHED one, so this cannot change what this turn's own team
         # resolved to.
         ctx_session = session_block
-        roster_plan = turn_runtime.escalation_roster_plan(state_in.pending, accepted_lane=plan.trace.lane)
+        roster_plan = turn_runtime.escalation_roster_plan(
+            state_in.pending,
+            accepted_lane=plan.trace.lane,
+            accepted_rules=plan.trace.rules_fired,
+        )
         if roster_plan:
             session_vars = session_block.get("session_vars") if isinstance(session_block, dict) else None
+            prior_variables = (session_vars or {}).get("variables") or {}
             ctx_session = {
                 **session_block,
                 "session_vars": {
                     **(session_vars if isinstance(session_vars, dict) else {}),
                     "variables": {
-                        **((session_vars or {}).get("variables") or {}),
+                        **prior_variables,
                         "routing_roster_plan": roster_plan,
-                        "routing": {"suggested_team": plan.trace.team},
+                        # MERGE, never replace (reviewer N-c): `variables.routing` is a
+                        # whole routing block on a session n8n wrote, and this needs
+                        # exactly one key of it - the team, so `escalation_context`'s own
+                        # `same_team` equality check holds for the offer we just accepted.
+                        "routing": {
+                            **(
+                                prior_variables.get("routing")
+                                if isinstance(prior_variables.get("routing"), dict)
+                                else {}
+                            ),
+                            "suggested_team": plan.trace.team,
+                        },
                     },
                 },
             }
@@ -2165,6 +2186,14 @@ def _run_stages(  # noqa: PLR0915
                             answer,
                             envelope=envelopes[0],
                             parser=answer_parse_output,
+                            # For the silent company's own `brand_code`, off the gate's
+                            # per-company routing axis - the SAME read `apply_scope_block`
+                            # above already makes of this payload.
+                            gate=(
+                                resolver_payload.get("gate")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
                         )
@@ -3836,10 +3865,28 @@ def _question_offered(
                     "uuid": value,
                     "uuids": [value] if value else [],
                     "entity_type": kind,
-                    "payload": {"team": jsc.get(row, "team")} if kind == "team" else {},
+                    "payload": _option_payload(row, kind),
                 }
             )
         return built
+
+    def _option_payload(row: Any, kind: str) -> dict[str, Any]:
+        """What the ANSWER to this option carries into the next turn.
+
+        A team option names its team; a COMPANY option names its company and, above all,
+        its `company_id` - the only field routing reads (`lanes/escalation.py::
+        _next_assignee_body`), and what makes the tapped number and the typed company
+        name reach `escalation_context` through the same seam (hand pass 11, blocker 2).
+        """
+        if kind == "team":
+            return {"team": jsc.get(row, "team")}
+        if kind == "company":
+            return {
+                "company": jsc.get(row, "company_name") or jsc.get(row, "label"),
+                "company_id": jsc.get(row, "company_id") or None,
+                "brand_code": jsc.get(row, "brand_code") or None,
+            }
+        return {}
 
     clarify = values.get("clarify")
     if jsc.truthy(clarify):
@@ -3848,8 +3895,20 @@ def _question_offered(
                 "team_pick", _options(jsc.get(clarify, "clarify_team_options"), "team"), expects="pick"
             )
         if jsc.truthy(jsc.get(clarify, "clarify_text")):
+            # The clarify's OWN pool first (`escalation.clarify_company_reply`'s
+            # `clarify_company_options`): the companies it just printed, carrying the ids
+            # that route. `result_set` stays the fallback for a clarify composed by a
+            # producer that filled one - the member roster the n8n arm clarifies over.
+            routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+            rows = jsc.get(clarify, "clarify_company_options") or composed.get("result_set")
             return turn_pending.ask(
-                "company_pick", _options(composed.get("result_set"), "company"), expects="pick"
+                "company_pick",
+                _options(rows, "company"),
+                # The team the offer was made for: an acceptance names none of its own
+                # (contract 108), and a clarify that dropped it sent the answering turn
+                # to whatever team the fresh parse happened to suggest.
+                team=jsc.get(clarify, "team") or jsc.get(routing, "suggested_team"),
+                expects="pick",
             )
 
     member = outcome.get("build-cs-member-offer")
