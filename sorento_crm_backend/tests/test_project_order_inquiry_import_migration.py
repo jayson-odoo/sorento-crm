@@ -20,6 +20,14 @@ in a migrated (or bootstrapped) database and not in a `create_all` scratch schem
 
 Every foreign key target is seeded here behind the `ZZT-OISM` marker, and every document
 number is minted per test. Nothing is read off an existing row: CI's database is empty.
+
+`test_prefers_line_with_same_required_date`, `test_closed_delivered_order_migrates` and
+`test_an_existing_record_gains_only_the_lines_the_sheet_names` retired under R4,
+PLAN-board-received-stock-own-arrival, 21 Sep 2026 (each pinned D8/the five-pass exact-date
+pick, both superseded by AC-S4-3's "a closed or cancelled line is never a candidate"; see
+the retirement notes left in their place, in file order). `test_retail_order_not_plannable`
+and `test_closed_line_row_not_open_demand` were rewritten in place rather than retired -
+see their own docstrings.
 """
 from __future__ import annotations
 
@@ -45,7 +53,6 @@ from app.models.procurement import (
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
-    INQUIRY_ACTIONED,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -54,7 +61,6 @@ from app.models.project_so import (
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
-    ProjectSalesOrder,
     ProjectSalesOrderLine,
 )
 from app.models.scm import OrderLinkClaim
@@ -650,8 +656,19 @@ def test_unknown_so_creates_nothing():
 
 
 def test_retail_order_not_plannable():
-    """AC-S1-7. Retail demand is refused with its code and raises nothing; a CLOSED
-    project-class order is NOT refused (D8) - it is adopted and its rows are raised."""
+    """AC-S1-7. Retail demand is refused with its code and raises nothing.
+
+    The second half of this test used to assert D8 ("a CLOSED project-class order is NOT
+    refused - it is adopted and its rows are raised"): retired under R4, 21 Sep 2026,
+    `PLAN-board-received-stock-own-arrival.md` S4 / AC-S4-3, which makes a closed or
+    cancelled core line never a candidate, not even as a last resort. A closed order whose
+    only line is closed and fully delivered therefore has nowhere for the sheet's row to
+    land at all: the order itself is NOT refused (`orders_not_plannable` stays empty, it is
+    simply never adopted, `orders_adopted: 0`) and the row is reported
+    `no_line_for_item`, same as any other row that fits no open line - not silently
+    dropped, but not raised either. Reported to the owner (tester handback, 21 Sep 2026) as
+    the collision R4's "never dropped" and "closed lines take none" leave unresolved for a
+    fully-delivered order; no rule invented here."""
     with world() as w:
         retail = w.order(demand_class="retail")
         w.line(retail, qty_ordered="50")
@@ -678,45 +695,23 @@ def test_retail_order_not_plannable():
 
         result = w.apply(data)
 
+        # AC-S4-3: the order is not refused, but its only line is closed and takes no row.
         assert result["orders_not_plannable"] == []
-        assert result["rows_raised"] == 1, result
+        assert result["rows_raised"] == 0, result
+        assert result["rows_line_not_found"] == 1, result
+        assert result["line_not_found"][0]["reason"] == "no_line_for_item", result
+        assert w.rows() == []
 
 
-def test_prefers_line_with_same_required_date():
-    """AC-S1-8. The line whose required date equals the sheet's wins; an undated row takes
-    the open line before the closed one."""
-    with world() as w:
-        order = w.order()
-        october = w.line(order, qty_ordered="50", required_date=D_OCT)
-        november = w.line(order, qty_ordered="50", required_date=D_NOV)
-        data = sheet([
-            (order.so_number, w.product.product_code, 10, D_NOV,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        assert str(w.one_row().so_line_id) == str(w.mirror_of(november).id)
-        assert w.mirror_of(october) is not None, "a still-owed line is mirrored"
-
-    with world() as w:
-        order = w.order()
-        closed = w.line(order, qty_ordered="50", required_date=None, line_status="closed")
-        open_line = w.line(order, qty_ordered="50", required_date=None)
-        data = sheet([
-            (order.so_number, w.product.product_code, 10, None,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        assert str(w.one_row().so_line_id) == str(w.mirror_of(open_line).id)
-        # AC-S1-26 as amended (review finding 4, 14 Sep): a CLOSED line the sheet did not
-        # name is not mirrored - an unasked-for mirror line moves the planning record's own
-        # reconciliation figures.
-        assert w.mirror_of(closed) is None
+# test_prefers_line_with_same_required_date (AC-S1-8) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned the superseded exact-date
+# pass of the five-pass line pick ("the line whose required date equals the sheet's wins"),
+# which the date-order pick (`_pick_lines_by_date_order`) replaces with positional pairing -
+# a row lands on the earliest-still-open candidate line regardless of which line's own
+# required date the row's delivery date actually equals. Its second half (an undated row
+# prefers the open line over a closed one) is now covered more directly by AC-S4-3
+# (`tests/scm/test_board_received_stock_s4_import_pairing.py::test_ac_s4_3_closed_or_cancelled_line_never_paired`),
+# which proves the closed line is never even a candidate, not merely a losing one.
 
 
 def test_verb_from_date_cell():
@@ -1243,57 +1238,16 @@ def test_missing_header_refused():
 # --------------------------------------------------------------------------- #
 
 
-def test_closed_delivered_order_migrates():
-    """AC-S1-26. A closed, fully delivered project order is adopted FOR THE MIGRATION: one
-    mirror line per core line, closed ones included, and the core book untouched."""
-    with world() as w:
-        order = w.order(status="closed")
-        delivered = w.line(
-            order, qty_ordered="40", qty_delivered="40", line_status="closed"
-        )
-        other = w.line(
-            order,
-            product=w.product_row(),
-            qty_ordered="10",
-            qty_delivered="10",
-            line_status="closed",
-        )
-        data = sheet([
-            (order.so_number, w.product.product_code, 40, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = w.apply(data)
-
-        assert result["orders_not_plannable"] == []
-        assert result["rows_raised"] == 1, result
-        record = (
-            w.db.query(ProjectSalesOrder)
-            .filter(ProjectSalesOrder.so_id == str(order.id))
-            .one()
-        )
-        mirrors = (
-            w.db.query(ProjectSalesOrderLine)
-            .filter(ProjectSalesOrderLine.project_sales_order_id == str(record.id))
-            .all()
-        )
-        assert {str(m.core_sales_order_line_id) for m in mirrors} == {
-            str(delivered.id),
-        }, "the line the sheet NAMED is mirrored, and only it (AC-S1-26 as amended)"
-        assert str(other.id) not in {
-            str(m.core_sales_order_line_id) for m in mirrors
-        }, "a delivered line nobody named stays unmirrored"
-        mirrored = next(
-            m for m in mirrors if str(m.core_sales_order_line_id) == str(delivered.id)
-        )
-        assert Decimal(str(mirrored.qty)) == Decimal("40"), "the mirror states the ORDERED qty"
-        assert str(w.one_row().so_line_id) == str(mirrored.id)
-
-        w.db.refresh(order)
-        w.db.refresh(delivered)
-        assert order.status == "closed"
-        assert delivered.line_status == "closed"
-        assert Decimal(str(delivered.qty_ordered)) == Decimal("40")
+# test_closed_delivered_order_migrates (AC-S1-26) retired under R4,
+# PLAN-board-received-stock-own-arrival, 21 Sep 2026: it pinned D8 ("closed and fully
+# delivered lines migrate too"), explicitly superseded by AC-S4-3 - a closed line is never
+# a candidate for the sheet's row any more, so the row this test named against a closed
+# line is now refused `no_line_for_item` and nothing is raised or mirrored for it (the
+# order is never even adopted: `orders_adopted: 0`). The mirroring-includes-closed-lines
+# behaviour this test also exercised (AC-S1-26's mirror-every-core-line half) remains
+# covered at the adoption-service level by
+# `test_adopt_for_migration_mirrors_every_line_and_keeps_one_refusal` immediately below,
+# which does not depend on the sheet importer's line pick.
 
 
 def test_adopt_for_migration_mirrors_every_line_and_keeps_one_refusal():
@@ -1338,75 +1292,14 @@ def test_adopt_for_migration_mirrors_every_line_and_keeps_one_refusal():
         assert refused.value.detail["code"] == "sales_order_not_project_class"
 
 
-def test_an_existing_record_gains_only_the_lines_the_sheet_names():
-    """AC-S1-26, second half (review finding 4, 14 Sep), restated for AC-S2-15.
-
-    THE PURPOSE IS UNCHANGED: the upload adds nothing beyond what it names. What changed is
-    what the record already holds when it arrives.
-
-    The original reading was that `adopt` mirrored only `is_open_demand()` lines, so a
-    delivered one had no mirror and the sheet's own row created it. Since the 14 September
-    2026 ruling `adopt` mirrors every UNDECIDED line, delivered or not - the board has to be
-    able to confirm a line nobody sourced, and `confirm` names a line by its mirror - so all
-    three lines below are already mirrored before the sheet is read.
-
-    That also retires the premise the old docstring rested on. `_authored_line_totals` used
-    to sum mirror `qty` with no status filter, which was safe only while every mirror line
-    was a still-owed one by construction; it now filters explicitly, so a delivered mirror
-    line does not move the record's reconciliation figures and there is nothing to protect
-    the record FROM on that score.
-
-    What the upload must still not do is invent a mirror. It raises its one row against the
-    mirror that is already there - the SAME row, by id - and leaves the record's line count
-    exactly as adoption left it. A second mirror for a line that already has one would give
-    the board two rows for one piece of demand.
-    """
-    with world() as w:
-        order = w.order()
-        open_line = w.line(order, qty_ordered="50")
-        named = w.product_row()
-        delivered = w.line(
-            order, product=named, qty_ordered="10", qty_delivered="10",
-            line_status="closed",
-        )
-        unnamed = w.line(
-            order, product=w.product_row(), qty_ordered="7", qty_delivered="7",
-            line_status="closed",
-        )
-        record = ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
-        record_id = record["project_sales_order_id"]
-
-        # AC-S2-15: delivery is not a decision, so every one of the three is mirrored.
-        assert w.mirror_of(open_line) is not None, "the board mirrored the owed line"
-        assert w.mirror_of(delivered) is not None, "and the delivered undecided one"
-        assert w.mirror_of(unnamed) is not None, "and the one the sheet will not name"
-        before = str(w.mirror_of(delivered).id)
-        lines_before = _mirror_count(w, record_id)
-        assert lines_before == 3
-
-        data = sheet([
-            (order.so_number, named.product_code, 10, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-        result = w.apply(data)
-
-        assert result["rows_raised"] == 1, result
-        # ON THE EXISTING MIRROR, not on one the upload made for itself.
-        assert str(w.one_row().so_line_id) == before
-        assert str(w.mirror_of(delivered).id) == before
-        assert _mirror_count(w, record_id) == 3, (
-            "the upload added a mirror line nobody asked for"
-        )
-
-
-def _mirror_count(w, project_sales_order_id: str) -> int:
-    return (
-        w.db.query(ProjectSalesOrderLine)
-        .filter(
-            ProjectSalesOrderLine.project_sales_order_id == str(project_sales_order_id)
-        )
-        .count()
-    )
+# test_an_existing_record_gains_only_the_lines_the_sheet_names (AC-S1-26 second half /
+# AC-S2-15) retired under R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: its sheet
+# row named a CLOSED line's item, which AC-S4-3 now refuses `no_line_for_item` before any
+# raise-against-the-existing-mirror behaviour is even reached (the "open_line" in this
+# fixture carries a DIFFERENT product, so it is not a candidate for that row either). The
+# mirroring-of-every-undecided-line concern (AC-S2-15) this test opened with remains covered
+# at the adoption-service level by `test_project_so_adoption.py`'s own AC-S2-15 test, which
+# does not depend on the sheet importer's line pick.
 
 
 def test_closed_received_po_line_links():
@@ -1452,8 +1345,18 @@ def test_row_note_carries_migration_stamp():
 
 
 def test_closed_line_row_not_open_demand():
-    """AC-S1-29. A row raised against a CLOSED line is not demand: `scm.committed_v` counts
-    the LINE, and a closed line is not owed.
+    """AC-S1-29. A row against a CLOSED line is not demand: `scm.committed_v` counts the
+    LINE, and a closed line is not owed.
+
+    Rewritten under R4 (21 Sep 2026, `PLAN-board-received-stock-own-arrival.md` S4): the
+    sheet importer no longer raises ANY row against a closed line (AC-S4-3, a closed or
+    cancelled core line is never a candidate, superseding D8's "closed lines migrate too"
+    this test used to exercise the row through). AC-S1-29's own point - the VIEW ignores a
+    closed line's row regardless of how it got there - is unrelated to the importer's line
+    pick, so the row is written directly the way the board's own writer does
+    (`World.board_row`, already used elsewhere in this file for "already raised" fixtures),
+    against a mirror `adopt_for_migration` creates for the closed order exactly as the
+    importer itself would have (`ProjectSOAdoptionService.adopt_for_migration`, AC-S1-26).
 
     On the real database, because the view is installed by a migration rather than by
     `create_all`. A retail order at the same product and location is seeded beside it so the
@@ -1461,7 +1364,7 @@ def test_closed_line_row_not_open_demand():
     """
     with world(pg_session) as w:
         order = w.order(status="closed")
-        w.line(order, qty_ordered="40", qty_delivered="40", line_status="closed")
+        closed_line = w.line(order, qty_ordered="40", qty_delivered="40", line_status="closed")
         neighbour = w.order(demand_class="retail")
         w.line(neighbour, qty_ordered="7")
         w.db.flush()
@@ -1479,18 +1382,13 @@ def test_closed_line_row_not_open_demand():
         before = snapshot()
         assert before, "the retail neighbour must be counted before the sheet is applied"
 
-        data = sheet([
-            (order.so_number, w.product.product_code, 40, D_OCT,
-             w.warehouse.warehouse_code, ""),
-        ])
-        result = w.apply(data)
+        ProjectSOAdoptionService(w.db).adopt_for_migration(str(order.id), w.actor)
+        mirror = w.mirror_of(closed_line)
+        assert mirror is not None, "adopt_for_migration mirrors the closed line (AC-S1-26)"
+        w.board_row(mirror, qty="40")
         w.db.flush()
 
-        assert result["rows_raised"] == 1, result
         assert snapshot() == before
-        # The state the view ignores, and the honest word for it: purchasing dealt with
-        # this instruction and the goods went out.
-        #
         # Read by THIS test's own item code rather than through `one_row()`. This is the one
         # case on the real database (`pg_session`, for the view), where the tables are not
         # empty - a browser run against the same lane database leaves rows of its own, and an
@@ -1502,7 +1400,6 @@ def test_closed_line_row_not_open_demand():
             .all()
         )
         assert len(mine) == 1, [row.item_code for row in mine]
-        assert mine[0].state == INQUIRY_ACTIONED
 
 
 # --------------------------------------------------------------------------- #
