@@ -810,3 +810,152 @@ def test_ac_s3_15_control_buy_beside_a_fully_reserved_credit_is_accepted():
         )
         assert result["exceptions"] == [], result
         assert result["lines_decided"] == 1, result
+
+
+# ============================================================================
+# Round-5 reds (owner rulings, 22 Sep): B-2 (merge-blocking, browser-pass finding) and
+# S-1, two more seams inside AC-S3-15's own confirm-time refusal
+# (`_check_line`, `project_supply_service.py`).
+# ============================================================================
+
+
+def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
+    """S-1: AC-S3-15's own refusal message must name the CREDITED quantity, the same
+    wording `_refuse_buy_over_own_arrival` (`planning_change_service.py`, the amend-path
+    sibling of this same rule) already states for its own seam - "N landed for this line
+    on PO ...", N being what landed for the line, not whatever a partial Reserve happened
+    to leave uncovered of it.
+
+    Line needs 20, its own PO line received 40, 40 on hand (the credit is a clean 20 -
+    the line's own open qty caps the theoretical credit before on hand ever does). A
+    confirm posts Reserve 8 at the credited bin plus Buy 12 (8 + 12 = 20, the whole
+    line): refused as `planning_change_buy_over_own_arrival`, and the message must read
+    "20 landed for this line on PO ...", not "12 landed for this line on PO ...".
+
+    RED today: `_check_line`'s message names `uncovered` (`credit_qty -
+    reserved_at_credit_bin` = 20 - 8 = 12) rather than `credit_qty` (20) itself, so the
+    message reads "12 landed for this line on PO ..." - the part the posted Reserve left
+    short, not what actually landed.
+    """
+    within_window = date.today() + timedelta(days=10)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=40)
+
+        core_so = _core_so(db, company_id)
+        core_line = _core_line(
+            db, core_so, product, own, qty_ordered="20", required_date=within_window,
+        )
+        core_line.source_ref = f"ZZT-S315-NAME-{_uid()[:8]}"
+        db.flush()
+        po = supplier_and_po(db, po_number=f"ZZT-PO-S315-NAME-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
+        db.commit()
+
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=str(line.id),
+                            reserve=[{"warehouse_id": str(own.id), "qty": "8"}],
+                            buy_qty="12",
+                            amend_reason=(
+                                "ZZT AC-S3-15 - partial reserve at the credited bin, "
+                                "remainder bought"
+                            ),
+                        ),
+                    ]
+                ),
+                actor_user_id=actor,
+            )
+        assert refused.value.status_code == 409, refused.value.detail
+        assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
+            refused.value.detail
+        )
+        message = refused.value.detail.get("message") or ""
+        assert "20 landed for this line on PO" in message and po.po_number in message, (
+            f"the message must name the credited quantity (20), not the uncovered part "
+            f"(12) the posted Reserve happened to leave: message={message!r}"
+        )
+        assert "12 landed" not in message, message
+
+
+def test_ac_s3_16_confirm_never_refuses_the_boards_own_buy_for_a_line_outside_the_reserve_window():
+    """AC-S3-16 (B-2, merge-blocking, browser-pass finding): the confirm-time refusal
+    must follow the SAME reserve-window verdict the composer already reads
+    (`outside_reserve_window`, `walk()`'s own `if not outside_window:` gate around
+    `_own_arrival_credit_components`) - a line due beyond `as_of + lead time +
+    RESERVE_BUFFER_DAYS` is never credited at all, composed or confirmed, so its Buy is
+    never "over" a credit that was never on offer for it.
+
+    Line needs 20, required 400 days out (well beyond the default 90-day lead time plus
+    14-day buffer window, ~104 days), its own PO line received 40, 40 on hand at its bin
+    - the credit's physical shape is exactly AC-S3-15's own (a clean 20), but the LINE
+    itself is outside the reserve window. `proposal_for` must compose a pure Buy 20,
+    reason naming the lead-time window, and a confirm posting `buy_qty=20` (no Reserve
+    at all) must be ACCEPTED, `lines_decided == 1`.
+
+    RED today: `_check_line`'s own credit re-derivation (`own_arrival_credit_for` ->
+    `_own_arrival_credit_components`) never reads `outside_reserve_window` at all - it is
+    a plain function of tier 1/tier 2 receipts and on hand, with no date gate - so the
+    confirm still sees `credit_qty = 20` for a line the composer itself refuses to
+    touch, and wrongly refuses the board's own Buy proposal as
+    `planning_change_buy_over_own_arrival`.
+    """
+    outside_window = date.today() + timedelta(days=400)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=40)
+
+        core_so = _core_so(db, company_id)
+        core_line = _core_line(
+            db, core_so, product, own, qty_ordered="20", required_date=outside_window,
+        )
+        core_line.source_ref = f"ZZT-S316-{_uid()[:8]}"
+        db.flush()
+        po = supplier_and_po(db, po_number=f"ZZT-PO-S316-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
+        db.commit()
+
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        components = proposal["lines"][0]["components"]
+        reserve = sum(
+            (Decimal(c["qty"]) for c in components if c["kind"] == "reserve"), Decimal("0"),
+        )
+        buy_components = [c for c in components if c["kind"] == "buy"]
+        buy = sum((Decimal(c["qty"]) for c in buy_components), Decimal("0"))
+        assert reserve == Decimal("0") and buy == Decimal("20"), (
+            "a line due 400 days out is outside the reserve window: the whole 20 must "
+            f"compose as Buy, own-arrival credit never offered for it: components={components}"
+        )
+        assert buy_components and "lead time window" in (
+            buy_components[0].get("reason") or ""
+        ), buy_components
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(project_line_id=str(line.id), buy_qty="20"),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        assert result["exceptions"] == [], result
+        assert result["lines_decided"] == 1, result

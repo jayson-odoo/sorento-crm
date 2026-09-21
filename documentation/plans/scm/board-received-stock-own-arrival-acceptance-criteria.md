@@ -91,7 +91,18 @@ FK seeded, never a borrowed row.
   refused 409 `planning_change_buy_over_own_arrival` (the same code `_refuse_buy_over_own_arrival`
   raises), the message naming 20 and the PO. Control: `buy_qty=5` beside `Reserve 15` when the
   credit is only 15 (on hand 15) is accepted - the refusal only bites the part that would drop
-  Reserve below what is credited, never a Buy beside a credit already fully covered.
+  Reserve below what is credited, never a Buy beside a credit already fully covered. (round-5,
+  S-1) The message names the CREDITED quantity, the same figure `_refuse_buy_over_own_arrival`
+  states for its own seam - not whatever a partial Reserve happened to leave uncovered of it:
+  credit 20, Reserve 8 posted at the credited bin plus Buy 12, the refusal reads "20 landed for
+  this line on PO ...", never "12 landed".
+- AC-S3-16 (round-5, B-2, merge-blocking, browser-pass finding, 22 Sep) The confirm-time refusal
+  follows the SAME reserve-window verdict the composer already reads (`outside_reserve_window`) -
+  a line due beyond the reserve window is never credited at all, composed or confirmed, so its Buy
+  is never "over" a credit that was never on offer. Line needs 20 due 400 days out (outside the
+  window), its own PO line received 40, 40 on hand: `proposal_for` composes a pure Buy 20, reason
+  naming the lead-time window; a confirm naming `buy_qty=20` and no Reserve is ACCEPTED,
+  `lines_decided` 1 - never refused `planning_change_buy_over_own_arrival`.
 
 ## S4 Importer pairing by date order, never drop
 - AC-S4-1 Sales order with open lines dated d1 < d2 < d3 < d4 and a 2026 book with two rows (dates

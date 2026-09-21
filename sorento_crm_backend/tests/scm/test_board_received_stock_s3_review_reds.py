@@ -695,11 +695,99 @@ def test_path_picker_charges_only_what_each_row_used(api):
     db.add(idem_row)
     db.commit()
 
-    first_credit = svc._own_arrival_credit_for_row(idem_row)
-    second_credit = svc._own_arrival_credit_for_row(idem_row)
+    # `need=idem_row.qty` explicit (round-5 brief: the coder will make `need` required).
+    first_credit = svc._own_arrival_credit_for_row(idem_row, need=idem_row.qty)
+    second_credit = svc._own_arrival_credit_for_row(idem_row, need=idem_row.qty)
     assert first_credit == second_credit == Decimal("50"), (
         "asking the same row's own credit twice on one instance must be idempotent - "
         f"first={first_credit} second={second_credit}"
+    )
+
+
+def test_path_picker_memo_does_not_freeze_a_smaller_earlier_need(api):
+    """S-2 (round-5 brief): the per-row memo `_own_arrival_credit_for_row` keys by
+    `row.id` must not freeze the FIRST `need` a row happened to be asked with - a later
+    call for the SAME row with a LARGER `need` must answer that larger question, not
+    replay the smaller one's cached number.
+
+    One line, qty_ordered 40, own PO line received 40 (tier-1 credit, theoretical 40),
+    40 on hand, one row fully linked 40. Asked TWICE on one `ProjectOrderInquiryService`
+    instance: first with `need=10` (a smaller, artificial ask - answers 10), then with
+    `need=40` (the row's real linked total) - the second answer must be 40 (at least the
+    linked total it is about to be compared against), not the first call's memoised 10.
+    The ledger must never be charged past the bin's physical 40 on hand in total across
+    both calls (read `svc._own_arrival_left` directly, the shape the earlier tests in
+    this file already read).
+
+    RED today: `_own_arrival_credit_for_row`'s memo (`row_key in
+    self._own_arrival_row_credit: return cached`) returns the FIRST call's answer (10)
+    unconditionally on every later call for the same row, regardless of what `need` that
+    later call is asked with - so `_redirect_row_if_received`'s own `>= linked_qty`
+    check, asked a second time with the row's real 40, would wrongly read 10 and redirect
+    a row whose line's own landed stock in truth covers it in full.
+    """
+    client, world = api
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        required_date=date(2027, 6, 1),
+    )
+    core_line.source_ref = f"ZZT-S2MEMO-{_uid()[:8]}"
+    db.flush()
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    po = supplier_and_po(db, po_number=f"ZZT-PO-S2MEMO-{_uid()[:8]}")
+    po_line_bought_for(
+        db, po, world.product, world.own_wh, from_so_line_ref=core_line.source_ref,
+        qty_received=40, qty_ordered=40,
+    )
+    _stock(db, world.product, world.own_wh, 40)
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        amendment_id=None, state="raised", raised_by=world.actor,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    db.add(row)
+    db.flush()
+    spo = spo_allocation_fully_received(
+        db, world.product, world.own_wh, qty=40, from_po_number=po.po_number,
+    )
+    link = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=row.id, spo_allocation_id=spo.id,
+        document=spo.spo_number, qty=Decimal("40"),
+    )
+    db.add(link)
+    db.commit()
+
+    svc = ProjectOrderInquiryService(db)
+    first = svc._own_arrival_credit_for_row(row, need=Decimal("10"))
+    second = svc._own_arrival_credit_for_row(row, need=Decimal("40"))
+
+    assert first == Decimal("10"), first
+    assert second >= Decimal("40"), (
+        "asked a second time with the row's real linked total (40), the answer must "
+        "cover it, not freeze the smaller (10) the row happened to be asked with "
+        f"first: second={second}"
+    )
+
+    product_id = str(world.product.id)
+    remaining = svc._own_arrival_left.get(product_id, {}).get(world.own_wh.warehouse_code)
+    left = Decimal("40") if remaining is None else remaining
+    charged = Decimal("40") - left
+    assert charged <= Decimal("40"), (
+        "the ledger must never be charged past the bin's physical 40 on hand in total "
+        f"across both calls: charged={charged} svc._own_arrival_left={svc._own_arrival_left}"
     )
 
 

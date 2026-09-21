@@ -299,6 +299,18 @@ retained (Path B) row exactly as it shows a received link today. No new screens.
 - Inventory reservation (`quantity_reserved`) for landed goods.
 - Purchasing linking a raised row to a received document (R6: no).
 
+### Follow-ups (reviewer, round-5, 22 Sep)
+- `_restated_existing` consumed-row tracking - the AC-S4-8 restate-recovery seam flagged by the
+  reviewer as worth its own guard rather than being folded into this lane.
+- Confirm-time credit judged against the line's live proposal sources instead of a re-derivation:
+  `_check_line`'s own-arrival recheck (`own_arrival_credit_for` ->
+  `_own_arrival_credit_components`) recomputes the credit from scratch rather than reading what
+  the board's own frozen `proposal_json["sources"]` already state for the line - S-3, a
+  payload-order divergence the reviewer measured but did not force red this round (AC-S3-16 fixes
+  the reserve-window gate the re-derivation was missing; the re-derivation itself staying a
+  second, independent read of the same facts rather than a read of the proposal is the open
+  question this follow-up names).
+
 ## Verification on SO372176 (after deploy, owner)
 Confirm on the board succeeds; L2 to L6 read Received (20, 40+10, 40+10, 40+10, 40+10), nothing to
 buy for them; L1's row is gone; L7 offers Buy/stock; a re-upload of both books yields 8 OI rows
