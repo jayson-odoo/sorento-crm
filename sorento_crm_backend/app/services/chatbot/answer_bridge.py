@@ -718,10 +718,18 @@ def _stamps_by_position(text: str) -> dict[int, str]:
 
 
 def member_option(row: dict[str, Any], position: int) -> dict[str, Any] | None:
-    """A `cs_last_result_set` row as a `member_offer` option - `respond_user_id` rides
-    on the payload (not `session_state._legacy_option`'s own value/team pair) because an
-    answering turn assigns the escalation BY that id, never by the roster's `uuid`
-    (a `users.id`, never sent to respond.io)."""
+    """A `cs_last_result_set` row as a `member_offer` option.
+
+    Hand pass 12 Phase 3 finding P2 (corrects this docstring's own earlier claim):
+    an answering turn assigns the escalation BY the option's own `uuid` (a real
+    `users.id`) - `turn/apply.py::_answer_offer` stamps `trace.assignee` from it,
+    and `/external/next-assignee`'s own `get_member_assignee` matches
+    `preferred_assignee_id` against `TeamMember.user_id`, never against a
+    respond.io id. `respond_user_id` still rides on the payload (not
+    `session_state._legacy_option`'s own value/team pair) because it is what a
+    dry-run preview and any OTHER reader of this option (never the assign call
+    itself, which re-reads the resolved member's own respond id from the DB)
+    needs without a second lookup."""
     if not isinstance(row, dict):
         return None
     return {

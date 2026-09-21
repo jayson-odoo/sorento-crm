@@ -283,11 +283,16 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # the escalation lane routes by - the picked option's when the roster offered
     # several, the offer's own when it was a single-team yes/no.
     trace.team = option_payload.get("team") or pending.team
-    # AC-1700: a POSITION over a `member_offer` names that SPECIFIC member
-    # (`option.payload.respond_user_id`) - a bare "yes" (no position picked, `picked`
-    # stays `None`) leaves `option_payload` empty and assigns nothing, which is what
-    # keeps the round-robin draw for that acceptance unchanged.
-    trace.assignee = option_payload.get("respond_user_id")
+    # AC-1700: a POSITION over a `member_offer` names that SPECIFIC member -
+    # `option["uuid"]` (a real `users.id`), never `option.payload.respond_user_id`
+    # (hand pass 12 Phase 3 finding P2: `escalation_context` and
+    # `/external/next-assignee`'s own `get_member_assignee` both match
+    # `preferred_assignee_id` against a `users.id` - `TeamMember.user_id`
+    # downstream, the roster row's own `uuid` upstream - never a respond.io id).
+    # A bare "yes" (no position picked, `picked` stays `None`) leaves `picked` empty
+    # and assigns nothing, which is what keeps the round-robin draw for that
+    # acceptance unchanged.
+    trace.assignee = (picked or {}).get("uuid")
     # Hand pass 11, blocker 2: the same rule for the COMPANY a numbered pick named
     # (`option.payload.company`, the company clarify's own options). A bare "yes" picks
     # no position, so this stays `None` and the pool travels instead - which is exactly
