@@ -178,6 +178,7 @@ def apply_crossdomain_hit(
     dry_run: bool = True,
     asked_at_turn: int | None = None,
     turn_id: str | None = None,
+    focus_products: Any = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 1: a single-domain inventory/incoming HIT whose rows all
     read 0 on hand climbs the SAME cross-domain ladder a miss does, instead of
@@ -218,6 +219,16 @@ def apply_crossdomain_hit(
     "yes" answered a HIT-side offer with nothing to match against. `_crossdomain_offer_
     pending` mints the SAME `team_pick` shape, team off the rung's own `_xdBlock["team"]`
     (`lanes/business/answer.py:1071/1427` - the exact value the phrase itself prints).
+
+    `focus_products` (hand pass 12 round 3, R5, owner ruling): a DID-YOU-MEAN PICK
+    runs no resolver of its own (`resolver_payload is None`, the SAME fact `_ladder_
+    resolved`'s own docstring names for the MISS arm), so `resolved` alone has nothing
+    for `crossdomain_zeroset`'s own `resolved.intersection` read to climb from - the
+    ladder fired for a DIRECT ask (a fresh resolve) but never after a pick settled the
+    SAME product. Fed in the SAME shape `_ladder_resolved` already builds, from the
+    FOCUS carry `apply_scope_block`'s own `focus_products` parameter already reads
+    one call up (`engine.py`'s `state_out.focus.products`) - the picked product's real
+    `canonical_code`/`uuid`, never a second resolve.
     """
     try:
         if not answer.text or not isinstance(envelope, Mapping):
@@ -226,7 +237,7 @@ def apply_crossdomain_hit(
         item = {"answers": [r for r in figures if isinstance(r, dict)]} if isinstance(figures, list) else {}
         result = _run_crossdomain_ladder(
             parser=parser,
-            resolved=resolved,
+            resolved=_hit_ladder_resolved(resolved, focus_products),
             entities_names=entities_names,
             crossdomain_ladder=crossdomain_ladder,
             ctx=ctx,
@@ -835,6 +846,35 @@ def _ladder_resolved(resolved: Any, raw_fragment: Any) -> Any:
     base = dict(resolved) if isinstance(resolved, Mapping) else {}
     base["tokens"] = [p["canonical_code"] for p in products]
     base["intersection"] = list(products)
+    return base
+
+
+def _hit_ladder_resolved(resolved: Any, focus_products: Any) -> Any:
+    """`_ladder_resolved`'s own gap, closed for the HIT arm (hand pass 12 round 3, R5,
+    owner ruling): a did-you-mean PICK that HITS still runs no resolver of its own, so
+    `apply_crossdomain_hit`'s own `resolved` is exactly as empty as the MISS arm's was
+    before `_ladder_resolved` existed - the ladder fired for a DIRECT ask (a fresh
+    resolve) but never after a pick settled the very same product. Built from the
+    FOCUS carry instead of `_ladder_resolved`'s own delegate gate (a HIT's caller,
+    `engine.py`, has the picked product on `state_out.focus.products` already - no
+    fetch fragment to read a gate off), in the identical `{tokens, intersection}` shape
+    `crossdomain_zeroset`'s own "no `resolutions`" arm reads."""
+    if isinstance(resolved, Mapping) and (resolved.get("resolutions") or resolved.get("intersection")):
+        return resolved
+    products = [
+        {
+            "entity_type": "product",
+            "canonical_code": row.get("canonical_code"),
+            "uuid": row.get("uuid"),
+        }
+        for row in (focus_products if isinstance(focus_products, list) else [])
+        if isinstance(row, Mapping) and row.get("canonical_code") and row.get("uuid")
+    ]
+    if not products:
+        return resolved
+    base = dict(resolved) if isinstance(resolved, Mapping) else {}
+    base["tokens"] = [p["canonical_code"] for p in products]
+    base["intersection"] = products
     return base
 
 

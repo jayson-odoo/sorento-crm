@@ -1441,11 +1441,34 @@ def make_tool_runner(
         # no ids leaves the fetch with NO entities at all - the most unfiltered read
         # there is. `page_the_set` refuses it; this is where that refusal becomes the
         # same production miss.
+        # Hand pass 12 round 3, R6 (owner ruling): a stock/inventory tool must never
+        # be called with zero filters when the message named an entity and NONE of
+        # them placed - a genuinely unresolved product code (turn 328e8b00,
+        # "Srtks8060-BL stock") reached the tool with `entities_in: 1,
+        # total_uuids_passed: 0` and answered about the whole catalogue. The SAME
+        # facts `_answered_unfiltered` already reads to REWRITE the reply after the
+        # tool ran (`unplaced`/`entities`) are read HERE, before it runs, so the call
+        # never goes out at all - scoped to inventory/incoming only (never `order`,
+        # whose outstanding-report ask filters by CODE, not id, and is narrowed by
+        # exactly an unplaced token, `_answered_unfiltered`'s own carve-out). A
+        # genuinely entity-less ask ("what's on promotion") still calls its tool:
+        # `entities` is empty, so `all(...)` over it is vacuously true but the `and
+        # entities` guard refuses the empty case first.
+        would_be_unfiltered = (
+            domain in ("inventory", "incoming")
+            and bool(unplaced)
+            and bool(entities)
+            and all(_entity_token_key(e) in unplaced for e in entities)
+        )
         if (
-            spec.filters.get("tier")
-            and isinstance(tier_gate_value, dict)
-            and not tier_gate_value.get("access_levels_recomposed")
-        ) or (page_predicate is not None and page_predicate.get("entitlement_missing")):
+            (
+                spec.filters.get("tier")
+                and isinstance(tier_gate_value, dict)
+                and not tier_gate_value.get("access_levels_recomposed")
+            )
+            or (page_predicate is not None and page_predicate.get("entitlement_missing"))
+            or would_be_unfiltered
+        ):
             fragment: dict[str, Any] = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",

@@ -153,7 +153,16 @@ def _axis_words(
                 _add(e.get("raw"))
     if not words:
         for row in rows:
-            _add(row.get("title") or row.get("code"))
+            # Hand pass 12 round 3, Group F (owner ruling): a customer row's own
+            # `display_name` - `turn_runtime.py::fill_customer_names`'s DB-resolved
+            # per-ledger name, filled onto EVERY fetch's own `compatible_entities`
+            # unconditionally, hit or miss - wins over the option's rollup `title`/
+            # `code` (`turn_runtime.py::_answer_pending`'s own picked-option code,
+            # a ledger FAMILY's shared account code, never a ledger's own name). The
+            # MISS-path composer (`lanes/business/answer.py::axis_words`) already
+            # made this same preference; this is the HIT-path header's own
+            # equivalent, a different render path over the same rows.
+            _add(row.get("display_name") or row.get("title") or row.get("code"))
     return ", ".join(words) if words else None
 
 
@@ -171,7 +180,13 @@ def _focus_words(rows: Any) -> str | None:
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue
-        value = _printable(row.get("name") or row.get("raw") or row.get("canonical_code"))
+        # Hand pass 12 round 3, Group F: `display_name` (the caller's own DB-resolved
+        # per-ledger name, filled onto a LOCAL copy right before this call, never onto
+        # `focus` itself) wins over `name` (only ever stamped for a single-identity
+        # pick) and the option's own rollup `raw`/`canonical_code`.
+        value = _printable(
+            row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+        )
         if value and value not in words:
             words.append(value)
     return ", ".join(words) if words else None

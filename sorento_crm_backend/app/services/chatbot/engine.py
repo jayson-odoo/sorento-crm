@@ -2144,6 +2144,24 @@ def _run_stages(  # noqa: PLR0915
                     ):
                         from app.services.chatbot import answer_bridge
 
+                        # Hand pass 12 round 3, Group F (owner ruling): a bare positional
+                        # pick runs no resolver of its own (`resolver_payload is None`),
+                        # so this header falls to the FOCUS carry - and a multi-uuid
+                        # customer option's own focus rows carry NO name at all
+                        # (`turn/apply.py::_answer_pending`'s own Group F rule: a name is
+                        # only stamped when the option covers ONE identity), only the
+                        # picked option's rollup `canonical_code`. Filled here the SAME
+                        # way `turn_runtime.py::make_tool_runner.runner` already fills a
+                        # FETCHED row's `display_name` - a local copy, `entity_type`
+                        # stamped so the shared filler recognises them (a focus row's own
+                        # key is `hint`, never `entity_type`), never written back onto
+                        # `state_out.focus` itself.
+                        focus_customers_named = [
+                            {**row, "entity_type": "customer"}
+                            for row in state_out.focus.customers
+                        ]
+                        turn_runtime.fill_customer_names(db, focus_customers_named)
+
                         answer = answer_bridge.apply_scope_block(
                             answer,
                             domain=fetch_plan.fetch[0].domain,
@@ -2158,7 +2176,7 @@ def _run_stages(  # noqa: PLR0915
                                 if isinstance(resolver_payload, dict)
                                 else None
                             ),
-                            focus_customers=state_out.focus.customers,
+                            focus_customers=focus_customers_named,
                             focus_products=state_out.focus.products,
                         )
                         # BRIDGE (hand pass 11, defect 1): a zero-stock HIT climbs the
@@ -2193,6 +2211,7 @@ def _run_stages(  # noqa: PLR0915
                             dry_run=dry_run,
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
+                            focus_products=state_out.focus.products,
                         )
                         # BRIDGE (hand pass 11, defect 3): a HIT in one of several
                         # searched companies still offers the SILENT company's own
