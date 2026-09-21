@@ -1655,12 +1655,23 @@ class ProjectOrderInquiryService:
             )
         return True
 
-    def _own_arrival_credit_for_row(self, row: OrderInquiryRow) -> Decimal:
+    def _own_arrival_credit_for_row(
+        self, row: OrderInquiryRow, need: Optional[Decimal] = None
+    ) -> Decimal:
         """R2/R7: what landed FOR this row's line, the SAME credit the board's own ladder
         reads (`ProjectSupplyService.own_arrival_credit_for`) - reused rather than
         restated, so the path picker and the board cannot come to disagree about what
         counts as covered. Built off a MINIMAL `_LineFacts` (this call is a single-row
-        question, not a walk).
+        question, not a walk). Charges what the row was measured against.
+
+        AC-S3-14 (round-4 fix round): `_redirect_row_if_received` compares this credit
+        against `linked_qty` (the row's LINKED total), not the row's own `qty` - the two
+        diverge whenever a row's links do not sum to its own quantity. `need` is that
+        caller-supplied number; when omitted (the idempotence probe, asking a row's own
+        credit outside the redirect check) the row's own `qty` is used, unchanged from
+        before this fix. Memoised per row id, so the SECOND call for a row (whichever
+        `need` it is asked with) returns the same number the FIRST call computed and
+        charged the ledger with - the memo is on the answer, not the question.
 
         `open_qty` is `qty_ordered - qty_delivered` (review round, SF1), the SAME reading
         of "open" every other `_LineFacts` builder in this codebase uses
@@ -1732,7 +1743,8 @@ class ProjectOrderInquiryService:
         theoretical, _po, tier1_qty, tier2 = supply._own_arrival_credit_components(
             fact, own_arrival_left=ledger
         )
-        credit = min(theoretical, max(_dec(row.qty), _ZERO))
+        charge_against = _dec(row.qty) if need is None else _dec(need)
+        credit = min(theoretical, max(charge_against, _ZERO))
         if ledger is not None and credit > _ZERO:
             supply._charge_own_arrival_credit(fact, credit, tier1_qty, tier2, ledger)
         self._own_arrival_row_credit[row_key] = credit
@@ -1782,7 +1794,10 @@ class ProjectOrderInquiryService:
         # row - a still-open PO link is left exactly as it was; only the ordinary,
         # not-fully-covered branch below redirects an open link.
         linked_qty = sum((_dec(link.qty) for link in links), _ZERO)
-        if linked_qty > _ZERO and self._own_arrival_credit_for_row(row) >= linked_qty:
+        if (
+            linked_qty > _ZERO
+            and self._own_arrival_credit_for_row(row, need=linked_qty) >= linked_qty
+        ):
             return None
         open_links = [link for link in links if str(link.id) not in received]
         if open_links:

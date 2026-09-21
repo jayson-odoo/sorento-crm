@@ -5139,6 +5139,12 @@ class ProjectSupplyService:
         # calling it with `before + credit_qty` summed them instead, so a competing earlier
         # demand that had already netted the ordinary reading down still let the credited
         # line's Reserve clear the bin's full, un-netted amount.
+        # AC-S3-15: hoisted above the `if` below (rather than declared inside it) so
+        # both survive to the Buy-over-credit check after the Reserve loop, which needs
+        # the SAME live credit reading this block computes for the capacity statement,
+        # not a second, possibly-inconsistent read.
+        credit_qty = _ZERO
+        credit_po: Optional[str] = None
         if own_arrival_left is not None and fact.own_code:
             ledger = (
                 own_arrival_left.setdefault(fact.product_id, {})
@@ -5151,7 +5157,7 @@ class ProjectSupplyService:
             # not a bug: it only ever makes a LATER line's own credit smaller (refuses
             # rather than over-grants), and a confirm-time recheck has no "drawn" figure
             # to defer the charge to the way `walk_line`'s candidate draw does.
-            credit_qty, _credit_po = self.own_arrival_credit_for(
+            credit_qty, credit_po = self.own_arrival_credit_for(
                 fact, own_arrival_left=ledger
             )
             if credit_qty > _ZERO:
@@ -5293,6 +5299,50 @@ class ProjectSupplyService:
                     fact.product_id, budget_key, max(books.get(lender, _ZERO), _ZERO)
                 )
                 capacity_left.take(fact.product_id, budget_key, qty)
+
+        # AC-S3-15 (round-4 fix round, browser-pass finding): R7's Buy-over-credit
+        # refusal was wired only into `set_row_decision`'s amend path
+        # (`_refuse_buy_over_own_arrival`, `planning_change_service.py`, reading the
+        # FROZEN proposal's own `sources`) - the ordinary board Confirm never read this
+        # line's own-arrival credit before letting a Buy stand for it. `credit_qty` /
+        # `credit_po` are the SAME live reading already computed above for the Reserve
+        # capacity statement; only the part the posted Reserve at the CREDITED bin
+        # (`fact.warehouse`, `fact.own_code`'s own location) leaves uncovered is
+        # refused - a Buy beside a credit the Reserve already fully covers (the
+        # control) is untouched, the same "only the part that would drop Reserve below
+        # what is credited" rule `_refuse_buy_over_own_arrival` states for its own seam.
+        #
+        # Raised directly, the way `ReserveOverHand` above is - not folded into the
+        # `invalid`/`stale` buckets, whose shared "N line(s) cannot be confirmed"
+        # sentence would drop the credited quantity and the PO this message names -
+        # and still `SupplyLinesRefused`, so `failing_lines` pins the same line the
+        # sheet marks for every other refusal. "Nothing was written" holds because this
+        # raises before `_write_decision` is ever reached (a draft save never calls
+        # `_check_line` at all, so it stays lenient as designed).
+        if credit_qty > _ZERO and buy > _ZERO and fact.warehouse is not None:
+            reserved_at_credit_bin = sum(
+                (
+                    _dec(item.qty)
+                    for item in entry.reserve or []
+                    if str(item.warehouse_id) == str(fact.warehouse.id)
+                ),
+                _ZERO,
+            )
+            uncovered = credit_qty - reserved_at_credit_bin
+            if uncovered > _ZERO:
+                message = (
+                    f"{qty_text(uncovered)} landed for this line on PO {credit_po}; "
+                    "nothing to buy for it"
+                    if credit_po
+                    else f"{qty_text(uncovered)} landed for this line; nothing to buy "
+                    "for it"
+                )
+                raise SupplyLinesRefused(
+                    status_code=409,
+                    message=message,
+                    failing_lines=[{**subject, "reason": message}],
+                    code="planning_change_buy_over_own_arrival",
+                )
 
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
