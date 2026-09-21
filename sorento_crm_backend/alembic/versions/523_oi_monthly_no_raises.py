@@ -150,7 +150,18 @@ def backfill_raises(bind) -> int:
     bind.exec_driver_sql(
         f"""
         INSERT INTO {raises} (id, company_id, order_inquiry_id, kind, raised_by, raised_at)
-        SELECT gen_random_uuid(), t.company_id, t.order_inquiry_id, 'raised', NULL,
+        SELECT gen_random_uuid(), t.company_id, t.order_inquiry_id, 'raised',
+               -- S4 (reviewer, fix round 22 Sep 2026): the header's own `raised_by` is
+               -- who did the FIRST raise only when it was never re-stamped after (no
+               -- `reconfirmed` row is being written below for this same header) - once a
+               -- later reconfirm exists, `t.raised_by` names the LAST reconfirmer, not
+               -- the original raiser, and attributing the 'raised' row to them would be
+               -- a wrong name, not a missing one, so it stays NULL.
+               CASE
+                   WHEN t.raised_at - LEAST(t.raised_at, t.earliest_row_at) > interval '1 minute'
+                   THEN NULL
+                   ELSE t.raised_by
+               END,
                LEAST(t.raised_at, t.earliest_row_at)
         FROM zzt_oi_backfill_targets t
         """

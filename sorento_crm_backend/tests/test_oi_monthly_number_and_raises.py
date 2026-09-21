@@ -493,6 +493,58 @@ class TestRaiseHistory:
             assert len(rows) == 1
             assert rows[0].kind == "raised"
 
+    def test_backfill_keeps_raised_by_when_the_header_was_never_re_stamped_AC_RD_02(self):
+        """S4 (reviewer, fix round 22 Sep 2026): a header with no `reconfirmed` row (the
+        two times land within the same minute, matching the equal-times test above) still
+        names the person who raised it - the backfill must not blank a `raised_by` it
+        actually knows just because it always used to write NULL there."""
+        with blank_session() as db:
+            company_id = _sorento(db)
+            raiser = _user(db, f"{MARKER} Raiser")
+            same_time = datetime(2026, 9, 10, 9, 0)
+            header = _header(db, company_id, raised_by=raiser, raised_at=same_time)
+            _row(db, header, created_at=same_time)
+            db.commit()
+
+            module = _migration_module()
+            module.backfill_raises(db.connection())
+            db.commit()
+            db.expire_all()
+
+            rows = _raise_rows(db, header.id)
+            assert len(rows) == 1
+            assert rows[0].kind == "raised"
+            assert rows[0].raised_by == raiser
+
+    def test_backfill_blanks_raised_by_when_a_reconfirm_is_also_written_AC_RD_02(self):
+        """The mirror case: once the two times differ by more than a minute, the
+        header's own `raised_by` names the LAST reconfirmer (the `reconfirmed` row this
+        same backfill writes), not the original raiser - so the `raised` row's own
+        `raised_by` stays NULL rather than being attributed to the wrong person."""
+        with blank_session() as db:
+            company_id = _sorento(db)
+            reconfirmer = _user(db, f"{MARKER} Reconfirmer")
+            header_raised_at = datetime(2026, 9, 10, 9, 0)
+            header = _header(db, company_id, raised_by=reconfirmer, raised_at=header_raised_at)
+            earliest_row_created_at = header_raised_at - timedelta(days=2)
+            _row(db, header, created_at=earliest_row_created_at)
+            db.commit()
+
+            module = _migration_module()
+            module.backfill_raises(db.connection())
+            db.commit()
+            db.expire_all()
+
+            rows = _raise_rows(db, header.id)
+            assert len(rows) == 2
+            raised_row = next(r for r in rows if r.kind == "raised")
+            reconfirmed_row = next(r for r in rows if r.kind == "reconfirmed")
+            assert raised_row.raised_by is None, (
+                "the true first raiser is unknown - the header only remembers the last "
+                "reconfirmer"
+            )
+            assert reconfirmed_row.raised_by == reconfirmer
+
     def test_header_detail_raise_history_is_newest_first_with_names_AC_RD_03(self):
         """`OrderInquiryHeaderService.get(id).raise_history` after one raise + two
         reconfirms - three entries, newest first, `by_name` resolved. The service does

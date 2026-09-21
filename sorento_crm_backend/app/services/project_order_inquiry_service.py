@@ -3528,6 +3528,12 @@ class ProjectOrderInquiryService:
         `app.main`'s startup event, which several of this service's own test modules
         never trigger) - reading the transaction's own identity needs nothing to have
         registered anything first.
+
+        `get_transaction()` returns the session's ROOT transaction (SQLAlchemy's own
+        contract), never an inner savepoint, so a nested savepoint opened and released
+        inside the same request cannot smuggle a second row past the marker. There is
+        deliberately no retry path here: a marker hit means THIS call already recorded
+        the row, so the right response is to do nothing, not to try again.
         """
         txn = self.db.get_transaction()
         marker = self.db.info.setdefault("_oi_raise_marker", {})

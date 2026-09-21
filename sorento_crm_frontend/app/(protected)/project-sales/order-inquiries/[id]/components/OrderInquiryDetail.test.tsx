@@ -1,23 +1,26 @@
 /**
- * `PLAN-oi-header-list-detail.md`, AC-DP-05/06, security fix round S1 + UL
- * (`oi-header-list-detail-acceptance-criteria.md`).
+ * `PLAN-oi-header-list-detail.md`, AC-DP-05/06, security fix round S1 + UL, reviewer
+ * fix round S5 (`oi-header-list-detail-acceptance-criteria.md`).
  *
- * Two things pinned here:
+ * Pinned here:
  *
  * 1. **S1 (never widen).** With nothing ticked, Confirm / Auto link send exactly
  *    `{ filter: { inquiry_id: <the page id> } }` - never a payload that could match
  *    outside this one OI. Real service functions are spied on through a PARTIAL mock
  *    of `orderInquiryService` (kept mostly real via `importOriginal`) rather than
  *    mocking the hooks, so the actual payload the hook builds is what gets asserted.
- * 2. **UL (deferred, not a dialog).** Gear > Unlink selected should start a
- *    server-deferred pending action (countdown + Cancel, AC-DP-06) - the current code
- *    opens an `AlertDialog` instead (see `OrderInquiryDetail.tsx`'s own note on
- *    `unlinkSelected`), which is this test's own red.
+ * 2. **UL (deferred, not a dialog).** Gear > Unlink selected starts a server-deferred
+ *    pending action (countdown + Cancel, AC-DP-06) instead of the retired `AlertDialog`
+ *    confirm pattern - `@/services/pendingActionService` is mocked so the countdown
+ *    `useDeferredBulkAction` builds is real, and Cancel is asserted to leave the ticked
+ *    line ticked (AC-DP-06's own "Cancel leaves the ticked lines ticked").
+ * 3. **AC-DP-05.** The Confirm label counts the ticked lines, and Confirm is disabled
+ *    once nothing in scope still waits (a Completed header, nothing ticked).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrderInquiryHeaderDetail, OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 vi.mock('next/navigation', () => ({
@@ -100,7 +103,30 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
   };
 });
 
+// UL: the deferred Unlink parks a real pending action through this service - mocked so
+// the countdown `useDeferredBulkAction` builds is exercised for real, with a window long
+// enough (10s) that a synchronous test never sees it lapse.
+const createPendingActionSpy = vi.fn(async ({ entityId }: { entityId: string }) => ({
+  id: `pa-${entityId}`,
+  action_key: 'order_inquiry_row.unlink',
+  entity_type: 'order_inquiry_row',
+  entity_id: entityId,
+  commit_at: new Date(Date.now() + 10_000).toISOString(),
+  window_seconds: 10,
+}));
+const cancelPendingActionSpy = vi.fn(async () => undefined);
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) =>
+    createPendingActionSpy(...(args as [{ entityId: string }])),
+  cancelPendingAction: (...args: unknown[]) => cancelPendingActionSpy(...(args as [string])),
+  getCurrentPendingAction: vi.fn(async () => ({ pending: null, last_outcome: null })),
+}));
+
+import { pendingEntityStore } from '@/lib/pending-entity-store';
+import { getOrderInquiryHeader } from '../../../_shared/services/orderInquiryService';
 import { OrderInquiryDetail } from './OrderInquiryDetail';
+
+const mockGetOrderInquiryHeader = getOrderInquiryHeader as unknown as ReturnType<typeof vi.fn>;
 
 function renderDetail(id: string) {
   const client = new QueryClient({
@@ -117,6 +143,14 @@ beforeEach(() => {
   acknowledgeFilterSpy.mockClear();
   acknowledgeRowsSpy.mockClear();
   autoPlaceSpy.mockClear();
+  createPendingActionSpy.mockClear();
+  cancelPendingActionSpy.mockClear();
+  mockGetOrderInquiryHeader.mockReset();
+  mockGetOrderInquiryHeader.mockResolvedValue(HEADER);
+});
+
+afterEach(() => {
+  pendingEntityStore.reset();
 });
 
 describe('Confirm / Auto link never widen without a real page id (S1)', () => {
@@ -160,6 +194,29 @@ describe('Confirm / Auto link never widen without a real page id (S1)', () => {
   });
 });
 
+describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () => {
+  it('ticking a line changes the label to Confirm (1)', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    fireEvent.click(await screen.findByLabelText(`Select ${LINKED_LINE.item_code}`));
+
+    expect(await screen.findByRole('button', { name: 'Confirm (1)' })).toBeInTheDocument();
+  });
+
+  it('is disabled on a Completed header with nothing ticked', async () => {
+    mockGetOrderInquiryHeader.mockResolvedValue({
+      ...HEADER,
+      status: 'completed',
+      lines_to_confirm: 0,
+    });
+    renderDetail('oi-1');
+
+    const confirmButton = await screen.findByRole('button', { name: 'Confirm' });
+    expect(confirmButton).toBeDisabled();
+  });
+});
+
 describe('Unlink selected is a server-deferred pending action, not a confirm dialog (AC-DP-06, UL)', () => {
   it('does not open an AlertDialog - a countdown with Cancel appears instead', async () => {
     renderDetail('oi-1');
@@ -174,5 +231,26 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
     // Target behaviour: no confirmation dialog at all, a deferred countdown instead.
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(await screen.findByText(/cancel/i)).toBeInTheDocument();
+  });
+
+  it('Cancel leaves the ticked line ticked (AC-DP-06)', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    const checkbox = await screen.findByLabelText(`Select ${LINKED_LINE.item_code}`);
+    fireEvent.click(checkbox);
+    expect(checkbox).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), {
+      button: 0,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /unlink selected/i }));
+    await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => expect(cancelPendingActionSpy).toHaveBeenCalledTimes(1));
+    // The selection is untouched by Cancel - only a commit clears it.
+    expect(checkbox).toHaveAttribute('aria-checked', 'true');
   });
 });
