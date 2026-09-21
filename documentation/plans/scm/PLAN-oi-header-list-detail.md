@@ -113,8 +113,8 @@ stored: `lines_to_confirm > 0` = outstanding. The header `state` column is left 
 
 - `GET /order-inquiry-headers/{id}`: header + Order block + Customer block + counts + status +
   `raise_history`.
-- `inquiry_id` filter added to the worklist list (`GET /order-inquiries`), to the acknowledge /
-  unacknowledge `filter` payload, and to `POST /order-inquiries/auto-place` (gear > Auto link on
+- `inquiry_id` filter added to the worklist list (`GET /order-inquiries`), to the acknowledge `filter`
+  payload (NOT unacknowledge, which stays row_ids only), and to `POST /order-inquiries/auto-place` (gear > Auto link on
   the detail page, owner markup 21 Sep). Nothing else in those paths changes.
 - `GET /order-inquiry-headers/{id}/related-documents`: two grouped queries over
   `order_inquiry_links` joined to PO lines / SPO allocations.
@@ -181,7 +181,10 @@ GET /api/v1/project-sales/order-inquiry-headers/{id}/related-documents
 
 GET  /api/v1/project-sales/order-inquiries?inquiry_id=<id>          (existing list, one new filter)
 POST /api/v1/project-sales/order-inquiries/acknowledge   { filter: { inquiry_id } } | { row_ids }
-POST /api/v1/project-sales/order-inquiries/unacknowledge { filter: { inquiry_id } } | { row_ids }
+POST /api/v1/project-sales/order-inquiries/unacknowledge { row_ids }   (row_ids ONLY: the existing rule
+     "Unconfirm always names exactly what the buyer ticked" stands; the detail page sends the ticked
+     lines, else every confirmed line id of this OI)
+POST /api/v1/project-sales/order-inquiries/auto-place    { filter: { inquiry_id } } | { row_ids }
 ```
 
 Every field is declared on the response model and asserted in a test (`response_model` drops

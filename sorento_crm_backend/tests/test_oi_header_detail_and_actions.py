@@ -150,7 +150,12 @@ def test_worklist_inquiry_id_filter_scopes_to_one_header_and_keeps_its_fields_AC
     )
 
     row = next(item for item in body["data"] if item["id"] in mine_ids)
-    for key in ("supplier", "po_number", "location", "remark", "links", "verb"):
+    # `OrderInquiryWorklistRow`'s own field names (`app/schemas/project_order_inquiry.py`):
+    # `supplier` / `po_number` / `location` / `verb` (+ `note`) for supplier/PO/location/
+    # instruction, `links` for the SPO side (an SPO is a `kind="spo"` entry there, never a
+    # top-level field) - `remark` belongs to the per-project `OrderInquiryRowOut`, not this
+    # cross-project worklist row.
+    for key in ("supplier", "po_number", "location", "verb", "note", "links"):
         assert key in row, f"worklist field {key!r} must survive the inquiry_id filter"
 
 

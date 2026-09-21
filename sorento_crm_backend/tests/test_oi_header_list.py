@@ -439,15 +439,17 @@ class TestQueryAndFilters:
         assert seeded["inquiry"].id in ids
 
     def test_query_matches_legacy_inquiry_no_AC_LS_04(self, api):
-        """`legacy_inquiry_no` is not a mapped column yet (S1) - setting it raises
-        AttributeError, which is the S1 dependency this AC also carries."""
+        """`legacy_inquiry_no` is `String(20)` by design - real legacy numbers look like
+        `OI-000477` - so the fixture value has to fit that width, not the (much longer)
+        MARKER-prefixed style every other seeded value here uses."""
         client, db, company_id = api
         seeded = _header(db, company_id)
-        seeded["inquiry"].legacy_inquiry_no = f"{MARKER}-LEGACY-{_uid()[:6]}"
+        # 9 chars: well inside String(20), and unique enough not to collide with
+        # anything else seeded in this test's own scratch schema.
+        legacy_no = f"OI-9{str(uuid.uuid4().int)[-5:]}"
+        seeded["inquiry"].legacy_inquiry_no = legacy_no
         db.commit()
-        response = client.get(
-            HEADERS, params={"query": seeded["inquiry"].legacy_inquiry_no, "state": "all"}
-        )
+        response = client.get(HEADERS, params={"query": legacy_no, "state": "all"})
         assert response.status_code == 200, response.text
         ids = {item["id"] for item in response.json()["data"]}
         assert seeded["inquiry"].id in ids
