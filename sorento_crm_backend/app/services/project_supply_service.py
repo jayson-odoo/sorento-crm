@@ -1523,9 +1523,13 @@ class ProjectSupplyService:
         # than `credit_qty` for own-arrival to draw. Tier 1 (this line's own PO) first,
         # only the rest off the siblings' tier-2 spare, same order as before (MB2).
         if own_arrival_left is not None and credit_qty > _ZERO:
-            drawn = next(
+            # S-c: SUMMED over every own-arrival component, not just the first - a line
+            # `walk_line` splits across more than one component (e.g. a partial pool-share
+            # sub-step beside an own-arrival one, or the candidate itself split) leaves a
+            # `next(...)` read blind to every component after the first.
+            drawn = sum(
                 (
-                    component.qty
+                    _dec(component.qty)
                     for component in walked.components
                     if getattr(component, "source", None) == "own_arrival"
                 ),
@@ -1842,11 +1846,15 @@ class ProjectSupplyService:
                         # ordinary rung hands out, so a ledger only the credit spends lets
                         # one order's assignment and another order's credit each cover the
                         # whole of one floor. The credit's OWN component is skipped here:
-                        # `own_arrival_credit_for` already charged the ledger the moment it
-                        # granted it, and charging again would spend those units twice.
-                        # Seeded off `LocationNet.on_hand`, the same figure
-                        # `own_arrival_credit_for` seeds it with; a bin this fact's netting
-                        # says nothing about is left alone rather than invented as zero.
+                        # `self.walk` above already charged the ledger (S5's
+                        # `_charge_own_arrival_credit`, called with what `walk_line`
+                        # ACTUALLY drew, not the theoretical figure `_own_arrival_credit_
+                        # components` sized the candidate with) before this drawdown loop
+                        # ever runs, so charging it again here would spend those units
+                        # twice. Seeded off `LocationNet.on_hand`, the same figure
+                        # `_own_arrival_credit_components` seeds it with; a bin this fact's
+                        # netting says nothing about is left alone rather than invented as
+                        # zero.
                         on_hand = self._on_hand_at(fact, code)
                         if on_hand is not None:
                             left = _dec(own_arrival.setdefault(code, on_hand))
@@ -5122,13 +5130,27 @@ class ProjectSupplyService:
         # same bin is added to, so a credit that granted this line 0 (the pile's stated
         # basis already covered it) still inflates `_claimed` by its own amount, letting
         # that later slice cross `_basis` by units nothing physical backs. `state_at_least`
-        # states the pile is at least `before + credit_qty` without touching `_claimed`.
+        # states the pile is at least `credit_qty` without touching `_claimed`.
+        #
+        # B1 (round 3): the credit is a SECOND READING of the same bin - "this line's own
+        # PO put at least `credit_qty` of it there" - never a second pile added to whatever
+        # the ordinary reading already stated. `state_at_least(..., credit_qty)` intersects
+        # the two readings (`max(before, credit_qty)`, `state_at_least`'s own semantics);
+        # calling it with `before + credit_qty` summed them instead, so a competing earlier
+        # demand that had already netted the ordinary reading down still let the credited
+        # line's Reserve clear the bin's full, un-netted amount.
         if own_arrival_left is not None and fact.own_code:
             ledger = (
                 own_arrival_left.setdefault(fact.product_id, {})
                 if fact.product_id
                 else None
             )
+            # S-b: `own_arrival_credit_for` (not the size-then-charge split `walk()` uses)
+            # charges the ledger with the full THEORETICAL credit immediately, which can
+            # be more than what this confirm's own Reserve ends up posting. Conservative,
+            # not a bug: it only ever makes a LATER line's own credit smaller (refuses
+            # rather than over-grants), and a confirm-time recheck has no "drawn" figure
+            # to defer the charge to the way `walk_line`'s candidate draw does.
             credit_qty, _credit_po = self.own_arrival_credit_for(
                 fact, own_arrival_left=ledger
             )
@@ -5140,7 +5162,7 @@ class ProjectSupplyService:
                         fact.product_id, str(source.id), _ZERO
                     )
                     after = capacity_left.state_at_least(
-                        fact.product_id, str(source.id), before + credit_qty
+                        fact.product_id, str(source.id), credit_qty
                     )
                     capacity[fact.own_code] = capacity.get(
                         fact.own_code, _ZERO

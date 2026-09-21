@@ -753,6 +753,12 @@ class ProjectOrderInquiryService:
         # row a bin's credit covers spends it and a later row at the same bin sees what
         # is left, not the whole pile again.
         self._own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
+        # B2 (round 3): `_own_arrival_credit_for_row`'s own answer, memoised per ROW id -
+        # the credit it charges `_own_arrival_left` with is capped by, and charged as,
+        # what THIS row itself used, so asking the same row's own credit a second time
+        # must return that same answer rather than reading an already-drained ledger and
+        # charging it again (or reading nothing left and returning 0).
+        self._own_arrival_row_credit: Dict[str, Decimal] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -1667,7 +1673,22 @@ class ProjectOrderInquiryService:
         settling several rows of one order in one call would re-read the same physical
         floor fresh for each row and could credit each of them off it in full. Rows are
         processed in the order the caller iterates them (date order).
+
+        B2 (round 3): this is a per-ROW question, not a per-LINE one - two rows of the
+        SAME line each carry their own, smaller need. Calling `own_arrival_credit_for`
+        charged the ledger with the whole LINE's theoretical credit on the first row
+        asked, so a second row of the same line read an already-drained ledger and was
+        wrongly refused. Sized the same way `walk()` fixed this (S5): read the
+        THEORETICAL credit with `_own_arrival_credit_components` (no charge), then charge
+        `_charge_own_arrival_credit` with only `min(theoretical, row.qty)` - what THIS row
+        itself needed, never more. The answer is memoised per row id so asking the same
+        row's own credit twice returns the same number without charging the ledger a
+        second time.
         """
+        row_key = str(row.id)
+        if row_key in self._own_arrival_row_credit:
+            return self._own_arrival_row_credit[row_key]
+
         from app.services.project_supply_service import ProjectSupplyService, _LineFacts
 
         if not row.so_line_id:
@@ -1708,7 +1729,13 @@ class ProjectOrderInquiryService:
         ledger = (
             self._own_arrival_left.setdefault(product_id, {}) if product_id else None
         )
-        credit, _po = supply.own_arrival_credit_for(fact, own_arrival_left=ledger)
+        theoretical, _po, tier1_qty, tier2 = supply._own_arrival_credit_components(
+            fact, own_arrival_left=ledger
+        )
+        credit = min(theoretical, max(_dec(row.qty), _ZERO))
+        if ledger is not None and credit > _ZERO:
+            supply._charge_own_arrival_credit(fact, credit, tier1_qty, tier2, ledger)
+        self._own_arrival_row_credit[row_key] = credit
         return credit
 
     def _redirect_row_if_received(
