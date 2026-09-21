@@ -64,6 +64,13 @@ FK seeded, never a borrowed row.
   covering both cannot reserve 80 from 40; the second line is refused or reduced, in both the
   ladder (compose) and the confirm-time recheck. (measured: the line served first by the
   ordinary rung takes the bin; the credit finds nothing left)
+  (seams guarded: single-line floor, confirm ledger)
+- AC-S3-12 (second review round, 21 Sep) Owner ruling R2: a mixed row (a received link and a
+  still-open purchase-order link) that settles in place because its own-arrival credit covers the
+  row's whole linked total keeps BOTH links - the received link as history, and the still-open PO
+  link because shifting it off the row is purchasing's own decision at Order Inquiries, not
+  something a replan makes for them. `_redirect_row_if_received` must not release the open link
+  as a side effect of a credit-covered settle.
 
 ## S4 Importer pairing by date order, never drop
 - AC-S4-1 Sales order with open lines dated d1 < d2 < d3 < d4 and a 2026 book with two rows (dates

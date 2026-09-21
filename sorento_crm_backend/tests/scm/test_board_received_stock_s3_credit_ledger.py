@@ -268,3 +268,328 @@ def test_ac_s3_11_confirm_never_covers_the_same_units_twice():
         )
         failing = refused.value.detail.get("failing_lines") or []
         assert failing and "40" in failing[0]["reason"], failing
+
+
+# ============================================================================
+# Second review round (21 Sep) - guards for the two seams AC-S3-11's fix landed in, so
+# a regression that removes either is caught here rather than rediscovered live.
+# ============================================================================
+
+
+def test_single_line_credit_never_exceeds_the_floor():
+    """B2 (compose): ONE line, needing 80, with its OWN PO line received 40 (the
+    tier-1 credit) at a bin holding only 40 on hand, and no other demand at all. The
+    credit and the ordinary group-take rung are both reading the SAME 40-unit floor for
+    the SAME line - there is no second line to lose a rank tie here, so this pins the
+    seam `_less_drawn` guards on its own, without AC-S3-11's two-order shape around it.
+
+    GREEN today via `_less_drawn` (`app/services/scm/front_planning_engine.py`
+    ~:1228/:1448): the credit's own draw comes OFF `group_take_candidates` at that same
+    bin before question 1 (the ordinary rung) reads them, so question 1 finds nothing
+    left and the line's remainder (40) composes as Buy - Reserve 40 (source own_arrival)
+    + Buy 40, never a second, uncharged Reserve of 40 off the identical floor (Reserve
+    80 total, which is more than physically exists at the bin).
+
+    Regression guard: if `_less_drawn`'s subtraction at :1228 were removed (or the
+    seam otherwise stopped netting the credit's own draw off the ordinary candidates),
+    question 1 would read the bin's full, un-netted 40 again and this line would
+    compose Reserve 80 from an on-hand of 40 - this test would go red on the
+    `reserved == Decimal("40")` / `buy_sources` assertions below.
+    """
+    with blank_session() as db:
+        group, product = own_arrival_group(db)
+        own = own_arrival_warehouse(db, group)
+        _board_stock(db, product, own, on_hand=40)
+
+        order, (line,) = order_with_lines(
+            db, product=product, warehouse=own,
+            lines=[{"qty": "80", "required_date": TIE_DATE, "source_ref": "B2-L1"}],
+        )
+        po = supplier_and_po(db, po_number="ZZT-PO-B2-SINGLE")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref="B2-L1", qty_received=40, qty_ordered=40,
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, TIE_BUCKET)
+        contribution = cell["contributions"][0]
+        reserved = _reserved(contribution)
+
+        assert reserved <= Decimal("40"), (
+            "on hand is 40 at this bin; the line's own credit and the ordinary rung "
+            f"must not both draw the full 40 for a Reserve of 80: sources="
+            f"{contribution['sources']}"
+        )
+        assert reserved == Decimal("40"), contribution["sources"]
+        own_arrival_sources = [
+            s
+            for s in contribution["sources"]
+            if s.get("rung") == "group_take" and s.get("source") == "own_arrival"
+        ]
+        assert own_arrival_sources and Decimal(own_arrival_sources[0]["qty"]) == Decimal(
+            "40"
+        ), contribution["sources"]
+        buy_sources = [s for s in contribution["sources"] if s.get("kind") == "buy"]
+        assert buy_sources and Decimal(buy_sources[0]["qty"]) == Decimal("40"), contribution[
+            "sources"
+        ]
+
+
+def test_confirm_credit_is_stated_through_the_capacity_ledger():
+    """B2 (confirm): ONE confirm payload naming BOTH lines of one order at one bin
+    where the ordinary group-take reading is 0 (a competing 5000-unit order at the same
+    location, earlier date - the AC-S3-1 shape) and the own-arrival credit is the ONLY
+    capacity either line has: line 1 needs 40 with its own PO line received 40, line 2
+    needs 40 with its OWN, separate PO line also received 40, on hand 40 total at the
+    shared bin.
+
+    GREEN today: `_check_line`'s `own_arrival_left` ledger (`project_supply_service.py`
+    ~:5005-5026) is a single dict CREATED ONCE per `confirm()` call (:4510) and threaded
+    through every line of the payload in order - line 1 is checked first, its credit
+    (40) is stated through `capacity_left.offer(...)` and drains `own_arrival_left`'s
+    entry for that bin to 0 (`own_arrival_credit_for`, :2834-2845); line 2 is checked
+    second, reads the SAME drained ledger, and its own credit computes to 0 even though
+    its own separate PO also received 40 - the physical floor, not the document, is what
+    is shared. With the ordinary rung offering nothing at that bin either (the 5000-unit
+    order dominates it), line 2 has no capacity left at all and the payload is refused.
+
+    One `confirm()` call is atomic (`SupplyLinesRefused` - "Nothing was written" - PLAN
+    3.1 step 6), so "the first accepted" is read off `failing_lines`: line 1 is absent
+    from it (its own composition cleared the recheck cleanly) while line 2 is the one
+    named, which is what tells a planner reading the refusal which row to fix - not
+    literal separate commits, which a single payload naming both lines cannot produce.
+
+    Regression guard for the seam this file's own docstring (lines 19-23) names: if the
+    confirm-time credit were added straight onto `_check_line`'s local `capacity` dict
+    instead of being stated `capacity_left.offer(...)`, line 2 would read its OWN fresh
+    40-unit credit (nothing shared) and both lines would be accepted - reserving 80 off
+    a 40-unit floor live, at confirm time, past the compose-time guard entirely.
+    """
+    within_window = date.today() + timedelta(days=10)
+    dominant = date.today() + timedelta(days=5)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=40)
+
+        core_so = _core_so(db, company_id)
+        core_line_1 = _core_line(
+            db, core_so, product, own, qty_ordered="40", required_date=within_window,
+        )
+        core_line_1.source_ref = f"ZZT-B2-L1-{_uid()[:8]}"
+        db.flush()
+        po1 = supplier_and_po(db, po_number=f"ZZT-PO-B2-L1-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po1, product, own, from_so_line_ref=core_line_1.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        core_line_2 = _core_line(
+            db, core_so, product, own, qty_ordered="40", required_date=within_window,
+        )
+        core_line_2.source_ref = f"ZZT-B2-L2-{_uid()[:8]}"
+        db.flush()
+        po2 = supplier_and_po(db, po_number=f"ZZT-PO-B2-L2-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po2, product, own, from_so_line_ref=core_line_2.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        # The other order that drives the group net at this bin to 0 - same location,
+        # earlier date so it dominates the date-aware reading too (AC-S3-1's own shape,
+        # reused by test_ac_s3_10_confirm_round_trip_with_own_arrival_reserve above).
+        other_so = _core_so(db, company_id)
+        _core_line(db, other_so, product, own, qty_ordered="5000", required_date=dominant)
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line_1 = _project_line(
+            db, order, line_no=1, product=product, core_line=core_line_1,
+        )
+        line_2 = _project_line(
+            db, order, line_no=2, product=product, core_line=core_line_2,
+        )
+        db.commit()
+
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=str(line_1.id),
+                            reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
+                        ),
+                        ConfirmLine(
+                            project_line_id=str(line_2.id),
+                            reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
+                        ),
+                    ]
+                ),
+                actor_user_id=actor,
+            )
+        assert refused.value.status_code == 409, refused.value.detail
+        failing = refused.value.detail.get("failing_lines") or []
+        failing_line_nos = {entry.get("line_no") for entry in failing}
+        assert failing_line_nos == {line_2.line_no}, (
+            "line 1's credit drains the shared on-hand ledger for the bin; line 2's own "
+            "separate PO receipt must not read a second, undrained 40 off the same "
+            f"physical floor - expected only line 2 refused, got: {failing}"
+        )
+
+
+# ============================================================================
+# S5 (second review round, 21 Sep): the ledger must be charged with what was DRAWN,
+# never with the whole theoretical credit computed at candidate-build time.
+# ============================================================================
+
+
+def test_credit_ledger_is_charged_with_what_was_drawn_not_the_whole_credit():
+    """S5: `own_arrival_credit_for` is called from `walk()` at candidate-BUILD time
+    (`project_supply_service.py` ~:1416), BEFORE `front_planning_engine.walk_line`'s own
+    pool-share sub-step (step 0, drawn ahead of the own-arrival sub-step, ~:1195-1201)
+    has told the walk how much of the line's need is already covered from elsewhere.
+    `own_arrival_credit_for` computes its credit against `fact.open_qty` - the line's
+    WHOLE open quantity - and charges the on-hand ledger (`own_arrival_left[own_code]`,
+    :2845) for that FULL amount immediately. `walk_line` then draws the own-arrival
+    candidate only up to `need` (the line's remainder AFTER the pool share), which can be
+    SMALLER than what was already charged - so a sibling line reading the SAME bin's
+    on-hand ledger afterwards sees less left than physically true.
+
+    MEASURED SHAPE (`pool_share` fed via `own.pool_warehouse_id`, the same mechanism
+    `tests.scm.test_project_supply_service_ladder._group_sites` uses -
+    `pool_share_capacity` / `_draw_pool_share`, `front_planning_engine.py` :230/:1753):
+    one order, two lines at the SAME own bin, on DIFFERENT required dates so they are two
+    separate planning units (`_unit_key` = product + warehouse + date,
+    `project_supply_service.py` :1915-1927) and each is walked, and its own-arrival
+    credit computed, separately - line 1's PO receipt is not read a second time as line
+    2's own tier-1 credit; this file's own S1/S2/B2 tests already pin the tier-1/tier-2
+    split, so this test isolates the DIFFERENT bug S5 names by giving line 2 its OWN
+    separate PO line rather than relying on line 1's tier-2 spare (see note below on why
+    the brief's literal "tier-2 spare from line 1" phrasing does not reproduce against the
+    real formula).
+
+    - on hand at the shared own bin: 70.
+    - a site pool linked to that bin, on hand 60: default policy (50% dealer retention,
+      `DEFAULT_POOL_SHARE_PCT`) spares an allowance of 30 - the whole of it, since the
+      pool's OWN floor (60) exceeds the allowance.
+    - line 1 needs 40 (own PO line received 40 = tier 1): pool share takes 30 first
+      (step 0), leaving a remainder/need of 10 for own-arrival - the credit's ACTUAL draw
+      is 10, and line 1 is fully covered (Reserve 30 pool + Reserve 10 own_arrival, Buy 0).
+    - line 2 needs 40 too (its OWN separate PO line, also received 40 = tier 1) - the
+      pool's project share is already spent by line 1 (one ledger per pool, v8 R-B), so
+      line 2 gets nothing from the pool and its need is the whole 40. The group's ordinary
+      take at this bin is ALREADY negative before any credit is subtracted (on hand 70,
+      the two lines' own combined SO demand 80), so the ordinary rung (question 1) offers
+      line 2 nothing either - own-arrival is the only capacity either line has, exactly
+      like AC-S3-1's own shape, without needing a third competing order to force it.
+
+    CORRECT (physical): line 1 only ever draws 10 off the bin's on-hand credit-wise (the
+    other 30 of its need came from the POOL, a different physical location); 70 - 10 = 60
+    remains for line 2's own tier-1 credit, comfortably covering its 40 - Reserve 40
+    (own_arrival), Buy 0.
+
+    RED TODAY: line 1's own-arrival credit is computed as `min(tier1_qty=40, open_qty=40)
+    = 40` at candidate-build time (:1416) and the ON-HAND ledger is charged the full 40
+    (:2845) - not the 10 `walk_line` actually draws once the pool share is netted out.
+    Line 2 then reads a falsely-drained ledger (70 - 40 = 30, not the true 70 - 10 = 60)
+    and its own credit is capped at `min(40, 30) = 30` - a false, uncharged Buy of 10
+    where physically there is none. Goes GREEN when the ledger is charged with what
+    `walk_line` actually drew (10) rather than the theoretical credit computed before the
+    pool share's own draw was known.
+
+    STATED PLAINLY (the brief's own "if you cannot make the pool share cover part of line
+    1 ... report the shape you found" clause): line 1 needing 40 with an own PO line
+    received exactly 40 gives it a real tier-2 SPARE of `40 - min(40, qty_ordered 40) = 0`
+    by `_own_arrival_credit_for`'s own formula (`project_supply_service.py` :2799 -
+    `spare = sibling_received - min(sibling_received, sibling.qty_ordered)`), which nets
+    a sibling's spare against its OWN `qty_ordered` and is entirely blind to whether a
+    DIFFERENT rung (pool share) covered part of that sibling's need - so "line 1's unused
+    pool-covered 30 becomes line 2's tier-2 spare" is not a shape the real tier-2 formula
+    produces; only a line whose PO received MORE than it ordered has real tier-2 spare,
+    which is a different, already-covered bug (MB2, `test_tier2_spare_is_spent_once_
+    across_siblings`). The reproducible shape for S5's OWN bug (ledger charged the
+    theoretical credit, not the actual draw) is the ON-HAND ledger two SEPARATE lines
+    share at the SAME bin, pinned above, and giving line 2 its own tier-1 PO rather than a
+    tier-2 read off line 1 is what isolates it from the already-covered tier-2 bugs.
+    """
+    within_window = date.today() + timedelta(days=10)
+    later_window = date.today() + timedelta(days=11)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        pool = _warehouse(db, f"ZZT-POOL-{_uid()[:4]}")
+        own.pool_warehouse_id = pool.id
+        db.flush()
+        _stock(db, product, own, on_hand=70)
+        _stock(db, product, pool, on_hand=60)
+
+        core_so = _core_so(db, company_id)
+        core_line_1 = _core_line(
+            db, core_so, product, own, qty_ordered="40", required_date=within_window,
+        )
+        core_line_1.source_ref = f"ZZT-S5-L1-{_uid()[:8]}"
+        db.flush()
+        po1 = supplier_and_po(db, po_number=f"ZZT-PO-S5-L1-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po1, product, own, from_so_line_ref=core_line_1.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        core_line_2 = _core_line(
+            db, core_so, product, own, qty_ordered="40", required_date=later_window,
+        )
+        core_line_2.source_ref = f"ZZT-S5-L2-{_uid()[:8]}"
+        db.flush()
+        po2 = supplier_and_po(db, po_number=f"ZZT-PO-S5-L2-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po2, product, own, from_so_line_ref=core_line_2.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line_1 = _project_line(
+            db, order, line_no=1, product=product, core_line=core_line_1,
+        )
+        line_2 = _project_line(
+            db, order, line_no=2, product=product, core_line=core_line_2,
+        )
+        db.commit()
+
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        by_line_no = {line["line_no"]: line for line in proposal["lines"]}
+        components_1 = by_line_no[line_1.line_no]["components"]
+        components_2 = by_line_no[line_2.line_no]["components"]
+
+        reserve_1 = sum(
+            (Decimal(c["qty"]) for c in components_1 if c["kind"] == "reserve"), Decimal("0"),
+        )
+        buy_1 = sum(
+            (Decimal(c["qty"]) for c in components_1 if c["kind"] == "buy"), Decimal("0"),
+        )
+        assert reserve_1 == Decimal("40") and buy_1 == Decimal("0"), (
+            f"line 1 (pool share 30 + own-arrival credit 10) should be fully covered: "
+            f"reserve={reserve_1} buy={buy_1} components={components_1}"
+        )
+
+        reserve_2 = sum(
+            (Decimal(c["qty"]) for c in components_2 if c["kind"] == "reserve"), Decimal("0"),
+        )
+        buy_2 = sum(
+            (Decimal(c["qty"]) for c in components_2 if c["kind"] == "buy"), Decimal("0"),
+        )
+        own_arrival_2 = sum(
+            (
+                Decimal(c["qty"])
+                for c in components_2
+                if c.get("rung") == "group_take" and c.get("source") == "own_arrival"
+            ),
+            Decimal("0"),
+        )
+        assert buy_2 == Decimal("0") and reserve_2 == Decimal("40"), (
+            "line 1 only ever draws 10 off the shared bin's on-hand for its own-arrival "
+            "credit (the other 30 of its need is the POOL's, a different location); 60 "
+            "physically remains for line 2's own separate PO receipt (40), so line 2 "
+            f"must be Reserve 40 / Buy 0, not a false Buy from an over-charged ledger: "
+            f"reserve={reserve_2} buy={buy_2} own_arrival={own_arrival_2} "
+            f"components={components_2}"
+        )

@@ -420,31 +420,38 @@ def test_ac_s3_6_amending_the_uncredited_remainder_to_buy_is_allowed(api):
 
 
 # ============================================================================
-# SF10 - a mixed row (received + still-open link) must release the open link too
+# SF10 - REVERSED, second review round (21 Sep): a mixed row keeps BOTH links
 # ============================================================================
 
 
-def test_mixed_row_replan_settles_received_part_but_still_releases_the_open_po_link(api):
-    """SF10: a row linked 40 to a received SPO allocation AND 30 to a STILL-OPEN
-    purchase-order line (total linked 70). Its own line's own PO received 70, on hand 70
-    - own-arrival credit is 70, which meets the row's WHOLE linked total (70), so the
-    `credit >= linked_qty` shortcut in `_redirect_row_if_received` fires and returns
-    `None` (retain, Path B) - that half is unchanged from AC-S3-7's own contract.
+def test_mixed_row_replan_settles_in_place_and_keeps_both_links(api):
+    """AC-S3-12 (owner ruling R2, second review round 21 Sep): a row linked 40 to a
+    received SPO allocation AND 30 to a STILL-OPEN purchase-order line (total linked
+    70). Its own line's own PO received 70, on hand 70 - own-arrival credit is 70, which
+    meets the row's WHOLE linked total (70), so the `credit >= linked_qty` shortcut in
+    `_redirect_row_if_received` fires and returns `None` (retain, Path B) - unchanged
+    from AC-S3-7's own contract.
 
-    CONTRACT CHOICE this test pins (the plan's own S3 section names only the pure
-    Path A / Path B split, AC-S3-7 / AC-S3-8 - not this mixed shape): once landed stock
-    covers the row's whole need, the STILL-OPEN purchase-order-line reservation is no
-    longer needed BY THIS ROW - holding it double-books capacity a future delivery would
-    otherwise free for someone else. Pinned END STATE, checked directly against the DB
-    rather than only against the function's return value (which stays `None` either
-    way): the RECEIVED link (`received_link`, evidence of history) is still present
-    after the call; the OPEN PO link (`open_link`) is GONE (deleted by `_remove_links`,
-    the same mechanism the ordinary non-credited Path A branch already uses for its own
-    open links, two lines further down in the same function).
+    REVERSED from this file's earlier version (SF10, which had the settle release the
+    still-open PO link as a side effect): the owner's ruling is that shifting an open PO
+    link off a row is PURCHASING's own decision, made at Order Inquiries, not something a
+    replan's credit-covered settle makes for them by side effect. A replan that quietly
+    frees a purchasing team's still-open PO reservation the moment landed stock happens
+    to cover the row is exactly the "released at revision N" surprise AC-S3-8's own
+    Path A already reserves for a row that is genuinely NOT covered - Path B (this row)
+    must not borrow that mechanism.
 
-    Today's early `return None` sits BEFORE the function ever inspects `open_links` at
-    all - so today both links survive untouched, and the open PO line stays reserved for
-    a row that no longer needs it.
+    Pinned END STATE, checked directly against the DB: BOTH links survive the settle -
+    the RECEIVED link (`received_link`, evidence of history) exactly as before, and the
+    OPEN PO link (`open_link`) too, because nothing about the credit that settled this
+    row in place was drawn from that still-open PO's own shipping.
+
+    RED today: `_redirect_row_if_received`'s `credit >= linked_qty` branch
+    (`app/services/project_order_inquiry_service.py` ~:1673-1707) releases `still_open`
+    links via `_remove_links` before returning `None` (the SF10 fix, review round one).
+    Goes GREEN when the coder reverts that release - the branch returns `None` without
+    touching `open_links` at all, the same early exit this file's docstring originally
+    described before SF10 changed it.
     """
     client, world = api
     db = world.db
@@ -521,8 +528,8 @@ def test_mixed_row_replan_settles_received_part_but_still_releases_the_open_po_l
         "the received link is evidence of history and must survive an in-place settle"
     )
     still_open = db.get(OrderInquiryLink, open_link.id)
-    assert still_open is None, (
-        "the still-open PO line is no longer needed once landed stock covers the row's "
-        f"whole need - it must be released, not left dangling on a settled row: "
-        f"{still_open}"
+    assert still_open is not None, (
+        "AC-S3-12 (owner ruling R2): shifting the still-open PO link off this row is "
+        "purchasing's own decision at Order Inquiries, not a side effect of a credit-"
+        f"covered settle - the link must survive untouched: {still_open}"
     )
