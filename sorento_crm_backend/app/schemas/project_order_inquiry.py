@@ -599,6 +599,10 @@ class AcknowledgeFilter(BaseModel):
     delivery_to: Optional[str] = None
     axis: Optional[str] = None
     axis_key: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: The OI detail page's own whole-header Confirm (S3, `PLAN-oi-header-list-detail.
+    #: md`): "Select all N matching" narrowed to one header, so pressing Confirm with
+    #: nothing ticked means exactly that OI and nothing else.
+    inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
 
 
 class AcknowledgeRowsRequest(BaseModel):
@@ -903,14 +907,37 @@ class PlaceOnPoRequest(BaseModel):
         return self
 
 
+class AutoPlaceInquiryFilter(BaseModel):
+    """The ONE scope the detail page's gear "Auto link" needs (S3,
+    `PLAN-oi-header-list-detail.md`): everything ticked, else the whole OI - never a
+    client-rebuilt copy of the worklist's own filter shape, because a header's Auto link
+    means exactly "this OI", nothing wider.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+
+
 class AutoPlaceRequest(BaseModel):
     """Run the cascade now - the worklist's own "Auto-link". Omitted `product_ids` means
     every product that currently has a raised or partly linked ORDER / RESERVE & ORDER /
     ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's "Link
-    selected"), and wins over `product_ids`."""
+    selected"), and wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole
+    cascade to one header's own rows, on top of whichever of the other two is also given.
+
+    `extra="forbid"` (S3, security review round 1 precedent on `AcknowledgeFilter`): an
+    unknown `filter` key used to be silently dropped by Pydantic's own default, which let
+    a caller believe `filter.inquiry_id` scoped the cascade when it did nothing at all -
+    the cascade then ran UNSCOPED, across every company's rows, so this is a
+    scoping-correctness fix and not just a stricter validator.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     product_ids: Optional[List[str]] = None
     row_ids: Optional[List[str]] = None
+    filter: Optional[AutoPlaceInquiryFilter] = None
     #: The LINK HORIZON (section 11) the page's "Link selected" carries. Omitted means the
     #: reorder plan's own horizon.
     link_up_to: Optional[date] = None
@@ -1087,3 +1114,82 @@ class OrderInquirySpoDetail(BaseModel):
     container_no: Optional[str] = None
     lines: List[OrderInquirySpoDetailLine] = []
     allocations: List[OrderInquiryDocumentAllocation] = []
+
+
+# ---------------------------------------------------------------------------------
+# The order inquiry HEADER (S2/S3, `PLAN-oi-header-list-detail.md`). One row per OI -
+# never one per instruction, which is what every schema above this line answers.
+
+
+class OrderInquiryHeaderOut(BaseModel):
+    """One row of the Documents view (AC-LS-01, plan "Contract"). Every field declared
+    here and asserted by a test - `response_model` silently drops an undeclared one."""
+
+    id: str
+    inquiry_no: Optional[str] = None
+    #: The pre-renumber value (S1) - kept so a number quoted in an old email still
+    #: finds this OI. `None` for every header born after the renumber.
+    legacy_inquiry_no: Optional[str] = None
+    raised_at: Optional[datetime] = None
+    raised_by_name: Optional[str] = None
+    #: The CORE `sales_orders.id`, null when this order never reached AutoCount.
+    sales_order_id: Optional[str] = None
+    project_sales_order_id: str
+    so_number: Optional[str] = None
+    so_date: Optional[date] = None
+    customer_name: Optional[str] = None
+    customer_code: Optional[str] = None
+    project_id: Optional[str] = None
+    project_title: Optional[str] = None
+    agent_name: Optional[str] = None
+    #: Non-cancelled rows only (AC-LS-05).
+    lines_total: int = 0
+    lines_to_confirm: int = 0
+    qty_total: str = "0"
+    #: DERIVED, never stored (AC-LS-02): `lines_to_confirm > 0`.
+    status: Literal["outstanding", "completed"] = "outstanding"
+
+
+class OrderInquiryRaiseHistoryEntryOut(BaseModel):
+    """One entry of the General tab's Raise history card (AC-RD-03). Newest first."""
+
+    kind: Literal["raised", "reconfirmed"]
+    by_name: Optional[str] = None
+    at: Optional[datetime] = None
+
+
+class OrderInquiryHeaderDetailOut(OrderInquiryHeaderOut):
+    """`GET /order-inquiry-headers/{id}` (AC-DT-01): the header plus the Order/Customer
+    blocks and the full raise history - a superset of the list row's own fields, so a
+    detail page opened straight from a deep link never has to re-fetch the list row."""
+
+    order_type: Optional[str] = None
+    raise_history: List[OrderInquiryRaiseHistoryEntryOut] = []
+
+
+class OrderInquiryRelatedPOOut(BaseModel):
+    """One purchase order this header's rows are linked to (AC-DT-03)."""
+
+    po_id: str
+    po_number: Optional[str] = None
+    supplier_name: Optional[str] = None
+    po_date: Optional[date] = None
+    lines_linked: int = 0
+    qty_linked: str = "0"
+
+
+class OrderInquiryRelatedSPOOut(BaseModel):
+    """One SPO this header's rows are linked to (AC-DT-03)."""
+
+    spo_number: Optional[str] = None
+    supplier_name: Optional[str] = None
+    lines_linked: int = 0
+    qty_linked: str = "0"
+
+
+class OrderInquiryRelatedDocumentsOut(BaseModel):
+    """`GET /order-inquiry-headers/{id}/related-documents` (AC-DT-03). Empty lists,
+    never null, when this header's rows link to nothing yet."""
+
+    purchase_orders: List[OrderInquiryRelatedPOOut] = []
+    spos: List[OrderInquiryRelatedSPOOut] = []

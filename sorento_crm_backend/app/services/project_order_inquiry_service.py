@@ -2742,7 +2742,7 @@ class ProjectOrderInquiryService:
                         if row.previous_delivery_date
                         else None
                     ),
-                    "link": build_order_inquiry_link(so_number),
+                    "link": build_order_inquiry_link(inquiry.id),
                 },
                 "today": date.today().isoformat(),
             }
@@ -3022,6 +3022,11 @@ class ProjectOrderInquiryService:
         from app.services.automation_triggers import build_order_inquiry_link
 
         so_number = facts.get("so_number")
+        # The order's own standard-demand header (S3, AC-LK-01) - `None` when the order
+        # never raised one (an all-covered decision), which `build_order_inquiry_link`
+        # reads the same way it always has: the unfiltered list.
+        existing_inquiry = self._existing(pso_id, None) if pso_id else None
+        inquiry_id = existing_inquiry.id if existing_inquiry else None
         self.db.info.setdefault(_UNDO_PENDING_KEY, []).append(
             {
                 "decision_id": str(decision_id),
@@ -3031,7 +3036,7 @@ class ProjectOrderInquiryService:
                 "revision_no": revision_no,
                 "lines": lines,
                 "headline": headline,
-                "link": build_order_inquiry_link(so_number),
+                "link": build_order_inquiry_link(inquiry_id),
                 "actor": self._handover_actor(actor_user_id),
                 #: Which savepoint this was earned under (C2, `_notify_purchasing`'s
                 #: own rule), so a sibling order's rollback cannot discard it.
@@ -7897,6 +7902,7 @@ class ProjectOrderInquiryService:
         actor_user_id: str,
         trigger: str,
         row_ids: Optional[Sequence[str]] = None,
+        inquiry_id: Optional[str] = None,
         link_up_to: Optional[date] = None,
         link_horizon: Optional[str] = None,
         redeal_drafts: bool = False,
@@ -7957,6 +7963,11 @@ class ProjectOrderInquiryService:
 
         Both default to false, so Confirm's own cascade and every existing caller keep the
         acknowledged-only gate they were written under.
+
+        `inquiry_id` (S3, `PLAN-oi-header-list-detail.md`) scopes the WHOLE pass to one
+        header's own rows, on top of `row_ids` / `product_ids` when either is also
+        given - the OI detail page's gear > Auto link, which must never touch a row of
+        another header even when it shares a product with this one.
         """
         link_up_to = self.resolve_link_horizon(link_up_to, link_horizon)
         # A row its drafts cover WHOLLY is `placed`, so a re-deal has to be able to see it:
@@ -7982,6 +7993,8 @@ class ProjectOrderInquiryService:
         query = self.db.query(OrderInquiryRow).filter(
             *self._linkable_row_clauses(states=states, include_awaiting=include_awaiting)
         )
+        if inquiry_id:
+            query = query.filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
         if row_ids is not None:
             # The NAMED rows and nothing else. A product scope is right for "this purchase
             # order was just confirmed, who was waiting for this item" and wrong for "this
@@ -9054,10 +9067,17 @@ def _build_handover_context(
     seen_so: set = set()
     locations: set = set()
     verb_keys: set = set()
+    # S3, AC-LK-01: the FIRST header this batch's own lines named - `_record_handover`
+    # already queues `order_inquiry_id` on every item, so nothing new has to be looked
+    # up here. A handover naming several orders still points the email at one header,
+    # the same way `so_numbers[0]` already picked one SO to lead the subject with.
+    first_inquiry_id: Optional[str] = None
 
     for item in pending:
         pso_id = item.get("pso_id")
         so_number = item.get("so_number")
+        if first_inquiry_id is None and item.get("order_inquiry_id"):
+            first_inquiry_id = item["order_inquiry_id"]
 
         if pso_id not in seen_pso:
             seen_pso.add(pso_id)
@@ -9105,7 +9125,7 @@ def _build_handover_context(
             "orders": orders,
             "lines": lines,
             "line_count": len(lines),
-            "link": build_order_inquiry_link(so_numbers[0] if so_numbers else None),
+            "link": build_order_inquiry_link(first_inquiry_id),
         },
         "actor": pending[0].get("actor"),
         # Asia/Kuala_Lumpur, not the server's own local time (nit, review round 1) -
