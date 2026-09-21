@@ -16,7 +16,10 @@ import type {
   ProductComboPartUpdate,
 } from '../types/productCombo.types';
 
-const combosKey = (productId: string | undefined) => ['product-combos', productId];
+// Exported so `useProductComboImage` (a sibling hook, S5) invalidates the
+// SAME query key a combo mutation here does - two different cache keys for
+// one list would leave a combo's own image stale after an upload.
+export const combosKey = (productId: string | undefined) => ['product-combos', productId];
 const soldWithKey = (productId: string | undefined) => ['product-sold-with', productId];
 
 /** The host's own combos, with their parts (AC-S1-1). */

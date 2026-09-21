@@ -17,10 +17,7 @@ import {
   useProductCombos,
   useUpdateProductComboPart,
 } from '../../hooks/useProductCombos';
-import {
-  deleteProductComboImage,
-  uploadProductComboImage,
-} from '../../services/productComboService';
+import { useProductComboImage } from '../../hooks/useProductComboImage';
 import { getProducts } from '../../services/productService';
 import type { ProductComboPartRow, ProductComboRow } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
@@ -129,60 +126,55 @@ function PartRow({
 }
 
 /**
- * The combo's own cover picture (AC-S5-2/S5-5): Upload when there is none,
- * else the thumbnail with Replace and Clear. Deliberately plain
- * `useState` + a direct service call rather than a query-cache mutation
- * hook - `onChanged` asks the PARENT'S already-existing list query to
- * refetch, so this control needs no react-query wiring of its own.
+ * The combo's own cover picture (AC-S5-2/S5-3/S5-5): Upload when there is
+ * none, else the thumbnail with Replace and Clear. Through
+ * `useProductComboImage`, the same query-cache mutation shape every other
+ * combo edit on this page already uses - the list refetches itself on
+ * success, so this control carries no `onChanged` callback of its own.
  */
 function ComboImageControl({
   combo,
   canEdit,
-  onChanged,
 }: {
   combo: ProductComboRow;
   canEdit: boolean;
-  onChanged: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const { uploadMutateAsync, deleteMutateAsync, isUploading, isDeleting } =
+    useProductComboImage(combo.host_product_id);
+  const busy = isUploading || isDeleting;
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFile = useCallback(
     async (file: File | undefined) => {
       if (!file) return;
-      setBusy(true);
       setError(null);
       try {
-        await uploadProductComboImage(combo.id, file);
-        onChanged();
+        await uploadMutateAsync({ comboId: combo.id, file });
       } catch (caught) {
         setError((caught as Error).message || 'Failed to upload the image');
       } finally {
-        setBusy(false);
         if (inputRef.current) inputRef.current.value = '';
       }
     },
-    [combo.id, onChanged],
+    [combo.id, uploadMutateAsync],
   );
 
   const handleClear = useCallback(async () => {
-    setBusy(true);
     setError(null);
     try {
-      await deleteProductComboImage(combo.id);
-      onChanged();
+      await deleteMutateAsync(combo.id);
     } catch (caught) {
       setError((caught as Error).message || 'Failed to clear the image');
-    } finally {
-      setBusy(false);
     }
-  }, [combo.id, onChanged]);
+  }, [combo.id, deleteMutateAsync]);
 
   if (!canEdit && !combo.image) return null;
 
   return (
-    <div className="flex items-center gap-3 border-b p-3">
+    // `flex-wrap` (AC-S5-5 extended): the thumbnail, Replace/Clear and the
+    // error text below crowd a single row off the edge at phone width.
+    <div className="flex flex-wrap items-center gap-3 border-b p-3">
       {/* Images only (AC-S5-2) - the accept attribute plus the backend's own
           content-type check, which is what actually refuses a non-image. */}
       <input
@@ -243,7 +235,9 @@ function ComboImageControl({
           Upload picture
         </Button>
       )}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {/* Its own line (AC-S5-5 extended): `w-full` forces a wrap onto a row
+          by itself rather than squeezing in beside the buttons. */}
+      {error ? <p className="w-full text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -259,7 +253,6 @@ interface ComboBlockProps {
   onAddPart: (comboId: string, productId: string) => void;
   addPartError: string | null;
   isAddingPart: boolean;
-  onImageChanged: () => void;
 }
 
 function ComboBlock({
@@ -273,7 +266,6 @@ function ComboBlock({
   onAddPart,
   addPartError,
   isAddingPart,
-  onImageChanged,
 }: ComboBlockProps) {
   const groupOptions = useMemo(
     () =>
@@ -335,7 +327,7 @@ function ComboBlock({
           </Button>
         ) : null}
       </div>
-      <ComboImageControl combo={combo} canEdit={canEdit} onChanged={onImageChanged} />
+      <ComboImageControl combo={combo} canEdit={canEdit} />
       <div className="space-y-3 p-3">
         {combo.parts.length === 0 ? (
           <p className="text-sm text-muted-foreground">No parts yet.</p>
@@ -401,7 +393,7 @@ export function ProductCombosSection({ productId }: { productId: string }) {
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canEdit = useHasPermission('master_data.products.edit');
-  const { data: combos, isLoading, isError, refetch: refetchCombos } = useProductCombos(productId);
+  const { data: combos, isLoading, isError } = useProductCombos(productId);
 
   const partProductIds = useMemo(
     () => [...new Set((combos ?? []).flatMap((combo) => combo.parts.map((p) => p.product_id)))],
@@ -483,7 +475,6 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                   addPartError?.comboId === combo.id ? addPartError.message : null
                 }
                 isAddingPart={addPart.isPending}
-                onImageChanged={() => void refetchCombos()}
               />
             ))}
           </div>
