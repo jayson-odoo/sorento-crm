@@ -85,6 +85,12 @@ FK seeded, never a borrowed row.
   preview and apply refuse it with reason `order_fully_delivered` under `line_not_found`,
   `rows_raised` 0, order not adopted, no OI row written; an order with an open line of another
   item and no open line for this item still reports `no_line_for_item`.
+- AC-S4-8 (Phase 3 follow-up, 21 Sep, PASS 2 finding on the AC-S4-5 replay) A line whose sheet
+  row was raised and then settled to an ACTIVE `so_supply_decisions` buy_qty/required_date
+  (`_apply_settle_recovery`, AC-RB-11) still restates in place on a re-upload of the same book:
+  the row count stays equal to the sheet row count, the settled row is not duplicated, and no
+  new row is raised onto an open line the first upload never touched, even though the row's own
+  live qty/date no longer literally matches what the sheet states for it.
 
 ## S5 Board and OI read the credit (FE, vitest)
 - AC-S5-1 Board line with a composition component `source: own_arrival` renders a "Received N" chip

@@ -62,13 +62,15 @@ Postgres only (`tests/_pg_fixture.py`, via `world()`). Every FK is seeded here t
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 
 from app.services import project_order_inquiry_import_service as importer
+from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from tests.test_oi_sheet_pairing_repair import _apply
+from tests.test_oi_sheet_rebuild_from_planning import _decision
 from tests.test_project_order_inquiry_import_migration import sheet, world
 
 from ._oi_book_fixture import book_of, open_lines
@@ -538,3 +540,134 @@ def test_ac_s4_6_open_line_of_another_item_still_reports_no_line_for_item():
         assert result["rows_line_not_found"] == 1, result
         assert result["line_not_found"][0]["reason"] == "no_line_for_item", result
         assert w.rows() == [], "a row was written despite no line holding this item"
+
+
+# --------------------------------------------------------------------------- #
+# AC-S4-8 (Phase 3 follow-up, 21 Sep) - a re-upload must restate a row the    #
+# line's own ACTIVE supply decision settled, not raise a fresh instruction    #
+# for it                                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_s4_8_reupload_restates_a_row_the_line_decision_settled():
+    """AC-S4-8. Plan section "AFTER (fix round, HEAD c6e3c77c1, AC-S4-5)", PASS 2 finding:
+    `_apply_settle_recovery` (AC-RB-11, `project_order_inquiry_import_service.py:2807-2833`)
+    settles a freshly-raised row's own live qty/date to the mirror's ACTIVE
+    `so_supply_decisions` `buy_qty`/`required_date` - the sheet's own literal figures survive
+    only in the row's `previous_qty`/`previous_delivery_date` columns and the "Was {qty} on
+    {date}" note. `_restated_existing` (`project_order_inquiry_import_service.py:602-633`)
+    matches a re-uploaded sheet row against a live row's item + its CURRENT qty + CURRENT
+    delivery_date, so a settled row no longer answers to the sheet's own figures on a
+    re-upload: R4's "a re-upload restates existing rows in place; row count stays equal to
+    the sheet row count" breaks, exactly the PASS 2 measurement on SO372176 (8 rows -> 11
+    after a re-upload, three new rows landing on lines the first upload never touched).
+
+    Three open lines, L1 (d1), L2 (d2), L3 (d3) - L3 is never named by the book, kept open
+    and untouched, the same shape SO372176's own L10/L11 held (open lines the FIRST upload
+    never reached). L1 carries an ACTIVE decision settling it to 30 @ d1+7; L2 and L3 carry
+    none. A book with rows 40 @ d1 and 40 @ d2 is imported once: 2 rows, L1's own settled to
+    30 @ d1+7 with a "Was 40 on d1" note, L2's raised plain at 40 @ d2; L3 stays empty. The
+    SAME book is re-uploaded: the row count must STAY at 2 (no third row on L3 or anywhere
+    else), `rows_raised == 0` on the second apply, and L1's row must still be the SAME
+    settled row (30 @ d1+7, id unchanged) rather than replaced or duplicated.
+
+    RED today: L1's live row no longer states 40 @ d1 (the sheet's own figures for that row)
+    once settle has moved it to 30 @ d1+7, so `_restated_existing` cannot recognise the
+    re-uploaded 40 @ d1 row as the same instruction. It falls through into the date-order
+    pick (`_pick_lines_by_date_order`) as if it were a brand-new row; L3 is a genuinely FREE
+    candidate for this row's own item (`row_has_free` is true, the AC-LP-12 "bumped" branch),
+    so the row is raised as a FRESH second instruction rather than silently skipped as
+    already-raised, landing 40 @ d1 on L3 - a line the first upload never touched at all,
+    taking the total from 2 to 3. Expected to fail on the row count after the second apply
+    (3 != 2), not on a fixture or import error.
+    """
+    d1, d2, d3 = date(2026, 1, 1), date(2026, 2, 1), date(2026, 3, 1)
+    settled_date = d1 + timedelta(days=7)
+    with world() as w:
+        order = w.order()
+        line1 = w.line(order, qty_ordered="100", required_date=d1)
+        line2 = w.line(order, qty_ordered="100", required_date=d2)
+        line3 = w.line(order, qty_ordered="100", required_date=d3)
+
+        # The mirror line has to exist before a decision can be seeded against it - adopted
+        # directly here (no upload has happened yet), matching how every sibling AC-RB-11
+        # fixture in `test_oi_sheet_rebuild_from_planning.py` seeds an active decision.
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror1 = w.mirror_of(line1)
+        _decision(w, mirror1, line1, buy_qty="30", required_date=settled_date)
+
+        data = book_of(w, order, [(40, d1), (40, d2)])
+
+        first = w.apply(data)
+        assert first["rows_raised"] == 2, first
+
+        rows = w.rows()
+        assert len(rows) == 2, [
+            (str(r.so_line_id), str(r.qty), r.delivery_date) for r in rows
+        ]
+
+        mirror1_id = str(mirror1.id)
+        mirror2_id = str(w.mirror_of(line2).id)
+        mirror3_id = str(w.mirror_of(line3).id)
+        row_on_line1 = next((r for r in rows if str(r.so_line_id) == mirror1_id), None)
+        row_on_line2 = next((r for r in rows if str(r.so_line_id) == mirror2_id), None)
+        assert row_on_line1 is not None, (
+            "line 1 must carry a row after the first import",
+            [(str(r.so_line_id), str(r.qty)) for r in rows],
+        )
+        assert row_on_line2 is not None, (
+            "line 2 must carry a row after the first import",
+            [(str(r.so_line_id), str(r.qty)) for r in rows],
+        )
+        assert not any(str(r.so_line_id) == mirror3_id for r in rows), (
+            "line 3 must stay untouched by the first import - the book never names it",
+            [(str(r.so_line_id), str(r.qty)) for r in rows],
+        )
+
+        # L1's row is SETTLED to the decision's own figures, not the sheet's literal 40 @ d1.
+        assert row_on_line1.qty == Decimal("30"), row_on_line1.qty
+        assert row_on_line1.delivery_date == settled_date, row_on_line1.delivery_date
+        assert row_on_line1.previous_qty == Decimal("40"), row_on_line1.previous_qty
+        assert row_on_line1.previous_delivery_date == d1, row_on_line1.previous_delivery_date
+        assert f"Was 40 on {d1.isoformat()}" in (row_on_line1.note or ""), row_on_line1.note
+
+        # L2 carries no decision, so its row is raised plain at the sheet's own figures.
+        assert row_on_line2.qty == Decimal("40"), row_on_line2.qty
+        assert row_on_line2.delivery_date == d2, row_on_line2.delivery_date
+        assert row_on_line2.previous_qty is None, row_on_line2.previous_qty
+
+        row_on_line1_id = row_on_line1.id
+
+        second = w.apply(data)
+        assert second["rows_raised"] == 0, (
+            "a re-upload of the same book must restate the line-1 row IN PLACE, not raise a "
+            "fresh instruction for a row the decision already settled",
+            second,
+        )
+
+        rows_after = w.rows()
+        assert len(rows_after) == 2, (
+            "re-uploading the same book must not change the OI row count - the settled "
+            "row's own qty/date no longer matching the sheet's literal figures must not "
+            "make _restated_existing treat the sheet row as a brand-new instruction that "
+            "lands on the untouched, genuinely-free line 3",
+            [(str(r.so_line_id), str(r.qty), r.delivery_date) for r in rows_after],
+        )
+        assert not any(str(r.so_line_id) == mirror3_id for r in rows_after), (
+            "line 3 must stay untouched by the re-upload too - the sheet's 40 @ d1 row is "
+            "restating line 1's already-settled row, not a new instruction",
+            [(str(r.so_line_id), str(r.qty), r.delivery_date) for r in rows_after],
+        )
+
+        mirror1_rows_after = [r for r in rows_after if str(r.so_line_id) == mirror1_id]
+        assert len(mirror1_rows_after) == 1, (
+            "line 1 must still carry exactly ONE row after the re-upload",
+            [(str(r.id), str(r.qty), r.delivery_date) for r in mirror1_rows_after],
+        )
+        assert mirror1_rows_after[0].id == row_on_line1_id, (
+            "the re-upload must restate the SAME settled row, not replace or duplicate it"
+        )
+        assert mirror1_rows_after[0].qty == Decimal("30"), mirror1_rows_after[0].qty
+        assert mirror1_rows_after[0].delivery_date == settled_date, (
+            mirror1_rows_after[0].delivery_date
+        )
