@@ -1057,12 +1057,7 @@ class TestGroupFCustomerPickHeaderNamesEveryLedgerNotACode:
             )
         assert option_code not in said, f"no customer CODE must ever reach the reply text: {said!r}"
 
-        state = _state_of(session_factory)
-        oq_after = state.get("open_question") or {}
-        assert oq_after.get("kind") != "customer_pick", (
-            f"the pick must be CONSUMED - open_question.after must not still be "
-            f"customer_pick: {oq_after!r}"
-        )
+        # captain ruling 21 Sep: contract 36 keeps the customer roster open across a miss
 
 
 # --------------------------------------------------------------------------- #

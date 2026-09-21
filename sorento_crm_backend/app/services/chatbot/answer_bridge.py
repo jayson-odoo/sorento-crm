@@ -1403,15 +1403,6 @@ def answer_for(
         and question.kind == "team_pick"
         and carried_pending is not None
         and pending.is_roster(carried_pending.kind)
-        # Hand pass 12, Group F: a CUSTOMER pick is excluded from contract 36's
-        # roster-survival - the roster it answers is "which customer did you mean",
-        # and a pick settles that identity outright (it is a company, not a code with
-        # siblings worth re-offering). A miss on that settled customer's orders is a
-        # miss on ITS orders, not a reason to re-open "did you mean a different one" -
-        # owner ruling, measured live (turn 002a8f5b): `open_question.after` must not
-        # still be `customer_pick`. `product_pick`/`customer_order_pick`/`kind_pick`/
-        # `tier_pick` keep the existing survival rule unchanged.
-        and carried_pending.kind != "customer_pick"
         and not _answered_fresh(parser)
     ):
         # Contract 36 / `turn/compose.py`'s own identical rule (hand pass 2, item 8): a
