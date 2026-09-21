@@ -300,3 +300,166 @@ Restored SRTBF11701's list price back to 1241.00 at the end (confirmed on its de
 `R-S10-3-1280.png`, `R-S10-4-375.png`, `R-S10-4-1280.png`, `R-S6-12-1280.png`,
 `R-S7-8-arrange-1280.png`, `R-S9-3-1280.png`, `R-S8-8-1280.png`, `R-S8-14-1280.png`,
 `R-S8-9-1280.png`
+
+## S11 check (HEAD ceda4f7d1)
+
+Scope: AC-S4-3 (amended), AC-S4-10 to AC-S4-14, plus a 375px usability check. Session `ptr10s11`,
+logged in as `tehjayson@gmail.com`, navigated by sidebar clicks from `/` throughout (Master Data
+Management > Products > All Products, then Dealer Kit > Room Designer > Price Tag Requests).
+
+- **AC-S4-3 (amended): PASS.** Product SRTWT1212-SS-GM-DIY, Overview detail tabpanel text dump
+  contains no "price tag" string anywhere (Basic Information / Pricing Summary / Price floor /
+  Specifications / Tracking Flags / Combos / Sold with, no such row). Edit Product form's "Basic
+  Information" tab (the Overview edit form) lists exactly Product Code, Product Name, Description,
+  Category, Brand, Barcode, Item Type, Active Status, Chat Search, Exclude from reorder planning -
+  no "Price tag description" textarea. (`S11-AC-S4-3-edit-form-1280.png`)
+- **AC-S4-10: PASS.** Specifications tab on SRTWT1212-SS-GM-DIY shows "PRICE TAG DESCRIPTION"
+  directly under "PRODUCT DESCRIPTION", reading "(none)" (`S11-AC-S4-10-spec-tab-none-1280.png`).
+  On SRTKS8547 (already carried a stored description "Undermount double-bowl sink. Includes waste
+  kit.") "Edit price tag description" swapped it for a prefilled textarea with Insert field / Save
+  / Cancel. Typed `{{product.name}} in {{spec.material}}`, Save persisted it; reloaded the product
+  detail page (fresh `open` of the same URL with `?tab=specifications`) and the saved template was
+  still shown, not the old text (`S11-AC-S4-10-saved-persisted-1280.png`). Cancel on
+  SRTWT1212-SS-GM-DIY discarded a typed-in template back to "(none)". Escape on SRTKS8547: typed
+  "TEMP ESCAPE TEST" over the saved template, pressed Escape, box reverted to read-only showing
+  the saved `{{product.name}} in {{spec.material}}` unchanged - the Escape edit was never saved.
+- **AC-S4-11: PASS.** Insert field dialog's own field list contains exactly two group labels,
+  "PRODUCT" (Code, Name, Dimensions, Spec lines, Price tag description, List price, Sell price,
+  Currency, Accessories) and "SPECS" (~50 spec fields including Material); no Line, Set or part
+  group anywhere in the list. Clicked "Material {{spec.material}}" with the caret placed at the
+  start of the textarea's second line (Home key): the content became
+  `Undermount double-bowl sink.\n{{spec.brand}}Includes waste kit.{{spec.material}}` after two
+  inserts, i.e. each token landed exactly at the caret, not appended to the end. Testing note, not
+  a product defect: the field list is its own scroll container inside the dialog, and clicking a
+  button that is scrolled out of view silently closed the dialog without inserting anything -
+  `scrollintoview` on the target button before every click fixed this consistently.
+  (`S11-AC-S4-11-insert-field-dialog-1280.png`, `S11-AC-S4-11-scrolled-to-material-1280.png`)
+- **AC-S4-12: DEFECT.** On SRTKS8547 with template `{{spec.material}} tap`, "Prints as:" read
+  "Stainless steel tap" - the spec token resolves correctly to the readable form (matching the
+  casing the same tab's own Specification/Value table already uses for this field, "Stainless
+  steel" sentence-case, not the AC text's illustrative "Stainless Steel" title-case - judged
+  consistent with the app's existing convention, not a second defect). But with template
+  `{{product.name}} in {{spec.material}}` "Prints as:" read **"in Stainless steel"** - `
+  {{product.name}}` resolved to nothing where "SRTKS8547" (or "SRTWT1212-SS-GM-DIY" on the other
+  product) was expected. Reproduced on two different products, confirmed not a debounce/timing
+  issue (re-checked after a 1s wait, value unchanged), reproduced again with the template reduced
+  to just `{{product.name}}` alone -> "Prints as:" empty. (`S11-AC-S4-12-prints-as-check-1280.png`,
+  `S11-AC-S4-12-DEFECT-product-name-blank-1280.png`,
+  `S11-AC-S4-12-DEFECT-product-name-blank-srtks8547-1280.png`)
+- **AC-S4-13: DEFECT.** Opened PT-202609-0018 (`designing`, line product SRTKS8547) in the
+  designer. Tag 1a already carries a text layer bound to Content
+  `{{product.price_tag_description}}\n{{product.code}}`. Editing SRTKS8547's price tag description
+  (AC-S4-10/12 above) triggered this request's own auto-apply (S8): the tag's "Review product data
+  changes" dialog showed PRICE TAG DESCRIPTION was "Undermount double-bowl sink. Includes waste
+  kit." -> now `{{product.name}} in {{spec.material}}`, i.e. the tag's pin correctly carries the
+  raw stored template. On the canvas, though, that layer renders only **"SRTKS8547"** - the
+  `{{product.code}}` line - the `{{product.price_tag_description}}` line renders as nothing, not
+  the expected "SRTKS8547 in Stainless Steel". Ruled out a box-clipping artifact: grew the layer's
+  H from 10mm to 30mm (Inspector > Transform) and still only the single "SRTKS8547" line appeared,
+  vertically centered as it would be if the first line is genuinely an empty string, not truncated
+  - reverted H back to 10mm and Saved to leave the tag as found. Did not additionally test a
+  part-slot binding (`subjectPart`), since the base product-level token is already broken and a
+  part-level check depends on the same resolution path. (`S11-AC-S4-13-designer-overview-1280.png`,
+  `S11-AC-S4-13-layer-selected-1280.png`, `S11-AC-S4-13-zoomed-1280.png`,
+  `S11-AC-S4-13-resized-check-1280.png`, `S11-review-dialog-1280.png`,
+  `S11-AC-S4-13-after-dismiss-1280.png`, `S11-restored-height-1280.png`)
+- **AC-S4-14: NOT INDEPENDENTLY RE-TESTED.** No new backend behaviour to check per the AC's own
+  text ("no new pytest"); `GET`/`PATCH /products/{id}` round-tripping `price_tag_description` was
+  exercised indirectly by every Save above (AC-S4-10) and by the Specifications tab showing the
+  saved value after a fresh page load.
+- **375px usability check: PASS.** Specifications tab (read-only and mid-edit, with the textarea,
+  Insert field / Save / Cancel and "Prints as:" line) is fully legible and not clipped at 375
+  wide. (`S11-AC-check6-spec-tab-375.png`, `S11-AC-check6-edit-mode-375.png`)
+
+Product left edited (intentionally, dev copy, task authorized): SRTKS8547 now carries
+`price_tag_description = "{{product.name}} in {{spec.material}}"` (was "Undermount double-bowl
+sink. Includes waste kit."); its price tag request tag 1a's pin picked this up via auto-apply and
+was Dismissed (not rolled back) to clear the red dot.
+
+### Evidence files (S11 check)
+
+`S11-AC-S4-3-edit-form-1280.png`, `S11-AC-S4-10-spec-tab-none-1280.png`,
+`S11-AC-S4-10-saved-persisted-1280.png`, `S11-AC-S4-11-insert-field-dialog-1280.png`,
+`S11-AC-S4-11-scrolled-to-material-1280.png`, `S11-AC-S4-12-prints-as-check-1280.png`,
+`S11-AC-S4-12-DEFECT-product-name-blank-1280.png`,
+`S11-AC-S4-12-DEFECT-product-name-blank-srtks8547-1280.png`,
+`S11-AC-S4-13-designer-overview-1280.png`, `S11-AC-S4-13-layer-selected-1280.png`,
+`S11-AC-S4-13-zoomed-1280.png`, `S11-AC-S4-13-resized-check-1280.png`,
+`S11-review-dialog-1280.png`, `S11-AC-S4-13-after-dismiss-1280.png`,
+`S11-restored-height-1280.png`, `S11-AC-check6-spec-tab-375.png`,
+`S11-AC-check6-edit-mode-375.png`
+
+## S11 re-check (backend fix applied to `resolve-prices` response schema; coordinator ruling on AC-S4-12)
+
+Coordinator ruling carried into this re-check: the AC-S4-12 "product.name renders empty" finding
+above is NOT a defect - both products used (SRTWT1212-SS-GM-DIY, SRTKS8547) have `name == code`,
+and the app's long-standing `nameOrBlankIfCode` rule intentionally blanks a name that only repeats
+the code. Recorded as pass below using `{{product.code}}` instead. Session `ptr10s11b`, same rules
+(sidebar navigation, `get url` before reads, closed only its own session at the end).
+
+1. **AC-S4-12, re-tested with `{{product.code}}`: PASS.** On SRTKS8547's Specifications tab, set
+   the template to `{{product.code}} in {{spec.material}}`. "Prints as:" read **"SRTKS8547 in
+   Stainless steel"** - both tokens resolve. Saved. (`S11b-AC-S4-12-prints-as-code-1280.png`)
+2. **AC-S4-13, line/parent subject: PASS (backend fix confirmed).** Opened PT-202609-0018's
+   designer fresh (`open` to the `/design` URL, i.e. a hard reload, not a soft client nav). Tag
+   1a's text layer bound to `{{product.price_tag_description}}{{product.code}}` with subject
+   Parent/SRTKS8547 now renders **"SRTKS8547 in Stainless Steel"** on the canvas (confirmed at
+   100%/146%/232% zoom - previously this rendered nothing for the first line). The edit to
+   SRTKS8547's template (step 1) auto-applied to both tag 1a and 1b via S8: each tag's "Review
+   product data changes" dialog showed PRICE TAG DESCRIPTION **WAS** `{{product.name}} in
+   {{spec.material}}` **NOW** `{{product.code}} in {{spec.material}}` (raw templates, not
+   resolved), matching the request's expected format; Dismissed both.
+   (`S11b-AC-S4-13-canvas-resolved-1280.png`, `S11b-AC-S4-13-zoomed-1280.png` /
+   `S11b-AC-S4-13-max-zoom-1280.png` / `S11b-AC-S4-13-100-1280.png`,
+   `S11b-AC-S4-13-review-1a-1280.png`, `S11b-AC-S4-13-review-1b-1280.png`)
+3. **AC-S4-13, part subject: DEFECT (different cause, not yet fixed).** Selected tag 1a's
+   `{{product.price_tag_description}}` layer, changed its subject via the Product dropdown from
+   Parent to the open-group candidate **"SRTKT1871SS (this tag)"** (options were Parent
+   `SRTKS8547` plus a "Kitchen Tap" group listing both candidates, matching AC-S6-4's picker
+   shape). With SRTKT1871SS carrying no price tag description yet, the canvas rendered only
+   **"SRTKT1871SS"** (the `{{product.code}}` line) - the description line was empty, as expected
+   for a part with no template. (`S11b-AC-part-subject-empty-1280.png`) Then, on SRTKT1871SS's own
+   Specifications tab, set price tag description to `{{product.code}} part` and Saved (DB
+   confirmed: `products.price_tag_description = '{{product.code}} part'` for SRTKT1871SS). Back in
+   the designer: no red dot / no "Review product data changes" appeared for either tag (unlike the
+   line-level edit in step 2, which did trigger S8 auto-apply); the canvas still rendered only
+   "SRTKT1871SS", no "SRTKT1871SS part" line, after clicking "Check product data", after a full
+   `open` hard-reload of the `/design` URL, and after leaving and re-entering via the request
+   detail page. (`S11b-AC-part-template-check-1280.png`, `S11b-AC-part-zoom-check-1280.png`)
+   Traced the root cause via the SAME Bearer token the page itself uses (captured from
+   `agent-browser network request <id> --json`), calling
+   `POST /api/v1/dealer-kit/price-tag-requests/78c06810-10f3-470d-812c-4cf743d69635/resolve-prices`
+   directly: in that response, tag 1a's top-level (line-product) `price_tag_description` reads
+   `"{{product.code}} in {{spec.material}}"` (correct, confirms the coordinator's backend fix), but
+   **both entries in `parts[]` (SRTKT1871SS and SRTKT1872SS) carry `"price_tag_description": null`**
+   even though SRTKT1871SS's own DB row and its own Specifications tab both show the saved
+   template. So this is not a frontend resolution bug and not the same cause as the original
+   AC-S4-13 defect: the `resolve-prices` endpoint's line/parent-product serialization was fixed,
+   but its `parts[]` row serialization still drops `price_tag_description` - a part-bound text
+   layer can never resolve the token no matter what the part's own template says, until that
+   `parts[]` row also carries the field (this is exactly what AC-S4-4 requires: "on the line's
+   product row AND on every part row"). Reverted the layer's subject back to Parent
+   (`SRTKS8547`, the "(None)" slot binding / default product) via the same dropdown and clicked
+   Save to restore the tag's design to its pre-test state (confirmed by re-selecting the layer:
+   label and Inspector both show no part suffix, "Saved 12:42" shown).
+   (`S11b-revert-subject-dropdown-1280.png`, `S11b-subject-reverted-1280.png`,
+   `S11b-final-state-1280.png`)
+
+Products left edited (dev copy, intentional): SRTKS8547's `price_tag_description` is now
+`{{product.code}} in {{spec.material}}` (changed from the `{{product.name}} in ...}}` set in the
+first S11 check, per this re-check's step 1); SRTKT1871SS's `price_tag_description` is now
+`{{product.code}} part` (was empty). PT-202609-0018 tag 1a/1b data-change dots were Dismissed
+again; tag 1a's canvas layer subject was tested against the part then reverted back to Parent and
+saved, so the tag's own design is unchanged from before this re-check.
+
+### Evidence files (S11 re-check)
+
+`S11b-AC-S4-12-prints-as-code-1280.png`, `S11b-AC-S4-13-canvas-resolved-1280.png`,
+`S11b-AC-S4-13-canvas-zoomed-1280.png`, `S11b-AC-S4-13-resized-full-text-1280.png`,
+`S11b-AC-S4-13-max-zoom-1280.png`, `S11b-AC-S4-13-fit-view-1280.png`,
+`S11b-AC-S4-13-100-1280.png`, `S11b-AC-S4-13-review-1a-1280.png`,
+`S11b-AC-S4-13-review-1b-1280.png`, `S11b-product-combobox-1280.png`,
+`S11b-product-dropdown-open-1280.png`, `S11b-product-dropdown-open2-1280.png`,
+`S11b-AC-part-subject-empty-1280.png`, `S11b-AC-part-template-check-1280.png`,
+`S11b-AC-part-zoom-check-1280.png`, `S11b-revert-subject-dropdown-1280.png`,
+`S11b-subject-reverted-1280.png`, `S11b-final-state-1280.png`
