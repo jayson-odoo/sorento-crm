@@ -628,8 +628,13 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Now the user edits the list by hand.
       fireEvent.click(screen.getByLabelText('SO2 - P2'));
 
-      // A further range change - even one whose candidates would re-select SO2 - must not
-      // override the user's own edit.
+      // A further range change - even one whose candidates would re-select SO2 (still
+      // rows_in_range > 0) - must not override the user's own edit. `rows_awaiting` is
+      // bumped to 4 (was 0) so the fresh payload's own arrival is independently
+      // observable in the DOM - waiting on the CALL COUNT alone (the review-kill finding,
+      // B3) proves only that the fetch fired, not that its result was applied, so a build
+      // that dropped `touchedOrdersRef.current` from the guard could still slip through if
+      // the click happened before the state update flushed.
       getCandidateOrders.mockResolvedValueOnce([
         {
           so_number: 'SO2',
@@ -637,13 +642,23 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           customer_name: 'C2',
           rows_total: 1,
           rows_in_range: 1,
-          rows_awaiting: 0,
+          rows_awaiting: 4,
           first_delivery: '2026-09-01',
           last_delivery: '2026-09-05',
         },
       ]);
       fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
-      await waitFor(() => expect(getCandidateOrders).toHaveBeenCalledTimes(3));
+
+      // Wait on the EFFECT'S VISIBLE RESULT - the third payload's own awaiting count has
+      // rendered, so the re-derive effect has definitely run again with fresh
+      // `rows_in_range > 0` data for SO2 - before checking the guard held.
+      await waitFor(() =>
+        expect(screen.getByTestId('option-body-SO2').textContent).toContain('4 awaiting ack'),
+      );
+      // Fresh data says SO2 qualifies for pre-selection again; the user's own untick must
+      // still win. Removing `touchedOrdersRef.current` from the guard (RunPlanningModal.tsx)
+      // re-checks SO2 here and fails this assertion.
+      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(false);
 
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit).toHaveBeenCalledWith(

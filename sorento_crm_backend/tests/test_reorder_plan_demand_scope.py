@@ -43,6 +43,7 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOLineAllocation,
     SOSupplyDecision,
 )
 from app.models.user import User
@@ -190,7 +191,62 @@ def _project_so_with_lines(db, *, lines: list[dict], company_id: str = SORENTO_C
         db.add(row)
         rows.append(row)
     db.flush()
-    return {"so_number": so_number, "so": so, "pso": pso, "rows": rows}
+    return {
+        "so_number": so_number, "so": so, "pso": pso, "inquiry": inquiry,
+        "company_id": company_id, "rows": rows,
+    }
+
+
+def _add_form_row(db, project_so: dict, *, product_code: str, warehouse_code: str, qty,
+                   delivery_date, ack_state: str = ACK_ACKNOWLEDGED,
+                   inquiry_state: str = INQUIRY_RAISED) -> OrderInquiryRow:
+    """A FORM-leg row (`demand.py`'s third leg, `supply_decision_id IS NULL`) on the SAME
+    Order Inquiry as `project_so`'s confirmed lines - matched by `item_code`/
+    `stock_location` rather than a core sales-order line, so it shares the inquiry's own
+    SO number and `so_scoped` (`_SO_SCOPE_JOIN_SQL`, `demand.py:471`) sees it exactly as it
+    sees a confirmed row on the same SO.
+    """
+    row = OrderInquiryRow(
+        id=_u(), company_id=project_so["company_id"], order_inquiry_id=project_so["inquiry"].id,
+        so_line_id=None, item_code=product_code, stock_location=warehouse_code, qty=qty,
+        verb=IV_ORDER, state=inquiry_state, supply_decision_id=None,
+        ack_state=ack_state, delivery_date=delivery_date,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _add_reserve_claim(db, project_so: dict, *, product_id, warehouse_id, qty,
+                        required_date=None) -> None:
+    """A confirmed Project Reserve claim on `project_so`'s own PSO (`so_line_allocations`,
+    `source_type='reserve'`) - the seed shape `tests/scm/test_plan_horizon_review_fixes.py`'s
+    `_project_reserve` uses, adapted to hang off an EXISTING project SO (there via its own
+    throwaway one) so the claim's SO number is `project_so`'s, which is what
+    `_project_supply_reduction_map`'s own SO join (`reorder_run_service.py` ~1263) scopes on.
+    Reuses the PSO's one ACTIVE decision (`so_supply_decisions` allows only one per PSO) via
+    a second, otherwise-unrelated core line/PSO line - the join needs `d.project_sales_order_id`
+    to match, not this specific line to be IN `d.line_snapshots`.
+    """
+    core_line = SalesOrderLine(
+        id=_u(), sales_order_id=project_so["so"].id, product_id=product_id,
+        warehouse_id=warehouse_id, qty_ordered=qty, qty_delivered=0, line_status="open",
+        required_date=required_date, company_id=project_so["company_id"],
+    )
+    db.add(core_line)
+    db.flush()
+    pso_line = ProjectSalesOrderLine(
+        id=_u(), company_id=project_so["company_id"], project_sales_order_id=project_so["pso"].id,
+        line_no=999, product_id=product_id, qty=qty, core_sales_order_line_id=core_line.id,
+    )
+    db.add(pso_line)
+    db.flush()
+    alloc = SOLineAllocation(
+        id=_u(), so_line_id=pso_line.id, source_type="reserve",
+        warehouse_id=warehouse_id, qty=qty, company_id=project_so["company_id"],
+    )
+    db.add(alloc)
+    db.flush()
 
 
 def _retail_row(db, *, product_id, warehouse_id, qty, so_number, required_date):
@@ -206,26 +262,60 @@ def _retail_row(db, *, product_id, warehouse_id, qty, so_number, required_date):
     return so, line
 
 
-def _committed_for(db, run_id, pid) -> float:
+def _unlocated_retail_row(db, *, product_id, qty, so_number, required_date):
+    """A retail line naming NO warehouse - `_unlocated_demand_map`/`_apply_unlocated_demand`
+    (`reorder_run_service.py` ~1624/1724), landed on whichever of the product's rows holds
+    the most stock. Our seed has exactly one (wid), so it lands there deterministically."""
+    so = SalesOrder(id=_u(), so_number=so_number, status="open", demand_class="retail")
+    db.add(so)
+    db.flush()
+    line = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=product_id, warehouse_id=None,
+        qty_ordered=qty, qty_delivered=0, line_status="open", required_date=required_date,
+    )
+    db.add(line)
+    db.flush()
+    return so, line
+
+
+def _inputs_for(db, run_id, pid) -> dict:
     row = db.execute(
         text(
-            "SELECT inputs FROM scm.reorder_recommendation "
+            "SELECT id::text AS id, inputs FROM scm.reorder_recommendation "
             "WHERE run_id = :r AND product_id = :p AND rec_type IN ('buy', 'covered') LIMIT 1"
         ),
         {"r": run_id, "p": pid},
     ).mappings().first()
     assert row is not None, "expected a recommendation row for the product"
-    return float((row["inputs"] or {}).get("committed") or 0)
+    return dict(row)
+
+
+def _committed_for(db, run_id, pid) -> float:
+    return float((_inputs_for(db, run_id, pid)["inputs"] or {}).get("committed") or 0)
 
 
 def _seed_scope_universe(db) -> dict:
-    """T4-T7's shared seed (UAC seed paragraph): one retail line in range, SO A carrying
-    an in-range acked row, an OUT-of-range acked row and an in-range AWAITING row, and SO B
-    carrying one in-range acked row - all one product x warehouse, so a run's committed
-    figure is a single, comparable number.
+    """T4-T8's shared seed (UAC seed paragraph, widened for the B1/B2 review-kill gaps):
+    one retail line in range, SO A carrying an in-range acked row, an OUT-of-range acked
+    row and an in-range AWAITING row, and SO B carrying one in-range acked row - all one
+    product x warehouse, so a run's committed figure is a single, comparable number.
+
+    B1 (review kill): SO A and SO B each also carry a FORM-leg row (`supply_decision_id
+    IS NULL`, matched by item_code/warehouse rather than a confirmed decision) - distinct
+    quantities (5 / 3) so a broken `so_scoped` join on the FORM leg specifically (as
+    opposed to the confirmed leg, which T4/T5 already exercised) is caught: SO B's form
+    row must never appear in a run scoped to SO A alone.
+
+    B2 (review kill): a Reserve claim (`so_line_allocations`, `source_type='reserve'`)
+    against SO A (qty 6) and one against SO B (qty 2) - distinct quantities so a broken
+    `_project_supply_reduction_map` SO join is caught the same way; and one retail line
+    naming no warehouse (qty 9) - `_apply_unlocated_demand` must add it for a
+    retail/unscoped run and must NOT for a project-scoped one.
     """
-    wid = _mk_warehouse(db, _code("WH"))
-    pid = _mk_product(db, _code("P"))
+    wcode = _code("WH")
+    pcode = _code("P")
+    wid = _mk_warehouse(db, wcode)
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, wid, 0)
     _mk_demand(db, pid, wid, 0.0)
     _link(db, pid, _mk_supplier(db, f"{MARKER} Supplier"))
@@ -242,6 +332,23 @@ def _seed_scope_universe(db) -> dict:
     ])
     _retail_row(db, product_id=pid, warehouse_id=wid, qty=7, so_number=_code("SOR"),
                 required_date=date(2026, 9, 15))
+
+    # B1 - one form-leg row per SO, in range, acked, distinct quantities.
+    _add_form_row(db, so_a, product_code=pcode, warehouse_code=wcode, qty=5,
+                  delivery_date=date(2026, 9, 12))
+    _add_form_row(db, so_b, product_code=pcode, warehouse_code=wcode, qty=3,
+                  delivery_date=date(2026, 9, 22))
+
+    # B2 - one reserve claim per SO, in range, distinct quantities.
+    _add_reserve_claim(db, so_a, product_id=pid, warehouse_id=wid, qty=6,
+                       required_date=date(2026, 9, 5))
+    _add_reserve_claim(db, so_b, product_id=pid, warehouse_id=wid, qty=2,
+                       required_date=date(2026, 9, 25))
+
+    # B2 - one unlocated retail line, in range.
+    _unlocated_retail_row(db, product_id=pid, qty=9, so_number=_code("SOU"),
+                          required_date=date(2026, 9, 18))
+
     db.flush()
     return {"wid": wid, "pid": pid, "so_a": so_a["so_number"], "so_b": so_b["so_number"]}
 
@@ -322,6 +429,18 @@ def test_t3_replan_carries_demand_class_and_so_numbers_onto_the_new_run(scm_app)
 # =============================================================================
 
 def test_t4_project_scoped_to_one_so_counts_only_that_sos_in_range_acked_qty(scm_app):
+    """committed: SO A's confirmed in-range qty (11) + SO A's FORM-leg row (5) = 16 - SO
+    B's form row (3) and reserve (2) must NOT leak in, which is what would happen if the
+    `so_scoped` join were missing from the FORM leg specifically
+    (`demand.py:807`/`_SO_SCOPE_JOIN_SQL` at `demand.py:471`) rather than only the
+    confirmed leg (`demand.py:733`) - B1 (review kill).
+
+    `project_supply_reduction`: SO A's own reserve claim (6) only - SO B's (2) must not
+    leak in, which is what a missing/incorrect SO join on
+    `_project_supply_reduction_map` (`reorder_run_service.py` ~1263-1268, called from
+    `_apply_project_supply_reduction`'s `scoped_so_numbers` line ~1314) would let through -
+    B2 (review kill).
+    """
     _, db, _, _ = scm_app
     u = _seed_scope_universe(db)
 
@@ -332,10 +451,14 @@ def test_t4_project_scoped_to_one_so_counts_only_that_sos_in_range_acked_qty(scm
     )
     svc.run_reorder(created["run_id"], db=db)
 
-    assert _committed_for(db, created["run_id"], u["pid"]) == 11.0
+    inputs = _inputs_for(db, created["run_id"], u["pid"])["inputs"]
+    assert float(inputs.get("committed") or 0) == 16.0
+    assert float(inputs.get("project_supply_reduction") or 0) == 6.0
 
 
 def test_t5_project_with_no_order_scope_counts_every_in_range_acked_so(scm_app):
+    """committed: (SO A confirmed 11 + form 5) + (SO B confirmed 13 + form 3) = 32 - an
+    unscoped Project run nets every project order in range, both legs, both SOs."""
     _, db, _, _ = scm_app
     u = _seed_scope_universe(db)
 
@@ -346,24 +469,42 @@ def test_t5_project_with_no_order_scope_counts_every_in_range_acked_so(scm_app):
     )
     svc.run_reorder(created["run_id"], db=db)
 
-    assert _committed_for(db, created["run_id"], u["pid"]) == 24.0
+    assert _committed_for(db, created["run_id"], u["pid"]) == 32.0
 
 
-def test_t6_retail_counts_only_the_retail_line(scm_app):
+def test_t6_retail_counts_the_retail_line_plus_unlocated_and_ignores_so_numbers(scm_app):
+    """committed: the retail located line (7) + the unlocated retail line (9) = 16 - the
+    `demand_class != "project"` gate on `_apply_unlocated_demand`
+    (`reorder_run_service.py:1624`, called from `_plan_per_warehouse`) must still run for a
+    retail-scoped plan, or the 9 never lands.
+
+    `so_numbers=[so_a]` is passed here even though `demand_class='retail'` (a direct
+    service call bypasses the HTTP-level "so_numbers needs project" validator, T2) so this
+    also proves `_apply_project_supply_reduction`'s `scoped_so_numbers = so_numbers if
+    (so_numbers and demand_class == "project") else None` (`reorder_run_service.py:1314`)
+    checks `demand_class`, not merely `so_numbers` truthiness: `project_supply_reduction`
+    must be BOTH reserves (6 + 2 = 8), unscoped, because the claimed stock is real supply
+    regardless of which demand leg this run is examining - a guard that dropped the
+    `demand_class` check would instead scope it to SO A alone (6).
+    """
     _, db, _, _ = scm_app
     u = _seed_scope_universe(db)
 
     created = svc.create_run(
         db, [], enqueue=False,
         plan_horizon_start=date(2026, 8, 1), plan_horizon_date=date(2026, 10, 31),
-        demand_class="retail", so_numbers=[],
+        demand_class="retail", so_numbers=[u["so_a"]],
     )
     svc.run_reorder(created["run_id"], db=db)
 
-    assert _committed_for(db, created["run_id"], u["pid"]) == 7.0
+    inputs = _inputs_for(db, created["run_id"], u["pid"])["inputs"]
+    assert float(inputs.get("committed") or 0) == 16.0
+    assert float(inputs.get("project_supply_reduction") or 0) == 8.0
 
 
 def test_t7_no_demand_class_is_unchanged_behaviour(scm_app):
+    """committed: retail (7) + unlocated (9) + SO A (11+5) + SO B (13+3) = 48 - every leg,
+    every SO, the unlocated gate included (demand_class None != "project")."""
     _, db, _, _ = scm_app
     u = _seed_scope_universe(db)
 
@@ -374,7 +515,7 @@ def test_t7_no_demand_class_is_unchanged_behaviour(scm_app):
     )
     svc.run_reorder(created["run_id"], db=db)
 
-    assert _committed_for(db, created["run_id"], u["pid"]) == 31.0
+    assert _committed_for(db, created["run_id"], u["pid"]) == 48.0
 
 
 def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app):
@@ -388,19 +529,22 @@ def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app
     )
     svc.run_reorder(created["run_id"], db=db)
 
-    row = db.execute(
-        text(
-            "SELECT id::text AS id, inputs FROM scm.reorder_recommendation "
-            "WHERE run_id = :r AND product_id = :p AND rec_type IN ('buy', 'covered') LIMIT 1"
-        ),
-        {"r": created["run_id"], "p": u["pid"]},
-    ).mappings().first()
-    assert row is not None
+    row = _inputs_for(db, created["run_id"], u["pid"])
 
     out = dbs.demand_for_recommendation(db, row["id"])
 
-    assert [line["so_number"] for line in out["lines"]] == [u["so_a"]]
-    assert out["committed_total"] == float((row["inputs"] or {}).get("committed"))
+    # SO A alone, but TWO lines now (B1): the confirmed row (named by its own SO number)
+    # and the form row (named by its Order Inquiry's own `inquiry_no` - it has no
+    # reconciled book line to hang an SO number off, `demand_breakdown_service.py:657`).
+    # SO B's form row (qty 3) must be absent - if the SO join were missing on the drill's
+    # own FORM leg, `len(lines)` would be 3 and `committed_total` would be 19, not 16.
+    assert len(out["lines"]) == 2
+    assert sorted(line["source"] for line in out["lines"]) == [
+        "order_inquiry_confirmed", "order_inquiry_form",
+    ]
+    confirmed = next(line for line in out["lines"] if line["source"] == "order_inquiry_confirmed")
+    assert confirmed["so_number"] == u["so_a"]
+    assert out["committed_total"] == float((row["inputs"] or {}).get("committed")) == 16.0
 
 
 # =============================================================================
