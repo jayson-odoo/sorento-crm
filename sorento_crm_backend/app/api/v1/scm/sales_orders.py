@@ -82,7 +82,10 @@ def list_sales_orders(
     priority: Optional[str] = Query(None),
     source: Optional[str] = Query(
         None,
-        description="Where the order came from: inquiry | upload. Omit for all.",
+        description=(
+            "Where the order came from: autocount | inquiry | upload | history | manual. "
+            "Omit for all."
+        ),
     ),
     date_from: Optional[date] = Query(None, description="Earliest order date, inclusive."),
     date_to: Optional[date] = Query(None, description="Latest order date, inclusive."),

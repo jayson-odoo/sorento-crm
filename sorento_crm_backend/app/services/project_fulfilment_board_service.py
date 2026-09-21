@@ -78,6 +78,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services import project_line_draft_service
 from app.services.error_handler import AppException
+from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
     ProjectSupplyService,
@@ -2188,34 +2189,39 @@ class FulfilmentBoardService:
     def _line_numbers(self, records: Sequence[tuple]) -> Dict[str, int]:
         """A line number per core line, because the core table has none.
 
-        Derived per sales order by (required date nulls last, item code, line id), which is
-        the same deterministic rule adoption uses to number the mirror - so the board and the
-        sheet call the same line by the same number. Where a mirror line ALREADY exists and
-        numbers every contributing line of that order distinctly, its numbers win: the mirror
-        is what the sheet shows, and Re-sync can renumber a later line.
+        `project_line_numbering.number_lines` (B1 review round): AutoCount's own `line_no`
+        wins once every contributing line of the order carries one, distinctly - gaps and
+        all. Otherwise every line falls back to a DERIVED 1..n, by (required date nulls
+        last, item code, line id) - the same rule `_resolve_core_line` and adoption's own
+        `_mirror` share, so a key the board hands out is readable by both without a mirror
+        having to exist first.
+
+        A mirror line, when it ALREADY exists and numbers every contributing line of that
+        order distinctly, still wins over both: the mirror is what the sheet shows, and
+        Re-sync can renumber a later line. `number_lines` has no opinion on the mirror -
+        that pass is applied here, same as before.
         """
-        by_order: Dict[str, List[tuple]] = defaultdict(list)
+        by_order: Dict[str, List[LineFacts]] = defaultdict(list)
         for line, order, product, _warehouse, _agent in records:
             by_order[str(order.id)].append(
-                (
-                    line.required_date is None,
-                    line.required_date or date.min,
-                    product.product_code or "",
-                    str(line.id),
+                LineFacts(
+                    str(line.id), line.line_no, line.required_date, product.product_code or ""
                 )
             )
         derived: Dict[str, int] = {}
         for entries in by_order.values():
-            for index, entry in enumerate(sorted(entries), start=1):
-                derived[entry[3]] = index
+            derived.update(number_lines(entries))
 
         mirrored = {
             core_id: entry["line_no"]
             for core_id, entry in self._addressing.items()
-            if entry.get("line_no")
+            # `is not None`, not truthiness (S-1, fix round): a mirror line_no of 0 is a
+            # real AutoCount number, ingest accepts it (`ge=0`), and a falsy check would
+            # drop it the way a resolver that used truthiness would too.
+            if entry.get("line_no") is not None
         }
         for entries in by_order.values():
-            ids = [entry[3] for entry in entries]
+            ids = [entry.id for entry in entries]
             numbers = [mirrored.get(line_id) for line_id in ids]
             if all(n is not None for n in numbers) and len(set(numbers)) == len(numbers):
                 for line_id, number in zip(ids, numbers):

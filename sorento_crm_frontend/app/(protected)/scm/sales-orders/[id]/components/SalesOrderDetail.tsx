@@ -13,13 +13,13 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
+  CalendarRange,
   Columns3,
   FileText,
   ListOrdered,
   LoaderCircleIcon,
   Move,
   Plus,
-  SquarePen,
   Trash2,
   Truck,
 } from 'lucide-react';
@@ -98,6 +98,13 @@ import { BoardChangeTable } from '@/app/(protected)/project-sales/fulfilment-pla
 import { lineChangeAnnotation } from './salesOrderLineChange';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { useSalesOrderActions } from '../../actions';
+import { PLAN_PERMISSION } from '../../lib/planActions';
+// Aliased: this file already has its own header-scoped `SOURCE_LABELS` above, worded
+// slightly differently ("Order inquiry sheet") for the header's own Source field - the
+// LINE column reads the list's map instead, so the two sit side by side rather than one
+// shadowing the other.
+import { SOURCE_LABELS as LINE_SOURCE_LABELS } from '../../lib/sourceLabels';
+import { useHasPermission } from '@/hooks/usePermissions';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -174,6 +181,7 @@ function titleCase(v: string): string {
 /** Where the order came from. `history` is its own answer because "Manual" would claim
  *  somebody keyed a 2020 order by hand. Mirrors the purchase-order side's `import`. */
 const SOURCE_LABELS: Record<string, string> = {
+  autocount: 'AutoCount',
   inquiry: 'Order inquiry sheet',
   // The same word the list's Source column uses for the same row. It is read under a
   // "Source" label on the record of one sales order, so "Sales order upload" restated both.
@@ -369,12 +377,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // itself with the order this line belongs to.
   const soNumber = data?.so_number ?? '';
   const backHref = useBackToListHref('/scm/sales-orders');
-  // The set the list row's "..." renders too (D15). Delete used to be a red icon
-  // in the list and nothing at all here, so a record could only be removed by
-  // finding it again in the list.
-  const { actions, pending: deletionPending } = useSalesOrderActions(data, {
-    onDeleted: () => router.push(backHref),
-  });
+  // Same gate the list's own "Plan selected" carries (S2, R3): a door that answers 403
+  // is worse than not offering it, so the primary is simply absent without it.
+  const canPlan = useHasPermission(PLAN_PERMISSION);
   const searchParams = useSearchParams();
 
   const updateMut = useUpdateSalesOrder();
@@ -468,6 +473,15 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setError(null);
     setIsEditing(true);
   };
+
+  // The set the list row's "..." renders too (D15). Delete used to be a red icon in the
+  // list and nothing at all here, so a record could only be removed by finding it again in
+  // the list. Edit moved in here too (S2, R3): the header's primary slot is now Plan, and
+  // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
+  const { actions, pending: deletionPending } = useSalesOrderActions(data, {
+    onDeleted: () => router.push(backHref),
+    onEdit: () => beginEdit(data as SalesOrder),
+  });
 
   const cancelEdit = () => {
     setIsEditing(false);
@@ -670,6 +684,34 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   const columns = useMemo<ColumnDef<SalesOrderLine>[]>(
     () => [
+      // LEFTMOST, so the grid reads left to right in the same order AutoCount does
+      // (PLAN-so-lines-autocount-order.md). A saved column order that predates this column
+      // has never seen its id, so `mergeColumnOrderWithLeafColumns` (the shared column-config
+      // merge every `DataGrid` runs) has no preceding neighbour to anchor it after and places
+      // it first regardless - the same reason a first-time visitor sees it first.
+      {
+        id: 'line_no',
+        accessorFn: (line) => line.line_no ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="No." column={column} />,
+        // A VALUE, never an input, in or out of an edit session (3.3): AutoCount's own
+        // number is not something this screen offers to renumber. A session-local new line
+        // (`NEW_LINE_PREFIX`) has none yet, so it reads the same dash a never-numbered
+        // stored line does.
+        cell: ({ row }) =>
+          row.original.line_no == null ? (
+            <span className="text-muted-foreground">-</span>
+          ) : (
+            <span className="tabular-nums">{row.original.line_no}</span>
+          ),
+        // Numeric, never lexicographic - a bare string sort would read 1, 10, 11, 12, 2, 3.
+        sortingFn: 'basic',
+        size: 64,
+        meta: {
+          headerTitle: 'No.',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
       {
         accessorKey: 'sku',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
@@ -1058,6 +1100,27 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Status' },
       },
       {
+        id: 'source',
+        accessorFn: (line) => line.source ?? 'manual',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        // R2: the LINE's own provenance, never inherited from the header - a line with no
+        // source system of its own reads Manual even under an AutoCount or uploaded header.
+        // Same map the list's Source column and Source filter read (`lib/sourceLabels`).
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.source === 'inquiry' ? 'primary' : 'secondary'}
+            appearance="light"
+            size="md"
+          >
+            {LINE_SOURCE_LABELS[row.original.source ?? 'manual'] ?? 'Manual'}
+          </Badge>
+        ),
+        size: 130,
+        // Matches the list's own Source column: five values is a filter, not a sort.
+        enableSorting: false,
+        meta: { headerTitle: 'Source' },
+      },
+      {
         id: 'order_inquiry',
         accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
         header: ({ column }) => (
@@ -1432,15 +1495,28 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 actions={actions}
                 pendingAction={deletionPending}
                 gearLabel="Sales order options"
+                // The main action on this page is now PLAN, not Edit (S2, R3): this is the
+                // same board the list's "Plan selected" opens, on this one order, and it
+                // wears the main colour for the same reason an Add does on every list. Edit
+                // moved into the gear above, since a record already open has less need for
+                // a second, louder door into changing it. Absent - not disabled - without
+                // the permission the board's own page requires: a door that answers 403 is
+                // worse than no door. Also absent off a non-project demand class (AC-S2-6b):
+                // the fulfilment board only accepts project demand, so a retail order's Plan
+                // would open onto an empty board.
                 primary={
-                  <>
-                {/* The main action on this page, so it wears the main colour - the same
-                    filled primary button an Add is on every list. */}
-                <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
-                  <SquarePen className="size-4" />
-                  Edit
-                </Button>
-                  </>
+                  canPlan && so.demand_class === 'project' ? (
+                    <Button asChild variant="primary" size="sm" className="gap-1.5">
+                      <Link
+                        href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
+                          so.so_number,
+                        )}`}
+                      >
+                        <CalendarRange className="size-4" />
+                        Plan
+                      </Link>
+                    </Button>
+                  ) : undefined
                 }
               />
             )}
