@@ -5,7 +5,7 @@
     {
       "name": "domain-only-ask-after-all-reuses-the-rosters-own-products",
       "cold": true,
-      "contact": "440987230",
+      "contact": "437264483",
       "turns": [
         {
           "text": "incoming and PO for srtwc286",
@@ -30,7 +30,7 @@
     {
       "name": "bare-multi-domain-ask-with-no-subject-at-all-never-dumps-stock",
       "cold": true,
-      "contact": "440987231",
+      "contact": "437264483",
       "turns": [
         {
           "text": "stock and incoming and PO",
