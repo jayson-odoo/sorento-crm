@@ -114,6 +114,7 @@ import {
 } from '../../services/priceTagDataService';
 import { useTagDataChanges, tagDataChangesKey } from '../hooks/useTagDataChanges';
 import {
+  AUTO_UPDATE_STATUSES,
   type TagDataChangeSet,
 } from '@/lib/dealer-kit/product-data-changes';
 import RequestDesignSection from './RequestDesignSection';
@@ -767,7 +768,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                     className={`${STATUS_PILL_BASE} bg-amber-100 text-amber-800`}
                     data-testid="product-data-changed-pill"
                   >
-                    Product data updated · {changedCount}
+                    {request.status && AUTO_UPDATE_STATUSES.includes(request.status)
+                      ? `Product data updated · ${changedCount}`
+                      : `Product data changed · ${changedCount}`}
                   </span>
                 )}
               </div>

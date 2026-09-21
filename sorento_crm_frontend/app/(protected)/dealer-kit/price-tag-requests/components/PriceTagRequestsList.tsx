@@ -37,6 +37,7 @@ import {
 } from '@/lib/price-tag-status';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -309,9 +310,14 @@ export default function PriceTagRequestsList() {
         cell: ({ row }) => {
           const count = row.original.data_changed_tag_count ?? 0;
           if (count <= 0) return null;
+          const status = row.original.status;
+          const label =
+            status && AUTO_UPDATE_STATUSES.includes(status)
+              ? `Product data updated · ${count}`
+              : `Product data changed · ${count}`;
           return (
             <Badge size="sm" variant="warning" appearance="light">
-              Product data updated · {count}
+              {label}
             </Badge>
           );
         },
