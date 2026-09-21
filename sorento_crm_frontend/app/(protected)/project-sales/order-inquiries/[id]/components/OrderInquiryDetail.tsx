@@ -192,8 +192,34 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     );
   }
 
+  /**
+   * Auto link (AC-DP-06, owner markup 21 Sep): ALWAYS enabled, no confirm dialog -
+   * unlike the worklist's own "Auto link all", which asks for a link-horizon date
+   * first. Ticked lines -> exactly those (unfiltered - the cascade itself decides what
+   * it can and cannot place, the same as the worklist's own unconditional run over
+   * everything); nothing ticked -> the whole OI via `filter: { inquiry_id }` (AC-AL-01).
+   * Same hook, same result reporting (`linkOutcomeText`'s toast) as "Link selected" and
+   * the worklist's "Auto link all" - nothing new invented here.
+   *
+   * NOTE for the captain: when every ticked line already IS linkable, this sends the
+   * exact same `{ row_ids }` payload through the exact same `autoPlace` mutation as
+   * `runLinkSelected` above - the two differ only when a ticked line is NOT linkable
+   * (rejected, or already fully placed), which `runLinkSelected` silently drops and this
+   * still sends. Left both in place; not my call which one goes.
+   */
+  function runAutoLink() {
+    autoPlace.mutate(
+      selectedIds.length > 0 ? { row_ids: selectedIds } : { filter: { inquiry_id: id } },
+      { onSuccess: () => setRowSelection({}) },
+    );
+  }
+
   async function commitUnlink(ids: string[]) {
     setUnlinkState(null);
+    // AC-DP-06 (fix round): cleared HERE, on commit - not when the countdown starts.
+    // Clearing early left Cancel with nothing to restore, since the lines it was about
+    // to give back were already un-ticked the moment the press fired.
+    setRowSelection({});
     try {
       await Promise.all(ids.map((lineId) => unplaceOrderInquiryRow(lineId)));
       toast.success(`${ids.length} line${ids.length === 1 ? '' : 's'} unlinked`);
@@ -218,7 +244,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     };
     const timer = setTimeout(() => void commitUnlink(ids), UNLINK_WINDOW_MS);
     setUnlinkState({ ids, pending, timer });
-    setRowSelection({});
   }
 
   function cancelUnlink() {
@@ -322,6 +347,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 <DetailActionsMenu ariaLabel="Order inquiry options">
                   {canAct ? (
                     <>
+                      <DropdownMenuItem onSelect={runAutoLink}>
+                        <Wand2 className="size-4" aria-hidden />
+                        Auto link
+                      </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={!chooseDocumentLine}
                         onSelect={

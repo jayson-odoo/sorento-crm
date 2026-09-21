@@ -61,15 +61,20 @@ across many sales orders) stays, one toggle away, unchanged.
   PO, SPO, Location, Instruction, State (the existing `OrderInquiryStatePill`), a select column,
   product search, a Columns button, pagination (10 / 25 / 50) and a footer total under Qty.
   Cancelled lines are hidden, as on the worklist. `listingKey =
-  projects.projects.view::order-inquiry-lines`. The Qty cell keeps the Was/Now (i).
+  projects.projects.view::order-inquiry-lines`. The Qty cell keeps the Was/Now (i). The Product
+  cell shows the product code ONLY, one line, no name or description under it (owner, 21 Sep:
+  in Sorento the product code is the product name).
 - **AC-DP-04 [FE]** PO and SPO cells open the existing `OrderInquiryDocumentDialog`.
 - **AC-DP-05 [FE]** Confirm reads `Confirm` with nothing ticked and `Confirm (n)` with n lines
   ticked. It is disabled when no line in scope waits for a confirm, and hidden without
   `projects.order_inquiries.acknowledge`.
-- **AC-DP-06 [FE]** The gear menu carries, reusing today's dialogs and hooks: Choose document
-  (exactly one line ticked), Link selected, Unlink selected, Reject selected, Unconfirm, Export
+- **AC-DP-06 [FE]** The gear menu carries, reusing today's dialogs and hooks: Auto link (owner,
+  21 Sep: always enabled; runs the auto-link cascade over the ticked lines, else over every line
+  of this OI, and reports linked / left over the way the worklist's Auto link all does), Choose
+  document (exactly one line ticked), Link selected, Unlink selected, Reject selected, Unconfirm, Export
   Excel. Items needing a selection are disabled without one. Unlink is a deferred pending action
-  (countdown + Cancel), never a confirm dialog.
+  (countdown + Cancel), never a confirm dialog. Cancel leaves the ticked lines ticked; the
+  selection clears only when the unlink commits.
 - **AC-DP-07 [FE]** General tab: an Order card (S/O no as link, SO date, agent, project, order
   type) and a Customer card (customer, customer code), the SO General layout, plus a Raise
   history card: one entry per raise, newest first, each with kind (Raised / Reconfirmed), person
@@ -139,6 +144,9 @@ across many sales orders) stays, one toggle away, unchanged.
   awaiting / changed row of that header and nothing outside it; with `row_ids` only those rows.
   Rejected and cancelled rows are skipped as today. After a whole-OI confirm the header lists
   under `completed`.
+- **AC-AL-01 [BE]** `POST /order-inquiries/auto-place` with `filter: {inquiry_id}` runs the cascade
+  over that header's linkable rows only and touches no row of another header; with `row_ids` only
+  those rows. Same permission as today (`projects.order_inquiry.action`), 403 without it.
 - **AC-CF-02 [BE]** Given a Completed header, when a row turns `changed` or a new row is raised
   `awaiting`, then the header lists under `outstanding` again.
 - **AC-LK-01 [BE]** `build_order_inquiry_link` (emails) points at

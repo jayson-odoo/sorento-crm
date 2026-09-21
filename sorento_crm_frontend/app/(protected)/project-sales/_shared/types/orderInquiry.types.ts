@@ -932,6 +932,14 @@ export interface AutoPlaceRequest {
    * Omitted still means the plan's own; `'date'` is implied by `link_up_to`.
    */
   link_horizon?: 'date' | 'plan' | 'none';
+  /**
+   * `PLAN-oi-header-list-detail.md`, AC-AL-01: the OI detail page's own "Auto link" with
+   * nothing ticked - runs the cascade over that header's linkable rows only, touching no
+   * row of another header. Mutually exclusive with `row_ids` on the wire, same as the
+   * acknowledge endpoint's own `filter`. FE-typed ahead of Phase 2, which is the slice
+   * that makes the backend read it.
+   */
+  filter?: { inquiry_id: string };
 }
 
 export interface AutoPlaceResult {

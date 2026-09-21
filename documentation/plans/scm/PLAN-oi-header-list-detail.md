@@ -102,8 +102,9 @@ stored: `lines_to_confirm > 0` = outstanding. The header `state` column is left 
 
 - `GET /order-inquiry-headers/{id}`: header + Order block + Customer block + counts + status +
   `raise_history`.
-- `inquiry_id` filter added to the worklist list (`GET /order-inquiries`) and to the acknowledge /
-  unacknowledge `filter` payload. Nothing else in those paths changes.
+- `inquiry_id` filter added to the worklist list (`GET /order-inquiries`), to the acknowledge /
+  unacknowledge `filter` payload, and to `POST /order-inquiries/auto-place` (gear > Auto link on
+  the detail page, owner markup 21 Sep). Nothing else in those paths changes.
 - `GET /order-inquiry-headers/{id}/related-documents`: two grouped queries over
   `order_inquiry_links` joined to PO lines / SPO allocations.
 - `build_order_inquiry_link` takes the header id; the SO detail payload's `order_inquiries[]`
@@ -191,7 +192,7 @@ undeclared fields).
 | P1 | Phase 1 FE against mocks: S4 + S5 | AC-HL-01..07, AC-DP-01..11 |
 | S1 | number + raised date + raise history + migration | AC-NO-01..04, AC-RD-01..03 |
 | S2 | header list endpoint | AC-LS-01..07 |
-| S3 | detail, lines filter, related docs, confirm filter, links | AC-DT-01..03, AC-CF-01..02, AC-LK-01 |
+| S3 | detail, lines filter, related docs, confirm + auto-link filter, links | AC-DT-01..03, AC-CF-01..02, AC-AL-01, AC-LK-01 |
 | W | swap mocks, vitest, browser evidence | AC-FE-01, AC-E2E-01 |
 
 Security review applies (multi-company scoping on new routes + a new scoped table).

@@ -826,9 +826,24 @@ export async function getOrderInquiryHeader(
   return detail;
 }
 
-/** Phase 1 stand-in for the Lines tab, ahead of the real `inquiry_id` worklist filter
+/**
+ * Phase 1 stand-in for the Lines tab, ahead of the real `inquiry_id` worklist filter
  * (Phase 2 - see the module doc comment above). Cancelled lines are NOT filtered here;
- * the Lines tab hides them the same way the worklist does (S5), client-side. */
+ * the Lines tab hides them the same way the worklist does (S5), client-side.
+ *
+ * AC-DP-03 (owner, 21 Sep): the Product cell on THIS screen shows the code only, one
+ * line - "in Sorento the product code IS the product name" - so the mock carries no
+ * `product_name` for a line (`orderInquiryHeaders.mock.ts`'s `buildLine` leaves it
+ * `null`). `ItemCodeCell` itself is untouched: it already only prints a second line
+ * when `product_name` differs from `item_code`, which is the worklist's OWN real
+ * behaviour off real backend data and stays exactly as it is (do not disturb it for
+ * this screen's sake). Phase 2, reusing that same worklist row shape for `inquiry_id`,
+ * inherits whatever `product_name` the row actually carries - if a real product's name
+ * differs from its code, the sub-line would appear here too; the owner's ruling was
+ * read as "reflect it, don't force-null a value production may still hand back", but
+ * that reconciliation only becomes visible once Phase 2 is live and needs the owner's
+ * call.
+ */
 export async function getOrderInquiryHeaderLines(
   id: string,
 ): Promise<OrderInquiryWorklistRow[]> {

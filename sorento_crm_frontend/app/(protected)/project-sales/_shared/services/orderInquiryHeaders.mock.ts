@@ -220,7 +220,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-1': [
     buildLine('oih-1', {
       item_code: 'CKSW015',
-      product_name: 'Ceramic Kitchen Sink 015',
       qty: '40',
       delivery_date: '2026-09-25',
       supplier: 'Sunrise Ceramics Sdn Bhd',
@@ -231,7 +230,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-1', {
       item_code: 'TAP-220',
-      product_name: 'Chrome Basin Tap 220',
       qty: '18',
       delivery_date: '2026-09-25',
       supplier: 'Sunrise Ceramics Sdn Bhd',
@@ -250,7 +248,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-1', {
       item_code: 'GRT-090',
-      product_name: 'Porcelain Floor Tile 090',
       qty: '600',
       delivery_date: '2026-10-02',
       supplier: 'Sunrise Ceramics Sdn Bhd',
@@ -271,7 +268,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-1', {
       item_code: 'DR-HDL-12',
-      product_name: 'Brushed Nickel Door Handle',
       qty: '24',
       delivery_date: '2026-09-30',
       supplier: 'Metroline Hardware',
@@ -284,7 +280,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-1', {
       item_code: 'PNT-WHT-20',
-      product_name: 'Interior Emulsion Paint, White, 20L',
       qty: '30',
       delivery_date: '2026-10-05',
       supplier: 'Metroline Hardware',
@@ -298,7 +293,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-1', {
       item_code: 'CBL-004',
-      product_name: 'Cable duct, cancelled at site',
       qty: '8',
       delivery_date: '2026-09-20',
       verb: 'CANCEL_BALANCE',
@@ -310,7 +304,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-2': [
     buildLine('oih-2', {
       item_code: 'GLS-PNL-08',
-      product_name: 'Tempered Glass Panel 8mm',
       qty: '55',
       delivery_date: '2026-10-10',
       supplier: 'Kencana Glassworks',
@@ -320,7 +313,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-2', {
       item_code: 'ALM-FRM-30',
-      product_name: 'Aluminium Window Frame 30mm',
       qty: '32',
       delivery_date: '2026-10-12',
       supplier: 'Kencana Glassworks',
@@ -333,7 +325,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-2', {
       item_code: 'SLT-RUB-01',
-      product_name: 'Rubber Weather Seal',
       qty: '90',
       delivery_date: '2026-10-12',
       supplier: 'Kencana Glassworks',
@@ -346,7 +337,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-2', {
       item_code: 'HNG-STL-02',
-      product_name: 'Stainless Steel Hinge',
       qty: '48',
       delivery_date: '2026-10-15',
       verb: 'CANCEL_BALANCE',
@@ -358,7 +348,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-3': [
     buildLine('oih-3', {
       item_code: 'WD-FLR-12',
-      product_name: 'Engineered Wood Flooring 12mm',
       qty: '210',
       delivery_date: '2026-09-22',
       supplier: 'Menara Timber Supplies',
@@ -371,7 +360,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-3', {
       item_code: 'SKR-BRD-06',
-      product_name: 'Skirting Board 06',
       qty: '75',
       delivery_date: '2026-09-22',
       supplier: 'Menara Timber Supplies',
@@ -386,7 +374,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-4': [
     buildLine('oih-4', {
       item_code: 'LGT-LED-40',
-      product_name: 'LED Panel Light 40W',
       qty: '16',
       delivery_date: '2026-09-18',
       verb: 'CANCEL_BALANCE',
@@ -396,7 +383,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-4', {
       item_code: 'SWT-DBL-02',
-      product_name: 'Double Gang Switch',
       qty: '24',
       delivery_date: '2026-09-18',
       verb: 'CANCEL_BALANCE',
@@ -409,7 +395,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-5': [
     buildLine('oih-5', {
       item_code: 'STL-BM-200',
-      product_name: 'Structural Steel Beam 200mm',
       qty: '12',
       delivery_date: '2026-10-01',
       verb: 'ORDER',
@@ -417,7 +402,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-5', {
       item_code: 'BLT-M12',
-      product_name: 'M12 Structural Bolt',
       qty: '480',
       delivery_date: '2026-10-01',
       verb: 'ORDER',
@@ -425,7 +409,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-5', {
       item_code: 'PNT-PRM-05',
-      product_name: 'Anti-rust Primer, 5L',
       qty: '20',
       delivery_date: '2026-10-03',
       verb: 'ORDER',
@@ -436,7 +419,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-6': Array.from({ length: 42 }, (_, index) =>
     buildLine('oih-6', {
       item_code: `UBP-${String(index + 1).padStart(3, '0')}`,
-      product_name: `Utama Builders Part ${index + 1}`,
       qty: String(5 + (index % 6) * 3),
       delivery_date: index % 3 === 0 ? '2026-10-04' : '2026-10-11',
       supplier: 'Damansara Supply Co',
@@ -460,7 +442,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
   'oih-7': [
     buildLine('oih-7', {
       item_code: 'PVC-PIP-50',
-      product_name: 'PVC Pipe 50mm',
       qty: '60',
       delivery_date: '2026-09-19',
       verb: 'ORDER',
@@ -471,7 +452,6 @@ const LINES_BY_HEADER: Record<string, OrderInquiryWorklistRow[]> = {
     }),
     buildLine('oih-7', {
       item_code: 'ELB-90-50',
-      product_name: 'PVC Elbow 90deg 50mm',
       qty: '24',
       delivery_date: '2026-09-19',
       verb: 'ORDER',
