@@ -1528,9 +1528,11 @@ def answer_for(
     combined_member_rows: list[Any] | None = None
     already_member = producers.get("build-cs-member-offer")
     if not (isinstance(already_member, Mapping) and already_member.get("member_offer") is True):
+        # P8/F7 (hand pass 12 Phase 3): a `gate.compatible_entities` fallback used to
+        # sit here for `gate.require_specific is True` - dead code. `_cs_offer_eligible`
+        # below's own g4 requires `require_specific is not True`, so that branch could
+        # never survive to the eligibility check that gates this whole combine.
         combine_rows = offer.get("suggest_last_result_set") if isinstance(offer, Mapping) else None
-        if not combine_rows and isinstance(gate, Mapping) and gate.get("require_specific") is True:
-            combine_rows = [e for e in (gate.get("compatible_entities") or []) if isinstance(e, dict)]
         if (
             combine_rows
             and len(combine_rows) >= _MIN_ROSTER_OPTIONS
