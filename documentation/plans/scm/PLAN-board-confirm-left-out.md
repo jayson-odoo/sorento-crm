@@ -1,6 +1,6 @@
 # PLAN: fulfilment board - a left-out line is loud, reachable, and fixable
 
-Status: in progress, fix round 2 after review. Track: small fix (FE only, no migration, no endpoint, no auth change).
+Status: in progress, fix round 3 after re-review. Track: small fix (FE only, no migration, no endpoint, no auth change).
 Branch `fix/board-confirm-left-out`, worktree `sorento_crm-board-confirm-leftout`.
 UAC: `board-confirm-left-out-acceptance-criteria.md`.
 
@@ -52,6 +52,12 @@ to provide the reason for buying discontinued items, so we should accept this al
 
 Grid chip naming for other-group / sibling-bin stock, the modal Balance column following the
 dated assignment, other-group section on-hand row and net Total.
+
+An approved line's Order back / Document cited reach the SAVED DRAFT only (fix round 2, S2):
+no verdict - amended included - has ever carried `order_back`/`cited_document` into the
+`/confirm` body (`ConfirmLine` has no such field, on either `confirmLineFrom` or the sheet's
+own `confirmLineFromDraft`), so wiring them all the way to Confirm is a follow-up lane, not
+this one.
 
 ## Test list
 

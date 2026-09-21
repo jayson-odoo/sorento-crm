@@ -477,6 +477,10 @@ function borrowComponents(
       warehouse_id: source.warehouse_id as string,
       donor_project_id: null,
       qty: source.qty,
+      // `donor_project_id: null` here (not `source.donor_project_id`): the engine's own
+      // auto-proposed borrow (group / cross-group) never names a donor PROJECT, only a
+      // warehouse, and `suggestionDraftFrom`'s borrow rows agree - so every row an approving
+      // Save can carry a typed reason for is keyed on `null` here too (nit, fix round 3 review).
       reason:
         typedReasons.get(
           borrowReasonKeyOf({ warehouse_id: source.warehouse_id, donor_project_id: null }),

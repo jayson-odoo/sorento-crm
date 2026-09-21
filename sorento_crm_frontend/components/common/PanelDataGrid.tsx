@@ -270,11 +270,16 @@ export function PanelDataGrid<TRow extends object>({
     columnResizeMode: 'onChange',
   });
 
+  /**
+   * Which `focusRowId` the jump below has already fired for, so a re-render (or a later
+   * arrival, S5 just below) does not repeat it - the same ref shape the list's own scroll
+   * effect uses (`FulfilmentBoardListView`, S3).
+   */
+  const jumpedFocusRowId = React.useRef<string | null>(null);
+
   // `getPrePaginationRowModel` is filtered-then-sorted, exactly what paging itself slices -
   // no second implementation of sorting here, and it stays right if a column is later sorted
-  // ascending/descending while a jump is pending. Only depends on `focusRowId`: a caller sets
-  // it once per row, and re-running this every time `table` is rebuilt (every render) would
-  // fight the reader's own page changes once they have navigated away from the jump.
+  // ascending/descending while a jump is pending.
   //
   // DECLARED AFTER the `pageResetKey` effect above (nit, fix round 2 review): React runs one
   // component's own `useEffect`s in DECLARATION order on a commit where both fire - `focusKey`
@@ -282,17 +287,30 @@ export function PanelDataGrid<TRow extends object>({
   // can change in the SAME commit, and the pageReset effect's `setPagination(... pageIndex: 0)`
   // would otherwise win the race and strand the jump on page 1. Declared after it, THIS one's
   // `setPagination` is the later call in that flush, so its target page is what survives.
+  //
+  // S5 (fix round 3, reviewer): `filtered` is an explicit dependency, not `focusRowId` alone -
+  // a row named before the CALLER'S OWN data caught up to it (a fresher board read landing a
+  // beat after the click that asked for it) used to leave the page at 0 forever: `focusRowId`
+  // itself never changed again, so nothing re-ran this once the row actually arrived.
+  // `index === -1` returns WITHOUT touching the ref, so the NEXT render that changes
+  // `filtered` gets another try; the ref is only set once a page is actually chosen, so a row
+  // already on the right page from the start does not re-jump on every unrelated data refresh.
   React.useEffect(() => {
-    if (!focusRowId || !paginate) return;
+    if (!focusRowId) {
+      jumpedFocusRowId.current = null;
+      return;
+    }
+    if (!paginate || jumpedFocusRowId.current === focusRowId) return;
     const rows = table.getPrePaginationRowModel().rows;
     const index = rows.findIndex((row) => row.id === focusRowId);
     if (index === -1) return;
+    jumpedFocusRowId.current = focusRowId;
     const targetPage = Math.floor(index / pagination.pageSize);
     setPagination((current) =>
       current.pageIndex === targetPage ? current : { ...current, pageIndex: targetPage },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRowId]);
+  }, [focusRowId, filtered]);
 
   return (
     <DataGrid

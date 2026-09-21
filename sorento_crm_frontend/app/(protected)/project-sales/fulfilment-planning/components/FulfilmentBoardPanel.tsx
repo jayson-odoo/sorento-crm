@@ -282,6 +282,13 @@ export function FulfilmentBoardPanel({
     },
     [resetProductSearch],
   );
+  /**
+   * Fired by `FulfilmentBoardListView` once it has actually scrolled to `focusKey` (S3) - a
+   * stable function (nit, fix round 3 review), the same reason `dirtySetterFor` is cached per
+   * key one file over: an inline arrow here is a new prop identity on every render, which
+   * would needlessly re-fire any effect keyed on it.
+   */
+  const handleLeftOutLineFocused = React.useCallback(() => setFocusKey(null), []);
 
   // The granularity and the product filter travel in the URL, beside the selection the
   // worklist put there, so the WHOLE board is one link (PLAN 13.2, 13.3). `replace`, not
@@ -1935,7 +1942,7 @@ export function FulfilmentBoardPanel({
                 // once. Cleared once handled so a second click on the SAME line still fires
                 // the effect the list reads it with.
                 focusKey={focusKey}
-                onFocusHandled={() => setFocusKey(null)}
+                onFocusHandled={handleLeftOutLineFocused}
               />
             ) : (
               <>

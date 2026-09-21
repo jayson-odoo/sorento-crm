@@ -1759,30 +1759,43 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
    * `focusLeftOutLine` now calls the hook's own `reset('')`, which clears both halves
    * synchronously.
    */
-  it('reaches the left-out line even while a search that excludes it is still active (AC-5, fix round 2, B1)', async () => {
+  /**
+   * B2 (fix round 3, reviewer, blocking): the round-2 version of this test used
+   * `await screen.findByTestId(...)`, which POLLS for up to a second - long enough for
+   * `useDebouncedSearch`'s real 200ms timer to fire on its own even with the round-2 bug
+   * back in place (`setProductSearchInput('')` instead of `reset('')`), and S3's node-guard
+   * (fix round 2) then found the row on ITS OWN once that later render arrived. A 2-line
+   * fixture never exercised the page jump either. This version asserts SYNCHRONOUSLY, right
+   * on the commit the click itself produces - no `findBy`/`waitFor`, no timer advance - which
+   * only the SAME-TICK `reset('')` can satisfy, over 30 lines so the target genuinely sits
+   * beyond `PanelDataGrid`'s first 25-row page.
+   */
+  it('reaches the left-out line, beyond page 1, on the SAME commit as the click, even while a search that excludes it is still active (AC-5, fix round 3, B1/B2)', async () => {
     const scrollSpy = vi
       .spyOn(Element.prototype, 'scrollIntoView')
       .mockImplementation(() => {});
-    const board = twoLineOrder();
-    getPlanningBoard.mockResolvedValue(
-      withContribution(
-        board,
-        (entry) => entry.item_code === 'TPE-9204',
-        (entry) => ({
-          ...entry,
-          item_flags: {
-            dealer_hot_selling: false,
-            dealer_hot_selling_where: [],
-            project_hot_selling: false,
-            project_hot_selling_where: [],
-            dealer_classified: false,
-            project_classified: false,
-            discontinued: true,
-            retail_classification_available: true,
-          },
-        }),
-      ),
+    const lines = Array.from({ length: 30 }, (_, index) =>
+      demand({ line_no: index + 1, item_code: `ITEM${index + 1}` }),
     );
+    // The 28th line: index 27 in `so_number`/`line_no` order, page floor(27 / 25) = page 2.
+    const board = withContribution(
+      allSaved(boardOf(lines)),
+      (entry) => entry.line_no === 28,
+      (entry) => ({
+        ...entry,
+        item_flags: {
+          dealer_hot_selling: false,
+          dealer_hot_selling_where: [],
+          project_hot_selling: false,
+          project_hot_selling_where: [],
+          dealer_classified: false,
+          project_classified: false,
+          discontinued: true,
+          retail_classification_available: true,
+        },
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(board);
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -1790,22 +1803,23 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     const searchBox = screen.getByPlaceholderText(
       'Search sales order, customer, project or product',
     );
-    // A search that EXCLUDES the left-out line - not just typed, but SETTLED: waiting for the
-    // grid to actually narrow is what proves the debounced value (not only the box) now reads
-    // "WESERP10B", which is the state the bug needed to reproduce.
-    fireEvent.change(searchBox, { target: { value: 'WESERP10B' } });
-    await waitFor(() => expect(screen.queryByText('TPE-9204')).not.toBeInTheDocument());
+    // A search that EXCLUDES the left-out line (ITEM28) - not just typed, but SETTLED:
+    // waiting for the grid to actually narrow is what proves the debounced value (not only
+    // the box) now reads "ITEM1", which is the state the bug needed to reproduce.
+    fireEvent.change(searchBox, { target: { value: 'ITEM1' } });
+    await waitFor(() => expect(screen.queryByText('ITEM28')).not.toBeInTheDocument());
 
     const banner = await screen.findByTestId('board-left-out-banner');
-    fireEvent.click(within(banner).getByRole('button', { name: 'TPE-9204 line 2' }));
+    fireEvent.click(within(banner).getByRole('button', { name: 'ITEM28 line 28' }));
 
-    expect(
-      await screen.findByTestId(/^line-decision-so-a\|2\|TPE-9204/),
-    ).toBeInTheDocument();
-    expect(scrollSpy).toHaveBeenCalledTimes(1);
-    // The search box itself reads the reset too - not left holding a term that would filter
-    // the very row it just landed on straight back out on the next render.
+    // SYNCHRONOUS: `fireEvent.click` already flushed every cascading render and effect this
+    // click produces (React's `act()` drains the whole chain - the state updates, the page
+    // jump, the expand, the scroll - before returning), so if the search reset lagged (the
+    // B1 bug) this row is STILL filtered out right here, and `getByTestId` throws immediately
+    // rather than retrying past it.
+    expect(screen.getByTestId(/^line-decision-so-a\|28\|ITEM28/)).toBeInTheDocument();
     expect(searchBox).toHaveValue('');
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
 
     scrollSpy.mockRestore();
   });

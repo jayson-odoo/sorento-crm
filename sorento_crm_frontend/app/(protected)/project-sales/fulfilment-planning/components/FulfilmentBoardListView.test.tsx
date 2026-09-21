@@ -1434,3 +1434,61 @@ describe('FulfilmentBoardListView: the focus effect waits for the row to actuall
     await waitFor(() => expect(onFocusHandled).toHaveBeenCalledTimes(1));
   });
 });
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 3 (reviewer, S5): `PanelDataGrid`'s own page-jump effect
+ * used to depend on `focusRowId` alone - a row that arrives in a LATER render (a fresher board
+ * read landing a beat after the click that asked for it, the same shape the S3 test above
+ * models one level up) left the page stuck at 0 forever, because `focusRowId` itself never
+ * changed again to re-fire it.
+ */
+describe('FulfilmentBoardListView: the page jump retries when the row arrives late (fix round 3, S5)', () => {
+  it('jumps to the right page once the row appears beyond page 1, even though focusKey never changes', async () => {
+    const filler = Array.from({ length: 25 }, (_, index) =>
+      contribution({
+        key: `so-1:line-${index + 1}`,
+        so_number: `SO${String(index + 1).padStart(6, '0')}`,
+        line_no: index + 1,
+      }),
+    );
+    // Absent from the first render, then appended at index 25 - the first row of page 2.
+    const target = contribution({
+      key: 'so-1:line-26',
+      so_number: 'SO000026',
+      line_no: 26,
+    });
+    const onFocusHandled = vi.fn();
+    const onDecide = vi.fn();
+    const onDecideMany = vi.fn();
+
+    const { rerender } = render(
+      <FulfilmentBoardListView
+        contributions={filler}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await screen.findByText('SO000001');
+    expect(screen.queryByTestId(`line-decision-${target.key}`)).not.toBeInTheDocument();
+
+    // The row arrives - `focusKey` is UNCHANGED, only the rows themselves differ.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[...filler, target]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    expect(
+      await screen.findByTestId(`line-decision-${target.key}`),
+    ).toBeInTheDocument();
+  });
+});
