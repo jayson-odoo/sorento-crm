@@ -85,9 +85,14 @@ Carrying out a suggestion writes to the **Order Inquiries** page:
   counts it as available stock.
 * **A Borrow** raises an **ORDER BACK** row on the donor order's own line, for the quantity it
   lent out.
-* **A line whose only linked document is already fully received keeps its old row as history.**
-  The row is greyed, its quantity and its documents are left exactly as they were, and its Qty
-  cell carries the word **used** - click it to read which document, when it was received, and
+* **If the line's own landed stock already covers what the link needs, the row simply stays in
+  place instead.** Nothing is marked used and no fresh row is raised; the row keeps every link
+  it had - the received document as history, and any still-open purchase-order link too, because
+  moving that link off the row is purchasing's own decision to make at Order Inquiries, not
+  something a replan makes for them. Its note gains the usual Was/Now line.
+* **Otherwise, a line whose only linked document is already fully received keeps its old row as
+  history.** The row is greyed, its quantity and its documents are left exactly as they were, and
+  its Qty cell carries the word **used** - click it to read which document, when it was received, and
   where the goods landed. A fresh row is raised for the full new quantity, with no documents; it
   is what shows in the **Buy** card and what purchasing actually buys against. Its own (i) shows
   Was/Now against the quantity and date it replaces, and its Instruction (i) names the document
