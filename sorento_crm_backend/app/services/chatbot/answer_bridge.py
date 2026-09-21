@@ -187,14 +187,19 @@ def apply_crossdomain_hit(
     the gap this closes - one ladder per turn either way
     (`bridge_owns_ladder` covers this arm too).
 
-    `envelope` is the fetch's OWN envelope (`turn/fetch.py::_fetch_one`'s return,
-    carrying `answers`/`items`) - `crossdomain_zeroset` reads it directly for
-    `returned_codes`/`by_code` (`_envelope_items` tries `answers` before `items`,
-    which is exactly this envelope's own shape). A no-op (byte-identical `answer`)
-    for every domain but inventory/incoming (`crossdomain_zeroset`'s own domain
-    gate) and for a turn with nothing zero to probe (`_run_crossdomain_ladder`'s own
-    "no MCP call" case), so calling this unconditionally on every single-domain HIT
-    costs nothing on the other ~99% of turns.
+    `envelope` is the fetch's OWN envelope (`turn_runtime.envelope_of`'s return) - its
+    OWN rows live under `figures` (`envelope_of` renames `fetch.answers` to `figures`
+    on the way in; `turn/fetch.py::_fetch_one` never re-adds an `answers` key of its
+    own). `crossdomain_zeroset` needs the ORIGINAL `answers`/`fields` shape
+    (`_envelope_items` tries `answers` before `items`, and `_field_val` reads each
+    row's `fields`) - `figures` already carries that shape verbatim (`envelope_of`'s
+    own `figures = [r for r in rows if isinstance(r, dict)]`, no re-keying), so
+    `{"answers": envelope.get("figures") or []}` is the adapter, not a second reader.
+    A no-op (byte-identical `answer`) for every domain but inventory/incoming
+    (`crossdomain_zeroset`'s own domain gate) and for a turn with nothing zero to
+    probe (`_run_crossdomain_ladder`'s own "no MCP call" case), so calling this
+    unconditionally on every single-domain HIT costs nothing on the other ~99% of
+    turns.
 
     BEST EFFORT, the same convention `apply_scope_block` uses one function up: a
     turn that genuinely found rows must never fail because this ladder could not
@@ -203,6 +208,8 @@ def apply_crossdomain_hit(
     try:
         if not answer.text or not isinstance(envelope, Mapping):
             return answer
+        figures = envelope.get("figures")
+        item = {"answers": [r for r in figures if isinstance(r, dict)]} if isinstance(figures, list) else {}
         result = _run_crossdomain_ladder(
             parser=parser,
             resolved=resolved,
@@ -214,14 +221,79 @@ def apply_crossdomain_hit(
             space_id=space_id,
             trace=trace,
             dry_run=dry_run,
-            item=envelope,
+            item=item,
         )
+        result = _prefix_zero_note(result)
         from dataclasses import replace
 
         text = _apply_crossdomain_render(answer.text, result, answered=True)
         return answer if text == answer.text else replace(answer, text=text)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning("chatbot: the cross-domain zero-stock ladder did not run", exc_info=True)
+        return answer
+
+
+def apply_silent_company_offer(
+    answer: turn_compose.Answer, *, envelope: Mapping[str, Any] | None, parser: Mapping[str, Any] | None
+) -> turn_compose.Answer:
+    """Hand pass 11, defect 3 (multi-company HIT parity): a HIT in ONE of several
+    searched companies still offers to escalate to the SILENT company's own team -
+    production's own shape (owner: "for items that exist in sorento and mocha, we
+    search both sides ... offer to escalate to either company"). The rows and the
+    silent-company sentence itself are ALREADY correct today (`lanes/business/
+    fetch.py:2483-2531`, unchanged production, confirmed reading `envelope.
+    lookup_companies`/`shown_cos` off the SAME fetch item this reads) - only the
+    OFFER, which a HIT never had a reason to print before, is missing.
+
+    `envelope` is `turn_runtime.envelope_of`'s return; its `raw_fragment.fetch` is
+    the untouched `lanes.business.fetch.output_structurer` output (`envelope_of`
+    only ever RENAMES `fetch.answers` to `figures` on the outer dict, the
+    `raw_fragment` it also carries is the ORIGINAL) - `lookup_companies` and the
+    rows' own `company_name`/"Company" field live there, nowhere else on the outer
+    envelope. Best effort and a no-op (byte-identical `answer`) whenever
+    `lookup_companies` has one company or none, or every searched company already
+    shows a row - the ~99% of single-company turns this must never touch.
+    """
+    try:
+        if not answer.text or not isinstance(envelope, Mapping):
+            return answer
+        raw_fragment = envelope.get("raw_fragment")
+        fetched = raw_fragment.get("fetch") if isinstance(raw_fragment, Mapping) else None
+        if not isinstance(fetched, Mapping):
+            return answer
+        lookup_cos = fetched.get("lookup_companies")
+        if not isinstance(lookup_cos, list) or len(lookup_cos) < 2:
+            return answer
+        rows = fetched.get("answers")
+        rows = rows if isinstance(rows, list) else []
+
+        def _row_company(row: Any) -> str:
+            for f in row.get("fields") or [] if isinstance(row, Mapping) else []:
+                key = str(f.get("key") or "").strip().lower() if isinstance(f, Mapping) else ""
+                label = str(f.get("label") or "").strip().lower() if isinstance(f, Mapping) else ""
+                if key == "company_name" or label == "company":
+                    return str(f.get("value") or "").strip()
+            return ""
+
+        shown = {c for c in (_row_company(r) for r in rows) if c}
+        if not shown:
+            return answer
+        silent = [
+            str(c.get("name") or "").strip()
+            for c in lookup_cos
+            if isinstance(c, Mapping) and str(c.get("name") or "").strip() and str(c.get("name") or "").strip() not in shown
+        ]
+        if not silent:
+            return answer
+        routing = (parser or {}).get("routing") if isinstance(parser, Mapping) else None
+        team = answer_mod._pretty_team((routing or {}).get("suggested_team") or "customer_service")
+        names = silent[0] if len(silent) == 1 else f"{', '.join(silent[:-1])} and {silent[-1]}"
+        offer = f"Would you like me to escalate to *{names}* {team} team?"
+        from dataclasses import replace
+
+        return replace(answer, text=f"{answer.text}\n\n{offer}")
+    except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
+        logger.warning("chatbot: the silent-company escalate offer did not render", exc_info=True)
         return answer
 
 
@@ -685,6 +757,29 @@ def _miss_question(
 
     catalog = producers.get("escalate-catalog")
     if isinstance(catalog, Mapping) and catalog.get("is_escalate_offer") is True:
+        # Hand pass 11, defect 3: a miss `answer.py:3112` reported "checked in X
+        # and Y" (`_and_list` of two-or-more companies) must clarify WHICH one
+        # before escalating - `escalation.py::_clarify_over`'s own company pairs.
+        # Read straight off the ALREADY-COMPOSED text (the same sentence the
+        # customer just read) rather than re-deriving the searched-company list a
+        # second time, which this module has no independent access to.
+        companies = _companies_checked_in(text)
+        if len(companies) >= _MIN_ROSTER_OPTIONS:
+            return pending.ask(
+                "team_pick",
+                [
+                    {
+                        "position": i + 1,
+                        "label": name,
+                        "entity_type": "team",
+                        "payload": {"company": name},
+                    }
+                    for i, name in enumerate(companies)
+                ],
+                team=team,
+                asked_at_turn=asked_at_turn,
+                expects="yes_no",
+            )
         return pending.ask(
             "team_pick",
             [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
@@ -693,6 +788,19 @@ def _miss_question(
             expects="yes_no",
         )
     return None
+
+
+_CHECKED_IN_RE = re.compile(r"checked in ([^.\n]+)\.")
+
+
+def _companies_checked_in(text: str) -> list[str]:
+    """The company names off `answer.py::_and_list`'s own "checked in X and Y"
+    sentence - "X" and "X, Y and Z" alike, the exact suffix the miss composer
+    already wrote (`co_suffix`, `lanes/business/answer.py:3112`)."""
+    match = _CHECKED_IN_RE.search(text or "")
+    if not match:
+        return []
+    return [n.strip() for n in re.split(r",\s*|\s+and\s+", match.group(1)) if n.strip()]
 
 
 def _answered_fresh(parser: Mapping[str, Any] | None) -> bool:
@@ -813,6 +921,50 @@ def _run_crossdomain_ladder(
         trace=trace,
         granted=granted,
     )
+
+
+def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Hand pass 11, defect 1: `"No {primary_word} for {codes}."`, the SAME string
+    template `answer.py::crossdomain_render`'s own `only_other_note` already uses
+    (`f"No {primary_word} for {', '.join(only_other)}."`) - built here rather than
+    inside that shared function, because its OWN gate deliberately never fires for a
+    `zero: True` code (owner ruling 11 Sep 2026, second ruling, R2(b): "a zero code
+    never earns AC-820's own 'no {primary} for X' only-other line either way - the
+    zero sentence two paragraphs later already says the same thing" - true for a
+    MISS, where `not_found_error_message` already named the code up front, but a HIT
+    has no miss sentence of its own naming it at all). `crossdomain_render` itself
+    stays byte-identical (`test_crossdomain_ladder.py`'s own
+    `test_stock_origin_zero_but_incoming_answers_no_po_probe` pins "no zero sentence"
+    for the SAME shape on the miss path).
+
+    Only for a code whose OWN rung genuinely rendered something (not in the block's
+    own `nothing_codes` - that shape already gets its own sentence from
+    `_apply_crossdomain_rung`/`nothing_note`, unchanged): the mixed set's non-zero
+    code never reaches `zeroset.missing` at all, so it is never named here either.
+    """
+    zeroset = result.get("zeroset") if isinstance(result, Mapping) else None
+    xd = zeroset.get("_xd") if isinstance(zeroset, Mapping) else None
+    render = result.get("render") if isinstance(result, Mapping) else None
+    block = render.get("_xdBlock") if isinstance(render, Mapping) else None
+    if not isinstance(xd, Mapping) or not isinstance(block, Mapping):
+        return result
+    nothing_codes = {c for c in (block.get("nothing_codes") or []) if isinstance(c, str)}
+    codes: list[str] = []
+    for m in xd.get("missing") or []:
+        if not (isinstance(m, Mapping) and m.get("zero") is True):
+            continue
+        code = m.get("code") or m.get("_n")
+        if isinstance(code, str) and code and code not in nothing_codes and code not in codes:
+            codes.append(code)
+    if not codes:
+        return result
+    primary_word = "incoming" if xd.get("origin_domain") == "incoming" else "stock"
+    note = f"No {primary_word} for {', '.join(codes)}."
+    old_block_text = block.get("block") or ""
+    new_block = dict(block)
+    new_block["block"] = f"{note}\n\n{old_block_text}" if old_block_text else note
+    new_render = {**render, "_xdBlock": new_block}
+    return {**result, "render": new_render}
 
 
 def _apply_crossdomain_render(

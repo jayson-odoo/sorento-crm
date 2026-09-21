@@ -605,6 +605,49 @@ def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
     return out
 
 
+def _without_scope_hint_matches(
+    compatible: list[dict[str, Any]], entities: Any, resolved: Any
+) -> list[dict[str, Any]]:
+    """Drop a resolver match whose OWN token the parser hinted as a SCOPE kind
+    (brand/company) - hand pass 11, defect 4 ("cabana catalog" must never kind_pick).
+
+    `turn/reconcile.py::apply_reconciliation` already keeps such an entity's OWN
+    `hint` from ever being rewritten (its `_SCOPE_HINTS`, reused here so the two
+    never disagree about which hints are scope-only). That fix alone is not
+    enough: `gate.py`'s own `compatible_entities` has no opinion on which PARSER
+    entity a resolver match answers for - it is built from the resolver's OWN
+    per-match `entity_type`, so a brand WORD that also happens to name a real
+    promotion or filename ("CABANA WASH BASIN PROMO...") still reached the fetch
+    as if the customer had asked about that promotion/file, because the resolver
+    searches every column and genuinely found a name hit. A brand/company word is
+    a scope filter (`gate.py`'s own `_brand_tok`/`parser_brand` routing, entirely
+    separate from entity resolution), never a subject the resolver could offer a
+    choice between - so every match under ITS token is dropped here, whatever
+    entity_type it incidentally matched.
+    """
+    from app.services.chatbot.turn.reconcile import _SCOPE_HINTS
+
+    scope_tokens = {
+        _token_key(e.get("raw"))
+        for e in jsc.array(entities)
+        if isinstance(e, dict)
+        and jsc.nullish_str(e.get("hint")).strip().lower() in _SCOPE_HINTS
+    } - {""}
+    if not scope_tokens:
+        return compatible
+    drop_uuids: set[Any] = set()
+    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
+        if _token_key(jsc.get(resolution, "token")) not in scope_tokens:
+            continue
+        for m in jsc.array(jsc.get(resolution, "matches")):
+            uuid = jsc.get(m, "uuid")
+            if jsc.truthy(uuid):
+                drop_uuids.add(uuid)
+    if not drop_uuids:
+        return compatible
+    return [c for c in compatible if jsc.get(c, "uuid") not in drop_uuids]
+
+
 def _without_guesses(
     compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -793,6 +836,7 @@ def resolve_kinds(
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = unplaced_tokens(entities, resolved)
     compatible = _without_guesses(compatible, resolved, unplaced)
+    compatible = _without_scope_hint_matches(compatible, entities, resolved)
     # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
     # question described, and the count is what the answer's own header says. It rides
     # the gate to the tool trigger, where `fetch.output_structurer` prepends it.
@@ -1660,13 +1704,24 @@ def _is_certificate_type(db: Session, attachment_type_id: Any) -> bool:
     """`attachment_types.is_certificate` for the RESOLVED row, never the customer's
     own words. `False` for anything unresolved/unreadable - fail closed to the
     default (`marketing_product`) team rather than mis-route on a lookup that could
-    not run (a bad uuid, a row deleted since the resolver matched it)."""
+    not run (a bad uuid, a row deleted since the resolver matched it).
+
+    Run in a SAVEPOINT (`company_scope.stamp_lookup_companies`'s own convention): a
+    non-uuid id (a test double's own placeholder, a resolver row this turn's own
+    kind is not really a product/attachment_type at all) aborts the STATEMENT on
+    Postgres, and a bare try/except around the query alone leaves the WHOLE caller
+    transaction poisoned for every later query this same turn makes - measured
+    directly writing this function (`test_rearch_r11_catalogue.py`'s own fixture
+    uuid is not RFC 4122 shaped) as a cascade of unrelated `InFailedSqlTransaction`
+    errors from every db read after this one.
+    """
     if not jsc.truthy(attachment_type_id):
         return False
     from app.models.resources import AttachmentType
 
     try:
-        row = db.query(AttachmentType).filter(AttachmentType.id == attachment_type_id).first()
+        with db.begin_nested():
+            row = db.query(AttachmentType).filter(AttachmentType.id == attachment_type_id).first()
     except Exception:  # noqa: BLE001 - a lookup failure is not a reason to mis-route
         logger.warning("chatbot: attachment_type certificate lookup failed", exc_info=True)
         return False

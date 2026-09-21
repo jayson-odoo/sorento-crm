@@ -2135,6 +2135,13 @@ def _run_stages(  # noqa: PLR0915
                             trace=turn_trace,
                             dry_run=dry_run,
                         )
+                        # BRIDGE (hand pass 11, defect 3): a HIT in one of several
+                        # searched companies still offers the SILENT company's own
+                        # team. No-op off its own `lookup_companies` gate for every
+                        # single-company turn.
+                        answer = answer_bridge.apply_silent_company_offer(
+                            answer, envelope=envelopes[0], parser=answer_parse_output
+                        )
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
                 lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
