@@ -615,6 +615,16 @@ def _restated_existing(
 
     Every line of the order is searched, not only the open ones - the row this sheet row
     already raised may since have closed, and it is still the SAME instruction.
+
+    AC-S4-8: a row also matches on the existing row's `previous_qty`/`previous_delivery_
+    date` - the sheet's own literal figures at the moment it was first raised, preserved by
+    `_apply_settle_recovery`/`_settle_row_in_place` even after the row's LIVE qty/date have
+    since moved to an active supply decision's own buy_qty/required_date. Without this, a
+    settled row no longer answers to the sheet row that raised it, and a re-upload of the
+    unchanged book falls through into the date-order pick as if it were brand new,
+    landing a duplicate on the next genuinely free line. The current-values match is tried
+    FIRST and wins when both would apply, so an ordinary (non-settled) restatement is
+    unaffected.
     """
     item = (row.item_code or "").strip()
     qty = _dec(row.qty)
@@ -628,6 +638,20 @@ def _restated_existing(
                 and (existing.item_code or "").strip() == item
                 and _dec(existing.qty) == qty
                 and existing.delivery_date == row.delivery_date
+            ):
+                return candidate
+    for candidate in order_lines:
+        mirror_id = mirror_by_core.get(str(candidate[0].id))
+        if mirror_id is None:
+            continue
+        for existing in rows_by_mirror.get(mirror_id, []):
+            if (
+                existing.verb in _LINE_OWN_ROW_VERBS
+                and (existing.item_code or "").strip() == item
+                and existing.previous_qty is not None
+                and existing.previous_delivery_date is not None
+                and _dec(existing.previous_qty) == qty
+                and existing.previous_delivery_date == row.delivery_date
             ):
                 return candidate
     return None
