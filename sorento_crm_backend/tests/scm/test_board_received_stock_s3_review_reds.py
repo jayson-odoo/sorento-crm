@@ -707,31 +707,31 @@ def test_path_picker_charges_only_what_each_row_used(api):
 def test_path_picker_memo_does_not_freeze_a_smaller_earlier_need(api):
     """S-2 (round-5 brief): the per-row memo `_own_arrival_credit_for_row` keys by
     `row.id` must not freeze the FIRST `need` a row happened to be asked with - a later
-    call for the SAME row with a LARGER `need` must answer that larger question, not
-    replay the smaller one's cached number.
+    call for the SAME row with a DIFFERENT `need` must answer that question, not replay
+    an earlier call's cached number, and must never charge the ledger past the row's own
+    THEORETICAL credit no matter how the `need`s are ordered.
 
-    One line, qty_ordered 40, own PO line received 40 (tier-1 credit, theoretical 40),
-    40 on hand, one row fully linked 40. Asked TWICE on one `ProjectOrderInquiryService`
-    instance: first with `need=10` (a smaller, artificial ask - answers 10), then with
-    `need=40` (the row's real linked total) - the second answer must be 40 (at least the
-    linked total it is about to be compared against), not the first call's memoised 10.
-    The ledger must never be charged past the bin's physical 40 on hand in total across
-    both calls (read `svc._own_arrival_left` directly, the shape the earlier tests in
-    this file already read).
+    One line, qty_ordered 20, own PO line received 20 (tier-1 credit, theoretical 20 -
+    deliberately LESS than the 40 on hand, so an over-charge is visible instead of
+    hiding behind the physical floor), 40 on hand, one row fully linked 20. Asked THREE
+    times on one `ProjectOrderInquiryService` instance, `need=20` then `need=5` then
+    `need=20` again on the SAME row: each call answers its own `min(theoretical, need)`
+    (20, then 5, then 20), and the ledger is charged the row's theoretical credit (20)
+    exactly ONCE in total - never re-charged on the second, smaller-need call, and never
+    charged a second time on the third call repeating the first's need (which would
+    leave the ledger at 40 - 35 = 5, not the correct 40 - 20 = 20).
 
-    RED today: `_own_arrival_credit_for_row`'s memo (`row_key in
-    self._own_arrival_row_credit: return cached`) returns the FIRST call's answer (10)
-    unconditionally on every later call for the same row, regardless of what `need` that
-    later call is asked with - so `_redirect_row_if_received`'s own `>= linked_qty`
-    check, asked a second time with the row's real 40, would wrongly read 10 and redirect
-    a row whose line's own landed stock in truth covers it in full.
+    RED today: a smaller-then-larger-again `need` sequence for the same row mis-tracks
+    what this row has already been charged, so the third call (repeating the first
+    call's `need=20`) re-charges the ledger instead of recognising the row is already
+    covered - charging 35 in total rather than 20.
     """
     client, world = api
     db = world.db
 
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(
-        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        db, core_so, world.product, world.own_wh, qty_ordered="20",
         required_date=date(2027, 6, 1),
     )
     core_line.source_ref = f"ZZT-S2MEMO-{_uid()[:8]}"
@@ -743,7 +743,7 @@ def test_path_picker_memo_does_not_freeze_a_smaller_earlier_need(api):
     po = supplier_and_po(db, po_number=f"ZZT-PO-S2MEMO-{_uid()[:8]}")
     po_line_bought_for(
         db, po, world.product, world.own_wh, from_so_line_ref=core_line.source_ref,
-        qty_received=40, qty_ordered=40,
+        qty_received=20, qty_ordered=20,
     )
     _stock(db, world.product, world.own_wh, 40)
 
@@ -755,39 +755,39 @@ def test_path_picker_memo_does_not_freeze_a_smaller_earlier_need(api):
     db.flush()
     row = OrderInquiryRow(
         id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
-        so_line_id=line.id, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        so_line_id=line.id, qty=Decimal("20"), verb=IV_ORDER, state=INQUIRY_PLACED,
         stock_location=world.own_wh.warehouse_code,
     )
     db.add(row)
     db.flush()
     spo = spo_allocation_fully_received(
-        db, world.product, world.own_wh, qty=40, from_po_number=po.po_number,
+        db, world.product, world.own_wh, qty=20, from_po_number=po.po_number,
     )
     link = OrderInquiryLink(
         id=_uid(), company_id=world.company_id, row_id=row.id, spo_allocation_id=spo.id,
-        document=spo.spo_number, qty=Decimal("40"),
+        document=spo.spo_number, qty=Decimal("20"),
     )
     db.add(link)
     db.commit()
 
     svc = ProjectOrderInquiryService(db)
-    first = svc._own_arrival_credit_for_row(row, need=Decimal("10"))
-    second = svc._own_arrival_credit_for_row(row, need=Decimal("40"))
+    first = svc._own_arrival_credit_for_row(row, need=Decimal("20"))
+    second = svc._own_arrival_credit_for_row(row, need=Decimal("5"))
+    third = svc._own_arrival_credit_for_row(row, need=Decimal("20"))
 
-    assert first == Decimal("10"), first
-    assert second >= Decimal("40"), (
-        "asked a second time with the row's real linked total (40), the answer must "
-        "cover it, not freeze the smaller (10) the row happened to be asked with "
-        f"first: second={second}"
-    )
+    assert first == Decimal("20"), first
+    assert second == Decimal("5"), second
+    assert third == Decimal("20"), third
 
     product_id = str(world.product.id)
     remaining = svc._own_arrival_left.get(product_id, {}).get(world.own_wh.warehouse_code)
     left = Decimal("40") if remaining is None else remaining
     charged = Decimal("40") - left
-    assert charged <= Decimal("40"), (
-        "the ledger must never be charged past the bin's physical 40 on hand in total "
-        f"across both calls: charged={charged} svc._own_arrival_left={svc._own_arrival_left}"
+    assert charged == Decimal("20"), (
+        "the ledger must be charged the row's theoretical credit (20) exactly ONCE in "
+        "total across a need=20 -> 5 -> 20 sequence on the same row, never re-charged "
+        f"on the third call's repeat of the first's need (which would read 35): "
+        f"charged={charged} left={left} svc._own_arrival_left={svc._own_arrival_left}"
     )
 
 

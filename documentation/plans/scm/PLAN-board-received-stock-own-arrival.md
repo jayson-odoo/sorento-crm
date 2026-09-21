@@ -310,6 +310,13 @@ retained (Path B) row exactly as it shows a received link today. No new screens.
   the reserve-window gate the re-derivation was missing; the re-derivation itself staying a
   second, independent read of the same facts rather than a read of the proposal is the open
   question this follow-up names).
+- Picker vs board window verdict: the replan path picker's minimal `_LineFacts` carries no
+  `required_date`, so it never applies the reserve-window gate the board and confirm now apply
+  (AC-S3-16); a line outside the window can be settled in place by the picker while the board buys
+  it; needs an owner ruling on whether landed-for-this-line stock is window-gated at all.
+- Confirm-time window verdict reads today while compose reads `as_of`: a line exactly one day past
+  the window at compose can cross into it at confirm (one-day-wide, closed by the
+  live-proposal-sources follow-up).
 
 ## Verification on SO372176 (after deploy, owner)
 Confirm on the board succeeds; L2 to L6 read Received (20, 40+10, 40+10, 40+10, 40+10), nothing to

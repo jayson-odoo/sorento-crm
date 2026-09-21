@@ -31,6 +31,8 @@ or a fresh Buy.
   a planning change or deciding it straight on the board. The message names the quantity and the
   purchase order, for example "11 landed for this line on PO 202510-S0101; nothing to buy for
   it."
+* A line due beyond the lead-time window is bought, not credited with landed stock, so the
+  board's Buy for such a line is accepted at Confirm.
 
 ## Confirm no longer fails the whole order over a vanished placement
 

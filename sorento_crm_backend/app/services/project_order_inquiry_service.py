@@ -1663,9 +1663,10 @@ class ProjectOrderInquiryService:
     def _own_arrival_credit_for_row(self, row: OrderInquiryRow, need: Decimal) -> Decimal:
         """R2/R7: what landed FOR this row's line, the SAME credit the board's own ladder
         reads (`ProjectSupplyService.own_arrival_credit_for`) - reused rather than
-        restated, so the path picker and the board cannot come to disagree about what
-        counts as covered. Built off a MINIMAL `_LineFacts` (this call is a single-row
-        question, not a walk).
+        restated. Built off a MINIMAL `_LineFacts` (this call is a single-row question,
+        not a walk) that carries no `required_date`, so this credit applies no
+        reserve-window gate the way the board's own ladder does - a filed follow-up
+        (plan), not a claim that the picker and the board agree on every case.
 
         AC-S3-14 (round-4 fix round): `_redirect_row_if_received` compares this credit
         against `linked_qty` (the row's LINKED total), not the row's own `qty` - the two
@@ -1779,7 +1780,10 @@ class ProjectOrderInquiryService:
             supply._charge_own_arrival_credit(
                 fact, delta, tier1_remaining, tier2, ledger
             )
-        self._own_arrival_row_charged[row_key] = target
+        # A later, smaller `need` must never LOWER the recorded charge - a following
+        # larger need for the SAME row would then re-charge the bin for ground already
+        # covered.
+        self._own_arrival_row_charged[row_key] = max(charged_before, target)
         return target
 
     def _redirect_row_if_received(

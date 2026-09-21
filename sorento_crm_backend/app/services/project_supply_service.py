@@ -5149,6 +5149,10 @@ class ProjectSupplyService:
         # candidate at all for a line outside the reserve window, so the recheck must
         # not credit one either. A line due beyond the window is never credited,
         # composed or confirmed.
+        # `outside_reserve_window` below is called with no `as_of`, so it defaults to
+        # `date.today()` - per `ConfirmSupplyBody.as_of` ("live stock, the queue and
+        # every refusal are judged against now"), this window verdict is judged against
+        # today, never the body's `as_of`.
         if (
             own_arrival_left is not None
             and fact.own_code
