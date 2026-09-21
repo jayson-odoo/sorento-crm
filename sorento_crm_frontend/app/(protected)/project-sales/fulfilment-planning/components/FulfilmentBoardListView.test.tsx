@@ -1300,3 +1300,49 @@ describe('FulfilmentBoardListView - a cancelled changed line (R3, S5)', () => {
   // uncovered line does not touch either way. See `_shared/lib/fulfilmentBoard.test.ts`,
   // `describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)')`.
 });
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, AC-7: the Verdict header used to carry `accessorFn: () => ''`, so
+ * every row sorted equal and the header offered no sort at all. It reads the same state the
+ * pill renders (`verdictOf`, `BoardDecisionPill`) - never a second derivation - ranked
+ * Suggested, Saved, Confirmed, Rejected in the UAC's own words.
+ */
+describe('FulfilmentBoardListView: the Verdict column sorts (AC-7)', () => {
+  it('clicking the Verdict header sorts Suggested before Saved before Confirmed', async () => {
+    const suggestedLine = contribution({
+      key: 'so-1:line-1',
+      so_number: 'SO000001',
+      line_no: 1,
+    });
+    const savedLine = contribution({
+      key: 'so-1:line-2',
+      so_number: 'SO000002',
+      line_no: 2,
+    });
+    const confirmedLine = contribution({
+      key: 'so-1:line-3',
+      so_number: 'SO000003',
+      line_no: 3,
+      covered: true,
+    });
+
+    // Deliberately NOT already in rank order, so the click has something to prove.
+    renderView({
+      contributions: [confirmedLine, suggestedLine, savedLine],
+      draft: { [savedLine.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO000001');
+    expect(
+      screen.getAllByText(/^SO00000[1-3]$/).map((el) => el.textContent),
+    ).toEqual(['SO000003', 'SO000001', 'SO000002']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verdict' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^SO00000[1-3]$/).map((el) => el.textContent),
+      ).toEqual(['SO000001', 'SO000002', 'SO000003']),
+    );
+  });
+});

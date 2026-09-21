@@ -423,9 +423,58 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
  * same thing.
  */
 export function suggestedDecisionFor(contribution: BoardContribution): BoardDecision {
+  return suggestionWithReasons(contribution, { borrow: [] });
+}
+
+/**
+ * The row a reason was typed against, matched by warehouse + donor rather than array
+ * position: the suggestion's own borrow rows and the ones a planner typed a reason on are not
+ * necessarily in the same order. The SAME key `matchesSuggestion` compares rows by, so the two
+ * can never disagree about which row is which.
+ */
+export function borrowReasonKeyOf(row: {
+  warehouse_id?: string | null;
+  donor_project_id?: string | null;
+}): string {
+  return `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`;
+}
+
+/**
+ * The engine's suggestion, with the REASONS a planner typed for it carried onto it: the Buy
+ * reason a discontinued line needs, and any suggested borrow row's own reason.
+ *
+ * Board-confirm-left-out (measured cause 1): an approving Save used to post
+ * `decisionFromAmendDraft(suggestionDraftFrom(contribution), '')` verbatim, which seeds
+ * `buy_reason` from nothing and every borrow row's `reason` from the ENGINE's own sentence -
+ * so a reason the planner had just typed into the box never reached the server, and the box
+ * emptied on the reseed that followed. ONE function composes the suggestion WITH those
+ * reasons, used by both the panel's approving `save()` (the reasons come off the draft still
+ * on screen) and `confirmLinesFor`'s approved-covered branch (they come off the SAVED
+ * decision) - so the two can never compose two different suggestions for the same approval.
+ */
+export function suggestionWithReasons(
+  contribution: BoardContribution,
+  reasons: {
+    buy_reason?: string;
+    borrow: {
+      warehouse_id?: string | null;
+      donor_project_id?: string | null;
+      reason: string;
+    }[];
+  },
+): BoardDecision {
+  const suggested = decisionFromAmendDraft(suggestionDraftFrom(contribution), '');
+  const typedReasons = new Map(
+    reasons.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
+  );
   return {
-    ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+    ...suggested,
     verdict: 'approved',
+    buy_reason: reasons.buy_reason?.trim() || undefined,
+    borrow: suggested.borrow?.map((row) => ({
+      ...row,
+      reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
+    })),
   };
 }
 

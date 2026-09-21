@@ -31,12 +31,7 @@ import type {
   ConfirmLine,
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
-import {
-  borrowPassThrough,
-  confirmLineFrom,
-  decisionFromAmendDraft,
-  suggestionDraftFrom,
-} from './boardAmend';
+import { borrowPassThrough, confirmLineFrom, suggestionWithReasons } from './boardAmend';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -368,11 +363,16 @@ function lineFor(
   // engine's own answer, and re-deriving from them is what makes the board agree with the
   // sheet.
   if (contribution.covered && decision?.verdict === 'approved') {
-    const suggested: BoardDecision = {
-      ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
-      verdict: 'approved',
-      suspected_system_issue: decision.suspected_system_issue ?? false,
-    };
+    // Board-confirm-left-out (measured cause 1): this used to rebuild the suggestion off
+    // `decisionFromAmendDraft` alone, which drops the `buy_reason` and any borrow reason the
+    // SAVED decision carried - a discontinued line whose planner had already typed a reason
+    // into the approving Save (below) still read `buy_reason_missing` here. Composed by the
+    // SAME helper the panel's own approving `save()` uses, off the reasons THAT decision saved.
+    const suggested = suggestionWithReasons(contribution, {
+      buy_reason: decision.buy_reason ?? undefined,
+      borrow: decision.borrow ?? [],
+    });
+    suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
     const suggestedBuy = toMinor(suggested.buy_qty ?? '0');
     if (discontinued && suggestedBuy > 0 && !suggested.buy_reason?.trim()) {
       return 'buy_reason_missing';

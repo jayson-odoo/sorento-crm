@@ -2048,6 +2048,29 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
+  /**
+   * BOARD-CONFIRM-LEFT-OUT (measured cause 1): an APPROVED (not amended) verdict already
+   * reads `decision.buy_reason` on this UNCOVERED derivation - this is the panel's own
+   * approving Save, once it carries the reason (`BoardLineDecisionPanel.test.tsx`). Pinned
+   * here so the derivation this test exercises cannot regress the same way the COVERED
+   * one did (see "confirmLinesFor and an approved COVERED line" below).
+   */
+  it('posts an approved Buy once the approval itself carries the reason', () => {
+    const draft = {
+      ...approved,
+      [old.key]: { verdict: 'approved' as const, buy_reason: 'Last batch for the site.' },
+    };
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
+    expect(lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!.buy_reason).toBe(
+      'Last batch for the site.',
+    );
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+  });
+
   it('still names it on an amendment that buys it without a reason (the other, SAVED line still posts)', () => {
     const draft = {
       [contributions.find((entry) => entry.line_no === 1)!.key]: { verdict: 'approved' as const },
@@ -2089,6 +2112,72 @@ describe('confirmLinesFor and a discontinued product', () => {
       unpostableDecidedFor(unadopted, 'so-a', approved, false).map((entry) => entry.reason),
     ).toEqual(['buy_reason_missing']);
     expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(1);
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT (SO420745, 21 Sep 2026, measured cause 1): the COVERED-approved
+ * derivation rebuilds the suggestion (`suggestionWithReasons` in `boardAmend.ts`), because a
+ * covered line's `qty_proposed_*`/`sources` state the ACTIVE DECISION, not the engine's
+ * suggestion - so it cannot read `decision.buy_reason` off the derivation the way the
+ * UNCOVERED path above does. It used to drop `buy_reason` (and any borrow reason) on that
+ * rebuild, so a discontinued line the planner had already given a reason for, on an approving
+ * Save, still read `buy_reason_missing` at Confirm.
+ */
+describe('confirmLinesFor and an approved COVERED line: the buy reason travels with it', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [],
+    buy_qty: '10',
+  };
+  const discontinuedFlags = {
+    dealer_hot_selling: false,
+    dealer_hot_selling_where: [],
+    project_hot_selling: false,
+    project_hot_selling_where: [],
+    dealer_classified: false,
+    project_classified: false,
+    discontinued: true,
+    retail_classification_available: true,
+  };
+  const board = buildBoard(
+    [
+      line({
+        sales_order_id: 'so-a',
+        so_number: 'SO420745',
+        line_no: 32,
+        item_code: 'SRTWT9610-GM',
+        qty: '10',
+        decision: frozen,
+      }),
+    ],
+    { today: TODAY },
+  );
+  const contributions = board.cells
+    .flatMap((cell) => cell.contributions)
+    .map((entry) => ({ ...entry, item_flags: discontinuedFlags }));
+  const key = contributions[0].key;
+  const REASON = 'Owner accepted this discontinued item for the project.';
+
+  it('is not unpostable once the approving decision carries a fresh buy reason', () => {
+    const draft = { [key]: { verdict: 'approved' as const, buy_reason: REASON } };
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+  });
+
+  it('the confirm line carries the buy reason', () => {
+    const draft = { [key]: { verdict: 'approved' as const, buy_reason: REASON } };
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines[0].buy_reason).toBe(REASON);
+  });
+
+  it('still refuses it without one, the same as before', () => {
+    const draft = { [key]: { verdict: 'approved' as const } };
+    expect(
+      unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason),
+    ).toEqual(['buy_reason_missing']);
   });
 });
 

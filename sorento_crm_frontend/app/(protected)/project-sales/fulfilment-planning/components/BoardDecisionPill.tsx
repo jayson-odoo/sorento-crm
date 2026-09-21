@@ -89,6 +89,78 @@ export function isPreMarkOnly(
   return Boolean(decision?.preMarked) && !contribution.draft;
 }
 
+export type VerdictKey =
+  | 'unplannable'
+  | 'cancelled'
+  | 'confirmed'
+  | 'rejected'
+  | 'stale'
+  | 'change_proposed'
+  | 'saved'
+  | 'suggested';
+
+/**
+ * How far one line has got, as the ONE-WORD KEY this pill renders - pulled out of the pill's
+ * own body (board-confirm-left-out, AC-7) so the Verdict column's own SORT
+ * (`FulfilmentBoardListView`) reads off the exact rule the pill does, rather than a second
+ * derivation the two could quietly disagree about.
+ */
+export function verdictOf(
+  contribution: Pick<
+    BoardContribution,
+    'cancelled' | 'unplannable' | 'covered' | 'draft' | 'decision'
+  >,
+  decision: BoardDecision | null,
+): VerdictKey {
+  if (!contribution.cancelled && contribution.unplannable) return 'unplannable';
+
+  const covered = Boolean(contribution.covered) && !decision;
+  // What was saved, from wherever it came: THIS session's own click first, the server's own
+  // row otherwise - a fresh page load has not run the seeding effect yet on the very first
+  // paint, and the pill reads right either way rather than flashing Suggested for a frame.
+  const draftSource = decision ?? contribution.draft?.decision ?? null;
+  const stale = !covered && Boolean(contribution.draft?.stale);
+
+  // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
+  // `confirmSummaryFor` (`_shared/lib/fulfilmentBoard.ts`) counts by. A REJECTED verdict on
+  // a stale line commits nothing either way, and "Rejected" is what the planner actually did
+  // about it - reading "Suggestion changed" instead would say something happened that had
+  // already been answered.
+  //
+  // CANCELLED WINS OVER EVERYTHING (R3). Whatever was decided for this line, and whoever
+  // decided it, the book has since removed the line: reading "Confirmed" or "Saved" over a
+  // quantity nobody is owed would be the board agreeing to supply it.
+  if (contribution.cancelled) return 'cancelled';
+  if (covered) return 'confirmed';
+  if (draftSource?.verdict === 'rejected') return 'rejected';
+  if (stale) return 'stale';
+  if (isPreMarkOnly(contribution, decision)) {
+    // PLAN-board-change-proposed-pill: sits with `saved` in the resolution order (it IS a
+    // session draft, just not yet a written one) - `rejected` and `stale` both still win over
+    // it for the same reason they win over `saved`.
+    return 'change_proposed';
+  }
+  if (draftSource) return 'saved';
+  return 'suggested';
+}
+
+/**
+ * The Verdict column's own sort order (AC-7, the UAC's own words: "Suggested, Saved,
+ * Confirmed, Rejected"). `unplannable` and `cancelled` are not a verdict a planner takes on
+ * this board, so they sort at the ends rather than among the four the UAC names; `stale` and
+ * `change_proposed` are both a kind of "saved", so they sit beside it.
+ */
+export const VERDICT_SORT_RANK: Record<VerdictKey, number> = {
+  unplannable: 0,
+  suggested: 1,
+  change_proposed: 2,
+  saved: 3,
+  stale: 4,
+  confirmed: 5,
+  cancelled: 6,
+  rejected: 7,
+};
+
 export function BoardDecisionPill({
   contribution,
   decision,
@@ -112,40 +184,12 @@ export function BoardDecisionPill({
     );
   }
 
-  const covered = Boolean(contribution.covered) && !decision;
   // What was saved, from wherever it came: THIS session's own click first, the server's own
   // row otherwise - a fresh page load has not run the seeding effect yet on the very first
   // paint, and the pill reads right either way rather than flashing Suggested for a frame.
+  // Needed here for `suspected` below; `verdictOf` computes its OWN copy of the same value.
   const draftSource = decision ?? contribution.draft?.decision ?? null;
-  const stale = !covered && Boolean(contribution.draft?.stale);
-
-  // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
-  // `confirmSummaryFor` (`_shared/lib/fulfilmentBoard.ts`) counts by. A REJECTED verdict on
-  // a stale line commits nothing either way, and "Rejected" is what the planner actually did
-  // about it - reading "Suggestion changed" instead would say something happened that had
-  // already been answered.
-  let verdict: string;
-  // CANCELLED WINS OVER EVERYTHING (R3). Whatever was decided for this line, and whoever
-  // decided it, the book has since removed the line: reading "Confirmed" or "Saved" over a
-  // quantity nobody is owed would be the board agreeing to supply it.
-  if (contribution.cancelled) {
-    verdict = 'cancelled';
-  } else if (covered) {
-    verdict = 'confirmed';
-  } else if (draftSource?.verdict === 'rejected') {
-    verdict = 'rejected';
-  } else if (stale) {
-    verdict = 'stale';
-  } else if (isPreMarkOnly(contribution, decision)) {
-    // PLAN-board-change-proposed-pill: sits with `saved` in the resolution order (it IS a
-    // session draft, just not yet a written one) - `rejected` and `stale` both still win over
-    // it for the same reason they win over `saved`.
-    verdict = 'change_proposed';
-  } else if (draftSource) {
-    verdict = 'saved';
-  } else {
-    verdict = 'suggested';
-  }
+  const verdict = verdictOf(contribution, decision);
 
   // Flagged in this session's draft, or - while nobody has decided it here - flagged on the
   // decision that is already in the database: the icon has to survive a reload, or the doubt

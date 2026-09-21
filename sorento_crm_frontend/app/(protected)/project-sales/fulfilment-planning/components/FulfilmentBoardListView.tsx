@@ -14,10 +14,16 @@ import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
-import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
+import {
+  BoardDecisionPill,
+  isPreMarkOnly,
+  VERDICT_SORT_RANK,
+  verdictOf,
+} from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { BoardChangeTable } from './BoardChangeTable';
@@ -60,6 +66,8 @@ export function FulfilmentBoardListView({
   annotations,
   externalSearch,
   pageResetKey,
+  focusKey,
+  onFocusHandled,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -91,6 +99,14 @@ export function FulfilmentBoardListView({
    * leave the reader on whatever page 3 now shows instead of the top of the new list.
    */
   pageResetKey?: string;
+  /**
+   * Board-confirm-left-out AC-5: the row the left-out banner's own link asked to see, opened
+   * here and scrolled into view. The BOARD says which row; this view is the one that already
+   * owns the expansion state, so it is the one that acts on it.
+   */
+  focusKey?: string | null;
+  /** Fired once `focusKey` has been opened, so the caller can clear it for the next click. */
+  onFocusHandled?: () => void;
 }) {
   /**
    * Which rows are open - the same STATE the cell breakdown keeps, and the same panel inside
@@ -118,6 +134,44 @@ export function FulfilmentBoardListView({
     expandAll,
     requestCollapseAll,
   } = expansion;
+
+  /** Which row the scroll below has already fired for, so a re-render does not repeat it. */
+  const lastScrolledFocusKey = React.useRef<string | null>(null);
+
+  /**
+   * Board-confirm-left-out AC-5: opens `focusKey`'s row alongside whatever is already open
+   * (the multi-open reading, so nothing already on screen is thrown away).
+   */
+  React.useEffect(() => {
+    if (!focusKey) {
+      lastScrolledFocusKey.current = null;
+      return;
+    }
+    setExpanded((current) => {
+      const record = typeof current === 'boolean' ? {} : current;
+      if (record[focusKey]) return current;
+      return { ...record, [focusKey]: true };
+    });
+  }, [focusKey, setExpanded]);
+
+  /**
+   * The scroll itself, once the row `focusKey` named is actually open (`openKeys`, not
+   * `focusKey` alone): the effect above ASKS for it to expand, and the row does not exist in
+   * the DOM until the render that follows that state change lands - this effect re-fires on
+   * exactly that render, because `openKeys` is what changed. Guarded by the ref above, not by
+   * clearing `focusKey` on the caller's side alone: a second click naming the SAME already-
+   * open row has to scroll again, and this is what tells "still the same request" apart from
+   * "asked for again".
+   */
+  React.useEffect(() => {
+    if (!focusKey || !openKeys.includes(focusKey)) return;
+    if (lastScrolledFocusKey.current === focusKey) return;
+    lastScrolledFocusKey.current = focusKey;
+    document
+      .querySelector(`[data-testid="line-decision-${focusKey}"]`)
+      ?.scrollIntoView({ block: 'center' });
+    onFocusHandled?.();
+  }, [focusKey, openKeys, onFocusHandled]);
 
   /**
    * D14 (the captain: a quick save for the lines that need nothing amended). Selection is
@@ -249,6 +303,9 @@ export function FulfilmentBoardListView({
         },
         size: 150,
         minSize: 120,
+        // `sortable` turns on to give the Verdict column below its own sort (AC-7); every
+        // OTHER column opts back out so the reading order nobody asked to change stays put.
+        enableSorting: false,
         meta: {
           // The SAME editor the cell breakdown expands, so a decision reads and is taken
           // identically whichever way the planner came at the line - the per-location
@@ -292,6 +349,7 @@ export function FulfilmentBoardListView({
           ),
         size: 110,
         minSize: 90,
+        enableSorting: false,
       },
       {
         id: 'customer',
@@ -307,6 +365,7 @@ export function FulfilmentBoardListView({
           ),
         size: 180,
         minSize: 130,
+        enableSorting: false,
       },
       {
         id: 'product',
@@ -336,6 +395,7 @@ export function FulfilmentBoardListView({
         },
         size: 140,
         minSize: 110,
+        enableSorting: false,
       },
       {
         id: 'required_date',
@@ -355,6 +415,7 @@ export function FulfilmentBoardListView({
         ),
         size: 130,
         minSize: 110,
+        enableSorting: false,
       },
       {
         id: 'owed_qty',
@@ -370,6 +431,7 @@ export function FulfilmentBoardListView({
         ),
         size: 100,
         minSize: 90,
+        enableSorting: false,
       },
       {
         // AC-D4: what the ENGINE said, in PLAN section 2's own words. Split off the old
@@ -412,6 +474,7 @@ export function FulfilmentBoardListView({
         },
         size: 240,
         minSize: 170,
+        enableSorting: false,
       },
       {
         id: 'decided',
@@ -463,6 +526,7 @@ export function FulfilmentBoardListView({
         },
         size: 240,
         minSize: 170,
+        enableSorting: false,
       },
       {
         id: 'rank',
@@ -478,11 +542,16 @@ export function FulfilmentBoardListView({
           ),
         size: 80,
         minSize: 70,
+        enableSorting: false,
       },
       {
         id: 'verdict',
-        accessorFn: () => '',
-        header: 'Verdict',
+        // AC-7: sorted by the SAME state the pill renders (`verdictOf`, `BoardDecisionPill`) -
+        // never a second reading of "how far this line has got", which is exactly how the
+        // column and the pill it sorts could come to disagree.
+        accessorFn: (row) => VERDICT_SORT_RANK[verdictOf(row, draft[row.key] ?? null)],
+        enableSorting: true,
+        header: ({ column }) => <DataGridColumnHeader title="Verdict" column={column} />,
         // A PILL, and (D14) an Undo beside it once there is something a saved line can be
         // undone FROM - the only other way to shed one saved line today is the board-wide
         // "Undo all", which is not this line's answer to a quick save taken by mistake. D15
@@ -609,6 +678,10 @@ export function FulfilmentBoardListView({
       onExpandedChange={setExpanded}
       onRowClick={(row) => requestRow(row.key)}
       pageSize={25}
+      // AC-7: turns sorting on for the table so the Verdict column can offer it - every OTHER
+      // column opts back out above (`enableSorting: false`) so this is a change to Verdict
+      // alone, not a live control appearing on eight headers nobody asked to sort.
+      sortable
     />
     <UnsavedDecisionPrompt state={expansion} />
     </>
