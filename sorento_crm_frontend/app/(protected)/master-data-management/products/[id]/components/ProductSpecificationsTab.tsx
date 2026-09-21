@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { MoreVertical, RefreshCw } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,13 +26,27 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { readableEntry, valueLabelsByKey } from '@/lib/spec-readable';
+import { readableEntry, readableValue, valueLabelsByKey } from '@/lib/spec-readable';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { AddSpecificationDialog, SpecTable, type SpecKeyDefinition } from '@/components/spec-table';
+import {
+  AddSpecificationDialog,
+  SpecTable,
+  type SpecKeyDefinition,
+  type SpecTableRow,
+} from '@/components/spec-table';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useProductSpecTable } from '../../hooks/useProductSpecTable';
+import { useProduct, useUpdateProduct } from '../../hooks/useProducts';
 import SpecExtractPanel from './SpecExtractPanel';
 import { rederiveProduct } from '../../../product-specifications/services/productSpecService';
+import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
+import {
+  hasMergeField,
+  renderMergeFields,
+  type MergeFieldGroup,
+  type SpecKeyOption,
+} from '@/lib/dealer-kit/merge-fields';
+import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 import type {
   ProductSpecDetail,
   SpecDiagnosisReason,
@@ -40,6 +55,10 @@ import type {
   VerificationBlock,
   VerificationState,
 } from '../../../spec-verification/types/specVerification.types';
+
+// AC-S4-11: this product's own description cannot address a line, a set or a
+// combo part - only its own fields and its own specs.
+const PRICE_TAG_INSERT_GROUPS: MergeFieldGroup[] = ['Product', 'Specs'];
 
 /**
  * What this product's specifications are, and where each one came from.
@@ -211,6 +230,157 @@ function VerificationStrip({
   );
 }
 
+/**
+ * "Price tag description" (S11, amends S4): a per-product TEMPLATE, edited
+ * in place, with the same Insert field picker the tag template designer
+ * uses and a live "Prints as:" preview - so the person writing it sees the
+ * exact words a customer will read, before it is ever saved. One home for
+ * the field: the Overview edit form and detail row are gone
+ * (`ProductForm.priceTagDescription.test.tsx` /
+ * `ProductDetail.priceTagDescription.test.tsx`).
+ */
+function PriceTagDescriptionBlock({
+  productId,
+  storedTemplate,
+  canEdit,
+  rows,
+  registry,
+  productCode,
+  productName,
+  listPrice,
+}: {
+  productId: string;
+  storedTemplate: string | null;
+  canEdit: boolean;
+  rows: SpecTableRow[];
+  registry: SpecKeyDefinition[];
+  productCode: string;
+  productName: string;
+  listPrice: number | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [insertOpen, setInsertOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { mutateAsync, isPending } = useUpdateProduct();
+
+  const specKeys: SpecKeyOption[] = useMemo(
+    () => registry.map((key) => ({ key: key.spec_key, label: key.label, unit: key.unit })),
+    [registry],
+  );
+
+  // This product's own spec values, in the SAME readable form the table
+  // itself renders through (`readableValue`) - never the raw stored slug
+  // (AC-S4-12).
+  const previewBinding: TagBindingData = useMemo(
+    () => ({
+      kind: 'product',
+      product: {
+        id: productId,
+        code: productCode,
+        name: productName,
+        dimensions: '',
+        spec_lines: [],
+        specs: rows.map((row) => ({
+          key: row.specKey,
+          label: row.label,
+          value: readableValue(row.value, row.unit ?? undefined, row.valueLabels),
+          unit: row.unit,
+        })),
+        images: [],
+        list_price: listPrice,
+        offer_price: null,
+        promotion_id: null,
+        barcode: null,
+      },
+    }),
+    [productId, productCode, productName, listPrice, rows],
+  );
+
+  const activeText = editing ? draft : storedTemplate ?? '';
+  const printsAs = renderMergeFields(activeText, previewBinding, 'print');
+
+  const startEdit = () => {
+    setDraft(storedTemplate ?? '');
+    setEditing(true);
+  };
+  const cancelEdit = () => setEditing(false);
+  const save = async () => {
+    await mutateAsync({ id: productId, data: { price_tag_description: draft } });
+    setEditing(false);
+  };
+
+  const insertAtCaret = (content: string) => {
+    setDraft(content);
+    setInsertOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        Price tag description
+      </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <Textarea
+            ref={textareaRef}
+            aria-label="Price tag description"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') cancelEdit();
+            }}
+            rows={3}
+            className="font-mono text-sm"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setInsertOpen(true)}>
+              Insert field
+            </Button>
+            <Button size="sm" onClick={save} disabled={isPending}>
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={isPending}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="rounded-md border bg-muted/30 p-3 font-mono text-sm break-words">
+            {storedTemplate || '(none)'}
+          </p>
+          {canEdit && (
+            <div>
+              <Button size="sm" variant="outline" onClick={startEdit}>
+                Edit price tag description
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {hasMergeField(activeText) && (
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Prints as:</span>
+          <p className="text-sm break-words">{printsAs}</p>
+        </div>
+      )}
+
+      <InsertFieldDialog
+        open={insertOpen}
+        value={draft}
+        data={previewBinding}
+        specKeys={specKeys}
+        groups={PRICE_TAG_INSERT_GROUPS}
+        onCancel={() => setInsertOpen(false)}
+        onDone={insertAtCaret}
+      />
+    </div>
+  );
+}
+
 export default function ProductSpecificationsTab({ productId }: { productId: string }) {
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -219,6 +389,9 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   const [confirmingUnverify, setConfirmingUnverify] = useState(false);
   const spec = useProductSpecTable(productId);
   const { detail, rows, registry, applicableKeys, otherKeys, heldKeys, isLoading, error } = spec;
+  // Same `['product', id]` query `ProductDetail.tsx` already populates when it
+  // mounts this tab (S11) - no second round trip on the page's own first paint.
+  const { data: product } = useProduct(productId);
   // `{spec_key: value_labels}` (E.2) - built once off the registry this tab already
   // loaded, so `SpecExtractPanel` needs no registry call of its own.
   const valueLabels = useMemo(() => valueLabelsByKey(registry), [registry]);
@@ -342,6 +515,17 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
               {detail.source_text || '(no description)'}
             </p>
           </div>
+
+          <PriceTagDescriptionBlock
+            productId={productId}
+            storedTemplate={product?.price_tag_description ?? null}
+            canEdit={canEdit}
+            rows={rows}
+            registry={registry}
+            productCode={product?.product_code ?? detail.product_code}
+            productName={product?.product_name ?? ''}
+            listPrice={product?.list_price ?? null}
+          />
 
           {/* Where the stored flyer card used to be, in the same place on the tab.
               The card was a copy of a printed document kept beside the values it

@@ -279,8 +279,16 @@ export function renderMergeFields(
  * The spec group comes from the registry rather than from a list in here, so a
  * key added on the master-data screen appears in the dialog with no code
  * change (D58).
+ *
+ * `groups` narrows the catalog to only the named groups (S11) - a product's
+ * own price tag description cannot address a line, a set or a combo part, so
+ * the Specifications tab restricts to `['Product', 'Specs']`. Omitted, every
+ * group is offered, unchanged from before this parameter existed.
  */
-export function mergeFieldCatalog(specKeys: SpecKeyOption[]): MergeField[] {
+export function mergeFieldCatalog(
+  specKeys: SpecKeyOption[],
+  groups?: MergeFieldGroup[],
+): MergeField[] {
   const fixed = FIELD_LABELS.map(({ path, label, group }) => ({
     path,
     token: `{{${path}}}`,
@@ -297,10 +305,12 @@ export function mergeFieldCatalog(specKeys: SpecKeyOption[]): MergeField[] {
 
   // Product first, then the specs a designer is most likely hunting for, then
   // the two groups that only apply to some blocks.
-  return [
+  const all = [
     ...fixed.filter((field) => field.group === 'Product'),
     ...specs,
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
   ];
+
+  return groups ? all.filter((field) => groups.includes(field.group)) : all;
 }
