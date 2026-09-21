@@ -104,6 +104,14 @@ export async function confirmPull(jobId: string): Promise<AutocountPull> {
   return response.json();
 }
 
+/** AC-DS-1..8: throws away an open pull. Idempotent on an already-discarded pull; 409
+ *  `NOT_DISCARDABLE` on anything else (`confirmed` / `failed` / `expired`). */
+export async function discardPull(jobId: string): Promise<AutocountPull> {
+  const response = await apiFetch(`/api/v1/autocount/pulls/${jobId}/discard`, { method: 'POST' });
+  if (!response.ok) throw await codedError(response, 'Could not discard the pull.');
+  return response.json();
+}
+
 // ---- Start-error toast text (AC-PL-6) --------------------------------------------------
 
 const START_ERROR_MESSAGES: Record<string, string> = {

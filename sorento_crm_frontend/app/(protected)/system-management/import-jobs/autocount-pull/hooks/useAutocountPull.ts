@@ -7,6 +7,7 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   comparePull,
   confirmPull,
+  discardPull,
   downloadPullXlsx,
   getCurrentPull,
   getPull,
@@ -161,6 +162,41 @@ export function useConfirmPull() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Could not confirm the pull.');
+    },
+  });
+}
+
+/** AC-DS-10: mirrors `useConfirmPull` - invalidates the pull itself plus the current-pull
+ *  query (a discarded pull is no longer "open", so `GET /current` must stop finding it),
+ *  toasts "Pull discarded" on success, the extracted API error message on failure.
+ *
+ *  S3 (Phase 3 fix round 1): also invalidates `['import-job']` (prefix form, no `id` -
+ *  this hook only ever sees `pull.job_id`, not the job page's OWN `id` URL param, which
+ *  E2 already notes can differ) so the generic Job Summary card and its Cancel Job
+ *  button (`[id]/page.tsx`'s own `useQuery({ queryKey: ['import-job', id], ... })`)
+ *  refresh too - a discard from `building`/`previewing` leaves that card showing a
+ *  `canCancel` Cancel Job button and a stale status otherwise.
+ *
+ *  Fix round 2 (browser pass): ALSO `['import-job-status']` - react-query's prefix match
+ *  is per array ELEMENT, so `['import-job']` alone does not match `useImportJobStatus`'s
+ *  own key (`['import-job-status', jobId]`, `hooks/useImportJobs.ts`), which is what the
+ *  Job Summary card's status pill actually reads (`statusData?.status || job.status`) -
+ *  without this the card kept showing FINISHED/PENDING after a discard until a reload,
+ *  since that query's own polling has already stopped on a finished/dead job. */
+export function useDiscardPull() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => discardPull(jobId),
+    onSuccess: (pull) => {
+      queryClient.setQueryData(['autocount-pull', pull.job_id], pull);
+      queryClient.invalidateQueries({ queryKey: ['autocount-pull', pull.job_id] });
+      queryClient.invalidateQueries({ queryKey: ['autocount-pull-current', pull.entity] });
+      queryClient.invalidateQueries({ queryKey: ['import-job'] });
+      queryClient.invalidateQueries({ queryKey: ['import-job-status'] });
+      toast.success('Pull discarded');
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Could not discard the pull.');
     },
   });
 }
