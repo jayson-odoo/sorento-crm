@@ -5,21 +5,21 @@ told yes.
 
 Finding pinned here (security reviewer, 21 Sep 2026): in `app/services/project_supply_service.py`
 
-- `_own_arrival_credit_for` (~:2604-2691) caps its credit by `fact.group_net_by_location`'s
-  RAW `on_hand` (a live physical figure, netted at :2679-2690 only against what an EARLIER
+- `own_arrival_credit_for` caps its credit by `fact.group_net_by_location`'s
+  RAW `on_hand` (a live physical figure, netted only against what an EARLIER
   line of the SAME product+location already drew as CREDIT in this same walk/call via
   `own_arrival_left`) - never against what an ordinary `RUNG_GROUP_TAKE` draw already took in
   the SAME walk.
-- At compose time, the per-unit drawdown loop (~:1737-1766, inside `compose_lines`) walks every
+- At compose time, the per-unit drawdown loop (inside `compose_lines`) walks every
   `RUNG_GROUP_TAKE` component and charges it against `own_group`/`other_group` EXCEPT an
-  own-arrival one, which `continue`s at :1741-1745 without charging anything. So where one
+  own-arrival one, which `continue`s without charging anything. So where one
   unit's ordinary draw (rank tie-break, `_pile_order`) and another unit's own-arrival credit
   compete for the identical bin, the credit is invisible to the ledger the ordinary draw reads
   and writes: both units are told yes.
-- At confirm time, `_check_line` (~:4805-4831) adds the credit straight onto its own local
-  `capacity[fact.own_code]` (:4829-4831), never through `capacity_left` (the `_CapacityLedger`
-  every other rung's capacity check draws through, declared once per `confirm()` call at
-  :4322 and threaded through every line of the payload) - the same shape of bypass, one layer
+- At confirm time, `_check_line` adds the credit straight onto its own local
+  `capacity[fact.own_code]`, never through `capacity_left` (the `_CapacityLedger`
+  every other rung's capacity check draws through, declared once per `confirm()` call and
+  threaded through every line of the payload) - the same shape of bypass, one layer
   lower.
 
 Both tests below use `own_arrival_group`/`own_arrival_warehouse` (one ownership group, one
@@ -30,12 +30,12 @@ CONTRACT CHOICES this file pins:
 - AC-S3-11's own text says "order A" / "order B" for the compose (ladder) half - two DIFFERENT
   sales orders sharing one product and one bin, walked together in a single
   `FulfilmentBoardService.build()` call (the board's own unit key names the order,
-  `_unit_key`'s docstring at :1857-1870, so `own_group` truly is a PER-ORDER ledger there and
+  per `_unit_key`'s own docstring, so `own_group` truly is a PER-ORDER ledger there and
   the only thing that can still cap the group's book position across two orders sharing a
   ranking tie is the drawdown loop the finding names).
 - The two lines are given the SAME `required_date` (a genuine rank tie) and DETERMINISTIC
   `so_number`s, because `_pile_order`'s tie-break is "sales order number, then line number"
-  (:263-269) - a tie broken by a RANDOM uuid-suffixed `so_number` (`order_with_lines`'s
+  - a tie broken by a RANDOM uuid-suffixed `so_number` (`order_with_lines`'s
   default) makes which line the ordinary rung serves first non-deterministic, and the credit
   bypass is only OBSERVABLE when the credited line loses that tie (the ordinary rung serves
   the OTHER line first, and the credit still hands the loser a second, uncharged copy of the
@@ -45,7 +45,7 @@ CONTRACT CHOICES this file pins:
   pin: two SEPARATE orders confirmed in sequence (B first, A second; and the reverse, A first,
   B second) and ONE order with two lines confirmed together in a single `confirm()` call. All
   three are refused as `ReserveOverHand` (`SupplyLinesRefused`, 409, code
-  `supply_reserve_over_hand`) TODAY - `_check_reserve_against_on_hand` (R14, :5071-5163) is an
+  `supply_reserve_over_hand`) - `_check_reserve_against_on_hand` (R14) is an
   INDEPENDENT guard that reads real `Stock` and real confirmed `SOLineAllocation` rows rather
   than either walk-scoped ledger the finding names, and it does not distinguish an
   own-arrival-sourced Reserve request from an ordinary one: every `entry.reserve` item in the
@@ -117,7 +117,7 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
     even reached.
 
     MEASURED green after the fix: `compose_lines`'s own-arrival drawdown loop
-    (:1737-1766) now charges the SAME `own_arrival_left` ledger `own_arrival_credit_for`
+    now charges the SAME `own_arrival_left` ledger `own_arrival_credit_for`
     reads, for every ORDINARY `RUNG_GROUP_TAKE` Reserve at that bin - not only for the
     credit's own component. B is walked first (its `so_number` wins the tie), its ordinary
     Reserve of 40 takes the whole bin AND spends the own-arrival ledger for that bin down to
@@ -187,13 +187,13 @@ def test_ac_s3_11_confirm_never_covers_the_same_units_twice():
     one with its own PO line received 40). A live `ProjectSupplyService.confirm()` covering
     ORDER B first (ordinary Reserve 40) and then ORDER A (own-arrival Reserve 40, asked for
     exactly as the board proposes it in the test above) - `confirm()` is scoped to ONE order
-    (`order: ProjectSalesOrder`, `app/services/project_supply_service.py` :4187-4196), so
+    (`order: ProjectSalesOrder`, `app/services/project_supply_service.py`), so
     "a confirm covering both" is two confirms in sequence, sharing the same on-hand.
 
     MEASURED green today (not forced red - see this file's CONTRACT CHOICES): B's confirm
-    commits a real `SOLineAllocation` (`source_type=ALLOC_SOURCE_OWN`, :7151-7178) for its
+    commits a real `SOLineAllocation` (`source_type=ALLOC_SOURCE_OWN`) for its
     40. A's confirm then asks for the SAME 40 as an own-arrival Reserve, and
-    `_check_reserve_against_on_hand` (R14, :5071-5163) - independent of `_check_line`'s own
+    `_check_reserve_against_on_hand` (R14) - independent of `_check_line`'s own
     ledger, the seam AC-S3-11's finding actually names - reads live `Stock` and B's now-real
     hold and refuses A's ask as `ReserveOverHand` (409, `supply_reserve_over_hand`): "40 on
     hand, 40 already reserved by ORDER B, you asked 40". The reverse order (A confirms
@@ -283,14 +283,14 @@ def test_single_line_credit_never_exceeds_the_floor():
     the SAME line - there is no second line to lose a rank tie here, so this pins the
     seam `_less_drawn` guards on its own, without AC-S3-11's two-order shape around it.
 
-    GREEN today via `_less_drawn` (`app/services/scm/front_planning_engine.py`
-    ~:1228/:1448): the credit's own draw comes OFF `group_take_candidates` at that same
+    GREEN today via `_less_drawn` (`app/services/scm/front_planning_engine.py`):
+    the credit's own draw comes OFF `group_take_candidates` at that same
     bin before question 1 (the ordinary rung) reads them, so question 1 finds nothing
     left and the line's remainder (40) composes as Buy - Reserve 40 (source own_arrival)
     + Buy 40, never a second, uncharged Reserve of 40 off the identical floor (Reserve
     80 total, which is more than physically exists at the bin).
 
-    Regression guard: if `_less_drawn`'s subtraction at :1228 were removed (or the
+    Regression guard: if `_less_drawn`'s subtraction were removed (or the
     seam otherwise stopped netting the credit's own draw off the ordinary candidates),
     question 1 would read the bin's full, un-netted 40 again and this line would
     compose Reserve 80 from an on-hand of 40 - this test would go red on the
@@ -343,11 +343,11 @@ def test_confirm_credit_is_stated_through_the_capacity_ledger():
     needs 40 with its OWN, separate PO line also received 40, on hand 40 total at the
     shared bin.
 
-    GREEN today: `_check_line`'s `own_arrival_left` ledger (`project_supply_service.py`
-    ~:5005-5026) is a single dict CREATED ONCE per `confirm()` call (:4510) and threaded
+    GREEN today: `_check_line`'s `own_arrival_left` ledger (`project_supply_service.py`)
+    is a single dict CREATED ONCE per `confirm()` call and threaded
     through every line of the payload in order - line 1 is checked first, its credit
     (40) is stated through `capacity_left.offer(...)` and drains `own_arrival_left`'s
-    entry for that bin to 0 (`own_arrival_credit_for`, :2834-2845); line 2 is checked
+    entry for that bin to 0 (`own_arrival_credit_for`); line 2 is checked
     second, reads the SAME drained ledger, and its own credit computes to 0 even though
     its own separate PO also received 40 - the physical floor, not the document, is what
     is shared. With the ordinary rung offering nothing at that bin either (the 5000-unit
@@ -445,22 +445,22 @@ def test_confirm_credit_is_stated_through_the_capacity_ledger():
 
 def test_credit_ledger_is_charged_with_what_was_drawn_not_the_whole_credit():
     """S5: `own_arrival_credit_for` is called from `walk()` at candidate-BUILD time
-    (`project_supply_service.py` ~:1416), BEFORE `front_planning_engine.walk_line`'s own
-    pool-share sub-step (step 0, drawn ahead of the own-arrival sub-step, ~:1195-1201)
+    (`project_supply_service.py`), BEFORE `front_planning_engine.walk_line`'s own
+    pool-share sub-step (step 0, drawn ahead of the own-arrival sub-step)
     has told the walk how much of the line's need is already covered from elsewhere.
     `own_arrival_credit_for` computes its credit against `fact.open_qty` - the line's
-    WHOLE open quantity - and charges the on-hand ledger (`own_arrival_left[own_code]`,
-    :2845) for that FULL amount immediately. `walk_line` then draws the own-arrival
+    WHOLE open quantity - and charges the on-hand ledger (`own_arrival_left[own_code]`)
+    for that FULL amount immediately. `walk_line` then draws the own-arrival
     candidate only up to `need` (the line's remainder AFTER the pool share), which can be
     SMALLER than what was already charged - so a sibling line reading the SAME bin's
     on-hand ledger afterwards sees less left than physically true.
 
     MEASURED SHAPE (`pool_share` fed via `own.pool_warehouse_id`, the same mechanism
     `tests.scm.test_project_supply_service_ladder._group_sites` uses -
-    `pool_share_capacity` / `_draw_pool_share`, `front_planning_engine.py` :230/:1753):
+    `pool_share_capacity` / `_draw_pool_share`, `front_planning_engine.py`):
     one order, two lines at the SAME own bin, on DIFFERENT required dates so they are two
     separate planning units (`_unit_key` = product + warehouse + date,
-    `project_supply_service.py` :1915-1927) and each is walked, and its own-arrival
+    `project_supply_service.py`) and each is walked, and its own-arrival
     credit computed, separately - line 1's PO receipt is not read a second time as line
     2's own tier-1 credit; this file's own S1/S2/B2 tests already pin the tier-1/tier-2
     split, so this test isolates the DIFFERENT bug S5 names by giving line 2 its OWN
@@ -488,19 +488,19 @@ def test_credit_ledger_is_charged_with_what_was_drawn_not_the_whole_credit():
     remains for line 2's own tier-1 credit, comfortably covering its 40 - Reserve 40
     (own_arrival), Buy 0.
 
-    RED TODAY: line 1's own-arrival credit is computed as `min(tier1_qty=40, open_qty=40)
-    = 40` at candidate-build time (:1416) and the ON-HAND ledger is charged the full 40
-    (:2845) - not the 10 `walk_line` actually draws once the pool share is netted out.
-    Line 2 then reads a falsely-drained ledger (70 - 40 = 30, not the true 70 - 10 = 60)
-    and its own credit is capped at `min(40, 30) = 30` - a false, uncharged Buy of 10
-    where physically there is none. Goes GREEN when the ledger is charged with what
-    `walk_line` actually drew (10) rather than the theoretical credit computed before the
-    pool share's own draw was known.
+    BEFORE THE FIX: line 1's own-arrival credit was computed as `min(tier1_qty=40,
+    open_qty=40) = 40` at candidate-build time and the ON-HAND ledger was charged the
+    full 40 - not the 10 `walk_line` actually draws once the pool share is netted out.
+    Line 2 then read a falsely-drained ledger (70 - 40 = 30, not the true 70 - 10 = 60)
+    and its own credit was capped at `min(40, 30) = 30` - a false, uncharged Buy of 10
+    where physically there is none. This test guards the fix: the ledger is charged with
+    what `walk_line` actually drew (10) rather than the theoretical credit computed
+    before the pool share's own draw was known.
 
     STATED PLAINLY (the brief's own "if you cannot make the pool share cover part of line
     1 ... report the shape you found" clause): line 1 needing 40 with an own PO line
     received exactly 40 gives it a real tier-2 SPARE of `40 - min(40, qty_ordered 40) = 0`
-    by `_own_arrival_credit_for`'s own formula (`project_supply_service.py` :2799 -
+    by `own_arrival_credit_for`'s own formula (`project_supply_service.py` -
     `spare = sibling_received - min(sibling_received, sibling.qty_ordered)`), which nets
     a sibling's spare against its OWN `qty_ordered` and is entirely blind to whether a
     DIFFERENT rung (pool share) covered part of that sibling's need - so "line 1's unused

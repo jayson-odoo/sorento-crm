@@ -2,9 +2,9 @@
 S3 coder flagged the gap): the live CONFIRM round trip must honour the own-arrival credit, not
 only the board proposal `FulfilmentBoardService.build` composes (AC-S3-1, already green).
 
-`_check_line`'s confirm-time recheck (`app/services/project_supply_service.py` ~:4730) reads
+`_check_line`'s confirm-time recheck (`app/services/project_supply_service.py`) reads
 `own_use, other_use, _own_offer, _short = self.use_candidates_for(unit.fact)` for capacity -
-assignment-based candidates only. It has no call to `_own_arrival_credit_for` (~:2604), the
+assignment-based candidates only. It has no call to `own_arrival_credit_for`, the
 helper S3 added so the LADDER (the compose side) draws the credit first. So on the AC-S3-1
 shape - L2 needs 20, 40 received on its own PO line, group net negative because of a competing
 order at the same location - a live Confirm asking for that 20 as a Reserve at L2's own location
@@ -13,7 +13,7 @@ that has to agree with it does not know why it is safe.
 
 CONTRACT CHOICE this file pins: `ProjectSupplyService.confirm()` is called DIRECTLY rather than
 through `planning_change_service.build_batch()` + `.apply()`. `_apply_one_order`
-(`planning_change_service.py` ~:4546) builds a `ConfirmSupplyBody` from the row's own composition
+(`planning_change_service.py`) builds a `ConfirmSupplyBody` from the row's own composition
 and calls `supply.confirm(...)` - the exact same method, with the exact same `_check_line` recheck
 inside it - so a batch-and-apply round trip would exercise no code this call does not already
 exercise, at the cost of a synthetic `Diff`/`Change` this AC's own fixture shape (a first

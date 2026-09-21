@@ -17,25 +17,25 @@ receipt, a line is allowed to credit against.
 
 Seams named by the brief (measured directly, not guessed):
 
-- `app/services/project_supply_service.py::_own_arrival_credit_for` (~:2604-2692) walks
+- `app/services/project_supply_service.py::own_arrival_credit_for` walks
   EVERY sibling of the sales order (`SalesOrderLine.sales_order_id == core_line.
   sales_order_id`) with no `product_id` filter at all, and does not remember, across
   SEPARATE calls for two different open siblings, how much of one closed sibling's spare
   an EARLIER call already promised - only the per-(product, location) `own_arrival_left`
   ledger (on-hand) is threaded across the walk, and it is far too coarse to catch a
   spare-source over-spend when on hand is abundant (MB2).
-- `_po_received_for_so_line_ref` (~:2585-2602) matches purely on
+- `_po_received_by_so_line_ref` matches purely on
   `PurchaseOrderLine.from_so_line_ref == source_ref` text, with NO product check at all -
   neither tier 1 (this line's own PO) nor, through it, tier 2 (siblings' spare) ever
   verifies the receiving PO line's `product_id` matches the credited line's own product
   (MB3, both tiers).
 - `app/services/project_order_inquiry_service.py::_own_arrival_credit_for_row`
-  (~:1635-1671) builds its own minimal `_LineFacts` with
+  builds its own minimal `_LineFacts` with
   `open_qty=_dec(core_line.qty_ordered)` - NOT net of `qty_delivered`, unlike every other
-  caller of `_LineFacts.open_qty` in this codebase (`project_supply_service.py:3403-3404`,
-  `:8617-8618`: `qty_ordered - qty_delivered`) - so a partly-delivered line's credit is
+  caller of `_LineFacts.open_qty` in this codebase (`project_supply_service.py`:
+  `qty_ordered - qty_delivered`) - so a partly-delivered line's credit is
   capped by its ORIGINAL order quantity, not what is actually still open (SF1).
-- `_redirect_row_if_received` (~:1673-1707): the `credit >= linked_qty` shortcut
+- `_redirect_row_if_received`: the `credit >= linked_qty` shortcut
   (`if linked_qty > _ZERO and self._own_arrival_credit_for_row(row) >= linked_qty: return
   None`) exits BEFORE the function ever looks at `open_links` - so a row whose credit
   happens to cover its FULL linked total (received + still-open) never releases the
@@ -114,7 +114,7 @@ def test_tier2_spare_is_spent_once_across_siblings():
     should cap the TOTAL own-arrival credit across L2 and L3 is L1's actual spare of 40,
     not the location's physical floor.
 
-    Measured against `_own_arrival_credit_for` (`project_supply_service.py:2604-2692`):
+    Measured against `own_arrival_credit_for` (`project_supply_service.py`):
     the tier-2 `spare` for a given sibling is recomputed FRESH, independently, every time
     a DIFFERENT open line asks for it - nothing decrements "how much of L1's 40-unit
     spare a sibling already took" the way `own_arrival_left` decrements the PHYSICAL
@@ -170,7 +170,7 @@ def test_tier2_never_credits_another_product():
     own qty_ordered), 200 on hand of BOTH products, no other order. Line A must get NO
     own_arrival credit - line B's spare is a different product's stock.
 
-    `_own_arrival_credit_for`'s sibling loop (`project_supply_service.py:2604-2692`)
+    `own_arrival_credit_for`'s sibling loop (`project_supply_service.py`)
     filters siblings only by `SalesOrderLine.sales_order_id == core_line.sales_order_id`
     - it never compares `sibling.product_id` to `core_line.product_id` - so today line A
     (product X) reads line B's (product Y) spare as its own tier-2 credit.
@@ -219,7 +219,7 @@ def test_tier1_never_credits_another_product():
     A's (product X) own `source_ref` credits nothing - the received units are the WRONG
     product for line A to draw against, even though the text field matches.
 
-    `_po_received_for_so_line_ref` (`project_supply_service.py:2585-2602`) filters
+    `_po_received_by_so_line_ref` (`project_supply_service.py`) filters
     `PurchaseOrderLine.from_so_line_ref == source_ref` with no join back to the credited
     line's own `product_id` at all - a collision (or a data-entry mistake) on that text
     field is enough to credit a line with a delivery of a completely different item.
@@ -311,16 +311,16 @@ def test_path_picker_caps_credit_by_open_qty_like_the_board(api):
     allocation, its own PO line received 40, on hand 40. The line's own-arrival credit
     must be capped by what it still OWES (open qty 10), not by its original order
     quantity (40) - the same distinction `project_supply_service.py` already makes for
-    every OTHER `_LineFacts.open_qty` caller (`qty_ordered - qty_delivered`,
-    :3403-3404 / :8617-8618). Credit (10) is short of the linked 40, so
-    `_redirect_row_if_received` must NOT settle in place - today's Path A (redirect,
-    fresh row raised) applies.
+    every OTHER `_LineFacts.open_qty` caller (`qty_ordered - qty_delivered`). Credit (10)
+    is short of the linked 40, so `_redirect_row_if_received` must NOT settle in place -
+    Path A (redirect, fresh row raised) applies.
 
-    `_own_arrival_credit_for_row` (`project_order_inquiry_service.py:1635-1671`) builds
-    its own `_LineFacts` with `open_qty=_dec(core_line.qty_ordered)` - the ORIGINAL
-    order quantity, never netted against `qty_delivered` - so today it reads credit as
-    min(tier1 40, open_qty 40) capped by on hand 40 = 40, which meets the linked 40 and
-    wrongly retains the row in place.
+    Before the fix, `_own_arrival_credit_for_row` (`project_order_inquiry_service.py`)
+    built its own `_LineFacts` with `open_qty=_dec(core_line.qty_ordered)` - the ORIGINAL
+    order quantity, never netted against `qty_delivered` - so it read credit as
+    min(tier1 40, open_qty 40) capped by on hand 40 = 40, which met the linked 40 and
+    wrongly retained the row in place. This test guards the fix (`open_qty` netted
+    against `qty_delivered`).
     """
     client, world = api
     db = world.db
@@ -354,7 +354,7 @@ def test_ac_s3_6_amending_the_uncredited_remainder_to_buy_is_allowed(api):
     credit named) must be accepted - `set_row_decision` must not raise
     `planning_change_buy_over_own_arrival`.
 
-    `_refuse_buy_over_own_arrival` (`planning_change_service.py:2764-2802`) only refuses
+    `_refuse_buy_over_own_arrival` (`planning_change_service.py`) only refuses
     when the amended composition's Reserve at the credited warehouse drops BELOW the
     credited quantity; here it stays exactly at 30, so this is expected to be GREEN
     today if `_refuse_buy_over_own_arrival` is implemented as documented - kept as a
@@ -446,10 +446,10 @@ def test_mixed_row_replan_settles_in_place_and_keeps_both_links(api):
     OPEN PO link (`open_link`) too, because nothing about the credit that settled this
     row in place was drawn from that still-open PO's own shipping.
 
-    RED today: `_redirect_row_if_received`'s `credit >= linked_qty` branch
-    (`app/services/project_order_inquiry_service.py` ~:1673-1707) releases `still_open`
+    Before this ruling, `_redirect_row_if_received`'s `credit >= linked_qty` branch
+    (`app/services/project_order_inquiry_service.py`) released `still_open`
     links via `_remove_links` before returning `None` (the SF10 fix, review round one).
-    Goes GREEN when the coder reverts that release - the branch returns `None` without
+    This test guards the revert: the branch returns `None` without
     touching `open_links` at all, the same early exit this file's docstring originally
     described before SF10 changed it.
     """
