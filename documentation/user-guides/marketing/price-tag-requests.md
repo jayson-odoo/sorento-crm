@@ -72,9 +72,11 @@ talked about.
   list tells you which product each layer draws. Copying a design onto another tag with **Apply to
   all** falls a part-pointed layer back to the parent when the target has fewer parts, and names the
   layer in a toast.
-* The merge field `{{product.price_tag_description}}` prints the text from the product's own
-  **Price tag description** field verbatim, line breaks included; an empty field prints nothing. It
-  sits in the Insert list under **Product**, right after **Spec lines**. See
+* The merge field `{{product.price_tag_description}}` prints the product's own **Price tag
+  description** field - itself a TEMPLATE, not plain text, so it can carry its own `{{product.*}}`
+  and `{{spec.*}}` tokens (for example `{{product.name}} in {{spec.material}}`), rendered against
+  that same product's own data before it reaches the tag; an empty field prints nothing. It sits in
+  the Insert list under **Product**, right after **Spec lines**. See
   [Manage products](../product/manage-products.md) for where the field lives on the product.
 * A spec merge field such as `{{spec.dim_length}}` now prints the number on its own, with no unit -
   type the unit into the layer text yourself, for example `L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm`.
