@@ -297,3 +297,21 @@ def confirm_pull(
         return pull_service.confirm_pull(db, job, user_id=current_user["id"])
     except pull_service.PullNotReadyForConfirm as exc:
         raise AppException(status_code=status.HTTP_409_CONFLICT, message=str(exc), code="NOT_READY")
+
+
+@router.post("/{job_id}/discard")
+def discard_pull(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """AC-DS-1..5: throws away an open pull, no FoundryX call, no product/stock row
+    touched. Idempotent on an already-discarded pull; 409 on anything else (a pull
+    already `confirmed`, `failed` or `expired`)."""
+    job = _resolve_pull(db, current_user, job_id)
+    try:
+        return pull_service.discard_pull(db, job)
+    except pull_service.PullNotDiscardable as exc:
+        raise AppException(
+            status_code=status.HTTP_409_CONFLICT, message=str(exc), code="NOT_DISCARDABLE"
+        )

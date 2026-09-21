@@ -112,6 +112,11 @@ class PullNotReadyForConfirm(RuntimeError):
     """The pull is not `review` and carries no already-confirmed apply job."""
 
 
+class PullNotDiscardable(RuntimeError):
+    """The pull is not open (`building`/`previewing`/`review`) and not already
+    `discarded` - a `confirmed`, `failed` or `expired` pull cannot be thrown away."""
+
+
 class PullRowsNotAvailable(RuntimeError):
     """The pull has not reached `review` yet - there is nothing to show."""
 
@@ -141,10 +146,14 @@ def find_open_pull(
         .all()
     )
     for job in candidates:
-        if job.status == JobStatus.FAILED.value:
+        if job.status in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
             # The orphan sweep (or a dead-worker task) marked the `import_jobs` row
             # itself failed while the pull's own stored phase is stale (F-11) - not
-            # "open" whatever the metadata still says.
+            # "open" whatever the metadata still says. `cancelled` is the same story
+            # for Discard (AC-DS-8b): the generic Cancel button on the job page can
+            # set `status = cancelled` on a pull whose stored phase still says
+            # `building`, and Discard's own `discard_pull` always sets both together
+            # - so a `cancelled` row is never "open" regardless of its stored phase.
             continue
         pull = _pull_meta(job)
         if pull.get("phase") not in _OPEN_PHASES:
@@ -719,5 +728,34 @@ def confirm_pull(db: Session, job: ImportJob, *, user_id: str) -> dict:
         job_timeout=3600,
         job_id=str(apply_job.job_id),
     )
+    db.refresh(job)
+    return serialize(job, db)
+
+
+# ======================================================================== discard
+
+
+def discard_pull(db: Session, job: ImportJob) -> dict:
+    """AC-DS-1..5: throws away an open pull - no FoundryX call (the snapshot just
+    expires on its own), no product/stock row ever touched. Allowed from `building`,
+    `previewing` and `review` (`_OPEN_PHASES`, the same set `find_open_pull` treats as
+    "open"); already `discarded` returns the same body unchanged (idempotent, AC-DS-4);
+    anything else (`confirmed`, `failed`, `expired`) raises `PullNotDiscardable` - the
+    route turns that into a 409.
+    """
+    pull = _pull_meta(job)
+    phase = pull.get("phase")
+    if phase == "discarded":
+        return serialize(job, db)
+    if phase not in _OPEN_PHASES:
+        raise PullNotDiscardable(
+            f"Pull is in phase {phase!r}; only an open pull can be discarded."
+        )
+    pull["phase"] = "discarded"
+    job.job_metadata = _with_pull(job, pull)
+    job.status = JobStatus.CANCELLED.value
+    job.completed_at = datetime.utcnow()
+    job.updated_at = datetime.utcnow()
+    db.commit()
     db.refresh(job)
     return serialize(job, db)

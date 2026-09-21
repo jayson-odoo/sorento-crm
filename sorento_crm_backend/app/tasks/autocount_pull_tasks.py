@@ -100,10 +100,31 @@ def _publish_preview_progress(job_id: str, processed: int, total: int) -> None:
         fresh.close()
 
 
+def _stored_pull_phase(db, job_id) -> str:
+    """A fresh, direct read of the pull's OWN stored phase - never the ORM's
+    identity-mapped `job` object, which this task holds onto (and never refreshes)
+    across the whole dry-run ingest. What the "did a Discard land while this task was
+    running" guard below checks before writing a terminal phase over it (AC-DS-8a):
+    Discard commits on a DIFFERENT session (the request), so only a fresh read sees it.
+    """
+    row = db.execute(
+        text("SELECT metadata FROM import_jobs WHERE id = :id"), {"id": str(job_id)}
+    ).mappings().first()
+    if row is None:
+        return ""
+    meta = row["metadata"] or {}
+    return (meta.get("autocount_pull") or {}).get("phase") or ""
+
+
 def preview_autocount_pull(db_job_id: str) -> None:
     """AC-PP-1..6: refetch every row, dry-run ingest it, write per-row outcomes, store
     counts, and leave the job `finished` in phase `review` - or `failed` with the reason
-    stored, on any guard failure or unexpected error."""
+    stored, on any guard failure or unexpected error.
+
+    AC-DS-8a: neither terminal write happens if the pull was discarded WHILE this task
+    was running - re-checked against a fresh read right before each write, since a
+    Discard lands on a different session/commit than this task's own long-lived one.
+    """
     db = SessionLocal()
     try:
         job = db.query(ImportJob).filter(ImportJob.id == db_job_id).first()
@@ -126,6 +147,8 @@ def preview_autocount_pull(db_job_id: str) -> None:
             logger.warning(
                 "autocount pull preview failed job=%s entity=%s", db_job_id, entity, exc_info=True
             )
+            if _stored_pull_phase(db, db_job_id) == "discarded":
+                return
             pull["phase"] = "failed"
             job.job_metadata = {**(job.job_metadata or {}), "autocount_pull": pull}
             job.status = JobStatus.FAILED.value
@@ -135,6 +158,10 @@ def preview_autocount_pull(db_job_id: str) -> None:
             db.commit()
             return
 
+        if _stored_pull_phase(db, db_job_id) != "previewing":
+            # Discarded (or otherwise moved on) while this preview ran - leave the row
+            # exactly as whatever discarded it left it; never resurrect `review` over it.
+            return
         pull["phase"] = "review"
         pull["counts"] = counts
         job.job_metadata = {**(job.job_metadata or {}), "autocount_pull": pull}

@@ -9,6 +9,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+// PLAN-autocount-pull-discard.md: the component now calls `useRouter()` (Pull again's
+// navigation, AC-DS-11) - harness-only, no assertion in this file depends on it.
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 const usePull = vi.fn();
 const useDownloadPullXlsx = vi.fn();
 const useConfirmPull = vi.fn();
@@ -16,6 +20,10 @@ vi.mock('../hooks/useAutocountPull', () => ({
   usePull: (...a: unknown[]) => usePull(...a),
   useDownloadPullXlsx: (...a: unknown[]) => useDownloadPullXlsx(...a),
   useConfirmPull: (...a: unknown[]) => useConfirmPull(...a),
+  // Discard/Pull again (PLAN-autocount-pull-discard.md, AC-DS-9..11) - harness-only stubs,
+  // not under test here (see AutocountPullReview.discard.test.tsx for their coverage).
+  useDiscardPull: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartPull: () => ({ mutateAsync: vi.fn(), isPending: false }),
   // No-op here: this file mocks the whole hooks module and never wraps its renders in a
   // `QueryClientProvider`. The rows-refresh behaviour itself (D1, small-fix track) has its
   // own coverage, unmocked, in `AutocountPullReview.rowsRefresh.test.tsx`.

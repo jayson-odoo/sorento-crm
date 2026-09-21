@@ -10,7 +10,9 @@ export type AutocountPullEntity = 'products' | 'stock_balances';
 /**
  * Where a pull is in its life. `building` = FoundryX still assembling the snapshot (no
  * Sorento worker job yet); `previewing` = the preview task is running; `review` = ready for
- * Confirm; `confirmed` = the apply job has been created; `failed` / `expired` = dead ends.
+ * Confirm; `confirmed` = the apply job has been created; `failed` / `expired` / `discarded`
+ * = dead ends - `discarded` is the owner throwing an open pull away on purpose
+ * (PLAN-autocount-pull-discard.md), never a refusal.
  */
 export type AutocountPullPhase =
   | 'building'
@@ -18,7 +20,8 @@ export type AutocountPullPhase =
   | 'review'
   | 'confirmed'
   | 'failed'
-  | 'expired';
+  | 'expired'
+  | 'discarded';
 
 export interface AutocountPullProgress {
   pagesDone: number;

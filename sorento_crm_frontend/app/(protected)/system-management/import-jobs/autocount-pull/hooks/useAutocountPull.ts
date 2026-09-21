@@ -7,6 +7,7 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   comparePull,
   confirmPull,
+  discardPull,
   downloadPullXlsx,
   getCurrentPull,
   getPull,
@@ -161,6 +162,25 @@ export function useConfirmPull() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Could not confirm the pull.');
+    },
+  });
+}
+
+/** AC-DS-10: mirrors `useConfirmPull` - invalidates the pull itself plus the current-pull
+ *  query (a discarded pull is no longer "open", so `GET /current` must stop finding it),
+ *  toasts "Pull discarded" on success, the extracted API error message on failure. */
+export function useDiscardPull() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => discardPull(jobId),
+    onSuccess: (pull) => {
+      queryClient.setQueryData(['autocount-pull', pull.job_id], pull);
+      queryClient.invalidateQueries({ queryKey: ['autocount-pull', pull.job_id] });
+      queryClient.invalidateQueries({ queryKey: ['autocount-pull-current', pull.entity] });
+      toast.success('Pull discarded');
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Could not discard the pull.');
     },
   });
 }
