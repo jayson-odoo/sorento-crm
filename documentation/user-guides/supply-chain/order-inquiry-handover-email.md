@@ -23,8 +23,10 @@ location: `OI: SO397450 , SO397460`.
 3. A line table: **SO DATE**, **S/O NO**, **ITEM CODE**, **QTY**, **QTY CHANGE TO**,
    **DELIVERY DATE**, **DELIVERY DATE CHANGE TO**, **REMARK**.
 4. "Raised by \<name\> (\<email\>) on \<date\>."
-5. A link, **Open in Order Inquiries**, that opens the **Order Inquiries** worklist already
-   filtered to the sales orders in the mail.
+5. A link, **Open in Order Inquiries**, that opens the order inquiry's own detail page - see
+   [Order inquiries: the Documents view and the OI detail
+   page](order-inquiry-documents.md). When the mail covers more than one sales order, the link
+   opens the first order inquiry named in it.
 
 **How a change reads.** **QTY** and **DELIVERY DATE** always print what the line was; when
 either one moved, the new value prints in its own **QTY CHANGE TO** or **DELIVERY DATE CHANGE
@@ -101,6 +103,8 @@ dedicated combined line is built.
 
 ## See also
 
+* [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md) - what
+  the mail's link opens.
 * [Sales order changes after planning](sales-order-changes.md) - the in-app notification
   purchasing gets once a change is confirmed or amended, separate from this email.
 * [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md#undo-last-confirm)
