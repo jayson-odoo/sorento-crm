@@ -678,6 +678,143 @@ describe('renderMergeFields - product.price_tag_description is a template (AC-S4
   });
 });
 
+// ---------------------------------------------------------------------------
+// AC-S4-13 on a LINE binding, from a LIVE payload (S11 browser check, 21
+// Sep): `POST /api/v1/dealer-kit/price-tag-requests/{id}/resolve-prices`
+// against the lane stack for `PT-202609-0018` (designing, line product
+// `SRTKS8547`) - the exact request the S11 browser check exercised. The
+// fixture below is that response's row 0, trimmed (long CDN image URLs
+// dropped), with `price_tag_description` added by hand: the live route does
+// NOT carry that field on the wire at all today - see
+// `test_dealer_kit_tag_data_routes.py::
+// test_resolve_prices_carries_price_tag_description_on_the_line_and_its_
+// parts`, red, which is the REAL, measured root cause of the browser-
+// observed "renders only the code line" defect (`raw` is `undefined` on
+// the live canvas, so `resolvePath` returns `null` before ever reaching the
+// nested `renderMergeFields` call the coordinator's own diagnosis names).
+//
+// With the field populated as it WILL be once that backend gap closes, this
+// block empirically checks the coordinator's second diagnosis - that
+// `resolvePath`'s nested `renderMergeFields(raw, subject, mode)` call
+// (passing no `layer`) breaks `subjectPart` resolution. It does not
+// reproduce: `subjectOf` is a no-op on an already-`kind: 'product'` subject
+// regardless of whether a `layer` is threaded through, and every case below
+// (subject-narrowed part template, empty-template part, and a same-shaped
+// line whose name genuinely differs from its code) resolves correctly with
+// today's code. The one live-real assertion that DOES differ from a naive
+// "name in material" expectation - `SRTKS8547`'s own `{{product.name}}` -
+// is `nameOrBlankIfCode` (`product-block.ts`), pre-existing and pre-r10,
+// firing exactly as it does everywhere else a name repeats its code (S2):
+// not a bug this slice introduced, and not something a merge-field
+// resolver should special-case around.
+// ---------------------------------------------------------------------------
+
+function liveSrtks8547Line(overrides: Partial<LineTagData> = {}): TagBindingData {
+  const ownPart: TagPartData = {
+    product_id: '1c91699b-fa74-4f7a-91df-fa5e5fd63729',
+    code: 'SRTKT1871SS',
+    name: 'SRTKT1871SS',
+    dimensions: '',
+    spec_lines: ['Sorento tap. Kitchen tap. Stainless steel. Pillar mounted.'],
+    specs: [
+      { key: 'material', label: 'Material', value: 'Stainless Steel', unit: null },
+      { key: 'mounting', label: 'Mounting', value: 'Pillar Mounted', unit: null },
+    ],
+    images: [],
+    barcode: null,
+    list_price: 400,
+    sell_price: null,
+    currency: 'MYR',
+    role: 'Kitchen Tap',
+    chosen: true,
+    // The part's OWN stored template - a subjectPart layer's own read.
+    price_tag_description: '{{product.code}} part',
+  };
+  const noTemplatePart: TagPartData = {
+    product_id: 'c934f9b1-029d-4488-a430-b48e947ca92e',
+    code: 'SRTKT1872SS',
+    name: 'SRTKT1872SS',
+    dimensions: '',
+    spec_lines: ['Sorento tap. Kitchen tap. Stainless steel. Wall mounted.'],
+    specs: [
+      { key: 'material', label: 'Material', value: 'Stainless Steel', unit: null },
+      { key: 'mounting', label: 'Mounting', value: 'Wall Hung', unit: null },
+    ],
+    images: [],
+    barcode: null,
+    list_price: 420,
+    sell_price: null,
+    currency: 'MYR',
+    role: 'Kitchen Tap',
+    chosen: false,
+    price_tag_description: null,
+  };
+  return {
+    kind: 'line',
+    line: {
+      tag_id: '44555443-2b63-45e9-905f-dd3a2089c196',
+      tag_label: '1a',
+      open_groups: [],
+      parts: [ownPart, noTemplatePart],
+      own_parts: [ownPart],
+      line_id: 'fe3574e1-ec40-43ac-bd8d-02d796928878',
+      code: 'SRTKS8547',
+      name: 'SRTKS8547',
+      dimensions: '850 x 470 x 230 mm',
+      spec_lines: 'Sorento kitchen sink. Stainless steel. 850 x 470 x 230 mm. 0.9 mm thick.',
+      specs: [{ key: 'material', label: 'Material', value: 'Stainless Steel', unit: null }],
+      set_members: '+ SRTKT1871SS SRTKT1871SS',
+      images: [],
+      list_price: 1490,
+      sell_price: 878,
+      parent_list_price: 1090,
+      parent_sell_price: null,
+      sell_price_basis: 'promotion',
+      show_promo_price: false,
+      included_accessories: '',
+      quantity: 1,
+      barcode: null,
+      currency: 'MYR',
+      price_tag_description: '{{product.name}} in {{spec.material}}',
+      ...overrides,
+    },
+  };
+}
+
+describe('renderMergeFields - product.price_tag_description on a LIVE line binding (AC-S4-13, S11)', () => {
+  it('SRTKS8547 itself: {{product.name}} is blank because name equals code (nameOrBlankIfCode, pre-existing) - the material half still resolves', () => {
+    const data = liveSrtks8547Line();
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      ' in Stainless Steel',
+    );
+  });
+
+  it('the SAME live shape with a name that genuinely differs from its code resolves the full sentence - the mechanism itself is sound', () => {
+    const data = liveSrtks8547Line({ name: 'Sorento Kitchen Sink' });
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Sorento Kitchen Sink in Stainless Steel',
+    );
+  });
+
+  it("subjectPart pointing at the chosen tap's own template ({{product.code}} part) renders THAT part's code, not the line's", () => {
+    const data = liveSrtks8547Line();
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print', layer)).toBe(
+      'SRTKT1871SS part',
+    );
+  });
+
+  it('subjectPart pointing at a part with no stored template of its own renders empty, not the parent line\'s', () => {
+    const data = liveSrtks8547Line();
+    const layer = { props: { kind: 'text' as const, subjectPart: 1 } };
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print', layer)).toBe('');
+  });
+});
+
 describe('mergeFieldCatalog - Price tag description (AC-S4-7)', () => {
   it('lists Price tag description in group Product, directly after Spec lines', () => {
     const catalog = mergeFieldCatalog([]);

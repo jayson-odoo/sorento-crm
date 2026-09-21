@@ -577,6 +577,85 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
 
 
 # ---------------------------------------------------------------------------
+# AC-S4-13 (S11 browser check, phase 3, 21 Sep): `price_tag_description` is
+# computed by `tag_data_service` (see `test_dealer_kit_tag_data.py`'s
+# `test_ac_s4_4_resolve_tags_live_carries_price_tag_description_on_the_host`
+# / `..._part_row_carries_its_own_products_price_tag_description`, both
+# green) but `ResolvedLineData` and `TagPartData` - the response models THIS
+# route actually serializes through - never declare the field, so it never
+# reaches the wire. This is exactly the module docstring's own warning
+# ("FastAPI drops any field a response model does not declare, silently")
+# and it is the REAL, measured root cause of the S11 canvas defect: a text
+# layer bound to `{{product.price_tag_description}}` renders empty because
+# the designer never receives the raw template to render in the first
+# place - confirmed by curling this exact route against the lane stack for
+# a live request (`PT-202609-0018`, product `SRTKS8547`) and finding the key
+# entirely absent from every row and every part, even though `GET
+# /products/{id}` (a different route, a different schema) carries it.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts(api):
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.price_tag import PriceTagRequestLinePart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product = _product(db)
+    product.price_tag_description = "{{product.name}} in {{spec.material}}"
+    part_product = _product(db, list_price="0.00")
+    part_product.price_tag_description = "{{product.code}} part"
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [{"line_type": "product", "product_id": product.id, "quantity": 1}],
+        },
+    )
+    db.add(
+        PriceTagRequestLinePart(
+            id=str(uuid.uuid4()),
+            line_id=request.lines[0].id,
+            product_id=part_product.id,
+            role="accessory",
+        )
+    )
+    db.commit()
+    tag_id = request.lines[0].tags[0].id
+
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
+            json=[tag_id],
+        )
+
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    assert row["price_tag_description"] == "{{product.name}} in {{spec.material}}", (
+        "the line's own price_tag_description must reach the wire - the "
+        "designer canvas has nothing to render a {{product.price_tag_"
+        "description}} token from otherwise"
+    )
+    assert len(row["parts"]) == 1
+    assert row["parts"][0]["price_tag_description"] == "{{product.code}} part", (
+        "a PART's own price_tag_description must reach the wire too, for a "
+        "layer with a subjectPart pointing at it"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Request DETAIL lines carry what the detail page draws
 # ---------------------------------------------------------------------------
 

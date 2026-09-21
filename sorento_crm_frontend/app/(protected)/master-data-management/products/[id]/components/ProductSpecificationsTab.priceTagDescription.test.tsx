@@ -320,3 +320,71 @@ describe('Live preview - "Prints as:" (AC-S4-12)', () => {
     expect(updateMutateAsync).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S4-12, from the S11 browser check (21 Sep): the earlier `baseProduct()`
+// above already used the REAL API key names (`product_code`/`product_name`/
+// `list_price`) - confirmed against `GET /api/v1/master-data/products/{id}`
+// on the lane stack and `app/schemas/product.py`'s `ProductResponse` - so
+// there were no invented keys to fix in the mock. What WAS synthetic: its
+// `product_name` ('Basin Tap') differed from its `product_code` ('WC100').
+// Every real product the S11 browser check tried (SRTKS8547,
+// SRTWT1212-SS-GM-DIY - confirmed live, both `product_name === product_
+// code`) has no separate marketing name, which the earlier "Prints as:"
+// test never exercised (its own template was `{{spec.material}} tap`, no
+// `{{product.name}}` at all) - the exact blind spot the browser check
+// found. `{{product.name}}` blanking for a name-equals-code product is
+// `nameOrBlankIfCode` (`lib/dealer-kit/product-block.ts`), pre-existing and
+// pre-r10 (S2) - not a defect this block introduces, and not one this test
+// suite should assert around; `{{product.code}}` and `{{product.list_
+// price}}` are unaffected by it and both need covering, which they were not
+// before.
+// ---------------------------------------------------------------------------
+
+describe('Live preview against a REAL product shape - S11 browser check (AC-S4-12)', () => {
+  it('{{product.code}} and {{product.list_price}} resolve correctly for a real name-equals-code SKU', () => {
+    mockSpecHook(baseDetail());
+    useProduct.mockReturnValue({
+      data: baseProduct({
+        product_code: 'SRTKS8547',
+        product_name: 'SRTKS8547',
+        list_price: 1090,
+        price_tag_description: '{{product.code}} - {{product.list_price}}',
+      }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.getByText('SRTKS8547 - 1,090')).toBeInTheDocument();
+  });
+
+  it('{{product.name}} is blank for a real name-equals-code SKU - nameOrBlankIfCode, not a defect', () => {
+    mockSpecHook(baseDetail());
+    useProduct.mockReturnValue({
+      data: baseProduct({
+        product_code: 'SRTKS8547',
+        product_name: 'SRTKS8547',
+        price_tag_description: '[{{product.name}}]',
+      }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.getByText('[]')).toBeInTheDocument();
+  });
+
+  it('{{product.name}} resolves for a real SKU whose name genuinely differs from its code', () => {
+    mockSpecHook(baseDetail());
+    useProduct.mockReturnValue({
+      data: baseProduct({
+        product_code: 'SRTKS8547',
+        product_name: 'Sorento Kitchen Sink',
+        price_tag_description: '{{product.name}}',
+      }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.getByText('Sorento Kitchen Sink')).toBeInTheDocument();
+  });
+});
