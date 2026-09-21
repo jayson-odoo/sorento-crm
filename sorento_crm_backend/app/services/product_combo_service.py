@@ -40,7 +40,6 @@ from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException, handle_not_found
-from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -53,6 +52,28 @@ from app.services.storage_router import (
 COMBO_IMAGE_TYPE_CODE = "combo_image"
 MAX_COMBO_IMAGE_BYTES = 10 * 1024 * 1024
 STORAGE_ENTITY_TYPE = "product_combo_image"
+
+#: AC-S5-12: the allowlist is the FILENAME extension, never the client's own
+#: `Content-Type` header - a `.svg` claiming `image/svg+xml` is refused, and
+#: an `.exe` claiming `image/png` is refused by its extension regardless of
+#: what it says it is. Mirrors `shipment_line_photos._validated_image_ext`.
+_IMAGE_EXTS = {"jpg", "jpeg", "png", "webp"}
+_IMAGE_MIME_BY_EXT = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
+
+
+def _validated_image_ext(filename: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in _IMAGE_EXTS:
+        raise AppException(
+            status_code=422,
+            message=f"{filename} is not an image (jpg, jpeg, png or webp).",
+        )
+    return ext
 
 
 def _dimensions(product: Optional[Product]) -> Optional[str]:
@@ -106,14 +127,14 @@ def _serialize_image(db: Session, combo: ProductCombo) -> Optional[Dict[str, Any
     return {"attachment_id": attachment.id, "url": url}
 
 
-def _serialize(combo: ProductCombo, db: Optional[Session] = None) -> Dict[str, Any]:
+def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
     return {
         "id": combo.id,
         "host_product_id": combo.host_product_id,
         "name": combo.name,
         "sort_order": combo.sort_order,
         "parts": [_serialize_part(part) for part in combo.parts],
-        "image": _serialize_image(db, combo) if db is not None else None,
+        "image": _serialize_image(db, combo),
         "created_at": combo.created_at,
         "updated_at": combo.updated_at,
     }
@@ -271,20 +292,26 @@ class ProductComboService:
                 status_code=422,
                 message=f"Images must be under {MAX_COMBO_IMAGE_BYTES // (1024 * 1024)} MB.",
             )
-        if not (content_type or "").lower().startswith("image/"):
-            raise AppException(status_code=422, message="Only image files are accepted.")
+        # AC-S5-12: the extension decides, never the client's `Content-Type` -
+        # the stored mime is DERIVED from it too, below.
+        ext = _validated_image_ext(filename or "")
+        stored_content_type = _IMAGE_MIME_BY_EXT[ext]
 
         combo_type = self._combo_image_type()
         attachment_id = str(uuid.uuid4())
         safe_name = (filename or "combo-image").rsplit("/", 1)[-1][:255]
         key = f"{STORAGE_ENTITY_TYPE}/{attachment_id}/{safe_name}"
+        # AC-S5-12: the host product's own company, not the caller's write
+        # scope - a combo image is data of the host it pictures.
+        host_company_id = combo.host_product.company_id
 
         provider = default_provider()
         backend = get_backend(provider)
         stored_key, _url = backend.upload_file(
-            file_content=content, file_path=key, content_type=content_type
+            file_content=content, file_path=key, content_type=stored_content_type
         )
 
+        sweep: Optional[tuple] = None
         try:
             attachment = Attachment(
                 id=attachment_id,
@@ -293,13 +320,13 @@ class ProductComboService:
                 stored_filename=safe_name,
                 file_path=cdn_base_url(provider, stored_key),
                 file_size_bytes=len(content),
-                mime_type=content_type,
+                mime_type=stored_content_type,
                 file_hash=hashlib.sha256(content).hexdigest(),
                 entity_type=STORAGE_ENTITY_TYPE,
                 uploaded_by=user_id,
                 uploader_kind="user" if user_id else "system",
                 storage_provider=provider,
-                company_id=resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
+                company_id=host_company_id,
             )
             self.db.add(attachment)
             self.db.flush()
@@ -315,38 +342,56 @@ class ProductComboService:
                     attachment_id=attachment.id,
                     is_primary=False,
                     access_levels=["dealer", "end_user"],
-                    company_id=resolve_write_company_id(
-                        get_company_scope(self.db), ambiguous=None
-                    ),
+                    company_id=host_company_id,
                 )
             )
 
-            # AC-S5-3: a second upload replaces the first - old row deleted,
-            # its bytes swept, so a combo never accumulates orphaned pictures.
+            # AC-S5-3/S5-12: a second upload replaces the first - the combo's
+            # OWN link to the old attachment is dropped, and the row (plus its
+            # bytes) is swept only when no other product's own link still
+            # points at it.
             previous_attachment_id = combo.image_attachment_id
             combo.image_attachment_id = attachment.id
             self.db.flush()
             if previous_attachment_id and previous_attachment_id != attachment.id:
-                self._delete_attachment(previous_attachment_id)
+                sweep = self._unlink_combo_image(combo, previous_attachment_id)
 
             self.db.commit()
         except Exception:
             delete_object_best_effort(provider, stored_key)
             raise
 
-        return _serialize_image(self.db, self._combo_or_404(combo.id))
+        # AC-S5-12: the old bytes are swept only AFTER the commit that
+        # dropped the row lands - deleting them ahead of a commit that could
+        # still roll back would lose a picture another product still shows.
+        if sweep:
+            delete_object_best_effort(*sweep)
+
+        image = _serialize_image(self.db, self._combo_or_404(combo.id))
+        if image is None:
+            # AC-S5-12: the response model is not Optional - a signed URL
+            # that could not be produced for the picture we just stored is a
+            # storage-layer failure, not "no picture".
+            raise AppException(
+                status_code=502,
+                message="The image was stored but a preview URL could not be produced.",
+            )
+        return image
 
     def delete_image(self, combo_id: str) -> None:
-        """AC-S5-3: clears the pointer and deletes the attachment row - the
-        picture is the combo's own, not shared with anything that should
-        survive it."""
+        """AC-S5-3/S5-12: clears the pointer and drops the combo's OWN link -
+        the attachment row (and its bytes) is swept only when no other
+        product's own link still points at it."""
         combo = self._combo_or_404(combo_id)
         attachment_id = combo.image_attachment_id
         combo.image_attachment_id = None
         self.db.flush()
+        sweep = None
         if attachment_id:
-            self._delete_attachment(attachment_id)
+            sweep = self._unlink_combo_image(combo, attachment_id)
         self.db.commit()
+        if sweep:
+            delete_object_best_effort(*sweep)
 
     def _combo_image_type(self) -> AttachmentType:
         """The `Combo Image` type row, seeded idempotently by the migration in
@@ -372,22 +417,48 @@ class ProductComboService:
         self.db.flush()
         return row
 
-    def _delete_attachment(self, attachment_id: str) -> None:
-        """Hard delete: the row, its product link, and its stored bytes."""
+    def _unlink_combo_image(
+        self, combo: ProductCombo, attachment_id: str
+    ) -> Optional[tuple]:
+        """AC-S5-12: drop the combo's OWN link to `attachment_id` (its host
+        product's `product_attachments` row) and, only when no OTHER
+        `product_attachments` row still links it, the attachment row itself.
+
+        A combo image is shared into the host's own gallery (AC-S5-2), and
+        nothing stops a caller from separately attaching the same picture
+        elsewhere - a replace/clear here must never hard-delete a row
+        something else still shows.
+
+        Returns ``(provider, key)`` to sweep from storage once the caller's
+        own commit has landed, or ``None`` when nothing was deleted - the
+        bytes must survive until the transaction that dropped the row is
+        durable, since an undo of that delete cannot undo a storage sweep.
+        """
         from app.services.storage_router import extract_key
+
+        self.db.query(ProductAttachment).filter(
+            ProductAttachment.product_id == combo.host_product_id,
+            ProductAttachment.attachment_id == attachment_id,
+        ).delete(synchronize_session=False)
+        self.db.flush()
+
+        still_linked = (
+            self.db.query(ProductAttachment.id)
+            .filter(ProductAttachment.attachment_id == attachment_id)
+            .first()
+            is not None
+        )
+        if still_linked:
+            return None
 
         attachment = self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
         if attachment is None:
-            return
-        self.db.query(ProductAttachment).filter(
-            ProductAttachment.attachment_id == attachment_id
-        ).delete(synchronize_session=False)
+            return None
         provider = attachment.storage_provider
         key = extract_key(attachment.file_path)
         self.db.delete(attachment)
         self.db.flush()
-        if key:
-            delete_object_best_effort(provider, key)
+        return (provider, key) if key else None
 
     # ------------------------------------------------------------------ parts
 
