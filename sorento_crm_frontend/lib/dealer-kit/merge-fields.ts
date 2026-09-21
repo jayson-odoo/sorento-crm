@@ -147,8 +147,28 @@ function specText(spec: TagSpecValue): string {
  * three `line.*` paths read the LINE regardless of any subject: a quantity
  * and a line's own parts list are facts about the line, not about whichever
  * product a layer happens to be pointed at.
+ *
+ * AC-S4-13: `product.price_tag_description`'s stored text is itself a
+ * TEMPLATE now, not plain text - it is rendered once more, against the SAME
+ * subject's own data, before it reaches the caller. `String.replace`'s
+ * single left-to-right scan already makes this one pass with no recursion:
+ * a spec VALUE that happens to contain the literal text `{{product.name}}`
+ * is part of the replacement STRING, never rescanned for further tokens.
  */
-function resolvePath(path: string, data: TagBindingData, layer?: Pick<TagLayer, 'props'>): string | null {
+function resolvePath(
+  path: string,
+  data: TagBindingData,
+  layer?: Pick<TagLayer, 'props'>,
+  mode: MergeFieldMode = 'print',
+): string | null {
+  if (path === 'product.price_tag_description') {
+    const subject = subjectOf(data, layer);
+    if (!subject) return null;
+    const raw = resolveSlotText({ slot_binding: 'price_tag_description', props: layer?.props }, data);
+    if (raw == null) return null;
+    return renderMergeFields(raw, subject, mode);
+  }
+
   if (path.startsWith('spec.')) {
     const key = path.slice('spec.'.length);
     const spec = specsOf(data, layer).find((row) => row.key === key);
@@ -245,7 +265,7 @@ export function renderMergeFields(
   if (!text) return text;
 
   return text.replace(tokenPattern(), (whole, path: string) => {
-    const value = data ? resolvePath(path, data, layer) : null;
+    const value = data ? resolvePath(path, data, layer, mode) : null;
     if (value != null) return value;
     // With nothing bound and nothing previewed, the editor shows the token so
     // the designer can see which field will fill this spot. Print never does.
