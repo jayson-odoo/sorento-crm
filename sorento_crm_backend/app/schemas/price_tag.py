@@ -115,6 +115,10 @@ class PriceTagRequestTagUpdate(BaseModel):
     quantity: Optional[int] = Field(default=None, ge=1)
     marketing_price_override: Optional[Decimal] = None
     marketing_override_reason: Optional[str] = None
+    #: r10 S6: "Not printed" - skipped by arrange, the print payload and the
+    #: design media map. Refused (409) once the request has reached
+    #: proof_ready (AC-S6-7).
+    print_excluded: Optional[bool] = None
 
 
 class PriceTagRequestTagResponse(BaseModel):
@@ -139,6 +143,15 @@ class PriceTagRequestTagResponse(BaseModel):
     marketing_override_reason: Optional[str] = None
     list_price: Optional[float] = None
     sell_price: Optional[float] = None
+    #: r10 S6, AC-S6-7/S6-9.
+    print_excluded: bool = False
+    #: r10 S8: set when master data moved under this tag's pin and the
+    #: change was applied by itself; cleared by Dismiss.
+    data_updated_at: Optional[datetime] = None
+    #: r10 S8: what that auto-update changed, old -> new per field.
+    data_update_changes: Optional[list["LineDataChange"]] = None
+    #: r10 S8: the "Before product update" version number Roll back restores.
+    data_update_version: Optional[int] = None
 
 
 class LinePartCandidateResponse(BaseModel):
@@ -440,6 +453,13 @@ class PriceTagRequestResponse(BaseModel):
     # undeclared field is dropped by ``response_model`` without a word
     # (PLAN-price-tag-feedback-r2 S2).
     has_completed_export: bool = False
+
+    #: r10 S9: `ready | pending | failed | null`, off the request's most
+    #: recent tag sheet PDF export regardless of its outcome - tells the
+    #: portal "never asked" from "in progress" from "failed" so Download PDF
+    #: can read the right label instead of a dead button (AC-S9-1). Filled
+    #: the same way as `has_completed_export` above.
+    latest_export_status: Optional[str] = None
 
     # D-P6/AC-B6: whether a post-submit edit is currently allowed - True for
     # a draft, or a submitted request at New / Changes requested; False at
@@ -838,12 +858,21 @@ class TagSizePresetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     width_mm: float = Field(..., ge=10)
     height_mm: float = Field(..., ge=10)
+    #: r10 S7: the configured "per A4" grid - absent means arrange derives
+    #: the best fit itself.
+    sheet_cols: Optional[int] = Field(default=None, ge=1)
+    sheet_rows: Optional[int] = Field(default=None, ge=1)
+    sheet_turn: bool = False
 
 
 class TagSizePresetUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     width_mm: Optional[float] = Field(default=None, ge=10)
     height_mm: Optional[float] = Field(default=None, ge=10)
+    #: r10 S7. `None` (sent explicitly) clears the grid back to `Auto`.
+    sheet_cols: Optional[int] = Field(default=None, ge=1)
+    sheet_rows: Optional[int] = Field(default=None, ge=1)
+    sheet_turn: Optional[bool] = None
 
 
 class TagSizePresetResponse(BaseModel):
@@ -857,6 +886,10 @@ class TagSizePresetResponse(BaseModel):
     # Resolved, not stored - a preset row holds a user id and nothing a
     # person can read (no UUIDs in the UI). Filled by the route.
     created_by_name: Optional[str] = None
+    #: r10 S7: the configured "per A4" grid; null means derive.
+    sheet_cols: Optional[int] = None
+    sheet_rows: Optional[int] = None
+    sheet_turn: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -1152,6 +1185,11 @@ class ProductTagData(BaseModel):
     # none, which the layer renders as an editor placeholder / nothing on
     # print.
     barcode: Optional[str] = None
+    # S4: staff-authored tag copy, a template rendered against this SAME
+    # product's own data (S11). Absent renders nothing (Q5) - no fallback to
+    # spec_lines/description. Declared here or `response_model` drops it
+    # without a word - see `ResolvedLineData.data_changes`'s own note.
+    price_tag_description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
@@ -1266,6 +1304,14 @@ class TagPartData(BaseModel):
     sell_price: Optional[float] = None
     # AC-A11: this part's OWN product's currency, not the host's.
     currency: str = "MYR"
+    #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
+    #: subjectPart layer reads THIS, never the host's.
+    price_tag_description: Optional[str] = None
+    #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
+    #: subject picker groups candidates under it. Absent on a fixed part.
+    role: Optional[str] = None
+    #: r10 S6: true on the candidate THIS tag's own choices name.
+    chosen: Optional[bool] = None
 
 
 class ResolvedLineData(BaseModel):
@@ -1279,7 +1325,13 @@ class ResolvedLineData(BaseModel):
     tag_id: str
     tag_label: str = ""
     open_groups: list[TagOpenGroup] = []
+    #: r10 S6: every product this tag's combo could show - a superset of
+    #: `own_parts`, which is what this tag itself prints and prices.
     parts: list[TagPartData] = []
+    #: r10 S6: the parts this tag itself prints - fixed parts plus its own
+    #: chosen candidate. Absent on a row pinned before r10, where `parts`
+    #: was already this list (AC-S6-11) - the FE falls back to `parts`.
+    own_parts: Optional[list[TagPartData]] = None
     line_id: str
     code: str
     name: str
@@ -1304,6 +1356,13 @@ class ResolvedLineData(BaseModel):
     barcode: Optional[str] = None
     # AC-A11/A12: the tag's own currency (response_model gate).
     currency: str = "MYR"
+    # S4: staff-authored tag copy, a template rendered against this SAME
+    # line's own data (S11) - the line host's own value, distinct from each
+    # part's own `price_tag_description` above. Declared here or
+    # `response_model` drops it without a word, exactly like `data_changes`
+    # below - measured, `test_dealer_kit_tag_data_routes.py::
+    # test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts`.
+    price_tag_description: Optional[str] = None
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did
@@ -1450,6 +1509,14 @@ class TagPinPayload(BaseModel):
 class TagPinResponse(BaseModel):
     tag_id: str
     pinned_at: Optional[datetime] = None
+
+
+class TagDismissResponse(BaseModel):
+    """r10 S8: the answer to `POST tags/{id}/dismiss` - nothing on the tag
+    moved (the new data is already pinned), so there is nothing to echo
+    beyond which tag it was."""
+
+    tag_id: str
 
 
 class RequestVersionSummary(BaseModel):

@@ -1703,3 +1703,110 @@ describe('subjectPart on the print page (D7, AC-S4-3)', () => {
     expect(screen.queryByText('SK-1234')).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S7-8 (PLAN-price-tag-r10.md S7): a placed tag with `rotation: 90` draws
+// its inner (natural, unrotated) box with `transform: translate(<height_mm>
+// mm, 0) rotate(90deg)`; rotation 0 or absent draws no transform on it at
+// all - the print page must agree with the Konva arrange preview's own
+// "rotate then translate" (`ArrangeSheetView.tsx`'s `TagOnCanvas`). Already
+// wired (`TagRenderer`'s own `naturalBox`), so these are GREEN regression
+// guards - Phase 1 shipped the real renderer.
+// ---------------------------------------------------------------------------
+
+function docWithRotation(rotation: 0 | 90 | undefined, text: string): TagSheetDoc {
+  return {
+    kind: 'tag_sheet',
+    imposition: {
+      preset: 'auto',
+      page_width_mm: 210,
+      page_height_mm: 297,
+      bleed_mm: 5,
+      gap_mm: 0,
+    },
+    sheets: [
+      {
+        id: 's1',
+        tags: [
+          {
+            id: 't1',
+            template_id: 'tpl-sink',
+            request_tag_id: TAG_ID,
+            x_mm: 10,
+            y_mm: 10,
+            // Natural (unrotated) footprint - the tag's own layers are laid
+            // out against 143.5 x 100, regardless of rotation.
+            width_mm: 143.5,
+            height_mm: 100,
+            rotation,
+            layers: [
+              layer({
+                type: 'text',
+                props: { kind: 'text', text, align: 'left', color: '#000', fontSize: 10, fontFamily: 'Jost', fontWeight: 400, lineHeight: 1.2, letterSpacing: 0 },
+              }),
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** Climbs from a text node to the nearest ancestor carrying an inline
+ *  `transform`/`transformOrigin` pair - `naturalBox`'s own div, whichever
+ *  DOM depth the text landed at inside it. */
+function transformAncestorOf(el: HTMLElement): HTMLElement {
+  let node: HTMLElement | null = el;
+  while (node && node.style.transformOrigin !== '0 0' && node.parentElement) {
+    node = node.parentElement;
+  }
+  if (!node) throw new Error('no ancestor carries transformOrigin: 0 0');
+  return node;
+}
+
+describe('TagSheetRenderer - placed tag rotation (AC-S7-8)', () => {
+  it('rotation: 90 draws translate(<height_mm>mm, 0) rotate(90deg) on the natural box', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWithRotation(90, 'ZZT-ROT-90')}
+        resolvedData={{ [TAG_ID]: resolved() }}
+      />,
+    );
+
+    const box = transformAncestorOf(screen.getByText('ZZT-ROT-90'));
+    expect(box.style.transform).toBe('translate(100mm, 0) rotate(90deg)');
+  });
+
+  it('rotation: 0 draws no transform on the natural box', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWithRotation(0, 'ZZT-ROT-0')}
+        resolvedData={{ [TAG_ID]: resolved() }}
+      />,
+    );
+
+    const textEl = screen.getByText('ZZT-ROT-0');
+    // No rotation - nothing to climb to; the immediate naturalBox ancestor
+    // (transformOrigin still set, but transform absent) is found the same
+    // structural way and must carry no transform.
+    let node: HTMLElement | null = textEl;
+    while (node && node.style.width !== '143.5mm') node = node.parentElement;
+    expect(node).not.toBeNull();
+    expect((node as HTMLElement).style.transform).toBe('');
+  });
+
+  it('rotation absent (undefined) draws no transform either', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWithRotation(undefined, 'ZZT-ROT-ABSENT')}
+        resolvedData={{ [TAG_ID]: resolved() }}
+      />,
+    );
+
+    const textEl = screen.getByText('ZZT-ROT-ABSENT');
+    let node: HTMLElement | null = textEl;
+    while (node && node.style.width !== '143.5mm') node = node.parentElement;
+    expect(node).not.toBeNull();
+    expect((node as HTMLElement).style.transform).toBe('');
+  });
+});

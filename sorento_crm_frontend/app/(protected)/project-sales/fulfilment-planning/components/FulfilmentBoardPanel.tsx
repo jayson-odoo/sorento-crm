@@ -230,6 +230,7 @@ export function FulfilmentBoardPanel({
     value: productSearchInput,
     setValue: setProductSearchInput,
     debouncedValue: productSearch,
+    reset: resetProductSearch,
   } = useDebouncedSearch(searchParams.get('product') ?? '');
   const [rowAxis, setRowAxis] = React.useState<BoardRowAxis>(() =>
     rowAxisFrom(searchParams.get('rows')),
@@ -252,6 +253,42 @@ export function FulfilmentBoardPanel({
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
+  /**
+   * The line a click on the left-out banner (AC-5) asked to see, or null. Handed to
+   * `FulfilmentBoardListView`, which owns the row expansion this opens - the board only says
+   * WHICH row, never how the list gets there.
+   */
+  const [focusKey, setFocusKey] = React.useState<string | null>(null);
+  /**
+   * Board-confirm-left-out AC-5: the banner's own link. Switches to List (where every
+   * contributing line has its own row, unlike the grid's per-cell/per-product pivot), clears
+   * whatever would otherwise hide the row - the kind-strip filter and the product search box -
+   * and hands the key to the list, which expands that row and scrolls it into view.
+   *
+   * B1 (fix round 2, reviewer): `reset('')`, never `setProductSearchInput('')`. `setValue`
+   * alone only moves the BOX; `debouncedValue` (what `productSearch` actually reads, and what
+   * `visibleListContributions` filters by) still lags it by 200ms
+   * (`hooks/useDebouncedSearch.ts`), so the row this press is trying to reach was still
+   * filtered out at the moment `PanelDataGrid` went looking for it - the jump found no such
+   * row, the scroll no-op'd, and the box only caught up a beat later, too late to help.
+   * `reset` sets both halves synchronously, the same escape hatch the hook exists for.
+   */
+  const focusLeftOutLine = React.useCallback(
+    (contribution: BoardContribution) => {
+      setView('list');
+      setKindFilter(null);
+      resetProductSearch('');
+      setFocusKey(contribution.key);
+    },
+    [resetProductSearch],
+  );
+  /**
+   * Fired by `FulfilmentBoardListView` once it has actually scrolled to `focusKey` (S3) - a
+   * stable function (nit, fix round 3 review), the same reason `dirtySetterFor` is cached per
+   * key one file over: an inline arrow here is a new prop identity on every render, which
+   * would needlessly re-fire any effect keyed on it.
+   */
+  const handleLeftOutLineFocused = React.useCallback(() => setFocusKey(null), []);
 
   // The granularity and the product filter travel in the URL, beside the selection the
   // worklist put there, so the WHOLE board is one link (PLAN 13.2, 13.3). `replace`, not
@@ -945,6 +982,11 @@ export function FulfilmentBoardPanel({
     setConfirmAllOpen(false);
     setConfirmingAll(true);
     setBatchResults(null);
+    // AC-6: the count as the banner above stated it the moment Confirm was pressed - the
+    // owner's own words were "confirming silently is dangerous", so a press that leaves lines
+    // out says so in the SAME toast that says what it did commit, not only in a banner that
+    // stays on screen after the fact.
+    const leftOutAtConfirm = unpostable.length;
     try {
       let liveBoard = board.data;
       let contributions = allContributions;
@@ -1118,12 +1160,20 @@ export function FulfilmentBoardPanel({
       const kept = ok.reduce((total, entry) => total + (entry.transfers_kept ?? 0), 0);
       const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
       if (ok.length > 0) {
-        toast.success(
+        const summary =
           `${linesConfirmed} line${linesConfirmed === 1 ? '' : 's'} confirmed · ` +
-            `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
-            (kept > 0 ? `${kept} kept · ` : '') +
-            `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}`,
-        );
+          `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
+          (kept > 0 ? `${kept} kept · ` : '') +
+          `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}` +
+          (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : '');
+        // S4 (fix round 2, reviewer): a press that left something out is not an unqualified
+        // success, the owner's own words on SO420745 were "confirming silently is dangerous" -
+        // so the toast that SAYS so reads amber, not the plain green every other Confirm gets.
+        if (leftOutAtConfirm > 0) {
+          toast.warning(summary);
+        } else {
+          toast.success(summary);
+        }
       }
 
       const committedPsoIds = new Set(
@@ -1153,7 +1203,16 @@ export function FulfilmentBoardPanel({
     } finally {
       setConfirmingAll(false);
     }
-  }, [board, allContributions, draft, adopt, confirmMany, appliedSoNumbers, batchIdBySoNumber]);
+  }, [
+    board,
+    allContributions,
+    draft,
+    adopt,
+    confirmMany,
+    appliedSoNumbers,
+    batchIdBySoNumber,
+    unpostable,
+  ]);
 
   /**
    * The rows on screen, and the rows the selection holds.
@@ -1634,19 +1693,55 @@ export function FulfilmentBoardPanel({
         </p>
       ) : null}
 
-      {/* A line the planner decided that this confirmation cannot carry. Named, with why,
-          because dropping it silently would tell them they committed something they did not,
-          and the fix is somewhere else. One sentence per reason, so the count on the button
-          and this notice always describe the same lines. */}
-      {UNPOSTABLE_REASONS.flatMap((reason) => {
-        const lines = unpostable.filter((entry) => entry.reason === reason);
-        if (lines.length === 0) return [];
-        return unpostableNotices(reason, lines).map((sentence, index) => (
-          <p key={`${reason}-${index}`} className="text-sm text-amber-700 break-words">
-            {sentence}
-          </p>
-        ));
-      })}
+      {/* A line the planner decided that this confirmation cannot carry - LOUD, per the
+          owner's own words on SO420745 ("confirming silently is dangerous"), REACHABLE
+          ("a hyperlink to go to that line directly") and, once its reason is fixed,
+          FIXABLE (AC-1/AC-2 - see the panel's own approving save). One notice per reason,
+          so the count on the button and this banner always describe the same lines. */}
+      {unpostable.length > 0 && (
+        <Alert
+          variant="warning"
+          appearance="light"
+          data-testid="board-left-out-banner"
+        >
+          <AlertIcon>
+            <AlertTriangle />
+          </AlertIcon>
+          <AlertContent className="space-y-2">
+            {UNPOSTABLE_REASONS.flatMap((reason) => {
+              const lines = unpostable.filter((entry) => entry.reason === reason);
+              if (lines.length === 0) return [];
+              return unpostableNotices(reason, lines).map((notice, index) => (
+                <AlertDescription
+                  key={`${reason}-${index}`}
+                  className="break-words"
+                >
+                  {notice.named.map((name, nameIndex) => (
+                    <React.Fragment key={name.line.contribution.key}>
+                      {nameIndex > 0 ? ', ' : ''}
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        // `Button`'s own base class carries `whitespace-nowrap`
+                        // (`components/ui/button.tsx`) - fine for a short label, but a long
+                        // item code has nowhere to wrap at 375px without overriding it back
+                        // (design nit, fix round 2 review).
+                        className="h-auto min-h-0 whitespace-normal break-words p-0 text-left align-baseline text-sm"
+                        onClick={() => focusLeftOutLine(name.line.contribution)}
+                      >
+                        {name.label}
+                      </Button>
+                    </React.Fragment>
+                  ))}
+                  {notice.moreCount > 0 ? ` and ${notice.moreCount} more` : ''}
+                  {` ${notice.clause}`}
+                </AlertDescription>
+              ));
+            })}
+          </AlertContent>
+        </Alert>
+      )}
 
       {batchResults && (
         <div
@@ -1843,6 +1938,11 @@ export function FulfilmentBoardPanel({
                 // toggling a kind card while on page 3 would leave the list showing
                 // whatever landed there instead of the top of the narrowed set.
                 pageResetKey={`${productSearch}|${kindFilter ?? ''}`}
+                // AC-5: which row the left-out banner asked to see, opened and scrolled to
+                // once. Cleared once handled so a second click on the SAME line still fires
+                // the effect the list reads it with.
+                focusKey={focusKey}
+                onFocusHandled={handleLeftOutLineFocused}
               />
             ) : (
               <>

@@ -225,7 +225,12 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
     expect(screen.getAllByTestId('gear-menu')).toHaveLength(1);
     const gear = screen.getByTestId('gear-menu');
     expect(screen.getByText('Duplicate')).toBeInTheDocument();
-    expect(screen.getByText('Download PDF')).toBeInTheDocument();
+    // r10 S9: at 'new' the download item is disabled and reads "Available
+    // after approval" (AC-S9-5), not "Download PDF" - the label is
+    // status-dependent, so match either rather than pin one wording here.
+    expect(
+      screen.getByText(/^(Download PDF|Available after approval)$/),
+    ).toBeInTheDocument();
     expect(gear).toHaveTextContent('Revise');
   });
 
@@ -282,9 +287,10 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
   });
 
-  it('sends print_by in the revision fields payload (live finding, PT-202609-0013)', async () => {
-    // handleSubmitRevision's `fields` omitted print_by while draft/submit both
-    // include it - a revision silently dropped who prints.
+  it('AC-S1-2 (r10, supersedes live finding PT-202609-0013): the revision fields payload always carries print_by: self', async () => {
+    // r10 S1: the portal never asks who prints any more - `printBy` is a
+    // constant 'self' every payload sends, including revise, whatever the
+    // stored value on the request was (an old 'office' row included).
     asMock(getRequest).mockResolvedValue(
       baseRequest({
         status: 'new',
@@ -296,8 +302,10 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
-    // The read view shows Printing before any revision is attempted too.
-    expect(screen.getByText('Office prints')).toBeInTheDocument();
+    // AC-S1-1: the "Who prints" control (and its read-only "Printing" line)
+    // is gone from the portal form.
+    expect(screen.queryByText('Office prints')).toBeNull();
+    expect(screen.queryByText('I print myself')).toBeNull();
 
     fireEvent.click(screen.getByText('Revise'));
     const reasonField = await screen.findByLabelText(/reason/i);
@@ -308,7 +316,7 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     await waitFor(() =>
       expect(reviseMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          fields: expect.objectContaining({ print_by: 'office' }),
+          fields: expect.objectContaining({ print_by: 'self' }),
         }),
       ),
     );

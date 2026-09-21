@@ -378,6 +378,16 @@ class PriceTagRequestTag(Base):
     pinned_tag_data = Column(JSONB, nullable=True)
     pinned_at = Column(DateTime(timezone=False), nullable=True)
     data_change_ack_hash = Column(String(64), nullable=True)
+    # r10 S6: marked "Not printed" - skipped by arrange, the print payload and
+    # the design media map, never deleted (a toggle, not a decision that
+    # throws the tag's own design away).
+    print_excluded = Column(Boolean, nullable=False, server_default="false")
+    # r10 S8: the auto-apply seam's own record of what it just did, so the
+    # rail's "updated" indicator can name the change and Roll back knows which
+    # version to restore. Set together, cleared together on Dismiss.
+    data_updated_at = Column(DateTime(timezone=False), nullable=True)
+    data_update_changes = Column(JSONB, nullable=True)
+    data_update_version = Column(Integer, nullable=True)
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )

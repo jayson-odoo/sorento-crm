@@ -58,7 +58,7 @@ Open a product, then **Edit** (or the **Edit** icon on the list row). The same t
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No**), then **Combos** (the catalogue packages this product is sold as) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
+* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No**), then **Combos** (the catalogue packages this product is sold as, each with its own optional cover picture) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
 * **Stock** - on-hand / reserved / available by warehouse.
 * **Purchase History** - past purchases of this product.
 * **Attachments** - files linked to this product.
@@ -66,7 +66,7 @@ The detail page (`/master-data-management/products/{id}`) shows the product name
 * **Promotions** - promotions covering this product.
 * **Variants** - linked product variants.
 * **Audit Trail** - change history (the product model is audit-tracked).
-* **Specifications** - the product's structured specification values: every value with where it came from, editable in place, **AI Extract** to propose values from an attached document, and the verification block. See [Verify product specifications](verify-product-specifications.md).
+* **Specifications** - the product's structured specification values: every value with where it came from, editable in place, **AI Extract** to propose values from an attached document, and the verification block. See [Verify product specifications](verify-product-specifications.md). Directly under **Product description**, a **Price tag description** block shows the stored template read-only (or **(none)**); **Edit price tag description** swaps it for a textarea with **Save** and **Cancel** (Escape also cancels), an **Insert field** button to pick a `{{product.*}}` or `{{spec.*}}` token at the cursor, and a live **Prints as:** preview rendered against this product's own values. Prints verbatim through the `{{product.price_tag_description}}` merge field on a tag; left empty, nothing prints for it. Each line of the template keeps its own line break, a line whose fields are all empty for this particular product is left out rather than printing as a gap, and a token naming a field outside Insert field's own list is named under the preview so it is caught before saving. See [Work a price tag request - In the designer](../marketing/price-tag-requests.md#in-the-designer).
 
 Every section renders even when empty.
 

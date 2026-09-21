@@ -813,6 +813,12 @@ class TagSizePreset(Base, CompanyScopedMixin):
     name = Column(String(255), nullable=False)
     width_mm = Column(Numeric(6, 2), nullable=False)
     height_mm = Column(Numeric(6, 2), nullable=False)
+    # PLAN-price-tag-r10.md S7: the per-A4 grid this size prints as, when
+    # somebody configures one - null cols/rows means arrange derives the best
+    # fit on its own instead.
+    sheet_cols = Column(Integer, nullable=True)
+    sheet_rows = Column(Integer, nullable=True)
+    sheet_turn = Column(Boolean, nullable=False, server_default=text("false"))
     # String, not UUID - same reason as ``TagTemplateVersion.created_by`` above.
     created_by = Column(String, nullable=True)
     created_at = _created_at()

@@ -169,6 +169,10 @@ class ProductBase(BaseModel):
     # S5 (PLAN-reorder-feedback-9sep.md): the buyer's own switch, no backfill (G3) - every
     # existing product defaults false and is flipped by hand.
     exclude_from_planning: bool = False
+    # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag - CRM-owned,
+    # never sent by the AutoCount masters push (AC-S4-9, `CanonicalProduct`
+    # deliberately has no field of this name).
+    price_tag_description: Optional[str] = None
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -222,6 +226,8 @@ class ProductUpdate(BaseModel):
     is_discontinued: Optional[bool] = None
     # S5: None means "not sent", same convention as the other planning flags on this schema.
     exclude_from_planning: Optional[bool] = None
+    # PLAN-price-tag-r10.md S4: None = untouched by this PUT (AC-S4-2/S4-9).
+    price_tag_description: Optional[str] = None
 
     @field_validator("currency", mode="before")
     @classmethod

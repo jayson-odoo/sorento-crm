@@ -17,8 +17,10 @@ import {
   amendDraftFrom,
   amendSummary,
   borrowCandidatesOf,
+  borrowReasonKeyOf,
   decisionFromAmendDraft,
   suggestionDraftFrom,
+  suggestionWithReasons,
 } from '../../_shared/lib/boardAmend';
 import {
   fromMinor,
@@ -375,14 +377,31 @@ export function BoardLineDecisionPanel({
    * so a covered line always takes the ELSE branch below regardless of `approving` - an
    * unlocked, re-typed suggestion on a confirmed line is still an amendment that happens to
    * match the engine's numbers, not an approval.
+   *
+   * BOARD-CONFIRM-LEFT-OUT (measured cause 1): the approving branch used to post
+   * `decisionFromAmendDraft(suggestionDraftFrom(contribution), '')` verbatim, which drops the
+   * `buy_reason` a planner just typed for a discontinued Buy and any reason typed on a
+   * suggested borrow row - `matchesSuggestion` rightly compares quantities only, so typing a
+   * reason alone never stopped this from reading as an approval, and the reason never reached
+   * the server. `suggestionWithReasons` carries them across, matched by warehouse + donor
+   * (the same key `matchesSuggestion` uses) so a reason typed on the row it belongs to is the
+   * one that travels with it.
    */
   const save = async () => {
     let ok: boolean | void;
     const approvingNow = approving && !covered;
     if (approvingNow) {
       ok = await onDecide({
-        ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
-        verdict: 'approved',
+        ...suggestionWithReasons(contribution, {
+          buy_reason: draft.buy_reason,
+          borrow: draft.borrow,
+          // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on
+          // screen for this exact line - a wholly-bought approving save used to take them
+          // from the SUGGESTION draft (always false/'') and drop whatever the planner had
+          // actually ticked or typed.
+          order_back: draft.order_back,
+          cited_document: draft.cited_document,
+        }),
         suspected_system_issue: suspected,
       });
     } else {
@@ -407,7 +426,26 @@ export function BoardLineDecisionPanel({
     setDirty(false);
     setLocked(false);
     if (approvingNow) {
-      setDraft(suggestionDraftFrom(contribution));
+      // The reseed keeps the reasons just sent (measured cause 1): resetting straight to
+      // `suggestionDraftFrom` put the engine's own (reason-less) borrow sentences and a blank
+      // Buy reason back on screen the instant the save that just carried the planner's own
+      // reasons had landed - the box audibly emptied under them.
+      const suggestion = suggestionDraftFrom(contribution);
+      const typedReasons = new Map(
+        draft.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
+      );
+      setDraft({
+        ...suggestion,
+        buy_reason: draft.buy_reason,
+        borrow: suggestion.borrow.map((row) => ({
+          ...row,
+          reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
+        })),
+        // S2: the same reseed gap one field over - Order back and Document cited went back to
+        // the suggestion's own false/'' the instant the save that just carried them landed.
+        order_back: draft.order_back,
+        cited_document: draft.cited_document,
+      });
       setReason('');
     }
     // S4/AC-4.1: the button answers the click itself, within the interaction, before the

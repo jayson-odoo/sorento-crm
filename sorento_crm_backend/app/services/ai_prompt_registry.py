@@ -799,7 +799,10 @@ def _ai_extract_price_tag_fallback() -> str:
         " (8) When the form has line items, `products` is REQUIRED whenever "
         "the document shows any product code: every product code line is one "
         "entry, even when no quantity, price or name is shown. Return an "
-        "empty `products` array only when no product code appears anywhere."
+        "empty `products` array only when no product code appears anywhere. "
+        "(9) `quantity` is how many tags the salesperson wants, which the "
+        "document never says. Omit `quantity` from every entry; never copy a "
+        "quantity, pack size or order quantity from the document."
     )
 
 

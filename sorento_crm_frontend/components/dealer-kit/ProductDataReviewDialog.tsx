@@ -24,7 +24,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import type {
+  LineDataChange,
+  TagDataChangeSet,
+} from '@/lib/dealer-kit/product-data-changes';
 
 interface ProductDataReviewDialogProps {
   open: boolean;
@@ -73,45 +76,7 @@ export default function ProductDataReviewDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div
-          className="max-h-[60dvh] overflow-y-auto"
-          data-testid="product-data-review-rows"
-        >
-          {changeSet.changes.map((change) => (
-            <div
-              key={change.field}
-              className="grid grid-cols-1 gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[9rem_1fr_1fr] sm:gap-3"
-            >
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {change.label}
-              </span>
-              <div className="min-w-0">
-                <p className="text-2xs uppercase tracking-wide text-muted-foreground">
-                  On the tag
-                </p>
-                <ChangeValue
-                  value={change.old}
-                  imageUrl={change.old_image_url}
-                  isImage={change.field.startsWith('image:')}
-                  muted
-                />
-              </div>
-              <div className="min-w-0">
-                <p className="text-2xs uppercase tracking-wide text-muted-foreground">
-                  Now in the product
-                </p>
-                <ChangeValue
-                  value={change.new}
-                  imageUrl={change.new_image_url}
-                  isImage={change.field.startsWith('image:')}
-                />
-                {change.note && (
-                  <p className="mt-0.5 text-xs text-amber-700">{change.note}</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+        <ProductDataChangeRows changes={changeSet.changes} />
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button
@@ -129,6 +94,55 @@ export default function ProductDataReviewDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The old -> new rows, one per field. Shared with the r10 S8 "updated"
+ * dialog (`ProductDataUpdatedDialog`), which shows the same diff after the
+ * fact - the reader is asked the same question either way, only the answers
+ * on offer differ.
+ */
+export function ProductDataChangeRows({
+  changes,
+  oldHeading = 'On the tag',
+  newHeading = 'Now in the product',
+}: {
+  changes: LineDataChange[];
+  oldHeading?: string;
+  newHeading?: string;
+}) {
+  return (
+    <div className="max-h-[60dvh] overflow-y-auto" data-testid="product-data-review-rows">
+      {changes.map((change) => (
+        <div
+          key={change.field}
+          className="grid grid-cols-1 gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[9rem_1fr_1fr] sm:gap-3"
+        >
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {change.label}
+          </span>
+          <div className="min-w-0">
+            <p className="text-2xs uppercase tracking-wide text-muted-foreground">{oldHeading}</p>
+            <ChangeValue
+              value={change.old}
+              imageUrl={change.old_image_url}
+              isImage={change.field.startsWith('image:')}
+              muted
+            />
+          </div>
+          <div className="min-w-0">
+            <p className="text-2xs uppercase tracking-wide text-muted-foreground">{newHeading}</p>
+            <ChangeValue
+              value={change.new}
+              imageUrl={change.new_image_url}
+              isImage={change.field.startsWith('image:')}
+            />
+            {change.note && <p className="mt-0.5 text-xs text-amber-700">{change.note}</p>}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

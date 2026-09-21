@@ -84,6 +84,7 @@ import {
   listReviewComments,
   collectRequest,
   downloadPriceTagPdf,
+  requestPriceTagExport,
 } from '../lib/price-tag-request-service';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
@@ -109,11 +110,6 @@ import {
   type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
-import {
-  printByLabel,
-  type PrintBy,
-} from '@/lib/dealer-kit/print-collection';
 import { cn } from '@/lib/utils';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
@@ -434,7 +430,6 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
-const MISSING_PRINT_BY = 'Say who prints these tags.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
 
 /** Statuses the real design (D11) is visible at, once one exists to show.
@@ -442,6 +437,14 @@ const EMPTY_LINE = 'Pick a set or a product for this line.';
 const DESIGN_PREVIEW_STATUSES = new Set([
   'proof_ready',
   'changes_requested',
+  'approved',
+  'ready_for_collection',
+  'collected',
+]);
+
+/** r10 S9: a proof is not for printing, so the design preview shows from
+ *  `proof_ready` but the download item stays disabled until `approved`. */
+const DOWNLOAD_AVAILABLE_STATUSES = new Set([
   'approved',
   'ready_for_collection',
   'collected',
@@ -584,6 +587,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
   // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  // r10 S9: true from the click that queues an export (never asked yet, or
+  // the last one failed) until the poll sees it finish - the demo caught
+  // three approved requests whose auto-export had failed with nothing on
+  // the portal able to ask for a second one.
+  const [exportPending, setExportPending] = useState(false);
   const [collecting, setCollecting] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
@@ -594,7 +602,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     debtor?: string;
     neededBy?: string;
     lines?: string;
-    printBy?: string;
   }>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -609,8 +616,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ever turns on via the header gear's own Revise item (same hooks
   // `SubmissionForm` reads for the legacy kinds), never from status/draft
   // state directly, so Cancel puts the read view back with no round trip.
-  /** Who prints (r9 D7). No default: the salesperson has to answer. */
-  const [printBy, setPrintBy] = useState<PrintBy | null>(null);
+  // r10 S1 (owner: "always i print myself, qty ignore"): the portal no
+  // longer asks - every request the portal creates prints self. The CRM
+  // keeps its own office control (Q7); this constant is what every payload
+  // below sends.
+  const printBy = 'self' as const;
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
@@ -620,6 +630,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // at what they approved, but Approve/Request Changes only make sense while
   // the design is actually waiting on them.
   const showDesignPreview = !!request && DESIGN_PREVIEW_STATUSES.has(request.status);
+  // r10 S9: what the gear's Download PDF item reads. `latest_export_status`
+  // is the source of truth once the server sends it; a request created
+  // before r10 falls back to today's yes/no.
+  const canDownloadPdf = !!request && DOWNLOAD_AVAILABLE_STATUSES.has(request.status);
+  const exportStatus: 'ready' | 'pending' | 'failed' | null =
+    request?.latest_export_status ?? (request?.has_completed_export ? 'ready' : null);
+  const exportPreparing = exportPending || exportStatus === 'pending';
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
@@ -753,7 +770,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
-    setPrintBy((data.print_by as PrintBy | null) ?? null);
     setLines(data.lines.map(lineToDraft));
     setAttachments(data.attachments ?? []);
   }, []);
@@ -940,7 +956,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setPriceModeChosen(true);
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
-        setPrintBy((data.print_by as PrintBy | null) ?? null);
         // A duplicate's lines are new, unsaved rows with no identity of
         // their own yet (nit, review round 2) - the source request's own
         // line ids have no business surviving as this draft's React keys.
@@ -1056,7 +1071,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           if (code) notFoundCodes.push(code);
           return;
         }
-        const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
+        // r10 S2 (owner: "qty ignore"): quantity is how many TAGS the
+        // salesperson wants, which the document never says - the extract
+        // never sets it, and a second sighting of the same code merging in
+        // is not a second tag either.
+        const qty = 1;
         const existingIndex = merged.findIndex((l) =>
           match.kind === 'product'
             ? l.product_id === match.id
@@ -1066,7 +1085,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           const existing = merged[existingIndex];
           merged[existingIndex] = {
             ...existing,
-            quantity: existing.quantity + qty,
             remarks: [existing.remarks, p.notes]
               .filter((v) => v && v.trim())
               .join('; '),
@@ -1492,7 +1510,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         debtor?: string;
         neededBy?: string;
         lines?: string;
-        printBy?: string;
       },
       hasRowProblems: boolean,
     ) => {
@@ -1500,7 +1517,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         toggleSection('customer', true);
       } else if (fields.lines || hasRowProblems) {
         toggleSection('sales_order', true);
-      } else if (fields.printBy || fields.neededBy) {
+      } else if (fields.neededBy) {
         toggleSection('need_by', true);
       }
     },
@@ -1549,18 +1566,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       debtor?: string;
       neededBy?: string;
       lines?: string;
-      printBy?: string;
     } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
     if (lines.length === 0) next.lines = MISSING_LINES;
-    // Required at submit, never at Save Draft (D7): a draft is whatever has
-    // been filled in so far.
-    if (!printBy) next.printBy = MISSING_PRINT_BY;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, lines, printBy]);
+  }, [debtorCode, lines]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -1571,15 +1584,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // is the same failure as not showing one at all.
   useEffect(() => {
     setFieldErrors((prev) => {
-      if (!prev.debtor && !prev.neededBy && !prev.lines && !prev.printBy) return prev;
+      if (!prev.debtor && !prev.neededBy && !prev.lines) return prev;
       const next = { ...prev };
       if (next.debtor && debtorCode) delete next.debtor;
       if (next.neededBy && neededByDate) delete next.neededBy;
       if (next.lines && lines.length > 0) delete next.lines;
-      if (next.printBy && printBy) delete next.printBy;
       return next;
     });
-  }, [debtorCode, neededByDate, lines.length, printBy]);
+  }, [debtorCode, neededByDate, lines.length]);
 
   // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
   // clearing the promotion no longer flips the mode back to List. Switching
@@ -1882,8 +1894,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [requestId, router, slug],
   );
 
-  // ---- Download PDF (D19): the request's latest completed tag sheet export ----
-  const handleDownloadPdf = useCallback(async () => {
+  // ---- Download PDF (D19): the request's latest completed tag sheet export.
+  // r10 S9: a READY export streams exactly as before; anything else (never
+  // asked, or the last attempt failed) queues one instead of sitting behind
+  // a dead button - the demo caught three approved requests stuck that way
+  // because Approve's own auto-export had failed with no retry. ----
+  const streamDownload = useCallback(async () => {
     if (!requestId) return;
     setDownloadingPdf(true);
     try {
@@ -1897,6 +1913,59 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setGearOpen(false);
     }
   }, [requestId]);
+
+  const handleDownloadPdf = useCallback(async () => {
+    if (!requestId) return;
+    if (exportStatus === 'ready') {
+      await streamDownload();
+      return;
+    }
+    // Never asked yet, or the last export failed: queue (or re-queue) one
+    // and let the poll below pick it up.
+    setExportPending(true);
+    try {
+      await requestPriceTagExport(requestId);
+    } catch (e) {
+      setExportPending(false);
+      toast.error(e instanceof Error ? e.message : 'Failed to queue the PDF export');
+    }
+  }, [requestId, exportStatus, streamDownload]);
+
+  // Poll every 5 s while an export is preparing; stream it the moment the
+  // refetched request says ready, surface a toast on failed.
+  //
+  // AC-S9-8: gated on `exportPreparing`, not the LOCAL `exportPending` alone -
+  // a request that loads (or refreshes) already `pending` on the server (a
+  // reload mid-export, or a second tab that queued it) must also poll, not
+  // just show the right label and then sit dead.
+  useEffect(() => {
+    if (!exportPreparing || !requestId) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      getRequest(requestId)
+        .then((fresh) => {
+          if (cancelled || !fresh) return;
+          setRequest(fresh);
+          const status =
+            fresh.latest_export_status ?? (fresh.has_completed_export ? 'ready' : null);
+          if (status === 'ready') {
+            setExportPending(false);
+            void streamDownload();
+          } else if (status === 'failed') {
+            setExportPending(false);
+            toast.error('PDF export failed. Try again.');
+          }
+        })
+        .catch(() => {
+          // A transient failure to poll is not itself a failed export -
+          // the next tick tries again.
+        });
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [exportPreparing, requestId, streamDownload]);
 
   // ---- Loading skeleton ----
   if (loading) {
@@ -2001,7 +2070,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onApprove={handleApprove}
             onSend={handleSendChanges}
             download={{
-              available: Boolean(request.has_completed_export),
+              available: exportStatus === 'ready',
               pending: downloadingPdf,
               onDownload: () => void handleDownloadPdf(),
             }}
@@ -2274,12 +2343,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           onOpenChange={(next) => toggleSection('need_by', next)}
         >
           <div className="space-y-1.5">
-            <Label>Printing</Label>
-            <p className="text-sm font-medium py-2">
-              {printByLabel(request.print_by)}
-            </p>
-          </div>
-          <div className="space-y-1.5">
             <Label>Need by</Label>
             <p className="text-sm font-medium py-2">
               {request.needed_by_date ?? '-'}
@@ -2379,24 +2442,27 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               onOpenChange={setGearOpen}
             >
               <DropdownMenuItem
-                disabled={!request.has_completed_export || downloadingPdf}
+                disabled={!canDownloadPdf || exportPreparing || downloadingPdf}
                 onSelect={(event) => {
                   event.preventDefault();
                   void handleDownloadPdf();
                 }}
               >
-                {downloadingPdf ? (
+                {downloadingPdf || exportPreparing ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <Download className="size-4" />
                 )}
-                <span className="flex flex-col items-start">
-                  <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
-                  {!request.has_completed_export && !downloadingPdf && (
-                    <span className="text-xs text-muted-foreground">
-                      No completed export yet
-                    </span>
-                  )}
+                <span>
+                  {!canDownloadPdf
+                    ? 'Available after approval'
+                    : downloadingPdf
+                      ? 'Downloading...'
+                      : exportPreparing
+                        ? 'Preparing your PDF'
+                        : exportStatus === 'failed'
+                          ? 'PDF failed, try again'
+                          : 'Download PDF'}
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -2789,19 +2855,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         open={sectionOpen.need_by}
         onOpenChange={(next) => toggleSection('need_by', next)}
       >
-        <div
-          className="space-y-1.5"
-          {...(fieldErrors.printBy ? { 'data-error-anchor': 'print_by' } : {})}
-        >
-          <Label id="print-by-label">Printing *</Label>
-          <PrintBySelect
-            aria-labelledby="print-by-label"
-            value={printBy}
-            onChange={setPrintBy}
-            error={fieldErrors.printBy ?? null}
-          />
-        </div>
-
         <div
           className="space-y-1.5"
           {...(fieldErrors.neededBy

@@ -1367,3 +1367,34 @@ def no_respond(monkeypatch):
     ``Window check: Respond.io list_messages failed`` per transition.
     """
     return _ptag_r9_seed.block_respond(monkeypatch)
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-10 (PLAN-price-tag-r10.md S6): `print_excluded` is a TAG fact, like
+# `marketing_price_override` - a revise that keeps the same product must
+# carry it forward onto the surviving tag, not reset it.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s6_10_print_excluded_survives_when_the_same_product_is_revised():
+    from app.models.price_tag import PriceTagRequestLine
+
+    with blank_session() as db:
+        contact, product_id, row = _setup(db)
+        line = db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
+        tag = line.tags[0]
+        tag.print_excluded = True
+        db.commit()
+        token = _seed_token(contact)
+
+        PortalRevisionService(db).revise(
+            token, "price_tag_request", str(row.id),
+            {"products": [{"product_id": product_id, "quantity": 9}]}, "Reason", 0,
+        )
+
+        db.expire_all()
+        fresh_line = (
+            db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
+        )
+        assert len(fresh_line.tags) == 1
+        assert fresh_line.tags[0].print_excluded is True

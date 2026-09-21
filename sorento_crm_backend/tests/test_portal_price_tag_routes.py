@@ -1447,6 +1447,10 @@ class TestTheDownloadRoute:
         _revoke_the_grant(db, contact_id)
 
         res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
     def test_a_storage_outage_answers_502_not_a_relabeled_404(self, client, monkeypatch):
         """Mirrors ``portal_download_attachment``: a bucket that refuses is a
         502 the caller can retry, not a 404 that reads like the file was
@@ -2001,3 +2005,240 @@ def no_respond(monkeypatch):
     ``Window check: Respond.io list_messages failed`` per transition.
     """
     return _ptag_r9_seed.block_respond(monkeypatch)
+
+
+# ---------------------------------------------------------------------------
+# S9 (PLAN-price-tag-r10.md "Portal Download PDF"): the portal can ask for a
+# fresh export instead of sitting on a dead button.
+#
+# Contract (plan): `POST /public/portal/submissions/price_tag_request/{id}/
+# export` (contact-authenticated, queues `request_tag_sheet_export` as the
+# request's assignee); detail response gains `latest_export_status` in
+# `ready | pending | failed | null`.
+# ---------------------------------------------------------------------------
+
+
+def _approve(db, request_id: str, *, assigned_to_id: str | None = None) -> None:
+    from app.models.price_tag import PriceTagRequest
+
+    row = db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).one()
+    row.status = "approved"
+    if assigned_to_id:
+        row.assigned_to_id = assigned_to_id
+    db.commit()
+
+
+class TestAcS91LatestExportStatus:
+    def test_no_export_at_all_is_null(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+
+        body = c.get(f"{_BASE}/{created['id']}").json()
+
+        assert "latest_export_status" in body, (
+            "response_model silently drops an undeclared field - assert it by name"
+        )
+        assert body["latest_export_status"] is None
+
+    def test_a_ready_export_reports_ready(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        _seed_completed_export(db, created["id"])
+
+        body = c.get(f"{_BASE}/{created['id']}").json()
+        assert body["latest_export_status"] == "ready"
+
+    def test_a_failed_export_reports_failed(self, client):
+        from app.models.download import DownloadStatus, UserDownload
+        from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        db.add(
+            UserDownload(
+                id=str(uuid.uuid4()),
+                user_id=str(uuid.uuid4()),
+                kind=KIND,
+                source_entity_type="price_tag_request",
+                source_entity_id=created["id"],
+                status=DownloadStatus.FAILED.value,
+                filename="failed.pdf",
+                storage_provider="s3",
+                storage_key=f"zzt/{uuid.uuid4()}.pdf",
+            )
+        )
+        db.commit()
+
+        body = c.get(f"{_BASE}/{created['id']}").json()
+        assert body["latest_export_status"] == "failed"
+
+    def test_a_pending_export_reports_pending(self, client):
+        from app.models.download import DownloadStatus, UserDownload
+        from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        db.add(
+            UserDownload(
+                id=str(uuid.uuid4()),
+                user_id=str(uuid.uuid4()),
+                kind=KIND,
+                source_entity_type="price_tag_request",
+                source_entity_id=created["id"],
+                status=DownloadStatus.PENDING.value,
+                filename="pending.pdf",
+                storage_provider="s3",
+                storage_key=f"zzt/{uuid.uuid4()}.pdf",
+            )
+        )
+        db.commit()
+
+        body = c.get(f"{_BASE}/{created['id']}").json()
+        assert body["latest_export_status"] == "pending"
+
+
+class TestAcS92PortalExportRoute:
+    def test_approved_with_a_saved_version_queues_an_export_202(self, client, monkeypatch):
+        from tests import _ptag_r9_seed as seed
+        from app.models.price_tag import PriceTagRequest
+
+        c, db, contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        request = db.query(PriceTagRequest).filter_by(id=created["id"]).one()
+        seed.attach_design(db, request)
+        _approve(db, created["id"])
+
+        queued: list = []
+        monkeypatch.setattr(
+            "app.services.queue_service.enqueue_job",
+            lambda *a, **k: queued.append((a, k)),
+        )
+
+        response = c.post(f"{_BASE}/{created['id']}/export")
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["download_id"]
+
+    def test_proof_ready_refuses_with_409(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+
+        response = c.post(f"{_BASE}/{created['id']}/export")
+
+        assert response.status_code == 409, response.text
+
+    def test_captains_list_item_5_approved_with_no_saved_version_is_409(self, client):
+        """`request_tag_sheet_export`'s own NO_VERSION guard: approved status
+        alone is not enough - a request that was approved before any design
+        was ever saved has no page/version to render, so the queue refuses
+        with 409 rather than enqueueing a render of nothing."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        _approve(db, created["id"])
+
+        response = c.post(f"{_BASE}/{created['id']}/export")
+
+        assert response.status_code == 409, response.text
+
+    def test_ac_s9_7_a_second_export_while_one_is_pending_answers_202_with_the_same_download_id(
+        self, client, monkeypatch
+    ):
+        """AC-S9-7: a double-click (or the poll racing a slow click) must not
+        queue a second render of the same request - the same `download_id`
+        comes back, and `enqueue_job` is called exactly once."""
+        from tests import _ptag_r9_seed as seed
+        from app.models.download import UserDownload
+        from app.models.price_tag import PriceTagRequest
+
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        request = db.query(PriceTagRequest).filter_by(id=created["id"]).one()
+        seed.attach_design(db, request)
+        _approve(db, created["id"])
+
+        queued: list = []
+        monkeypatch.setattr(
+            "app.services.queue_service.enqueue_job",
+            lambda *a, **k: queued.append((a, k)),
+        )
+
+        first = c.post(f"{_BASE}/{created['id']}/export")
+        assert first.status_code == 202, first.text
+        first_id = first.json()["download_id"]
+
+        second = c.post(f"{_BASE}/{created['id']}/export")
+        assert second.status_code == 202, second.text
+        assert second.json()["download_id"] == first_id, (
+            "a second call while the first is still pending must answer the "
+            "SAME download, not queue a duplicate render"
+        )
+
+        assert len(queued) == 1, "enqueue_job must not fire twice for one pending export"
+        rows = (
+            db.query(UserDownload)
+            .filter(UserDownload.source_entity_id == created["id"])
+            .count()
+        )
+        assert rows == 1, "no second user_downloads row for the same request"
+
+    def test_ac_s9_7_revoked_visibility_refuses_the_export_route_too(self, client):
+        from tests import _ptag_r9_seed as seed
+        from app.models.price_tag import PriceTagRequest
+
+        c, db, contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE, json={"lines": [{"line_type": "product", "product_id": product_id}]}
+        ).json()
+        request = db.query(PriceTagRequest).filter_by(id=created["id"]).one()
+        seed.attach_design(db, request)
+        _approve(db, created["id"])
+        _revoke_the_grant(db, contact_id)
+
+        response = c.post(f"{_BASE}/{created['id']}/export")
+
+        assert response.status_code == 403, response.text
+        assert response.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
+    def test_another_contacts_request_404s(self, client):
+        c, db, _contact_id = client
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        other = _seed_contact_who_can_see_the_form(db)
+        theirs = PriceTagRequestService.create_request(
+            db,
+            contact_id=other,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "ZZT Theirs"},
+        )
+        db.flush()
+        _approve(db, theirs.id)
+
+        response = c.post(f"{_BASE}/{theirs.id}/export")
+
+        assert response.status_code == 404, response.text

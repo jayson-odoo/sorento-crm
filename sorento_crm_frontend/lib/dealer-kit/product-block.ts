@@ -86,6 +86,18 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
   }
 }
 
+/**
+ * The parts THIS tag prints and prices (r10 S6): `own_parts` when the row
+ * carries it, else `parts` - a row pinned before r10 has no `own_parts` and
+ * its `parts` was already exactly this list (AC-S6-11). `parts` itself is the
+ * wider list a slot may point at (every candidate of every choice group), so
+ * anything that ADDS parts up - the roll-up, the parent-alone subtraction -
+ * reads this and not `parts`, or a tag would total products it does not print.
+ */
+export function ownPartsOf(line: Pick<LineTagData, 'parts' | 'own_parts'>): TagPartData[] {
+  return line.own_parts ?? line.parts;
+}
+
 /** The parent host's OWN price, alone - never the tag's roll-up (D7,
  *  AC-S4-4). `parent_list_price`/`parent_sell_price` are the real answer,
  *  resolved server-side; absent (an older pinned/cached row, or a test
@@ -95,7 +107,7 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
 function parentAlonePrice(line: LineTagData, field: 'list_price' | 'sell_price'): number | null {
   const total = field === 'list_price' ? line.list_price : line.sell_price;
   if (total == null) return null;
-  const partsTotal = line.parts.reduce((sum, part) => {
+  const partsTotal = ownPartsOf(line).reduce((sum, part) => {
     if (field === 'list_price') return sum + (part.list_price ?? 0);
     // F6 (reviewer S8): the roll-up's SELL side follows the same rule the
     // tag's own price does per part - the part's offer when it has one,
@@ -128,6 +140,7 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     promotion_id: null,
     barcode: line.barcode,
     currency: line.currency,
+    price_tag_description: line.price_tag_description,
   };
 }
 
@@ -148,6 +161,7 @@ function productFromPart(part: TagPartData): ProductTagData {
     promotion_id: null,
     barcode: part.barcode ?? null,
     currency: part.currency,
+    price_tag_description: part.price_tag_description,
   };
 }
 
@@ -233,6 +247,8 @@ export function resolveSlotText(
         return subject.line.included_accessories;
       case 'barcode':
         return subject.line.barcode;
+      case 'price_tag_description':
+        return subject.line.price_tag_description ?? null;
       default:
         return null;
     }
@@ -264,6 +280,8 @@ export function resolveSlotText(
       return product.spec_lines.join('\n');
     case 'barcode':
       return product.barcode;
+    case 'price_tag_description':
+      return product.price_tag_description ?? null;
     default:
       return null;
   }

@@ -950,16 +950,28 @@ function TagRenderer({
     .filter((l) => l.visible !== false)
     .sort((a, b) => a.z_index - b.z_index);
 
-  return (
+  // Rotation (S7, AC-S7-8): `width_mm`/`height_mm` stay the tag's own NATURAL
+  // (unrotated) size - what its layers are laid out against - while
+  // `x_mm`/`y_mm` are the top-left of the PLACED (rotated) box. The outer div
+  // below IS that placed box (so bleed marks, drawn off it further down,
+  // print at the right corners either way); the inner one is the tag's own
+  // unrotated box, turned 90deg about its own top-left and slid back into the
+  // placed box by its own (natural) height - the same "rotate then
+  // translate" the Konva arrange preview does with a Group's offset.
+  const rotated = tag.rotation === 90;
+  const placedWidth = rotated ? tag.height_mm : tag.width_mm;
+  const placedHeight = rotated ? tag.width_mm : tag.height_mm;
+
+  const naturalBox = (
     <div
       style={{
         position: 'absolute',
-        left: `${tag.x_mm}mm`,
-        top: `${tag.y_mm}mm`,
+        left: 0,
+        top: 0,
         width: `${tag.width_mm}mm`,
         height: `${tag.height_mm}mm`,
-        overflow: 'hidden',
-        backgroundColor: '#ffffff',
+        transformOrigin: '0 0',
+        transform: rotated ? `translate(${tag.height_mm}mm, 0) rotate(90deg)` : undefined,
       }}
     >
       {sortedLayers.map((layer) => (
@@ -974,6 +986,22 @@ function TagRenderer({
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
         </div>
       ))}
+    </div>
+  );
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${tag.x_mm}mm`,
+        top: `${tag.y_mm}mm`,
+        width: `${placedWidth}mm`,
+        height: `${placedHeight}mm`,
+        overflow: 'hidden',
+        backgroundColor: '#ffffff',
+      }}
+    >
+      {naturalBox}
 
       {/* Bleed marks at corners */}
       {bleed_mm > 0 && (

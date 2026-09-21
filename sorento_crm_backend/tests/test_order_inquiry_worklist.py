@@ -1172,7 +1172,9 @@ def test_the_summary_offers_the_suppliers_and_projects_actually_present(api):
     body = client.get(f"{LIST}/summary").json()
 
     assert [entry["id"] for entry in body["suppliers"]] == [placed["supplier"].id]
-    assert [entry["id"] for entry in body["projects"]] == [seeded["project"].id]
+    # The facet's `id` is the Project column's own TEXT now, not a registered project's
+    # uuid (owner ask, `PLAN-oi-project-label-from-so.md` section 5).
+    assert [entry["id"] for entry in body["projects"]] == [seeded["project"].title]
 
 
 # --------------------------------------------------------------------- agent

@@ -85,6 +85,7 @@ const PATH_SLOTS: Record<string, Exclude<SlotBinding, null>> = {
   'product.name': 'name',
   'product.dimensions': 'dimensions',
   'product.spec_lines': 'spec_lines',
+  'product.price_tag_description': 'price_tag_description',
   'product.list_price': 'list_price',
   'product.sell_price': 'sell_price',
   'product.included_accessories': 'included_accessories',
@@ -99,6 +100,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.name', label: 'Name', group: 'Product' },
   { path: 'product.dimensions', label: 'Dimensions', group: 'Product' },
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
+  { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
   { path: 'product.currency', label: 'Currency', group: 'Product' },
@@ -145,8 +147,30 @@ function specText(spec: TagSpecValue): string {
  * three `line.*` paths read the LINE regardless of any subject: a quantity
  * and a line's own parts list are facts about the line, not about whichever
  * product a layer happens to be pointed at.
+ *
+ * AC-S4-13: `product.price_tag_description`'s stored text is itself a
+ * TEMPLATE now, not plain text - it is rendered once more, against the SAME
+ * subject's own data, before it reaches the caller. `String.replace`'s
+ * single left-to-right scan already makes this one pass with no recursion:
+ * a spec VALUE that happens to contain the literal text `{{product.name}}`
+ * is part of the replacement STRING, never rescanned for further tokens.
+ * AC-S4-17: that nested render goes through `renderPriceTagDescription`, not
+ * a plain `renderMergeFields` call - see that function's own comment.
  */
-function resolvePath(path: string, data: TagBindingData, layer?: Pick<TagLayer, 'props'>): string | null {
+function resolvePath(
+  path: string,
+  data: TagBindingData,
+  layer?: Pick<TagLayer, 'props'>,
+  mode: MergeFieldMode = 'print',
+): string | null {
+  if (path === 'product.price_tag_description') {
+    const subject = subjectOf(data, layer);
+    if (!subject) return null;
+    const raw = resolveSlotText({ slot_binding: 'price_tag_description', props: layer?.props }, data);
+    if (raw == null) return null;
+    return renderPriceTagDescription(raw, subject, mode);
+  }
+
   if (path.startsWith('spec.')) {
     const key = path.slice('spec.'.length);
     const spec = specsOf(data, layer).find((row) => row.key === key);
@@ -243,7 +267,7 @@ export function renderMergeFields(
   if (!text) return text;
 
   return text.replace(tokenPattern(), (whole, path: string) => {
-    const value = data ? resolvePath(path, data, layer) : null;
+    const value = data ? resolvePath(path, data, layer, mode) : null;
     if (value != null) return value;
     // With nothing bound and nothing previewed, the editor shows the token so
     // the designer can see which field will fill this spot. Print never does.
@@ -252,13 +276,63 @@ export function renderMergeFields(
 }
 
 /**
+ * `product.price_tag_description`'s own nested render (AC-S4-17) - the ONE
+ * place a stored template's LINES matter, because a description is typed
+ * one sentence per line and a token with nothing to say must not leave a
+ * blank line sitting between two real ones on the printed tag.
+ *
+ * Scoped tightly to this one caller: an ordinary text layer's own
+ * `renderMergeFields` call is untouched, so `A\n{{spec.x}}\nB` on a plain
+ * layer still renders `A\n\nB` - collapsing THAT would be a surprise on
+ * every other tag in the system for one field's sake.
+ *
+ * A line with no `{{token}}` on it at all is kept exactly as typed, blank or
+ * not - that is the author's own line break, not a resolver's decision. A
+ * line that carries a token is rendered through the ordinary
+ * `renderMergeFields`, then right-trimmed (never left-trimmed - a token
+ * resolving empty at the START of a line, e.g. `{{product.name}} in
+ * {{spec.material}}` on a name-equals-code product, still opens on the
+ * space that follows it, exactly as `renderMergeFields` alone would print
+ * it): empty after that means the line said nothing at all and is dropped
+ * together with its own newline; anything left is kept trimmed.
+ */
+export function renderPriceTagDescription(
+  template: string,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): string {
+  if (!template) return template;
+
+  const kept: string[] = [];
+  for (const line of template.split('\n')) {
+    if (!hasMergeField(line)) {
+      kept.push(line);
+      continue;
+    }
+    const rendered = renderMergeFields(line, data, mode, layer).replace(/\s+$/, '');
+    if (rendered === '') continue;
+    kept.push(rendered);
+  }
+  return kept.join('\n');
+}
+
+/**
  * Every field the Insert field dialog offers, grouped.
  *
  * The spec group comes from the registry rather than from a list in here, so a
  * key added on the master-data screen appears in the dialog with no code
  * change (D58).
+ *
+ * `groups` narrows the catalog to only the named groups (S11) - a product's
+ * own price tag description cannot address a line, a set or a combo part, so
+ * the Specifications tab restricts to `['Product', 'Specs']`. Omitted, every
+ * group is offered, unchanged from before this parameter existed.
  */
-export function mergeFieldCatalog(specKeys: SpecKeyOption[]): MergeField[] {
+export function mergeFieldCatalog(
+  specKeys: SpecKeyOption[],
+  groups?: MergeFieldGroup[],
+): MergeField[] {
   const fixed = FIELD_LABELS.map(({ path, label, group }) => ({
     path,
     token: `{{${path}}}`,
@@ -275,10 +349,12 @@ export function mergeFieldCatalog(specKeys: SpecKeyOption[]): MergeField[] {
 
   // Product first, then the specs a designer is most likely hunting for, then
   // the two groups that only apply to some blocks.
-  return [
+  const all = [
     ...fixed.filter((field) => field.group === 'Product'),
     ...specs,
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
   ];
+
+  return groups ? all.filter((field) => groups.includes(field.group)) : all;
 }

@@ -144,6 +144,30 @@ def request_tag_sheet_export(
             code="NOT_FOUND",
         )
 
+    # AC-S9-7: one export in flight per REQUEST, whoever asks - a double
+    # click (or the portal's own poll racing a slow click) must not queue a
+    # second render of the same request. The SAME in-flight download comes
+    # back and nothing new is enqueued. Keyed on the ENTITY
+    # (`source_entity_type`/`source_entity_id`), never the caller's own user
+    # id (unlike `DownloadService.has_in_flight`): the CRM export route and
+    # the portal export route can each trigger this same request's export,
+    # and the second one to arrive must see the first's, not its own.
+    in_flight = (
+        db.query(UserDownload)
+        .filter(
+            UserDownload.source_entity_type == "price_tag_request",
+            UserDownload.source_entity_id == str(request_id),
+            UserDownload.kind == KIND,
+            UserDownload.status.in_(
+                [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
+            ),
+        )
+        .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
+        .first()
+    )
+    if in_flight is not None:
+        return in_flight, sheet_ids
+
     # Every finished status can be exported (D8): the office reprints a lost
     # sheet after collection, and asking for a PDF is not a step in the
     # hand-over.
@@ -285,6 +309,32 @@ def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownlo
     )
 
 
+def latest_export_status(db: Session, request_id: str) -> Optional[str]:
+    """r10 S9: `ready | pending | failed | None` - "never asked" from "in
+    progress" from "failed", off the request's most recent tag sheet PDF
+    download regardless of its status (``latest_completed_export`` above
+    only ever answers a READY one). ``processing`` reads as `pending` too -
+    the portal button has one waiting state, not two.
+    """
+    row = (
+        db.query(UserDownload)
+        .filter(
+            UserDownload.source_entity_type == "price_tag_request",
+            UserDownload.source_entity_id == str(request_id),
+            UserDownload.kind == KIND,
+        )
+        .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    if row.status == DownloadStatus.READY.value:
+        return "ready"
+    if row.status == DownloadStatus.FAILED.value:
+        return "failed"
+    return "pending"
+
+
 def render_inputs(db: Session, download_id: str) -> dict:
     """Everything the tag sheet render needs."""
     from app.services.dealer_kit.export_service import get_request as _get_export_request
@@ -384,6 +434,21 @@ def design_media(
             if request is not None
             else []
         )
+    # AC-S6-8/AC-S6-12: a tag marked Not printed is still open and editable
+    # on the rail/canvas (those go straight through
+    # `resolve_request_line_data`), but this is the ONE resolver behind the
+    # PDF payload, the portal preview and the CRM design preview - a proof
+    # of what will print must never carry a tag that will not, and an image
+    # reachable only through that tag must not be signed into the export.
+    if request is not None:
+        excluded_tag_ids = {
+            tag.id
+            for line in (request.lines or [])
+            for tag in (line.tags or [])
+            if tag.print_excluded
+        }
+        if excluded_tag_ids:
+            rows = [row for row in rows if row["tag_id"] not in excluded_tag_ids]
     images: dict[str, str] = {}
     for row in rows:
         for image in row["images"]:
@@ -415,6 +480,33 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
     doc = inputs["doc"] or {}
 
     rows, media = design_media(db, request, doc)
+
+    # AC-S6-12 (extended): `design_media` above only filters the resolver
+    # ROWS - the SAVED doc's own placements pass straight through. A tag
+    # marked Not printed AFTER the doc was last arranged leaves a stale
+    # placement in `doc.sheets` that the print page draws from directly, so
+    # the doc itself needs the same filter here, and a sheet a filter
+    # empties out entirely is dropped rather than printing a blank page -
+    # the export's own sheet list then counts printed tags only.
+    if request is not None and doc.get("sheets"):
+        excluded_tag_ids = {
+            tag.id
+            for line in (request.lines or [])
+            for tag in (line.tags or [])
+            if tag.print_excluded
+        }
+        if excluded_tag_ids:
+            filtered_sheets = []
+            for sheet in doc["sheets"]:
+                tags = [
+                    placed
+                    for placed in (sheet.get("tags") or [])
+                    if placed.get("request_tag_id") not in excluded_tag_ids
+                ]
+                if tags:
+                    filtered_sheets.append({**sheet, "tags": tags})
+            doc = {**doc, "sheets": filtered_sheets}
+
     resolved_data: dict[str, dict] = {}
 
     for row in rows:

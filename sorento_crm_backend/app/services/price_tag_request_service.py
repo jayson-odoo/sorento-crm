@@ -572,6 +572,7 @@ class PriceTagRequestService:
                             choices=row.get("choices") or {},
                             marketing_price_override=row.get("marketing_price_override"),
                             marketing_override_reason=row.get("marketing_override_reason"),
+                            print_excluded=bool(row.get("print_excluded")),
                         )
                     )
                 return
@@ -927,6 +928,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                     "choices": dict(tag.choices or {}),
                     "marketing_price_override": tag.marketing_price_override,
                     "marketing_override_reason": tag.marketing_override_reason,
+                    # AC-S6-10: "Not printed" survives a revise on a tag whose
+                    # choice set is unchanged, same as quantity and overrides.
+                    "print_excluded": bool(tag.print_excluded),
                 }
                 for tag in sorted(
                     old.tags or [], key=lambda t: (t.sort_order or 0, t.id)
@@ -1694,6 +1698,12 @@ Marketing's own work is not part of the form's payload, so it is captured
             "marketing_override_reason": tag.marketing_override_reason,
             "list_price": (resolved or {}).get("list_price"),
             "sell_price": (resolved or {}).get("sell_price"),
+            "print_excluded": bool(tag.print_excluded),
+            # r10 S8: set when the read seam auto-applied a product-data
+            # change; cleared by Dismiss.
+            "data_updated_at": tag.data_updated_at,
+            "data_update_changes": tag.data_update_changes,
+            "data_update_version": tag.data_update_version,
         }
 
     @staticmethod
@@ -2172,11 +2182,13 @@ Marketing's own work is not part of the form's payload, so it is captured
         # top level, so a top-level import here would be circular.
         from app.services.dealer_kit.tag_sheet_export_service import (
             latest_completed_export,
+            latest_export_status,
         )
 
         response.has_completed_export = (
             latest_completed_export(db, request.id) is not None
         )
+        response.latest_export_status = latest_export_status(db, request.id)
 
         # R3-1/AC-R1: reverses S8's D-P6 - a submitted request is read-only
         # exactly like a stock inquiry. True for a draft only; a submitted

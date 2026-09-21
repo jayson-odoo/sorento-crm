@@ -185,8 +185,25 @@ function addedLayer(index: number): TagLayer {
 // Arrange draws through real react-konva/Konva, which needs a real canvas -
 // unavailable in jsdom. Toggling to Arrange is exercised by the Fix B tests
 // below, so it needs a stand-in the same way TagCanvasEditor does above.
+//
+// AC-S7-16 (designer-level shape): the stand-in also renders the SAME
+// "N sheet(s) / M tag(s)" summary the real `ArrangeSheetView` toolbar does,
+// off the real `doc` prop it was handed - so a test at this level can prove
+// a tag went missing before it ever reaches Konva, without needing a real
+// canvas.
 vi.mock('./ArrangeSheetView', () => ({
-  ArrangeSheetView: () => <div data-testid="arrange-view">arrange open</div>,
+  ArrangeSheetView: ({ doc }: { doc: TagSheetDoc }) => {
+    const totalTags = doc.sheets.reduce((sum, sheet) => sum + sheet.tags.length, 0);
+    return (
+      <div data-testid="arrange-view">
+        arrange open
+        <span>
+          {doc.sheets.length} sheet{doc.sheets.length === 1 ? '' : 's'} / {totalTags} tag
+          {totalTags === 1 ? '' : 's'}
+        </span>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../../../services/tagTemplateService', () => ({
@@ -1701,5 +1718,57 @@ describe('RequestTagDesigner - tag size dropdown grouping (S5, AC-S4-3/S4-4)', (
     // The template's own print_size (60x40) already matches - Custom never
     // shows, so there is nothing to save.
     expect(screen.queryByRole('button', { name: 'Save as size' })).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S7-16 (captain's ruling, phase 3 review, designer-level shape): a live
+// browser finding after `lib/dealer-kit/request-tags.test.ts`'s own
+// `autoArrange` proved green in isolation - two DIFFERENT request tags off
+// ONE line (D6: an open group resolved into its own tag per candidate at
+// submit) must both reach the Arrange doc. `autoArrange` itself places
+// whatever `ArrangeItem[]` it is handed correctly; the tag goes missing one
+// layer up, in `RequestTagDesigner`'s own `arrangeItems` - built by filtering
+// `tagRefs` through the `tags` state record (`tag ? [...] : []`), and that
+// record is filled ONE TAG AT A TIME by the auto-clone effect keyed on
+// `selectedRequestTagId`, which starts (and, absent a click into the second
+// tag, stays) on only the FIRST request tag overall. The second tag of a
+// split line that nobody has opened on the canvas yet never gets a `tags[id]`
+// entry, so it never reaches `arrangeItems`, `autoArrange`, or the saved doc.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - both tags of a split line reach Arrange (AC-S7-16)', () => {
+  it('two tags on one line: the Arrange toolbar reads "1 sheet / 2 tags", not 1', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestTags.mockResolvedValue([
+      lineTagData({ tag_id: 'tag-a', line_id: 'line-1', code: 'SRT-1' }),
+      lineTagData({ tag_id: 'tag-b', line_id: 'line-1', code: 'SRT-1' }),
+    ]);
+
+    renderDesigner(
+      request({
+        lines: [
+          line({
+            id: 'line-1',
+            code: 'SRT-1',
+            tags: [
+              requestTag('line-1', 1, { id: 'tag-a', label: '1a' }),
+              requestTag('line-1', 1, { id: 'tag-b', label: '1b' }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    // Only the first tag (whichever the auto-select effect lands on) is ever
+    // opened on the canvas - exactly the everyday path: a designer opens the
+    // line, sees ITS tag, and switches straight to Arrange without ever
+    // clicking into the second candidate's own row.
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
+
+    await waitFor(() => expect(screen.getByTestId('arrange-view')).toBeInTheDocument());
+    expect(screen.getByText('1 sheet / 2 tags')).toBeInTheDocument();
   });
 });

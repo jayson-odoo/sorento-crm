@@ -67,6 +67,8 @@ function renderView(
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
     annotations?: Map<string, BoardChangeAnnotation[]>;
     externalSearch?: string;
+    focusKey?: string | null;
+    onFocusHandled?: () => void;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -94,6 +96,8 @@ function renderView(
       onDecideMany={onDecideMany}
       annotations={overrides.annotations}
       externalSearch={overrides.externalSearch}
+      focusKey={overrides.focusKey}
+      onFocusHandled={overrides.onFocusHandled}
     />,
   );
   return { ...utils, onDecide, onDecideMany };
@@ -1299,4 +1303,192 @@ describe('FulfilmentBoardListView - a cancelled changed line (R3, S5)', () => {
   // question ("is this cell/row already covered by an active decision") that a cancelled,
   // uncovered line does not touch either way. See `_shared/lib/fulfilmentBoard.test.ts`,
   // `describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)')`.
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, AC-7: the Verdict header used to carry `accessorFn: () => ''`, so
+ * every row sorted equal and the header offered no sort at all. It reads the same state the
+ * pill renders (`verdictOf`, `BoardDecisionPill`) - never a second derivation - ranked
+ * Suggested, Saved, Confirmed, Rejected in the UAC's own words.
+ */
+describe('FulfilmentBoardListView: the Verdict column sorts (AC-7)', () => {
+  it('clicking the Verdict header sorts Suggested before Saved before Confirmed', async () => {
+    const suggestedLine = contribution({
+      key: 'so-1:line-1',
+      so_number: 'SO000001',
+      line_no: 1,
+    });
+    const savedLine = contribution({
+      key: 'so-1:line-2',
+      so_number: 'SO000002',
+      line_no: 2,
+    });
+    const confirmedLine = contribution({
+      key: 'so-1:line-3',
+      so_number: 'SO000003',
+      line_no: 3,
+      covered: true,
+    });
+
+    // Deliberately NOT already in rank order, so the click has something to prove.
+    renderView({
+      contributions: [confirmedLine, suggestedLine, savedLine],
+      draft: { [savedLine.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO000001');
+    expect(
+      screen.getAllByText(/^SO00000[1-3]$/).map((el) => el.textContent),
+    ).toEqual(['SO000003', 'SO000001', 'SO000002']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verdict' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^SO00000[1-3]$/).map((el) => el.textContent),
+      ).toEqual(['SO000001', 'SO000002', 'SO000003']),
+    );
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 1 (AC-5): a jump that lands on whatever page happens to
+ * be open is a dead link once an order runs past the 25-row first page - common on a large
+ * order. `focusKey` now moves `PanelDataGrid`'s own page to wherever the row actually sits, in
+ * the SAME (default, unsorted) row order the pager reads.
+ */
+describe('FulfilmentBoardListView: the banner reaches a line beyond page 1 (AC-5, fix round 1)', () => {
+  it('jumps to the page holding focusKey when it sits beyond the first 25 rows', async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      contribution({
+        key: `so-1:line-${index + 1}`,
+        so_number: `SO${String(index + 1).padStart(6, '0')}`,
+        line_no: index + 1,
+      }),
+    );
+    // The 28th row: index 27, page floor(27 / 25) = page 2 (0-based page 1).
+    const target = rows[27];
+
+    renderView({ contributions: rows, focusKey: target.key });
+
+    expect(
+      await screen.findByTestId(`line-decision-${target.key}`),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 2 (reviewer, S3): the scroll effect used to mark itself
+ * done (the ref, and `onFocusHandled`) the instant the row was OPEN (`openKeys`), not the
+ * instant it was actually FOUND in the DOM - open and rendered are not the same moment while a
+ * search is still narrowing the list out from under it (B1) or the page has not landed yet
+ * (fix round 1). Marking it done regardless left nothing to retry on once the row actually
+ * showed up.
+ */
+describe('FulfilmentBoardListView: the focus effect waits for the row to actually render (fix round 2, S3)', () => {
+  it('does not report focus handled for a row not yet in the list, then reports it once when the row appears', async () => {
+    const other = contribution({
+      key: 'so-1:line-1',
+      so_number: 'SO000001',
+      line_no: 1,
+    });
+    const target = contribution({
+      key: 'so-1:line-2',
+      so_number: 'SO000002',
+      line_no: 2,
+    });
+    const onFocusHandled = vi.fn();
+    const onDecide = vi.fn();
+    const onDecideMany = vi.fn();
+
+    const { rerender } = render(
+      <FulfilmentBoardListView
+        contributions={[other]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await screen.findByText('SO000001');
+    expect(screen.queryByTestId(`line-decision-${target.key}`)).not.toBeInTheDocument();
+    expect(onFocusHandled).not.toHaveBeenCalled();
+
+    // The row appears - the same board read a moment later would hand down.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[other, target]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    expect(
+      await screen.findByTestId(`line-decision-${target.key}`),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(onFocusHandled).toHaveBeenCalledTimes(1));
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 3 (reviewer, S5): `PanelDataGrid`'s own page-jump effect
+ * used to depend on `focusRowId` alone - a row that arrives in a LATER render (a fresher board
+ * read landing a beat after the click that asked for it, the same shape the S3 test above
+ * models one level up) left the page stuck at 0 forever, because `focusRowId` itself never
+ * changed again to re-fire it.
+ */
+describe('FulfilmentBoardListView: the page jump retries when the row arrives late (fix round 3, S5)', () => {
+  it('jumps to the right page once the row appears beyond page 1, even though focusKey never changes', async () => {
+    const filler = Array.from({ length: 25 }, (_, index) =>
+      contribution({
+        key: `so-1:line-${index + 1}`,
+        so_number: `SO${String(index + 1).padStart(6, '0')}`,
+        line_no: index + 1,
+      }),
+    );
+    // Absent from the first render, then appended at index 25 - the first row of page 2.
+    const target = contribution({
+      key: 'so-1:line-26',
+      so_number: 'SO000026',
+      line_no: 26,
+    });
+    const onFocusHandled = vi.fn();
+    const onDecide = vi.fn();
+    const onDecideMany = vi.fn();
+
+    const { rerender } = render(
+      <FulfilmentBoardListView
+        contributions={filler}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await screen.findByText('SO000001');
+    expect(screen.queryByTestId(`line-decision-${target.key}`)).not.toBeInTheDocument();
+
+    // The row arrives - `focusKey` is UNCHANGED, only the rows themselves differ.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[...filler, target]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        focusKey={target.key}
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    expect(
+      await screen.findByTestId(`line-decision-${target.key}`),
+    ).toBeInTheDocument();
+  });
 });

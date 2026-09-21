@@ -211,7 +211,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     );
   });
 
-  it('quantity from the extracted row is rounded and floored at 1, not defaulted', async () => {
+  it('AC-S2-3 (r10): quantity is never read off the document - even a quantity the extractor sends is ignored, always 1', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
@@ -229,7 +229,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       captured.onApply?.({ productLines: products });
     });
 
-    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(4);
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1);
   });
 
   it('a matched SET row becomes a line too, same as a matched product', async () => {
@@ -287,7 +287,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       captured.onApply?.({ productLines: products });
     });
 
-    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(2);
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1); // AC-S2-3 (r10): never read off the document
     expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
     expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(1);
     expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('third');
@@ -367,13 +367,13 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
 
     expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1);
     expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
-    expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(5);
+    expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(1); // AC-S2-3 (r10): never read off the document
     expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('set of five');
     expect(screen.queryByLabelText('Quantity for line 3')).toBeNull();
     expect(toasts.error).not.toHaveBeenCalled();
   });
 
-  it('R3-7/AC-R12: the same product extracted twice merges into ONE line with summed quantity', async () => {
+  it('AC-S2-4 (r10, supersedes R3-7/AC-R12): the same product extracted twice merges into ONE line, quantity stays 1 - not summed', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
@@ -388,7 +388,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       captured.onApply?.({ productLines: products });
     });
 
-    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(5);
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1);
     expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
   });
 });
@@ -500,7 +500,7 @@ describe('PriceTagRequestForm - AI extract reads match fields off the payload (A
       captured.onApply?.({ productLines: products });
     });
 
-    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(2);
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1); // AC-S2-3 (r10): never read off the document
     expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
     expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(1);
     expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('third');
