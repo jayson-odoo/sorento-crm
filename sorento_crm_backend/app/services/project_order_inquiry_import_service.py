@@ -14,8 +14,10 @@ not hold is the operator's own Excel: which sales-order line is owed where, and 
 or shipping order it is waiting on. So this importer:
 
   * creates NO sales order and NO sales-order line, and writes no `warehouse_id` (D4);
-  * RAISES one order inquiry row against the sales order line the sheet names, whatever that
-    line's status - closed and fully delivered lines migrate too (D8);
+  * RAISES one order inquiry row against an OPEN sales order line of the sheet's own order
+    (D8's "closed and fully delivered lines migrate too" is SUPERSEDED by R4, 21 Sep 2026,
+    `PLAN-board-received-stock-own-arrival.md` S4: a closed or cancelled line is never a
+    candidate any more, not even as a last resort - AC-S4-3);
   * PAIRS that row to the document AutoCount's own ingest already states for the line (D9),
     following a purchase order through to the shipping order it became (D10). The sheet's
     remark pairs NOTHING and picks no line (section 8 of the pairing-repair plan, owner
@@ -33,25 +35,25 @@ documents AutoCount stated only by NUMBER: a claim is one row per
 `(so_number, po_number, item_code)` and never repoints, so it cannot say "line 3 to purchase
 order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep prod copy the
 August `po_history` extract already held the claim key for 28,397 pairings the column states
-exactly, which is why `po_history` pairs nothing any more. The same column also decides WHICH
-line of the order a row lands on when several fit, through five passes in order
-(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R7, 19 Sep 2026,
-`_match_in_passes`): the line whose required date IS the sheet's date; failing that, a line
-in the sheet's own month whose book document the sheet ALSO cites (R4, prod C-FH14: the
-sheet's PO outranks the month when they disagree, or an April row citing one purchase order
-steals the month's only line from a row that actually cites it); failing that, any line
-among the book's own documents the sheet cites, whichever month it falls in (R2: the sheet's
-PO may pick the LINE even though it still pairs nothing); failing that, any line left in the
-sheet's own month with no PO to decide it; and only then the line the book bought for at
-all, unchanged from before. Inside every one of the five, a line whose own `qty_ordered`
-equals the row's quantity is tried before a bigger one (R6, prod CB2805A-DIY: two same-date
-lines with nothing else to tell them apart otherwise left the smaller row taking the bigger
-line on a bare created-at tie-break). A cancelled August-extract ghost line is never offered
-by the first four passes at all and ranks last in the fifth, the fallback, where it is still
-taken when it is the only line that fits (R7, 19 Sep 2026, prod comparison workbook: a ghost
-carries its line's ORIGINAL date, so it was routinely the only exact-date candidate a row
-had, and used to win pass 1 outright before a live line the row's own citation named was
-ever offered in a later pass).
+exactly, which is why `po_history` pairs nothing any more. WHICH line of the order a row lands
+on, when several are open, used to be decided by five citation/month passes in order
+(`PLAN-oi-sheet-line-pick-month-po.md`, owner rulings R1 to R7, 19 Sep 2026, `_match_in_passes`
+- the line whose required date IS the sheet's date; failing that, a line in the sheet's own
+month whose book document the sheet ALSO cites; failing that, any line among the book's own
+documents the sheet cites; failing that, any line left in the sheet's own month with no PO to
+decide it; and only then the line the book bought for at all). **Superseded 21 Sep 2026 by R4**
+(`PLAN-board-received-stock-own-arrival.md` S4, `_pick_lines_by_date_order`): the S0 measurement
+against SO372176 on the 21 Sep prod copy found that fallback ranking a defect on its own terms -
+a row's own delivery date lost to whichever open line of the order happened to be earliest
+overall, landing deliveries more than a year off - and the five passes' own citation/month
+machinery is now unused by the line pick (kept, and still read by `_pair`'s document linking).
+The pick is now one thing for the whole order: its OPEN lines sorted by `required_date`, this
+upload's own rows for it sorted by `delivery_date`, paired one to one in that order; a row
+beyond the last open line lands on the LAST one as a second row. The five passes' own helper
+functions (`_run_pass`, `_narrow_*`, `_rank_for*`) stay defined, unused by the line pick, in
+case a citation signal is ever reinstated as a narrower filter ahead of the date order - nothing
+here reads them today. Item, location and quantity still gate a candidate exactly as before
+(`_match_row`, unchanged).
 
 Three honest limits, each counted and named rather than smoothed over.
 
@@ -59,9 +61,12 @@ Three honest limits, each counted and named rather than smoothed over.
 is named under `sales_orders_not_found` and nothing is invented for it; a row whose item,
 location or quantity fits no line of that order is reported with the FIRST reason it failed.
 
-**A line that already carries an order inquiry row is left exactly as it is** (D2). The sheet
-is a migration, not a source of truth about rows somebody has since worked on, so a re-upload
-writes nothing new.
+**A line that already carries an order inquiry row is left exactly as it is, unless the sheet
+names a genuinely different delivery** (D2, narrowed 21 Sep 2026 by R4/AC-S4-2: a line that
+already carries a row is no longer a FREE candidate, but it still takes a second row when the
+date-order pick runs out of open lines before it runs out of sheet rows). The sheet is a
+migration, not a source of truth about rows somebody has since worked on, so a re-upload of the
+SAME instruction (`_restated_existing`) writes nothing new.
 
 **A genuine typo inside one tab still raises twice** (R5, 19 Sep 2026: a restatement is only
 ever across tabs, never within one). A row a person mistyped rather than meant to split is
@@ -1018,6 +1023,152 @@ def _match_in_passes(
     )
 
 
+# --------------------------------------------------------------------------- #
+# the line pick, from 21 Sep 2026: date order, replacing the five passes above #
+# --------------------------------------------------------------------------- #
+
+
+def _line_pick_key(candidate: tuple) -> tuple:
+    """R4's own tie-break once a candidate line has been placed in date order: undated
+    last, the earliest required date, the oldest line, the id - the same terms `_rank_for`
+    always closed a tie on, so two runs of the same sheet still land the same way."""
+    line = candidate[0]
+    return (
+        line.required_date is None,
+        line.required_date or date.max,
+        line.created_at or datetime.min,
+        str(line.id),
+    )
+
+
+def _restated_existing(
+    order_lines: List[tuple],
+    mirror_by_core: Dict[str, str],
+    rows_by_mirror: Dict[str, List[Any]],
+    row: Any,
+) -> Optional[tuple]:
+    """R4/AC-S4-4: the candidate this sheet row already states, wherever in the order it
+    landed, read the same way `_resolve_line_repairs`' own exact-match pass already does
+    (item, quantity, delivery date - never location, which a migrated row's own line can
+    silently correct for a blank sheet cell). A re-upload of an unchanged book restates
+    this row in place rather than being routed through the date-order pick as a fresh
+    instruction, which is what would otherwise turn every re-upload into a pile of second
+    rows on the order's last open line.
+
+    Every line of the order is searched, not only the open ones - the row this sheet row
+    already raised may since have closed, and it is still the SAME instruction.
+    """
+    item = (row.item_code or "").strip()
+    qty = _dec(row.qty)
+    for candidate in order_lines:
+        mirror_id = mirror_by_core.get(str(candidate[0].id))
+        if mirror_id is None:
+            continue
+        for existing in rows_by_mirror.get(mirror_id, []):
+            if (
+                existing.verb in _LINE_OWN_ROW_VERBS
+                and (existing.item_code or "").strip() == item
+                and _dec(existing.qty) == qty
+                and existing.delivery_date == row.delivery_date
+            ):
+                return candidate
+    return None
+
+
+def _pick_lines_by_date_order(
+    plan: _Plan,
+    lines: Dict[str, List[tuple]],
+    taken: Dict[str, Decimal],
+    raised_already: set,
+    rows_by_mirror: Dict[str, List[Any]],
+    pending: List[_Match],
+) -> None:
+    """R4 (21 Sep 2026, `PLAN-board-received-stock-own-arrival.md` S4): the whole line pick,
+    replacing `_match_in_passes` and the five citation/month passes above, which this file
+    used for the line pick until 21 Sep 2026. D8 ("closed and fully delivered lines migrate
+    too") and R7's "a cancelled line may still be taken by the fallback, when it is the only
+    line that fits" are BOTH superseded for this pick: a closed or cancelled line is never a
+    candidate here, not even as a last resort (AC-S4-3). The passes' own helpers
+    (`_bought_refs`, `_bought_documents`, `_narrow_sheet_po`, `_rank_for` and the rest) stay
+    defined and are still read for OTHER inputs - `_pair`'s own document linking reads
+    `plan.bought_rows` unchanged - only the LINE pick itself no longer calls them.
+
+    One sales order at a time: its OPEN lines, sorted by `required_date`; this upload's own
+    pending rows for that order, sorted by `delivery_date` (undated last, file order
+    breaking a tie), paired one to one in that order onto whichever candidate line is not
+    yet taken - by an earlier import (`raised_already`) or by an earlier row of this SAME
+    walk. A row beyond the last such line lands on the LAST candidate line as a second row,
+    whatever it already carries (AC-S4-2). Item, location and quantity still gate a
+    candidate exactly as `_match_row` always has (reused unchanged, so `no_line_for_item`
+    and the rest report exactly as before) - the date order only decides which of the lines
+    `_match_row` would accept a row lands on.
+
+    A row that already states exactly what a live row on the order already carries
+    (`_restated_existing`) never reaches the date-order pick at all: it restates that row in
+    place (D2 kept, AC-S4-4), so a re-upload of an unchanged book raises nothing new and
+    never crowds a later, genuinely new row off the line it should take.
+    """
+    by_order: Dict[str, List[Tuple[int, _Match]]] = {}
+    for index, match in enumerate(pending):
+        order = plan.orders.get(match.row.so_number)
+        if order is None:
+            continue
+        by_order.setdefault(str(order.id), []).append((index, match))
+
+    for order_id, indexed in by_order.items():
+        order_lines = lines.get(order_id, [])
+        candidates = [c for c in order_lines if (c[0].line_status or "open") == "open"]
+        candidates.sort(key=_line_pick_key)
+        candidate_ids = {str(c[0].id) for c in candidates}
+        last_id = str(candidates[-1][0].id) if candidates else None
+        used_this_walk: set = set()
+
+        ordered = sorted(
+            indexed,
+            key=lambda pair: (
+                pair[1].row.delivery_date is None,
+                pair[1].row.delivery_date or date.max,
+                pair[0],
+            ),
+        )
+        for _, match in ordered:
+            existing = _restated_existing(
+                order_lines, plan.mirror_by_core_line, rows_by_mirror, match.row
+            )
+            if existing is not None:
+                match.core_line, match.line_location = existing[0], existing[2] or None
+                match.already_raised = True
+                taken[str(existing[0].id)] = (
+                    taken.get(str(existing[0].id), _ZERO) + _dec(match.row.qty)
+                )
+                continue
+            if not candidates:
+                _, reason = _match_row(match.row, [], taken, rank=_line_pick_key)
+                match.reason = reason
+                continue
+
+            def _rank(candidate: tuple, free_ids=candidate_ids - raised_already - used_this_walk) -> tuple:
+                line = candidate[0]
+                line_id = str(line.id)
+                free = line_id in free_ids
+                return (
+                    0 if free else 1,
+                    0 if (free or line_id == last_id) else 1,
+                    line.required_date is None,
+                    line.required_date or date.max,
+                    line.created_at or datetime.min,
+                    line_id,
+                )
+
+            found, reason = _match_row(match.row, candidates, taken, rank=_rank)
+            if found is not None:
+                match.core_line, match.line_location = found[0], found[2] or None
+                match.already_raised = str(found[0].id) in raised_already
+                used_this_walk.add(str(found[0].id))
+            else:
+                match.reason = reason
+
+
 def _already_raised(
     db: Session, core_lines: Sequence[SalesOrderLine]
 ) -> Tuple[set, Dict[str, str], Dict[str, List[Any]]]:
@@ -1952,7 +2103,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             continue
         pending.append(match)
 
-    _match_in_passes(plan, lines, taken, raised_already, pending)
+    _pick_lines_by_date_order(plan, lines, taken, raised_already, rows_by_mirror, pending)
     _resolve_recovery_matches(db, plan, rows_by_mirror)
 
     plan.orders_in_play = sorted({

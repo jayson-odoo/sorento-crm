@@ -48,6 +48,10 @@ FK seeded, never a borrowed row.
   true, fresh row raised, note carries "released at revision N".
 - AC-S3-9 The board reads Received for a Path B row (line summary carries the received link qty)
   and never shows a Reallocate sentence for it.
+- AC-S3-10 (added 21 Sep after the S3 coder flagged the gap) Full round trip: a batch built for
+  the fixture order carries an own-arrival Reserve for L2; Confirm (`apply` -> confirm-time recheck
+  `_check_line`) succeeds and the Reserve is applied, even when the group net is negative because
+  of the other order. The recheck must know the credit the same way the ladder does.
 
 ## S4 Importer pairing by date order, never drop
 - AC-S4-1 Sales order with open lines dated d1 < d2 < d3 < d4 and a 2026 book with two rows (dates
