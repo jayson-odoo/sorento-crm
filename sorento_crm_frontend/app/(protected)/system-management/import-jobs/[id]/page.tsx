@@ -32,6 +32,15 @@ import { usePull } from '../autocount-pull/hooks/useAutocountPull';
  *  (PLAN-autocount-pull-review.md) - every other job type renders exactly as before. */
 const AUTOCOUNT_PULL_JOB_TYPES = new Set(['autocount_products_pull', 'autocount_stock_pull']);
 
+/** AC-DS-12: the entity a pull job's OWN `job_type` names, for the main header's Back
+ *  button - a fallback for the (rare) render where `pullStatus` has not loaded yet, so
+ *  the pull's own metadata `entity` is the preferred source wherever it is available. */
+function pullEntityFromJobType(jobType: string): 'products' | 'stock_balances' | null {
+  if (jobType === 'autocount_products_pull') return 'products';
+  if (jobType === 'autocount_stock_pull') return 'stock_balances';
+  return null;
+}
+
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
   order_tracking_import: 'Order Tracking Import',
@@ -198,6 +207,29 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const displaySkipped = progress ? progress.skipped : job.skipped_rows;
   const planningChangeBatch = planningChangeBatchOf(job.result);
 
+  // AC-DS-12/13: only the MAIN header's Back button - the loading / not-found ones above
+  // stay "Back to Import Jobs" always. A `page` param means the caller came from the
+  // Import Jobs list, so that trail wins whatever the job type; otherwise a pull job goes
+  // back to wherever it was pulled FROM (Products / Stock), never the generic list.
+  // N4 (Phase 3 review): `job.job_type` alone, never `pullStatus?.entity` - the pull's own
+  // `entity` is set once at `start_pull` from the SAME job type this derives from, so the
+  // two can never disagree, and reading it straight off `job` needs no extra `usePull`
+  // fetch to have resolved first.
+  const pullEntity = isPullJob ? pullEntityFromJobType(job.job_type) : null;
+  const backToOwnList = isPullJob && pageIndex === null && pullEntity;
+  const backLabel = backToOwnList
+    ? pullEntity === 'products'
+      ? 'Back to Products'
+      : 'Back to Stock'
+    : 'Back to Import Jobs';
+  const backHref = backToOwnList
+    ? pullEntity === 'products'
+      ? '/master-data-management/products'
+      : '/inventory-management/stock'
+    : pageIndex !== null
+      ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}`
+      : '/system-management/import-jobs';
+
   return (
     <>
       <Container>
@@ -245,8 +277,8 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 </div>
               )}
               <Button asChild variant="outline">
-                <Link href={pageIndex !== null ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}` : '/system-management/import-jobs'}>
-                  <MoveLeft /> Back to Import Jobs
+                <Link href={backHref}>
+                  <MoveLeft /> {backLabel}
                 </Link>
               </Button>
               {canCancel && (
