@@ -18,6 +18,12 @@ writes nothing. No downgrade body - removing a spelling the catalogue understand
 only make an installed database understand less, and the seed is the source of truth for
 what it should say.
 
+Measured blast radius (hand pass 12 Phase 3, on the 15 Sep 2026 prod-copy clone): this
+run created 1 spec key and repaired 5 vocabularies. It is a whole-seeder re-run, not a
+"close couple" spelling fix alone - `SPEC_REGISTRY_SEED` gained derivation rules across
+13 commits since `311m_spec_tables_uuid_id` last ran it, and every one of them reaches an
+installed database for the first time here, in the same pass as this ruling's own words.
+
 Revision ID: spec_vocab_close_couple
 Revises: chatbot_rearch_s12
 """
