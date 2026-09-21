@@ -42,7 +42,8 @@ import { rederiveProduct } from '../../../product-specifications/services/produc
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import {
   hasMergeField,
-  renderMergeFields,
+  mergeFieldCatalog,
+  renderPriceTagDescription,
   type MergeFieldGroup,
   type SpecKeyOption,
 } from '@/lib/dealer-kit/merge-fields';
@@ -298,7 +299,26 @@ function PriceTagDescriptionBlock({
   );
 
   const activeText = editing ? draft : storedTemplate ?? '';
-  const printsAs = renderMergeFields(activeText, previewBinding, 'print');
+  const printsAs = renderPriceTagDescription(activeText, previewBinding, 'print');
+
+  // AC-S4-18: "known" is the SAME restricted catalog Insert field offers -
+  // a token this product simply carries no VALUE for is not "unknown", only
+  // a path the catalog does not name at all is.
+  const knownPaths = useMemo(
+    () => new Set(mergeFieldCatalog(specKeys, PRICE_TAG_INSERT_GROUPS).map((field) => field.path)),
+    [specKeys],
+  );
+  const unknownTokens = useMemo(() => {
+    const seen = new Set<string>();
+    const tokens: string[] = [];
+    for (const match of activeText.matchAll(/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g)) {
+      const path = match[1];
+      if (knownPaths.has(path) || seen.has(path)) continue;
+      seen.add(path);
+      tokens.push(`{{${path}}}`);
+    }
+    return tokens;
+  }, [activeText, knownPaths]);
 
   const startEdit = () => {
     setDraft(storedTemplate ?? '');
@@ -348,7 +368,7 @@ function PriceTagDescriptionBlock({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <p className="rounded-md border bg-muted/30 p-3 font-mono text-sm break-words">
+          <p className="rounded-md border bg-muted/30 p-3 font-mono text-sm whitespace-pre-line break-words">
             {storedTemplate || '(none)'}
           </p>
           {canEdit && (
@@ -364,7 +384,10 @@ function PriceTagDescriptionBlock({
       {hasMergeField(activeText) && (
         <div className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground">Prints as:</span>
-          <p className="text-sm break-words">{printsAs}</p>
+          <p className="text-sm whitespace-pre-line break-words">{printsAs}</p>
+          {unknownTokens.length > 0 && (
+            <p className="text-destructive text-xs">Unknown field: {unknownTokens.join(', ')}</p>
+          )}
         </div>
       )}
 

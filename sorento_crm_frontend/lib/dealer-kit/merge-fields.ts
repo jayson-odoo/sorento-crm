@@ -154,6 +154,8 @@ function specText(spec: TagSpecValue): string {
  * single left-to-right scan already makes this one pass with no recursion:
  * a spec VALUE that happens to contain the literal text `{{product.name}}`
  * is part of the replacement STRING, never rescanned for further tokens.
+ * AC-S4-17: that nested render goes through `renderPriceTagDescription`, not
+ * a plain `renderMergeFields` call - see that function's own comment.
  */
 function resolvePath(
   path: string,
@@ -166,7 +168,7 @@ function resolvePath(
     if (!subject) return null;
     const raw = resolveSlotText({ slot_binding: 'price_tag_description', props: layer?.props }, data);
     if (raw == null) return null;
-    return renderMergeFields(raw, subject, mode);
+    return renderPriceTagDescription(raw, subject, mode);
   }
 
   if (path.startsWith('spec.')) {
@@ -271,6 +273,48 @@ export function renderMergeFields(
     // the designer can see which field will fill this spot. Print never does.
     return mode === 'editor' && !data ? whole : '';
   });
+}
+
+/**
+ * `product.price_tag_description`'s own nested render (AC-S4-17) - the ONE
+ * place a stored template's LINES matter, because a description is typed
+ * one sentence per line and a token with nothing to say must not leave a
+ * blank line sitting between two real ones on the printed tag.
+ *
+ * Scoped tightly to this one caller: an ordinary text layer's own
+ * `renderMergeFields` call is untouched, so `A\n{{spec.x}}\nB` on a plain
+ * layer still renders `A\n\nB` - collapsing THAT would be a surprise on
+ * every other tag in the system for one field's sake.
+ *
+ * A line with no `{{token}}` on it at all is kept exactly as typed, blank or
+ * not - that is the author's own line break, not a resolver's decision. A
+ * line that carries a token is rendered through the ordinary
+ * `renderMergeFields`, then right-trimmed (never left-trimmed - a token
+ * resolving empty at the START of a line, e.g. `{{product.name}} in
+ * {{spec.material}}` on a name-equals-code product, still opens on the
+ * space that follows it, exactly as `renderMergeFields` alone would print
+ * it): empty after that means the line said nothing at all and is dropped
+ * together with its own newline; anything left is kept trimmed.
+ */
+export function renderPriceTagDescription(
+  template: string,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): string {
+  if (!template) return template;
+
+  const kept: string[] = [];
+  for (const line of template.split('\n')) {
+    if (!hasMergeField(line)) {
+      kept.push(line);
+      continue;
+    }
+    const rendered = renderMergeFields(line, data, mode, layer).replace(/\s+$/, '');
+    if (rendered === '') continue;
+    kept.push(rendered);
+  }
+  return kept.join('\n');
 }
 
 /**
