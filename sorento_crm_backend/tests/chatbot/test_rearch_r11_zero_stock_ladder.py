@@ -48,7 +48,10 @@ PO_TOOL = "crm_procurement_po_placed_list"
 
 ZERO_CODE = "SRTWC6022-SH-UF-NEW"
 ZERO_UUID = "60220000-0000-0000-0000-000000000001"
-LIVE_CODE = "SRTWC6022-SH-UF"
+# Deliberately NOT "SRTWC6022-SH-UF" (a string PREFIX of `ZERO_CODE` below,
+# "SRTWC6022-SH-UF-NEW") - any substring/"in" assertion that the LIVE code never
+# appears would always find it living inside the zero code's own printed lines.
+LIVE_CODE = "SRTWC7015-RL-UF"
 LIVE_UUID = "60220000-0000-0000-0000-000000000002"
 
 # The owner's prod copy, verbatim (finding 1's own paste).
@@ -316,8 +319,11 @@ class TestAllZeroStockHitFallsThroughToThePORung:
         # `_group_parts`' header for a PO line, and the rung's own team
         # (`_CROSSDOMAIN_RUNG_TEAM["purchase_order"] == "purchasing"`).
         assert PO_HEADER in said, said
-        assert "*Ordered Qty:* 10" in said, said
-        assert "*Outstanding Qty:* 10" in said, said
+        # Production's own field names, not the row's raw label - `_crossdomain_rung_text`
+        # (answer.py:1234-1235) hardcodes "*Ordered:*"/"*Outstanding:*", matching the
+        # owner's own prod paste ("*Ordered:* 10 *Outstanding:* 10").
+        assert "*Ordered:* 10" in said, said
+        assert "*Outstanding:* 10" in said, said
         assert "2026-09-11" in said, said
         assert PURCHASING_OFFER in said, said
         assert WAREHOUSE_OFFER not in said, (
@@ -381,8 +387,14 @@ class TestMixedSetOnlyTheZeroCodeClimbs:
             )
         assert NO_STOCK_FOR in said, said
         assert f"No stock for {LIVE_CODE}" not in said, said
-        # Nothing about the live code after the incoming lead.
+        # Nothing about the live code in the incoming rung's own block. `said` joins the
+        # reply text with every action's own text, and an action can mirror the reply's
+        # full composed message - truncate at the offer that closes THIS rung's block, or
+        # a mirrored duplicate further down would falsely reprint the (harmless) stock
+        # block's own live-code row into `tail`.
         tail = said.split(INCOMING_LEAD, 1)[1] if INCOMING_LEAD in said else ""
+        if WAREHOUSE_OFFER in tail:
+            tail = tail.split(WAREHOUSE_OFFER, 1)[0] + WAREHOUSE_OFFER
         assert INCOMING_LEAD in said, said
         assert LIVE_CODE not in tail, ("the ladder sentence names only the zero code", tail)
 

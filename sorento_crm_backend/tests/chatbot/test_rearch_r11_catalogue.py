@@ -48,12 +48,15 @@ CATALOGUE_TOOL = "crm_resource_attachments_catalogue"
 ATTACHMENT_TOOLS = {LIST_TOOL, CATALOGUE_TOOL}
 
 CABANA_FILE = "@ CABANA CATALOG 2025 (RESEARCHABLE).pdf"
-CABANA_FILE_ID = "cab00000-0000-0000-0000-000000000001"
+# Valid-hex fake uuids (0-9a-f only) - a resolved attachment_type row is now looked up
+# by this uuid for real (coder round 2), and Postgres rejects a non-hex "uuid" string
+# outright ("cat0..."/"pro0.../"sor0..." all carried a non-hex letter).
+CABANA_FILE_ID = "00000000-0000-0000-0000-0000000000c1"
 SORENTO_FILE = "@ SORENTO CATALOG 2025 (RESEARCHABLE).pdf"
-SORENTO_FILE_ID = "sor00000-0000-0000-0000-000000000001"
-CATALOGUE_TYPE_UUID = "cat00000-0000-0000-0000-000000000001"
-PROMO_UUID = "pro00000-0000-0000-0000-000000000001"
-PROMO_FILE_UUID = "pro00000-0000-0000-0000-000000000002"
+SORENTO_FILE_ID = "00000000-0000-0000-0000-0000000000c2"
+CATALOGUE_TYPE_UUID = "00000000-0000-0000-0000-0000000000c3"
+PROMO_UUID = "00000000-0000-0000-0000-0000000000c4"
+PROMO_FILE_UUID = "00000000-0000-0000-0000-0000000000c5"
 
 ATTACHED_INTRO = "I have attached the file(s) below."
 KIND_PICK_QUESTION = "Which one do you mean?"
@@ -222,18 +225,20 @@ class TestBrandWordUnderResourceAttachmentIsAScopeNotAKindPick:
     def test_the_class_entity_reaches_the_tool_as_the_document_class(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
-        """(b) canonical_code "catalogue" narrows the tool call - `attachment_type_code`
-        or resolved `attachment_ids` - never dropped."""
+        """(b) canonical_code "catalogue" narrows the tool call - the resolved
+        attachment_type's real param, `attachment_type_ids`
+        (`fetch.py::TYPE_TO_PARAM["attachment_type"]`), or the resolved
+        `attachment_ids` - never dropped."""
         calls = _wire(session_factory, monkeypatch, "cabana")
         stub_access()
         _turn(session_factory, stub_parser, _recorded_verdict("cabana"), text="cabana catalog", msg_id="ZZT-r11-cat-tool")
         attachment_calls = [args for name, args in calls if name in ATTACHMENT_TOOLS]
         assert attachment_calls, f"the resource attachment tool must run, no miss without a fetch: {calls}"
         args = attachment_calls[0]
-        type_code = str(args.get("attachment_type_code") or "").lower()
+        type_ids = args.get("attachment_type_ids") or []
         ids = args.get("attachment_ids") or []
-        assert type_code.startswith("catalog") or ids, (
-            "the document class must reach the tool as attachment_type_code or attachment_ids", args
+        assert CATALOGUE_TYPE_UUID in type_ids or ids, (
+            "the document class must reach the tool as attachment_type_ids or attachment_ids", args
         )
 
     def test_the_reply_is_the_attachment_form_with_the_cabana_catalogue(

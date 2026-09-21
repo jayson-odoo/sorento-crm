@@ -390,7 +390,11 @@ class TestCertificateDidYouMeanIsTheStampedForm:
             f"never runs - see this test's module comment: {reply!r}"
         )
         assert "Reply with a code to continue, or would you like me to escalate to " in reply, reply
-        assert "marketing product team" in reply, reply
+        # Re-pinned, hand pass 11 owner ruling (21 Sep 2026): a certificate-typed ask
+        # routes to purchasing certification, not marketing product - the resolved
+        # attachment_type row's own `is_certificate` now overrides the parser's routing
+        # on every certificate offer, this did-you-mean's included.
+        assert "purchasing certification team" in reply, reply
         assert f"{base} - has certificate" in reply or f"{base} - has Certification" in reply, (
             f"AC-1703: the neighbours must carry a has/no stamp: {reply!r}"
         )
