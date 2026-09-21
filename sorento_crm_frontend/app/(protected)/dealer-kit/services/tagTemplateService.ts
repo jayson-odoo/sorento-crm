@@ -100,21 +100,34 @@ export async function createTemplate(input: {
  * last edit most needs to reach the server. It is not the default because a
  * keepalive request body is capped at 64KB and a busy template exceeds that.
  *
- * `sheet` (S7, AC-S7-11) rides along on `print_size` - the caller passes the
- * template's CURRENT grid (or null/absent to clear it) on every save, since
- * this PUT replaces `print_size` wholesale rather than patching it.
+ * `sheet` (S7, AC-S7-11 extended) defaults from the TEMPLATE the caller
+ * hands `doc` in for (`doc.print_size?.sheet`) - a `doc` is normally just
+ * `{width_mm, height_mm, layers}`, but every call site here already HAS the
+ * current template in scope, so it can spread `print_size: template.
+ * print_size` in without also remembering a `sheet` ternary on top; a
+ * caller that genuinely needs to override or clear the grid still can, via
+ * `options.sheet`, which wins over the default. `width_mm`/`height_mm`
+ * still come from `doc` itself, never from the passed-along `print_size` -
+ * `printSizeOf` stays the one place either can be read from, so a resize
+ * cannot drift from what actually saves. Omitted when unset either way:
+ * `print_size.sheet` is only ever assigned when a truthy sheet is found, so
+ * a template with no configured grid still PUTs a `print_size` with no
+ * `sheet` key at all.
  */
 export async function updateTemplate(
   id: string,
-  doc: TagTemplateDoc,
+  doc: TagTemplateDoc & { print_size?: TagTemplate['print_size'] },
   options: { keepalive?: boolean; sheet?: TagSheetGrid | null } = {},
 ): Promise<TagTemplate> {
-  const print_size: { width_mm: number; height_mm: number; sheet?: TagSheetGrid } = printSizeOf(doc);
-  if (options.sheet) print_size.sheet = options.sheet;
+  const { print_size: templatePrintSize, ...pureDoc } = doc;
+  const print_size: { width_mm: number; height_mm: number; sheet?: TagSheetGrid } =
+    printSizeOf(pureDoc);
+  const sheet = options.sheet !== undefined ? options.sheet : templatePrintSize?.sheet;
+  if (sheet) print_size.sheet = sheet;
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ doc, print_size }),
+    body: JSON.stringify({ doc: pureDoc, print_size }),
     keepalive: options.keepalive,
   });
   if (!response.ok) {

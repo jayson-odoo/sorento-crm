@@ -191,10 +191,11 @@ export default function TagTemplateEditorPage() {
     useCallback(async (layers: TagLayer[]) => {
       const current = templateRef.current;
       if (!current) return;
-      const updated = await updateTemplate(current.id, { ...current.doc, layers }, {
-        keepalive: teardownRef.current,
-        ...(current.print_size.sheet ? { sheet: current.print_size.sheet } : {}),
-      });
+      const updated = await updateTemplate(
+        current.id,
+        { ...current.doc, layers, print_size: current.print_size },
+        { keepalive: teardownRef.current },
+      );
       setTemplate(updated);
     }, []),
   );
@@ -296,13 +297,11 @@ export default function TagTemplateEditorPage() {
     setSaving(true);
     try {
       await flushAutosave();
-      const updated = template.print_size.sheet
-        ? await updateTemplate(
-            template.id,
-            { ...template.doc, layers: draftLayers },
-            { sheet: template.print_size.sheet },
-          )
-        : await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
+      const updated = await updateTemplate(template.id, {
+        ...template.doc,
+        layers: draftLayers,
+        print_size: template.print_size,
+      });
       setTemplate(updated);
       toast.success('Template saved');
     } catch (err) {
@@ -322,7 +321,11 @@ export default function TagTemplateEditorPage() {
       // still in flight (S4), so the two cannot land out of order and publish
       // a draft that a late autosave then overwrites.
       await flushAutosave();
-      const saved = await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
+      const saved = await updateTemplate(template.id, {
+        ...template.doc,
+        layers: draftLayers,
+        print_size: template.print_size,
+      });
       setTemplate(saved);
       const updated = await publishTemplate(saved.id, publishNote.trim() || undefined);
       setTemplate(updated);
@@ -360,7 +363,7 @@ export default function TagTemplateEditorPage() {
   const handleRestore = useCallback(
     async (versionId: string) => {
       if (!template) return;
-      const priorDraft = { ...template.doc, layers: draftLayers };
+      const priorDraft = { ...template.doc, layers: draftLayers, print_size: template.print_size };
       setRestoringVersionId(versionId);
       try {
         const updated = await restoreTemplateVersion(template.id, versionId);
