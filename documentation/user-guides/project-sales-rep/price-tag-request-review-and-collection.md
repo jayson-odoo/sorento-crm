@@ -1,27 +1,28 @@
 # Project Sales Rep - Review a price tag design, ask for changes, approve and collect
 
-What happens to a price tag request after you submit it: who prints the tags, how you read the
+What happens to a price tag request after you submit it: how you print your tags, how you read the
 design, how you ask for changes by pointing at the tag itself, and how the request closes.
 
 Filling in and submitting the request is a different guide - see
 [Submit via portal](submit-via-portal.md#price-tag-request).
 
-## Who prints the tags
+## Printing your tags
 
-Every price tag request has to say who prints, and you choose it when you submit. It is the first
-thing in the **Additional Information** section, labelled **Printing \***, with two options:
+There's nothing to choose when you submit any more - every request you raise prints itself.
+Once you approve the design, the PDF is prepared for you to print, and **Download PDF** is how you
+get it (see [Downloading the PDF](#downloading-the-pdf) below).
 
-* **Office prints** - the office prints the tags and holds them for you. After you approve, the
+For the rare request the office prints on your behalf, that's a setting only they can change, on
+their side, while the request is still open - not something you pick on the form.
+
+You can see which way a request is set under **Additional Information** on the submitted request,
+as **Printing: I print myself** or **Printing: Office prints**. It reads **Not set** on old
+requests raised before this existed.
+
+* **I print myself** - after you approve, the request is finished; the PDF appears under
+  **Download PDF**.
+* **Office prints** - after you approve, the office prints the tags and holds them for you. The
   request carries on to **Ready for collection** and closes when the tags are picked up.
-* **I print myself** - you print your own tags from the PDF. After you approve, the request is
-  finished; the PDF appears under **Download PDF**.
-
-There is no default on purpose. If you tap **Submit** without choosing, the form stops and says
-*"Say who prints these tags."* next to the control.
-
-You can see the choice afterwards under **Additional Information** on the submitted request. It
-reads **Not set** on old requests raised before the choice existed. If it is wrong, ask the office
-to change it for you - only they can, and only while the request is still open.
 
 ## Reading the design
 
@@ -45,9 +46,16 @@ In the full-screen view:
 * The percentage in the middle opens a menu with **Fit** and fixed steps.
 * On a phone or tablet, pinch to zoom.
 
-**Download PDF** only works once the office has exported the sheet. Until then the button reads
-**PDF is being generated** and is greyed out. It is normally the fastest after you approve a request
-you print yourself.
+### Downloading the PDF
+
+Once your request reaches **Approved** (or later), **Download PDF** works even before a PDF
+exists yet - you don't have to wait for anyone else to trigger it:
+
+* No PDF ready yet: click it. It reads **Preparing your PDF** while one is being made, then the
+  file downloads on its own the moment it's ready.
+* An export failed: it reads **PDF failed, try again** - click it again to have another one made.
+* Before approval - at **Design Ready** or **Changes Requested** - it reads
+  **Available after approval** and is disabled, since a proof isn't for printing.
 
 ## Asking for changes
 
@@ -78,9 +86,10 @@ round.
 While the request is at **Design Ready**, an **Approve** button sits in the **Design** card header.
 Approving is final: the pins close with the round and the request moves on.
 
-* **I print myself** - the request stays at **Approved** and that is the end of it. The PDF is
-  prepared straight away; open the design and use **Download PDF** once the WhatsApp message says
-  it is ready.
+* **I print myself** - the request stays at **Approved** and that is the end of it. The PDF starts
+  preparing straight away; open the design and click **Download PDF** any time - it reads
+  **Preparing your PDF** until it's ready and downloads on its own from there, or wait for the
+  WhatsApp message that says it's ready.
 * **Office prints** - the office prints the tags. When they are printed, the status becomes
   **Ready for collection** and you get a WhatsApp.
 

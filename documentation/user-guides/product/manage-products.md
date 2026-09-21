@@ -25,6 +25,9 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
    * **Product Code \*** - unique identifier (letters, numbers, spaces, and `- _ . / ( ) + #`). Cannot be changed after creation.
    * **Product Name \*** - 3 - 255 characters.
    * **Description** - optional, up to 2000 characters.
+   * **Price tag description** - optional, multi-line. Prints verbatim on a price tag through the
+     `{{product.price_tag_description}}` merge field; left empty, nothing prints for it. See
+     [Work a price tag request - In the designer](../marketing/price-tag-requests.md#in-the-designer).
    * **Category \*** - searchable picker (see [Product categories & brands](product-categories-and-brands.md)).
    * **Brand** - optional, searchable picker.
    * **Item Type** - **None**, **Product**, **Bundle**, **Service**, or **Other**.
@@ -58,7 +61,7 @@ Open a product, then **Edit** (or the **Edit** icon on the list row). The same t
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No**), then **Combos** (the catalogue packages this product is sold as) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
+* **Overview** - **Basic Information** (including **Price tag description**), **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No**), then **Combos** (the catalogue packages this product is sold as, each with its own optional cover picture) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
 * **Stock** - on-hand / reserved / available by warehouse.
 * **Purchase History** - past purchases of this product.
 * **Attachments** - files linked to this product.
