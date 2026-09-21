@@ -605,49 +605,6 @@ def _company_names_by_uuid(resolved: Any) -> dict[str, str]:
     return out
 
 
-def _without_scope_hint_matches(
-    compatible: list[dict[str, Any]], entities: Any, resolved: Any
-) -> list[dict[str, Any]]:
-    """Drop a resolver match whose OWN token the parser hinted as a SCOPE kind
-    (brand/company) - hand pass 11, defect 4 ("cabana catalog" must never kind_pick).
-
-    `turn/reconcile.py::apply_reconciliation` already keeps such an entity's OWN
-    `hint` from ever being rewritten (its `_SCOPE_HINTS`, reused here so the two
-    never disagree about which hints are scope-only). That fix alone is not
-    enough: `gate.py`'s own `compatible_entities` has no opinion on which PARSER
-    entity a resolver match answers for - it is built from the resolver's OWN
-    per-match `entity_type`, so a brand WORD that also happens to name a real
-    promotion or filename ("CABANA WASH BASIN PROMO...") still reached the fetch
-    as if the customer had asked about that promotion/file, because the resolver
-    searches every column and genuinely found a name hit. A brand/company word is
-    a scope filter (`gate.py`'s own `_brand_tok`/`parser_brand` routing, entirely
-    separate from entity resolution), never a subject the resolver could offer a
-    choice between - so every match under ITS token is dropped here, whatever
-    entity_type it incidentally matched.
-    """
-    from app.services.chatbot.turn.reconcile import _SCOPE_HINTS
-
-    scope_tokens = {
-        _token_key(e.get("raw"))
-        for e in jsc.array(entities)
-        if isinstance(e, dict)
-        and jsc.nullish_str(e.get("hint")).strip().lower() in _SCOPE_HINTS
-    } - {""}
-    if not scope_tokens:
-        return compatible
-    drop_uuids: set[Any] = set()
-    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
-        if _token_key(jsc.get(resolution, "token")) not in scope_tokens:
-            continue
-        for m in jsc.array(jsc.get(resolution, "matches")):
-            uuid = jsc.get(m, "uuid")
-            if jsc.truthy(uuid):
-                drop_uuids.add(uuid)
-    if not drop_uuids:
-        return compatible
-    return [c for c in compatible if jsc.get(c, "uuid") not in drop_uuids]
-
-
 def _without_guesses(
     compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -836,7 +793,6 @@ def resolve_kinds(
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = unplaced_tokens(entities, resolved)
     compatible = _without_guesses(compatible, resolved, unplaced)
-    compatible = _without_scope_hint_matches(compatible, entities, resolved)
     # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
     # question described, and the count is what the answer's own header says. It rides
     # the gate to the tool trigger, where `fetch.output_structurer` prepends it.

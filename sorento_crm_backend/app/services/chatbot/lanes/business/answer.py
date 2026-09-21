@@ -894,7 +894,6 @@ def crossdomain_render(
         # typed prefix code, e.g. "SRTWC8517" flagged zero from its own "-PJ" sibling's
         # rows, must find that SAME sibling's rows on the OTHER side too). A plain entry
         # keeps the exact lookup - pre-existing, untouched.
-        #
         if zero:
             rows = [it for code_key, its in by_code.items() if code_key == n or code_key.startswith(n) for it in its]
         else:

@@ -164,7 +164,6 @@ def apply_scope_block(
 def apply_crossdomain_hit(
     answer: turn_compose.Answer,
     *,
-    domain: str | None,
     envelope: Mapping[str, Any] | None,
     parser: Mapping[str, Any] | None,
     resolved: Any,
@@ -176,6 +175,8 @@ def apply_crossdomain_hit(
     space_id: str | None,
     trace: Any = None,
     dry_run: bool = True,
+    asked_at_turn: int | None = None,
+    turn_id: str | None = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 1: a single-domain inventory/incoming HIT whose rows all
     read 0 on hand climbs the SAME cross-domain ladder a miss does, instead of
@@ -195,15 +196,27 @@ def apply_crossdomain_hit(
     row's `fields`) - `figures` already carries that shape verbatim (`envelope_of`'s
     own `figures = [r for r in rows if isinstance(r, dict)]`, no re-keying), so
     `{"answers": envelope.get("figures") or []}` is the adapter, not a second reader.
-    A no-op (byte-identical `answer`) for every domain but inventory/incoming
-    (`crossdomain_zeroset`'s own domain gate) and for a turn with nothing zero to
-    probe (`_run_crossdomain_ladder`'s own "no MCP call" case), so calling this
+    A no-op (byte-identical `answer`) for every PARSER `domain_hint` but
+    inventory/incoming (`crossdomain_zeroset`'s own gate, `lanes/business/answer.py:
+    481-484` - a statement about the hint, never about which domain this HIT's own
+    fetch actually answered) and for a turn with nothing zero to probe
+    (`_run_crossdomain_ladder`'s own "no MCP call" case), so calling this
     unconditionally on every single-domain HIT costs nothing on the other ~99% of
-    turns.
+    turns. No `domain` parameter of its own (nit N-1, security review): nothing here
+    ever read the fetched domain, and the docstring naming it invited exactly this
+    misreading.
 
     BEST EFFORT, the same convention `apply_scope_block` uses one function up: a
     turn that genuinely found rows must never fail because this ladder could not
     run.
+
+    Security N-3 (hand pass 11 security review): a rung that fires appends
+    `tail.compose.crossdomain_compose`'s own locked "Would you like me to escalate
+    to X team?" phrase to `text`, but minted no `Pending` of its own - the miss arm's
+    identical phrase does, through `_miss_question`'s bare "Yes" arm, so a customer's
+    "yes" answered a HIT-side offer with nothing to match against. `_crossdomain_offer_
+    pending` mints the SAME `team_pick` shape, team off the rung's own `_xdBlock["team"]`
+    (`lanes/business/answer.py:1071/1427` - the exact value the phrase itself prints).
     """
     try:
         if not answer.text or not isinstance(envelope, Mapping):
@@ -227,14 +240,45 @@ def apply_crossdomain_hit(
         from dataclasses import replace
 
         text = _apply_crossdomain_render(answer.text, result, answered=True)
-        return answer if text == answer.text else replace(answer, text=text)
+        if text == answer.text:
+            return answer
+        question = _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
+        return replace(answer, text=text, question=question if question is not None else answer.question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
-        logger.warning("chatbot: the cross-domain zero-stock ladder did not run", exc_info=True)
+        logger.warning(
+            "chatbot turn %s: the cross-domain zero-stock ladder did not run", turn_id, exc_info=True
+        )
         return answer
 
 
+def _crossdomain_offer_pending(
+    result: Mapping[str, Any], *, asked_at_turn: int | None
+) -> pending.Pending | None:
+    """The bare "Yes" `team_pick` `_miss_question`'s catalog arm mints for the
+    identical locked phrase on a miss - `None` when the rung rendered nothing
+    (`_apply_crossdomain_render`'s own gate, so a caller checking `text == answer.text`
+    first never needed to call this at all)."""
+    render = result.get("render") if isinstance(result, Mapping) else None
+    block = render.get("_xdBlock") if isinstance(render, Mapping) else None
+    if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
+        return None
+    team = block.get("team")
+    return pending.ask(
+        "team_pick",
+        [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
+        team=team if isinstance(team, str) and team else None,
+        asked_at_turn=asked_at_turn,
+        expects="yes_no",
+    )
+
+
 def apply_silent_company_offer(
-    answer: turn_compose.Answer, *, envelope: Mapping[str, Any] | None, parser: Mapping[str, Any] | None
+    answer: turn_compose.Answer,
+    *,
+    envelope: Mapping[str, Any] | None,
+    parser: Mapping[str, Any] | None,
+    asked_at_turn: int | None = None,
+    turn_id: str | None = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 3 (multi-company HIT parity): a HIT in ONE of several
     searched companies still offers to escalate to the SILENT company's own team -
@@ -253,6 +297,16 @@ def apply_silent_company_offer(
     envelope. Best effort and a no-op (byte-identical `answer`) whenever
     `lookup_companies` has one company or none, or every searched company already
     shows a row - the ~99% of single-company turns this must never touch.
+
+    Reviewer S2 / N-3 (hand pass 11): a HIT arm that only replaces `text` leaves
+    `answer.question` `None`, so the offer's own "yes" had nothing to answer - the
+    follow-up reached escalation only through the parser's generic
+    `is_escalation_confirmation`, with no company at all. This mints the SAME
+    `team_pick` shape `_miss_question`'s escalate-catalog arm mints for a miss - one
+    option per silent company, `payload: {"company": name}` - so a later "yes"
+    escalates WITH the company already named, through the EXISTING
+    `parser.escalation.company_pick` seam (`lanes/escalation.py:232-252`); no new
+    pending kind.
     """
     try:
         if not answer.text or not isinstance(envelope, Mapping):
@@ -286,14 +340,32 @@ def apply_silent_company_offer(
         if not silent:
             return answer
         routing = (parser or {}).get("routing") if isinstance(parser, Mapping) else None
-        team = answer_mod._pretty_team((routing or {}).get("suggested_team") or "customer_service")
+        raw_team = (routing or {}).get("suggested_team") or "customer_service"
+        team = answer_mod._pretty_team(raw_team)
         names = silent[0] if len(silent) == 1 else f"{', '.join(silent[:-1])} and {silent[-1]}"
         offer = f"Would you like me to escalate to *{names}* {team} team?"
+        question = pending.ask(
+            "team_pick",
+            [
+                {
+                    "position": i + 1,
+                    "label": name,
+                    "entity_type": "team",
+                    "payload": {"company": name},
+                }
+                for i, name in enumerate(silent)
+            ],
+            team=raw_team,
+            asked_at_turn=asked_at_turn,
+            expects="yes_no",
+        )
         from dataclasses import replace
 
-        return replace(answer, text=f"{answer.text}\n\n{offer}")
+        return replace(answer, text=f"{answer.text}\n\n{offer}", question=question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
-        logger.warning("chatbot: the silent-company escalate offer did not render", exc_info=True)
+        logger.warning(
+            "chatbot turn %s: the silent-company escalate offer did not render", turn_id, exc_info=True
+        )
         return answer
 
 
@@ -708,6 +780,7 @@ def _miss_question(
     parser: Mapping[str, Any] | None,
     asked_at_turn: int | None,
     text: str,
+    resolved: Any = None,
 ) -> pending.Pending | None:
     """AC-1684: every question the miss arm raises, in the SAME precedence
     `tail.reply_ladder.compose_reply`'s own `result_set` already reads (member offer
@@ -760,10 +833,9 @@ def _miss_question(
         # Hand pass 11, defect 3: a miss `answer.py:3112` reported "checked in X
         # and Y" (`_and_list` of two-or-more companies) must clarify WHICH one
         # before escalating - `escalation.py::_clarify_over`'s own company pairs.
-        # Read straight off the ALREADY-COMPOSED text (the same sentence the
-        # customer just read) rather than re-deriving the searched-company list a
-        # second time, which this module has no independent access to.
-        companies = _companies_checked_in(text)
+        # `_searched_companies` (security SF-2) reads the resolver/gate structures
+        # directly, never the already-composed sentence.
+        companies = _searched_companies(resolved, gate)
         if len(companies) >= _MIN_ROSTER_OPTIONS:
             return pending.ask(
                 "team_pick",
@@ -790,17 +862,35 @@ def _miss_question(
     return None
 
 
-_CHECKED_IN_RE = re.compile(r"checked in ([^.\n]+)\.")
+def _searched_companies(resolved: Any, gate: Any) -> list[str]:
+    """Which companies this turn's fetch actually searched, off the RESOLVER/GATE
+    structures - never off the already-composed reply text (security SF-2, hand pass
+    11 security review: that text quotes the customer's own raw token back verbatim,
+    `label_token` in `lanes/business/answer.py:3152-3156`, so a hostile raw token
+    could mint attacker-labelled escalate options if this reader ever regexed the
+    sentence for "checked in X and Y" instead).
 
+    Mirrors the join `lanes/business/answer.py:2941-2954` performs for that SAME
+    sentence: a per-match `company_name` keyed by uuid, then the gate's own
+    `compatible_entities` walked in order, keeping the first company seen per uuid -
+    the set actually sent to the tool, never the caller's wider access list.
+    `turn_runtime._company_names_by_uuid` already builds that per-uuid map (resolutions,
+    intersection and by_entity_type alike - the OR-mode fallback this lane's own
+    multi-company miss takes reports its matches under `resolutions`, but an AND-mode
+    hit reports them under `intersection` instead, and this reader must not care which).
+    """
+    from app.services.chatbot.turn_runtime import _company_names_by_uuid
 
-def _companies_checked_in(text: str) -> list[str]:
-    """The company names off `answer.py::_and_list`'s own "checked in X and Y"
-    sentence - "X" and "X, Y and Z" alike, the exact suffix the miss composer
-    already wrote (`co_suffix`, `lanes/business/answer.py:3112`)."""
-    match = _CHECKED_IN_RE.search(text or "")
-    if not match:
-        return []
-    return [n.strip() for n in re.split(r",\s*|\s+and\s+", match.group(1)) if n.strip()]
+    co_by_uuid = _company_names_by_uuid(resolved)
+    compat = gate.get("compatible_entities") if isinstance(gate, Mapping) else None
+    searched: list[str] = []
+    for c in compat if isinstance(compat, list) else []:
+        if not isinstance(c, Mapping):
+            continue
+        company = co_by_uuid.get(c.get("uuid"))
+        if company and company not in searched:
+            searched.append(company)
+    return searched
 
 
 def _answered_fresh(parser: Mapping[str, Any] | None) -> bool:
@@ -1003,8 +1093,12 @@ def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
         codes.append(code)
     if not codes:
         return result
-    primary_word = "incoming" if xd.get("origin_domain") == "incoming" else "stock"
-    note = f"No {primary_word} for {', '.join(codes)}."
+    # Nit N-2 (reviewer, hand pass 11): always "stock", never "incoming" - `zero: True`
+    # (the only way a `missing` entry survives the loop above) is stamped ONLY on the
+    # `dh == "inventory"` arm (`lanes/business/answer.py:683-692`), so `origin_domain`
+    # (== `dh`) is always "inventory" here; the incoming half of the old ternary was
+    # unreachable dead code.
+    note = f"No stock for {', '.join(codes)}."
     old_block_text = block.get("block") or ""
     new_block = dict(block)
     new_block["block"] = f"{note}\n\n{old_block_text}" if old_block_text else note
@@ -1225,7 +1319,13 @@ def answer_for(
     producers = composed.get("producers") or {}
 
     question = _miss_question(
-        offer, producers, gate=gate, parser=parser, asked_at_turn=asked_at_turn, text=text
+        offer,
+        producers,
+        gate=gate,
+        resolved=resolved,
+        parser=parser,
+        asked_at_turn=asked_at_turn,
+        text=text,
     )
     if (
         question is not None

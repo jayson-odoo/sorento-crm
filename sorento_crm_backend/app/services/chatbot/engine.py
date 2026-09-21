@@ -2105,11 +2105,11 @@ def _run_stages(  # noqa: PLR0915
                         )
                         # BRIDGE (hand pass 11, defect 1): a zero-stock HIT climbs the
                         # SAME cross-domain ladder a miss does. `apply_crossdomain_hit`
-                        # is a no-op off `crossdomain_zeroset`'s own domain gate for
-                        # every domain but inventory/incoming, and off its own
-                        # probeable-product gate when there is nothing zero to climb
-                        # for - so calling it unconditionally here costs nothing on
-                        # every other single-domain HIT.
+                        # is a no-op off `crossdomain_zeroset`'s own gate on the
+                        # PARSER's `domain_hint` for every hint but inventory/incoming,
+                        # and off its own probeable-product gate when there is nothing
+                        # zero to climb for - so calling it unconditionally here costs
+                        # nothing on every other single-domain HIT.
                         aggregate = (
                             resolver_payload.get("aggregate")
                             if isinstance(resolver_payload, dict)
@@ -2118,7 +2118,6 @@ def _run_stages(  # noqa: PLR0915
                         )
                         answer = answer_bridge.apply_crossdomain_hit(
                             answer,
-                            domain=fetch_plan.fetch[0].domain,
                             envelope=envelopes[0],
                             parser=answer_parse_output,
                             resolved=(
@@ -2134,13 +2133,19 @@ def _run_stages(  # noqa: PLR0915
                             space_id=space_id_for_turn,
                             trace=turn_trace,
                             dry_run=dry_run,
+                            asked_at_turn=turn_no,
+                            turn_id=turn_id,
                         )
                         # BRIDGE (hand pass 11, defect 3): a HIT in one of several
                         # searched companies still offers the SILENT company's own
                         # team. No-op off its own `lookup_companies` gate for every
                         # single-company turn.
                         answer = answer_bridge.apply_silent_company_offer(
-                            answer, envelope=envelopes[0], parser=answer_parse_output
+                            answer,
+                            envelope=envelopes[0],
+                            parser=answer_parse_output,
+                            asked_at_turn=turn_no,
+                            turn_id=turn_id,
                         )
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
