@@ -1263,8 +1263,12 @@ def list_order_inquiry_headers(
             "code / location of any of the header's own non-cancelled lines."
         ),
     ),
-    raised_by: Optional[str] = Query(None, description="By `users.id`, exact."),
-    agent: Optional[str] = Query(None, description="By the agent's own name, exact."),
+    raised_by: Optional[str] = Query(
+        None, max_length=200, description="By `users.id`, exact."
+    ),
+    agent: Optional[str] = Query(
+        None, max_length=200, description="By the agent's own name, exact."
+    ),
     project_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
     sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
     direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),

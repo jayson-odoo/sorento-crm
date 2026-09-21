@@ -389,7 +389,17 @@ class OrderInquiryHeaderService:
         """Every purchase order / SPO this header's own non-cancelled rows are linked
         to (AC-DT-03), grouped by document - `lines_linked` counts DISTINCT ROWS (never
         links: one row split across two lines of the same document is still one line of
-        this OI on that document), `qty_linked` sums every link's own quantity."""
+        this OI on that document), `qty_linked` sums every link's own quantity.
+
+        404 for an unknown id or another company's header (AC-N2): `OrderInquiry` is
+        company-scoped at the session's own `do_orm_execute` listener (the same scoped
+        lookup `get()` uses), so a plain filter-by-id already returns nothing for
+        another company's row - one query, no bespoke company check here."""
+        exists = (
+            self.db.query(OrderInquiry.id).filter(OrderInquiry.id == inquiry_id).first()
+        )
+        if exists is None:
+            raise AppException(404, "This order inquiry no longer exists.", code="oi_header_not_found")
         po_rows = (
             self.db.query(
                 PurchaseOrder.id.label("po_id"),

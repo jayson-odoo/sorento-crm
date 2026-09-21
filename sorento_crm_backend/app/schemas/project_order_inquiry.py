@@ -612,7 +612,12 @@ class AcknowledgeRowsRequest(BaseModel):
     Exactly one of `row_ids` / `filter` is named - both, or neither, is refused
     (AC-CF-8c). What an acknowledgement means is fixed either way: the rows become
     purchasing's work and the cascade runs for exactly them.
+
+    `extra="forbid"` (fix round, consistency with `AutoPlaceRequest`): an unknown key
+    used to be silently dropped rather than refused.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     #: Capped at 500 (security review round 1) - the same guard rail a hand-typed batch
     #: id list gets everywhere else on this route module, so a caller cannot force one
