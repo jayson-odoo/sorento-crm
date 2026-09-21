@@ -6,6 +6,10 @@ import type {
   AutoPlaceRequest,
   AutoPlaceResult,
   OrderInquiryDetail,
+  OrderInquiryHeaderDetail,
+  OrderInquiryHeaderListEnvelope,
+  OrderInquiryHeaderListParams,
+  OrderInquiryHeaderRelatedDocuments,
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
@@ -25,6 +29,12 @@ import type {
   UnplaceAllResult,
   UploadJobScope,
 } from '../types/orderInquiry.types';
+import {
+  mockGetOrderInquiryHeader,
+  mockGetOrderInquiryHeaderLines,
+  mockGetOrderInquiryHeaderRelatedDocuments,
+  mockListOrderInquiryHeaders,
+} from './orderInquiryHeaders.mock';
 
 const BASE = '/api/v1/project-sales';
 
@@ -760,5 +770,74 @@ export async function downloadOrderInquiryXlsx(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to export the order inquiry'));
   return response.blob();
+}
+
+/* -------------------------------------------------- the OI DOCUMENT (header)
+ *
+ * `PLAN-oi-header-list-detail.md`. One row per order inquiry HEADER - one sales order's
+ * whole set of purchasing instructions - as distinct from every row-level function above.
+ *
+ * PHASE 1 (this slice): every function below reads `orderInquiryHeaders.mock.ts`, an
+ * in-process fixture - no `apiFetch`, no network. PHASE 2 (S2/S3) swaps each function's
+ * BODY to the real route below; the hooks in `useOrderInquiry.ts` and every component that
+ * calls them are untouched, because the swap happens at this service boundary and nowhere
+ * else.
+ *
+ * API CONTRACT (Phase 2):
+ *
+ *   GET /api/v1/projects/order-inquiry-headers
+ *     ?state=outstanding|completed|all (default outstanding)
+ *     &query= (OI no, legacy no, SO no, customer, project, agent, any line's product or
+ *       location) &raised_by=<user id> &agent=<agent name> &project_id=<uuid>
+ *     &sort=raised_at|inquiry_no|so_number|raised_by|lines_total|qty_total|customer|
+ *       project|agent|so_date|status
+ *     &dir=asc|desc (default raised_at asc) &page=1 &limit=25
+ *     -> { data: OrderInquiryHeader[], pagination: { total, page, limit } }
+ *     Permission `projects.projects.view`.
+ *
+ *   GET /api/v1/projects/order-inquiry-headers/{id}
+ *     -> OrderInquiryHeaderDetail (the header + Order/Customer blocks, counts, status and
+ *     `raise_history`). 404 for an unknown id or another company's header.
+ *
+ *   GET /api/v1/projects/order-inquiry-headers/{id}/related-documents
+ *     -> OrderInquiryHeaderRelatedDocuments. Empty lists when nothing is linked.
+ *
+ * The Lines tab reads the EXISTING worklist list, `listOrderInquiryWorklist`, with a new
+ * `inquiry_id` filter (Phase 2 adds it to `OrderInquiryWorklistParams`/`worklistParams`
+ * above) - not a new endpoint. Phase 1 stands in with `mockGetOrderInquiryHeaderLines`.
+ */
+
+// Phase 2 route: `/api/v1/projects/order-inquiry-headers` (see the contract above). Every
+// function below is mocked ONLY - Phase 2 replaces each body with an `apiFetch` call
+// against that route and the mock module is deleted, the same way `fulfilmentPlanningService
+// .ts`'s own Phase 1 seams were retired once their routes went live.
+
+export async function listOrderInquiryHeaders(
+  params: OrderInquiryHeaderListParams = {},
+): Promise<OrderInquiryHeaderListEnvelope> {
+  return mockListOrderInquiryHeaders(params);
+}
+
+export async function getOrderInquiryHeader(
+  id: string,
+): Promise<OrderInquiryHeaderDetail> {
+  const detail = mockGetOrderInquiryHeader(id);
+  if (!detail) throw new Error('This order inquiry no longer exists');
+  return detail;
+}
+
+/** Phase 1 stand-in for the Lines tab, ahead of the real `inquiry_id` worklist filter
+ * (Phase 2 - see the module doc comment above). Cancelled lines are NOT filtered here;
+ * the Lines tab hides them the same way the worklist does (S5), client-side. */
+export async function getOrderInquiryHeaderLines(
+  id: string,
+): Promise<OrderInquiryWorklistRow[]> {
+  return mockGetOrderInquiryHeaderLines(id);
+}
+
+export async function getOrderInquiryHeaderRelatedDocuments(
+  id: string,
+): Promise<OrderInquiryHeaderRelatedDocuments> {
+  return mockGetOrderInquiryHeaderRelatedDocuments(id);
 }
 

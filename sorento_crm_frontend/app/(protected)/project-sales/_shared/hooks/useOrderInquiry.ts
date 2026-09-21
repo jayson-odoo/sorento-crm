@@ -7,6 +7,9 @@ import {
   acknowledgeOrderInquiryRows,
   acknowledgeOrderInquiryRowsByFilter,
   autoPlaceOrderInquiryRows,
+  getOrderInquiryHeader,
+  getOrderInquiryHeaderLines,
+  getOrderInquiryHeaderRelatedDocuments,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
   getOrderInquiryPoDetail,
@@ -15,6 +18,7 @@ import {
   getOrderInquiryWorklistSummary,
   getSalesOrderInquiry,
   getUnplaceAllPreview,
+  listOrderInquiryHeaders,
   listOrderInquiryRows,
   linkNowOrderInquiryRows,
   listOrderInquiryWorklist,
@@ -33,6 +37,7 @@ import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import { acknowledgeOutcomeText, linkOutcomeText } from '../lib/linkHorizon';
 import type {
   AutoPlaceRequest,
+  OrderInquiryHeaderListParams,
   OrderInquiryListParams,
   OrderInquiryMatrixParams,
   OrderInquiryPoAllocation,
@@ -40,6 +45,7 @@ import type {
   UnplaceAllRequest,
 } from '../types/orderInquiry.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 export const ORDER_INQUIRY_ROWS_KEY = 'project-order-inquiry-rows';
 export const ORDER_INQUIRY_SUMMARY_KEY = 'project-order-inquiry-summary';
@@ -52,6 +58,86 @@ export const ORDER_INQUIRY_SPO_DETAIL_KEY = 'order-inquiry-spo-detail';
 export const ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY = 'order-inquiry-unplace-all-preview';
 export const ORDER_INQUIRY_UPLOAD_JOB_KEY = 'order-inquiry-upload-job';
 export const ORDER_INQUIRY_MATRIX_KEY = 'order-inquiry-matrix';
+export const ORDER_INQUIRY_HEADERS_KEY = 'order-inquiry-headers';
+export const ORDER_INQUIRY_HEADER_KEY = 'order-inquiry-header';
+export const ORDER_INQUIRY_HEADER_LINES_KEY = 'order-inquiry-header-lines';
+export const ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY =
+  'order-inquiry-header-related-documents';
+
+/**
+ * The header LIST's own React Query key (`PLAN-oi-header-list-detail.md`). Built through
+ * one function so `useOrderInquiryHeaders` and `orderInquiryHeadersPagerQuery`'s pager
+ * (`useListPager`) can never construct it two different ways.
+ */
+export function orderInquiryHeadersListQueryKey(params: OrderInquiryHeaderListParams) {
+  return [ORDER_INQUIRY_HEADERS_KEY, params] as const;
+}
+
+/** The list query a detail URL describes, in the shape the header list passes. */
+function orderInquiryHeaderListParamsFromUrl(
+  params: ListPagerParams,
+): OrderInquiryHeaderListParams {
+  return {
+    page: params.pageIndex + 1,
+    limit: params.pageSize,
+    sort: params.sorting?.[0]?.id,
+    dir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
+    query: params.searchQuery || undefined,
+    state: (params.filters.state as OrderInquiryHeaderListParams['state']) || undefined,
+    raised_by: params.filters.raised_by || undefined,
+    agent: params.filters.agent || undefined,
+    project_id: params.filters.project_id || undefined,
+  };
+}
+
+/** The detail page's prev/next pager (`DetailActions`'s `pager` prop): the same key and
+ * fetch the list itself uses, so a step within the loaded page issues no request. */
+export const orderInquiryHeadersPagerQuery = {
+  listQueryKey: (params: ListPagerParams) =>
+    orderInquiryHeadersListQueryKey(orderInquiryHeaderListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listOrderInquiryHeaders(orderInquiryHeaderListParamsFromUrl(params)),
+};
+
+/** The Documents view (AC-HL-01..07): one row per order inquiry header. */
+export function useOrderInquiryHeaders(params: OrderInquiryHeaderListParams = {}) {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: orderInquiryHeadersListQueryKey(params),
+    queryFn: () => listOrderInquiryHeaders(params),
+  });
+}
+
+/** The detail page's own header (AC-DP-01/07): the Order/Customer blocks, counts, status
+ * and raise history. */
+export function useOrderInquiryHeaderDetail(id: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_HEADER_KEY, id],
+    queryFn: () => getOrderInquiryHeader(id as string),
+    enabled: Boolean(id),
+    retry: false,
+  });
+}
+
+/** The Lines tab (AC-DP-03): every non-cancelled row this header raised. Phase 1 reads
+ * the mock module; Phase 2 reuses the cross-project worklist's own `inquiry_id` filter
+ * (see `orderInquiryService.ts`'s header section) so this hook's callers never change. */
+export function useOrderInquiryHeaderLines(id: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id],
+    queryFn: () => getOrderInquiryHeaderLines(id as string),
+    enabled: Boolean(id),
+  });
+}
+
+/** Related PO / Related SPO tabs (AC-DP-08). */
+export function useOrderInquiryHeaderRelatedDocuments(id: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY, id],
+    queryFn: () => getOrderInquiryHeaderRelatedDocuments(id as string),
+    enabled: Boolean(id),
+  });
+}
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -409,6 +495,11 @@ export function useOrderInquiryHandshake() {
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+    // A confirm/reject/unconfirm moves the HEADER between Outstanding and Completed too
+    // (AC-CF-01/02): the detail page's own counts and the Documents list both read it.
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
   }
 
   const acknowledge = useMutation({
