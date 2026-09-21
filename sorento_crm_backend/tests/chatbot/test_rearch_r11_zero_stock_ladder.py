@@ -61,19 +61,41 @@ PO_HEADER = "but PO is placed"
 WAREHOUSE_OFFER = "escalate to warehouse team"
 PURCHASING_OFFER = "escalate to purchasing team"
 
-MODES = ("detailed", "compact")
+#: S3 (reviewer, PR #952 hand pass 11 round 2): "compact" above is the UNGRANTED row -
+#: `value` is always a clean number, `restricted_fields` never set, so `fetch.py::
+#: _keep_field`'s swap (`f["value"] = f.pop("granted_value")`) never fires and
+#: `answer.py::_on_hand_number`'s string-unwrap branch (`_ON_HAND_WITH_OUTSTANDING`) is
+#: never exercised - a kill test that turns `_on_hand_number` into the identity function
+#: leaves every one of this file's own tests green (measured: `pytest -k compact` stays
+#: 100% pass with the guard deleted). "compact_granted" is the shape live turn cfee5933
+#: actually carries once a contact holds `inventory.sellable`: `value` becomes the
+#: FORMATTED STRING `"{qty} (O/S: 0)"`, not the number, matching `STOCK_ENVELOPE`'s own
+#: rows in `test_rearch_r11_zero_stock_live_replay.py`.
+MODES = ("detailed", "compact", "compact_granted")
 
 
 def _stock_row(code: str, qty: int, mode: str, *, discontinued: bool = False) -> dict[str, Any]:
     """One stock item in the RAW MCP presenter shape `output_structurer` reads.
     `detailed` is the per-warehouse row (`quantity_on_hand`); `compact` is the per-product
-    total (`total_on_hand`, label "Total") - `_row_qty` reads exactly these two."""
+    total (`total_on_hand`, label "Total") - `_row_qty` reads exactly these two.
+    `compact_granted` is `compact` PLUS the restricted-field grant shape (S3): the row
+    carries both the clean `value` and the formatted `granted_value`, and `_stock_hit`
+    below stamps the envelope's own `restricted_fields` so `fetch.py::_keep_field`
+    performs the real swap before this file's assertions ever see the row."""
     if mode == "detailed":
         fields = [
             {"key": "product_code", "label": "Product Code", "value": code},
             {"key": "warehouse", "label": "Warehouse", "value": "BRW"},
             {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": qty},
             {"key": "outstanding", "label": "Outstanding", "value": 5 if qty == 0 else 0},
+        ]
+    elif mode == "compact_granted":
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": code},
+            {
+                "key": "total_on_hand", "label": "Total", "value": qty,
+                "granted_value": f"{qty} (O/S: 0)",
+            },
         ]
     else:
         fields = [
@@ -87,7 +109,7 @@ def _stock_row(code: str, qty: int, mode: str, *, discontinued: bool = False) ->
 
 
 def _stock_hit(rows: list[dict[str, Any]], mode: str) -> dict[str, Any]:
-    return {
+    envelope: dict[str, Any] = {
         "result_type": "stock",
         "intro": (
             "Stock details found for the requested products."
@@ -97,6 +119,13 @@ def _stock_hit(rows: list[dict[str, Any]], mode: str) -> dict[str, Any]:
         "items": rows,
         "has_result": True,
     }
+    if mode == "compact_granted":
+        # `fetch.py::output_structurer`'s restricted-field gate reads THIS key off the
+        # envelope itself (`e.get("restricted_fields")`) - absent (as for plain "compact"
+        # above), the whole `_keep_field` block never runs, so adding the grant to `_run`'s
+        # `stub_access` call unconditionally (below) is a no-op for every other mode.
+        envelope["restricted_fields"] = {"total_on_hand": "inventory.sellable"}
+    return envelope
 
 
 def _incoming_rows(code: str) -> dict[str, Any]:
@@ -230,8 +259,11 @@ def _run(
             ],
         )
     )
-    # Both rungs are per-contact reveals (PO: `purchase_orders.placed`).
-    stub_access(attributes=["purchase_orders.placed"])
+    # Both rungs are per-contact reveals (PO: `purchase_orders.placed`); `inventory.
+    # sellable` grants the compact stock total's own outstanding suffix (S3,
+    # `compact_granted` mode) - harmless for "detailed"/"compact", whose envelopes never
+    # carry `restricted_fields` at all (`_stock_hit`'s own docstring).
+    stub_access(attributes=["purchase_orders.placed", "inventory.sellable"])
 
     result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
     said = "\n".join(
