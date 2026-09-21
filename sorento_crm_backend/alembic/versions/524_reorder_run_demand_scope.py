@@ -11,7 +11,7 @@ from the model's own `CheckConstraint`. Both columns are additive and nullable, 
 downgrade is a plain drop and no data is rewritten either way.
 
 Revision ID: 524_reorder_run_demand_scope
-Revises: ptag_0013_r10
+Revises: 523_oi_monthly_no_raises
 """
 from alembic import op
 import sqlalchemy as sa
@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from app.services.scm.demand_class import check_constraint_sql
 
 revision = "524_reorder_run_demand_scope"
-down_revision = "ptag_0013_r10"
+down_revision = "523_oi_monthly_no_raises"
 branch_labels = None
 depends_on = None
 
