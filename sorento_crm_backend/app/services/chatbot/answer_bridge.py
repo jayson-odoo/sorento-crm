@@ -161,6 +161,70 @@ def apply_scope_block(
         return answer
 
 
+def apply_crossdomain_hit(
+    answer: turn_compose.Answer,
+    *,
+    domain: str | None,
+    envelope: Mapping[str, Any] | None,
+    parser: Mapping[str, Any] | None,
+    resolved: Any,
+    entities_names: Any,
+    crossdomain_ladder: Mapping[str, Any] | None,
+    ctx: Any,
+    services: AnswerServices,
+    contact_id: Any,
+    space_id: str | None,
+    trace: Any = None,
+    dry_run: bool = True,
+) -> turn_compose.Answer:
+    """Hand pass 11, defect 1: a single-domain inventory/incoming HIT whose rows all
+    read 0 on hand climbs the SAME cross-domain ladder a miss does, instead of
+    printing the zero stock summary alone. Production's own HIT arm
+    (`origin/main lanes/business/__init__.py:1585-1650`) calls `answer.
+    run_crossdomain` on every answered turn, not only a miss; the caller's own
+    `envelope_missed` gate keeps this bridge's MISS arm and `turn/fetch.py::_climb`
+    from ever reaching a HIT at all (rows exist, so neither trigger fires), which is
+    the gap this closes - one ladder per turn either way
+    (`bridge_owns_ladder` covers this arm too).
+
+    `envelope` is the fetch's OWN envelope (`turn/fetch.py::_fetch_one`'s return,
+    carrying `answers`/`items`) - `crossdomain_zeroset` reads it directly for
+    `returned_codes`/`by_code` (`_envelope_items` tries `answers` before `items`,
+    which is exactly this envelope's own shape). A no-op (byte-identical `answer`)
+    for every domain but inventory/incoming (`crossdomain_zeroset`'s own domain
+    gate) and for a turn with nothing zero to probe (`_run_crossdomain_ladder`'s own
+    "no MCP call" case), so calling this unconditionally on every single-domain HIT
+    costs nothing on the other ~99% of turns.
+
+    BEST EFFORT, the same convention `apply_scope_block` uses one function up: a
+    turn that genuinely found rows must never fail because this ladder could not
+    run.
+    """
+    try:
+        if not answer.text or not isinstance(envelope, Mapping):
+            return answer
+        result = _run_crossdomain_ladder(
+            parser=parser,
+            resolved=resolved,
+            entities_names=entities_names,
+            crossdomain_ladder=crossdomain_ladder,
+            ctx=ctx,
+            services=services,
+            contact_id=contact_id,
+            space_id=space_id,
+            trace=trace,
+            dry_run=dry_run,
+            item=envelope,
+        )
+        from dataclasses import replace
+
+        text = _apply_crossdomain_render(answer.text, result, answered=True)
+        return answer if text == answer.text else replace(answer, text=text)
+    except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
+        logger.warning("chatbot: the cross-domain zero-stock ladder did not run", exc_info=True)
+        return answer
+
+
 def _compose_text(lane_item: dict[str, Any], *, ctx: Any, canned: Any, db: Any, **values: Any) -> str:
     """`tail.reply.compose_from_fragments`, the SAME chain `complete_answer` walks for
     every canned/business reply - the plan's own "text = tail/outcome.escalate_catalog +
@@ -673,6 +737,7 @@ def _run_crossdomain_ladder(
     space_id: str | None,
     trace: Any = None,
     dry_run: bool = True,
+    item: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """AC-1705's cross-domain stock ladder: `answer.run_crossdomain`'s own call, split
     out from the FOLD below (`_apply_crossdomain_render`, hand pass 9 item 2) so a
@@ -697,9 +762,15 @@ def _run_crossdomain_ladder(
     and at least one probeable (uuid-carrying) product (`crossdomain_zeroset`'s own
     domain/probeable checks) - calling it unconditionally on every miss is therefore a
     genuine no-op (no MCP call, `render=None`) for every other domain, never a second
-    ladder policy of this module's own. The `{}` first argument is equivalent to main's
-    own validator item on a miss: `crossdomain_zeroset` reads that item for
-    `returned_codes` alone, and on a miss that set is empty either way.
+    ladder policy of this module's own. `item` defaults to `{}`, equivalent to main's
+    own validator item on a MISS: `crossdomain_zeroset` reads that item for
+    `returned_codes` alone, and on a miss that set is empty either way. Hand pass 11,
+    defect 1: a caller answering a single-domain HIT whose rows read 0 on hand (the
+    ladder never used to reach a HIT at all - `envelope_missed` is false for it, so
+    neither this bridge's own miss triggers nor `turn/fetch.py::_climb` ever ran)
+    passes the validated fetch envelope here instead - `crossdomain_zeroset`'s own
+    `_rows_all_zero` per-code read (`dh == "inventory"` only) is what turns "found but
+    every row is 0" into a `zero: True` miss entry the SAME ladder probes for.
 
     Every OTHER argument is the one `complete_answer` hands its own `run_crossdomain`
     (`lanes/business/__init__.py:1685-1710`), reviewer B3/S2:
@@ -727,7 +798,7 @@ def _run_crossdomain_ladder(
     access = ctx.get("access") if isinstance(ctx, Mapping) else None
     granted = access.get("attributes") if isinstance(access, Mapping) else None
     return answer_mod.run_crossdomain(
-        {},
+        dict(item) if isinstance(item, Mapping) else {},
         parser=parser,
         resolved=resolved,
         session_block=session_block,
@@ -744,20 +815,34 @@ def _run_crossdomain_ladder(
     )
 
 
-def _apply_crossdomain_render(text: str, result: Mapping[str, Any]) -> str:
+def _apply_crossdomain_render(
+    text: str, result: Mapping[str, Any], *, answered: bool = False
+) -> str:
     """The rung's own rendered block, folded above the escalate marker, from the
     ALREADY-COMPUTED `result` `_run_crossdomain_ladder` (above) returned - this
     function never calls the ladder itself, so running it early (before the miss text)
-    and folding its render late (after) never probes twice for one fact."""
+    and folding its render late (after) never probes twice for one fact.
+
+    `answered` (hand pass 11, defect 1): a HIT with rows folds through
+    `crossdomain_compose`'s PARTIAL-turn branch instead of its TOTAL-MISS one - the
+    block goes UNDER the primary answer, WITH the locked "Would you like me to
+    escalate to X team?" question (the miss branch never appends that phrase itself;
+    a genuine miss already has it from `not_found_error_message`'s own escalate ask,
+    which a HIT has none of). That branch's own guard reads `variables.
+    last_result_set` for non-emptiness only - never its contents - so a single
+    truthy sentinel is enough to say "this turn answered something", the same fact
+    `text` already carrying real rows establishes.
+    """
     render = result.get("render")
     if not isinstance(render, Mapping):
         return text
     block = render.get("_xdBlock")
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return text
-    sealed = {"reply": {"text": text, "session_patch": {"user_response": text, "variables": {}}}}
+    variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
+    sealed = {"reply": {"text": text, "session_patch": {"user_response": text, "variables": variables}}}
     merged = tail_compose.crossdomain_compose(
-        sealed, result={"result": {"xd": {"block": dict(block)}}}, answered=False
+        sealed, result={"result": {"xd": {"block": dict(block)}}}, answered=answered
     )
     merged_text = (merged.get("reply") or {}).get("session_patch", {}).get("user_response")
     return merged_text if isinstance(merged_text, str) and merged_text else text

@@ -1656,11 +1656,29 @@ def with_carried_entities(
     return {**parse_output, "entities": carried}
 
 
+def _is_certificate_type(db: Session, attachment_type_id: Any) -> bool:
+    """`attachment_types.is_certificate` for the RESOLVED row, never the customer's
+    own words. `False` for anything unresolved/unreadable - fail closed to the
+    default (`marketing_product`) team rather than mis-route on a lookup that could
+    not run (a bad uuid, a row deleted since the resolver matched it)."""
+    if not jsc.truthy(attachment_type_id):
+        return False
+    from app.models.resources import AttachmentType
+
+    try:
+        row = db.query(AttachmentType).filter(AttachmentType.id == attachment_type_id).first()
+    except Exception:  # noqa: BLE001 - a lookup failure is not a reason to mis-route
+        logger.warning("chatbot: attachment_type certificate lookup failed", exc_info=True)
+        return False
+    return bool(row is not None and row.is_certificate)
+
+
 def answer_parse_output(
     parse_output: dict[str, Any] | None,
     *,
     gate: Any,
     domains: Any = (),
+    db: Session | None = None,
 ) -> dict[str, Any]:
     """What the ANSWER composers read, which is what the RESOLVER read (AC-1701/AC-1702).
 
@@ -1694,13 +1712,14 @@ def answer_parse_output(
     """
     out = dict(parse_output) if isinstance(parse_output, dict) else {}
     g = gate if isinstance(gate, dict) else {}
-    type_names = [
-        jsc.js_string(row.get("code")).strip()
+    type_rows = [
+        row
         for row in jsc.array(g.get("compatible_entities"))
         if isinstance(row, dict)
         and jsc.nullish_str(row.get("entity_type")).strip().lower() == "attachment_type"
         and jsc.truthy(row.get("code"))
     ]
+    type_names = [jsc.js_string(row.get("code")).strip() for row in type_rows]
     if len(type_names) == 1:
         entities: list[Any] = []
         for entity in jsc.array(out.get("entities")):
@@ -1712,6 +1731,24 @@ def answer_parse_output(
             else:
                 entities.append(entity)
         out["entities"] = entities
+        # Hand pass 11, defect 2 (owner ruling): a RESOLVED attachment_type row
+        # (never a regex over the customer's text, D11) whose own
+        # `attachment_types.is_certificate` is true routes this turn's escalation to
+        # `purchasing_certification` / `general_enquiries`, deterministically and
+        # post-LLM - main's deleted `head/output_exchange.py:85-120` made the same
+        # domain+is_cert call, and the v39 prompt line names the SAME team the
+        # rendered domain block (`chatbot_domains.escalation_team_code`) then
+        # contradicts. Applied HERE, the first and only place this function settles
+        # which attachment_type the turn is actually about, so the corrected team
+        # reaches the miss offer sentence, the pending roster's own `team` stamp
+        # (carried across a did-you-mean pick, contract 108), and the escalation
+        # lane on "yes" - all three read `out["routing"]`, never a second copy.
+        if db is not None and _is_certificate_type(db, type_rows[0].get("uuid")):
+            out["routing"] = {
+                **(out.get("routing") or {}),
+                "suggested_team": "purchasing_certification",
+                "suggested_agent": "general_enquiries",
+            }
     if not jsc.truthy(out.get("domain_hint")):
         named = [d for d in (domains or []) if d]
         if len(named) == 1:

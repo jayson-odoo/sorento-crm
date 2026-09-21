@@ -6,6 +6,16 @@ from __future__ import annotations
 
 from typing import Any
 
+#: Hand pass 11, defect 4 (owner ruling, "cabana catalog" -> a kind_pick over a brand
+#: word): a SCOPE hint names a company/brand filter, never a subject the resolver could
+#: offer a choice between. "cabana" (hint "brand") hitting both `promotion` and
+#: `attachment` in the resolver's per-token count is not the customer choosing between
+#: two THINGS named "cabana" - it is one brand word that happens to also match file
+#: names - so it is left exactly as the parser hinted it, the same as a token with no
+#: hits at all. Reconciliation exists to settle what a SUBJECT word IS (an order, a
+#: product, ...); it has no job to do on a word that only ever scopes one.
+_SCOPE_HINTS = frozenset({"brand", "company"})
+
 
 class ReconcileResult:
     def __init__(self) -> None:
@@ -23,6 +33,9 @@ def apply_reconciliation(
         return result
 
     for e in entities:
+        if e.get("hint") in _SCOPE_HINTS:
+            result.entities.append(e)
+            continue
         raw = e.get("raw")
         hits = resolved.get(raw) if raw is not None else None
         if not hits:

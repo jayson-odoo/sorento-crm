@@ -1629,6 +1629,7 @@ def _run_stages(  # noqa: PLR0915
                 resolver_ctx["parse"]["output"],
                 gate=(resolver_payload or {}).get("gate"),
                 domains=plan.domains,
+                db=db,
             )
             if resolved_kinds or resolved_candidates:
                 # The ONE re-entry the plan allows: what the resolver found goes back
@@ -2101,6 +2102,38 @@ def _run_stages(  # noqa: PLR0915
                             ),
                             focus_customers=state_out.focus.customers,
                             focus_products=state_out.focus.products,
+                        )
+                        # BRIDGE (hand pass 11, defect 1): a zero-stock HIT climbs the
+                        # SAME cross-domain ladder a miss does. `apply_crossdomain_hit`
+                        # is a no-op off `crossdomain_zeroset`'s own domain gate for
+                        # every domain but inventory/incoming, and off its own
+                        # probeable-product gate when there is nothing zero to climb
+                        # for - so calling it unconditionally here costs nothing on
+                        # every other single-domain HIT.
+                        aggregate = (
+                            resolver_payload.get("aggregate")
+                            if isinstance(resolver_payload, dict)
+                            and isinstance(resolver_payload.get("aggregate"), dict)
+                            else None
+                        )
+                        answer = answer_bridge.apply_crossdomain_hit(
+                            answer,
+                            domain=fetch_plan.fetch[0].domain,
+                            envelope=envelopes[0],
+                            parser=answer_parse_output,
+                            resolved=(
+                                resolver_payload.get("resolved")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            entities_names=aggregate.get("name") if aggregate is not None else [],
+                            crossdomain_ladder=_crossdomain_ladder(switches),
+                            ctx=ctx,
+                            services=business_services.production_answer_services(db),
+                            contact_id=(ctx.get("contact") or {}).get("id"),
+                            space_id=space_id_for_turn,
+                            trace=turn_trace,
+                            dry_run=dry_run,
                         )
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
