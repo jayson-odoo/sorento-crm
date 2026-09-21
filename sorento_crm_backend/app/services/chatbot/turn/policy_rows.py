@@ -15,6 +15,31 @@ from __future__ import annotations
 from typing import Any
 
 # --------------------------------------------------------------------------- #
+# RECORD_KEY_KIND - hand pass 12 round 2, Group C (owner ruling, 21 Sep 2026). Not a
+# `chatbot_domains` column: checked `DomainPolicy` (turn/policy.py) and the seeded rows
+# below, neither carries anything named a "record key" today, so this is the smallest
+# addition - one plain dict, three entries, read by `turn_runtime.make_tool_runner`'s
+# own rerun-on-miss check. NOT database-seeded (unlike DEFAULT_DOMAIN_ROWS below) and
+# so not under the "frozen seed data" rule - a plain Python constant, edited directly.
+#
+# The entity KIND (the same string `Focus`'s own extra-bucket keys and `_spec_row`'s
+# `entity_type` use, folded through `turn.state.EXTRA_KIND_ALIASES` before comparison)
+# that IS this domain's own record - the thing a customer names when they mean ONE
+# specific row, not a filter over many: a shipment/container number for incoming, an
+# order number for order (the same "order"/"customer_order" axis EXTRA_KIND_ALIASES
+# already folds to one bucket), a PO number for purchase_order.
+RECORD_KEY_KIND: dict[str, str] = {
+    "incoming": "inbound_shipment",
+    "order": "order",
+    # Not exercised by any test this round - no live PO-number resolver path exists
+    # yet (measured: `lanes/business/gate.py::ALLOWED` carries no "purchase_order" row
+    # at all, so nothing types a PO number's own hint today). Named for the day one
+    # lands, after the tool's own field key (`crm_procurement_po_placed_list`'s
+    # envelope already keys its own number "po_number").
+    "purchase_order": "po_number",
+}
+
+# --------------------------------------------------------------------------- #
 # chatbot_domains seed - one row per app.services.chatbot.contracts.DOMAIN_SPEC entry,
 # in that dict's own declaration order (sort_order). Every fact below is read off that
 # constant (or a sibling one named in the docstring), not invented: label from
