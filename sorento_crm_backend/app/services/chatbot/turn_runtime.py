@@ -44,7 +44,7 @@ from app.services.chatbot.turn.state import (
     Profile,
     State,
     focus_from_wire,
-    fold_token,
+    token_key,
 )
 from app.services.chatbot import session_state
 
@@ -608,25 +608,30 @@ def lane_parse_output(
 # --------------------------------------------------------------------------- #
 
 
-def _token_key(value: Any) -> str:
-    r"""The key the resolver's OWN answer is filed under, for a join against it.
+# `_token_key`: the key the resolver's OWN answer is filed under, for a join against
+# it. Separators are REMOVED, not just lower-cased: `resolve_gate.resolve_entity_body`
+# sends a product entity through `_PRODUCT_FOLD` (`[-\s]+`) before the resolver ever
+# sees it, so a token the customer typed as `SRTWT165-FT` comes back in
+# `unresolved_tokens` as `SRTWT165FT`. Keying one side with the hyphen and the other
+# without silently failed the join for EVERY hyphenated code - measured on turn
+# bb921451 (hand pass 7, B1): `unresolved_tokens: ["SRTWT165FT"]` against an entity
+# whose `raw` is `SRTWT165-FT` gave `unplaced == {}`, so the "I could not find X"
+# sentence and the unfiltered-catalogue guard (`_without_guesses`) were both dead for
+# exactly the codes that need them most. Sorento product codes are hyphenated far more
+# often than not.
+#
+# Hand pass 12 Phase 3 finding F8: this used to be its own copy of `turn.state.
+# token_key`'s exact body (`turn/reconcile.py::_key` carried a second one) - moved
+# there, beside `fold_token` itself (the ONE copy `turn.narrow._token_of`, R1, also
+# uses), and re-imported here under its own established name so every other module's
+# docstring reference to `turn_runtime._token_key` still resolves.
+_token_key = token_key
 
-    Separators are REMOVED, not just lower-cased: `resolve_gate.resolve_entity_body`
-    sends a product entity through `_PRODUCT_FOLD` (`[-\s]+`) before the resolver ever
-    sees it, so a token the customer typed as `SRTWT165-FT` comes back in
-    `unresolved_tokens` as `SRTWT165FT`. Keying one side with the hyphen and the other
-    without silently failed the join for EVERY hyphenated code - measured on turn
-    bb921451 (hand pass 7, B1): `unresolved_tokens: ["SRTWT165FT"]` against an entity
-    whose `raw` is `SRTWT165-FT` gave `unplaced == {}`, so the "I could not find X"
-    sentence and the unfiltered-catalogue guard (`_without_guesses`) were both dead
-    for exactly the codes
-    that need them most. Sorento product codes are hyphenated far more often than not.
 
-    The fold itself is `turn.state.fold_token` - the ONE copy, also used by
-    `turn.narrow._token_of` (R1), so the two sides of an unplaced-token join can never
-    disagree about what a hyphen or a space folds to again.
-    """
-    return fold_token(jsc.nullish_str(value).strip().casefold())
+def _entity_token_key(entity: dict[str, Any]) -> str:
+    """`_token_key` of whichever of the three names a row spells its code under - the key
+    to join a plan/compatible row against `unplaced_tokens`."""
+    return _token_key(_code_of(entity))
 
 
 def _entity_token_key(entity: dict[str, Any]) -> str:

@@ -44,6 +44,22 @@ def fold_token(value: str) -> str:
     return "".join(ch for ch in value if ch != "-" and not ch.isspace())
 
 
+def token_key(value: Any) -> str:
+    """The one join key both sides of a resolver-token map fold to - `fold_token`
+    plus the strip/casefold every caller was already doing around it by hand.
+
+    Hand pass 12 Phase 3 finding F8: `turn_runtime._token_key` and `turn/
+    reconcile._key` were two copies of this exact same three-line body (one via
+    `jsc.nullish_str`, one via a bare `None` guard - the same result either way).
+    ONE copy, here, beside `fold_token` itself, in the lowest module both `turn_
+    runtime.py` and `turn/reconcile.py` already import from (`turn/reconcile.py`
+    cannot import `turn_runtime` - circular). `turn_runtime.py` still exposes it as
+    `_token_key` (its own established name, several other modules' docstrings refer
+    to it by), a plain re-import, not a second definition.
+    """
+    return fold_token(str(value).strip().casefold()) if value is not None else ""
+
+
 # Entity kinds that get their own plural Focus field. Anything else lands in
 # `Focus.extra`, keyed by kind - a kind this turn's tests never exercise on Focus
 # directly still has somewhere safe to sit rather than being silently dropped.

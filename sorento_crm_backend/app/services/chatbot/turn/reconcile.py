@@ -6,12 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.chatbot.turn.state import fold_token
-
-
-def _key(value: Any) -> str:
-    """The one join key both sides of the resolver's own by-token map fold to."""
-    return fold_token(str(value).strip().casefold()) if value is not None else ""
+from app.services.chatbot.turn.state import token_key as _key
 
 
 def hits_for_token(resolved: dict[str, dict[str, int]] | None, raw: Any) -> dict[str, int] | None:
