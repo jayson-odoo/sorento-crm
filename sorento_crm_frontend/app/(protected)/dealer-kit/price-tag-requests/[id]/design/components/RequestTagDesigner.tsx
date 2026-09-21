@@ -588,29 +588,43 @@ export function RequestTagDesigner({
   // effect will then see.
   const autoCloneRef = useRef(false);
   useEffect(() => {
-    if (!selectedRequestTagId || tags[selectedRequestTagId]) return;
     if (templatesStatus === 'loading' || templatesStatus === 'error') return;
     if (pricesStatus === 'loading' || pricesStatus === 'error') return;
-    const entry = requestTags.find((row) => row.tag.id === selectedRequestTagId);
-    if (!entry) return;
-    const tagData = resolved.get(entry.tag.id);
-    const template =
-      defaultTemplateFor(entry.line, templates, tagData?.code) ??
-      starterTemplateFor(entry.line, tagData, newTagId);
+    // AC-S7-16: EVERY request tag with no design yet is cloned here, not
+    // just the selected one - a split line's second tag (D6: an open group
+    // resolved into its own tag per candidate at submit) must reach
+    // `arrangeItems` the moment Arrange opens, even when nobody has ever
+    // clicked into it on the canvas. One batched `setTags` update below, not
+    // one `applyTemplate` call per tag - N sequential updates would fire the
+    // autosave effect (which reads `tags`) once per tag instead of once.
+    const missing = requestTags.filter((row) => !tags[row.tag.id]);
+    if (missing.length === 0) return;
+    const patch: Record<string, PlacedTag> = {};
+    for (const { tag: requestTag, line } of missing) {
+      const tagData = resolved.get(requestTag.id);
+      const template =
+        defaultTemplateFor(line, templates, tagData?.code) ??
+        starterTemplateFor(line, tagData, newTagId);
+      let tag = tagForTag(
+        { id: requestTag.id, quantity: requestTag.quantity, line },
+        template,
+        newTagId(),
+      );
+      if (defaultTagSize) {
+        tag = resizeTag(tag, defaultTagSize.width_mm, defaultTagSize.height_mm);
+      }
+      patch[requestTag.id] = tag;
+    }
     autoCloneRef.current = true;
-    applyTemplate(
-      { id: entry.tag.id, quantity: entry.tag.quantity, line: entry.line },
-      template,
-    );
+    setTags((prev) => ({ ...prev, ...patch }));
   }, [
-    selectedRequestTagId,
+    requestTags,
     tags,
     templates,
     templatesStatus,
     pricesStatus,
     resolved,
-    requestTags,
-    applyTemplate,
+    defaultTagSize,
   ]);
 
   const selectedTag = selectedRequestTagId ? tags[selectedRequestTagId] ?? null : null;
