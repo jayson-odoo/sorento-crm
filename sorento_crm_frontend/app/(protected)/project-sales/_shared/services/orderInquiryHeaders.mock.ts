@@ -169,31 +169,50 @@ function nextLineId(headerId: string): string {
   return `${headerId}-line-${lineSeq}`;
 }
 
-/** One mock line. `ackState` decides whether it counts toward `lines_to_confirm`. */
+/** `raised` (no link), `placed` (linked quantity covers the whole line) or
+ * `partly_linked` (some of it) - the same three-way read `OrderInquiryStatePill` and the
+ * detail page's own `isLinkable`/`selectedLinked` derive it by, off the line's OWN
+ * `links`, so a fixture line's state can never disagree with what it is linked to
+ * (browser-pass DEFECT, fix round: every fixture line read `raised` regardless of its
+ * links, so a ticked linked line could never enable Unlink selected). */
+function deriveLineState(
+  qty: string,
+  links: OrderInquiryWorklistRow['links'],
+): 'raised' | 'placed' | 'partly_linked' {
+  const linkedQty = (links ?? []).reduce((sum, link) => sum + Number(link.qty || '0'), 0);
+  const total = Number(qty || '0');
+  if (linkedQty <= 0) return 'raised';
+  if (linkedQty >= total) return 'placed';
+  return 'partly_linked';
+}
+
+/** One mock line. `ackState` decides whether it counts toward `lines_to_confirm`; `state`
+ * is DERIVED from `qty`/`links` when the caller does not state one explicitly (the
+ * cancelled fixtures do, since cancellation is not a fact `links` alone could ever say). */
 function buildLine(
   headerId: string,
   overrides: Partial<OrderInquiryWorklistRow> & {
     ackState?: 'awaiting' | 'acknowledged' | 'changed' | 'rejected';
   },
 ): OrderInquiryWorklistRow {
-  const { ackState = 'acknowledged', ...rest } = overrides;
+  const { ackState = 'acknowledged', qty = '10', links = [], state, ...rest } = overrides;
   return {
     id: nextLineId(headerId),
     inquiry_no: undefined,
     item_code: 'SKU-0000',
     product_name: null,
-    qty: '10',
     delivery_date: '2026-10-01',
     customer_name: null,
     project_title: null,
     supplier: null,
     location: null,
-    links: [],
-    state: 'raised',
     verb: 'ORDER',
     note: null,
-    ack_state: ackState,
     ...rest,
+    qty,
+    links,
+    state: state ?? deriveLineState(qty, links),
+    ack_state: ackState,
   };
 }
 

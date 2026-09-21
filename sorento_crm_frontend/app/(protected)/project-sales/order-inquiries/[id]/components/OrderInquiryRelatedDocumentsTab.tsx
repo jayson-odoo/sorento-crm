@@ -21,6 +21,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryRelatedPurchaseOrder,
@@ -119,13 +120,19 @@ function relatedSpoColumns(): ColumnDef<OrderInquiryRelatedSpo>[] {
       header: ({ column }) => <DataGridColumnHeader title="SPO no" column={column} />,
       size: 190,
       meta: { headerTitle: 'SPO no', skeleton: <Skeleton className="h-4 w-24" /> },
-      // No dedicated SPO document page exists in this lane's reach; the number is
-      // stated plainly, the same "quote the number, never a raw id" rule every other
-      // SPO reference in this module follows (`OrderInquiryDocumentDialog`'s own trigger).
+      // AC-DP-08: the SPO document page (`procurement-management/spo-allocations/
+      // [spoNumber]`), addressed the one way every other SPO reference in the app is -
+      // `spoDetailHref`, never a hand-encoded string (an SPO number carries a literal
+      // `/`, e.g. `SPO-2026/08-0061`).
       cell: ({ row }) => (
-        <span className="block truncate font-medium tabular-nums" title={row.original.spo_number}>
+        <Link
+          href={spoDetailHref(row.original.spo_number)}
+          onClick={(e) => e.stopPropagation()}
+          className="block truncate font-medium tabular-nums text-primary hover:underline"
+          title={row.original.spo_number}
+        >
           {row.original.spo_number}
-        </span>
+        </Link>
       ),
     },
     {

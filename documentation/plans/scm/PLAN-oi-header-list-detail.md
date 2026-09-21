@@ -112,7 +112,7 @@ stored: `lines_to_confirm > 0` = outstanding. The header `state` column is left 
 ### S4 - Documents view [FE]
 
 `app/(protected)/project-sales/order-inquiries/`: `page.tsx` renders a small view switch
-(`?view=lines` = today's `OrderInquiriesClient`, untouched; default = new
+(`?display=lines` = today's `OrderInquiriesClient`, untouched; default = new
 `components/OrderInquiryHeadersList.tsx`). Copies `SPOAllocationsList` for the toggle + URL state
 and `SalesOrdersGrid` for `rowHref` / `buildDetailSearch`. New hook `useOrderInquiryHeaders`, list
 query key + `orderInquiryHeadersPagerQuery` in `_shared/hooks/useOrderInquiry.ts`, service

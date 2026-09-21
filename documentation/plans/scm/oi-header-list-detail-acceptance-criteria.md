@@ -34,7 +34,7 @@ across many sales orders) stays, one toggle away, unchanged.
 
 - **AC-HL-01 [FE]** Given the Order Inquiries page, when it opens, then a `Documents | Lines`
   toggle shows with Documents selected, and Lines renders today's worklist unchanged (same cards,
-  chips, filters, Actions, Confirm). The chosen view is kept in the URL (`?view=lines`).
+  chips, filters, Actions, Confirm). The chosen view is kept in the URL as `?display=lines` (`view` is already the worklist's own List | Schedule key and existing links carry it).
 - **AC-HL-02 [FE]** Given the Documents view, then the grid shows one row per OI with columns in
   this order: Raised at, OI no, S/O no, Raised by, Lines, Qty, Customer, Project, Agent, SO date,
   Status. Every column has an explicit size, long text truncates with a `title`, the table is
