@@ -936,6 +936,12 @@ class OrderInquiryWorklistService:
         raised_date: Optional[str] = None,
         state: Optional[str] = None,
         project_id: Optional[str] = None,
+        # S5 (`PLAN-oi-project-label-from-so.md` section 5): the filter follows the
+        # COLUMN, which is `_PROJECT_TITLE` - text, exact match, never a uuid. Separate
+        # from `project_id` (which stays UUID-validated, for any existing deep link):
+        # an adopted order has no `Project` row to filter by id, only the label the
+        # column prints.
+        project: Optional[str] = None,
         supplier_id: Optional[str] = None,
         raised_by: Optional[str] = None,
         linked: Optional[str] = None,
@@ -1043,6 +1049,8 @@ class OrderInquiryWorklistService:
             base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
         if project_id:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
+        if project:
+            base = base.filter(_PROJECT_TITLE == project)
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
@@ -2390,7 +2398,7 @@ class OrderInquiryWorklistService:
             "by_state": by_state,
             "by_month": self._by_month({**filters, "delivery_month": None}),
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
-            "projects": self._projects({**filters, "project_id": None}),
+            "projects": self._projects({**filters, "project_id": None, "project": None}),
             "raised_by": self._raised_by({**filters, "raised_by": None}),
             # S1, R-K: the Location and Agent filters' own lists, same shape as
             # `suppliers` (`[{id,label,rows}]`), each with its own filter dropped.
@@ -2631,17 +2639,25 @@ class OrderInquiryWorklistService:
         ]
 
     def _projects(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The Project filter's own list, off `_PROJECT_TITLE` - the SAME text the
+        column prints - not `Project.id`/`Project.title` alone (S5,
+        `PLAN-oi-project-label-from-so.md` section 5). An adopted order has no
+        `Project` row at all, so grouping on the registered project only left the
+        dropdown empty: 515 distinct labels across 12,716 rows and zero registered
+        projects, measured on the prod-copy clone. The option's own `id` is the text
+        itself - there is no second, id-shaped concept to encode - and `project`
+        (like every other axis here) filters exact-match on that same text.
+        """
         rows = (
             self._base(**filters)
-            .with_entities(Project.id, Project.title, func.count(OrderInquiryRow.id))
-            .filter(Project.id.isnot(None))
-            .group_by(Project.id, Project.title)
-            .order_by(Project.title.asc())
+            .with_entities(_PROJECT_TITLE, func.count(OrderInquiryRow.id))
+            .filter(_PROJECT_TITLE.isnot(None))
+            .group_by(_PROJECT_TITLE)
+            .order_by(_PROJECT_TITLE.asc())
             .all()
         )
         return [
-            {"id": project_id, "label": title, "rows": int(count)}
-            for project_id, title, count in rows
+            {"id": title, "label": title, "rows": int(count)} for title, count in rows
         ]
 
     def _raised_by(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:

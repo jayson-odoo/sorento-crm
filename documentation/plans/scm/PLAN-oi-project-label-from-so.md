@@ -1,6 +1,6 @@
 # PLAN: Order inquiry Project column and handover email read the sales order's project label
 
-Status: in review, draft PR (Track: small fix). Browser AC-8 passed 21 Sep 2026 on :3080 / :8080.
+Status: in progress, draft PR #1084. Sections 1-4 reviewed + browser passed 21 Sep 2026; section 5 (Project filter) building. Track: started as small fix, section 5 adds a query param and a frontend change.
 Branch: `fix/oi-project-label-from-so` (worktree `sorento_crm-oi-project-label`, off origin/main 170d6ece3)
 UAC: `oi-project-label-from-so-acceptance-criteria.md`
 
@@ -66,11 +66,30 @@ email. Owner: "whether got project or not should also hand to purchasing".
 - The label read here is the same `SalesOrder.project_label` as readers 1-3; one query on
   `order.so_id`, only on the no-project branch.
 
+## 5. Project filter follows the Project column (owner ask, 21 Sep 2026)
+
+Measured on the prod-copy clone: 515 distinct labels across 12,716 inquiry rows, and ZERO
+inquiries on a registered project, so the Project filter dropdown is empty today.
+
+The filter answers "show me this project's rows", and the project is the text the column
+prints. So the filter works on that text; no id encoding, no second concept.
+
+- Backend: a new optional text filter `project` on every worklist entry point that takes
+  `project_id` today (list, summary, export, matrix, and the BODY scopes of the bulk
+  actions: acknowledge scope, unplace all preview and apply). It filters
+  `_PROJECT_TITLE == project` (exact match) in `_base`. A bulk action that ignored it would
+  act on rows outside the view, so the body schemas carry it too.
+- `_projects()` groups by `_PROJECT_TITLE` (non-null), returns `{id: <text>, label: <text>,
+  rows}` ordered by label, and is computed with `project` cleared (as it clears
+  `project_id` today).
+- `project_id` stays as it is (UUID-validated) for any existing deep link; the dropdown no
+  longer sends it.
+- Frontend: the Project filter sends `project=<text>`; the stored filter blob key becomes
+  `project` (a stored `project_id` from before is ignored). Types and the two services
+  (`orderInquiryService.ts`, `orderInquiryMatrixService.ts`) gain `project`.
+
 ## Known, not fixed here
 
-- The Project filter dropdown (`_projects()`) still lists registered projects only, so it
-  cannot offer a label the column now prints. `project_id=` is the filter's contract; a
-  label filter is a separate ask.
 - Pre-existing: the purchasing notification commits on a fresh session at the savepoint
   release, before the caller's outer commit, so a later rollback can leave a notification
   pointing at an inquiry that no longer exists. Same shape as before for project-bearing

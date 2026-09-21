@@ -276,7 +276,11 @@ type OrderInquiryViewFilters = {
   po_number?: string;
   spo_number?: string;
   supplier_id?: string;
-  project_id?: string;
+  // S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the Project
+  // column - the filter follows the column now, not a registered project's id. A blob
+  // stored before this shipped may still carry the old `project_id` key; nothing here
+  // reads it any more; a fresh save never writes it back.
+  project?: string;
   raised_date?: string;
   raised_by?: string;
   linked?: 'po' | 'spo' | 'none';
@@ -646,7 +650,10 @@ export function OrderInquiriesClient() {
     // These six have no URL representation at all today (Measured facts) - the memory is
     // their only persistence, so it always applies.
     setSupplierFilter(stored.supplier_id ?? '');
-    setProjectFilter(stored.project_id ?? '');
+    // A blob saved before S5 shipped may still carry the old `project_id` key - never
+    // read here, so a stored one restores to no project filter rather than a stale id
+    // the Project select no longer has an option for.
+    setProjectFilter(stored.project ?? '');
     setRaisedDate(stored.raised_date ?? '');
     setRaisedByFilter(stored.raised_by ?? '');
     setLinkedFilter(stored.linked ?? '');
@@ -685,7 +692,7 @@ export function OrderInquiriesClient() {
     if (poNumberFilter) blob.po_number = poNumberFilter;
     if (spoNumberFilter) blob.spo_number = spoNumberFilter;
     if (supplierFilter) blob.supplier_id = supplierFilter;
-    if (projectFilter) blob.project_id = projectFilter;
+    if (projectFilter) blob.project = projectFilter;
     if (raisedDate) blob.raised_date = raisedDate;
     if (raisedByFilter) blob.raised_by = raisedByFilter;
     if (linkedFilter) blob.linked = linkedFilter as 'po' | 'spo' | 'none';
@@ -717,7 +724,7 @@ export function OrderInquiriesClient() {
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
-      project_id: projectFilter || undefined,
+      project: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
       // AC-CF-11: `ack=all` (the explicit "show everything") sends no filter at all;
@@ -777,7 +784,7 @@ export function OrderInquiriesClient() {
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
-      project_id: projectFilter || undefined,
+      project: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
     }),
     [
@@ -1328,6 +1335,12 @@ export function OrderInquiriesClient() {
             label: entry.label,
           }))}
           placeholder="Every project"
+          // S5 (`PLAN-oi-project-label-from-so.md`): the option's own text is now the
+          // SO's project label, not a short registered-project title - long enough
+          // (e.g. "KITACON / PHASE 6A & 6B@BDR TSK PUTERI") that the trigger needs to
+          // truncate to one line with the full text in `title`, same as a picker
+          // inside a fixed-width table cell.
+          truncateTriggerLabel
         />
       </div>
       <div className="space-y-1.5">

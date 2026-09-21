@@ -156,7 +156,7 @@ export async function markOrderInquiryRows(
  *        second call links nothing further.
  *
  *   GET  {BASE}/order-inquiries/unplace-all-preview  { query?, delivery_month?,
- *        raised_date?, project_id?, supplier_id?, raised_by? }
+ *        raised_date?, project_id?, project?, supplier_id?, raised_by? }
  *        -> UnplaceAllPreview { count, product_code?, product_name? }. The confirm
  *        dialog's own numbers, resolved server-side against the SAME filters
  *        `unplace-all` itself reads - never off whatever page of the worklist happens to
@@ -403,6 +403,7 @@ function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
   if (filters.delivery_month) params.set('delivery_month', filters.delivery_month);
   if (filters.raised_date) params.set('raised_date', filters.raised_date);
   if (filters.project_id) params.set('project_id', filters.project_id);
+  if (filters.project) params.set('project', filters.project);
   if (filters.supplier_id) params.set('supplier_id', filters.supplier_id);
   if (filters.raised_by) params.set('raised_by', filters.raised_by);
   return params;
@@ -450,6 +451,8 @@ export async function unplaceAllOrderInquiryRows(
  *
  *   GET  {BASE}/order-inquiries
  *        query, delivery_month=YYYY-MM, raised_date=YYYY-MM-DD, state, project_id,
+ *        project (S5: text, exact match on the Project column - what the filter's own
+ *        picker sends; project_id stays UUID-only, for an existing deep link),
  *        supplier_id, raised_by, linked, kind, page, limit, sort, dir
  *        S1 (PLAN-scm-oi-worklist-excel-parity.md, R-K) adds: location (warehouse code,
  *        equality), agent (sales agent id, equality), so_month=YYYY-MM (on the SO date),
@@ -613,6 +616,9 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       raised_date: params.raised_date,
       state: params.state,
       project_id: params.project_id,
+      // S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the
+      // Project column - the filter's own picker sends this now, never `project_id`.
+      project: params.project,
       supplier_id: params.supplier_id,
       raised_by: params.raised_by,
       linked: params.linked,

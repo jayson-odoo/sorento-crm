@@ -15,23 +15,32 @@ project, purchasing is still handed the raise - a `ProjectTask` only when there 
 project (`tasks.project_id` is NOT NULL), the in-app notification either way, its
 heading following the same fallback (`Project.title` > `SalesOrder.project_label` > the
 SO reference).
+
+AC-13..AC-18 (owner ask, 21 Sep 2026, plan section 5): the Project FILTER follows the
+same text the column prints - `project`, exact match on `_PROJECT_TITLE`, on every
+worklist entry point that reads `project_id` today (list, summary, matrix, export, and
+the body-scoped bulk actions). `project_id` is unchanged, for an existing deep link.
 """
 from __future__ import annotations
 
+import io
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
+import openpyxl
 import pytest
 from sqlalchemy import text
 
 from app.models.notification import Notification
 from app.models.order import Customer, SalesOrder
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiry,
+    OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -180,7 +189,16 @@ def _adopted_order(
 # ------------------------------------------------------------------ worklist (AC-1..AC-4)
 
 
-def _client(db, user_id: str):
+#: S5 AC-17: "Select all N matching" (acknowledge's own `filter`) and the unplace-all
+#: routes are write actions, gated on their own grants beside the plain view every
+#: other test here reads with.
+WRITE = READ_ONLY + [
+    "projects.order_inquiry.action",
+    "projects.order_inquiries.acknowledge",
+]
+
+
+def _client(db, user_id: str, permissions=READ_ONLY):
     from fastapi.testclient import TestClient
 
     from app.database import get_db
@@ -199,10 +217,11 @@ def _client(db, user_id: str):
         UserPermissionService.check_user_has_permission,
         UserPermissionService.get_user_permission_slugs,
     )
+    granted = list(permissions)
     UserPermissionService.check_user_has_permission = (
-        lambda self, uid, slug: slug in READ_ONLY
+        lambda self, uid, slug: slug in granted
     )
-    UserPermissionService.get_user_permission_slugs = lambda self, uid: list(READ_ONLY)
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: list(granted)
     return TestClient(app), originals
 
 
@@ -224,6 +243,22 @@ def api():
         project_seed_service.run(db, company_id=company_id)
         user_id = _user(db, f"{MARKER} Eling")
         client, originals = _client(db, user_id)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                yield client, db, company_id
+        finally:
+            _restore(originals)
+
+
+@pytest.fixture()
+def write_api():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        user_id = _user(db, f"{MARKER} Buyer")
+        client, originals = _client(db, user_id, WRITE)
         try:
             with company_scope(db, frozenset({company_id})):
                 yield client, db, company_id
@@ -718,3 +753,212 @@ def test_one_notification_per_header_across_reconfirms(seeded, monkeypatch):
         f"AC-12: expected exactly one notification for one header, got "
         f"{len(notifications)}"
     )
+
+
+# ----------------------------------- AC-13..AC-18: the Project filter follows the column
+
+
+def _link_row(db, company_id: str, row: OrderInquiryRow) -> None:
+    """A real PO link on the row - the minimum `unplace_all_preview`'s `linked='any'`
+    scope needs to see it at all. `_adopted_order`'s own rows carry none."""
+    supplier = Supplier(
+        id=_uid(),
+        company_id=company_id,
+        supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    db.add(supplier)
+    db.flush()
+    order = PurchaseOrder(
+        id=_uid(),
+        company_id=company_id,
+        po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add(order)
+    db.flush()
+    product = _product(db, f"ZZT-LNK-{_uid()[:6]}", f"{MARKER} link product")
+    line = PurchaseOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        purchase_order_id=order.id,
+        product_id=product.id,
+        qty_ordered=Decimal("10"),
+    )
+    db.add(line)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=company_id,
+            row_id=row.id,
+            po_line_id=line.id,
+            document=order.po_number,
+            qty=row.qty,
+        )
+    )
+    db.commit()
+
+
+def _project_filter_world(db, company_id: str) -> dict:
+    """The scenario AC-13..AC-17 all read: `ALPHA` (2 rows, two separate adopted
+    orders, both LINKED so `unplace_all_preview` has something to count), `BETA` (1
+    row, also linked), a registered project `TUJU RESIDENCE` (1 row) and a row with
+    NEITHER a project nor an SO label - the option `_projects()` must never offer
+    (AC-13)."""
+    from app.services.project_service import register_project
+
+    alpha_1 = _adopted_order(db, company_id, project_label=f"{MARKER} ALPHA", customer=None)
+    alpha_2 = _adopted_order(db, company_id, project_label=f"{MARKER} ALPHA", customer=None)
+    beta = _adopted_order(db, company_id, project_label=f"{MARKER} BETA", customer=None)
+    _link_row(db, company_id, alpha_1["row"])
+    _link_row(db, company_id, alpha_2["row"])
+    _link_row(db, company_id, beta["row"])
+    owner = _user(db, f"{MARKER} Registrar")
+    project = register_project(
+        db,
+        company_id=company_id,
+        actor_user_id=owner,
+        developer_party_id=None,
+        title=f"{MARKER} TUJU RESIDENCE",
+    )
+    db.flush()
+    registered = _adopted_order(db, company_id, project_label=None, project_id=project.id)
+    neither = _adopted_order(db, company_id, project_label=None, customer=None)
+    return {
+        "alpha": [alpha_1, alpha_2],
+        "beta": beta,
+        "registered": registered,
+        "project": project,
+        "neither": neither,
+    }
+
+
+def test_summary_projects_facet_lists_the_column_labels(api):
+    """AC-13: the facet groups by `_PROJECT_TITLE` - the SAME text the column prints -
+    not `Project.title` alone. Two adopted orders sharing a label count as two rows of
+    ONE option; a registered project is a second; a row with neither is not an option
+    at all; ordered by label."""
+    client, db, company_id = api
+    _project_filter_world(db, company_id)
+
+    body = client.get(f"{BASE}/order-inquiries/summary").json()
+    options = {opt["id"]: opt for opt in body["projects"]}
+
+    assert len(body["projects"]) == 3
+    assert options[f"{MARKER} ALPHA"]["rows"] == 2
+    assert options[f"{MARKER} BETA"]["rows"] == 1
+    assert options[f"{MARKER} TUJU RESIDENCE"]["rows"] == 1
+    labels = [opt["label"] for opt in body["projects"]]
+    assert labels == sorted(labels)
+
+
+def test_list_filters_by_project_text_exact_match(api):
+    """AC-14: `project=ALPHA` returns exactly the two ALPHA rows; the registered
+    project's own title reaches its row the same way; wrong case matches nothing."""
+    client, db, company_id = api
+    world = _project_filter_world(db, company_id)
+    alpha_ids = {order["row"].id for order in world["alpha"]}
+
+    alpha_hit = client.get(
+        LIST, params={"project": f"{MARKER} ALPHA", "limit": 100}
+    ).json()
+    registered_hit = client.get(
+        LIST, params={"project": f"{MARKER} TUJU RESIDENCE", "limit": 100}
+    ).json()
+    wrong_case = client.get(
+        LIST, params={"project": f"{MARKER} alpha", "limit": 100}
+    ).json()
+
+    assert {row["id"] for row in alpha_hit["data"]} == alpha_ids
+    assert {row["id"] for row in registered_hit["data"]} == {
+        world["registered"]["row"].id
+    }
+    assert wrong_case["data"] == []
+
+
+def test_projects_facet_ignores_its_own_filter(api):
+    """AC-15: with `project=ALPHA` applied, the facet still lists all three options -
+    a control that emptied itself the moment it was used could not be used again."""
+    client, db, company_id = api
+    _project_filter_world(db, company_id)
+
+    body = client.get(
+        f"{BASE}/order-inquiries/summary", params={"project": f"{MARKER} ALPHA"}
+    ).json()
+
+    assert len(body["projects"]) == 3
+
+
+def test_summary_matrix_and_export_all_honour_the_project_filter(api):
+    """AC-16: summary totals, the matrix and the export all narrow to ALPHA's two rows
+    with `project=ALPHA` - not just the list."""
+    client, db, company_id = api
+    world = _project_filter_world(db, company_id)
+    alpha_item_codes = {order["product"].product_code for order in world["alpha"]}
+
+    summary = client.get(
+        f"{BASE}/order-inquiries/summary", params={"project": f"{MARKER} ALPHA"}
+    ).json()
+    assert summary["total_rows"] == 2
+
+    matrix = client.get(
+        f"{BASE}/order-inquiries/matrix",
+        params={"axis": "product", "by": "week", "project": f"{MARKER} ALPHA"},
+    ).json()
+    assert sum(cell["rows"] for cell in matrix["data"]) == 2
+
+    export = client.get(
+        f"{BASE}/order-inquiries/export", params={"project": f"{MARKER} ALPHA"}
+    )
+    assert export.status_code == 200, export.text
+    book = openpyxl.load_workbook(io.BytesIO(export.content))
+    sheet = book["JAN 26"]
+    item_codes = {
+        sheet.cell(row=r, column=3).value for r in range(3, sheet.max_row + 1)
+    }
+    assert item_codes == alpha_item_codes
+
+
+def test_bulk_scopes_honour_the_project_filter(write_api):
+    """AC-17: the acknowledge route's `filter` body and the unplace-all-preview route
+    both narrow to ALPHA's two rows with `project: 'ALPHA'` - never BETA's, even though
+    BETA is linked (and so in `unplace_all_preview`'s scope) and awaiting (and so in
+    `acknowledge`'s) exactly the same as ALPHA."""
+    client, db, company_id = write_api
+    _project_filter_world(db, company_id)
+
+    preview = client.get(
+        f"{BASE}/order-inquiries/unplace-all-preview",
+        params={"project": f"{MARKER} ALPHA"},
+    ).json()
+    assert preview["count"] == 2
+
+    result = client.post(
+        f"{BASE}/order-inquiries/acknowledge",
+        json={"filter": {"project": f"{MARKER} ALPHA"}},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["acknowledged"] == 2
+
+
+def test_project_id_filter_still_works_by_uuid(api):
+    """AC-18: `project_id=<uuid>` is unchanged - it still filters by the REGISTERED
+    project, unaffected by `project` existing beside it."""
+    client, db, company_id = api
+    world = _project_filter_world(db, company_id)
+
+    body = client.get(LIST, params={"project_id": world["project"].id}).json()
+
+    assert {row["id"] for row in body["data"]} == {world["registered"]["row"].id}
+
+
+def test_project_id_filter_still_rejects_a_non_uuid(api):
+    """AC-18: a malformed `project_id` is still refused the way it is today -
+    `validate_uuid_path` answers 404, never a 500 carrying a Postgres statement."""
+    client, db, company_id = api
+    _project_filter_world(db, company_id)
+
+    response = client.get(LIST, params={"project_id": "not-a-uuid"})
+
+    assert response.status_code == 404, response.text

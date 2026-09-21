@@ -39,3 +39,27 @@ against it. Seed the whole chain in the test; never `LIMIT 1` off an existing ta
 - **AC-8 browser.** Worklist row for an adopted order prints the SO's project label in the
   Project column, at 1280 and 375 (screenshot under
   `documentation/plans/scm/evidence/oi-project-label-from-so/`).
+
+## Section 5: Project filter follows the Project column
+
+- **AC-13 facet lists labels.** Summary `projects` facet for a view holding adopted rows
+  labelled `ALPHA` (2 rows) and `BETA` (1 row) plus one row on a registered project
+  `TUJU RESIDENCE`: three options, `{id: 'ALPHA', label: 'ALPHA', rows: 2}`, `BETA`,
+  `TUJU RESIDENCE`, ordered by label. A row with neither is not an option.
+- **AC-14 filter by text.** `project=ALPHA` on the list returns exactly the two ALPHA rows;
+  `project=TUJU RESIDENCE` returns the registered-project row; `project=alpha` (wrong case)
+  returns none (exact match).
+- **AC-15 facet ignores its own filter.** With `project=ALPHA` applied, the `projects` facet
+  still lists all three options.
+- **AC-16 every entry point honours it.** Summary counts, the matrix, and the export
+  with `project=ALPHA` cover only ALPHA rows.
+- **AC-17 bulk scope honours it.** The acknowledge-scope and unplace-all preview bodies with
+  `project: 'ALPHA'` count only ALPHA rows, never BETA's.
+- **AC-18 `project_id` unchanged.** `project_id=<uuid>` still filters by registered project
+  and a non-UUID value is still rejected the way it is today.
+- **AC-19 frontend (vitest).** Picking an option in the Project filter sends
+  `project=<label>` and no `project_id`; a stored blob holding only `project_id` restores to
+  no project filter; clearing the filter drops the param.
+- **AC-20 browser.** Filters > Project lists labels, searching `KITACON` finds the option,
+  picking it narrows the list to those rows and the row count changes; clear restores. 1280
+  and 375.

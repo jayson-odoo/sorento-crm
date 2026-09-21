@@ -570,6 +570,10 @@ class AcknowledgeFilter(BaseModel):
     answers for a path param - the route ALSO runs the shared UUID guard those routes
     use (`_validate_worklist_filter_uuids`), so a value that somehow slipped past this
     pattern is still refused before it reaches SQL.
+
+    `project` (S5, `PLAN-oi-project-label-from-so.md` section 5) is text, exact match on
+    the Project column, never a uuid - separate from `project_id`, which stays as it is.
+    A bulk action that ignored it would act on rows outside the worklist's own scope.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -579,6 +583,7 @@ class AcknowledgeFilter(BaseModel):
     raised_date: Optional[str] = None
     state: Optional[WorklistState] = None
     project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    project: Optional[str] = Field(None, max_length=255)
     supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     raised_by: Optional[str] = None
     linked: Optional[str] = None
@@ -950,6 +955,9 @@ class UnplaceAllRequest(BaseModel):
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
     project_id: Optional[str] = None
+    #: S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the
+    #: Project column - separate from `project_id`, unchanged.
+    project: Optional[str] = Field(None, max_length=255)
     supplier_id: Optional[str] = None
     #: The user whose inquiries the list is narrowed to, so the action can never reach
     #: further than what the person pressing it can see.
