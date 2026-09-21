@@ -50,6 +50,8 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.user_service import UserPermissionService
 
+from tests._fake_storage import FakeStorage
+
 # THE red import. Everything below fails to collect until
 # `app/models/product_combo.py` exists with these two names (PLAN D1).
 from app.models.product_combo import (  # noqa: E402
@@ -474,13 +476,48 @@ def test_business_gate_ignores_combos(db):
 COMBO_IMAGE = "/api/v1/master-data/product-combos/{combo_id}/image"
 
 
+@pytest.fixture()
+def storage(monkeypatch) -> FakeStorage:
+    """Every combo-image upload, signed URL and delete in this file goes
+    through an in-process fake, never the real bucket.
+
+    CI has no storage credentials, so a real upload from these tests failed
+    outright there (`ValueError: S3 configuration incomplete`) - the tests
+    only ever passed locally because this lane's own dotenv carries real AWS
+    keys, which means every prior local run of this file silently uploaded
+    to the PRODUCTION bucket.
+
+    Patched in BOTH namespaces, the same idiom `tests/_fake_storage.py`'s
+    own `patch_storage` uses for `asset_service`: `product_combo_service`
+    imports `default_provider`/`get_backend`/`cdn_base_url` BY NAME at
+    module load (`from app.services.storage_router import (...)`), so it
+    holds its OWN bound copy of each - patching only `storage_router` would
+    leave that copy pointing at the real functions.
+    `resolve_signed_url`/`delete_object_best_effort` are deliberately NOT
+    patched here either (same as `patch_storage`): both are DEFINED in
+    `storage_router.py`, so their own internal `get_backend(...)` calls
+    resolve from `storage_router`'s module globals regardless of which
+    module's copy of the NAME called them.
+    """
+    from app.services import product_combo_service, storage_router
+
+    fake = FakeStorage()
+    for module in (storage_router, product_combo_service):
+        monkeypatch.setattr(module, "default_provider", lambda: "s3")
+        monkeypatch.setattr(module, "get_backend", lambda provider: fake)
+        monkeypatch.setattr(
+            module, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}"
+        )
+    return fake
+
+
 def _jpg_bytes() -> bytes:
     # A minimal valid-enough JPEG header; the route only needs to see a
     # plausible image/jpeg upload, not decode pixels.
     return bytes.fromhex("ffd8ffe000104a4649460001") + b"\x00" * 32 + bytes.fromhex("ffd9")
 
 
-def test_ac_s5_2_upload_creates_a_combo_image_attachment_and_sets_it(db, monkeypatch):
+def test_ac_s5_2_upload_creates_a_combo_image_attachment_and_sets_it(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -494,6 +531,11 @@ def test_ac_s5_2_upload_creates_a_combo_image_attachment_and_sets_it(db, monkeyp
     body = response.json()
     assert body["attachment_id"]
     assert body["url"]
+
+    # AC-S5-2: exactly one object actually written through the fake - the
+    # thing the real bucket can never assert about itself.
+    assert len(storage.objects) == 1, storage.objects
+    assert any(body["attachment_id"] in key for key in storage.objects), storage.objects
 
     db.expire_all()
     fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
@@ -510,7 +552,7 @@ def test_ac_s5_2_upload_creates_a_combo_image_attachment_and_sets_it(db, monkeyp
     assert str(link.product_id) == str(host.id)
 
 
-def test_ac_s5_2_a_non_image_upload_is_422(db, monkeypatch):
+def test_ac_s5_2_a_non_image_upload_is_422(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -523,7 +565,7 @@ def test_ac_s5_2_a_non_image_upload_is_422(db, monkeypatch):
     assert response.status_code == 422, response.text
 
 
-def test_ac_s5_2_an_oversized_upload_is_422(db, monkeypatch):
+def test_ac_s5_2_an_oversized_upload_is_422(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -537,7 +579,7 @@ def test_ac_s5_2_an_oversized_upload_is_422(db, monkeypatch):
     assert response.status_code == 422, response.text
 
 
-def test_ac_s5_2_a_combo_of_another_company_is_404_on_upload_and_delete(db, monkeypatch):
+def test_ac_s5_2_a_combo_of_another_company_is_404_on_upload_and_delete(db, monkeypatch, storage):
     _mocha(db)
     host = _product(db, "SRTBF11834", company_id=SORENTO)
     combo = _combo(db, host, "3 in 1")
@@ -553,7 +595,7 @@ def test_ac_s5_2_a_combo_of_another_company_is_404_on_upload_and_delete(db, monk
     assert delete.status_code == 404, delete.text
 
 
-def test_ac_s5_3_a_second_upload_replaces_the_first(db, monkeypatch):
+def test_ac_s5_3_a_second_upload_replaces_the_first(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -573,6 +615,13 @@ def test_ac_s5_3_a_second_upload_replaces_the_first(db, monkeypatch):
     second_attachment_id = second.json()["attachment_id"]
     assert second_attachment_id != first_attachment_id
 
+    # AC-S5-3: the OLD object's bytes are gone, and only the new one remains
+    # - the fake makes both halves of "replace" observable, not just the DB
+    # row.
+    assert len(storage.objects) == 1, storage.objects
+    assert any(second_attachment_id in key for key in storage.objects), storage.objects
+    assert not any(first_attachment_id in key for key in storage.objects), storage.objects
+
     db.expire_all()
     fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
     assert str(fresh_combo.image_attachment_id) == second_attachment_id
@@ -583,7 +632,7 @@ def test_ac_s5_3_a_second_upload_replaces_the_first(db, monkeypatch):
     assert old is None, "the replaced attachment must be deleted, not orphaned"
 
 
-def test_ac_s5_3_delete_clears_and_deletes(db, monkeypatch):
+def test_ac_s5_3_delete_clears_and_deletes(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -593,9 +642,13 @@ def test_ac_s5_3_delete_clears_and_deletes(db, monkeypatch):
         files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
     )
     attachment_id = uploaded.json()["attachment_id"]
+    assert len(storage.objects) == 1, storage.objects
 
     response = client.delete(COMBO_IMAGE.format(combo_id=combo.id))
     assert response.status_code == 204, response.text
+
+    # AC-S5-3: the bytes are gone too, not only the row.
+    assert storage.objects == {}, storage.objects
 
     db.expire_all()
     fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
@@ -606,7 +659,7 @@ def test_ac_s5_3_delete_clears_and_deletes(db, monkeypatch):
     assert db.query(Attachment).filter(Attachment.id == attachment_id).first() is None
 
 
-def test_ac_s5_4_get_combos_carries_the_image_field(db, monkeypatch):
+def test_ac_s5_4_get_combos_carries_the_image_field(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -635,7 +688,7 @@ def test_ac_s5_4_get_combos_carries_the_image_field(db, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_ac_s5_12_svg_content_type_is_refused_despite_the_image_prefix(db, monkeypatch):
+def test_ac_s5_12_svg_content_type_is_refused_despite_the_image_prefix(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -648,7 +701,7 @@ def test_ac_s5_12_svg_content_type_is_refused_despite_the_image_prefix(db, monke
     assert response.status_code == 422, response.text
 
 
-def test_ac_s5_12_an_exe_claiming_to_be_a_png_is_refused_by_its_extension(db, monkeypatch):
+def test_ac_s5_12_an_exe_claiming_to_be_a_png_is_refused_by_its_extension(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -661,7 +714,7 @@ def test_ac_s5_12_an_exe_claiming_to_be_a_png_is_refused_by_its_extension(db, mo
     assert response.status_code == 422, response.text
 
 
-def test_ac_s5_12_extension_wins_over_a_generic_client_content_type(db, monkeypatch):
+def test_ac_s5_12_extension_wins_over_a_generic_client_content_type(db, monkeypatch, storage):
     """A caller who sends no real content type (`application/octet-stream`,
     what a plain `<input type=file>` sends for an unrecognised extension on
     some platforms) must not be refused when the FILENAME extension is a
@@ -685,7 +738,7 @@ def test_ac_s5_12_extension_wins_over_a_generic_client_content_type(db, monkeypa
     assert stored.mime_type == "image/png", stored.mime_type
 
 
-def test_ac_s5_12_replace_survives_an_attachment_still_linked_elsewhere(db, monkeypatch):
+def test_ac_s5_12_replace_survives_an_attachment_still_linked_elsewhere(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -718,6 +771,14 @@ def test_ac_s5_12_replace_survives_an_attachment_still_linked_elsewhere(db, monk
         files={"file": ("second.jpg", _jpg_bytes(), "image/jpeg")},
     )
     assert second.status_code in (200, 201), second.text
+    second_attachment_id = second.json()["attachment_id"]
+
+    # AC-S5-12: the OLD object's bytes must survive too, not only the row -
+    # the fake is the only place "still-referenced bytes were not deleted"
+    # is actually checkable, rather than merely inferred from the row.
+    assert len(storage.objects) == 2, storage.objects
+    assert any(first_attachment_id in key for key in storage.objects), storage.objects
+    assert any(second_attachment_id in key for key in storage.objects), storage.objects
 
     from app.models.resources import Attachment
 
@@ -734,7 +795,7 @@ def test_ac_s5_12_replace_survives_an_attachment_still_linked_elsewhere(db, monk
     ), "the OTHER product's own link must survive the combo's replace"
 
 
-def test_ac_s5_12_the_attachments_company_id_is_the_host_products_company(db, monkeypatch):
+def test_ac_s5_12_the_attachments_company_id_is_the_host_products_company(db, monkeypatch, storage):
     host = _product(db, "SRTBF11834")
     combo = _combo(db, host, "3 in 1")
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
@@ -751,7 +812,7 @@ def test_ac_s5_12_the_attachments_company_id_is_the_host_products_company(db, mo
     assert str(stored.company_id) == str(host.company_id)
 
 
-def test_ac_s5_13_the_stored_attachment_carries_the_real_entity_type(db, monkeypatch):
+def test_ac_s5_13_the_stored_attachment_carries_the_real_entity_type(db, monkeypatch, storage):
     """AC-S5-13 (captain's ruling, phase 3 review): the value under test in
     `test_migration_ptag_0013_r10.py`'s CHECK-constraint fix must be the
     value the upload route ACTUALLY writes, or the migration test proves
