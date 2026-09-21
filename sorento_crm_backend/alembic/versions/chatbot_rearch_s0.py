@@ -80,29 +80,32 @@ def seed_domains_and_kinds(bind) -> tuple[int, int]:
     for i, row in enumerate(_DOMAINS):
         if row["name"] in existing_names:
             continue
-        bind.execute(
-            domains_table.insert().values(
-                # Explicit rather than relying on a server default: `chatbot_domains.id`
-                # has one on a REAL migrated database (this migration's own DDL, above)
-                # but not on a `create_all`-built one (the model declares only a Python-
-                # side default, which a reflected `Table` never sees) - an explicit
-                # value is correct either way.
-                id=str(uuid.uuid4()),
-                name=row["name"],
-                label=row["label"],
-                intents=row["intents"],
-                tools=row["tools"],
-                primary_tool=row["tools"][0] if row["tools"] else None,
-                escalation_team_code=row["escalation_team_code"],
-                switch_words=row["switch_words"],
-                narrowing=row["narrowing"],
-                takes_date_filter=any(t in _DATE_PARAM_TOOLS for t in row["tools"]),
-                reveal_key=row["reveal_key"],
-                supported=row["supported"],
-                ladder=row["ladder"],
-                sort_order=i,
-            )
-        )
+        values = {
+            "name": row["name"],
+            "label": row["label"],
+            "intents": row["intents"],
+            "tools": row["tools"],
+            "primary_tool": row["tools"][0] if row["tools"] else None,
+            "escalation_team_code": row["escalation_team_code"],
+            "switch_words": row["switch_words"],
+            "narrowing": row["narrowing"],
+            "takes_date_filter": any(t in _DATE_PARAM_TOOLS for t in row["tools"]),
+            "reveal_key": row["reveal_key"],
+            "supported": row["supported"],
+            "ladder": row["ladder"],
+            "sort_order": i,
+        }
+        if "id" in domains_table.c:
+            # Explicit rather than relying on a server default: `chatbot_domains.id`
+            # has one on a REAL migrated database (this migration's own DDL, above)
+            # but not on a `create_all`-built one (the model declares only a Python-
+            # side default, which a reflected `Table` never sees) - an explicit
+            # value is correct either way. Always true at this revision (the column
+            # is part of THIS migration's own `create_table` call, above) - guarded
+            # the same way as `kinds_table` below, for symmetry and so neither insert
+            # depends on assuming the reflected shape matches the DDL just issued.
+            values["id"] = str(uuid.uuid4())
+        bind.execute(domains_table.insert().values(**values))
         domains_inserted += 1
 
     existing_kinds = {
@@ -112,21 +115,30 @@ def seed_domains_and_kinds(bind) -> tuple[int, int]:
     for i, row in enumerate(_ENTITY_KINDS):
         if row["kind"] in existing_kinds:
             continue
-        bind.execute(
-            kinds_table.insert().values(
-                # See the `domains_table` insert above - explicit for the same reason
-                # (`chatbot_entity_kinds.id`, chatbot_rearch_s6f, has no server default).
-                id=str(uuid.uuid4()),
-                kind=row["kind"],
-                label=row["label"],
-                resolver_source=row["resolver_source"],
-                did_you_mean=row["did_you_mean"],
-                default_narrowing=row["default_narrowing"],
-                family_grouping=row["family_grouping"],
-                base_property_words=row["base_property_words"],
-                sort_order=i,
-            )
-        )
+        values = {
+            "kind": row["kind"],
+            "label": row["label"],
+            "resolver_source": row["resolver_source"],
+            "did_you_mean": row["did_you_mean"],
+            "default_narrowing": row["default_narrowing"],
+            "family_grouping": row["family_grouping"],
+            "base_property_words": row["base_property_words"],
+            "sort_order": i,
+        }
+        if "id" in kinds_table.c:
+            # `chatbot_entity_kinds.id` does not exist at THIS revision - it is added
+            # later in the chain by `chatbot_rearch_s6f`. On a real migrated database
+            # (the reflected shape this function normally sees) the column is absent
+            # here and must NOT be passed, or the insert raises `CompileError:
+            # Unconsumed column names: id` (prod deploy run 35652578646, 22 Sep 2026,
+            # `alembic upgrade head` against a genuinely fresh chain - the first
+            # environment ever to run this migration from a truly empty database).
+            # On a `create_all`-built table (the test suite's substrate) every model
+            # column, including columns later migrations add, exists from the start,
+            # so the column IS present there and gets an explicit value for the same
+            # reason `domains_table` does above.
+            values["id"] = str(uuid.uuid4())
+        bind.execute(kinds_table.insert().values(**values))
         kinds_inserted += 1
 
     return domains_inserted, kinds_inserted
