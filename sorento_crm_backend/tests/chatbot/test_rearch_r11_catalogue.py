@@ -41,6 +41,7 @@ from typing import Any
 import pytest
 
 from app.models.access import RespondContact
+from app.models.base import set_company_scope
 from app.models.company import RespondContactCompany
 from app.models.resources import Attachment, AttachmentType
 from app.services.chatbot import engine as engine_mod
@@ -310,6 +311,13 @@ def _wire_real(session_factory, monkeypatch) -> tuple[list[tuple[str, dict[str, 
         if name not in ATTACHMENT_TOOLS:
             return json.dumps({"result_type": "unknown", "items": [], "has_result": False})
         db2 = session_factory()
+        # Coder 40's measurement, round 4: `Attachment` is `CompanyScopedMixin` and every
+        # seeded row carries `DEFAULT_COMPANY_ID` - a fresh session opened here with no
+        # scope stamped reads UNSCOPED (0 rows), falls through to EMPTY, and the composer
+        # correctly reports a miss for what should have been a hit. The tool call itself
+        # was always right (`attachment_ids` = the one catalogue uuid); only this stub's
+        # own read needed the scope a real request-scoped session already carries.
+        set_company_scope(db2, frozenset({DEFAULT_COMPANY_ID}))
         q = (
             db2.query(
                 Attachment.id, Attachment.original_filename, AttachmentType.type_name
