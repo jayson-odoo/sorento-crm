@@ -519,6 +519,18 @@ def test_t7_no_demand_class_is_unchanged_behaviour(scm_app):
 
 
 def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app):
+    """The drill's CONFIRMED leg lists every un-linked row REGARDLESS of ack_state - main's
+    own contract, locked by `tests/scm/test_plan_row_payload_fields.py` - while
+    `committed_total` keeps excluding an awaiting one (`_committed_total` reads
+    `demand.horizon_committed_select_sql`, whose confirmed leg still filters
+    `PLANNED_ACK_STATES`): the drill SHOWS more than it COUNTS, on this leg only. The FORM
+    leg keeps filtering by ack_state (pre-existing, unrelated to this).
+
+    SO A carries: confirmed acked in-range (11), confirmed acked OUT-of-range (99, excluded
+    by the horizon - unrelated to ack), confirmed AWAITING in-range (50, now LISTED but not
+    counted), and a form row (5). SO B's form row (qty 3) must be absent - the SO-scope
+    guard (B1) this test exists for.
+    """
     _, db, _, _ = scm_app
     u = _seed_scope_universe(db)
 
@@ -533,18 +545,23 @@ def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app
 
     out = dbs.demand_for_recommendation(db, row["id"])
 
-    # SO A alone, but TWO lines now (B1): the confirmed row (named by its own SO number)
-    # and the form row (named by its Order Inquiry's own `inquiry_no` - it has no
-    # reconciled book line to hang an SO number off, `demand_breakdown_service.py:657`).
-    # SO B's form row (qty 3) must be absent - if the SO join were missing on the drill's
-    # own FORM leg, `len(lines)` would be 3 and `committed_total` would be 19, not 16.
-    assert len(out["lines"]) == 2
-    assert sorted(line["source"] for line in out["lines"]) == [
-        "order_inquiry_confirmed", "order_inquiry_form",
-    ]
-    confirmed = next(line for line in out["lines"] if line["source"] == "order_inquiry_confirmed")
-    assert confirmed["so_number"] == u["so_a"]
+    # Unchanged: the frozen committed figure never counted the awaiting row.
     assert out["committed_total"] == float((row["inputs"] or {}).get("committed")) == 16.0
+
+    qtys = sorted(float(line["qty"]) for line in out["lines"])
+    # SO A's confirmed acked (11) + confirmed AWAITING, now listed (50) + form (5) = 66,
+    # while committed_total stays 16 - the awaiting row's presence in the LIST must not
+    # move the COUNT.
+    assert sum(qtys) == 66.0
+    assert 11.0 in qtys and 50.0 in qtys and 5.0 in qtys
+    # The out-of-range confirmed row (99) stays excluded by the horizon - unrelated to the
+    # ack revert. SO B's form row (3) must not leak in - if the SO-scope join were missing
+    # on the drill's own FORM leg (`demand_breakdown_service.py:726`), it would.
+    assert 99.0 not in qtys
+    assert 3.0 not in qtys
+
+    confirmed_lines = [line for line in out["lines"] if line["source"] == "order_inquiry_confirmed"]
+    assert confirmed_lines and all(line["so_number"] == u["so_a"] for line in confirmed_lines)
 
 
 # =============================================================================

@@ -40,10 +40,12 @@ its customer/agent are read off the inquiry's OWN sales order header
 (`order_inquiries.project_sales_order_id`) rather than through a mirror line that may not
 exist. Same predicates `horizon_committed_select_sql`'s form leg applies: `supply_decision_id
 IS NULL`, the retail-shadow `NOT EXISTS`, `verb IN ('ORDER', 'ORDER_BACK')`, `state IN
-('raised', 'partly_linked')`, `ack_state IN PLANNED_ACK_STATES` (an unacknowledged row is not
-something to buy against yet, same reasoning as the confirmed leg above), the unlinked
-remainder `qty > linked`, and the same `:horizon` bind - so the lightbox total agrees with
-the row's own Project figure, which is sized by the exact same leg.
+('raised', 'partly_linked')`, `ack_state IN PLANNED_ACK_STATES` - UNLIKE the confirmed leg
+above, which SHOWS an awaiting row rather than hiding it (still owed to the customer, so it
+stays visible even though it is not bought against); the form leg has no other leg making
+that row visible at all, so it is the one place this list gates on ack_state itself - the
+unlinked remainder `qty > linked`, and the same `:horizon` bind - so the lightbox total
+agrees with the row's own Project figure, which is sized by the exact same leg.
 
 WHO SOLD IT (21 Aug live ask): `sales_orders.sales_agent_id` -> `sales_agents`, the same
 salesperson master `sales_order_service._agent_fields` already reads for the SO detail
@@ -602,11 +604,13 @@ def demand_for_recommendation(db: Session, rec_id: str,
             WHERE oir.verb = :buy_verb
               AND oir.state = ANY(:unplaced_states)
               {NOT_REDIRECTED_SQL}
-              -- The 27 Aug ack ruling (`demand.horizon_committed_select_sql`'s own
-              -- confirmed leg, and every other reader of this rule): an unacknowledged row
-              -- is not something to buy against yet, so it is not one of the orders behind
-              -- a buy figure that already excludes it.
-              AND oir.ack_state = ANY(:planned_ack_states)
+              -- No ack_state filter here, deliberately (main's contract, reaffirmed 21 Sep
+              -- after a fix-round regression): the CONFIRMED leg SHOWS an awaiting row in
+              -- the drill - it is still owed to the customer and stays visible so the
+              -- buyer can see why it is not counted - while `_committed_total`'s own read
+              -- of `horizon_committed_select_sql` (which DOES apply `PLANNED_ACK_STATES`)
+              -- is what keeps it out of the summed total. Only the FORM leg below filters
+              -- ack_state, because it has no OTHER leg showing that row at all.
               AND oir.qty > COALESCE(lk.linked, 0)
               AND sol.product_id::text = :pid
               AND sol.warehouse_id::text = ANY(:members)
@@ -627,16 +631,21 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "horizon_start": horizon_start,
             "active_state": ACTIVE_DECISION_STATE, "buy_verb": BUY_VERB,
             "unplaced_states": list(UNLINKED_INQUIRY_STATES),
-            "planned_ack_states": list(PLANNED_ACK_STATES),
             "so_numbers": run_so_numbers, **co_params,
         }
         confirmed_rows = db.execute(text(
             confirmed_base_sql
             + " ORDER BY oir.delivery_date NULLS LAST, so.so_number LIMIT :limit"
         ), {**confirmed_params, "limit": limit_n}).mappings().all()
+        # The TOTAL, unlike the list above, counts acknowledged rows only - the same
+        # `PLANNED_ACK_STATES` gate `horizon_committed_select_sql`'s own confirmed leg
+        # applies, so this figure (folded into `committed_total`/`project_total`) matches
+        # `inputs.committed` (T8). Built as `confirmed_base_sql` plus the one predicate,
+        # never a second copy of the leg.
+        confirmed_totals_sql = confirmed_base_sql + " AND oir.ack_state = ANY(:planned_ack_states)"
         confirmed_totals = db.execute(text(
-            f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS qty FROM ({confirmed_base_sql}) t"
-        ), confirmed_params).mappings().first()
+            f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS qty FROM ({confirmed_totals_sql}) t"
+        ), {**confirmed_params, "planned_ack_states": list(PLANNED_ACK_STATES)}).mappings().first()
         confirmed_n = int(confirmed_totals["n"] or 0)
         confirmed_total = float(confirmed_totals["qty"] or 0)
 
@@ -881,7 +890,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
         # query's committed figure already reports - additive, never a double count (see
         # the module docstring's PROVENANCE and S3 notes). Both totals are the UNCAPPED
         # sums (SF-1/SF-2), never `sum(l["qty"] for l in ...)`, which would undercount past
-        # the display cap.
+        # the display cap. `confirmed_total` counts ACKNOWLEDGED rows only, the same
+        # `PLANNED_ACK_STATES` gate `horizon_committed_select_sql` applies, so this figure
+        # matches `inputs.committed` - the LIST (`confirmed_rows`/`all_lines`) shows every
+        # open row regardless of ack_state (main's contract), so the total can read lower
+        # than what is actually listed above it; that is the visible-but-not-counted
+        # awaiting row, not a bug.
         "committed_total": float(totals["committed"] or 0) + confirmed_total + form_total,
         "unlocated_total": float(totals["unlocated"] or 0),
         # Where the demand actually sits, so "why BRW when I ordered for BRW-IB" is answered
