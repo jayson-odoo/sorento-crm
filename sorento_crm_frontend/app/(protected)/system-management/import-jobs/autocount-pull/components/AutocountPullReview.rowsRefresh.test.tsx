@@ -19,6 +19,20 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ImportJobRow } from '../../types/importJob.types';
 
+// PLAN-autocount-pull-discard.md: the component now calls `useRouter()` (Pull again's
+// navigation, AC-DS-11) - harness-only, no assertion in this file depends on it. The real
+// `useDiscardPull`/`useStartPull` (via `...actual` below) need no further mocking - this
+// file already wraps every render in a real `QueryClientProvider`. `usePathname` stays
+// `null` - the REAL `next/navigation` default outside a router context (see
+// `usePathname`'s own implementation), which is what the REAL `PullChangesTab` ->
+// `ImportJobRowsCard` -> `DataGrid` chain this file exercises was already reading before
+// this file mocked the module at all; a fixed pathname string here changes DataGrid's own
+// column-persistence fetch key and silently drops a column this test asserts on.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => null,
+}));
+
 const usePull = vi.fn();
 const useDownloadPullXlsx = vi.fn();
 const useConfirmPull = vi.fn();
