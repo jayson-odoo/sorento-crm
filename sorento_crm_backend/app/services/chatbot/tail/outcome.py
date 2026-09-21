@@ -251,13 +251,26 @@ def cs_offer_gate(
     raised a "please choose" picker must not ALSO raise a member picker, or the customer
     sees two numbered lists and their next number resolves against whichever the session
     happened to keep.
+
+    Hand pass 12, Group B2(a): the require-specific gate (`gate.require_specific`) is
+    only ONE of the shapes that raises a picker - a plain did-you-mean roster
+    (`build_suggest_offer`'s own `suggest_last_result_set`, spread onto `catalog` via
+    `lane_item = {**offer, "branch_kind": ...}`, `answer_bridge.answer_for`) raises one
+    too, and g4 never read it: turn 99c114fd's own reply printed the did-you-mean roster
+    (1-6) AND the member roster (restarting at 1) in one message, with `open_question`
+    left as `member_offer` - so a customer picking by the position the text had just
+    shown them could not even reach the did-you-mean roster. Checked directly on
+    `catalog` rather than threaded as a new parameter: `catalog` already carries it, and
+    `escalate_catalog` is the one function on this seam that has read `suggest_offer`
+    from the start (its own `not_found`-branch annotation).
     """
     routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
     g1 = jsc.get(catalog, "is_escalate_offer") is True
     g2 = jsc.get(routing, "suggested_team") == "customer_service"
     g3 = jsc.get(routing, "suggested_agent") == "order_enquiries"
     g4 = gate is None or jsc.get(gate, "require_specific") is not True
-    return g1 and g2 and g3 and g4
+    g4b = not jsc.truthy(jsc.get(catalog, "suggest_last_result_set"))
+    return g1 and g2 and g3 and g4 and g4b
 
 
 def build_outcome(

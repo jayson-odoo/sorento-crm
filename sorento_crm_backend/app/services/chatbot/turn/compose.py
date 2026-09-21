@@ -264,6 +264,19 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         lane_words = env.get("lane_text")
         if isinstance(lane_words, str) and lane_words.strip():
             block = lane_words.strip()
+            # Hand pass 12, Group H: a missed leg of a MULTI-domain ask must name
+            # itself, never the bare fallback (`lanes/business/fetch.NO_RESULT_INTRO`,
+            # imported lazily - this module's own purity test allows `lanes`, unlike
+            # `head`/`dialogue`/`tail`/`engine`, but nothing else here needs it).
+            # Exact-string, not a `envelope_missed` blanket rule: a richer miss
+            # sentence (a report's own refusal, an entitlement line) already names
+            # itself and must print untouched - only the tool's OWN generic "found
+            # nothing" fallback is replaced, and only when there is a subject to name.
+            from app.services.chatbot.lanes.business.fetch import NO_RESULT_INTRO
+
+            if block == NO_RESULT_INTRO and codes:
+                subject_label = label.lower() if isinstance(label, str) else str(domain)
+                block = f"No {subject_label} found for {codes}."
         elif rows_text:
             block = header + "\n" + "\n\n".join(rows_text)
         elif env.get("denied"):

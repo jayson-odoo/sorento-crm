@@ -36,6 +36,18 @@ KIND_FIELD_MAP: dict[str, str] = {
     "brand": "brands",
 }
 
+# Hand pass 12, Group B: kinds that share ONE `Focus.extra` slot rather than each
+# getting their own. The resolver types an order token "order", "customer_order" or
+# "order_number" depending on how it matched (`lanes.business.answer._ORDER_TYPES`,
+# `fetch.TYPE_TO_PARAM` - both already treat the three as one axis feeding the same
+# `order_ids` param), but a did-you-mean roster over an unplaced order token settles
+# with entity_type "customer_order" while the ORIGINAL miss that opened the roster is
+# recorded under "order" - so a pick had no bucket in common with the miss it answers,
+# and the missed raw sat on `focus.extra["order"]` forever, unreachable and unreplaced.
+# Canonicalised HERE, once, so `apply._set_kind_field`'s write and `narrow._candidates`'s
+# read can never disagree about which bucket either kind is in.
+EXTRA_KIND_ALIASES: dict[str, str] = {"customer_order": "order", "order_number": "order"}
+
 
 @dataclass
 class Focus:

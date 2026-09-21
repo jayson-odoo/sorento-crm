@@ -15,6 +15,31 @@ from __future__ import annotations
 from typing import Any
 
 # --------------------------------------------------------------------------- #
+# RECORD_KEY_KIND - hand pass 12 round 2, Group C (owner ruling, 21 Sep 2026). Not a
+# `chatbot_domains` column: checked `DomainPolicy` (turn/policy.py) and the seeded rows
+# below, neither carries anything named a "record key" today, so this is the smallest
+# addition - one plain dict, three entries, read by `turn_runtime.make_tool_runner`'s
+# own rerun-on-miss check. NOT database-seeded (unlike DEFAULT_DOMAIN_ROWS below) and
+# so not under the "frozen seed data" rule - a plain Python constant, edited directly.
+#
+# The entity KIND (the same string `Focus`'s own extra-bucket keys and `_spec_row`'s
+# `entity_type` use, folded through `turn.state.EXTRA_KIND_ALIASES` before comparison)
+# that IS this domain's own record - the thing a customer names when they mean ONE
+# specific row, not a filter over many: a shipment/container number for incoming, an
+# order number for order (the same "order"/"customer_order" axis EXTRA_KIND_ALIASES
+# already folds to one bucket), a PO number for purchase_order.
+RECORD_KEY_KIND: dict[str, str] = {
+    "incoming": "inbound_shipment",
+    "order": "order",
+    # Not exercised by any test this round - no live PO-number resolver path exists
+    # yet (measured: `lanes/business/gate.py::ALLOWED` carries no "purchase_order" row
+    # at all, so nothing types a PO number's own hint today). Named for the day one
+    # lands, after the tool's own field key (`crm_procurement_po_placed_list`'s
+    # envelope already keys its own number "po_number").
+    "purchase_order": "po_number",
+}
+
+# --------------------------------------------------------------------------- #
 # chatbot_domains seed - one row per app.services.chatbot.contracts.DOMAIN_SPEC entry,
 # in that dict's own declaration order (sort_order). Every fact below is read off that
 # constant (or a sibling one named in the docstring), not invented: label from
@@ -141,7 +166,21 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         # S6d (owner hand pass 2, item 6): the product token on an order ask resolves
         # and FILTERS the answer. Without a policy of its own it contributed neither an
         # entity nor a filter, and the outstanding report ran over every product.
-        narrowing={"customer": "must_narrow_one", "product": "optional_filter"},
+        #
+        # Hand pass 12, Group B: "order" narrows `narrow_to_code`, the same policy
+        # value `incoming`/`purchase_order` already give their own `product` kind - a
+        # did-you-mean pick over an order token is ALREADY SETTLED the moment it is
+        # picked (it carries a uuid), so this is the `just_picked` shortcut
+        # (`turn/narrow.py::decide`) most of the time in practice, falling through to
+        # the ordinary `narrow_to_code` rules on any later turn that still carries it.
+        # `EXTRA_KIND_ALIASES` (`turn/state.py`) folds "customer_order"/"order_number"
+        # onto this SAME "order" bucket, so one row covers every entity_type the
+        # resolver types an order token with.
+        narrowing={
+            "customer": "must_narrow_one",
+            "product": "optional_filter",
+            "order": "narrow_to_code",
+        },
         # answer._OUTSTANDING_SO_GRANT ("sales_orders.outstanding"): the SO arm of an
         # outstanding-order answer is refused without it.
         reveal_key="sales_orders.outstanding",

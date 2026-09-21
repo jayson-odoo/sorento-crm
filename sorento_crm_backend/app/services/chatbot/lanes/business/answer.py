@@ -614,9 +614,18 @@ def crossdomain_zeroset(
                 intersection.extend(value if isinstance(value, list) else [value])
         else:
             intersection = []
+        # Hand pass 12 round 2: the whole pool's own normalised codes, read once - what
+        # `_token_requests` needs to tell "this token names a REAL code exactly" from
+        # "this token merely shares a prefix with several", over the SAME intersection
+        # a single AND-mode/single-token resolve call returns (M2's own measurement).
+        all_norm_codes = {
+            _type_norm(jsc.get(m, "canonical_code"))
+            for m in intersection
+            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code"))
+        }
         for m in intersection:
             if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _token_requests(
-                _type_norm(jsc.get(m, "canonical_code")), tokens
+                _type_norm(jsc.get(m, "canonical_code")), tokens, all_norm_codes
             ):
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
 
@@ -2378,7 +2387,7 @@ def _type_norm(value: Any) -> str:
 _TOKEN_PREFIX_MIN_LEN = 4
 
 
-def _token_requests(norm_code: str, tokens: set[str]) -> bool:
+def _token_requests(norm_code: str, tokens: set[str], all_norm_codes: set[str]) -> bool:
     """D4 (12 Sep 2026, finding 4): does a typed token request this intersection product?
 
     Owner finding, 12 Sep 2026: "ETA SRTWT6236" resolved (tier `and`) to the one family
@@ -2390,9 +2399,24 @@ def _token_requests(norm_code: str, tokens: set[str]) -> bool:
     member, so the two halves disagreed about what "requested" means. Fixed here: a
     product is requested when a typed token EQUALS its normalised code, OR when a token of
     at least `_TOKEN_PREFIX_MIN_LEN` characters is a PREFIX of it.
+
+    Hand pass 12 round 2 (owner ruling, M2's own measurement, turn 0c6730a2 "Mfg6661
+    eta"): the cross-domain block crosses ONLY for what the PRIMARY fetch used - a typed
+    token that fold-equals a REAL code exactly (the same fold-equality `turn/narrow.py:
+    372-387`'s own `typed_exact_settles` branch uses to settle the primary fetch on ONE
+    product, never its siblings) must not ALSO sweep every sibling sharing its prefix
+    into the crossdomain probe, the way `_TOKEN_PREFIX_MIN_LEN`'s own loose rule still
+    does for a token that resolves to no exact code at all (SRTWT6236, this function's
+    own founding case, is not itself a real product - only its variants are). Once ANY
+    token in this ask exactly names a real candidate SOMEWHERE in the pool
+    (`all_norm_codes`, every candidate's own normalised code, computed once by the
+    caller), the prefix half is refused for every candidate - "requested" narrows to
+    the one thing actually typed, not its whole family.
     """
     if norm_code in tokens:
         return True
+    if tokens & all_norm_codes:
+        return False
     return any(len(t) >= _TOKEN_PREFIX_MIN_LEN and norm_code.startswith(t) for t in tokens)
 
 
@@ -2962,6 +2986,15 @@ def not_found_error_message(
             entity_type = entity_type if jsc.truthy(entity_type) else "item"
             base = disp_by_uuid.get(jsc.get(c, "uuid"))
             if not jsc.truthy(base):
+                # Hand pass 12, Group F: `disp_by_uuid` is built from the RESOLVER's own
+                # matches (`r["resolutions"]`), empty on a turn that resolved nothing
+                # fresh (a pure pick). The row's OWN `display_name` - `turn_runtime.
+                # fill_customer_names`'s DB-resolved per-ledger name - is the same fact
+                # by a different route, and outranks the code for the same reason
+                # `disp_by_uuid` does: a code is not a name, and a multi-ledger pick's
+                # own code names EVERY ledger it covers at once.
+                base = jsc.get(c, "display_name")
+            if not jsc.truthy(base):
                 base = jsc.get(c, "code")
             # A uuid is not a name. When neither the resolver display nor the code yields a
             # human-readable identifier the candidate is DROPPED, never printed raw - the
@@ -3191,8 +3224,19 @@ def not_found_error_message(
                         words.append(value)
             if not words:  # 3. last resort: the gate's own label
                 for row in rows:
+                    # Hand pass 12, Group F: a multi-ledger customer pick's own rows
+                    # carry a real per-row `display_name` (`turn_runtime.
+                    # fill_customer_names`, DB-resolved by uuid) - preferred over
+                    # `title`/`code`, neither of which a customer row has ever set to
+                    # anything but the shared account CODE, so a three-ledger pick
+                    # named the same code three times instead of three ledgers.
+                    display_name = jsc.get(row, "display_name")
                     title = jsc.get(row, "title")
-                    value = jsc.nullish_str(title if title is not None else jsc.get(row, "code")).strip()
+                    value = jsc.nullish_str(
+                        display_name
+                        if jsc.truthy(display_name)
+                        else (title if title is not None else jsc.get(row, "code"))
+                    ).strip()
                     if value and value not in words:
                         words.append(value)
             return ", ".join(words)

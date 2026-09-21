@@ -2376,9 +2376,16 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         and len(e["summary_items"])
         and e.get("has_result") is True
     )
+    # Hand pass 12, Group A: a carried order-domain status/document MAY stay on focus
+    # across a domain change ("remembering is one thing, whether I use it is another" -
+    # owner ruling) - what must stop is a NON-ORDER tool's reply using it. `ctx["tool"]`
+    # is this turn's own tool, so the gate is the same `ORDER_TOOLS` membership
+    # `entity_ids_transformer` already uses for the tool-args side of this same carry.
     order_status = semantic_input.get("order_status")
+    tool_is_order = jsc.js_string(ctx.get("tool") or "").strip() in ORDER_TOOLS
     if (
-        jsc.truthy(e.get("has_result"))
+        tool_is_order
+        and jsc.truthy(e.get("has_result"))
         and isinstance(e.get("items"), list)
         and len(e["items"])
         and order_status in ("outstanding", "delivered")

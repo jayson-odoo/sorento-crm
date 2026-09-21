@@ -35,7 +35,9 @@ from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
 from app.services.chatbot.turn.plan import FetchSpec
+from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.turn.state import (
+    EXTRA_KIND_ALIASES,
     KIND_FIELD_MAP,
     Focus,
     Profile,
@@ -1230,6 +1232,98 @@ def outstanding_carry(
     return out
 
 
+def _record_key_rerun_split(
+    domain: str, verdict: dict[str, Any], entities: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]] | None:
+    """Hand pass 12 round 2, Group C (owner ruling): the rerun's own entities (this
+    domain's own RECORD KEY alone, `policy_rows.RECORD_KEY_KIND`), the ones it drops,
+    and the WORDS the customer actually typed for the record key (read off `verdict.
+    entities` directly, never off the resolved row's own `canonical_code` - a
+    shipment resolves to the resolver's own canonical identity, `entity_resolver.py::
+    _probe_inbound_shipment`'s `shipment_number`, which is NOT the container number a
+    customer typed and the match came in on; measured directly, C1's own turn) - or
+    `None` when this fetch is not a record-key-rerun candidate at all.
+
+    `decide.py:427-478`'s own REFINE table is untouched - a combined call still
+    carries every carried filter on its FIRST try, exactly as it does today. This is
+    the ANSWERING side only, and it reads THIS message's own typed entities (`verdict.
+    entities`, `current_message: True`) rather than re-deriving the decision: a typed
+    FILTER (customer, product, date, brand - anything whose hint the domain does not
+    name as ITS OWN record) never matches `RECORD_KEY_KIND` and so never reruns (C3,
+    C4, C6's own green guards). A record key typed ALONE (nothing to drop) or a domain
+    with no record key at all both read `None` too - there is nothing to rerun for.
+    """
+    record_kind = policy_rows.RECORD_KEY_KIND.get(domain)
+    if not record_kind:
+        return None
+
+    def _fold(kind: Any) -> Any:
+        return EXTRA_KIND_ALIASES.get(kind, kind) if isinstance(kind, str) else kind
+
+    current_kind_entities = [
+        e
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("current_message") is True and _fold(e.get("hint")) == record_kind
+    ]
+    if not current_kind_entities:
+        return None
+
+    keep = [e for e in entities if _fold(e.get("entity_type")) == record_kind]
+    drop = [e for e in entities if _fold(e.get("entity_type")) != record_kind]
+    if not keep or not drop:
+        return None
+    typed_words = [
+        w
+        for w in (
+            jsc.js_string(e.get("canonical_code") or e.get("raw")).strip()
+            for e in current_kind_entities
+        )
+        if w
+    ]
+    return keep, drop, typed_words
+
+
+def _entity_display(entity: dict[str, Any]) -> str | None:
+    """The word a rerun's own dropped-filter sentence names a DROPPED row by - its
+    code where it has one (a product, an order number carried on the focus with raw
+    == code), else the raw a customer typed with no code to resolve to (a customer
+    name seeded with no separate code, R12 round 2's own C5 fixture)."""
+    value = entity.get("code") or entity.get("canonical_code") or entity.get("raw")
+    return jsc.js_string(value).strip() or None if value else None
+
+
+def _drop_focus_entities(focus: Focus, dropped: list[dict[str, Any]]) -> None:
+    """Hand pass 12 round 2, Group C: the carried entity a record-key rerun just
+    proved wrong (the combined call missed; the rerun on the record key alone did
+    not) must not still ride the focus into the NEXT turn - `focus.after` drops it,
+    the same "what the ANSWER was about" rule `turn/apply.py::_narrow_and_plan`
+    already applies for a freshly-settled kind (S6d's own comment there), applied
+    here for a kind a rerun just SETTLED THE OPPOSITE WAY about.
+    """
+    codes_by_kind: dict[str, set[str]] = {}
+    for entity in dropped:
+        kind = entity.get("entity_type")
+        code = entity.get("code") or entity.get("canonical_code") or entity.get("raw")
+        if isinstance(kind, str) and kind and code:
+            codes_by_kind.setdefault(kind, set()).add(str(code))
+    for kind, codes in codes_by_kind.items():
+        attr = KIND_FIELD_MAP.get(kind)
+        if not attr:
+            continue
+        current = getattr(focus, attr, None)
+        if not isinstance(current, list):
+            continue
+        kept = [
+            row
+            for row in current
+            if not (
+                isinstance(row, dict)
+                and str(row.get("canonical_code") or row.get("code") or row.get("raw")) in codes
+            )
+        ]
+        setattr(focus, attr, kept)
+
+
 def make_tool_runner(
     db: Session,
     *,
@@ -1303,6 +1397,13 @@ def make_tool_runner(
             if page_predicate is not None
             else _entities_for(spec, compatible_entities)
         )
+        # Hand pass 12, Group F: a multi-ledger customer pick's own entities carry no
+        # `display_name` at all (`turn/apply.py::_answer_pending` leaves it off on
+        # purpose for an option covering several uuids) - filled in here, the same
+        # DB-backed read `resolve_kinds` already does for a freshly-resolved customer
+        # (line ~906 above), so the miss header can name each ledger rather than
+        # falling back to the option's own rollup code.
+        fill_customer_names(db, entities)
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
         # and `predicate` are still set exactly as today, below, overriding whatever
@@ -1358,6 +1459,44 @@ def make_tool_runner(
                 trace=turn_trace,
                 db=db,
             )
+        # Hand pass 12 round 2, Group C (owner ruling): a combined call (a REFINE
+        # turn's own carried filter PLUS this message's own record key,
+        # `decide.py:427-478`'s table, unchanged) that MISSED reruns exactly ONCE,
+        # on the record key alone - through the SAME `business.run_fetch` call the
+        # first try used, never a second path around the access/narrowing/scope
+        # gate. `page_predicate is None` keeps a `set_page` continuation (its own,
+        # unrelated, id-only entities) out of this.
+        if page_predicate is None and not (fragment.get("fetch") or {}).get("has_result"):
+            rerun_split = _record_key_rerun_split(domain, verdict, entities)
+            if rerun_split is not None:
+                keep_entities, dropped_entities, record_words = rerun_split
+                rerun_gate = dict(gate)
+                rerun_gate["compatible_entities"] = keep_entities
+                rerun_fragment = business.run_fetch(
+                    {"gate": rerun_gate, "tier_gate": tier_gate_value, "ctx": lane_ctx},
+                    services=business_services.fetch_services(db),
+                    dry_run=dry_run,
+                    space_id=space_id,
+                    trace=turn_trace,
+                    db=db,
+                )
+                if (rerun_fragment.get("fetch") or {}).get("has_result"):
+                    dropped_words = [w for w in (_entity_display(e) for e in dropped_entities) if w]
+                    if dropped_words and record_words:
+                        note = (
+                            f"{', '.join(dropped_words)} does not match "
+                            f"{', '.join(record_words)} - dropped, showing "
+                            f"{', '.join(record_words)} on its own:"
+                        )
+                        rerun_fetch = dict(rerun_fragment.get("fetch") or {})
+                        original_text = jsc.js_string(rerun_fetch.get("response") or "").strip()
+                        rerun_fetch["response"] = (
+                            f"{note}\n\n{original_text}" if original_text else note
+                        )
+                        rerun_fragment = {**rerun_fragment, "fetch": rerun_fetch}
+                    _drop_focus_entities(focus, dropped_entities)
+                    fragment = rerun_fragment
+                    entities = keep_entities
         if _answered_unfiltered(fragment, entities, unplaced):
             # Every subject this fetch had is a token the resolver could not place, so
             # there was nothing to filter by - and a tool called with no filter answers
