@@ -306,22 +306,124 @@ class TestBlocker2bBareYesOverAnUnresolvedMissAsksWhichCompany:
             f"the clarify's own option pool must be exactly the two searched "
             f"companies: {_company_clarify_options(ctx)!r}"
         )
-        assert "1" in clarify_text and "2" in clarify_text, (
-            f"owner ruling: the clarify offers a NUMBERED list ('reply 1, 2, or the "
-            f"name') so a bare digit can answer it too - today's copy has no digits "
-            f"at all: {clarify_text!r}"
+        # NOT pinned: literal "1"/"2" digits printed in the clarify copy. Captain
+        # ruling (hand pass 11 re-check, coder 42's report): `clarify_company_reply`
+        # is graded byte for byte against the n8n capture corpus
+        # (`test_s5_escalation_lane.py::_run_clarify_company_reply`), its tail is the
+        # operator-editable `chatbot_reply_copy.CHATBOT_REPLY_OFFER_HOLD` template, and
+        # `lanes/canned.py::offer_hold_clarify_text` + `test_s3_canned_and_ideate.py`
+        # pin the SAME lead byte for byte - rewording it is a product/copy decision
+        # with a Prompts-screen owner, not a code detail this test grades. The pick
+        # IS numbered underneath (positions 1..N in exactly the printed order below)
+        # even though the SENTENCE prints no digit - `TestThirdTurnClarifyAnswerRoutesByCompanyId`
+        # pins that a bare "1" resolves to the first-printed company's real id.
+
+
+# --------------------------------------------------------------------------- #
+# The third-turn round trip: the clarify from BLOCKER 2b is answered by POSITION
+# ("1") and, separately, the customer could equally answer by NAME (already proven
+# turn-boundary-free by `TestBlocker2aCompanyWordRoutesByRealCompanyId` above) - both
+# must route by the real `company_id`, never just the name.
+# --------------------------------------------------------------------------- #
+
+
+class TestThirdTurnClarifyAnswerRoutesByCompanyId:
+    def test_a_bare_position_over_the_clarify_resolves_to_the_first_companys_real_id(
+        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        """T1 miss in both -> T2 bare "yes" clarifies (dry-run spy, the real
+        `escalation.run`/`_clarify_gate`/`_question_offered` company branch,
+        unmodified) -> T3 "1" answers the persisted `company_pick` pending by
+        POSITION. The cheap round-trip the coder's own probe used (spy
+        `run_escalation_lane`, read `escalation_context`/`_next_assignee_body` off
+        the captured pair) rather than a live (non-dry) lane, which would need a
+        company-scoped Team/AgentTeam/SLA-policy seed for a FRESH per-test company
+        this file has no other reason to build."""
+        ids = _two_company_chain(session_factory)
+        envelope = _orders_envelope([], [{"id": ids["a"], "name": MOCHA}, {"id": ids["b"], "name": SORENTO}])
+        _wire(session_factory, system_settings_row, monkeypatch, envelope=envelope)
+        stub_parser(_order_verdict())
+        stub_access()
+
+        result = engine_mod.run_turn(
+            _scope_envelope(MULTICO_CONTACT_ID, message_id="zzt-b2c-1", text=f"{PRODUCT_CODE} kim seng jaya send yet"),
+            session_factory=session_factory,
+        )
+        assert result.status == "done", result.error
+        assert "checked in" in _said(result), _said(result)
+
+        # T2 - bare "yes" over the two-company miss clarifies (dry-run, real lane).
+        dry_calls: list[tuple[Any, Any, Any]] = []
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", _dry_run_escalation_lane(dry_calls))
+        stub_parser(
+            _parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                is_affirmative=True, escalation={"is_escalation_confirmation": True, "company_pick": None},
+            )
+        )
+        result2 = engine_mod.run_turn(
+            _scope_envelope(MULTICO_CONTACT_ID, message_id="zzt-b2c-2", text="yes"),
+            session_factory=session_factory,
+        )
+        assert result2.branch_kind == "out_of_scope", (result2.branch_kind, result2.error)
+        assert len(dry_calls) == 1, dry_calls
+        _ctx2, _item2, lane_result2 = dry_calls[0]
+        assert lane_result2.get("pending") == {"kind": "company_clarify"}, lane_result2
+
+        pending = _open_question(session_factory)
+        assert pending.get("kind") == "company_pick", (
+            f"the clarify must persist as an answerable `company_pick` pending for "
+            f"the NEXT turn to resolve: {pending!r}"
+        )
+        options = pending.get("options") or []
+        assert len(options) == 2, options
+        first = next((o for o in options if o.get("position") == 1), None)
+        assert first is not None and first.get("label") == MOCHA, (
+            f"positions follow the printed order (Mocha first) - the offer's own "
+            f"printed pool: {options!r}"
         )
 
-    # A third-turn round trip ("the following turn resolves the clarify by number or
-    # name") is NOT pinned here: it depends on how the coder chooses to PERSIST the
-    # clarify across the turn boundary (a new `company_clarify` pending kind wired
-    # into `ROSTER_KINDS`/`OFFER_KINDS`/`from_wire`, versus re-arming the same
-    # `team_pick`) - undetermined anywhere this session measured, and a full live
-    # (non-dry) second turn needs a company-scoped Team/AgentTeam/SLA-policy seed this
-    # file does not have a reason to invent yet (`_escalation_seed.py`'s own seed is
-    # pinned to the SORENTO_COMPANY_ID constant, not a fresh per-test company). The
-    # company-BY-NAME resolution itself is already proven, turn-boundary-free, by
-    # `TestBlocker2aCompanyWordRoutesByRealCompanyId` above.
+        # T3 - "1" answers the persisted company_pick by POSITION.
+        calls: list[tuple[Any, Any]] = []
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", _fake_escalation_lane(calls))
+        stub_parser(
+            _parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+                is_affirmative=None, escalation={"is_escalation_confirmation": False, "company_pick": None},
+            )
+        )
+        result3 = engine_mod.run_turn(
+            _scope_envelope(MULTICO_CONTACT_ID, message_id="zzt-b2c-3", text="1"),
+            session_factory=session_factory,
+        )
+        assert result3.branch_kind == "out_of_scope", (result3.branch_kind, result3.error)
+        assert len(calls) == 1, calls
+        ctx3, item3 = calls[0]
+        ec = escalation_context(item3, ctx=ctx3)
+        assert ec.get("company_id") == ids["a"], (
+            f"a bare position over the company clarify must resolve to the FIRST "
+            f"printed company's (Mocha's) real id, not just its name riding along: {ec!r}"
+        )
+        assert ec.get("company_name") == MOCHA, ec
+
+        next_body = _next_assignee_body(ctx3, ec)
+        assert next_body.get("company_id") == ids["a"], (
+            f"the round robin must be handed Mocha's real company id: {next_body!r}"
+        )
+
+    # Kill-test proof (measured this session, reverted and restored, `git diff`
+    # confirmed clean before committing): reverting
+    # `lanes/escalation.py::escalation_context`'s `elif pick_row is not None:` arm
+    # (`company_id = jsc.get(pick_row, "company_id") or None` -> `company_id =
+    # None`) - the ONE line that reads the id off the routing-roster-plan pool a
+    # resolved `company_pick` matched against - makes
+    # `test_a_bare_position_over_the_clarify_resolves_to_the_first_companys_real_id`
+    # fail at `assert ec.get("company_id") == ids["a"]` (`None == '<uuid>'`), and
+    # leaves every other test in this file green (the mutation is scoped to the
+    # `company_pick` arm alone, which only this test and BLOCKER 2a exercise -
+    # BLOCKER 2a fails too, correctly, for the same reason: both reach id resolution
+    # through the identical pool-match arm).
 
 
 # --------------------------------------------------------------------------- #
@@ -339,7 +441,15 @@ class TestSF3SearchedCompaniesSkipsBrandAndCategoryMatches:
         `_searched_companies` returns ['Sorento', 'Cabana']..."). A product resolves
         ONLY in company A; a brand token resolves ONLY in company B. The "checked in"
         sentence names company A alone (`answer.py:2949`'s own `_NO_TOOL_ID` skip) -
-        `_searched_companies` must agree."""
+        `_searched_companies` must agree.
+
+        Captain ruling (hand pass 11 re-check, coder 42's report): the helper's
+        RETURN SHAPE changed from a bare name list to the roster ROW
+        `{"company_id", "company_name", "brand_code"}` - BLOCKER 1 needs the id to
+        travel with the name from this exact function, its only source of
+        `company_id` on the miss arm. Graded on the BEHAVIOUR (which companies
+        survive, and that the surviving row is not stripped of its id), not the
+        bare-list shape."""
         from app.services.chatbot.answer_bridge import _searched_companies
 
         resolved = {
@@ -347,13 +457,23 @@ class TestSF3SearchedCompaniesSkipsBrandAndCategoryMatches:
                 {
                     "token": "srtwc1234",
                     "matches": [
-                        {"uuid": "prod-uuid-a", "entity_type": "product", "company_name": "ZZT Sorento"},
+                        {
+                            "uuid": "prod-uuid-a",
+                            "entity_type": "product",
+                            "company_name": "ZZT Sorento",
+                            "company_id": "co-uuid-a",
+                        },
                     ],
                 },
                 {
                     "token": "cabana",
                     "matches": [
-                        {"uuid": "brand-uuid-b", "entity_type": "brand", "company_name": "ZZT Cabana"},
+                        {
+                            "uuid": "brand-uuid-b",
+                            "entity_type": "brand",
+                            "company_name": "ZZT Cabana",
+                            "company_id": "co-uuid-b",
+                        },
                     ],
                 },
             ],
@@ -365,9 +485,14 @@ class TestSF3SearchedCompaniesSkipsBrandAndCategoryMatches:
             ],
         }
         companies = _searched_companies(resolved, gate)
-        assert companies == ["ZZT Sorento"], (
+        assert [c["company_name"] for c in companies] == ["ZZT Sorento"], (
             f"a brand/category match carries no tool-side id (_NO_TOOL_ID) and must "
             f"never be counted as a company the fetch actually searched: {companies!r}"
+        )
+        assert companies[0].get("company_id") == "co-uuid-a", (
+            f"the surviving row must carry its own real company id (never stripped "
+            f"to just the name) - BLOCKER 1 has nowhere else to read the miss arm's "
+            f"company_id from: {companies!r}"
         )
 
 

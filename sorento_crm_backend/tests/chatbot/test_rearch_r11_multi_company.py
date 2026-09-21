@@ -40,6 +40,7 @@ from tests.chatbot.test_engine_company_scope import (
     _wire_answer_services,
     _wire_real_resolve_entity,
 )
+from app.services.chatbot.lanes.escalation import _next_assignee_body, escalation_context
 from tests.chatbot.test_rearch_r4_answering_a_miss import _fake_escalation_lane
 
 ORDERS_TOOL = "crm_order_management_orders_list"
@@ -246,7 +247,16 @@ class TestMissInBothCompaniesClarifiesTheCompany:
         stub_parser(
             _parser_output(
                 message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                is_affirmative=True, escalation={"is_escalation_confirmation": True, "company_pick": "mocha"},
+                is_affirmative=True,
+                # `_company_keys`/`CO_ALIASES` (`lanes/escalation.py`) only match a
+                # company whose OWN `company_name` is literally "sorento"/"mocha"/
+                # "cabana" (production's real, unprefixed company names) or an alias
+                # keyed to that exact string - this file's `ZZT`-prefixed test
+                # company names do not alias to the bare word "mocha" (tester 49's
+                # own measurement, `TestBlocker2aCompanyWordRoutesByRealCompanyId`'s
+                # docstring note). The seeded name, lowered, is what a real customer
+                # typing the company's own name back would resolve on.
+                escalation={"is_escalation_confirmation": True, "company_pick": MOCHA.lower()},
             )
         )
         result2 = engine_mod.run_turn(
@@ -255,10 +265,22 @@ class TestMissInBothCompaniesClarifiesTheCompany:
         )
         assert result2.branch_kind == "out_of_scope", (result2.branch_kind, result2.error)
         assert len(calls) == 1, calls
-        ctx, _item = calls[0]
-        blob = json.dumps(ctx, default=str)
-        assert MOCHA in blob, (
-            "the company answer must reach the escalation as the Mocha company", blob[:600]
+        ctx, item = calls[0]
+        # Strengthened (tester 50, hand pass 11 company-routing pins): the company
+        # answer must route by Mocha's REAL `company_id`, not merely carry the name
+        # somewhere in the context blob - `MOCHA in json.dumps(ctx)` was satisfied by
+        # the name simply riding along in the injected roster plan regardless of
+        # whether `_company_keys` matched anything at all (tester 49's own flag,
+        # `.claude/handoffs/20260921T0703Z-rearch-tester49-company-routing-reds.md`).
+        ec = escalation_context(item, ctx=ctx)
+        assert ec.get("company_name") == MOCHA, ec
+        assert ec.get("company_id") == ids["a"], (
+            f"the company answer must resolve to Mocha's real company id, not just "
+            f"its name: {ec!r}"
+        )
+        next_body = _next_assignee_body(ctx, ec)
+        assert next_body.get("company_id") == ids["a"], (
+            f"the round robin must be handed Mocha's real company id: {next_body!r}"
         )
         output = ((ctx.get("parse") or {}).get("output")) or {}
         assert (output.get("routing") or {}).get("suggested_team") == "customer_service", output.get("routing")
