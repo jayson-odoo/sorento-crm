@@ -366,6 +366,13 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         <p className="text-muted-foreground">Price tag description</p>
                         <p
                           className="font-medium whitespace-pre-line"
+                          // The inline style is what actually makes
+                          // `getComputedStyle().whiteSpace` read `pre-line`
+                          // under vitest/jsdom - no Tailwind stylesheet loads
+                          // there, so the CLASS alone computes nothing;
+                          // `ProductDetail.priceTagDescription.test.tsx`
+                          // reads exactly that. Kept deliberately, not a
+                          // leftover duplicate.
                           style={{ whiteSpace: 'pre-line' }}
                           data-testid="price-tag-description-value"
                         >

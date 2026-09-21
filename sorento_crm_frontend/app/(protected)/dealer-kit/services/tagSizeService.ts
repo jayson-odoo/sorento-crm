@@ -43,8 +43,8 @@ export interface TagSizeRecord {
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
-  /** The per-A4 grid this size prints as (S7, AC-S7-11/15). Not yet sent or
-   *  stored by the backend (Phase 2 migration) - always absent until then. */
+  /** The per-A4 grid this size prints as (S7, AC-S7-11/15). Null/absent =
+   *  the size carries no saved grid. */
   sheet_cols?: number | null;
   sheet_rows?: number | null;
   sheet_turn?: boolean;

@@ -1070,11 +1070,13 @@ def update_price_tag_request_tag(
     tag = _tag_or_404(db, request_id, tag_id)
     data = payload.model_dump(exclude_unset=True)
     if "print_excluded" in data:
+        # `_tag_or_404` above already resolved this same request (raising 404
+        # otherwise), so `req` here is never None.
         req = PriceTagRequestService.get_request(db, request_id)
         # AC-S6-7: refused once the request has reached proof_ready (or
         # later) - a proof already out for review must not silently lose a
         # tag from what gets printed.
-        if req is not None and req.status not in (
+        if req.status not in (
             STATUS_NEW,
             STATUS_DESIGNING,
             STATUS_CHANGES_REQUESTED,

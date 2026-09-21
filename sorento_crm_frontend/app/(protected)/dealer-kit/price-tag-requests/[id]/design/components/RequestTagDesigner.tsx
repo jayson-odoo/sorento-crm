@@ -727,10 +727,10 @@ export function RequestTagDesigner({
   /**
    * A grid typed into the panel (S7, AC-S7-14): held for this session only
    * (`customSheetGrids`), so arrange reflects it immediately without waiting
-   * on a save. Persisting it onto an EXISTING saved preset is Phase 2 (the
-   * backend does not carry `sheet_cols`/`sheet_rows`/`sheet_turn` yet) - a
-   * size with no preset yet carries it forward when "Save as size" is used
-   * (the dialog reads `customSheetGrids` directly, below).
+   * on a save. Persisting it onto an EXISTING saved preset is a later slice -
+   * there is no update call for it here yet - a size with no preset carries
+   * it forward when "Save as size" is used (the dialog reads
+   * `customSheetGrids` directly, below).
    */
   const handleSheetGridChange = useCallback(
     (width_mm: number, height_mm: number, grid: SheetGridConfig | null) => {
@@ -1211,10 +1211,10 @@ export function RequestTagDesigner({
   const updateTag = useUpdateRequestTag(request.id);
   /**
    * r10 S6 Not printed: flips `print_excluded` on the tag and writes the
-   * answer into the request held here. The response's own value wins when
-   * the server sends one; until the r10 backend lands it does not, so the
-   * value just sent stands in - the row greys locally and a reload forgets
-   * it. Arrange re-runs off `tagRefs`, so the copies drop out at once.
+   * answer into the request held here from the response the PATCH sends
+   * back - falling back to the value just sent only if a response somehow
+   * carries none. Arrange re-runs off `tagRefs`, so the copies drop out at
+   * once.
    */
   const handleTogglePrintExcluded = useCallback(
     async (tag: PriceTagRequestTag) => {

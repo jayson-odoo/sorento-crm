@@ -143,8 +143,7 @@ export interface PriceTagRequestTag {
   list_price: number | null;
   sell_price: number | null;
   /** r10 S6: marked "Not printed" - still designable, skipped by arrange,
-   *  the PDF and the sheet counts. Absent reads as false: the server does
-   *  not send it until the r10 migration lands. */
+   *  the PDF and the sheet counts. Absent reads as false. */
   print_excluded?: boolean;
   /** r10 S8: set when master data moved under this tag's pin and the change
    *  was applied by itself; cleared by Dismiss. Null or absent = nothing to
