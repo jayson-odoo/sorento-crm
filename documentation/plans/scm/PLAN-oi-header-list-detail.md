@@ -1,6 +1,6 @@
 # PLAN - Order inquiries: header list (All / Outstanding / Completed) + OI detail page, monthly OI number, fixed raised date with raise history
 
-Status: APPROVED 21 Sep 2026 (owner markup applied in Lavish, "ok go"); Phase 1 building
+Status: Phase 1 mock signed off by owner 21 Sep 2026 (hands-on, :3080); Phase 2 building, tester first
 UAC: `oi-header-list-detail-acceptance-criteria.md` (the journey is its first section)
 Branch: `feat/oi-header-list-detail` from `origin/main`
 Track: full `/feature` lane (migration + new routes + two screens)
@@ -16,6 +16,17 @@ Track: full `/feature` lane (migration + new routes + two screens)
 - R5 Raised date = first raise, fixed; every raise / reconfirm is traceable (who, when).
 - R6 Link fixes (Choose document, Link, Unlink, Reject, Unconfirm) are available on the detail
   page in this lane.
+
+- R7 (hands-on, 21 Sep) Product cell shows the code only; gear gains Auto link (ticked lines, else
+  the whole OI); Link selected STAYS next to it; the outer switch key is `display=lines`.
+- Lane stack: FE :3080, BE :8084, both from this worktree, DB `sorento_ai_automation_0918_1900`
+  (owner handed it over, 21 Sep). pytest runs against that same DB through `tests/_pg_fixture.py`
+  (every test rolls back), touched files only. Its `alembic_version` stamp is behind
+  (`521_sales_report_month_fix`; the DB converges through `create_all`), so the lane's migration is
+  applied there as idempotent DDL + its own backfill functions, never `alembic upgrade head`.
+- Migration revision id: `523_oi_monthly_no_raises` (file `alembic/versions/523_oi_monthly_no_raises.py`),
+  exposing `backfill_raises(bind)` and `renumber_inquiries(bind)` as module-level functions so the
+  tests drive them on seeded rows (precedent: `tests/test_migration_454_order_inquiry_born_ack.py`).
 
 ## Measured facts (origin/main 170d6ece3 + 0921 prod copy, 21 Sep)
 
