@@ -15,7 +15,7 @@ from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
 from app.services.chatbot.turn.policy import Policy
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, State
+from app.services.chatbot.turn.state import KIND_FIELD_MAP, State, focus_row_label
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
 
@@ -467,6 +467,12 @@ def _subject_line(state: State | None, asked_kind: str) -> str:
     anywhere, so mid-conversation there is nothing on screen saying the customer
     survived. Only axes this question is NOT about, and each family named once, by the
     same rule the answer header uses.
+
+    Reads each row through `focus_row_label` (hand pass 12 Phase 3 finding P1) so a
+    caller that filled `display_name` onto a local copy of the carried rows before
+    calling `compose_question` - the same fill `engine.py` already does for the
+    HIT-arm scope block - is actually reflected here, instead of always falling back
+    to the option's shared rollup `canonical_code`.
     """
     if state is None:
         return ""
@@ -480,7 +486,7 @@ def _subject_line(state: State | None, asked_kind: str) -> str:
             continue
         rows = getattr(getattr(state, "focus", None), attr, None) or []
         names = [
-            str(r.get("name") or r.get("canonical_code") or r.get("raw") or "").strip()
+            str(focus_row_label(r) or "").strip()
             for r in rows
             if isinstance(r, dict)
         ]

@@ -3,7 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
+
+
+def focus_row_label(row: Mapping[str, Any]) -> Any:
+    """Which field of a focus/roster row names it, in one preference order shared by
+    every caller that prints a row's own subject: `turn/compose.py::_subject_line` and
+    `tail/scope_block.py::_focus_words`. A DB-filled `display_name` (present only on a
+    LOCAL copy a caller filled just before printing - see `turn_runtime.
+    fill_customer_names`'s own docstring; never written back onto `Focus` itself)
+    wins over the pick's own `name` (stamped only for a single-identity option),
+    which wins over the raw text the contact typed, which wins over the option's
+    shared rollup `canonical_code`.
+
+    Hand pass 12 Phase 3 finding P1: `_subject_line` used to carry its OWN, narrower
+    ladder (`name or canonical_code or raw`, no `display_name` at all), so a caller
+    that HAD filled `display_name` onto a fresh roster's carried rows still printed
+    the customer ROLLUP code instead of naming every ledger.
+    """
+    return row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
 
 
 def fold_token(value: str) -> str:

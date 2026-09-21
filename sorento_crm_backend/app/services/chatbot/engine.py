@@ -25,7 +25,7 @@ import json
 import logging
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
@@ -2313,7 +2313,25 @@ def _run_stages(  # noqa: PLR0915
             and completes_here
             and branch_kind in _ASK_BRANCH_KINDS
         ):
-            answer = turn_compose.compose_question(plan.ask, state_out)
+            # Hand pass 12 Phase 3 finding P1: a fresh roster over a DIFFERENT axis
+            # (e.g. a product pick, once a multi-ledger `customer_pick` already
+            # settled) must still name every carried customer, not just print the
+            # option's shared rollup code - `turn/apply.py::_answer_pending`'s own
+            # multi-uuid rows carry no `name` at all. Filled the SAME way the HIT-arm
+            # scope block above already does (~2158-2166): a LOCAL copy, `entity_type`
+            # stamped for the shared filler, never written back onto `state_out.focus`
+            # itself.
+            subject_state = state_out
+            if state_out.focus.customers:
+                focus_customers_named = [
+                    {**row, "entity_type": "customer"} for row in state_out.focus.customers
+                ]
+                turn_runtime.fill_customer_names(db, focus_customers_named)
+                subject_state = dataclasses_replace(
+                    state_out,
+                    focus=dataclasses_replace(state_out.focus, customers=focus_customers_named),
+                )
+            answer = turn_compose.compose_question(plan.ask, subject_state)
 
         # -- the REFUSAL: a denied stock check is an answer, not silence ------- #
         # `stock_denied` is one of the three business branch kinds, so it is outside

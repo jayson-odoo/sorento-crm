@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from app.services.chatbot.turn.state import focus_row_label
+
 # NARROWED (main, captain ruling 2026-08-24, ported verbatim): this header describes
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
 # date-filters", which let it render "Customer: all customers" on an inbound
@@ -183,10 +185,9 @@ def _focus_words(rows: Any) -> str | None:
         # Hand pass 12 round 3, Group F: `display_name` (the caller's own DB-resolved
         # per-ledger name, filled onto a LOCAL copy right before this call, never onto
         # `focus` itself) wins over `name` (only ever stamped for a single-identity
-        # pick) and the option's own rollup `raw`/`canonical_code`.
-        value = _printable(
-            row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
-        )
+        # pick) and the option's own rollup `raw`/`canonical_code` - the ONE ladder,
+        # shared with `turn/compose.py::_subject_line` (hand pass 12 Phase 3 P1).
+        value = _printable(focus_row_label(row))
         if value and value not in words:
             words.append(value)
     return ", ".join(words) if words else None
