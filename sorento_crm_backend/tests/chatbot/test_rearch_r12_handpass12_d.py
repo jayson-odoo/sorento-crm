@@ -79,6 +79,22 @@ def _seed_shipment(session_factory: Any, *, container: str) -> str:
     return row.id
 
 
+def _no_dash_code(prefix: str) -> str:
+    """A token with NO separators, matching turn 50082c60's own recorded raw text
+    ("TCNU3167091" - four letters, seven digits, no dash, no space) - MEASURED: `app/
+    services/chatbot/turn/reconcile.py::apply_reconciliation` looks up `resolved.
+    get(e.get("raw"))`, but `resolved` (`turn_runtime.resolve_kinds`'s own `by_token`)
+    is keyed by the FOLDED token (`fold_token`, dashes and whitespace stripped) - a
+    raw carrying a dash (`unique_code`'s own "ZZT-CONT-xxxx" shape) never finds its
+    own resolver hit under that key, so the hint is never rewritten regardless of what
+    the resolver actually matched. `unique_code(...)` would silently exercise THAT
+    pre-existing key-fold gap rather than these tests' own target (the rerun gate
+    reading the parser's hint instead of the resolved kind), so every typed entity
+    token in this file is built dash-free instead, the same shape the recorded turn's
+    own container number already has."""
+    return f"ZZT{prefix}{uuid.uuid4().hex[:10].upper()}"
+
+
 # --------------------------------------------------------------------------- #
 # RERUN VARIANT - the record-key rerun reads the RESOLVED kind, not the parser's
 # own (possibly wrong) hint.
@@ -89,33 +105,47 @@ class TestC1VariantParserHintMismatchResolvedKindWins:
     def test_parser_hints_product_resolver_places_shipment_the_dropped_product_still_names_itself(
         self, session_factory, monkeypatch
     ) -> None:
-        """Replays turn 50082c60's own shape (`.claude/handpass/hp12b-turns-21sep.json`):
-        focus carries product SRTWB1421 in domain incoming; the customer types
-        "TCNU3167091" and the PARSER hints it `"product"` (turn 50082c60's own
-        recorded verdict, byte for byte) even though it is a container number - the
-        REAL resolver places it as an `inbound_shipment` regardless of the hint
-        (`entity_resolver.py::_probe_inbound_shipment`, exact case/whitespace-
+        """Replays turn 50082c60's own shape, MEASURED off `.claude/handpass/
+        hp12b-turns-21sep.json` directly (both this turn and the one before it,
+        9904f2f9, which left the carried focus): focus carries product SRTWB1421 in
+        domain incoming (`document: ["PO"]`, no open question needed - `decide.py::
+        _subject_reading`'s REFINE row fires on `domain_in_message: false` plus
+        entities alone, the SAME row `test_rearch_r12_handpass12_b.py`'s own C1
+        reaches with no pending seeded either); the customer types "TCNU3167091"
+        and the PARSER hints it `"product"` (turn 50082c60's own recorded verdict,
+        byte for byte: `domain_in_message: false`, one entity, `hint: "product"`,
+        `canonical_code: null`, `current_message: true`) even though it is a
+        container number - the REAL resolver places it as an `inbound_shipment`
+        regardless of the hint (`entity_resolver.py`, exact case/whitespace-
         insensitive match on `shipping_container_number`, the SAME real-resolver
-        seeding `test_rearch_r12_handpass12_b.py`'s own C1 uses). Owner rule: the
-        record-key rerun test must read the RESOLVED kind of the entity typed this
-        turn (a shipment), not the parser's own hint (`"product"`).
+        seeding C1 uses).
 
-        MEASURED contradiction against the brief's own assumption ("the rerun
-        happens, a second incoming call with shipment_ids only"), flagged rather
-        than forced: with hint "product" - the SAME kind as the carried entity -
-        the combine step never runs at all; `focus.products` is replaced outright
-        before any fetch, so there is only ONE incoming call (`shipment_ids` alone,
-        no miss, no rerun cycle). C1's own two-call rerun is specific to hint
-        "inbound_shipment" (a DIFFERENT kind than the carried "product"), which
-        combines across two focus buckets rather than replacing one. The genuine
-        gap this mishint shape exposes instead: the dropped product is never named
-        in the reply at all - a silent loss of carried context, still the SAME
-        owner intent ("the reply names what was dropped") even though the
-        mechanism differs from C1's."""
+        CORRECTED (this file's own previous version of this test asserted the
+        wrong shape - flagged, not carried forward): the live trace's own idx 10
+        tool call already carries BOTH `product_ids` and `shipment_ids` on the
+        FIRST try (`entities_in: 2`) - the resolver's real kind, not the parser's
+        mishint, decides whether the typed entity COMBINES with or REPLACES the
+        carried one, and a resolved `inbound_shipment` combines against a carried
+        `product` (a different kind) exactly as C1's own correctly-hinted turn
+        does. The combined call misses live (`envelope.has_result: false`) and the
+        live bot never reruns - it answers "Here's what you want: ... But no
+        incoming matched these. Would you like me to escalate?" - because `app/
+        services/chatbot/turn_runtime.py::_record_key_rerun_split`'s own
+        `current_kind_entities` gate reads the PARSER's hint
+        (`e.get("hint") == record_kind`) to decide whether this turn even
+        qualifies as record-key-typed, and the parser hinted "product", not
+        "inbound_shipment" - so the gate never fires and the miss stands, no
+        rerun at all, even though the SAME function's `keep`/`drop` split two
+        lines down already reads the RESOLVED `entity_type` correctly. Owner
+        ruling 5 (hand pass 12): rerun once on a REFINE miss when the entity typed
+        THIS turn is the domain's record key by its RESOLVED kind, whatever the
+        parser hinted - so this turn must still get the shipment-only rerun C1
+        gets, dropping the carried product and naming it in the reply the same
+        way."""
         _seed_contact_and_get(session_factory)
         code = unique_code("D1PROD")
         product_id = _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=code)
-        container = unique_code("CONT")
+        container = _no_dash_code("CONT")
         _seed_shipment(session_factory, container=container)
         other_code = unique_code("D1OTHER")
         _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=other_code)
@@ -141,15 +171,13 @@ class TestC1VariantParserHintMismatchResolvedKindWins:
             intent_hint="check_incoming",
             domain_hint="incoming",
             domain_in_message=False,
-            # `continuation: True` - `TestGroupCRerunOnMissForTypedRecordKey::
-            # test_c1_...`'s own verdict shape, UNCHANGED, per this test's own
-            # instruction to copy C1's seeding/verdict pattern and vary only the
-            # hint. Turn 50082c60's OWN recorded `continuation` is `False` - with
-            # THAT value the REFINE table takes a different (NEW_ASK) branch and
-            # never combines with the carried product at all, which tests a
-            # different decide.py row than the one this variant targets (whether
-            # the record-key rerun reads the RESOLVED kind, not the parser hint).
-            continuation=True,
+            # Turn 50082c60's OWN recorded `continuation` is `False` (not the
+            # prior version's `True`) - `_is_continuation` (`turn/apply.py`)
+            # requires `continuation is True` AND no current-message entity, so
+            # with a current-message entity present here either value reaches the
+            # exact same REFINE decision; pinned to the recorded value rather than
+            # the prior guess.
+            continuation=False,
             entity_op="replace_combine",
             entities=[
                 {
@@ -158,6 +186,7 @@ class TestC1VariantParserHintMismatchResolvedKindWins:
                     "raw": container,
                     "hint": "product",
                     "canonical_code": None,
+                    "hint_confident": True,
                     "current_message": True,
                     "confident": True,
                 }
@@ -192,36 +221,140 @@ class TestC1VariantParserHintMismatchResolvedKindWins:
         assert result.status == "done", result.error
         said = _said(result)
 
-        # MEASURED, not the brief's own assumption (flagging the contradiction
-        # rather than forcing it): with hint "product" (matching the CARRIED
-        # entity's own kind) the combine step never happens at all - the typed
-        # entity replaces `focus.products` outright before any fetch runs, so the
-        # very FIRST (and only) incoming call already carries `shipment_ids` alone,
-        # no `product_ids`, no miss, no rerun. C1's own two-call rerun is specific
-        # to hint "inbound_shipment" (a DIFFERENT kind than the carried "product"),
-        # which combines across two focus buckets rather than replacing one -
-        # confirmed directly, not assumed: this fixture is C1's own seeding pattern
-        # with only the `hint` field changed.
+        incoming_calls = [args for name, args in fetch_calls if name == INCOMING_TOOL]
+        # (a) MEASURED off the live trace's own idx 10: the FIRST call already
+        # combines both kinds - the resolver's real kind wins over the parser's
+        # mishint for the combine-vs-replace reconciliation, same as C1.
+        assert incoming_calls, f"no incoming call went out at all: {fetch_calls!r}"
+        assert "product_ids" in incoming_calls[0], incoming_calls[0]
+        assert "shipment_ids" in incoming_calls[0], incoming_calls[0]
+
+        # (b) THE RED: a record-key miss must rerun exactly once, on the RESOLVED
+        # kind, regardless of the parser's own mishint - today's code gates the
+        # rerun on the parser's hint instead, so this never fires and the fetch
+        # stops at one call.
+        assert len(incoming_calls) == 2, (
+            f"a REFINE miss on a mishinted record key must still rerun once, on "
+            f"the RESOLVED kind (a shipment), the same as a correctly-hinted "
+            f"turn does: {fetch_calls!r}"
+        )
+        assert "shipment_ids" in incoming_calls[1], incoming_calls[1]
+        assert "product_ids" not in incoming_calls[1], (
+            f"the rerun must drop every carried filter, keeping only the current "
+            f"message's own record key: {incoming_calls[1]!r}"
+        )
+
+        # (c) the rerun's own HIT reply names the dropped product and the
+        # container in one sentence (C1's own dropped-filter shape), then prints
+        # the rerun's own rows, and stops offering to escalate.
+        lines = said.split("\n")
+        combo_lines = [ln for ln in lines if code in ln and container in ln]
+        assert combo_lines, (
+            f"the carried product AND the container must both appear in one "
+            f"sentence, naming what the rerun dropped: {said!r}"
+        )
+        assert other_code in said, f"the rerun's own rows must print: {said!r}"
+        assert "escalate" not in said.lower(), (
+            f"a successful rerun must not still offer to escalate: {said!r}"
+        )
+
+        # (d) the dropped product must not still ride the focus into the next turn.
+        state = _state_of(session_factory)
+        products_after = (state.get("focus") or {}).get("products") or []
+        assert not any(p.get("canonical_code") == code for p in products_after), (
+            f"the dropped product must not still ride the focus: {products_after!r}"
+        )
+
+    def test_guard_parser_hints_shipment_wrongly_for_a_word_that_resolves_to_a_product_never_reruns(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """The mirror mishint: the PARSER wrongly hints `"inbound_shipment"` for a
+        word that the REAL resolver places as a `product` - a typed FILTER over an
+        incoming focus, never the domain's record key (`policy_rows.
+        RECORD_KEY_KIND["incoming"] == "inbound_shipment"`), so it must never
+        rerun even though the mishint happens to match the record-kind gate's own
+        (buggy) hint check. This is a GUARD, not the fix's own target: `app/
+        services/chatbot/turn_runtime.py::_record_key_rerun_split`'s `keep`/`drop`
+        split already reads the RESOLVED `entity_type` (not the hint) for the
+        keep-vs-drop question, so `keep` (entities whose RESOLVED kind is
+        `inbound_shipment`) comes out empty here and the function returns `None`
+        before any rerun - true today, and must stay true once the `current_kind_
+        entities` gate above it is corrected to read the resolved kind too (a
+        resolved `product` still never equals the domain's record key
+        `inbound_shipment`, whichever gate decides it)."""
+        _seed_contact_and_get(session_factory)
+        carried_code = unique_code("D1GCARRY")
+        carried_id = _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=carried_code)
+        typed_code = _no_dash_code("D1GTYPED")
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=typed_code)
+
+        _seed_state(
+            session_factory,
+            focus=_focus(
+                domains=["incoming"],
+                document=["PO"],
+                products=[
+                    {
+                        "raw": carried_code,
+                        "hint": "product",
+                        "uuid": carried_id,
+                        "company_name": "Sorento",
+                        "canonical_code": carried_code,
+                    }
+                ],
+            ),
+        )
+
+        verdict = _parser_output(
+            message_type="business_query",
+            intent_hint="check_incoming",
+            domain_hint="incoming",
+            domain_in_message=False,
+            continuation=False,
+            entity_op="replace_combine",
+            entities=[
+                {
+                    # THE REVERSE MISHINT - a real product code, hinted as a
+                    # shipment (the domain's own record key).
+                    "raw": typed_code,
+                    "hint": "inbound_shipment",
+                    "canonical_code": None,
+                    "hint_confident": True,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+            document=[],
+            status=None,
+            order_status=None,
+            routing={
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries",
+                "team_source": None,
+            },
+        )
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == INCOMING_TOOL:
+                return json.dumps(_unknown_envelope_with_rows([]))
+            return _unknown_envelope()
+
+        mcp_call, fetch_calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=verdict,
+            text_body=typed_code,
+            msg_id="zzt-d1-guard-reverse-mishint",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+
         incoming_calls = [args for name, args in fetch_calls if name == INCOMING_TOOL]
         assert len(incoming_calls) == 1, (
-            f"test setup sanity, measured: a same-kind mishint ('product') never "
-            f"combines with the carried product at all - one call, not two: "
-            f"{fetch_calls!r}"
+            f"a typed FILTER (a resolved product, whatever the parser mishinted) "
+            f"must never rerun, even on a miss: {fetch_calls!r}"
         )
-        assert "shipment_ids" in incoming_calls[0], incoming_calls[0]
-        assert "product_ids" not in incoming_calls[0], incoming_calls[0]
-
-        # The RED: the carried product is dropped with NO explanation at all - the
-        # reply names only the container's own rows, never the product it silently
-        # lost. Owner rule's own intent ("the reply names what was dropped")
-        # applies regardless of which mechanism (rerun vs first-call narrowing)
-        # did the dropping.
-        assert code in said, (
-            f"the carried product must still be named as dropped, even though this "
-            f"mishint shape narrows on the FIRST call rather than rerunning: "
-            f"{said!r}"
-        )
-        assert other_code in said, f"the shipment-only rows must print: {said!r}"
 
 
 def _unknown_envelope_with_rows(rows: list[tuple[str, str]]) -> dict[str, Any]:
