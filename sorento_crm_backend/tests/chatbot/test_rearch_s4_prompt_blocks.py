@@ -106,7 +106,19 @@ class TestMigrationPublishesFirstRearchVersionUnlabelled:
     """The migration that publishes the first rearch parser version (S4, not yet
     written) must leave exactly ONE new unlabelled `ai_prompt_versions` row for
     `chatbot_semantic_parser` whose body contains the rendered blocks verbatim and
-    whose `config_json` carries `blocks_hash`; the `production` label must not move."""
+    whose `config_json` carries `blocks_hash`; the `production` label must not move.
+
+    RE-PINNED (owner ruling 21 Sep 2026, hand pass 12 S12): `chatbot_rearch_s12`
+    republishes AND promotes `production` ON PURPOSE, once the narrowing values it
+    ships are live (S12's own docstring: "deploying this lane must need NO hand
+    setup on prod" - this REVERSES S4's own "the owner promotes from the Prompts
+    page" rule for later publishes). Asserting "the label has not moved" against
+    `pg_session` (the FULLY migrated database, S12 included) now fails for the
+    right reason: S12 has already moved it, on purpose. `test_production_label_
+    not_moved_by_the_migration` below now runs S4 ALONE (`blank_session()`, S0 then
+    S4 only, never the full chain) to keep pinning what THIS migration promises on
+    its own step; `test_rearch_s12_config_ships.py::TestS12Upgrade` is where the
+    promote-on-purpose rule is pinned."""
 
     PROMPT_NAME = "chatbot_semantic_parser"
 
@@ -150,9 +162,24 @@ class TestMigrationPublishesFirstRearchVersionUnlabelled:
             )
 
     def test_production_label_not_moved_by_the_migration(self) -> None:
+        """S4 ALONE (`blank_session()`, S0 then S4, never S6d..S12): a fresh scratch
+        schema's own `seed_prompt_registry` bootstrap (called from inside `publish_
+        policy_blocks` itself) seeds v1 AND its production label the FIRST time this
+        install has ever seeded the key - production then stays at that v1 while
+        S4's own new-version logic publishes today's rendered blocks as a SECOND,
+        UNLABELLED version. `test_rearch_s12_config_ships.py::TestS12Upgrade` pins
+        the opposite, ON-PURPOSE promote S12 performs once the chain reaches it -
+        this test only ever exercises S4's own step."""
         from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+        from tests._pg_fixture import blank_session
+        from tests.chatbot.test_rearch_s12_config_ships import _load
 
-        with pg_session() as db:
+        with blank_session() as db:
+            bind = db.get_bind()
+            _load("chatbot_rearch_s0.py").seed_domains_and_kinds(bind)
+            _load("chatbot_rearch_s4.py").publish_policy_blocks(bind)
+            db.commit()
+
             production = (
                 db.query(AIPromptLabel)
                 .filter(AIPromptLabel.name == self.PROMPT_NAME, AIPromptLabel.label == "production")
@@ -166,7 +193,7 @@ class TestMigrationPublishesFirstRearchVersionUnlabelled:
             )
             assert production_version is not None
             assert rendered not in (production_version.template or ""), (
-                "the migration that publishes the rearch blocks must NOT move the "
-                "production label - the version production still points at must not "
-                "be the new rendered-blocks version"
+                "S4 ALONE must not move the production label - the version "
+                "production still points at (the bootstrap v1) must not be the new "
+                "rendered-blocks version S4 published unlabelled"
             )

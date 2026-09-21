@@ -1601,25 +1601,22 @@ class TestTypedStemWinsOverFamilySibling:
         """The edge case the captain's brief originally asked to REPORT rather than
         force: "SRT567" is a prefix of several products but not itself one of them.
 
-        20 Sep 2026 - RE-MEASURED, behaviour CHANGED for the better (a real fix
-        landing free, not this tester's own change): the ORIGINAL finding was that
-        `outstanding_product_code`'s fallback picked whichever product entity was
-        FIRST in resolution order, silently, with no roster. Measured now: the turn
-        correctly asks (a real `product_pick` `open_question`, both candidates
-        offered) instead of guessing - no fetch runs on this turn at all, which is
-        the CORRECT behaviour for a genuinely ambiguous stem (neither candidate's
-        own code casefold-equals "SRT567"), not a gap. Re-pinned to the new, honest
-        property.
-
-        COPY RE-PIN (tester 31, 20 Sep 2026, R4's AC-1680 consolidation): the
-        literal "Which product do you mean?" header this test asserted is one of
-        the exact duplicate strings AC-1680 names for deletion - `turn/compose.py`'s
-        `_ASK_HEADERS` no longer carries a `product_pick`-specific entry, so a
-        roster with no domain-specific header falls to the ONE shared generic
-        header, `compose_question`'s own default, "Which one do you mean?"
-        (measured: `turn/compose.py:423,487`). Re-pinned to that current production
-        string; the candidates-present and open_question-shape assertions are
-        unchanged."""
+        RE-PINNED AGAIN (owner ruling 21 Sep 2026, hand pass 12, S12): the owner
+        reversed `order.product`'s own narrowing to `list_all` - a typed family stem
+        now answers over EVERY variant it names, the same way `inventory`/
+        `purchase_cost` already do, rather than rostering an ambiguity that `list_
+        all` no longer treats as one. Re-measured directly (this pass, tester 55):
+        the turn runs exactly ONE fetch, `crm_sales_report`, and that call's own
+        `product_code` arg is the RAW TYPED STEM ("SRT567") - `outstanding_product_
+        code`'s typed-code-wins rule (AC-1119, the SAME rule the sibling test above
+        pins for a stem that IS itself a product) fires here too, unconditionally
+        on the raw text, not conditioned on whether the stem itself resolves to a
+        product. There is no `product_ids` key on this call at all - a captain's
+        brief guess ("product_ids = every variant of the stem") did not survive
+        measurement; flagged here rather than forced. No roster is left open - the
+        report's own normal `sales_report_detail` follow-up offer ("Reply 1 for the
+        sales order list") is a different, unrelated pending shape and is not what
+        this test refuses."""
         first_uuid = "55555555-5555-5555-5555-555555555555"
         second_uuid = "66666666-6666-6666-6666-666666666666"
         resolve_services = _family_resolve_services(
@@ -1648,14 +1645,23 @@ class TestTypedStemWinsOverFamilySibling:
             resolve_services=resolve_services,
             mcp_response=SALES_REPORT_HIT,
         )
-        assert captured == [], (
-            "an honest roster must fetch nothing before the customer picks", captured,
+        assert result.status == "done", result.error
+        assert len(captured) == 1, (
+            f"a typed family stem must answer over every variant it names with ONE "
+            f"fetch, never a roster (owner ruling 21 Sep 2026, list_all): {captured!r}"
         )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Which one do you mean?" in reply, reply
-        assert "SRT5679" in reply and "SRT5670" in reply, reply
+        name, args = captured[0]
+        assert name == "crm_sales_report", name
+        assert args.get("product_code") == "SRT567", (
+            "typed-code-wins (AC-1119) must send the RAW TYPED STEM here too, the "
+            f"SAME rule the sibling test above pins for an exact-match stem: {args!r}"
+        )
         open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "product_pick", open_question
+        assert open_question.get("kind") != "product_pick", (
+            f"no product roster may be left open once the family answers directly - "
+            f"a stem that is not itself a product must never guess a single sibling "
+            f"NOR still roster: {open_question!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

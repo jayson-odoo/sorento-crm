@@ -168,17 +168,27 @@ class TestFinding5EntityOpReplaceDropsCarriedCustomers:
 
 class TestFinding6OrderDomainProductIsAnOptionalFilterNeverDropped:
     """Ruling 6 (turn c45e2929): a product token on an order ask resolves (roster when
-    ambiguous) and filters the report; never dropped silently. Seed `order` narrowing
-    product = `optional_filter` (resolve and filter)."""
+    ambiguous) and filters the report; never dropped silently.
+
+    RE-PINNED (owner ruling 21 Sep 2026, hand pass 12, S12): the owner reversed the
+    original `optional_filter` seed to `list_all` - a typed family STEM means orders
+    containing ANY variant of it (no pick forced), while a typed product is still
+    never silently dropped. The seed value changed; the "never dropped" half of this
+    finding (a `product` key exists at all, distinct from `not_applicable`) did not."""
 
     def test_order_domain_product_narrowing_is_optional_filter(self) -> None:
         from app.services.chatbot.turn import policy_rows
 
         row = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
-        assert row["narrowing"].get("product") == "optional_filter", (
-            "order's product narrowing must seed 'optional_filter' (resolve and "
-            f"filter, never silently drop) - currently {row['narrowing'].get('product')!r} "
-            "(measured: no 'product' key at all today, only 'customer')"
+        value = row["narrowing"].get("product")
+        assert value == "list_all", (
+            "order's product narrowing must seed 'list_all' (owner ruling 21 Sep "
+            f"2026, hand pass 12 S12 - a typed family stem answers over every "
+            f"variant, never a silent drop) - currently {value!r}"
+        )
+        assert value != "not_applicable", (
+            "whatever the seed value, a product token on an order ask must never be "
+            f"silently dropped (not_applicable): {value!r}"
         )
 
 

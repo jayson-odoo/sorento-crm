@@ -1,9 +1,9 @@
 Domain master_products ("product information"): intents check_product. Switch words: catalogue, catalog, spec, specs, specification, specifications, dimension, dimensions. Escalates to purchasing.
-Domain product_attachment ("product attachments"): intents check_product_attachment. Switch words: (none). attachment_type narrows narrow_by_type; product narrows must_narrow_one. Escalates to marketing_product.
-Domain promotion ("promotions"): intents check_promotion. Switch words: promo, promos, promotion, promotions, promosi. product narrows optional_filter; tier narrows narrow_by_tier. Takes a date window. Escalates to marketing_promotion.
+Domain product_attachment ("product attachments"): intents check_product_attachment. Switch words: (none). attachment_type narrows narrow_by_type; product narrows narrow_by_tier. Escalates to marketing_product.
+Domain promotion ("promotions"): intents check_promotion. Switch words: promo, promos, promotion, promotions, promosi. product narrows narrow_by_tier; tier narrows narrow_by_tier. Takes a date window. Escalates to marketing_promotion.
 Domain forms ("forms"): intents get_forms. Switch words: (none). form narrows must_narrow_one. Escalates to marketing_form.
 Domain inventory ("stock"): intents check_stock, low_stock_report. Switch words: stock, stocks, inventory, stok, qty, quantity, low stock, reorder report, below level. product narrows list_all. Takes a date window. Escalates to warehouse.
-Domain order ("orders"): intents check_order. Switch words: order, orders, outstanding, tempahan, delivery, deliveries, deliver, delivered, penghantaran, hantar, dihantar. customer narrows must_narrow_one; product narrows optional_filter. Takes a date window. Escalates to customer_service.
+Domain order ("orders"): intents check_order. Switch words: order, orders, outstanding, tempahan, delivery, deliveries, deliver, delivered, penghantaran, hantar, dihantar. customer narrows must_narrow_one; order narrows narrow_to_code; product narrows list_all. Takes a date window. Escalates to customer_service.
 Domain incoming ("incoming stock"): intents check_incoming. Switch words: incoming, eta, shipment, shipments, arriving, container, containers. product narrows narrow_to_code. Takes a date window. Escalates to purchasing.
 Domain portal_link ("this request"): intents get_portal_link. Switch words: (none).
 Domain resource_attachment ("resource attachments"): intents get_resource_attachment. Switch words: (none). Takes a date window.
