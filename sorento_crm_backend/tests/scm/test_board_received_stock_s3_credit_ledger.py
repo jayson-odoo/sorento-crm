@@ -336,79 +336,88 @@ def test_single_line_credit_never_exceeds_the_floor():
 
 
 def test_confirm_credit_is_stated_through_the_capacity_ledger():
-    """B2 (confirm): ONE confirm payload naming BOTH lines of one order at one bin
-    where the ordinary group-take reading is 0 (a competing 5000-unit order at the same
-    location, earlier date - the AC-S3-1 shape) and the own-arrival credit is the ONLY
-    capacity either line has: line 1 needs 40 with its own PO line received 40, line 2
-    needs 40 with its OWN, separate PO line also received 40, on hand 40 total at the
-    shared bin.
+    """B1 (round 3, re-aimed): a second reading of ONE bin must intersect with the
+    ordinary reading there, never SUM with it.
 
-    GREEN today: `_check_line`'s `own_arrival_left` ledger (`project_supply_service.py`)
-    is a single dict CREATED ONCE per `confirm()` call and threaded
-    through every line of the payload in order - line 1 is checked first, its credit
-    (40) is stated through `capacity_left.offer(...)` and drains `own_arrival_left`'s
-    entry for that bin to 0 (`own_arrival_credit_for`); line 2 is checked
-    second, reads the SAME drained ledger, and its own credit computes to 0 even though
-    its own separate PO also received 40 - the physical floor, not the document, is what
-    is shared. With the ordinary rung offering nothing at that bin either (the 5000-unit
-    order dominates it), line 2 has no capacity left at all and the payload is refused.
+    On hand 100 at one bin. A competing core sales-order line for 60 at that same bin,
+    an EARLIER required date, so the ordinary date-aware reading `_check_line` seeds
+    `capacity_left` with for THIS line's own bin is 40 (100 on hand, less the earlier
+    60-unit demand it has to honour first - the AC-S3-1 date-aware shape). This line
+    itself needs 80, and its own PO line received 40 - a tier-1 own-arrival credit of 40
+    (`own_arrival_credit_for` caps the credit by the RAW physical on hand, 100, per this
+    file's own docstring above, never by the netted 40). `proposal_for` composes it
+    Reserve 40 (own_arrival) + Buy 40 - the credit alone does not clear the whole 80.
 
-    One `confirm()` call is atomic (`SupplyLinesRefused` - "Nothing was written" - PLAN
-    3.1 step 6), so "the first accepted" is read off `failing_lines`: line 1 is absent
-    from it (its own composition cleared the recheck cleanly) while line 2 is the one
-    named, which is what tells a planner reading the refusal which row to fix - not
-    literal separate commits, which a single payload naming both lines cannot produce.
+    A confirm posting Reserve 80 at that bin must be REFUSED: the bin truly holds only
+    40 free once the earlier, competing demand is honoured, and the credit is a second
+    STATEMENT about that same physical pile ("this line's own PO put at least 40 of it
+    there"), not a second, additional 40 stacked on top of the ordinary reading.
 
-    Regression guard for the seam this file's own docstring (lines 19-23) names: if the
-    confirm-time credit were added straight onto `_check_line`'s local `capacity` dict
-    instead of being stated `capacity_left.offer(...)`, line 2 would read its OWN fresh
-    40-unit credit (nothing shared) and both lines would be accepted - reserving 80 off
-    a 40-unit floor live, at confirm time, past the compose-time guard entirely.
+    R14 (`_check_reserve_against_on_hand`) cannot be the guard that catches this: the
+    competing line is an open, UNCONFIRMED core SO line with no `SOLineAllocation` of its
+    own, so R14's own "silent when nobody else holds here" clause leaves it untouched -
+    this shape isolates `_check_line`'s own capacity ledger, the seam this file's
+    docstring names, from R14's separate one.
+
+    RED today: `_check_line`'s confirm-time recheck (`project_supply_service.py`) calls
+    `capacity_left.state_at_least(fact.product_id, str(source.id), before + credit_qty)`
+    - `before` (40, the ordinary reading already seeded into the ledger) PLUS the credit
+    (40) - so the bin's stated floor is raised to 80 and Reserve 80 wrongly clears it.
+    The right call states the credit as its OWN reading of the bin -
+    `state_at_least(..., credit_qty)`, i.e. the pile becomes `max(before, credit_qty)`
+    (`state_at_least`'s own semantics), never their sum - so the bin's stated floor stays
+    at 40 (the larger of the two readings, 40 and 40) and Reserve 80 is refused.
+
+    Control: `test_confirm_credit_reserve_within_capacity_is_accepted` below (a sibling,
+    not this same world - a Reserve here summing to LESS than the line's whole open qty
+    would first be refused by the unrelated "components add up" / "whole line either
+    wholly stock or wholly Buy" rules, which would test those rules rather than this
+    ledger) posts a Reserve fully within what the bin supports and is accepted, so the
+    fix is pinned as "the two readings intersect", not "the credit is ignored outright".
     """
     within_window = date.today() + timedelta(days=10)
     dominant = date.today() + timedelta(days=5)
     with blank_session() as db:
         company_id, actor, project, product = _world(db)
         own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
-        _stock(db, product, own, on_hand=40)
+        _stock(db, product, own, on_hand=100)
+
+        # The competing demand: an earlier-dated, UNCONFIRMED core SO line for 60 at the
+        # SAME bin, no PO of its own and no allocation of its own - this is what nets the
+        # ordinary date-aware reading down to 40 without ever giving R14 a holder to name.
+        competing_so = _core_so(db, company_id)
+        _core_line(
+            db, competing_so, product, own, qty_ordered="60", required_date=dominant,
+        )
 
         core_so = _core_so(db, company_id)
-        core_line_1 = _core_line(
-            db, core_so, product, own, qty_ordered="40", required_date=within_window,
+        core_line = _core_line(
+            db, core_so, product, own, qty_ordered="80", required_date=within_window,
         )
-        core_line_1.source_ref = f"ZZT-B2-L1-{_uid()[:8]}"
+        core_line.source_ref = f"ZZT-B1-{_uid()[:8]}"
         db.flush()
-        po1 = supplier_and_po(db, po_number=f"ZZT-PO-B2-L1-{_uid()[:8]}")
+        po = supplier_and_po(db, po_number=f"ZZT-PO-B1-{_uid()[:8]}")
         po_line_bought_for(
-            db, po1, product, own, from_so_line_ref=core_line_1.source_ref,
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
             qty_received=40, qty_ordered=40,
         )
-
-        core_line_2 = _core_line(
-            db, core_so, product, own, qty_ordered="40", required_date=within_window,
-        )
-        core_line_2.source_ref = f"ZZT-B2-L2-{_uid()[:8]}"
-        db.flush()
-        po2 = supplier_and_po(db, po_number=f"ZZT-PO-B2-L2-{_uid()[:8]}")
-        po_line_bought_for(
-            db, po2, product, own, from_so_line_ref=core_line_2.source_ref,
-            qty_received=40, qty_ordered=40,
-        )
-
-        # The other order that drives the group net at this bin to 0 - same location,
-        # earlier date so it dominates the date-aware reading too (AC-S3-1's own shape,
-        # reused by test_ac_s3_10_confirm_round_trip_with_own_arrival_reserve above).
-        other_so = _core_so(db, company_id)
-        _core_line(db, other_so, product, own, qty_ordered="5000", required_date=dominant)
 
         order = _project_so(db, project, so_id=core_so.id)
-        line_1 = _project_line(
-            db, order, line_no=1, product=product, core_line=core_line_1,
-        )
-        line_2 = _project_line(
-            db, order, line_no=2, product=product, core_line=core_line_2,
-        )
+        line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
+
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        components = proposal["lines"][0]["components"]
+        reserve = sum(
+            (Decimal(c["qty"]) for c in components if c["kind"] == "reserve"), Decimal("0"),
+        )
+        buy = sum(
+            (Decimal(c["qty"]) for c in components if c["kind"] == "buy"), Decimal("0"),
+        )
+        assert reserve == Decimal("40") and buy == Decimal("40"), (
+            "the board's own proposal: Reserve 40 (own_arrival credit) + Buy 40 - "
+            f"components={components}"
+        )
 
         with pytest.raises(AppException) as refused:
             ProjectSupplyService(db).confirm(
@@ -416,12 +425,8 @@ def test_confirm_credit_is_stated_through_the_capacity_ledger():
                 ConfirmSupplyBody(
                     lines=[
                         ConfirmLine(
-                            project_line_id=str(line_1.id),
-                            reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
-                        ),
-                        ConfirmLine(
-                            project_line_id=str(line_2.id),
-                            reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
+                            project_line_id=str(line.id),
+                            reserve=[{"warehouse_id": str(own.id), "qty": "80"}],
                         ),
                     ]
                 ),
@@ -429,12 +434,71 @@ def test_confirm_credit_is_stated_through_the_capacity_ledger():
             )
         assert refused.value.status_code == 409, refused.value.detail
         failing = refused.value.detail.get("failing_lines") or []
-        failing_line_nos = {entry.get("line_no") for entry in failing}
-        assert failing_line_nos == {line_2.line_no}, (
-            "line 1's credit drains the shared on-hand ledger for the bin; line 2's own "
-            "separate PO receipt must not read a second, undrained 40 off the same "
-            f"physical floor - expected only line 2 refused, got: {failing}"
+        assert failing and str(line.line_no) == str(failing[0].get("line_no")), failing
+        reason = (failing[0].get("reason") or "") if failing else ""
+        assert "40" in reason and "80" in reason, (
+            "the bin's true free floor (40, the ordinary reading and the credit stating "
+            f"the SAME pile, never their sum) refuses an 80-unit ask: reason={reason!r}"
         )
+
+
+def test_confirm_credit_reserve_within_capacity_is_accepted():
+    """B1's control: the SAME bin arithmetic (on hand 100, an earlier-dated competing
+    core SO line for 60 nets the ordinary date-aware reading to 40) but this line needs
+    only 40, matching its own PO's receipt (tier-1 credit 40) exactly - a Reserve of 40
+    is the WHOLE line, no Buy beside it, so the "components add up" and "wholly stock or
+    wholly Buy" rules never enter into it, and the confirm exercises `_check_line`'s
+    capacity ledger alone.
+
+    GREEN both before and after B1's fix: `before` (the ordinary reading, 40) and
+    `credit_qty` (40) are equal here, so `max(before, credit_qty)` (the correct,
+    intersecting reading) and `before + credit_qty` (today's buggy, summing one) both
+    reach or exceed 40, and Reserve 40 clears either arithmetic. Pinned so a fix that
+    over-tightens the ledger - refusing a legitimate, fully-backed Reserve - is caught
+    here rather than only the over-permissive direction B1 pins.
+    """
+    within_window = date.today() + timedelta(days=10)
+    dominant = date.today() + timedelta(days=5)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=100)
+
+        competing_so = _core_so(db, company_id)
+        _core_line(
+            db, competing_so, product, own, qty_ordered="60", required_date=dominant,
+        )
+
+        core_so = _core_so(db, company_id)
+        core_line = _core_line(
+            db, core_so, product, own, qty_ordered="40", required_date=within_window,
+        )
+        core_line.source_ref = f"ZZT-B1-CTRL-{_uid()[:8]}"
+        db.flush()
+        po = supplier_and_po(db, po_number=f"ZZT-PO-B1-CTRL-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
+        db.commit()
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        assert result["exceptions"] == [], result
+        assert result["lines_decided"] == 1, result
 
 
 # ============================================================================

@@ -533,3 +533,171 @@ def test_mixed_row_replan_settles_in_place_and_keeps_both_links(api):
         "purchasing's own decision at Order Inquiries, not a side effect of a credit-"
         f"covered settle - the link must survive untouched: {still_open}"
     )
+
+
+# ============================================================================
+# B2 (round 3): the netting loop's PARTLY_LINKED branch calls
+# `_redirect_row_if_received` for MULTIPLE rows of one line on ONE instance - the
+# per-instance `own_arrival_left` ledger must be charged with what each ROW actually
+# used to clear itself, never the whole LINE's theoretical credit on the first row asked.
+# ============================================================================
+
+
+def test_path_picker_charges_only_what_each_row_used(api):
+    """B2: one line, qty_ordered 70, its own PO received 70 (tier-1 credit, theoretical
+    70, capped by on hand 70) - TWO rows on that SAME line, 35 each, each with its OWN
+    SPO allocation link fully received (35 each, linked total 70 across the two rows).
+    Both rows are genuinely backed by real, physical stock (70 on hand covers both 35s
+    with nothing left over) - `_redirect_row_if_received`, evaluated for BOTH rows on
+    ONE `ProjectOrderInquiryService` instance (the netting loop's own PARTLY_LINKED
+    branch, `project_order_inquiry_service.py`, does exactly this for every row of an
+    order in one replan call), must retain BOTH (`None`, Path B) - neither flips
+    `redirected_to_pool`.
+
+    RED today: `_own_arrival_credit_for_row` builds its `_LineFacts` off the WHOLE
+    line's `open_qty` (70) on every call, and `own_arrival_credit_for` charges the
+    shared `own_arrival_left` ledger with the FULL theoretical credit it computes (70),
+    never with what the calling row actually needed to clear its own `credit >=
+    linked_qty` check (35) - so row 1's own check (`70 >= 35`) drains the ledger to 0 in
+    one call, and row 2's own check then reads `credit = min(70, remaining=0) = 0`,
+    which is `< 35`, so row 2 is wrongly redirected even though 35 of the SAME 70
+    physically on hand is, in truth, still exactly its own.
+
+    Idempotence (same bug, one layer down, pinned in isolation on a fresh product/PO of
+    its own so nothing else touches its ledger key): asking the SAME row's own credit
+    TWICE in a row, on one instance, must return the SAME answer - re-asking the
+    question a row already asked must not draw the ledger down a second time. Today the
+    second call returns 0, because `own_arrival_credit_for` charges the ledger
+    unconditionally on every call it is given, whether the caller is a fresh row or the
+    same one asked again.
+    """
+    client, world = api
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="70",
+        required_date=date(2027, 6, 1),
+    )
+    core_line.source_ref = f"ZZT-B2-{_uid()[:8]}"
+    db.flush()
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    po = supplier_and_po(db, po_number=f"ZZT-PO-B2-{_uid()[:8]}")
+    po_line_bought_for(
+        db, po, world.product, world.own_wh, from_so_line_ref=core_line.source_ref,
+        qty_received=70, qty_ordered=70,
+    )
+    _stock(db, world.product, world.own_wh, 70)
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        amendment_id=None, state="raised", raised_by=world.actor,
+    )
+    db.add(inquiry)
+    db.flush()
+
+    row1 = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("35"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    row2 = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("35"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    db.add_all([row1, row2])
+    db.flush()
+
+    spo1 = spo_allocation_fully_received(
+        db, world.product, world.own_wh, qty=35, from_po_number=po.po_number,
+    )
+    spo2 = spo_allocation_fully_received(
+        db, world.product, world.own_wh, qty=35, from_po_number=po.po_number,
+    )
+    link1 = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=row1.id, spo_allocation_id=spo1.id,
+        document=spo1.spo_number, qty=Decimal("35"),
+    )
+    link2 = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=row2.id, spo_allocation_id=spo2.id,
+        document=spo2.spo_number, qty=Decimal("35"),
+    )
+    db.add_all([link1, link2])
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state=DECISION_ACTIVE, line_snapshots=[], confirmed_by=world.actor,
+    )
+    db.add(decision)
+    db.commit()
+
+    svc = ProjectOrderInquiryService(db)
+    result1 = svc._redirect_row_if_received(row1, [link1], decision)
+    result2 = svc._redirect_row_if_received(row2, [link2], decision)
+
+    assert result1 is None, (
+        "row 1's own 35 is backed by 35 of the 70 physically on hand: it must be "
+        f"retained (Path B), not redirected: {result1}"
+    )
+    db.expire_all()
+    fresh1 = db.get(OrderInquiryRow, row1.id)
+    assert fresh1.redirected_to_pool is not True, fresh1.redirected_to_pool
+
+    assert result2 is None, (
+        "row 2's own 35 is backed by the OTHER 35 of the same 70 physically on hand - "
+        "row 1's own check must not charge the shared ledger with the WHOLE line's "
+        "theoretical credit (70) when it only needed 35 to clear its own check, or row "
+        f"2 reads a falsely-drained ledger and is wrongly redirected: {result2}"
+    )
+    fresh2 = db.get(OrderInquiryRow, row2.id)
+    assert fresh2.redirected_to_pool is not True, fresh2.redirected_to_pool
+
+    # Idempotence, isolated: a fresh product (its own ledger key, untouched by anything
+    # above) so re-asking the SAME row's own credit twice measures only whether the
+    # method itself is idempotent, not interference from row1/row2's own draws.
+    idem_product = _product(db, f"ZZT-B2-IDEM-{_uid()[:8]}")
+    idem_core_so = _core_so(db, world.company_id)
+    idem_core_line = _core_line(
+        db, idem_core_so, idem_product, world.own_wh, qty_ordered="50",
+        required_date=date(2027, 6, 2),
+    )
+    idem_core_line.source_ref = f"ZZT-B2-IDEM-{_uid()[:8]}"
+    db.flush()
+    idem_order = _project_so(
+        db, world.project, so_id=idem_core_so.id, autocount_doc_no=idem_core_so.so_number,
+    )
+    idem_line = _project_line(
+        db, idem_order, line_no=1, product=idem_product, core_line=idem_core_line,
+    )
+    db.commit()
+
+    idem_po = supplier_and_po(db, po_number=f"ZZT-PO-B2-IDEM-{_uid()[:8]}")
+    po_line_bought_for(
+        db, idem_po, idem_product, world.own_wh, from_so_line_ref=idem_core_line.source_ref,
+        qty_received=50, qty_ordered=50,
+    )
+    _stock(db, idem_product, world.own_wh, 50)
+
+    idem_inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=idem_order.id,
+        amendment_id=None, state="raised", raised_by=world.actor,
+    )
+    db.add(idem_inquiry)
+    db.flush()
+    idem_row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=idem_inquiry.id,
+        so_line_id=idem_line.id, qty=Decimal("50"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    db.add(idem_row)
+    db.commit()
+
+    first_credit = svc._own_arrival_credit_for_row(idem_row)
+    second_credit = svc._own_arrival_credit_for_row(idem_row)
+    assert first_credit == second_credit == Decimal("50"), (
+        "asking the same row's own credit twice on one instance must be idempotent - "
+        f"first={first_credit} second={second_credit}"
+    )
