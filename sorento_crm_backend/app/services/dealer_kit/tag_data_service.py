@@ -1599,6 +1599,12 @@ def data_hash(row: dict) -> str:
             "chosen": bool(part.get("chosen")),
             "list_price": _plain(part.get("list_price")),
             "sell_price": _plain(part.get("sell_price")),
+            # AC-S4-15: a part's OWN template is a fact about that part, not
+            # about the host - edited, it must move the hash the same way
+            # the host's own `price_tag_description` above already does, or
+            # the gate stays silent for the exact case `diff_pin_against_
+            # live`'s per-part loop already knows how to report.
+            "price_tag_description": part.get("price_tag_description"),
         }
         for part in row.get("parts") or []
     ]
@@ -1759,6 +1765,14 @@ def diff_pin_against_live(
             f"{code} offer price",
             _money(before.get("sell_price")),
             _money(after.get("sell_price")),
+        )
+        # AC-S4-15: a part's own template, diffed under that part's own code -
+        # mirrors the host's own `price_tag_description` comparison above.
+        add(
+            f"part:{code}:price_tag_description",
+            f"{code} price tag description",
+            before.get("price_tag_description"),
+            after.get("price_tag_description"),
         )
         before_images = {
             image.get("attachment_id") for image in before.get("images") or []
