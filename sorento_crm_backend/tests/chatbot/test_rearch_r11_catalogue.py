@@ -55,7 +55,11 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures re-exported by 
     stub_access,
     stub_parser,
 )
-from tests.chatbot.test_engine_company_scope import _real_resolve_entity, _unreachable_access_types
+from tests.chatbot.test_engine_company_scope import (
+    _real_resolve_entity,
+    _seed_workspace,
+    _unreachable_access_types,
+)
 from tests.chatbot.test_r3_pending_end_to_end import _session_of
 
 LIST_TOOL = "crm_resource_attachments_list"
@@ -251,6 +255,25 @@ def _scope_seeded_contact_to_default_company(session_factory: Any) -> None:
     db.commit()
 
 
+def _point_seeded_contact_at_default_workspace(session_factory: Any) -> None:
+    """Round 3 follow-up (coder measurement, 21 Sep 2026): the company-scope fix above
+    is not enough on its own. `field_access.resolve_contact_id(db, contact_id,
+    space_id)` JOINs through `RespondWorkspace` whenever `space_id` is truthy;
+    `stub_access()` hardcodes `default_space_id` to "364817", the `seeded` fixture's
+    contact carries `workspace_id = None`, and this private test DB has NO
+    `RespondWorkspace` row at all - so the contact resolves to `None` and the scope
+    stays `frozenset()` regardless of the `RespondContactCompany` link, exactly the
+    same fail-closed symptom one layer deeper. Seeds ONE workspace at that same
+    space_id (`_seed_workspace`, already hardcoded to "364817") and points the
+    existing contact row at it - reuses `test_engine_company_scope.py::_seed_workspace`
+    rather than a second workspace-seeding helper."""
+    workspace_id = _seed_workspace(session_factory)
+    db = session_factory()
+    contact = db.query(RespondContact).filter(RespondContact.respond_io_id == str(CONTACT_ID)).one()
+    contact.workspace_id = workspace_id
+    db.commit()
+
+
 def _wire_real(session_factory, monkeypatch) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, str]]:
     """The REAL resolver (`entity_resolver.resolve_references_intersection`'s
     filename-coverage AND, `_and_probe_attachment(coverage_mode=True)`, opt-in for
@@ -268,6 +291,7 @@ def _wire_real(session_factory, monkeypatch) -> tuple[list[tuple[str, dict[str, 
     db.commit()
 
     _scope_seeded_contact_to_default_company(session_factory)
+    _point_seeded_contact_at_default_workspace(session_factory)
     ids = _seed_catalogue_library(session_factory)
 
     def _bundle(db: Any, *, space_id: str | None = None) -> ResolveGateServices:
