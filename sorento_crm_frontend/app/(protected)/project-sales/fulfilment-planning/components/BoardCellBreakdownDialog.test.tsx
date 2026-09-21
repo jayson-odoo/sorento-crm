@@ -3883,3 +3883,88 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
     expect(screen.getByText('SO398322')).toBeInTheDocument();
   });
 });
+
+/**
+ * AC-S5-1 (`board-received-stock-own-arrival-acceptance-criteria.md` S5,
+ * `PLAN-board-received-stock-own-arrival.md` R7): the own-arrival credit (S3) composes as a
+ * Reserve carrying `source: 'own_arrival'` on the wire
+ * (`FulfilmentBoardService._source`, `project_fulfilment_board_service.py:~4056`). The board
+ * says so with a "Received N" chip, beside the existing per-source pills in the "Sourced
+ * from" cell - the same cell the `buy_origin === 'local'` Badge already sits in
+ * (`BoardCellBreakdownDialog.tsx`, the `sources` column) - carrying the PO number
+ * (`supply_document`) in its `title`. RED: nothing in `BoardCellBreakdownDialog` reads
+ * `source` today, so no such chip exists at any quantity.
+ */
+describe('BoardCellBreakdownDialog: own arrival (S5)', () => {
+  /** One line whose ladder composed 20 as an own-arrival Reserve off PO 202510-S0101. */
+  function cellWithOwnArrival(source: Record<string, unknown> = {}): BoardCell {
+    const cell = cellOf([demand({ qty: '20' })]);
+    const contribution = {
+      ...cell.contributions[0],
+      sources: [
+        {
+          kind: 'reserve',
+          rung: 'group_take',
+          qty: '20',
+          location: 'BRW-BB',
+          reason: '20 landed for this line on PO 202510-S0101, taken first.',
+          source: 'own_arrival',
+          supply_document: 'PO 202510-S0101 line 2',
+          ...source,
+        },
+      ],
+    };
+    return { ...cell, contributions: [contribution] } as unknown as BoardCell;
+  }
+
+  function renderDialogFor(cell: BoardCell) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('AC-S5-1: a source carrying source: own_arrival renders a "Received N" chip naming the PO in its title', () => {
+    const cell = cellWithOwnArrival();
+    const key = cell.contributions[0].key;
+    renderDialogFor(cell);
+    openLines();
+
+    const chip = screen.getByTestId(`received-own-arrival-${key}`);
+    expect(chip.textContent).toBe('Received 20');
+    expect(chip).toHaveAttribute('title', expect.stringContaining('PO 202510-S0101'));
+  });
+
+  it('AC-S5-1: no chip when no source carries source: own_arrival', () => {
+    const cell = cellOf([demand({ qty: '20' })]);
+    const key = cell.contributions[0].key;
+    renderDialogFor(cell);
+    openLines();
+
+    expect(
+      screen.queryByTestId(`received-own-arrival-${key}`),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-S5-1: an ordinary group-take Reserve with source: null renders no chip', () => {
+    const cell = cellWithOwnArrival({ source: null });
+    const key = cell.contributions[0].key;
+    renderDialogFor(cell);
+    openLines();
+
+    expect(
+      screen.queryByTestId(`received-own-arrival-${key}`),
+    ).not.toBeInTheDocument();
+  });
+});

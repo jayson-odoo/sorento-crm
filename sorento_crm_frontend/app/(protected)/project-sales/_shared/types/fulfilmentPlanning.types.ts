@@ -1504,6 +1504,14 @@ export interface BoardSource {
    */
   supply_key?: string | null;
   supply_document?: string | null;
+  /**
+   * R7 (`PLAN-board-received-stock-own-arrival.md`, S3/S5): `"own_arrival"` on a Reserve
+   * born from goods that landed FOR this line (or the rest of its own sales order),
+   * `null`/absent on an ordinary Reserve. What the board's "Received N" chip keys off
+   * (AC-S5-1) - the same string the engine writes on `contribution["sources"]`
+   * (`FulfilmentBoardService._source`).
+   */
+  source?: 'own_arrival' | null;
 }
 
 /** A donor the engine found for a line's Borrow. Named, never an id. */

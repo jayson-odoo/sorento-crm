@@ -798,6 +798,33 @@ export function BoardCellBreakdownDialog({
                   merged.some((m) => m.kind === 'buy') && (
                     <Badge variant="secondary">Local</Badge>
                   )}
+                {/* AC-S5-1 (`PLAN-board-received-stock-own-arrival.md`): a Reserve born
+                    from goods that landed FOR this line carries `source: 'own_arrival'` -
+                    never derived from `rung === 'group_take'` alone, which also covers an
+                    ordinary group-take Reserve nothing landed for. */}
+                {(() => {
+                  const ownArrival = contribution.sources.filter(
+                    (source) => source.source === 'own_arrival',
+                  );
+                  if (ownArrival.length === 0) return null;
+                  const minor = ownArrival.reduce(
+                    (total, source) => total + toMinor(source.qty),
+                    0,
+                  );
+                  const title = ownArrival
+                    .map((source) => source.supply_document)
+                    .filter((document): document is string => Boolean(document))
+                    .join(', ');
+                  return (
+                    <Badge
+                      variant="secondary"
+                      data-testid={`received-own-arrival-${contribution.key}`}
+                      title={title || undefined}
+                    >
+                      Received {fromMinor(minor)}
+                    </Badge>
+                  );
+                })()}
                 {/* The two prose sentences behind the numbers above - why this rung fired,
                     and what was left for this line at its own pile - under one visible icon
                     rather than a silent `title` nobody hovers or two lines of wrapped text
