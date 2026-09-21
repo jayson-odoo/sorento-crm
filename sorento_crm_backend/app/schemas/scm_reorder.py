@@ -8,9 +8,15 @@ supplier resolve to human codes/names (ids stay on the request path only).
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+#: One sales order number, capped like `canonical_documents.py`'s own `_SoNumber` - a
+#: bound on the STRING, not the list (that is `so_numbers`'s own `Field(max_length=...)`
+#: below). Human-typed SO numbers are short; a caller sending a pathological string is a
+#: request to reject, not one to store.
+_SoNumber = Annotated[str, Field(max_length=100)]
 
 
 def require_start_on_or_before_end(start: Optional[date], end: Optional[date]) -> None:
@@ -24,6 +30,20 @@ def require_start_on_or_before_end(start: Optional[date], end: Optional[date]) -
     """
     if start is not None and end is not None and start > end:
         raise ValueError("plan_horizon_start must be on or before plan_horizon_date")
+
+
+def require_so_numbers_need_project_demand_class(
+    demand_class: Optional[str], so_numbers: List[str]
+) -> None:
+    """Raises when ``so_numbers`` is asked for without ``demand_class='project'`` (T2).
+
+    An SO scope only means something against the project leg specifically - a retail run or
+    an unscoped ("all") run nets without regard to which sales orders the buyer named, so a
+    non-empty list on either of those is a request that cannot be honoured rather than one
+    that is silently ignored.
+    """
+    if so_numbers and demand_class != "project":
+        raise ValueError("so_numbers requires demand_class='project'")
 
 
 # --- create / poll ----------------------------------------------------------
@@ -50,10 +70,19 @@ class CreateReorderRunRequest(BaseModel):
     # carrying no date is always still counted (G2, 9 Sep ruling), the same reading the end
     # date already gives it.
     plan_horizon_start: Optional[date] = None
+    # Demand scope (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026): which leg of
+    # demand to net. Omitted/None nets BOTH legs, unchanged from before this field existed.
+    demand_class: Optional[Literal["project", "retail"]] = None
+    # The SO scope, project only. Omitted/empty means every project order in range - not
+    # narrowed to none - so it is a real narrowing only when both non-empty AND
+    # demand_class='project'. Capped at 500 - the measured universe is ~321 SOs (plan
+    # section 2), so 500 is headroom, not a real limit - and each number at 100 chars.
+    so_numbers: List[_SoNumber] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def _start_before_end(self):
         require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
+        require_so_numbers_need_project_demand_class(self.demand_class, self.so_numbers)
         return self
 
 
@@ -73,10 +102,16 @@ class ReplanReorderRunRequest(BaseModel):
     product_codes: List[str] = []
     plan_horizon_date: Optional[date] = None
     plan_horizon_start: Optional[date] = None
+    # Same demand scope as `CreateReorderRunRequest`; the FE re-submits it unchanged from
+    # the run being replanned when the header edit form never touched it.
+    demand_class: Optional[Literal["project", "retail"]] = None
+    # Same cap as `CreateReorderRunRequest.so_numbers` - see its own comment.
+    so_numbers: List[_SoNumber] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def _start_before_end(self):
         require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
+        require_so_numbers_need_project_demand_class(self.demand_class, self.so_numbers)
         return self
 
 
@@ -131,6 +166,12 @@ class ReorderRunStatusResponse(BaseModel):
     # `chat` when the low stock report tool created this run over WhatsApp, None on every
     # other path (PLAN-low-stock-report S5, AC-48).
     requested_via: Optional[str] = None
+    # Demand scope this run was launched with (21 Sep 2026). None = both legs, unchanged
+    # from before this field existed - the FE header shows "Demand: ..." only when set.
+    demand_class: Optional[Literal["project", "retail"]] = None
+    # None means no SO scope was asked for; a list, INCLUDING empty, is a real narrowing -
+    # the same "None vs []" reading `product_codes` above already uses.
+    so_numbers: Optional[List[str]] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -156,6 +197,9 @@ class ReorderRunListItem(BaseModel):
     # the two responses is on screen (today's run vs a past one).
     plan_horizon_date: Optional[str] = None
     plan_horizon_start: Optional[str] = None
+    # Same demand scope as ReorderRunStatusResponse (21 Sep 2026).
+    demand_class: Optional[Literal["project", "retail"]] = None
+    so_numbers: Optional[List[str]] = None
     # --- the plans list (PLAN-scm-reorder-revamp.md 4.1) ----------------------------
     # The scheduled daily run rather than one a person started (`created_by IS NULL` -
     # `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge; the
@@ -186,6 +230,21 @@ class ReorderRunListItem(BaseModel):
 class ReorderRunListResponse(BaseModel):
     data: List[ReorderRunListItem]
     pagination: dict  # {page, limit, total, total_pages}
+
+
+class CandidateOrder(BaseModel):
+    """One project SO the Orders picker in Start Plan (Demand = Project) can offer
+    (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026). `rows_total` is unfiltered -
+    a row the requested range excludes still counts toward it, so the picker can say why
+    an SO it lists shows zero in-range lines."""
+    so_number: str
+    project_label: Optional[str] = None
+    customer_name: Optional[str] = None
+    rows_total: int = 0
+    rows_in_range: int = 0
+    rows_awaiting: int = 0
+    first_delivery: Optional[str] = None
+    last_delivery: Optional[str] = None
 
 
 class ReorderRunTodayResponse(ReorderRunListItem):
