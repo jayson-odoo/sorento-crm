@@ -1,6 +1,6 @@
 # PLAN: price tag r10 - self print by default, no quantity from the image, all variations on one tag, automatic arrange, combo image, price tag description, readable spec values
 
-Status: in review (draft PR, 21 Sep 2026; never merged without owner go)
+Status: merged (PR #1083, cc6c09f19, 21 Sep 2026). Owner steps after merge: resize the live templates to the cells, Outline push of the user guides, paste rule 9 into the extract prompt if it was edited.
 Source: owner's price tag testing notes, 17 Sep 2026 (WhatsApp): "always i print myself, qty ignore",
 "promo only follow dealer use A3 flyer", "sometimes dealer want all variation in 1 price tag", "gap easier to
 cut", "1. combo image 2. description 3. templates".
