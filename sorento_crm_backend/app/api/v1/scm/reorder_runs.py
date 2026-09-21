@@ -9,6 +9,7 @@ fields - SKU/warehouse/supplier resolve to human codes/names.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
@@ -21,6 +22,7 @@ from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
 from app.models.scm import ReorderRecommendation, ReorderRun
 from app.schemas.scm_reorder import (
+    CandidateOrder,
     CreateReorderRunRequest,
     ReorderRunAccepted,
     ReorderRunListResponse,
@@ -46,10 +48,12 @@ from app.services.scm import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
+from app.services.scm import demand
 from app.services.scm import demand_source_service
 from app.services.scm import location_stock_service
 from app.services.scm import unplanned_demand_service
 from app.services.scm import demand_breakdown_service
+from app.services.scm.demand import NOT_REDIRECTED_SQL
 from app.services.scm.money import BASE_CURRENCY
 from app.services.scm.reorder_policy import resolve_global_cover_scope
 
@@ -96,6 +100,8 @@ def create_reorder_run(
         include_market=payload.include_market,
         plan_horizon_date=payload.plan_horizon_date,
         plan_horizon_start=payload.plan_horizon_start,
+        demand_class=payload.demand_class,
+        so_numbers=payload.so_numbers or None,
     )
     if response is not None:
         response.status_code = 202
@@ -126,6 +132,8 @@ def replan_reorder_run(
         product_codes=payload.product_codes or [],
         plan_horizon_date=payload.plan_horizon_date,
         plan_horizon_start=payload.plan_horizon_start,
+        demand_class=payload.demand_class,
+        so_numbers=payload.so_numbers or None,
         actor=(_user or {}).get("id"),
     )
     if response is not None:
@@ -217,7 +225,7 @@ def list_reorder_runs(
         SELECT id, status, buy_scope, warehouse_ids, product_ids, created_by,
                started_at, finished_at, run_log,
                decision_grain, front_planning_contract_version, plan_horizon_date,
-               plan_horizon_start,
+               plan_horizon_start, demand_class, so_numbers,
                -- Denormalised at write time by `decision_service._refresh_run_counts`
                -- and at run completion (S3 perf, AC-3.3) - a plain column instead of the
                -- LEFT JOIN against the whole `purchase_order_lines` table this page used
@@ -325,6 +333,10 @@ def _list_item(
         "front_planning_contract_version": r["front_planning_contract_version"],
         "plan_horizon_date": _iso(r["plan_horizon_date"]),
         "plan_horizon_start": _iso(_key(r, "plan_horizon_start")),
+        # Demand scope (21 Sep 2026) - same "absent on an older caller's own SELECT"
+        # guard as the rest of this dict, via `_key`.
+        "demand_class": _key(r, "demand_class"),
+        "so_numbers": _key(r, "so_numbers"),
         # The scheduler passes no actor, so a run nobody is named on is the daily one.
         "is_scheduled": _key(r, "created_by") is None,
         # A run launched with no warehouse scope stores every ACTIVE warehouse, so "60
@@ -484,6 +496,83 @@ def get_location_stock(
     return location_stock_service.location_stock_for_product(db, product_id)
 
 
+# Above ``/reorder-runs/{run_id}`` for the same route-shadowing reason as its neighbours -
+# declared after it, FastAPI would capture "candidate-orders" as ``run_id``.
+@router.get("/reorder-runs/candidate-orders", response_model=list[CandidateOrder])
+def get_candidate_orders(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Every open project SO with an Order Inquiry row - the Orders picker in Start Plan's
+    Demand = Project field (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026).
+
+    ONE query over the project legs' own population, WITHOUT the ack/date predicates that
+    narrow what a RUN actually buys: an SO belongs on this list even when every one of its
+    rows sits outside the range or awaits acknowledgement, because leaving it off would
+    hide the very orders the buyer opens this picker to reconcile against the sheet (R2 -
+    the awaiting count is shown here so that stays visible before Start). `rows_in_range`
+    applies the SAME open-bound date rule the run itself applies to `:horizon`/
+    `:horizon_start` (an omitted bound is open; a NULL `delivery_date` always counts, G2).
+    Not scoped to confirmed rows alone - a row still awaiting a supply decision (the form
+    leg) belongs to its SO the same way a confirmed one does, so both surface here off the
+    row's own `order_inquiry_id` rather than off `supply_decision_id`.
+
+    No paging (~321 rows measured on the prod copy) - the FE filters/searches client-side.
+    """
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dco")
+    rows = db.execute(text(f"""
+        SELECT so.so_number,
+               pj.title AS project_label,
+               c.customer_name AS customer_name,
+               count(*) AS rows_total,
+               count(*) FILTER (
+                   WHERE (CAST(:from_date AS date) IS NULL OR oir.delivery_date IS NULL
+                          OR oir.delivery_date >= CAST(:from_date AS date))
+                     AND (CAST(:to_date AS date) IS NULL OR oir.delivery_date IS NULL
+                          OR oir.delivery_date <= CAST(:to_date AS date))
+               ) AS rows_in_range,
+               count(*) FILTER (
+                   WHERE NOT (oir.ack_state = ANY(:planned_ack_states))
+               ) AS rows_awaiting,
+               MIN(oir.delivery_date) AS first_delivery,
+               MAX(oir.delivery_date) AS last_delivery
+        FROM projects.order_inquiry_rows oir
+        JOIN projects.order_inquiries soi ON soi.id = oir.order_inquiry_id
+        JOIN projects.sales_orders spso ON spso.id = soi.project_sales_order_id
+        JOIN sales_orders so ON so.id = spso.so_id
+        LEFT JOIN projects.projects pj ON pj.id = spso.project_id
+        LEFT JOIN customers c ON c.id = so.customer_id AND c.company_id = so.company_id
+        WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
+          AND oir.state IN ('raised', 'partly_linked')
+          {NOT_REDIRECTED_SQL}
+          AND oir.qty > 0
+          AND so.status = 'open'
+          AND so.demand_class = 'project'
+          {("AND " + co) if co else ""}
+        GROUP BY so.id, so.so_number, pj.title, c.customer_name
+        ORDER BY so.so_number
+    """), {
+        "from_date": from_date, "to_date": to_date,
+        "planned_ack_states": list(demand.PLANNED_ACK_STATES),
+        **co_params,
+    }).mappings().all()
+    return [
+        {
+            "so_number": r["so_number"],
+            "project_label": r["project_label"],
+            "customer_name": r["customer_name"],
+            "rows_total": int(r["rows_total"] or 0),
+            "rows_in_range": int(r["rows_in_range"] or 0),
+            "rows_awaiting": int(r["rows_awaiting"] or 0),
+            "first_delivery": r["first_delivery"].isoformat() if r["first_delivery"] else None,
+            "last_delivery": r["last_delivery"].isoformat() if r["last_delivery"] else None,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)
 def get_reorder_run(
     run_id: str,
@@ -498,7 +587,7 @@ def get_reorder_run(
         "       front_planning_contract_version, plan_horizon_date, plan_horizon_start, "
         "       started_at, "
         "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id, "
-        "       requested_via "
+        "       requested_via, demand_class, so_numbers "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
@@ -540,6 +629,8 @@ def get_reorder_run(
         "superseded_by_run_id": (str(row["superseded_by_run_id"])
                                  if row["superseded_by_run_id"] else None),
         "requested_via": row["requested_via"],
+        "demand_class": row["demand_class"],
+        "so_numbers": row["so_numbers"],
     }
 
 

@@ -24,6 +24,8 @@ finds the other.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import func, literal, select
 
 from app.models.order import SalesOrder, SalesOrderLine
@@ -456,6 +458,20 @@ _FORM_CORE_LINE_JOIN_SQL = (
     "    LEFT JOIN sales_order_lines csol ON csol.id = cpsl.core_sales_order_line_id"
 )
 
+#: The SO-scope join `horizon_committed_select_sql(so_scoped=True)` adds to BOTH project
+#: legs (PLAN-reorder-plan-demand-class-orders.md, S2, 21 Sep 2026). Walks an inquiry row
+#: back to its own CORE sales order - `order_inquiry_id -> order_inquiries.
+#: project_sales_order_id -> projects.sales_orders.so_id -> sales_orders.id` - and matches
+#: its number against the bound list. R1: the key is the WHOLE SO, intersected with every
+#: other predicate already on the leg (a row outside the range or unacknowledged is still
+#: excluded even when its SO is named). Never applied to the retail leg: an SO scope only
+#: ever narrows the project leg.
+_SO_SCOPE_JOIN_SQL = (
+    "JOIN projects.order_inquiries soi ON soi.id = oir.order_inquiry_id\n"
+    "    JOIN projects.sales_orders spso ON spso.id = soi.project_sales_order_id\n"
+    "    JOIN sales_orders sso ON sso.id = spso.so_id AND sso.so_number = ANY(:so_numbers)"
+)
+
 COMMITTED_V_SQL = f"""
 CREATE OR REPLACE VIEW scm.committed_v AS
 WITH legs AS (
@@ -620,7 +636,9 @@ GROUP BY product_id, warehouse_id;
 """
 
 
-def horizon_committed_select_sql() -> str:
+def horizon_committed_select_sql(
+    demand_class: Optional[str] = None, so_scoped: bool = False
+) -> str:
     """THE PLAN'S committed figure: `COMMITTED_V_SQL`'s body as a bare SELECT (no
     `CREATE VIEW`), with a `:horizon` bind narrowing both legs to demand due at or before
     it, a `:horizon_start` bind (S4, PLAN-reorder-feedback-9sep.md) narrowing them to demand
@@ -652,9 +670,23 @@ def horizon_committed_select_sql() -> str:
     stay copy-pasteable, so this is a second copy of the same `legs` shape with one
     predicate added to each leg - the same relationship `COMMITTED_V_SQL` already has to
     the individual predicates in this module (`PLAN_DEMAND_ORDER_SQL` etc).
+
+    ``demand_class`` (PLAN-reorder-plan-demand-class-orders.md, S2, 21 Sep 2026) drops
+    whichever legs the run's Demand scope excludes from the UNION: ``'project'`` keeps only
+    the two project legs (confirmed + form), ``'retail'`` keeps only the book leg, and
+    ``None`` - every caller before this lane, and an unscoped run - keeps all three,
+    rendering the exact SQL this function has always produced (T12).
+
+    ``so_scoped`` (same plan) adds `_SO_SCOPE_JOIN_SQL` to BOTH project legs when True,
+    narrowing them to the sales orders bound as `:so_numbers` (R1: the key is the whole
+    SO, intersected with every predicate already on the leg - a row outside the range or
+    unacknowledged is still excluded even when its SO is named). False (the default) adds
+    no join and binds no `:so_numbers`, so a caller that never asks for this - every OTHER
+    caller of this function today - keeps compiling/binding exactly as it always has.
     """
-    return f"""
-WITH legs AS (
+    so_join = _SO_SCOPE_JOIN_SQL if so_scoped else ""
+
+    retail_leg = f"""
     SELECT sol.product_id,
            sol.warehouse_id,
            0::numeric AS project_qty,
@@ -678,8 +710,9 @@ WITH legs AS (
       -- required_date before the start is excluded; no date at all is always in, the same
       -- reading the end date already gives it.
       AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
-           OR sol.required_date >= CAST(:horizon_start AS date))
-    UNION ALL
+           OR sol.required_date >= CAST(:horizon_start AS date))"""
+
+    confirmed_leg = f"""
     SELECT sol.product_id,
            CASE WHEN oir.verb = 'ORDER_BACK'
                 THEN COALESCE(donor.id, sol.warehouse_id)
@@ -694,6 +727,7 @@ WITH legs AS (
      AND d.state = 'active'
     JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
     JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+    {so_join}
     LEFT JOIN warehouses donor ON donor.warehouse_code = oir.stock_location
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
@@ -714,8 +748,9 @@ WITH legs AS (
            OR oir.delivery_date <= CAST(:horizon AS date))
       -- Planning window START (S4): same rule, other side.
       AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date >= CAST(:horizon_start AS date))
-    UNION ALL
+           OR oir.delivery_date >= CAST(:horizon_start AS date))"""
+
+    form_leg = f"""
     -- The FORM leg: an instruction the CS Order Inquiry Form raised that no supply decision
     -- points at (`PLAN-scm-cs-planning-uat.md` section 3.I; the fixture sheet's `[NL]`
     -- rows). CS writes `ORDER BACK` where a delivery date belongs, and the form is the only
@@ -766,6 +801,7 @@ WITH legs AS (
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
     {_FORM_CORE_LINE_JOIN_SQL}
+    {so_join}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
         FROM projects.order_inquiry_links l
@@ -798,7 +834,19 @@ WITH legs AS (
            OR oir.delivery_date <= CAST(:horizon AS date))
       -- Planning window START (S4): same rule, other side.
       AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date >= CAST(:horizon_start AS date))
+           OR oir.delivery_date >= CAST(:horizon_start AS date))"""
+
+    if demand_class == "project":
+        legs = [confirmed_leg, form_leg]
+    elif demand_class == "retail":
+        legs = [retail_leg]
+    else:
+        legs = [retail_leg, confirmed_leg, form_leg]
+    legs_sql = "\n    UNION ALL\n".join(leg.strip("\n") for leg in legs)
+
+    return f"""
+WITH legs AS (
+{legs_sql}
 )
 SELECT product_id,
        warehouse_id,

@@ -101,6 +101,8 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         budget_id: null,
         plan_horizon_start: inputs.plan_horizon_start || null,
         plan_horizon_date: inputs.plan_horizon_date || null,
+        demand_class: inputs.demand_class,
+        so_numbers: inputs.so_numbers,
       });
       setModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: runHistoryKey });

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -15,8 +16,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { searchProductOptions } from '../../services/scmOptionsService';
 import { useWarehouseOptions } from '../../hooks/useScmOptions';
+import { getCandidateOrders } from '../services/reorderRunService';
 
 /** Start Plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
  *  budget stays a backend/post-run capability only, tightened afterwards on the plan
@@ -54,7 +57,26 @@ export interface ManualPlanInputs {
    * always still counted.
    */
   plan_horizon_date: string;
+  /**
+   * Which leg of demand to net (`reorder-plan-demand-class-orders`, 21 Sep). Absent
+   * means Demand = All - both legs, today's behaviour. Present only when the buyer
+   * picked Project or Dealer.
+   */
+  demand_class?: 'project' | 'retail';
+  /**
+   * The SO scope, present only when `demand_class === 'project'` - the buyer's final
+   * selection from the Orders picker, `[]` when everything was unticked (still means
+   * "every project order in range", not "none").
+   */
+  so_numbers?: string[];
 }
+
+/** Demand = Project / Dealer / All (R4). "Dealer" is retail - the vocabulary a buyer
+ *  reads is not the closed `demand_class` one on the wire. */
+const DEMAND_OPTIONS = [
+  { value: 'project', label: 'Project' },
+  { value: 'retail', label: 'Dealer' },
+];
 
 /** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date, not
  *  `toISOString()`'s UTC one, which reads as yesterday or tomorrow depending on the
@@ -98,6 +120,13 @@ export function RunPlanningModal({
   /** Labels of every product this modal has seen come back from the server, so a chip for a
    *  code that is not on the page currently loaded still reads as its name. */
   const [productLabels, setProductLabels] = useState<Record<string, string>>({});
+  /** '' reads as Demand = All (R4) - the same "empty means everything" reading every other
+   *  field in this modal already uses. */
+  const [demand, setDemand] = useState<'' | 'project' | 'retail'>('');
+  const [soNumbers, setSoNumbers] = useState<string[]>([]);
+  /** Once the buyer has edited the Orders pick by hand, the range no longer overwrites it
+   *  (V4) - re-derived from the query result until then, kept afterwards. */
+  const touchedOrdersRef = useRef(false);
 
   const {
     data: warehouseOptions,
@@ -133,7 +162,59 @@ export function RunPlanningModal({
     setHorizon('');
     setError(null);
     setProductLabels({});
+    setDemand('');
+    setSoNumbers([]);
+    touchedOrdersRef.current = false;
   }, [open]);
+
+  /** Every open project SO with an OI row, for the Orders picker - fetched only while
+   *  Demand = Project, and re-fetched as the range changes (the range narrows
+   *  `rows_in_range`, which is what drives the pre-selection below). */
+  const {
+    data: candidateOrders,
+    isLoading: candidatesLoading,
+    isError: candidatesError,
+  } = useQuery({
+    queryKey: ['reorder', 'candidate-orders', horizonStart, horizon],
+    queryFn: () => getCandidateOrders({ from: horizonStart || undefined, to: horizon || undefined }),
+    enabled: open && demand === 'project',
+  });
+
+  // Pre-select every SO with a line in range (J1), re-derived on every fresh result UNTIL
+  // the buyer has touched the list by hand (V4) - a range edit before that point still
+  // updates the pick; one after keeps whatever they chose.
+  useEffect(() => {
+    if (demand !== 'project' || touchedOrdersRef.current || !candidateOrders) return;
+    setSoNumbers(candidateOrders.filter((o) => o.rows_in_range > 0).map((o) => o.so_number));
+  }, [candidateOrders, demand]);
+
+  const handleSoNumbersChange = (next: string[]) => {
+    touchedOrdersRef.current = true;
+    setSoNumbers(next);
+  };
+
+  /** `so_number - project label or customer name`, trimmed when neither is on file. */
+  const orderOptions = useMemo(
+    () =>
+      (candidateOrders ?? []).map((o) => {
+        const suffix = o.project_label ?? o.customer_name ?? '';
+        return {
+          value: o.so_number,
+          label: suffix ? `${o.so_number} - ${suffix}` : o.so_number,
+          description: `${o.rows_in_range} lines in range`,
+        };
+      }),
+    [candidateOrders],
+  );
+
+  /** Awaiting-ack counts, kept apart from `orderOptions` so `renderOption` can colour just
+   *  that part of the description rather than the whole secondary line (27 Aug ruling:
+   *  never bought against, so it has to stay visible before Start). */
+  const awaitingBySoNumber = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const o of candidateOrders ?? []) map.set(o.so_number, o.rows_awaiting);
+    return map;
+  }, [candidateOrders]);
 
   const today = todayDateInputValue();
 
@@ -167,6 +248,12 @@ export function RunPlanningModal({
       // Empty = no horizon (today's behaviour): every open SO line is planned
       // regardless of when it is needed.
       plan_horizon_date: horizon,
+      // Demand = All sends neither key (V3): the modal predates demand scoping and an
+      // unnarrowed run must stay indistinguishable from before this existed.
+      ...(demand ? { demand_class: demand } : {}),
+      // The buyer's FINAL selection - `[]` when everything was unticked, which still
+      // means "every project order in range" (design 4.6), not "none".
+      ...(demand === 'project' ? { so_numbers: soNumbers } : {}),
     });
   };
 
@@ -183,6 +270,18 @@ export function RunPlanningModal({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
+
+          <div>
+            <Label htmlFor="plan-demand" className="mb-1 block">Demand</Label>
+            <SearchableSelect
+              id="plan-demand"
+              value={demand}
+              onChange={(v) => setDemand(v as '' | 'project' | 'retail')}
+              options={DEMAND_OPTIONS}
+              clearable
+              placeholder="All"
+            />
+          </div>
 
           <div>
             <Label className="mb-1 block">Sales orders needed</Label>
@@ -215,6 +314,41 @@ export function RunPlanningModal({
               Empty = every open order counts.
             </p>
           </div>
+
+          {demand === 'project' ? (
+            <div>
+              <Label className="mb-1 block">Orders</Label>
+              <SearchableMultiSelect
+                value={soNumbers}
+                onChange={handleSoNumbersChange}
+                options={orderOptions}
+                disabled={candidatesLoading}
+                placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
+                emptyMessage={
+                  candidatesError ? 'Could not load orders.' : 'No project orders found.'
+                }
+                renderOption={(opt) => {
+                  const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
+                  return (
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="break-words">{opt.label}</span>
+                      <span className="break-words text-xs text-muted-foreground">
+                        {opt.description}
+                        {awaiting > 0 ? (
+                          <span className="text-[var(--color-warning-accent,var(--color-yellow-600))]">
+                            {`, ${awaiting} awaiting ack`}
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                  );
+                }}
+              />
+              <p className="mt-1 text-2xs text-muted-foreground">
+                Untick an order to leave it out. Empty = every project order in range.
+              </p>
+            </div>
+          ) : null}
 
           <div>
             <div className="mb-1 flex items-center justify-between">

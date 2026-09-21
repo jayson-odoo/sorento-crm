@@ -82,6 +82,7 @@ from app.services.scm.demand import (
     PLANNED_ACK_STATES,
     PROJECT_CLASS,
     UNLINKED_INQUIRY_STATES,
+    horizon_committed_select_sql,
 )
 from app.services.scm.trajectory import month_shift
 from app.services.scm.trajectory_service import demand_context_for_product
@@ -263,12 +264,29 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # row is mislabelled "pool" and lists a sibling warehouse's lines, and even a correctly
     # scoped row's lines fail to sum to it (a live sum over dates the run itself excluded).
     horizon_row = db.execute(text(
-        "SELECT plan_horizon_date, plan_horizon_start FROM scm.reorder_run WHERE id = :rid"
+        "SELECT plan_horizon_date, plan_horizon_start, demand_class, so_numbers "
+        "FROM scm.reorder_run WHERE id = :rid"
     ), {"rid": rec["run_id"]}).mappings().first() or {}
     horizon = horizon_row.get("plan_horizon_date")
     # S4 (PLAN-reorder-feedback-9sep.md): the start-side twin, read beside the end so this
     # drill speaks the SAME window `inputs.committed` was frozen against on either side.
     horizon_start = horizon_row.get("plan_horizon_start")
+    # Demand scope (21 Sep 2026): the run's own stamped scope, so this drill lists exactly
+    # the leg(s) `inputs.committed` was netted from - a Project run's book leg contributes
+    # nothing, a Retail run's confirmed/form legs contribute nothing, and an SO-scoped
+    # Project run's confirmed/form legs see only the named orders (T8).
+    run_demand_class = horizon_row.get("demand_class")
+    run_so_numbers = horizon_row.get("so_numbers") or []
+    # Mirrors `_planning_rows`' own `so_scoped = bool(so_numbers)` exactly - `so_numbers` is
+    # only ever non-empty when `demand_class == 'project'` (the stamping rule in
+    # `create_run`), so this alone is the same test.
+    run_so_scoped = bool(run_so_numbers)
+    # Both project legs read `so.so_number` off a core sales order already joined into each
+    # of their own queries below - no new join needed, unlike `demand.py`'s bare SQL.
+    so_filter = (
+        "AND so.so_number = ANY(:so_numbers)"
+        if (run_demand_class == "project" and run_so_numbers) else ""
+    )
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
@@ -292,9 +310,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
     )
 
     def _committed_total(candidate: list[str], include_unloc: bool) -> float:
-        """What this candidate location set commits for this product, by the same filter
-        the display list uses - the scope test has to ask the question the list will
-        answer, or the header could name a set the lines below it do not add up to.
+        """What this candidate location set commits for this product, by the SAME
+        `demand.horizon_committed_select_sql` the run itself froze `inputs.committed`
+        from (21 Sep 2026 fix) - not a second, book-only formula. A pooled recommendation
+        on a Project run has NO retail leg to compare against at all, so a book-only total
+        could never match the frozen figure and the scope test fell through to "warehouse"
+        every time, silently dropping the pool's other members from the popover. Reusing
+        the one SQL, scoped to THIS run's own `demand_class`/`so_numbers`, is what makes
+        the two comparable again.
 
         Parametrized on `include_unloc` (rather than closing over the row's own
         `include_unlocated`) so a SIBLING recommendation's own unlocated attribution
@@ -302,24 +325,26 @@ def demand_for_recommendation(db: Session, rec_id: str,
         unlocated demand is attributed to exactly one row per product, and only that row's
         own scope test should ever fold it in.
         """
-        loc = "sol.warehouse_id::text = ANY(:members)"
+        loc = "cv.warehouse_id::text = ANY(:members)"
         if include_unloc:
-            loc = f"({loc} OR sol.warehouse_id IS NULL)"
+            loc = f"({loc} OR cv.warehouse_id IS NULL)"
+        cv_params: dict[str, Any] = {
+            "pid": rec["product_id"], "members": candidate,
+            "horizon": horizon, "horizon_start": horizon_start,
+        }
+        if run_so_scoped:
+            cv_params["so_numbers"] = list(run_so_numbers)
+        cv_sql = horizon_committed_select_sql(
+            demand_class=run_demand_class, so_scoped=run_so_scoped
+        )
         return float(db.execute(
             text(f"""
-                SELECT COALESCE(sum({qty}), 0)
-                FROM sales_order_lines sol
-                JOIN sales_orders so ON so.id = sol.sales_order_id
-                WHERE sol.product_id::text = :pid
-                  AND so.status = 'open' AND sol.line_status = 'open'
-                  AND sol.purchasing_status <> 'covered'
-                  AND {qty} > 0
-                  AND {plan_demand}
+                SELECT COALESCE(SUM(cv.committed), 0)
+                FROM ({cv_sql}) cv
+                WHERE cv.product_id::text = :pid
                   AND {loc}
-                  AND {horizon_pred}
-                  {("AND " + co) if co else ""}
             """),
-            {"pid": rec["product_id"], "members": candidate, "horizon": horizon, "horizon_start": horizon_start, **co_params},
+            cv_params,
         ).scalar() or 0)
 
     members, rec_scope, pool_code = _scope_for(
@@ -414,30 +439,39 @@ def demand_for_recommendation(db: Session, rec_id: str,
     params: dict[str, Any] = {"pid": rec["product_id"], "members": members,
                               "horizon": horizon, "horizon_start": horizon_start, "channel_project_class": PROJECT_CLASS,
                               **co_params}
-    rows = db.execute(text(
-        display_sql + " ORDER BY sol.required_date NULLS LAST, so.so_number LIMIT :limit"
-    ), {**params, "limit": limit_n}).mappings().all()
-    # SF-2: `project_qty`/`retail_qty`/`unclassified_qty` are read off this SAME uncapped
-    # aggregate (never off the capped `rows`/`all_lines` fetched below), the same way
-    # `committed`/`unlocated` already were - so the by-channel totals stay correct past the
-    # display cap instead of only summing whatever page happened to be returned. When
-    # `channel` filters the underlying set, the other two buckets come back zero here -
-    # which is honest: nothing of that bucket is IN this filtered list to sum.
-    totals = db.execute(text(
-        f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS committed, "
-        f"       COALESCE(sum(qty) FILTER (WHERE warehouse_code IS NULL), 0) AS unlocated, "
-        f"       COALESCE(sum(qty) FILTER (WHERE demand_class = :project_class), 0) "
-        f"           AS project_qty, "
-        f"       COALESCE(sum(qty) FILTER (WHERE demand_class "
-        f"                                  IS DISTINCT FROM :project_class), 0) "
-        f"           AS retail_qty, "
-        # Always 0 since P4, and stated rather than deleted so the payload keeps its shape
-        # for a client that still reads the key (the popover renders it only when nonzero).
-        # A NULL class is counted in `retail_qty` above, exactly as `scm.committed_v`
-        # counts it; summing it here as well would report the same quantity twice.
-        f"       0 AS unclassified_qty "
-        f"FROM ({display_sql}) t"
-    ), {**params, "project_class": PROJECT_CLASS}).mappings().first()
+    # The BOOK leg is the retail channel entire (P3) - a Project-scoped run's `committed`
+    # never included it, so listing it here would show orders no part of this run's frozen
+    # figure counts (21 Sep 2026).
+    book_active = run_demand_class != "project"
+    if book_active:
+        rows = db.execute(text(
+            display_sql + " ORDER BY sol.required_date NULLS LAST, so.so_number LIMIT :limit"
+        ), {**params, "limit": limit_n}).mappings().all()
+        # SF-2: `project_qty`/`retail_qty`/`unclassified_qty` are read off this SAME uncapped
+        # aggregate (never off the capped `rows`/`all_lines` fetched below), the same way
+        # `committed`/`unlocated` already were - so the by-channel totals stay correct past the
+        # display cap instead of only summing whatever page happened to be returned. When
+        # `channel` filters the underlying set, the other two buckets come back zero here -
+        # which is honest: nothing of that bucket is IN this filtered list to sum.
+        totals = db.execute(text(
+            f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS committed, "
+            f"       COALESCE(sum(qty) FILTER (WHERE warehouse_code IS NULL), 0) AS unlocated, "
+            f"       COALESCE(sum(qty) FILTER (WHERE demand_class = :project_class), 0) "
+            f"           AS project_qty, "
+            f"       COALESCE(sum(qty) FILTER (WHERE demand_class "
+            f"                                  IS DISTINCT FROM :project_class), 0) "
+            f"           AS retail_qty, "
+            # Always 0 since P4, and stated rather than deleted so the payload keeps its shape
+            # for a client that still reads the key (the popover renders it only when nonzero).
+            # A NULL class is counted in `retail_qty` above, exactly as `scm.committed_v`
+            # counts it; summing it here as well would report the same quantity twice.
+            f"       0 AS unclassified_qty "
+            f"FROM ({display_sql}) t"
+        ), {**params, "project_class": PROJECT_CLASS}).mappings().first()
+    else:
+        rows = []
+        totals = {"n": 0, "committed": 0, "unlocated": 0, "project_qty": 0,
+                  "retail_qty": 0, "unclassified_qty": 0}
 
     lines = [
         {
@@ -493,7 +527,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
     confirmed_rows: list[Any] = []
     confirmed_n = 0
     confirmed_total = 0.0
-    if members and channel in (None, "project"):
+    if members and channel in (None, "project") and run_demand_class != "retail":
         # SF-1: unlike the book query above, this had NO `LIMIT` at all - past the cap the
         # book query's `total`/`shown` were already correct and this leg's were not, so the
         # combined figures disagreed with what was actually returned. Same shape as the
@@ -539,6 +573,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
             WHERE oir.verb = :buy_verb
               AND oir.state = ANY(:unplaced_states)
               {NOT_REDIRECTED_SQL}
+              -- The 27 Aug ack ruling (`demand.horizon_committed_select_sql`'s own
+              -- confirmed leg, and every other reader of this rule): an unacknowledged row
+              -- is not something to buy against yet, so it is not one of the orders behind
+              -- a buy figure that already excludes it.
+              AND oir.ack_state = ANY(:planned_ack_states)
               AND oir.qty > COALESCE(lk.linked, 0)
               AND sol.product_id::text = :pid
               AND sol.warehouse_id::text = ANY(:members)
@@ -549,13 +588,18 @@ def demand_for_recommendation(db: Session, rec_id: str,
               -- S4: the start-side twin, same rule.
               AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
                    OR oir.delivery_date >= CAST(:horizon_start AS date))
+              -- Demand scope (21 Sep 2026): the run's own SO narrowing, project-scoped
+              -- runs only (R1: the whole SO, intersected with every predicate above).
+              {so_filter}
               {("AND " + co) if co else ""}
         """
         confirmed_params = {
             "pid": rec["product_id"], "members": members, "horizon": horizon,
             "horizon_start": horizon_start,
             "active_state": ACTIVE_DECISION_STATE, "buy_verb": BUY_VERB,
-            "unplaced_states": list(UNLINKED_INQUIRY_STATES), **co_params,
+            "unplaced_states": list(UNLINKED_INQUIRY_STATES),
+            "planned_ack_states": list(PLANNED_ACK_STATES),
+            "so_numbers": run_so_numbers, **co_params,
         }
         confirmed_rows = db.execute(text(
             confirmed_base_sql
@@ -576,7 +620,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
     form_rows: list[Any] = []
     form_n = 0
     form_total = 0.0
-    if channel in (None, "project"):
+    if channel in (None, "project") and run_demand_class != "retail":
         where_form_loc = "fw.id::text = ANY(:members)"
         if include_unlocated:
             where_form_loc = f"({where_form_loc} OR fw.id IS NULL)"
@@ -646,6 +690,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
               -- S4: the start-side twin, same rule.
               AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
                    OR oir.delivery_date >= CAST(:horizon_start AS date))
+              -- Demand scope (21 Sep 2026): same SO narrowing as the confirmed leg. `so`
+              -- is LEFT JOINed (an unpublished project order has none), so a form row with
+              -- no core SO at all never matches a named scope - it cannot belong to a
+              -- named SO it does not have.
+              {so_filter}
         """
         form_params = {
             "pid": rec["product_id"], "members": members, "horizon": horizon,
@@ -653,6 +702,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "form_verbs": ["ORDER", "ORDER_BACK"],
             "unplaced_states": list(UNLINKED_INQUIRY_STATES),
             "planned_ack_states": list(PLANNED_ACK_STATES),
+            "so_numbers": run_so_numbers,
         }
         form_rows = db.execute(text(
             form_base_sql
