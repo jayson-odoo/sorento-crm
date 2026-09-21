@@ -388,7 +388,9 @@ def _release_components(
     dealer = bool((facts.get("dealer_hot_selling") or {}).get("value"))
     target = facts.get("reallocate_to") or "pool"
     placed = facts.get("placed") or {}
-    placed_qty = _dec(placed.get("qty"))
+    # D1/R1: only the OPEN part of what is placed may be reallocated - a received document
+    # is stock in hand for this line, never offered back a second time.
+    placed_qty = _dec(placed.get("po_qty"))
     document = placed.get("document")
     out: List[dict] = []
     for qty, location in held_by["reserve"]:
@@ -519,7 +521,9 @@ def compose_suggestion(
         }
 
     placed = facts.get("placed") or {}
-    placed_qty = _dec(placed.get("qty"))
+    # D1/R1: only the OPEN part of what is placed may be reallocated - a received document
+    # is stock in hand for this line, never offered back a second time.
+    placed_qty = _dec(placed.get("po_qty"))
     document = placed.get("document")
     target = facts.get("reallocate_to") or "pool"
     # Rule 8: a purchase cannot land inside the immediate window, so whatever the ladder
@@ -689,6 +693,17 @@ def compose_suggestion(
             ))
             continue
         components.extend(_sourcing_components(klass, proposed[klass], facts))
+
+    # D1/R1: a received document is stock in hand for this line - said once, as a `keep`,
+    # never as a `reallocate` (that is `po_qty`'s business above, not `received_qty`'s).
+    received_qty = _dec(placed.get("received_qty"))
+    if received_qty > _ZERO:
+        components.append(_component(
+            "keep", "po", received_qty,
+            f"Received {document} {qty_text(received_qty)}" if document
+            else f"Received {qty_text(received_qty)}",
+            document=document,
+        ))
 
     return {
         "components": components + deferred,
@@ -1447,14 +1462,27 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
     shape: 234 raised, 134 on a purchase order, 100 still unlinked) - a state check would
     see nothing placed there and the suggestion would offer to drop a real purchase order.
 
+    `qty` is the SUM of every link, unchanged (arrival/late maths still reads the whole of
+    it). `po_qty` (D1, R1) is the OPEN part - link qty on a `po_line_id` link whose PO line
+    is not yet fully received, `_received_documents_for`'s own test
+    (`project_order_inquiry_service.py`) - the only part a suggestion may still reallocate.
+    `received_qty` is the rest: link qty on a received PO line, or on an SPO allocation
+    judged received (the negation of `scm.spo_supply.open_incoming_clauses`, reused via
+    `_received_documents_for` rather than restated a second time). A received link is stock
+    in hand for this line (R1) - it is never offered back to `reallocate_to`.
+
     `arrival_date` is when that supply is expected: the purchase order LINE's own date,
     else the order's, else the date the inquiry row was raised against - the date the
     purchase was placed to meet. It is what "late by N days" is measured from.
     """
-    empty = {"qty": qty_text(_ZERO), "document": None, "arrival_date": None}
+    empty = {
+        "qty": qty_text(_ZERO), "po_qty": qty_text(_ZERO), "received_qty": qty_text(_ZERO),
+        "document": None, "arrival_date": None,
+    }
     if not project_line_id:
         return empty
     from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     rows = (
         db.query(OrderInquiryRow)
@@ -1478,6 +1506,11 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
         return empty
     total = sum((_dec(link.qty) for link in links), _ZERO)
     document = next((link.document for link in links if link.document), None)
+    received = ProjectOrderInquiryService(db)._received_documents_for(links)
+    received_qty = sum(
+        (_dec(link.qty) for link in links if str(link.id) in received), _ZERO,
+    )
+    po_qty = total - received_qty
     po_line_ids = [str(link.po_line_id) for link in links if link.po_line_id]
     arrivals: List[date] = []
     if po_line_ids:
@@ -1496,6 +1529,8 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
         arrivals = [r.delivery_date for r in rows if r.delivery_date]
     return {
         "qty": qty_text(total),
+        "po_qty": qty_text(po_qty),
+        "received_qty": qty_text(received_qty),
         "document": document,
         # The LATEST, because the line is only whole when the last of it lands.
         "arrival_date": max(arrivals).isoformat() if arrivals else None,
@@ -1990,7 +2025,9 @@ def compose_row_state(
     when a change is raised, and `scripts/recompute_planning_change_proposals.py` when a
     PENDING row raised before this slice has to be brought up to it.
     """
-    if _dec((facts.get("placed") or {}).get("qty")) > _ZERO or _dec(
+    # D1/R1: a received link frees nothing to reallocate, so only the OPEN part
+    # (`po_qty`) asks this question.
+    if _dec((facts.get("placed") or {}).get("po_qty")) > _ZERO or _dec(
         (held or {}).get("timely_spo_qty")
     ) > _ZERO:
         # Only asked when something could actually be freed - it ranks every waiting row
@@ -2724,6 +2761,47 @@ def _validate_composition_shape(
     }
 
 
+def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> None:
+    """R7: an amend may not turn own-arrival credit into a Buy.
+
+    `row.proposal_json["sources"]` names every own-arrival Reserve the row's own live
+    proposal carries - goods that already landed for this line, `source: "own_arrival"`,
+    each naming the PO. The amend still stands for whatever reserve at that SAME warehouse
+    it keeps; only the part that would drop BELOW what is credited is refused, so amending
+    the remainder (an ordinary reserve or Buy beside the credit) is untouched.
+    """
+    credit_sources = [
+        s for s in (row.proposal_json or {}).get("sources") or []
+        if s.get("source") == "own_arrival"
+    ]
+    if not credit_sources:
+        return
+    reserved_by_wh: Dict[str, Decimal] = {}
+    for r in composition.get("reserve") or []:
+        wh = r.get("warehouse_id")
+        if wh:
+            reserved_by_wh[wh] = reserved_by_wh.get(wh, _ZERO) + _dec(r.get("qty"))
+    for source in credit_sources:
+        credited = _dec(source.get("qty"))
+        if credited <= _ZERO:
+            continue
+        wh = source.get("warehouse_id")
+        still_reserved = reserved_by_wh.get(wh, _ZERO) if wh else _ZERO
+        if still_reserved < credited:
+            po = source.get("supply_document")
+            message = (
+                f"{qty_text(credited)} landed for this line on PO {po}; nothing to buy "
+                "for it"
+                if po
+                else f"{qty_text(credited)} landed for this line; nothing to buy for it"
+            )
+            raise AppException(
+                status_code=409,
+                message=message,
+                code="planning_change_buy_over_own_arrival",
+            )
+
+
 def set_row_decision(
     db: Session,
     batch_id: str,
@@ -2800,6 +2878,7 @@ def set_row_decision(
                     message="An amendment needs a composition.",
                     code="planning_change_composition_required",
                 )
+            _refuse_buy_over_own_arrival(row, composition)
             composed = composition
         row.composition_json = _validate_composition_shape(db, composed, row, open_qty)
     else:
@@ -3254,6 +3333,15 @@ def _redeal_document(
         freed = min(freed, available)
         if freed <= _ZERO:
             return [], []
+    elif available <= _ZERO:
+        # AC-S1-1 / R3 minimum: the placement this suggestion named is no longer on the
+        # line at all (the book moved it, or it was unlinked, between compose and apply).
+        # Nothing to fail the order over - the batch records that nothing moved, the same
+        # way a cancelled row's own give-back reads.
+        return [], [
+            f"{document or 'the document'}: nothing to move, the placement this "
+            "suggestion named is no longer on the line"
+        ]
     elif available < freed:
         raise AppException(
             status_code=409,
@@ -4234,6 +4322,41 @@ def _apply_one_order(
             )
         else:
             live.append(r)
+    if not live and not extra_lines:
+        return empty_result
+
+    # AC-S1-3 / R3 minimum: the book closed a line this batch was built against, between
+    # compose and apply - a stale row's SO line is now gone, so the batch records nothing
+    # was carried out for it rather than failing (or silently applying) a composition about
+    # a line that no longer accepts one. `cancelled` rows are excluded: a closed core line
+    # is exactly what a `cancelled` row already expects and handles on its own path below.
+    core_line_ids_live = {
+        r.core_line_id for r in live if r.core_line_id and r.kind != "cancelled"
+    }
+    closed_core_line_ids: set = set()
+    if core_line_ids_live:
+        closed_core_line_ids = {
+            str(line_id)
+            for (line_id,) in db.query(SalesOrderLine.id)
+            .filter(
+                SalesOrderLine.id.in_(list(core_line_ids_live)),
+                SalesOrderLine.line_status.in_(("closed", "cancelled")),
+            )
+            .all()
+        }
+    if closed_core_line_ids:
+        still_live: List[PlanningChangeRow] = []
+        for r in live:
+            if (
+                r.kind != "cancelled"
+                and r.core_line_id
+                and str(r.core_line_id) in closed_core_line_ids
+            ):
+                r.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+                r.applied_reason = "the sales-order line is closed"
+            else:
+                still_live.append(r)
+        live = still_live
     if not live and not extra_lines:
         return empty_result
 

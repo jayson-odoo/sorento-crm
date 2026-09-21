@@ -3189,6 +3189,15 @@ class FulfilmentBoardService:
             if getattr(component, "rung", None) == RUNG_GROUP_TAKE
             and component.source_location
         ]
+        # R7: what own-arrival credit this rung actually drew, so the trail can say WHICH
+        # PO landed it before the group-net sentence that follows - read off `components`
+        # (what was DRAWN), the same as `group_drawn` above.
+        own_arrival_drawn = [
+            (_dec(component.qty), getattr(component, "supply_document", None))
+            for component in components
+            if getattr(component, "rung", None) == RUNG_GROUP_TAKE
+            and getattr(component, "source", None) == "own_arrival"
+        ]
         group_offered = sum(
             (
                 _dec(c.get("qty"))
@@ -3228,6 +3237,7 @@ class FulfilmentBoardService:
                     group_drawn,
                     other=other_group_candidates,
                     offer=group_offered,
+                    own_arrival=own_arrival_drawn,
                 )
             ),
         )
@@ -3824,6 +3834,7 @@ class FulfilmentBoardService:
         drawn: Sequence[Tuple[str, Decimal, bool]] = (),
         other: Sequence[Dict[str, Any]] = (),
         offer: Optional[Decimal] = None,
+        own_arrival: Sequence[Tuple[Decimal, Optional[str]]] = (),
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -3841,11 +3852,25 @@ class FulfilmentBoardService:
         by the required date (captain, 27 August 2026). The rest is NAMED, with its date,
         and never drawn: "30 on the water, arrives 1 Mar, not counted" is the one sentence
         that tells a planner why a group with stock coming still bought.
+
+        R7: `own_arrival` is what THIS rung drew as own-arrival credit, said FIRST and by
+        its own PO - "20 landed for this line on PO ..., taken first" - ahead of whatever
+        the ordinary group-net sentence below it says, because the two are different facts
+        answering the same question.
         """
+        prefix = "".join(
+            (
+                f"{qty_text(qty)} landed for this line on PO {po_number}, taken first. "
+                if po_number
+                else f"{qty_text(qty)} landed for this line, taken first. "
+            )
+            for qty, po_number in own_arrival
+            if qty > _ZERO
+        )
         if outcome == "none_needed":
-            return _COVERED_BEFORE
+            return prefix + _COVERED_BEFORE
         if not fact.group_code:
-            return (
+            return prefix + (
                 "This location carries no ownership group, so there is no group to take "
                 "from."
             )
@@ -3863,12 +3888,12 @@ class FulfilmentBoardService:
             # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
             # an answer to "why nothing" while `BRW-IB` owes 27,804 against 5,290.
             if offer <= _ZERO:
-                return (
+                return prefix + (
                     f"The {fact.group_code} group nets {qty_text(net)}, so there is "
                     "nothing left for this line - whatever sits at any one of its "
                     f"locations is already owed at another.{late}"
                 )
-            return (
+            return prefix + (
                 f"The {fact.group_code} group nets {qty_text(net)}, leaving "
                 f"{qty_text(offer)} for this line, and none of it sits free at a location "
                 f"this line can draw from.{late}"
@@ -3886,7 +3911,7 @@ class FulfilmentBoardService:
                 )
                 for location, qty, is_water in drawn
             ) or ", ".join(str(c["location"]) for c in candidates)
-            return (
+            return prefix + (
                 f"The {fact.group_code} group nets {qty_text(net)}, leaving "
                 f"{qty_text(offer)} for this line; it was drawn as {taken_at}.{late}"
             )
@@ -3898,7 +3923,7 @@ class FulfilmentBoardService:
             )
             for c in candidates
         )
-        return (
+        return prefix + (
             f"The {fact.group_code} group nets {qty_text(net)}, leaving {qty_text(offer)} "
             f"for this line at {offered_at}. {_WHOLE_LINE_RULE_DROPPED}{late}"
         )
@@ -4075,6 +4100,10 @@ class FulfilmentBoardService:
             "same_agent": bool(getattr(component, "same_agent", False)),
             "donor_core_line_id": getattr(component, "donor_core_line_id", None),
             "donor_required_date": getattr(component, "donor_required_date", None),
+            #: R7: `"own_arrival"` on a Reserve born from goods that landed for this line
+            #: (or the rest of its own order), `None` on an ordinary group-take Reserve -
+            #: what the cell's "Received N (own arrival)" chip keys off.
+            "source": getattr(component, "source", None),
         }
 
     # ------------------------------------------------------------ the answer

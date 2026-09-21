@@ -1347,6 +1347,7 @@ class ProjectSupplyService:
         supply_left: Optional[MutableMapping[str, Decimal]] = None,
         own_group_left: Optional[MutableMapping[str, Decimal]] = None,
         pool_share_left: Optional[MutableMapping[str, Decimal]] = None,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
     ):
         """`compose_line` plus the five OPTIONS behind it (R36, AC-S3-14).
 
@@ -1359,6 +1360,7 @@ class ProjectSupplyService:
         # with the window as its reason, so "not walked" is visible rather than silent.
         outside_window = self.outside_reserve_window(fact, as_of=as_of)
         group_take: List[Dict[str, Any]] = []
+        own_arrival_candidates: List[Dict[str, Any]] = []
         other_group: List[Dict[str, Any]] = []
         order_borrow: List[Dict[str, Any]] = []
         supply_borrow: List[Dict[str, Any]] = []
@@ -1374,6 +1376,21 @@ class ProjectSupplyService:
                     own_left=own_group_left,
                 )
             )
+            # R7: a candidate OF ITS OWN, drawn separately from the assignment's own
+            # group-take pile (`use_candidates_for`'s own return stays untouched for every
+            # other caller - the recheck at confirm time in particular must not see stock
+            # counted twice). `walk_line` draws it ahead of `group_take_candidates` and, as
+            # a sub-unit like `pool_share`, lets it cover PART of the line.
+            credit_qty, credit_po = self._own_arrival_credit_for(
+                fact, own_arrival_left=own_arrival_left
+            )
+            if credit_qty > _ZERO:
+                own_arrival_candidates = [{
+                    "location": fact.own_code,
+                    "qty": credit_qty,
+                    "source": "own_arrival",
+                    "supply_document": credit_po,
+                }]
             order_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left
             )
@@ -1400,6 +1417,7 @@ class ProjectSupplyService:
             is_discontinued=fact.is_discontinued,
             reorder_coverage_until=self._reorder_coverage_until(),
             group_take_candidates=group_take,
+            own_arrival_candidates=own_arrival_candidates,
             other_group_candidates=other_group,
             # R-M (3 Sep 2026): the other groups whose own book is short, so step 1's row
             # can say why it gave nothing rather than printing a bare 0.
@@ -1541,6 +1559,12 @@ class ProjectSupplyService:
         # because what is left of a document is personal to the asker - one held by the
         # asker's own order is worth nothing to it and everything to the next order along.
         supply_left: Dict[str, Dict[str, Decimal]] = {}
+        # product id -> LOCATION CODE -> what is left of that location's physical on hand
+        # for R7's own-arrival credit, this walk (AC-S3-4). Seeded lazily, off
+        # `LocationNet.on_hand`, the first line that asks - the SAME physical pile the
+        # walk's ordinary group-take rung draws from, so a later line of the SAME order at
+        # the SAME bin cannot be offered units an earlier line already took as credit.
+        own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
         for unit_key in walk:
             arrived = units[unit_key]
             # The unit fact is the FIRST-ARRIVING member's, not the lowest-numbered one:
@@ -1622,6 +1646,14 @@ class ProjectSupplyService:
                 if unit_fact.product_id
                 else None
             )
+            # R7's own-arrival credit ledger (AC-S3-4): persists across every unit of the
+            # walk that shares this product, the same as `other_group`/`supply` above - a
+            # later line at the same bin must find what an earlier one already drew off it.
+            own_arrival = (
+                own_arrival_left.setdefault(unit_fact.product_id, {})
+                if unit_fact.product_id
+                else None
+            )
             # THE UNIT'S OWN ownership-group pile, and nobody else's (R-E). `use_candidates_for`
             # hands every member of the unit the SAME draw - what the assignment gave the
             # unit's lines by their own date - so without a ledger the second member would be
@@ -1659,6 +1691,7 @@ class ProjectSupplyService:
                     supply_left=supply,
                     own_group_left=own_group,
                     pool_share_left=share_open,
+                    own_arrival_left=own_arrival,
                 )
                 components = walked.components
                 if floors_open is not None:
@@ -1704,6 +1737,11 @@ class ProjectSupplyService:
                 for component in components:
                     code = component.source_location
                     if component.rung != RUNG_GROUP_TAKE or not code:
+                        continue
+                    if getattr(component, "source", None) == "own_arrival":
+                        # R7: never drawn from `own_group`'s own SA-assignment pile in the
+                        # first place (it bypasses that pile entirely, on purpose - see
+                        # `_own_arrival_credit_for`), so it must not spend it here either.
                         continue
                     lender = sales_agent_service.group_of_warehouse_code(code)
                     mine = lender == fact.group_code
@@ -2543,6 +2581,114 @@ class ProjectSupplyService:
                 # anything, and a sentence about it would be noise on every walk.
                 short[group] = -book
         return out, short
+
+    def _po_received_for_so_line_ref(self, source_ref: str) -> Tuple[Decimal, Optional[str]]:
+        """What has LANDED against every purchase-order line bought for `source_ref`
+        (`PurchaseOrderLine.from_so_line_ref`), and the PO it came off - the raw figure
+        R7's tier 1 and tier 2 are both built from, before either is capped by anything.
+
+        `po_number` is the first one found (own-arrival fixtures never split one SO line's
+        buy across two purchase orders); a mixed real one still returns a true total, only
+        the SENTENCE and the amend refusal name one PO of it, which is what R7 asks for.
+        """
+        rows = (
+            self.db.query(PurchaseOrderLine.qty_received, PurchaseOrder.po_number)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(PurchaseOrderLine.from_so_line_ref == source_ref)
+            .all()
+        )
+        total = sum((_dec(qty) for qty, _po_number in rows), _ZERO)
+        po_number = next((po_number for _qty, po_number in rows if po_number), None)
+        return total, po_number
+
+    def _own_arrival_credit_for(
+        self,
+        fact: _LineFacts,
+        *,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> Tuple[Decimal, Optional[str]]:
+        """R7: what landed FOR this line - tier 1, its own purchase order(s)
+        (`from_so_line_ref == this line's source_ref`), then tier 2, the rest of the same
+        sales order's landed stock, each sibling's own claim on its own PO subtracted first
+        (a closed line's by its `qty_ordered` - what it delivered; an open one's by the
+        same field - what it still needs). Capped by physical on hand at the line's own
+        location (`LocationNet.on_hand`, already stamped on `fact.group_net_by_location`
+        by `_apply_group_nets` - no second query) and, via `own_arrival_left`, by what an
+        earlier line of the SAME walk already drew off that same location (AC-S3-4): never
+        re-offering the units L2 just took to L3 at the same bin.
+
+        Returns `(credit_qty, po_number)` - `po_number` is tier 1's own PO where there is
+        one, else the first tier-2 PO the credit actually drew from a spare on.
+        """
+        core_line_id = fact.unit_core_line_ids[0] if fact.unit_core_line_ids else None
+        if not core_line_id or not fact.own_code:
+            return _ZERO, None
+        core_line = (
+            self.db.query(SalesOrderLine)
+            .filter(SalesOrderLine.id == core_line_id)
+            .one_or_none()
+        )
+        if core_line is None or not core_line.source_ref:
+            return _ZERO, None
+
+        tier1_qty, tier1_po = self._po_received_for_so_line_ref(core_line.source_ref)
+        tier2_qty = _ZERO
+        tier2_po: Optional[str] = None
+        if core_line.sales_order_id:
+            siblings = (
+                self.db.query(SalesOrderLine)
+                .filter(
+                    SalesOrderLine.sales_order_id == core_line.sales_order_id,
+                    SalesOrderLine.id != core_line.id,
+                )
+                .all()
+            )
+            for sibling in siblings:
+                if not sibling.source_ref:
+                    continue
+                sibling_received, sibling_po = self._po_received_for_so_line_ref(
+                    sibling.source_ref
+                )
+                if sibling_received <= _ZERO:
+                    continue
+                # AC-S3-5: net of what the sibling's own PO already owes IT - its own
+                # `qty_ordered`, delivered where it is closed, still-owed where it is not.
+                spare = sibling_received - min(sibling_received, _dec(sibling.qty_ordered))
+                if spare > _ZERO:
+                    tier2_qty += spare
+                    if tier2_po is None:
+                        tier2_po = sibling_po
+
+        # Capped by what the LINE itself still needs, before anything is drawn off the
+        # shared on-hand ledger (AC-S3-4): `_draw_group` would trim the actual draw to the
+        # line's own need regardless, but the ledger has to be charged for the SAME amount
+        # that is trimmed to, or a line whose own PO received more than it needs would
+        # over-spend the location's on hand and starve a sibling of headroom it never used.
+        theoretical = min(tier1_qty + tier2_qty, max(_dec(fact.open_qty), _ZERO))
+        if theoretical <= _ZERO:
+            return _ZERO, None
+
+        on_hand = None
+        for entry in fact.group_net_by_location or []:
+            if getattr(entry, "location", None) == fact.own_code:
+                on_hand = _dec(getattr(entry, "on_hand", _ZERO))
+                break
+        if on_hand is None:
+            return _ZERO, None
+
+        if own_arrival_left is not None:
+            remaining = own_arrival_left.get(fact.own_code)
+            if remaining is None:
+                remaining = on_hand
+        else:
+            remaining = on_hand
+
+        credit = min(theoretical, max(remaining, _ZERO))
+        if credit <= _ZERO:
+            return _ZERO, None
+        if own_arrival_left is not None:
+            own_arrival_left[fact.own_code] = max(remaining - credit, _ZERO)
+        return credit, tier1_po or tier2_po
 
     def use_candidates_for(
         self,
@@ -3855,6 +4001,9 @@ class ProjectSupplyService:
             "supply_key": component.supply_key,
             "supply_document": component.supply_document,
             "arrival_date": component.arrival_date,
+            # R7: `"own_arrival"` on a Reserve born from the own-arrival credit, `None`
+            # everywhere else - what `set_row_decision` reads to refuse a Buy amend over it.
+            "source": component.source,
         }
 
     def _resolve_source_warehouse_id(

@@ -1632,6 +1632,44 @@ class ProjectOrderInquiryService:
             )
         return True
 
+    def _own_arrival_credit_for_row(self, row: OrderInquiryRow) -> Decimal:
+        """R2/R7: what landed FOR this row's line, the SAME credit the board's own ladder
+        reads (`ProjectSupplyService._own_arrival_credit_for`) - reused rather than
+        restated, so the path picker and the board cannot come to disagree about what
+        counts as covered. Built off a MINIMAL `_LineFacts` (this call is a single-row
+        question, not a walk - no shared ledger to thread through).
+        """
+        from app.services.project_supply_service import ProjectSupplyService, _LineFacts
+
+        if not row.so_line_id:
+            return _ZERO
+        project_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
+        if project_line is None or not project_line.core_sales_order_line_id:
+            return _ZERO
+        core_line = self.db.get(SalesOrderLine, project_line.core_sales_order_line_id)
+        if core_line is None or not core_line.warehouse_id:
+            return _ZERO
+        warehouse = self.db.get(Warehouse, core_line.warehouse_id)
+        if warehouse is None:
+            return _ZERO
+        supply = ProjectSupplyService(self.db)
+        product_id = str(core_line.product_id) if core_line.product_id else None
+        group_code = group_of_warehouse_code(warehouse.warehouse_code)
+        by_location: List[Any] = []
+        if product_id and group_code:
+            netting = netting_for_products(self.db, [product_id])
+            by_location = list(netting.group_net(product_id, group_code).by_location)
+        fact = _LineFacts(
+            unit_core_line_ids=[str(core_line.id)],
+            product_id=product_id,
+            warehouse=warehouse,
+            group_code=group_code,
+            group_net_by_location=by_location,
+            open_qty=_dec(core_line.qty_ordered),
+        )
+        credit, _po = supply._own_arrival_credit_for(fact)
+        return credit
+
     def _redirect_row_if_received(
         self,
         row: OrderInquiryRow,
@@ -1659,6 +1697,13 @@ class ProjectOrderInquiryService:
         received = self._received_documents_for(links)
         received_links = [link for link in links if str(link.id) in received]
         if not received_links:
+            return None
+        # R2/R7: own landed stock covers the link - settle in place, links kept, no
+        # redirect (Path B). Measured against the WHOLE of `links`' quantity, not only the
+        # received part: the row's demand is what the credit has to cover to make a fresh
+        # row unnecessary.
+        linked_qty = sum((_dec(link.qty) for link in links), _ZERO)
+        if linked_qty > _ZERO and self._own_arrival_credit_for_row(row) >= linked_qty:
             return None
         open_links = [link for link in links if str(link.id) not in received]
         if open_links:
