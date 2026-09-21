@@ -162,11 +162,10 @@ class Settings(BaseSettings):
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).
     external_api_key_act_as_user_id: str | None = None  # EXTERNAL_API_KEY_ACT_AS_USER_ID
 
-    # AutoCount pull + review (PLAN-autocount-pull-review.md). The FoundryX gateway this
-    # backend calls to build/read a frozen AutoCount snapshot. Blank on either field means
-    # "not configured" - the pull start route refuses with NOT_CONFIGURED and calls nothing.
-    foundryx_base_url: str = ""  # FOUNDRYX_BASE_URL
-    foundryx_api_key: str = ""   # FOUNDRYX_API_KEY
+    # AutoCount pull + review: the FoundryX gateway base URL and key are NOT env vars
+    # (PLAN-foundryx-pull-connection-ui.md retires the two settings this comment used to
+    # name) - they live on the seeded `foundryx-esb` `integrations` row, configured from
+    # Integration Management. See `app/services/foundryx_autocount_client.py`.
 
     # Redis Queue (must match everywhere: API, workers, seed scripts; use same host:port/db)
     redis_url: str = "redis://localhost:6379/0"

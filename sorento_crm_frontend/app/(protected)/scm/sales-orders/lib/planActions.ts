@@ -2,6 +2,13 @@ import { CalendarRange } from 'lucide-react';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
 /**
+ * Who may open the fulfilment planning board. Same gate the board's own page carries -
+ * exported so the record page's own "Plan" primary (S2) reads the identical constant
+ * rather than a second copy of the permission slug.
+ */
+export const PLAN_PERMISSION = 'projects.projects.view';
+
+/**
  * "Plan selected (N)" - the sales-order list's way onto the fulfilment board.
  *
  * It lives in the toolbar's own **Start** menu, beside Upload sales orders, and NOT in the

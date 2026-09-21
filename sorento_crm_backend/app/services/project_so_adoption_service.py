@@ -38,7 +38,8 @@ a project.
 
 Re-sync and Detach (plan 5.1) are the adoption path's other two verbs and land with the
 sheet seam; `mirror_missing_lines` below is the additive half of re-sync that AC-FP12 pins
-(a later core line takes the next `line_no` and moves nobody).
+(a later core line takes its own AutoCount number when one is free on this order, else the
+next `line_no`, and moves nobody already mirrored).
 """
 from __future__ import annotations
 
@@ -60,6 +61,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.services.error_handler import AppException
+from app.services.project_line_numbering import LineFacts, has_own_numbering, number_lines
 from app.services.scm.demand import PROJECT_CLASS, is_open_demand, is_undecided_demand
 
 logger = logging.getLogger(__name__)
@@ -181,15 +183,20 @@ class ProjectSOAdoptionService:
         """Mirror the still-owed core lines this record does not carry yet (AC-FP12).
 
         Additive and stable: an existing mirror line keeps its `line_no` whatever the new
-        line's required date is, and the new one takes `max + 1`. Renumbering would move a
-        line under a person who has already read it, and the line number is what every
-        refusal names.
+        line's required date is. A later line takes ITS OWN AutoCount number when it has
+        one and nothing already mirrored on this order holds it (B1 review round) - so a
+        re-ingest that widens an order's `line_no` coverage still lets the new line answer
+        to the number AutoCount gives it, rather than a position picked among strangers.
+        Falls back to `max + 1` otherwise, exactly as before. Renumbering an EXISTING
+        mirror line is never on the table either way: it would move a line under a person
+        who has already read it, and the line number is what every refusal names.
         """
         if not order.so_id:
             return []
+        existing = self._mirror_lines(str(order.id))
         held = {
             str(line.core_sales_order_line_id)
-            for line in self._mirror_lines(str(order.id))
+            for line in existing
             if line.core_sales_order_line_id
         }
         missing = [
@@ -200,7 +207,54 @@ class ProjectSOAdoptionService:
         if not missing:
             return []
         core = self.db.query(SalesOrder).filter(SalesOrder.id == order.so_id).first()
-        return self._mirror(order, core, missing, start_at=self._next_line_no(str(order.id)))
+        held_numbers = {line.line_no for line in existing}
+        numbers = self._numbers_for_missing(missing, held_numbers)
+        # start_at is unused once numbers is supplied - _mirror only reads it as the
+        # rule-2 (derived) fallback when numbers is None - kept because the parameter has
+        # no default.
+        return self._mirror(
+            order, core, missing, start_at=self._next_line_no(str(order.id)), numbers=numbers
+        )
+
+    def _numbers_for_missing(
+        self, missing: Sequence[SalesOrderLine], held_numbers: set,
+    ) -> Dict[str, int]:
+        """`{core line id: mirror line_no}` for lines `mirror_missing_lines` is about to
+        add, one at a time against what the order ALREADY holds (`held_numbers`) - never
+        the batch rule `project_line_numbering.number_lines` runs for a fresh mirror,
+        because a partial widening is not "every contributing line of the order" (that
+        set already has a mirror, from whichever rule adopted it) and must not re-decide
+        it. A stable order (required date, item code, line id) so two re-ingests that add
+        the same lines in a different wire order still number them the same way.
+        """
+        codes = {
+            key: value[0]
+            for key, value in self._products([line.product_id for line in missing]).items()
+        }
+        ordered = sorted(
+            missing,
+            key=lambda line: (
+                line.required_date is None,
+                line.required_date or _EARLIEST,
+                codes.get(str(line.product_id or ""), ""),
+                str(line.id),
+            ),
+        )
+        taken = set(held_numbers)
+        next_no = max(taken, default=0) + 1
+        numbers: Dict[str, int] = {}
+        for line in ordered:
+            candidate = line.line_no
+            if candidate is not None and candidate not in taken:
+                numbers[str(line.id)] = candidate
+                taken.add(candidate)
+                continue
+            while next_no in taken:
+                next_no += 1
+            numbers[str(line.id)] = next_no
+            taken.add(next_no)
+            next_no += 1
+        return numbers
 
     def _mirror_missing(
         self,
@@ -213,16 +267,30 @@ class ProjectSOAdoptionService:
         The additive half `mirror_missing_lines` applies to the still-owed lines, taken out
         so the migration can hand it a different line set (every line, not only the owed
         ones) without changing what the board's own re-sync means.
+
+        Numbered the same per-line way as `mirror_missing_lines` (B1 review round, fix
+        round): a missing line's own AutoCount number is checked against what THIS order's
+        mirror already holds before it is used, never handed to `_mirror` raw - an order
+        first adopted under rule 2 (derived numbering) has no unique index stopping a raw
+        AutoCount `line_no` from landing on a mirror line number another line already owns.
         """
+        existing = self._mirror_lines(str(order.id))
         held = {
             str(line.core_sales_order_line_id)
-            for line in self._mirror_lines(str(order.id))
+            for line in existing
             if line.core_sales_order_line_id
         }
         missing = [line for line in core_lines if str(line.id) not in held]
         if not missing:
             return []
-        return self._mirror(order, core, missing, start_at=self._next_line_no(str(order.id)))
+        held_numbers = {line.line_no for line in existing}
+        numbers = self._numbers_for_missing(missing, held_numbers)
+        # start_at is unused once numbers is supplied - _mirror only reads it as the
+        # rule-2 (derived) fallback when numbers is None - kept because the parameter has
+        # no default.
+        return self._mirror(
+            order, core, missing, start_at=self._next_line_no(str(order.id)), numbers=numbers
+        )
 
     # ----------------------------------------------------------------- pieces
 
@@ -345,28 +413,45 @@ class ProjectSOAdoptionService:
         core_lines: Sequence[SalesOrderLine],
         *,
         start_at: int,
+        numbers: Optional[Dict[str, int]] = None,
     ) -> List[ProjectSalesOrderLine]:
-        """One mirror line per core line, in a deterministic order.
+        """One mirror line per core line.
 
-        Sorted by required date (undated last), then item code, then the core line id, so
-        two adoptions of the same order produce the same line numbers and a refusal naming
-        "line 3" means the same line to everybody.
+        `numbers` (`{core line id: mirror line_no}`), when the caller already worked out
+        its own - `mirror_missing_lines` below, whose rule is per LINE against the mirror
+        that already exists, not `project_line_numbering`'s per-BATCH one. Left `None`
+        (a fresh `adopt`/`adopt_for_migration`, or the OI migration's `_mirror_missing`),
+        `project_line_numbering.number_lines` (B1 review round) decides for the whole
+        batch: AutoCount's own `line_no` wins, gaps and all, once every line of THIS batch
+        carries one, distinctly - 5, 1, 3 mirrors as 5, 1, 3, never renumbered to 1, 2, 3,
+        because line 5 has to keep meaning line 5 on both sides of the ESB link. Otherwise
+        every line falls back to a DERIVED order (required date, item code, line id),
+        walked from `start_at` - the old rule, and the only one an order AutoCount has
+        never numbered ever sees.
         """
         products = self._products([line.product_id for line in core_lines])
         codes = {key: value[0] for key, value in products.items()}
         locations = self._warehouse_codes([line.warehouse_id for line in core_lines])
 
-        ordered = sorted(
-            core_lines,
-            key=lambda line: (
-                line.required_date is None,
-                line.required_date or _EARLIEST,
-                codes.get(str(line.product_id or ""), ""),
-                str(line.id),
-            ),
-        )
+        if numbers is None:
+            entries = [
+                LineFacts(
+                    str(line.id), line.line_no, line.required_date,
+                    codes.get(str(line.product_id or ""), ""),
+                )
+                for line in core_lines
+            ]
+            if has_own_numbering(entries):
+                numbers = {
+                    entry.id: int(entry.line_no) for entry in entries  # type: ignore[arg-type]
+                }
+            else:
+                derived = number_lines(entries)
+                numbers = {id_: n + (start_at - 1) for id_, n in derived.items()}
+
+        ordered = sorted(core_lines, key=lambda line: numbers[str(line.id)])
         written: List[ProjectSalesOrderLine] = []
-        for offset, line in enumerate(ordered):
+        for line in ordered:
             _code, name, uom = products.get(str(line.product_id or ""), (None, None, None))
             qty = Decimal(str(line.qty_ordered or 0))
             unit_price = Decimal(str(line.unit_price or 0))
@@ -374,7 +459,7 @@ class ProjectSOAdoptionService:
                 id=str(uuid.uuid4()),
                 project_sales_order_id=order.id,
                 core_sales_order_line_id=str(line.id),
-                line_no=start_at + offset,
+                line_no=numbers[str(line.id)],
                 product_id=line.product_id,
                 description=name,
                 qty=qty,

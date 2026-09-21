@@ -8,11 +8,13 @@
  * again in the list. One array now, rendered by the row's "..." and the record's
  * gear.
  *
- * Edit is not here: it is the record's primary button, and on the list the row
- * click opens the record.
+ * Edit lives here now too (S2, R3): the record's primary slot became Plan, so Edit
+ * moved into the gear, above Delete. It takes an `onEdit` OPTION rather than always
+ * appearing, because the list row has no edit session to open - it passes none and
+ * its "..." shows Delete only, same as before.
  */
 
-import { Trash2 } from 'lucide-react';
+import { SquarePen, Trash2 } from 'lucide-react';
 
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -32,11 +34,17 @@ export interface UseSalesOrderActionsOptions {
    * row has nowhere to put one, so it travels to a toast (S6-06, S6-07).
    */
   surface?: 'inline' | 'toast';
+  /**
+   * Opens the record's edit session. Only the detail page has one to open, so only it
+   * passes this - the list row calls this hook with no `onEdit` and its "..." renders
+   * Delete alone.
+   */
+  onEdit?: () => void;
 }
 
 export function useSalesOrderActions(
   order: SalesOrderActionTarget | null | undefined,
-  { onDeleted, surface = 'inline' }: UseSalesOrderActionsOptions = {},
+  { onDeleted, surface = 'inline', onEdit }: UseSalesOrderActionsOptions = {},
 ): RecordActionSet {
   // Delete asks nothing (D7): the countdown takes the record's primary slot, or
   // the toast on a list row, and Cancel is the way back.
@@ -58,6 +66,20 @@ export function useSalesOrderActions(
   if (!order) return { actions: [], dialogs: null, pending: null };
 
   const actions: RecordAction[] = [
+    // Above Delete (secondary items render first; `orderRecordActions` moves anything
+    // `kind: 'destructive'` last regardless of array order). Absent entirely without an
+    // `onEdit` - the list row's own menu has nowhere to open a session, so it never grows
+    // an Edit item nobody could use.
+    ...(onEdit
+      ? [
+          {
+            key: 'sales_order.edit',
+            label: 'Edit',
+            icon: SquarePen,
+            run: onEdit,
+          } as RecordAction,
+        ]
+      : []),
     {
       key: 'sales_order.delete',
       label: 'Delete',

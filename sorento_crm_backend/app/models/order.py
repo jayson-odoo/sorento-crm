@@ -524,6 +524,10 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # AutoCount's own `Seq` (PLAN-so-lines-autocount-order.md), kept as it arrives. NULL
+    # means this line has never been numbered by AutoCount (order inquiry, upload,
+    # absorbed history, manual, or an AutoCount line pushed before this column existed).
+    line_no = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

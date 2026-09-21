@@ -262,6 +262,13 @@ export type SalesOrderStatus =
 
 export interface SalesOrderLine {
   id: string;
+  /**
+   * AutoCount's own line number (`Seq`), kept as it arrives - the address the Lines tab
+   * sorts and labels by (PLAN-so-lines-autocount-order.md). `null` for a line AutoCount
+   * never numbered: an order-inquiry, upload, absorbed-history or manual line, or an
+   * AutoCount line pushed before this column existed.
+   */
+  line_no?: number | null;
   sku: string;
   product_name: string;
   qty_ordered: number;
@@ -284,6 +291,13 @@ export interface SalesOrderLine {
   warehouse_code?: string;
   /** `open` or `closed`. A closed line is not a commitment however much it still shows. */
   line_status?: string;
+  /**
+   * Where THIS LINE came from - never inherited from the header (R2): a line with no
+   * provenance of its own reads Manual even under an AutoCount or uploaded header, since
+   * the line itself is what carries no source system. Same vocabulary as the header's own
+   * `source`, plus `autocount`.
+   */
+  source?: string;
   /** When this line's quantity is due. Per line, for the same reason as the location. */
   required_date?: string | null;
   /**
@@ -521,7 +535,7 @@ export interface SalesOrderInquiry {
   rows_placed: number;
 }
 
-export type SalesOrderSource = 'inquiry' | 'upload' | 'history' | 'manual';
+export type SalesOrderSource = 'autocount' | 'inquiry' | 'upload' | 'history' | 'manual';
 
 /** A pairing this order's lines claim, and whether both sides are present. */
 export interface LinkedPurchaseOrder {

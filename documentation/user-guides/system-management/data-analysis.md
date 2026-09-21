@@ -158,11 +158,20 @@ The **system-wide integration audit trail**: every inbound/outbound call to an e
 ## AutoCount integration (ESB) - contract version 2.1
 
 The AutoCount integration (the ESB) pushes masters and documents straight into Sorento on its
-own schedule, without a file ever being uploaded by hand. It has no settings screen of its own -
-this section is a reference for what it sends and how that interacts with data entered any other
-way. Every inbound call from it is logged the same as any other integration, on
+own schedule, without a file ever being uploaded by hand. This section is a reference for what it
+sends and how that interacts with data entered any other way. Every inbound call from it is
+logged the same as any other integration, on
 **[Integration Logs](/integration-management/integration-logs)** (`integration_channel` for the
 AutoCount pushes).
+
+**The AutoCount connection** (used by the on-demand Pull below, not by the scheduled push above)
+is entered on the **FoundryX ESB** record under **[Integration Management →
+Integrations](/integration-management/integrations)**: an admin types the gateway's base URL and
+the API key FoundryX issued, then clicks **Test**. Test reports **Connected**, or names the
+reason it failed - a rejected key, AutoCount's own service turned off, too many attempts, or the
+address unreachable. Test does not check that the key covers this company: a key valid for a
+different company still shows Connected there, and is refused on the first Pull instead, with
+AutoCount's own message.
 
 **What version 2.1 sends that earlier versions did not:**
 

@@ -180,7 +180,7 @@ def start_pull(db: Session, *, user_id: str, company_id: str, entity: str) -> Im
         return existing
 
     company_code = _company_code(db, company_id)
-    client = FoundryxAutocountClient()  # raises FoundryxPullError(NOT_CONFIGURED) if unset
+    client = FoundryxAutocountClient(db)  # raises FoundryxPullError(NOT_CONFIGURED) if unset
     body = client.build(company_code, entity)
 
     pull = {
@@ -265,7 +265,7 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
             db.refresh(job)
             return serialize(job, db)
 
-        client = FoundryxAutocountClient()
+        client = FoundryxAutocountClient(db)
         body = client.status(pull.get("snapshot_id"))
         foundryx_status = body.get("status")
 
@@ -356,12 +356,12 @@ def require_rows_available(job: ImportJob) -> None:
         raise PullRowsNotAvailable(f"Pull is in phase {phase_of(job)!r}; nothing to show yet.")
 
 
-def fetch_snapshot_rows(job: ImportJob) -> list[dict]:
+def fetch_snapshot_rows(db: Session, job: ImportJob) -> list[dict]:
     """The RAW snapshot rows, fetched fresh through the FoundryX client every call - no
     cache (plan: "Simplest thing that works; no cache"). Shared by `/rows`, `/download.xlsx`
     and `/compare` so none of the three re-implements paging on its own."""
     pull = _pull_meta(job)
-    client = FoundryxAutocountClient()
+    client = FoundryxAutocountClient(db)
     return client.all_rows(pull.get("snapshot_id"))
 
 

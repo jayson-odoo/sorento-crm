@@ -92,6 +92,16 @@ class IssuedKeyResponse(BaseModel):
     warning: str = "Copy this key now. It cannot be retrieved again."
 
 
+class IntegrationTestResponse(BaseModel):
+    """The Test action's result (PLAN-foundryx-pull-connection-ui.md S2). A test
+    RESULT, never an error - an unconfigured row or an unreachable gateway still
+    answers 200 with ``ok: false`` here."""
+
+    ok: bool
+    message: str
+    latency_ms: int
+
+
 class RotateKeyRequest(BaseModel):
     grace_days: int = Field(
         7,
