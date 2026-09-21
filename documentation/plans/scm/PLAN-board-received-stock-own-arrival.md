@@ -71,6 +71,11 @@ Three defects:
   amending it to Buy is refused: "N landed for this line on PO ...".
 - **R8** Closed by R2: no date rule; when other orders consume the stock, on hand falls below the
   link and Path A fires by itself.
+- **R9** (owner, 21 Sep evening, after the S4 reconciliation measured the collision) A sheet row
+  for a sales order with no open line (fully delivered or all cancelled) lands nowhere: the import
+  refuses it with its own reason `order_fully_delivered` (not `no_line_for_item`, which stays for
+  a genuine item mismatch), the order is not adopted, the row is listed under `line_not_found`.
+  The old D8 history row on the closed line is not written.
 - Board vs OI split (owner): the board does not consider incoming; incoming is purchasing's decision
   at Order Inquiries. R7 reads RECEIVED quantity only; open-PO shifting at OI is untouched, and a
   delayed line still reaches OI as a fresh row (Path A) or a retained row with Was/Now (Path B).

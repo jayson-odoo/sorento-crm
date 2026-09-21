@@ -68,7 +68,7 @@ import pytest
 
 from app.services import project_order_inquiry_import_service as importer
 from tests.test_oi_sheet_pairing_repair import _apply
-from tests.test_project_order_inquiry_import_migration import world
+from tests.test_project_order_inquiry_import_migration import sheet, world
 
 from ._oi_book_fixture import book_of, open_lines
 
@@ -208,3 +208,105 @@ def test_ac_s4_4_reupload_of_both_books_restates_in_place_never_drops():
         again_2027 = _apply(w, book_2027, file_name="2027 order inquiry.xlsx")
         assert again_2027["rows_raised"] == 0, again_2027
         assert len(w.rows()) == 4, "re-uploading book 2027 must not create or drop a row"
+
+
+# --------------------------------------------------------------------------- #
+# AC-S4-6 (R9, added 21 Sep evening) - a sheet row for a sales order with no  #
+# open line at all gets its OWN reason, `order_fully_delivered`, never the    #
+# genuine-item-mismatch `no_line_for_item`                                    #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("status", ["closed", "cancelled"])
+def test_ac_s4_6_fully_delivered_order_row_is_refused_with_its_own_reason(status: str):
+    """AC-S4-6 (R9). A sheet row for a sales order whose only line is closed or
+    cancelled - no open line survives at all - is refused with its OWN reason
+    `order_fully_delivered`, never `no_line_for_item`: the order is not adopted, no OI row
+    is written, and the old D8 history row on the closed line is not written either
+    (`w.rows() == []` covers that - nothing at all lands for this sales order).
+
+    RED today: `_pick_lines_by_date_order` filters an order down to its OPEN lines, finds
+    none, and calls `_match_row(row, [], ...)` - whose FIRST filter (`same_item`) is empty
+    regardless of WHY the candidate list is empty, so it reports `no_line_for_item`
+    (`app/services/import_outcome_codes.py::NO_LINE_FOR_ITEM`) today. The literal string
+    `"order_fully_delivered"` is asserted directly rather than importing a constant, so this
+    test stays red on the STRING even once the coder adds
+    `import_outcome_codes.ORDER_FULLY_DELIVERED` to that module.
+    """
+    with world() as w:
+        order = w.order()
+        w.line(
+            order,
+            qty_ordered="30",
+            qty_delivered="30" if status == "closed" else "0",
+            required_date=date(2026, 6, 1),
+            line_status=status,
+        )
+        data = book_of(w, order, [(30, date(2026, 6, 1))])
+
+        preview = w.preview(data)
+        assert preview["rows_raised"] == 0, preview
+        assert preview["orders_adopted"] == 0, preview
+        assert preview["rows_line_not_found"] == 1, preview
+        assert preview["line_not_found"][0]["reason"] == "order_fully_delivered", preview
+
+        result = w.apply(data)
+        assert result["rows_raised"] == 0, result
+        assert result["orders_adopted"] == 0, result
+        assert result["rows_line_not_found"] == 1, result
+        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
+        assert w.rows() == [], "a row was written for an order with no open line at all"
+
+
+def test_ac_s4_6_mixed_closed_and_cancelled_lines_report_order_fully_delivered():
+    """AC-S4-6 (R9). "All closed or cancelled" covers a MIX of the two statuses across an
+    order's lines, not only a single-line order of one status - the parametrized test above
+    proves each status alone; this proves the order-wide check is "no OPEN line survives",
+    not "every line shares one status"."""
+    with world() as w:
+        order = w.order()
+        w.line(
+            order, qty_ordered="10", qty_delivered="10",
+            required_date=date(2026, 5, 1), line_status="closed",
+        )
+        w.line(
+            order, qty_ordered="20", qty_delivered="0",
+            required_date=date(2026, 6, 1), line_status="cancelled",
+        )
+        data = book_of(w, order, [(15, date(2026, 6, 1))])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["orders_adopted"] == 0, result
+        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
+        assert w.rows() == [], "a row was written for an order with no open line at all"
+
+
+def test_ac_s4_6_open_line_of_another_item_still_reports_no_line_for_item():
+    """AC-S4-6 contrast case (R9). An order that DOES have an open line - just not for
+    this row's item - is a genuine item mismatch, not `order_fully_delivered`: R9 only
+    recarves the "no open line survives AT ALL" case, and this one must keep reading
+    `no_line_for_item` after the coder's fix lands. Today's importer already agrees (its
+    open-line filter still leaves a non-empty candidate list here, so `_match_row`'s
+    `same_item` filter is the one that actually refuses the row), so this assertion is a
+    regression guard against the R9 fix over-reaching, not the red half of AC-S4-6.
+    """
+    with world() as w:
+        order = w.order()
+        other_product = w.product_row(code=f"{w.product.product_code}-OTHER")
+        w.line(
+            order, product=other_product, qty_ordered="30",
+            required_date=date(2026, 6, 1), line_status="open",
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 10, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_line_not_found"] == 1, result
+        assert result["line_not_found"][0]["reason"] == "no_line_for_item", result
+        assert w.rows() == [], "a row was written despite no line holding this item"

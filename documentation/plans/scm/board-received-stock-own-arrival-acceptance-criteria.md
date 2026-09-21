@@ -64,6 +64,10 @@ FK seeded, never a borrowed row.
 - AC-S4-4 Re-uploading the same book restates existing rows in place (no duplicate, no skip) and the
   row count stays equal to the sheet row count for that sales order.
 - AC-S4-5 SO372176 replay on the 0921 copy (manual, in the PR body): 8 rows on L2..L9 by date.
+- AC-S4-6 (R9, added 21 Sep) A sheet row for an order whose lines are all closed or cancelled:
+  preview and apply refuse it with reason `order_fully_delivered` under `line_not_found`,
+  `rows_raised` 0, order not adopted, no OI row written; an order with an open line of another
+  item and no open line for this item still reports `no_line_for_item`.
 
 ## S5 Board and OI read the credit (FE, vitest)
 - AC-S5-1 Board line with a composition component `source: own_arrival` renders a "Received N" chip

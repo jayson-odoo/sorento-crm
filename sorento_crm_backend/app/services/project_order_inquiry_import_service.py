@@ -1098,15 +1098,40 @@ def _pick_lines_by_date_order(
     breaking a tie), paired one to one in that order onto whichever candidate line is not
     yet taken - by an earlier import (`raised_already`) or by an earlier row of this SAME
     walk. A row beyond the last such line lands on the LAST candidate line as a second row,
-    whatever it already carries (AC-S4-2). Item, location and quantity still gate a
-    candidate exactly as `_match_row` always has (reused unchanged, so `no_line_for_item`
-    and the rest report exactly as before) - the date order only decides which of the lines
-    `_match_row` would accept a row lands on.
+    whatever it already carries (AC-S4-2). Item and location still gate a candidate exactly
+    as `_match_row` always has (reused unchanged, so `no_line_for_item` and `location_differs`
+    report exactly as before) - the date order only decides which of the lines `_match_row`
+    would accept a row lands on.
 
     A row that already states exactly what a live row on the order already carries
     (`_restated_existing`) never reaches the date-order pick at all: it restates that row in
     place (D2 kept, AC-S4-4), so a re-upload of an unchanged book raises nothing new and
     never crowds a later, genuinely new row off the line it should take.
+
+    Fix round, 21 Sep 2026 (AC-LP-12 "bumped", a genuine regression the tester's own R4
+    reconciliation found and left red rather than inventing a rule to close it): a row that
+    is NOT a restatement, and is bumped onto a line already carrying a row ONLY because this
+    walk's own earlier rows spent its OWN ITEM's genuinely free candidate(s) first
+    (`row_has_free` - at least one line matching this row's item carried no row before this
+    walk began), is RAISED as a second row rather than silently absorbed as `already_raised`.
+
+    Scoped to the row's own ITEM (round 2 of this fix round, AC-RB-21's journey test), never
+    the whole order: an order can hold a genuinely free line for a DIFFERENT product while
+    this row's own item has none at all, and an order-wide reading wrongly read THAT as
+    licence to skip the used-row recovery a re-upload after a real Confirm still needs.
+
+    Deliberately NOT the rule for an item with no free candidate at all (AC-LP-12 "charge",
+    AC-6 and the rest of `test_oi_sheet_date_follow_sheet.py`'s single-already-raised-line
+    fixtures): there, `already_raised` is set exactly as before this fix round, so D2's
+    repair (`_resolve_delivery_date_repairs`), used-row and top-up recovery
+    (`_resolve_recovery_matches`) still get first say over the row, unchanged - `row_has_
+    free` is a distinction the OLD per-line `already_raised` never had a reason to draw, so
+    gating on it touches nothing that mechanism already owned. `_match_row`'s own quantity
+    gate is likewise untouched (see the comment at its call site below): a row this walk's
+    own earlier rows genuinely outgrew still reports `qty_exceeds_ordered`, at the SAME
+    line (AC-M-8) or any other (AC-S1-5, AC-S1-40) - R4's "never dropped" is about a row
+    losing its OWN line to the free-preferred rank, not a licence to overcharge a line past
+    what it can hold.
     """
     by_order: Dict[str, List[Tuple[int, _Match]]] = {}
     for index, match in enumerate(pending):
@@ -1147,6 +1172,27 @@ def _pick_lines_by_date_order(
                 match.reason = reason
                 continue
 
+            # AC-LP-12 "bumped" fix round, 21 Sep 2026: whether THIS ROW's own item had at
+            # least one open, matching candidate carrying no live row before this walk even
+            # started. Scoped to the row's own ITEM, never the whole order (round 2 of this
+            # fix round, AC-RB-21's journey test: an order can hold a free line for a
+            # DIFFERENT item entirely - line B, line C, both a different product than line
+            # A's own row - which says nothing about whether line A's own row was ever
+            # free). Only when true can a row be genuinely "bumped" - pushed off a free
+            # line onto an occupied one purely because an EARLIER row of this SAME walk
+            # claimed the free one first, which is new since R4's free-preferred rank and a
+            # scenario the old per-line `already_raised` never had to answer. An item whose
+            # only candidate(s) were ALREADY occupied before this upload ran is D2's
+            # ordinary shape - repair (`_resolve_delivery_date_repairs`), used-row and
+            # top-up recovery (`_resolve_recovery_matches`) all still read `already_raised`
+            # to decide whether a row means one of THOSE, and none of that machinery is
+            # this fix round's business.
+            wanted_item = (match.row.item_code or "").strip()
+            item_candidate_ids = {
+                str(c[0].id) for c in candidates if c[1] == wanted_item
+            }
+            row_has_free = bool(item_candidate_ids - raised_already)
+
             def _rank(candidate: tuple, free_ids=candidate_ids - raised_already - used_this_walk) -> tuple:
                 line = candidate[0]
                 line_id = str(line.id)
@@ -1161,9 +1207,26 @@ def _pick_lines_by_date_order(
                 )
 
             found, reason = _match_row(match.row, candidates, taken, rank=_rank)
+            # `_match_row`'s own qty gate (`fits`) is left exactly as it is: a genuine
+            # `qty_exceeds_ordered` - this walk's OWN earlier rows already spent a
+            # candidate's capacity, whether at the SAME line (AC-S1-40, AC-M-8) or because
+            # the row's raw quantity never fit anything at all (AC-S1-5) - stays a reported
+            # refusal, never bypassed. Trying to bypass it generally (an earlier draft of
+            # this fix round did, "when order_has_free, ignore capacity") turned three
+            # genuine `qty_exceeds_ordered` facts into silent over-charges instead; the
+            # ONE thing this fix round actually needed - AC-LP-12 "bumped" - never reaches
+            # this branch at all (its second row fits its paired line on ordinary, unspent
+            # capacity; only `already_raised`, below, was ever wrong for it).
             if found is not None:
                 match.core_line, match.line_location = found[0], found[2] or None
-                match.already_raised = str(found[0].id) in raised_already
+                # AC-LP-12 "bumped": a row landing on a line ALREADY carrying a row is the
+                # ordinary D2 skip (`_resolve_recovery_matches`/`_resolve_delivery_date_
+                # repairs` still get first say over it, unchanged) UNLESS this row's own
+                # item had a genuinely free candidate it was bumped off of by this walk's
+                # own earlier rows - in which case it is a fresh second row, never a
+                # silent skip.
+                already_from_earlier = str(found[0].id) in raised_already
+                match.already_raised = already_from_earlier and not row_has_free
                 used_this_walk.add(str(found[0].id))
             else:
                 match.reason = reason
