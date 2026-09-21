@@ -194,78 +194,100 @@ from a different book or the same restated instruction: the existing row is rest
 (follow-book, Was/Now), a genuinely new instruction is raised as a second row. Cancelled/closed core
 lines are never candidates (drop the pass-5 fallback onto them).
 
-**AFTER (21 Sep 2026, HEAD 7ba28c778, AC-S4-5)**, replaying `preview()` against
-`sorento_ai_automation_0921` with the NEW `_pick_lines_by_date_order` (S4's own code, in
-`app/services/project_order_inquiry_import_service.py:1078-1241`), one call per book, for every
-sheet row naming SO372176. Read-only verified the same way as S0 (every `db.commit()/flush()/add()`
-sits inside `_Raiser`/`apply`, lines 3003+/3342+, strictly after `preview`/`_preview_plan`/`_plan`/
-`_pair`/`_pick_lines_by_date_order`, lines 1078-2867, which touch only `db.query(...)`). Script:
-`/Users/tehjayson/.claude/jobs/77a4318c/tmp/measure_so372176_import_after.py`. Run:
+**AFTER (fix round, HEAD c6e3c77c1, AC-S4-5)**, 21 Sep 2026. The 21 Sep first pass above
+(HEAD 7ba28c778) was preview-only and flagged its own methodology gap (Deviation 3): two
+independent `preview()` dry-runs against one unchanged snapshot cannot see book 1's picks when
+book 2 previews, so it could not reproduce a real sequential upload. Since then R10 landed (line
+qty no longer gates the date-order pairing) and the five-pass fallback was deleted (HEAD
+6c9b05636). This re-run closes that gap by calling the REAL write path -
+`svc.apply()`, the same function `app.tasks.import_tasks._run_scm_upload_job` calls - for each
+book in turn, inside one still-uncommitted session, so book 2's plan genuinely sees book 1's
+raised rows the way a live sequential upload would, without ever committing to disk.
+
+Verified before running that this is safe: `apply()` takes the caller's own session and never
+opens one of its own (grepped the whole service file for `SessionLocal(`, `Queue(`, `enqueue`,
+`.delay(`, `notification_service`, `send_email`, `send_notification`, `rq.` - zero hits); it never
+calls `db.commit()` (its own docstring: "One transaction, owned by the caller"), only `db.flush()`
+and one `begin_nested()` SAVEPOINT inside `ProjectSOAdoptionService._insert_record` (undone by the
+outer rollback same as everything else); and `outcome=None` makes `apply()` build
+`ImportOutcome(None, persist=False)` itself, which `import_outcome.py` confirms never buffers or
+writes an `import_job_rows` row on any session once `persist` is False. Nothing to stub - no RQ
+job, no email, no notification sits anywhere on this path. Script:
+`/Users/tehjayson/.claude/jobs/77a4318c/tmp/measure_so372176_import_after2.py`. Run:
 
 ```
 cd /Users/tehjayson/Documents/foundryx/sorento_crm-own-arrival/sorento_crm_backend
 SORENTO_ENV_FILE=/Users/tehjayson/.claude/jobs/77a4318c/tmp/env.0921 \
   /Users/tehjayson/Documents/foundryx/sorento_crm/sorento_crm_backend/venv/bin/python \
-  /Users/tehjayson/.claude/jobs/77a4318c/tmp/measure_so372176_import_after.py
+  /Users/tehjayson/.claude/jobs/77a4318c/tmp/measure_so372176_import_after2.py
 ```
 
-Two runs inside one rolled-back session. RUN 1 replays over the DB exactly as it sits today (still
-holding the 20 Sep import's rows and the 21 Sep confirm's L3/L6 restatement). RUN 2, inside the
-SAME open transaction, first deletes SO372176's own 8 `order_inquiry_rows` (uncommitted;
-`order_inquiry_links` cascade with them, `ondelete="CASCADE"` on `row_id`), then replays both books
-against that clean state. The whole session is rolled back in `finally`; a fresh second session then
-re-counted `order_inquiry_rows` for SO372176 and got 8, identical to the pre-run count - the delete
-never persisted.
+One rolled-back session. Step 1 deletes SO372176's own 8 `order_inquiry_rows` (uncommitted;
+`order_inquiry_links` cascade). PASS 1 previews then APPLIES the 2026 book, then previews then
+APPLIES the 2027 book, against that clean state, both in the same open transaction. PASS 2, before
+rollback, re-uploads (preview + apply) both books again over PASS 1's own applied state, to show
+what a restate looks like. The whole session is rolled back in `finally`; a fresh second session
+then re-counted `order_inquiry_rows` for SO372176 and got 8, identical to the pre-run count - the
+delete and every apply never persisted.
 
-RUN 1 - re-upload over current state (DB as it sits today):
+PASS 1 - clean sequential import (delete, then 2026 book applied, then 2027 book applied against
+that now-flushed state):
 
-| Book | Sheet row | Date | Qty | Paired SO line (No., required date, qty) | Raisable | Reason |
-|---|---|---|---|---|---|---|
-| 2026 book | OCT 26 row 154 | 2026-10-01 | 70 | L11 (2027-12-30, 120) | Yes | - |
-| 2026 book | SEPT OCT 26 row 821 | 2026-10-01 | 70 | - | No | `duplicate` (restates OCT 26/row 154) |
-| 2026 book | NOV 26 row 179 | 2026-11-01 | 40 | L7 (2027-06-30, 50) | Yes | - |
-| 2026 book | DEC 26 row 279 | 2026-12-01 | 30 | L11 (2027-12-30, 120) | Yes | - |
-| 2026 book | DEC 26 row 280 | 2026-12-01 | 40 | L3 (2026-12-30, 50) | Yes | - |
-| 2027 book | JAN 27 row 49 | 2027-01-01 | 40 | L7 (2027-06-30, 50) | Yes | - |
-| 2027 book | FEB 27 row 3 | 2027-02-01 | 40 | L11 (2027-12-30, 120) | Yes | - |
-| 2027 book | MAR 27 row 3 | 2027-03-01 | 40 | L11 (2027-12-30, 120) | Yes | - |
-| 2027 book | APR 27 row 186 | 2027-04-01 | 30 | L11 (2027-12-30, 120) | Yes | - |
+| Line | Line required date / qty | Row qty / date | Note |
+|---|---|---|---|
+| L2 | 2026-10-01 / 20 | 70 / 2026-10-01 | Migrated ... 2026 book.xlsx; **Was 20 on 2026-10-01**; Linked to SPO-2026/01-0138 |
+| L3 | 2026-12-30 / 50 | 50 / 2026-12-30 | Migrated ... 2026 book.xlsx; Was 40 on 2026-11-01; Linked to SPO-2026/01-0138 |
+| L4 | 2027-02-28 / 50 | 50 / 2027-02-28 | Migrated ... 2026 book.xlsx; Was 30 on 2026-12-01; Linked to SPO-2026/01-0138 |
+| L5 | 2027-04-30 / 50 | 50 / 2027-04-30 | Migrated ... 2026 book.xlsx; Was 40 on 2026-12-01; Linked to SPO-2026/01-0138 |
+| L6 | 2027-06-01 / 50 | 50 / 2027-06-01 | Migrated ... 2027 book.xlsx; Was 40 on 2027-01-01; Linked to SPO-2026/01-0138 |
+| L7 | 2027-06-30 / 50 | 40 / 2027-02-01 | Migrated ... 2027 book.xlsx |
+| L8 | 2027-08-30 / 40 | 40 / 2027-08-30 | Migrated ... 2027 book.xlsx; Was 40 on 2027-03-01 |
+| L9 | 2027-10-30 / 50 | 50 / 2027-10-30 | Migrated ... 2027 book.xlsx; Was 30 on 2027-04-01 |
 
-RUN 2 - clean import (SO372176's own 8 rows deleted, uncommitted, before either book runs):
+8 rows, L2..L9, exactly as the UAC states, with OCT26/70 on L2 carrying the R10 "Was 20 on
+2026-10-01" note (row qty 70 exceeds L2's own 20).
 
-| Book | Sheet row | Date | Qty | Paired SO line (No., required date, qty) | Raisable | Reason |
-|---|---|---|---|---|---|---|
-| 2026 book | OCT 26 row 154 | 2026-10-01 | 70 | L11 (2027-12-30, 120) | Yes | - |
-| 2026 book | SEPT OCT 26 row 821 | 2026-10-01 | 70 | - | No | `duplicate` |
-| 2026 book | NOV 26 row 179 | 2026-11-01 | 40 | L3 (2026-12-30, 50) | Yes | - |
-| 2026 book | DEC 26 row 279 | 2026-12-01 | 30 | L4 (2027-02-28, 50) | Yes | - |
-| 2026 book | DEC 26 row 280 | 2026-12-01 | 40 | L5 (2027-04-30, 50) | Yes | - |
-| 2027 book | JAN 27 row 49 | 2027-01-01 | 40 | L3 (2026-12-30, 50) | Yes | - |
-| 2027 book | FEB 27 row 3 | 2027-02-01 | 40 | L4 (2027-02-28, 50) | Yes | - |
-| 2027 book | MAR 27 row 3 | 2027-03-01 | 40 | L5 (2027-04-30, 50) | Yes | - |
-| 2027 book | APR 27 row 186 | 2027-04-01 | 30 | L6 (2027-06-01, 50) | Yes | - |
+PASS 2 - re-upload of both books over PASS 1's applied state (before rollback, same session):
 
-Comparison with UAC AC-S4-5 ("8 rows on L2..L9 by date"):
+| Line | Line required date / qty | Row qty / date | Note (abridged) |
+|---|---|---|---|
+| L2 | 2026-10-01 / 20 | 70 / 2026-10-01 | unchanged, restated in place (`already_raised`) |
+| L3 | 2026-12-30 / 50 | 50 / 2026-12-30 | unchanged, restated in place |
+| L4 | 2027-02-28 / 50 | 50 / 2027-02-28 | unchanged, restated in place |
+| L5 | 2027-04-30 / 50 | 50 / 2027-04-30 | unchanged, restated in place |
+| L6 | 2027-06-01 / 50 | 50 / 2027-06-01 | unchanged, restated in place |
+| L7 | 2027-06-30 / 50 | 40 / 2027-02-01 | unchanged, restated in place |
+| L8 | 2027-08-30 / 40 | 40 / 2027-08-30 | unchanged, restated in place |
+| L9 | 2027-10-30 / 50 | 50 / 2027-10-30 | unchanged, restated in place |
+| L11 | 2027-12-30 / 120 | 40 / 2026-12-01 | **new**, "2026 book.xlsx" only |
+| L11 | 2027-12-30 / 120 | 30 / 2026-12-01 | **new**, second row on the same line |
+| L10 | 2027-11-30 / 50 | 50 / 2027-11-30 | **new**, "2026 book.xlsx"; Was 40 on 2026-11-01 |
 
-1. The row COUNT matches: 8 non-duplicate sheet rows are raisable in the clean case (4 per book),
-   none dropped as `already_raised` and none `top_up_sum_mismatch` - a full reversal of S0's BEFORE
-   table, where 6 of these same 9 members were blocked. D3's "never drop" holds.
-2. Deviation: L2 is never used in either run. SO372176's L2 carries only 20 pcs ordered
-   (`sales_order_lines.qty_ordered`), and every sheet row naming SO372176 in both books is qty >= 30
-   (30, 40 or 70) - `_match_row`'s own quantity gate (unchanged by S4, still reads `fits`) refuses L2
-   for all of them, so the date-order pick's candidate list never lands a row there. Likewise OCT 26
-   row 154's 70 pcs fits no open line except L11 (qty_ordered 120, the only line >= 70), landing over
-   a year from its own 2026-10-01 date - not a ranking defect this time (D3 is fixed), just a real
-   quantity mismatch between what the sheet says and what L2/most lines can hold.
-3. Deviation: RUN 2's two books land on the SAME four lines (L3-L6 twice) rather than spanning
-   L3..L9, because this script calls `preview()` once per book independently inside one rolled-back
-   transaction (S0's own script did the same) - book 2's `_plan` never sees book 1's not-yet-applied
-   picks. The real 20 Sep import uploaded the books sequentially with a commit between (03:19:03 then
-   03:22:36 per S0), which would give book 2 a fresh `already_raised` state reflecting book 1's
-   commit; this script did not simulate that intervening commit, so the L3-L6 collision here is a
-   preview-methodology artifact of running both books dry against one unchanged snapshot, not
-   necessarily how a live sequential upload lands. A true "L2..L9" replay needs each book actually
-   applied before the next book's preview runs - out of scope for this read-only measurement.
+11 rows after PASS 2, not 8: three new rows land on L10/L11, lines PASS 1 never touched.
+
+Comparison with UAC AC-S4-5 ("8 rows on L2..L9 by date") and 3 deviations:
+
+1. **PASS 1 matches exactly.** Calling the real write path sequentially (book 1 applied before
+   book 2 previews) resolves the earlier preview-only run's Deviation 2/3 collisions entirely: 8
+   rows, one per open line L2..L9 in date order, none dropped, and OCT26/70 lands on L2 with the
+   R10 "Was 20 on 2026-10-01" note exactly as the UAC describes. The 21 Sep first pass's L2-unused
+   / L3-L6-collision findings were an artifact of previewing both books dry against one unchanged
+   snapshot, not a defect in S4's pairing itself.
+2. **New finding, only visible on the real apply path:** 6 of the 8 PASS 1 rows (L3, L4, L5, L6,
+   L8, L9) have their qty/date SETTLED to an ACTIVE `so_supply_decisions` row's own buy_qty and
+   required_date (`_apply_settle_recovery`, AC-RB-11, `project_order_inquiry_import_service.py:
+   2807-2833`) rather than keeping the sheet's own literal ask - the sheet's figures survive only
+   in the row's "Was ..." note. This is pre-existing, documented behaviour (2.1(b)), not something
+   S4 changed; the earlier preview-only script could never see it because `preview()` never calls
+   `apply()`'s post-raise settle step.
+3. **PASS 2 is not a clean restate-in-place.** Because settle (#2) moved 6 of 8 rows' own
+   qty/date away from what the sheet literally states, PASS 2's `already_raised` match (keyed off
+   the sheet row against the row's OWN current qty/date) no longer recognises those sheet rows as
+   already raised on re-upload, so 3 "new" instructions land on lines L10/L11 that PASS 1 never
+   used - the count grows from 8 to 11, not restate-in-place at 8. This is a consequence of the
+   settle mechanism in #2 interacting with a re-upload, not a defect S4 introduced; out of scope
+   for AC-S4-5 (which is about the clean-import count, matched by PASS 1) but worth a follow-up
+   ruling before a live re-upload of an already-decided line is relied on to restate cleanly.
 
 ### S5 Board and OI read the credit (FE)
 Board line shows the `Received N (own arrival)` chip where the composition carries
