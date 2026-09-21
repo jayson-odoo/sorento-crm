@@ -284,6 +284,30 @@ register(
 )
 
 
+def _unlink_order_inquiry_row(db: Session, payload: dict):
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    return ProjectOrderInquiryService(db).unplace(
+        _entity_id(payload), actor_user_id=payload.get("requested_by_id")
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_row.unlink",
+        entity_types=("order_inquiry_row",),
+        execute=_unlink_order_inquiry_row,
+        # Reversible: the document is still there, and re-linking the row restores the
+        # placement (AC-DP-06 - "Unlink is a deferred pending action, never a confirm
+        # dialog"). `link_id` is left unset so every link on the row goes, matching
+        # what "Unlink selected" means on the worklist today.
+        window=WINDOW_REVERSIBLE,
+        permission="projects.order_inquiry.action",
+        label="Unlink",
+    )
+)
+
+
 def _actor(db: Session, payload: dict) -> dict:
     """The click's actor, in the shape a service expects `current_user` to be.
 

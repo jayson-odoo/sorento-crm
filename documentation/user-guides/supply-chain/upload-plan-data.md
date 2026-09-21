@@ -64,13 +64,17 @@ a filtered export of one or the other.
 
 ## The Order Inquiries page
 
-Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. The page
-is what replaces the monthly order-book Excel; a **List** / **Schedule** toggle sits top right of
-the page. There is no "Plan until" line on the page any more - the cut-off date that used to show
-there now lives inside the **Auto link all...** dialog.
+Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. This
+worklist - one row per order inquiry line - is what replaces the monthly order-book Excel. It now
+sits behind the **Lines** toggle top right of the page (**Documents** opens by default; see
+[Order inquiries: the Documents view and the OI detail
+page](order-inquiry-documents.md) for the header list and the per-order-inquiry detail page). Once
+you are on **Lines**, a **List** / **Schedule** toggle sits above the grid. There is no "Plan
+until" line on the page any more - the cut-off date that used to show there now lives inside the
+**Auto link all...** dialog.
 
-The page opens on **To confirm**: every row CS has raised that you have not yet signed off. See
-"Confirming a row" below for what that means and how it works.
+The **Lines** view opens on **To confirm**: every row CS has raised that you have not yet signed
+off. See "Confirming a row" below for what that means and how it works.
 
 ### Stage cards
 
@@ -524,9 +528,10 @@ left alone.
 
 ### Where the rows appear
 
-Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. An
-ordinary migrated row is confirmed the moment it is raised, so it will not show on the page's
-default **To confirm** view - set the **Confirmed** filter to **Confirmed** or **All** to find it.
+Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**, then
+switch to **Lines**. An ordinary migrated row is confirmed the moment it is raised, so it will not
+show on the **Lines** view's default **To confirm** filter - set the **Confirmed** filter to
+**Confirmed** or **All** to find it.
 The two exceptions land on **To confirm** instead, needing your sign-off: a row rebuilt as
 **used** (see "A row already covered by stock" above), and a row landing on a line that is
 already cancelled (see "A row on a cancelled line" above). Each row carries the quantity, delivery
@@ -586,6 +591,7 @@ and load by hand.
 
 ## See also
 
+* [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md)
 * [Run a reorder plan](run-a-reorder-plan.md)
 * [Print the order summary](print-the-order-summary.md)
 * [Upload SPO allocations](../purchasing/upload-spo.md)

@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 
+import { DeferredCountdown } from '@/components/common/DeferredActionButton';
 import { deferredToast, dismissDeferredToast } from '@/components/common/deferredToast';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
 import {
@@ -55,6 +56,14 @@ export interface UseDeferredBulkActionInput {
   actionKey: string;
   /** The registry's entity type, e.g. `product`. Default for a target with no override. */
   entityType: string;
+  /**
+   * Where the countdown goes: `toast` (default) puts it over the list, because a
+   * row has nowhere to put it (S6-07). `inline` hands it back as `countdown` for
+   * a detail page's own primary area to render instead - a batch started from a
+   * record's own gear menu, not a list row (`useDeferredAction`'s own `inline`
+   * surface, same reasoning, extended here for a SELECTION rather than one id).
+   */
+  surface?: 'inline' | 'toast';
   /** Verb-first copy for the countdown: "Deleting" reads as "Deleting in 8s". */
   verb?: string;
   /** Past tense, for the closing sentence: "12 products deleted". */
@@ -65,6 +74,14 @@ export interface UseDeferredBulkActionInput {
   invalidateKeys?: readonly (readonly unknown[])[];
   /** Called once the batch is parked - where a list drops its selection. */
   onStarted?: () => void;
+  /**
+   * Called once every parked action has actually SETTLED (committed or failed on
+   * the server) - never on a Cancel, which withdraws the batch instead of settling
+   * it. A caller whose selection must survive Cancel (AC-DP-06: "Cancel leaves the
+   * ticked lines ticked; the selection clears only when the unlink commits")
+   * clears it here rather than in `onStarted`.
+   */
+  onFinished?: () => void;
   /**
    * Overrides the three closing sentences instead of the default
    * "`${describe(count)} ${pastVerb}.`" template - for copy that reads
@@ -83,6 +100,11 @@ export interface UseDeferredBulkActionResult {
   run: (targets: DeferredBulkTarget[]) => void;
   /** True from the click until every action is parked (or refused). */
   isStarting: boolean;
+  /**
+   * The countdown to render where the batch was started. Null while nothing is
+   * parked, and null on the `toast` surface, where the toast carries it instead.
+   */
+  countdown: ReactNode;
 }
 
 export function useDeferredBulkAction(
@@ -96,13 +118,24 @@ export function useDeferredBulkAction(
     describe,
     invalidateKeys,
     onStarted,
+    onFinished,
     finishText,
+    surface = 'toast',
   } = input;
 
   const queryClient = useQueryClient();
   const [isStarting, setIsStarting] = useState(false);
   //: One batch at a time, and each batch owns a toast id of its own.
   const batchRef = useRef(0);
+  //: The `inline` surface's own countdown state - null while nothing is parked.
+  //: `onCancel` is captured with the batch's own closure, the same `cancelAll`
+  //: the `toast` surface hands `deferredToast`, so Cancel behaves identically on
+  //: either surface.
+  const [inlinePending, setInlinePending] = useState<{
+    pending: PendingAction;
+    cancelling: boolean;
+    onCancel: () => void;
+  } | null>(null);
 
   const run = useCallback(
     (targets: DeferredBulkTarget[]) => {
@@ -152,7 +185,9 @@ export function useDeferredBulkAction(
         let withdrawn = false;
 
         const finish = () => {
-          dismissDeferredToast(toastId);
+          if (surface === 'inline') setInlinePending(null);
+          else dismissDeferredToast(toastId);
+          onFinished?.();
           if (finishText) {
             if (failed === 0) toast.success(finishText.allCommitted(committed));
             else if (committed === 0) toast.error(finishText.allFailed(failed));
@@ -197,11 +232,16 @@ export function useDeferredBulkAction(
         const cancelAll = async () => {
           if (withdrawn) return;
           withdrawn = true;
-          dismissDeferredToast(toastId);
+          if (surface === 'inline') {
+            setInlinePending((prev) => (prev ? { ...prev, cancelling: true } : prev));
+          } else {
+            dismissDeferredToast(toastId);
+          }
           const cancels = await Promise.allSettled(
             parked.map((action) => cancelPendingAction(action.id)),
           );
           for (const action of parked) pendingEntityStore.releaseById(action.id);
+          if (surface === 'inline') setInlinePending(null);
           // A cancel that arrives after its window closed loses to the commit (409), so
           // "cancelled" is not always the whole truth and the reader has to be told
           // which rows went anyway.
@@ -218,13 +258,17 @@ export function useDeferredBulkAction(
           }
         };
 
-        deferredToast({
-          pending: clock,
-          verb,
-          subject: describe(parked.length),
-          onCancel: () => void cancelAll(),
-          id: toastId,
-        });
+        if (surface === 'inline') {
+          setInlinePending({ pending: clock, cancelling: false, onCancel: () => void cancelAll() });
+        } else {
+          deferredToast({
+            pending: clock,
+            verb,
+            subject: describe(parked.length),
+            onCancel: () => void cancelAll(),
+            id: toastId,
+          });
+        }
       })();
     },
     [
@@ -234,14 +278,28 @@ export function useDeferredBulkAction(
       finishText,
       invalidateKeys,
       isStarting,
+      onFinished,
       onStarted,
       queryClient,
       pastVerb,
+      surface,
       verb,
     ],
   );
 
-  return { run, isStarting };
+  return {
+    run,
+    isStarting,
+    countdown:
+      surface === 'inline' && inlinePending ? (
+        <DeferredCountdown
+          pending={inlinePending.pending}
+          verb={verb}
+          onCancel={inlinePending.onCancel}
+          cancelling={inlinePending.cancelling}
+        />
+      ) : null,
+  };
 }
 
 export default useDeferredBulkAction;

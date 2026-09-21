@@ -1097,6 +1097,11 @@ class SalesOrderService:
                 continue
             total, placed = counts.get(str(inquiry.id), (0, 0))
             row["order_inquiries"].append({
+                # The header id (S3, AC-LK-01): the SO page's own link points at the OI
+                # detail page, `/project-sales/order-inquiries/<id>`, not a UUID shown
+                # anywhere - it travels in the URL only, the same as every other
+                # `rowHref` in this product.
+                "id": inquiry.id,
                 "inquiry_no": inquiry.inquiry_no,
                 "state": inquiry.state,
                 "raised_at": inquiry.raised_at.isoformat() if inquiry.raised_at else None,

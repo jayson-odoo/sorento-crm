@@ -1,14 +1,28 @@
 """An order inquiry has a NUMBER, not just an id.
 
-`OI-000001`, the same shape and width as `ProjectSalesOrder.provisional_ref` (`PSO-000001`):
-the highest number this company has issued, plus one. Until this existed the only way to
-name what purchasing had been handed was a UUID, which nothing in this product is allowed to
-show a person - and "the inquiry on SO414033" stops being an answer the moment an amendment
-raises the second one.
+`OI-2609-0001` (R3, `PLAN-oi-header-list-detail.md`): the MONTH of the header's own first
+raise, Asia/Kuala_Lumpur, then a four-digit series that starts over every month - the
+highest number this company has issued IN THAT MONTH, plus one. Superseded the flat
+`OI-000001` (six digits, no month) this file used to pin; migration `523_oi_monthly_no_raises`
+renumbers every pre-existing header and keeps the old value on `legacy_inquiry_no`. Until
+this existed the only way to name what purchasing had been handed was a UUID, which nothing
+in this product is allowed to show a person - and "the inquiry on SO414033" stops being an
+answer the moment an amendment raises the second one.
 
 The number is stamped by a `before_insert` listener on the model rather than by each writer,
 so "no inquiry exists without a number" is structural: the two creation sites in the service
 never mention it, and neither does any future one.
+
+`tests/test_oi_monthly_number_and_raises.py` (S1 of that plan) is the primary suite for the
+monthly scheme itself - the dated prefix, the MYT day-boundary edge, the never-re-minted
+guard, the renumber migration. This file keeps only what that one does NOT already cover:
+a gap in the series is never refilled (highest plus one, never the count), the database's
+own uniqueness constraint, the confirmation flow's own minting path (`refresh_for_decision`,
+not `ensure_inquiry`), and the detail read surviving the serialiser. Two tests that became
+exact duplicates of the new file once rewritten to the dated format - "the first inquiry is
+OI-000001" and "each inquiry takes the next number" (both just "N headers get consecutive
+numbers", already covered by that file's AC-NO-01/AC-NO-02 tests) - are deleted rather than
+kept as a second copy.
 
 Postgres, blank scratch schema, rolled back at teardown, and every FK target real: the
 uniqueness this slice leans on is a database constraint, so a test that ran anywhere else
@@ -16,8 +30,9 @@ would prove nothing about it.
 """
 from __future__ import annotations
 
+import re
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -31,6 +46,9 @@ from app.services import project_order_inquiry_service as svc
 from ._pg_fixture import blank_session
 
 MARKER = "zzt-oino"
+
+#: `OI-2609-0001`: prefix month + a four-digit series (`INQUIRY_NO_DIGITS`).
+DATED_NUMBER_RE = re.compile(r"^OI-\d{4}-\d{4}$")
 
 
 def _uid() -> str:
@@ -60,7 +78,7 @@ def _order(db, company_id: str) -> ProjectSalesOrder:
     return order
 
 
-def _inquiry(db, order: ProjectSalesOrder, *, amendment_id=None) -> OrderInquiry:
+def _inquiry(db, order: ProjectSalesOrder, *, amendment_id=None, raised_at=None) -> OrderInquiry:
     row = OrderInquiry(
         id=_uid(),
         company_id=order.company_id,
@@ -68,31 +86,16 @@ def _inquiry(db, order: ProjectSalesOrder, *, amendment_id=None) -> OrderInquiry
         amendment_id=amendment_id,
         state="raised",
     )
+    if raised_at is not None:
+        row.raised_at = raised_at
     db.add(row)
     db.flush()
     return row
 
 
-def test_the_first_inquiry_is_oi_000001(db):
-    company_id = _company(db)
-
-    number = svc.next_inquiry_no(db, company_id)
-
-    assert number == "OI-000001"
-
-
-def test_each_inquiry_takes_the_next_number(db):
-    company_id = _company(db)
-    first = _inquiry(db, _order(db, company_id))
-
-    second = _inquiry(db, _order(db, company_id))
-
-    assert first.inquiry_no == "OI-000001"
-    assert second.inquiry_no == "OI-000002"
-
-
 def test_a_gap_in_the_series_is_never_refilled(db):
-    """The next number is the HIGHEST plus one, never the count.
+    """The next number is the HIGHEST plus one, never the count, scoped to the MONTH the
+    header opened under (R3).
 
     Counting would hand a departed inquiry's number to a different one the moment anything
     was removed, and the old number is already in somebody's email. (Removing the highest
@@ -100,13 +103,14 @@ def test_a_gap_in_the_series_is_never_refilled(db):
     non-event: nothing in this system deletes an inquiry, rows are cancelled.)
     """
     company_id = _company(db)
-    dropped = _inquiry(db, _order(db, company_id))
-    kept = _inquiry(db, _order(db, company_id))
-    assert (dropped.inquiry_no, kept.inquiry_no) == ("OI-000001", "OI-000002")
+    september = datetime(2026, 9, 5)
+    dropped = _inquiry(db, _order(db, company_id), raised_at=september)
+    kept = _inquiry(db, _order(db, company_id), raised_at=september)
+    assert (dropped.inquiry_no, kept.inquiry_no) == ("OI-2609-0001", "OI-2609-0002")
     db.delete(dropped)
     db.flush()
 
-    assert svc.next_inquiry_no(db, company_id) == "OI-000003"
+    assert svc.next_inquiry_no(db, company_id, september.date()) == "OI-2609-0003"
 
 
 def test_the_number_is_unique_in_the_database(db):
@@ -130,10 +134,18 @@ def test_the_number_is_unique_in_the_database(db):
 
 def test_a_confirmation_stamps_the_number_on_the_inquiry_it_raises(db):
     """The confirmed Buy handoff is one of the two places an inquiry is born, and it says
-    nothing about numbering: the stamp does that, which is the point of putting it there."""
+    nothing about numbering: the stamp does that, which is the point of putting it there.
+
+    Exercises `refresh_for_decision`'s own minting path end to end - a different route
+    from `tests/test_oi_monthly_number_and_raises.py`'s direct `ensure_inquiry`/model-insert
+    calls, so it stays even though that file owns the numbering SCHEME itself. No
+    `raised_at` is set on the way in here, so the header opens under WHATEVER real month
+    the test happens to run in - asserted by shape (`DATED_NUMBER_RE`) and by the `-0001`
+    a brand-new company-scoped scratch schema guarantees for that month, never by a
+    hardcoded month.
+    """
     from app.models.product import Product, ProductCategory, UnitOfMeasure
     from app.models.project_so import ProjectSalesOrderLine, SOSupplyDecision
-    from datetime import datetime
 
     company_id = _company(db)
     order = _order(db, company_id)
@@ -172,7 +184,11 @@ def test_a_confirmation_stamps_the_number_on_the_inquiry_it_raises(db):
         actor_user_id=actor.id,
     )
 
-    assert result["inquiry"].inquiry_no == "OI-000001"
+    inquiry_no = result["inquiry"].inquiry_no
+    assert DATED_NUMBER_RE.match(inquiry_no), inquiry_no
+    assert inquiry_no.endswith("-0001"), (
+        "the FIRST inquiry raised in a fresh, company-scoped scratch schema this month"
+    )
 
 
 def test_the_detail_read_names_the_inquiry(db):

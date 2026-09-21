@@ -81,7 +81,9 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                plan_horizon_start: Optional[date] = None,
                supersedes_run_id: Optional[str] = None,
                requested_via: Optional[str] = None,
-               refuse_if_in_flight: bool = False) -> dict:
+               refuse_if_in_flight: bool = False,
+               demand_class: Optional[str] = None,
+               so_numbers: Optional[list[str]] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -127,6 +129,13 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     plans list can mark it - a buyer opening Reorder Planning can then see WHY a plan
     nobody here launched exists, instead of reading it as a stray run.
 
+    ``demand_class`` (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026) narrows the run
+    to one leg of demand - ``project`` | ``retail``; ``None`` (the default) nets both, exactly
+    as before this parameter existed. ``so_numbers`` further narrows a project run to the
+    named sales orders; stored as the LIST when given, ``[]`` when Project was chosen with no
+    SO narrowed (every project order in range - a real answer, not an unset one), and
+    ``None`` when demand isn't scoped to project at all (nothing to narrow).
+
     ``refuse_if_in_flight`` (B2, security review) raises ``AppException(409,
     code="run_in_progress")`` when the company already has a ``queued`` / ``running`` run,
     so a caller cannot start an unbounded number of concurrent plans. Off by default (the
@@ -167,6 +176,15 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
             )
     run_id = str(uuid.uuid4())
     now = datetime.utcnow()
+    # "Asked for nothing" (None) and "asked for Project with no SO named" ([]) are different
+    # facts and both real (design 4.6) - only a run scoped OUTSIDE project has nothing to
+    # narrow, so that is the only case NULL is stamped.
+    if so_numbers:
+        stored_so_numbers = list(so_numbers)
+    elif demand_class == "project":
+        stored_so_numbers = []
+    else:
+        stored_so_numbers = None
     db.add(ReorderRun(
         id=run_id,
         created_by=actor,
@@ -178,6 +196,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         include_market=bool(include_market),
         plan_horizon_date=plan_horizon_date,
         plan_horizon_start=plan_horizon_start,
+        demand_class=demand_class,
+        so_numbers=stored_so_numbers,
         policy_snapshot_ref=f"policies@{now.isoformat()}",
         started_at=now,
         run_log={"stage": _STAGES[0]},
@@ -348,6 +368,8 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
 def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
                product_codes: list[str], plan_horizon_date: Optional[date],
                plan_horizon_start: Optional[date] = None,
+               demand_class: Optional[str] = None,
+               so_numbers: Optional[list[str]] = None,
                actor: Optional[str]) -> dict:
     """Launch a NEW run that supersedes ``old_run_id`` (G8). Runs stay immutable - this
     never mutates the old row's own scope/recommendations, it only starts a fresh run and
@@ -409,6 +431,8 @@ def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
         actor=actor,
         plan_horizon_date=plan_horizon_date,
         plan_horizon_start=plan_horizon_start,
+        demand_class=demand_class,
+        so_numbers=so_numbers,
         supersedes_run_id=old_run_id,
     )
 
@@ -457,7 +481,7 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
         today = datetime.now(_KL_TZ).date()
     cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log, "
             "decision_grain, front_planning_contract_version, plan_horizon_date, "
-            "plan_horizon_start")
+            "plan_horizon_start, demand_class, so_numbers")
     # Company-scoped by hand: raw SQL, so the ORM isolation filter never sees it. Without the
     # predicate the reorder page opens on whichever company ran most recently, which is
     # another company's plan wearing this company's chrome.
@@ -619,7 +643,9 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 
         rows = _planning_rows(db, run.warehouse_ids, run.product_ids,
                              horizon=run.plan_horizon_date,
-                             horizon_start=run.plan_horizon_start)
+                             horizon_start=run.plan_horizon_start,
+                             demand_class=run.demand_class,
+                             so_numbers=run.so_numbers)
         # Confirmed Reserve / Borrow leaves the Retail free-supply pool before anything is
         # netted against it (AC-F07); stamped on the row so every planning path sees it.
         # Horizoned on the SAME rule as the demand it offsets (AC-F-horizon): a reserve
@@ -628,7 +654,9 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         # rule on the START side (S4): a reserve claimed against a line the window no longer
         # covers must leave together with that demand too.
         _apply_project_supply_reduction(db, rows, horizon=run.plan_horizon_date,
-                                        horizon_start=run.plan_horizon_start)
+                                        horizon_start=run.plan_horizon_start,
+                                        demand_class=run.demand_class,
+                                        so_numbers=run.so_numbers)
         last_move = _last_movement_map(db, [r["product_id"] for r in rows], run.warehouse_ids)
         # L5 - how long the stock sitting there has been sitting. Only ever consulted for a
         # SKU that has never moved, where until now there was no evidence at all.
@@ -655,7 +683,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
                                        wh_meta, last_buy=last_buy, rates=rates,
                                        levels=levels, last_cost=last_cost,
                                        horizon=run.plan_horizon_date,
-                                       horizon_start=run.plan_horizon_start)
+                                       horizon_start=run.plan_horizon_start,
+                                       demand_class=run.demand_class)
 
         # M4 cash stage - compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -772,7 +801,9 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                    product_ids: Optional[list[str]] = None,
                    horizon: Optional[date] = None,
-                   horizon_start: Optional[date] = None) -> list[dict]:
+                   horizon_start: Optional[date] = None,
+                   demand_class: Optional[str] = None,
+                   so_numbers: Optional[list[str]] = None) -> list[dict]:
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
     warehouses (reuses the dashboard focus predicate).
 
@@ -828,6 +859,13 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     location because another company's stock counted here would ADD COVER and silently suppress
     a purchase, and the product because 11,390 codes exist in both companies, so the same code
     resolves to two rows.
+
+    ``demand_class`` / ``so_numbers`` (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026)
+    are the run's own stamped Demand scope, read straight off ``scm.reorder_run`` by the
+    caller and passed into ``demand.horizon_committed_select_sql`` beside ``horizon`` /
+    ``horizon_start`` so ``committed`` reflects the SAME scope the buyer chose at launch. A
+    non-empty ``so_numbers`` turns on ``so_scoped``; empty/None does not, whatever
+    ``demand_class`` says (Project with no SO named still nets every project order in range).
     """
     # S5, AC-S5.2: an excluded product earns no row, even one it would otherwise be
     # committed-demand-admitted into (G10's named-product bypass does not reach here - that
@@ -872,7 +910,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # site-pool warehouse holding ONLY an open PO line (no stock/SPO/committed row) still
     # gets a row here; `np` is then LEFT-joined back onto it and every value read off `np`
     # below is COALESCEd to 0 for the pair that came from `po_ordered_v` alone.
-    cv_with = f"""WITH cv_all AS ({demand.horizon_committed_select_sql()}),
+    # Demand scope (21 Sep 2026): the run's own stamped `demand_class`/`so_numbers`, so this
+    # CTE nets the SAME leg(s) the buyer chose rather than always all three. `so_scoped`
+    # turns on only when there is something to bind - a Project run with no SO named still
+    # nets every project order in range, the same as an unscoped call.
+    so_scoped = bool(so_numbers)
+    cv_with = f"""WITH cv_all AS ({demand.horizon_committed_select_sql(demand_class=demand_class, so_scoped=so_scoped)}),
     keys AS (
         SELECT product_id, warehouse_id FROM scm.net_position_v
         UNION
@@ -886,6 +929,8 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # S4: the start-side twin, bound beside `:horizon` on every leg
     # `demand.horizon_committed_select_sql` applies the end to.
     params["horizon_start"] = horizon_start
+    if so_scoped:
+        params["so_numbers"] = list(so_numbers)
 
     # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`, captain-intent ruling 2 Sep - PENDING
     # CAPTAIN CONFIRM; SECOND LEG added by `PLAN-low-stock-report.md` S1, owner ruling
@@ -1178,7 +1223,8 @@ def awaiting_acknowledgement_rows(db: Session) -> int:
 
 def _project_supply_reduction_map(db: Session, rows: list[dict],
                                   horizon: Optional[date] = None,
-                                  horizon_start: Optional[date] = None) -> dict[tuple, float]:
+                                  horizon_start: Optional[date] = None,
+                                  so_numbers: Optional[list[str]] = None) -> dict[tuple, float]:
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
@@ -1202,11 +1248,32 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     through `demand.horizon_committed_select_sql`) - so a reserve and the demand it offsets
     leave the plan together. Undated demand stays in, same rule as every other horizon
     predicate in this module.
+
+    ``so_numbers`` (21 Sep 2026), when given, narrows the claim to decisions against the
+    NAMED sales orders only - the same intersection R1 states for the demand side, so a
+    reserve/borrow this run's chosen SOs did not make never reduces THIS run's supply.
+    Empty/None applies no SO filter (every other caller, and Project with no SO narrowed).
     """
     pids = list({str(r["product_id"]) for r in rows})
     if not pids:
         return {}
-    found = db.execute(text("""
+    so_join = ""
+    params: dict[str, Any] = {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}
+    if so_numbers:
+        # `sso.id = sol.sales_order_id` (security N1, 21 Sep 2026) - the "equivalent
+        # alias" to `oir.company_id` this query has no `oir` row to compare against: it
+        # pins `sso` to the EXACT core SO the claim's own line belongs to, which is
+        # strictly tighter than a company match and needs no extra join. A bare
+        # `so_number` match alone would let a same-numbered SO in ANOTHER company (SO
+        # numbers are unique per company, not globally) satisfy the filter.
+        so_join = (
+            "JOIN projects.sales_orders spso ON spso.id = d.project_sales_order_id\n"
+            "        JOIN sales_orders sso ON sso.id = spso.so_id "
+            "AND sso.so_number = ANY(:so_numbers)\n"
+            "        AND sso.id = sol.sales_order_id"
+        )
+        params["so_numbers"] = list(so_numbers)
+    found = db.execute(text(f"""
         SELECT sol.product_id::text AS pid,
                COALESCE(a.warehouse_id, sol.warehouse_id)::text AS wid,
                SUM(a.qty) AS qty
@@ -1216,6 +1283,7 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
         JOIN projects.so_supply_decisions d
           ON d.project_sales_order_id = psl.project_sales_order_id
          AND d.state = 'active'
+        {so_join}
         WHERE a.source_type <> 'order'
           AND sol.product_id::text = ANY(:pids)
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
@@ -1223,21 +1291,30 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
           AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date >= CAST(:horizon_start AS date))
         GROUP BY 1, 2
-    """), {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}).fetchall()
+    """), params).fetchall()
     return {(str(r[0]), str(r[1])): float(r[2] or 0.0)
             for r in found if r[1] is not None and float(r[2] or 0.0) > 0}
 
 
 def _apply_project_supply_reduction(db: Session, rows: list[dict],
                                     horizon: Optional[date] = None,
-                                    horizon_start: Optional[date] = None) -> None:
+                                    horizon_start: Optional[date] = None,
+                                    demand_class: Optional[str] = None,
+                                    so_numbers: Optional[list[str]] = None) -> None:
     """Stamp each planning row with the confirmed Project claim on its own stock.
 
     Mutated onto the row rather than passed down, exactly like `_apply_unlocated_demand`,
     so every path that computes a cell sees it without a new parameter on four signatures.
+
+    ``so_numbers`` narrows the claim the same way it narrows `_planning_rows`' own
+    `committed` figure, but only when the run is ACTUALLY scoped to Project - a retail-only
+    or unscoped run's supply reduction is untouched, because the stock a confirmed Project
+    decision has claimed is real regardless of which leg of demand this run is examining.
     """
+    scoped_so_numbers = so_numbers if (so_numbers and demand_class == "project") else None
     claims = _project_supply_reduction_map(db, rows, horizon=horizon,
-                                           horizon_start=horizon_start)
+                                           horizon_start=horizon_start,
+                                           so_numbers=scoped_so_numbers)
     if not claims:
         return
     for r in rows:
@@ -1515,7 +1592,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                         levels: Optional[dict] = None,
                         last_cost: Optional[dict] = None,
                         horizon: Optional[date] = None,
-                        horizon_start: Optional[date] = None) -> list[ReorderRecommendation]:
+                        horizon_start: Optional[date] = None,
+                        demand_class: Optional[str] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -1540,7 +1618,11 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
-    _apply_unlocated_demand(db, by_product, horizon=horizon, horizon_start=horizon_start)
+    # Demand scope (21 Sep 2026): unlocated demand is the RETAIL book leg entire
+    # (`_apply_unlocated_demand`'s own docstring) - a Project run has already dropped that
+    # leg from `committed`, so landing it here too would silently re-add it.
+    if demand_class != "project":
+        _apply_unlocated_demand(db, by_product, horizon=horizon, horizon_start=horizon_start)
 
     for pid, prows in by_product.items():
         # Each location is its own pool unless the policy says siblings may cover for one

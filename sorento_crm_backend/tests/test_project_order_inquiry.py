@@ -24,6 +24,7 @@ rather than passing quietly.
 from __future__ import annotations
 
 import io
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -69,6 +70,9 @@ from app.services.project_so_draft_service import ProjectSODraftService
 from ._pg_fixture import blank_session
 
 MARKER = "zzt-oi"
+
+#: `OI-2609-0001` (R3, `PLAN-oi-header-list-detail.md`) - the dated monthly number.
+DATED_NUMBER_RE = re.compile(r"^OI-\d{4}-\d{4}$")
 
 
 def _uid() -> str:
@@ -337,9 +341,13 @@ def test_a_confirmation_with_no_buy_raises_no_inquiry_header(seeded):
 
 def test_a_later_confirmation_with_buy_raises_the_header_then(seeded):
     """The order's NEXT revision, once CS actually has something to buy, mints the header
-    the all-covered confirmation before it correctly declined - numbered `OI-000001`, not
-    retroactively assigned to the revision that raised nothing, proving no number was
-    burned by declining to raise a header for it.
+    the all-covered confirmation before it correctly declined - the FIRST number this
+    fresh, company-scoped scratch schema opens under, not retroactively assigned to the
+    revision that raised nothing, proving no number was burned by declining to raise a
+    header for it. Asserted by shape (`OI-YYMM-NNNN`, R3) rather than a hardcoded month -
+    `raised_at` is never set explicitly on the way in here, so the header opens under
+    whatever real month the test happens to run in - and by `-0001`, which the fresh
+    scratch schema's own emptiness guarantees for that month.
     """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
@@ -351,7 +359,8 @@ def test_a_later_confirmation_with_buy_raises_the_header_then(seeded):
 
     inquiry = result["inquiry"]
     assert inquiry is not None
-    assert inquiry.inquiry_no == "OI-000001"
+    assert DATED_NUMBER_RE.match(inquiry.inquiry_no), inquiry.inquiry_no
+    assert inquiry.inquiry_no.endswith("-0001")
     assert result["created"] == 1
     active = [row for row in _rows(db, inquiry.id) if row.state != INQUIRY_CANCELLED]
     assert len(active) == 1

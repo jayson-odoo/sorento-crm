@@ -1434,7 +1434,12 @@ def test_context_shape_and_formats(api, monkeypatch):
     line = handover["lines"][0]
     assert line["delivery_date"] == WAS.strftime("%d/%m/%Y")
     assert line["qty"] == "10"
-    assert handover["link"] == build_order_inquiry_link(fixture["core_so"].so_number)
+    # `build_order_inquiry_link` now takes the HEADER id, not the SO number (S3,
+    # `PLAN-oi-header-list-detail.md`, AC-LK-01) - a self-comparison against the same call
+    # cannot catch a wrong id being passed in, so also assert the real shape.
+    header_id = str(fixture["row"].order_inquiry_id)
+    assert handover["link"] == build_order_inquiry_link(header_id)
+    assert handover["link"].endswith(f"/project-sales/order-inquiries/{header_id}")
     order = handover["orders"][0]
     assert order["so_number"] == fixture["core_so"].so_number
 
