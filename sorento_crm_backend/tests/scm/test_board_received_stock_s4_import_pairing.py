@@ -157,6 +157,11 @@ def test_ac_s4_3_closed_or_cancelled_line_never_paired(status: str):
     """AC-S4-3. A closed or cancelled core line is never paired, even when it is the only
     qty fit - R4's explicit narrowing of the older "closed lines migrate too" (D8) reading,
     for this date-order pick alone.
+
+    Reason updated under R9 (21 Sep 2026, PLAN-board-received-stock-own-arrival,
+    AC-S4-6): this order has no open line at all, so the row is now refused with its own
+    reason `order_fully_delivered`, never the genuine-item-mismatch `no_line_for_item` -
+    this test still pins "never paired"; AC-S4-6 (below) pins the reason itself.
     """
     with world() as w:
         order = w.order()
@@ -174,7 +179,7 @@ def test_ac_s4_3_closed_or_cancelled_line_never_paired(status: str):
         assert result["rows_raised"] == 0, result
         assert w.rows() == [], "a row was raised against a closed/cancelled line"
         assert result["rows_line_not_found"] == 1, result
-        assert result["line_not_found"][0]["reason"] == "no_line_for_item", result
+        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
 
 
 def test_ac_s4_4_reupload_of_both_books_restates_in_place_never_drops():

@@ -664,11 +664,9 @@ def test_retail_order_not_plannable():
     cancelled core line never a candidate, not even as a last resort. A closed order whose
     only line is closed and fully delivered therefore has nowhere for the sheet's row to
     land at all: the order itself is NOT refused (`orders_not_plannable` stays empty, it is
-    simply never adopted, `orders_adopted: 0`) and the row is reported
-    `no_line_for_item`, same as any other row that fits no open line - not silently
-    dropped, but not raised either. Reported to the owner (tester handback, 21 Sep 2026) as
-    the collision R4's "never dropped" and "closed lines take none" leave unresolved for a
-    fully-delivered order; no rule invented here."""
+    simply never adopted, `orders_adopted: 0`) and the row is reported with its own
+    reason, not silently dropped, but not raised either -
+    R9 (21 Sep 2026, PLAN-board-received-stock-own-arrival): order_fully_delivered."""
     with world() as w:
         retail = w.order(demand_class="retail")
         w.line(retail, qty_ordered="50")
@@ -696,10 +694,12 @@ def test_retail_order_not_plannable():
         result = w.apply(data)
 
         # AC-S4-3: the order is not refused, but its only line is closed and takes no row.
+        # AC-S4-6 / R9: with no open line surviving at all, the reason is its own
+        # order_fully_delivered, never the genuine-item-mismatch no_line_for_item.
         assert result["orders_not_plannable"] == []
         assert result["rows_raised"] == 0, result
         assert result["rows_line_not_found"] == 1, result
-        assert result["line_not_found"][0]["reason"] == "no_line_for_item", result
+        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
         assert w.rows() == []
 
 
