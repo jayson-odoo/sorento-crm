@@ -1108,27 +1108,9 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
 AUTO_UPDATE_STATUSES = {"designing", "changes_requested"}
 
 
-def _auto_update_default_doc() -> dict:
-    """A tag sheet nobody has drawn on yet, matching the designer's own
-    default (``IMPOSITION_PRESETS.auto``) - the same shape
-    ``price_tag_requests._default_tag_sheet_doc`` builds. Needed here too:
-    the auto-apply seam can write a version for a request that has never
-    been opened in the designer, so there may be no document to reuse.
-    """
-    return {
-        "kind": "tag_sheet",
-        "imposition": {
-            "preset": "auto",
-            "page_width_mm": 210,
-            "page_height_mm": 297,
-            "bleed_mm": 3,
-            "gap_mm": 2,
-        },
-        "sheets": [],
-    }
-
-
-def apply_auto_data_updates(db: Session, request, triples: list[tuple]) -> None:
+def apply_auto_data_updates(
+    db: Session, request, triples: list[tuple], *, user_id: Optional[str] = None
+) -> None:
     """S8: re-pin every ``(tag, live_row, changes)`` in ``triples`` to its live
     data. ``changes`` is the diff the CALLER already computed (the same list
     that lands in the read response's ``data_changes``), reused rather than
@@ -1145,84 +1127,135 @@ def apply_auto_data_updates(db: Session, request, triples: list[tuple]) -> None:
     (``data_updated_at``/``data_update_changes``/``data_update_version``) so
     the rail's "updated" indicator can name the change and Roll back
     (``POST versions/{n}/restore``) knows which version undoes it.
+    ``user_id`` (AC-S8-15) is the staff member whose poll triggered this
+    write - both PageVersions carry it as ``created_by``, an auto-applied
+    version is not an anonymous system row.
+
+    AC-S8-16: idempotent both against a repeat call with the same already-
+    applied triples (a triple whose diff is already reflected in the tag's
+    current pin is dropped before anything is written; an entirely
+    already-applied batch writes nothing) and against two pollers racing to
+    apply the SAME live edit (the page row is locked ``FOR UPDATE`` before
+    ``max(version)`` is read, so a second caller blocks behind the first for
+    the rest of this transaction; the whole write also runs inside its own
+    SAVEPOINT, so a version-number collision that still slips through costs
+    only this apply, not the caller's whole transaction - leaving the pins
+    as they were rather than 500ing the read that triggered it).
     """
     if not triples:
         return
     from sqlalchemy import func
+    from sqlalchemy.exc import IntegrityError
 
     from app.models.dealer_kit import Page, PageVersion
     from app.services.price_tag_request_service import PriceTagRequestService
 
+    triples = [
+        (tag, live, changes)
+        for tag, live, changes in triples
+        if tag.pinned_tag_data != pin_payload(live)
+    ]
+    if not triples:
+        return
+
     PriceTagRequestService.ensure_tag_sheet_page(db, request, None)
-    page = db.query(Page).filter(Page.id == request.page_id).first()
 
     now = datetime.utcnow()
     changes_by_tag = {tag.id: changes for tag, _live, changes in triples}
 
-    before_version_number = None
-    if page is not None:
+    def pins_snapshot() -> dict:
+        return {
+            t.id: t.pinned_tag_data
+            for line in request.lines
+            for t in (line.tags or [])
+            if t.pinned_tag_data is not None
+        }
 
-        def pins_snapshot() -> dict:
-            return {
-                t.id: t.pinned_tag_data
-                for line in request.lines
-                for t in (line.tags or [])
-                if t.pinned_tag_data is not None
-            }
-
-        latest = (
-            db.query(PageVersion)
-            .filter(PageVersion.page_id == page.id)
-            .order_by(PageVersion.version.desc())
+    savepoint = db.begin_nested()
+    try:
+        # AC-S8-16: FOR UPDATE - blocks a second caller computing the same
+        # `max(version) + 1` for this page until this transaction ends.
+        page = (
+            db.query(Page)
+            .filter(Page.id == request.page_id)
+            .with_for_update()
             .first()
         )
-        doc = page.draft_doc or (latest.doc if latest else None) or _auto_update_default_doc()
-        fields = sorted({
-            change["label"] for changes in changes_by_tag.values() for change in changes
-        })
-        label_suffix = f": {', '.join(fields)}" if fields else ""
-        current_max = (
-            db.query(func.max(PageVersion.version))
-            .filter(PageVersion.page_id == page.id)
-            .scalar()
-        ) or 0
-        before_version = PageVersion(
-            page_id=page.id,
-            version=current_max + 1,
-            doc=doc,
-            commit_message=f"Before product update{label_suffix}",
-            created_by=None,
-            pinned_line_data=pins_snapshot(),
-        )
-        db.add(before_version)
-        db.flush()
-        before_version_number = before_version.version
-        page.draft_doc = None
 
-    for tag, live, _changes in triples:
-        tag.pinned_tag_data = pin_payload(live)
-        tag.pinned_at = now
-        tag.data_change_ack_hash = None
-        tag.data_updated_at = now
-        tag.data_update_changes = changes_by_tag.get(tag.id) or []
-        tag.data_update_version = before_version_number
+        before_version_number = None
+        doc = None
+        label_suffix = ""
+        if page is not None:
+            # Lazy import: routes is the layer above services, but this is
+            # the one document shape both sides need to agree on, and
+            # duplicating it here is how it drifted (bleed_mm/gap_mm stale
+            # against the designer's own default until this fix).
+            from app.api.v1.dealer_kit.price_tag_requests import (
+                _default_tag_sheet_doc,
+            )
 
-    if page is not None:
-        db.flush()
-        after_version = PageVersion(
-            page_id=page.id,
-            version=before_version_number + 1,
-            doc=doc,
-            commit_message=f"Product update{label_suffix}",
-            created_by=None,
-            pinned_line_data=pins_snapshot(),
+            latest = (
+                db.query(PageVersion)
+                .filter(PageVersion.page_id == page.id)
+                .order_by(PageVersion.version.desc())
+                .first()
+            )
+            doc = page.draft_doc or (latest.doc if latest else None) or _default_tag_sheet_doc()
+            fields = sorted({
+                change["label"] for changes in changes_by_tag.values() for change in changes
+            })
+            label_suffix = f": {', '.join(fields)}" if fields else ""
+            current_max = (
+                db.query(func.max(PageVersion.version))
+                .filter(PageVersion.page_id == page.id)
+                .scalar()
+            ) or 0
+            before_version = PageVersion(
+                page_id=page.id,
+                version=current_max + 1,
+                doc=doc,
+                commit_message=f"Before product update{label_suffix}",
+                created_by=user_id,
+                pinned_line_data=pins_snapshot(),
+            )
+            db.add(before_version)
+            db.flush()
+            before_version_number = before_version.version
+            page.draft_doc = None
+
+        for tag, live, _changes in triples:
+            tag.pinned_tag_data = pin_payload(live)
+            tag.pinned_at = now
+            tag.data_change_ack_hash = None
+            tag.data_updated_at = now
+            tag.data_update_changes = changes_by_tag.get(tag.id) or []
+            tag.data_update_version = before_version_number
+
+        if page is not None:
+            db.flush()
+            after_version = PageVersion(
+                page_id=page.id,
+                version=before_version_number + 1,
+                doc=doc,
+                commit_message=f"Product update{label_suffix}",
+                created_by=user_id,
+                pinned_line_data=pins_snapshot(),
+            )
+            db.add(after_version)
+            db.flush()
+        savepoint.commit()
+    except IntegrityError:
+        savepoint.rollback()
+        logger.warning(
+            "apply_auto_data_updates: version race on page %s for request %s - "
+            "left pins as they were for this poll.",
+            request.page_id,
+            request.id,
         )
-        db.add(after_version)
-        db.flush()
 
 
 def resolve_request_line_data(
-    db: Session, request, *, apply_updates: bool = False
+    db: Session, request, *, apply_updates: bool = False, user_id: Optional[str] = None
 ) -> list[dict]:
     """Display data for every TAG of a price tag request.
 
@@ -1254,6 +1287,11 @@ def resolve_request_line_data(
     it from every reader would have master data move a tag the instant
     anyone merely opens the design, which is the r9 pin gate's entire point
     to prevent.
+
+    ``user_id`` (AC-S8-15) is who to attribute the write to when
+    ``apply_updates`` actually applies something - the caller's job to
+    resolve (a real staff session holding ``.process``), never this
+    resolver's; passed straight through to ``apply_auto_data_updates``.
     """
     from app.services.price_tag_request_service import PriceTagRequestService
 
@@ -1347,7 +1385,7 @@ def resolve_request_line_data(
             rows.append(live)
 
     if to_apply:
-        apply_auto_data_updates(db, request, to_apply)
+        apply_auto_data_updates(db, request, to_apply, user_id=user_id)
 
     return rows
 

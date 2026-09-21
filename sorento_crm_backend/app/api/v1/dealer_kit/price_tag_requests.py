@@ -91,9 +91,9 @@ def _default_tag_sheet_doc() -> dict:
     a request whose FIRST design action was Update tag (not a CRM Claim,
     which auto-creates the ``Page`` via ``ensure_tag_sheet_page`` but writes
     no document at all until a save) left a document nothing could draw.
-    Values match the designer's own default (``IMPOSITION_PRESETS.auto``,
-    `lib/dealer-kit/tag-template-types.ts`), so the page this builds looks
-    exactly like the one a fresh claim opens on.
+    Values match the designer's own default (``PRINT_MARGIN_MM``,
+    `lib/dealer-kit/request-tags.ts`: ``bleed_mm: 5, gap_mm: 0``), so the
+    page this builds looks exactly like the one a fresh claim opens on.
     """
     return {
         "kind": "tag_sheet",
@@ -101,8 +101,8 @@ def _default_tag_sheet_doc() -> dict:
             "preset": "auto",
             "page_width_mm": 210,
             "page_height_mm": 297,
-            "bleed_mm": 3,
-            "gap_mm": 2,
+            "bleed_mm": 5,
+            "gap_mm": 0,
         },
         "sheets": [],
     }
@@ -112,6 +112,31 @@ def _user_id(user: dict) -> str | None:
     if not isinstance(user, dict):
         return None
     return user.get("id") or user.get("user_id")
+
+
+def _may_auto_apply(db: Session, user: dict) -> bool:
+    """AC-S8-15: the auto-apply WRITE needs a real staff session, not merely
+    a caller who can currently see the diff - `_change_sets` itself always
+    runs and always reports what changed. `apply_updates=True` requires
+    both: the acting principal came in on a JWT (never an X-API-Key
+    channel, whatever the acted-as user's own grants are - `auth_method ==
+    "integration_api_key"` is the real integration_auth marker for that),
+    and that principal itself holds `.process` - a `.view`-only caller must
+    be told about the change, it must never trigger the re-pin on their
+    behalf.
+    """
+    if not isinstance(user, dict):
+        return False
+    if user.get("auth_method") == "integration_api_key":
+        return False
+    uid = _user_id(user)
+    if not uid:
+        return False
+    from app.services.user_service import UserPermissionService
+
+    return UserPermissionService(db).check_user_has_permission(
+        uid, "dealer_kit.price_tag_requests.process"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +198,10 @@ def list_price_tag_requests(
     # `data_checked_at`) until a later load picks them up.
     touched = PriceTagRequestService.touched_request_ids(db, rows)
     if touched:
+        # AC-S8-15: the sweep only WRITES (re-pins) when the caller is a
+        # real staff session holding `.process` - resolved once per call,
+        # not per row, since it does not change between rows of one request.
+        apply_updates = _may_auto_apply(db, _user)
         refreshed = 0
         for row in rows:
             if refreshed >= _DATA_CHANGE_REFRESH_CAP:
@@ -184,14 +213,14 @@ def list_price_tag_requests(
             checked_at = datetime.utcnow()
             # AC-S8-5: the list sweep is a "poll" too, same as GET data-changes.
             change_rows = tag_data_service.resolve_request_line_data(
-                db, row, apply_updates=True
+                db, row, apply_updates=apply_updates, user_id=_user_id(_user)
             )
             tag_data_service.store_data_change_count(db, row, change_rows, checked_at)
             refreshed += 1
         # Derived-cache write on a read route: stores what the resolve
-        # already computed so the list can show it without resolving.
-        # Deliberate; `_VIEW` stays because the value is read-only data the
-        # caller could compute anyway.
+        # already computed so the list can show it without resolving. The
+        # count refresh itself stays on `.view` - `apply_updates` above is
+        # what gates the actual re-pin write, not this commit.
         db.commit()
     return PriceTagRequestPage(
         data=PriceTagRequestService.list_items(db, rows),
@@ -469,7 +498,7 @@ def update_price_tag_request_line_price(
 
 
 def _change_sets(
-    db: Session, req, *, apply_updates: bool = True
+    db: Session, req, *, apply_updates: bool = True, user_id: Optional[str] = None
 ) -> list[TagDataChangeSet]:
     """The resolver's diff, one entry per changed TAG.
 
@@ -483,18 +512,22 @@ def _change_sets(
     (GET, recheck, pin) pick it up with no second resolve.
 
     ``apply_updates`` (S8) defaults True - GET/recheck are genuinely a
-    "poll" and are meant to auto-apply (AC-S8-2). ``resolve_tag_pin``'s own
-    tail call passes False: it already just wrote ITS tag's manual update
-    through its own before/after version pair, and letting this call also
-    auto-apply a DIFFERENT tag of the same request (a designing request
-    commonly has several) would write a second, uncoordinated before/after
-    pair outside that fold, splitting one batch into two version pairs.
+    "poll" and are meant to auto-apply (AC-S8-2), gated by the caller
+    resolving ``_may_auto_apply`` first (AC-S8-15: a real staff session
+    holding ``.process``, not merely whoever can currently see the diff).
+    ``resolve_tag_pin``'s own tail call passes False: it already just wrote
+    ITS tag's manual update through its own before/after version pair, and
+    letting this call also auto-apply a DIFFERENT tag of the same request
+    (a designing request commonly has several) would write a second,
+    uncoordinated before/after pair outside that fold, splitting one batch
+    into two version pairs. ``user_id`` is who an actual auto-apply gets
+    attributed to (AC-S8-15); irrelevant when ``apply_updates`` is False.
     """
     # Security review 16 Sep: the horizon is captured BEFORE the resolve,
     # never after - see `store_data_change_count`'s own docstring.
     checked_at = datetime.utcnow()
     rows = tag_data_service.resolve_request_line_data(
-        db, req, apply_updates=apply_updates
+        db, req, apply_updates=apply_updates, user_id=user_id
     )
     sets = [
         TagDataChangeSet(
@@ -531,14 +564,16 @@ def list_tag_data_changes(
         raise AppException(
             status_code=404, message="Price tag request not found.", code="NOT_FOUND"
         )
-    result = _change_sets(db, req)
+    # AC-S8-15: a `.view`-only caller (or an X-API-Key channel, whatever the
+    # acted-as user's own grants are) must still see the diff - it just must
+    # never trigger the write.
+    result = _change_sets(
+        db, req, apply_updates=_may_auto_apply(db, _user), user_id=_user_id(_user)
+    )
     # AC-D2: this route was read-only before the stored cache existed - the
-    # commit is new, for the count/timestamp `_change_sets` just wrote.
-    #
-    # Derived-cache write on a read route: stores what the resolve already
-    # computed so the list can show it without resolving. Deliberate; `_VIEW`
-    # stays because the value is read-only data the caller could compute
-    # anyway.
+    # commit is new, for the count/timestamp `_change_sets` just wrote. The
+    # count refresh stays on `.view`; `apply_updates` above is what gates
+    # the re-pin write itself.
     db.commit()
     return result
 
@@ -728,7 +763,12 @@ def dismiss_tag_data_update(
     tag.data_update_changes = None
     tag.data_update_version = None
     db.flush()
-    _change_sets(db, req)
+    # AC-S8-6 extended: `apply_updates=False`, the same reason the pin
+    # route's own tail call passes it - this call is dismissing THIS tag's
+    # own already-applied change, and letting the refresh ALSO auto-apply a
+    # different tag of the same request would sweep up a second,
+    # uncoordinated diff under this one dismiss.
+    _change_sets(db, req, apply_updates=False)
     db.commit()
     return TagDismissResponse(tag_id=tag.id)
 
@@ -896,6 +936,14 @@ def restore_request_version(
             live = live_by_tag.get(tag.id)
             if live is not None:
                 tag.data_change_ack_hash = tag_data_service.data_hash(live)
+    # AC-S8-14: clear the indicator this restore is undoing, on EVERY
+    # restored tag - a tag whose `data_updated_at` survives would keep
+    # showing "Product data updated" (and counting toward the badge) for a
+    # change Roll back just put back the way it was.
+    for tag in restored_tags:
+        tag.data_updated_at = None
+        tag.data_update_changes = None
+        tag.data_update_version = None
     # The restored document is the draft: the designer opens draft-first, and
     # this is what marketing was last looking at. No version is written for
     # this half - v<n> already IS that state, sitting right there in history.
