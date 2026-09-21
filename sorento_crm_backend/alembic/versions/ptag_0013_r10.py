@@ -38,7 +38,7 @@ this codebase: a downgrade restores SCHEMA, not a value a person may have
 acted on since.
 
 Revision ID: ptag_0013_r10
-Revises: 522_oi_cancelled_used_confirm
+Revises: 523_so_line_no
 Create Date: 2026-09-21
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "ptag_0013_r10"
-down_revision = "522_oi_cancelled_used_confirm"
+down_revision = "523_so_line_no"
 branch_labels = None
 depends_on = None
 
