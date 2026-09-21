@@ -27,6 +27,8 @@ Three ideas shape the whole file:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Boolean,
@@ -827,6 +829,11 @@ class OrderInquiry(Base, CompanyScopedMixin):
     # for the same reason: the read that mints it is company-scoped, so each company has
     # its own series.
     inquiry_no = Column(String(20), nullable=False)
+    # The number this header carried before the monthly renumber (`523_oi_monthly_no_
+    # raises`, R3) - never re-used going forward, kept only so a number already quoted
+    # in an old email still finds its OI (search matches it too). NULL for every header
+    # born after that migration.
+    legacy_inquiry_no = Column(String(20), nullable=True)
     project_sales_order_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
@@ -834,6 +841,11 @@ class OrderInquiry(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("projects.so_amendments.id", ondelete="SET NULL"), nullable=True
     )
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
+    # The FIRST raise (R5) - written once, at insert, and never re-stamped by a
+    # reconfirm since S1 (`523_oi_monthly_no_raises`). Every later raise/reconfirm is
+    # its own row on `OrderInquiryRaise` instead; these two columns stay the header's
+    # fixed "born on" fact so a number quoted from month N still reads as month N even
+    # after a dozen reconfirms.
     raised_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
@@ -860,34 +872,48 @@ class OrderInquiry(Base, CompanyScopedMixin):
     )
 
 
-#: `OI-000001`. Six digits, the same width `PSO-000001` uses, so the two documents a
-#: project screen shows side by side are read the same way.
+#: `OI-2609-0001` (R3, `PLAN-oi-header-list-detail.md`): the MONTH of the header's own
+#: first raise, then a four-digit series that starts over every month. Superseded the
+#: flat `OI-000001` (six digits, no month) migration `523_oi_monthly_no_raises`
+#: renumbers - the old value survives on `legacy_inquiry_no`.
 INQUIRY_NO_PREFIX = "OI-"
-INQUIRY_NO_DIGITS = 6
+INQUIRY_NO_DIGITS = 4
+#: Every date this file numbers by is Asia/Kuala_Lumpur (R3): a header raised at
+#: 2026-09-30 17:30 UTC is already 1 Oct there, and must number under October.
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
-def next_inquiry_no(bind, company_id) -> str:
-    """The next inquiry number for one company: the highest already issued, plus one.
+def _inquiry_no_prefix(ref_date) -> str:
+    """`OI-2609-` for any `date`/`datetime` in September 2026."""
+    return f"{INQUIRY_NO_PREFIX}{ref_date:%y%m}-"
+
+
+def next_inquiry_no(bind, company_id, ref_date) -> str:
+    """The next inquiry number for one company, for one MONTH: the highest already
+    issued in that month, plus one.
 
     HIGHEST plus one, never the count: a number that has been issued is in somebody's
-    email, so a departed inquiry must not hand it to a different one.
+    email, so a departed inquiry must not hand it to a different one. Scoped to the
+    month's own prefix rather than the whole series, so October opens at `-0001` no
+    matter how many September numbers already exist (R3).
 
     Per COMPANY, matching `uq_project_order_inquiry_no` and `provisional_ref` one table
     over. `bind` is whatever can execute a statement - the flush's own Connection when this
     runs from the stamp below, a Session when a caller asks directly - so the number is
     minted by ONE piece of code however it is reached.
     """
+    prefix = _inquiry_no_prefix(ref_date)
     table = OrderInquiry.__table__
     latest = bind.execute(
         select(table.c.inquiry_no)
         .where(table.c.company_id == company_id,
-               table.c.inquiry_no.like(f"{INQUIRY_NO_PREFIX}%"))
+               table.c.inquiry_no.like(f"{prefix}%"))
         .order_by(func.length(table.c.inquiry_no).desc(), table.c.inquiry_no.desc())
         .limit(1)
     ).scalar()
-    tail = (latest or "")[len(INQUIRY_NO_PREFIX):]
+    tail = (latest or "")[len(prefix):]
     highest = int(tail) if tail.isdigit() else 0
-    return f"{INQUIRY_NO_PREFIX}{highest + 1:0{INQUIRY_NO_DIGITS}d}"
+    return f"{prefix}{highest + 1:0{INQUIRY_NO_DIGITS}d}"
 
 
 @event.listens_for(OrderInquiry, "before_insert")
@@ -902,10 +928,60 @@ def _stamp_inquiry_no(_mapper, connection, target) -> None:
     inserted - two inquiries raised in one confirmation take consecutive numbers - and
     cannot re-enter the flush the way a session query would. A number already set (a
     migration backfill, a test pinning one) is left exactly as it is.
+
+    The MONTH the number opens under is the header's own `raised_at` (R3, converted to
+    its Asia/Kuala_Lumpur date) when the caller already set one, else this instant - the
+    same "now" the column's own `server_default=func.now()` would otherwise write, so
+    the two never disagree about when this header was born.
     """
     if getattr(target, "inquiry_no", None):
         return
-    target.inquiry_no = next_inquiry_no(connection, target.company_id)
+    raised_at = getattr(target, "raised_at", None)
+    ref_moment = raised_at if raised_at is not None else datetime.utcnow()
+    ref_date = ref_moment.replace(tzinfo=timezone.utc).astimezone(_MY_TZ).date()
+    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date)
+
+
+#: The two things `OrderInquiryRaise.kind` can be (R5): the header's FIRST raise, and
+#: every later reconfirm. Written by `ProjectOrderInquiryService.ensure_inquiry` (create
+#: = `raised`, reuse = `reconfirmed`) and by the sheet import's own `_inquiry`, the same
+#: shape - never anywhere else, so "one row per confirmation" stays true everywhere a
+#: header can be raised or reconfirmed.
+OI_RAISE_RAISED = "raised"
+OI_RAISE_RECONFIRMED = "reconfirmed"
+
+
+class OrderInquiryRaise(Base, CompanyScopedMixin):
+    """One entry of an order inquiry's raise history (R5, S1
+    `PLAN-oi-header-list-detail.md`): who raised or reconfirmed it, and when.
+
+    `OrderInquiry.raised_at`/`raised_by` stay the header's fixed "born on" fact once
+    this table exists - the FIRST row here always agrees with them, and every later
+    reconfirm adds a row instead of overwriting those two columns, so a number quoted
+    in month N still reads as month N no matter how many times CS reconfirms after.
+
+    Its own table rather than `audit_logs` (measured, plan "Design"): audit is off for
+    this entity, carries no actor on the batch/import path, and a two-row backfill is
+    all migration `523_oi_monthly_no_raises` needs to seed here, while an audit read
+    would have nothing to backfill FROM at all.
+    """
+
+    __tablename__ = "order_inquiry_raises"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    order_inquiry_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(16), nullable=False)
+    raised_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_order_inquiry_raises_inquiry", "order_inquiry_id"),
+        {"schema": "projects"},
+    )
 
 
 class OrderInquiryRow(Base, CompanyScopedMixin):

@@ -618,6 +618,107 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
+ * The cell renderers below (`ItemCodeCell` .. `InstructionCell`) are exported so the OI
+ * DETAIL page's own Lines tab (`PLAN-oi-header-list-detail.md`, S5) reuses exactly these
+ * renderings rather than a second copy that could drift from the worklist's own words -
+ * the column defs in `useOrderInquiryWorklistColumns` below call the very same functions.
+ * PO/SPO are deliberately NOT among them: the detail page's own cells open the simpler
+ * `OrderInquiryDocumentDialog` (AC-DP-04), not this worklist's bundling/reallocate-aware
+ * `DocumentsCell`, which reasons about columns this single-header screen has no use for.
+ */
+export function ItemCodeCell({
+  row,
+  codeOnly = false,
+}: {
+  row: OrderInquiryWorklistRow;
+  /**
+   * AC-DP-03, owner ruling 21 Sep: the OI detail page's own Lines tab shows the
+   * product CODE only, one line - "in Sorento the product code IS the product
+   * name" - even though a real worklist row DOES carry `product_name`. Defaults to
+   * `false` so this cell's every OTHER caller (the Lines worklist itself) renders
+   * exactly as it always has; only `orderInquiryHeaderLinesColumns.tsx` passes
+   * `true`.
+   */
+  codeOnly?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <span className="block truncate font-medium" title={row.item_code ?? ''}>
+        {row.item_code || <Muted>Unresolved</Muted>}
+      </span>
+      {!codeOnly && row.product_name && row.product_name !== row.item_code && (
+        <span className="block truncate text-xs text-muted-foreground" title={row.product_name}>
+          {row.product_name}
+        </span>
+      )}
+    </div>
+  );
+}
+
+export function QtyCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1 tabular-nums">
+      {formatInquiryQty(row.qty)}
+      <QtyAnnotationButton row={row} />
+      {row.line_cancelled ? (
+        <WorklistPill testId={`qty-line-cancelled-${row.id}`}>cancelled</WorklistPill>
+      ) : null}
+    </span>
+  );
+}
+
+export function DeliveryDateCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return row.delivery_date ? (
+    <span className="whitespace-nowrap">{formatDateInMalaysia(row.delivery_date)}</span>
+  ) : (
+    <Muted>No date</Muted>
+  );
+}
+
+export function SupplierCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return row.supplier ? (
+    <span className="block truncate" title={row.supplier}>
+      {row.supplier}
+    </span>
+  ) : (
+    <Muted>Not linked</Muted>
+  );
+}
+
+export function LocationCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return row.location ? (
+    <span className="block truncate" title={row.location}>
+      {row.location}
+    </span>
+  ) : null;
+}
+
+export function InstructionCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <OrderInquiryVerbPill verb={row.verb} />
+      {row.note && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              aria-label="Why this instruction"
+              className="size-5 shrink-0 text-muted-foreground"
+            >
+              <Info className="size-3.5" aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs break-words">{row.note}</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/**
  * The worklist's columns, in the spreadsheet's own order (`JAN - DEC 2026 ORDER.xlsx`).
  *
  * Shared between the main list and the calendar's day drilldown, so a person reading
@@ -701,24 +802,7 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,
         size: 180,
         meta: { headerTitle: 'Item code', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate font-medium" title={row.original.item_code ?? ''}>
-              {row.original.item_code || <Muted>Unresolved</Muted>}
-            </span>
-            {/* Only when it says something the code does not: plenty of products are
-                named after their own code, and printing it twice reads as a defect. */}
-            {row.original.product_name &&
-              row.original.product_name !== row.original.item_code && (
-                <span
-                  className="block truncate text-xs text-muted-foreground"
-                  title={row.original.product_name}
-                >
-                  {row.original.product_name}
-                </span>
-              )}
-          </div>
-        ),
+        cell: ({ row }) => <ItemCodeCell row={row.original} />,
       },
       {
         // Qty carries the handshake now (S1, AC-1.5): a rejection and its reason, or a
@@ -735,20 +819,7 @@ export function useOrderInquiryWorklistColumns({
         // the gaps/padding between them (~174px measured).
         size: 200,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => (
-          <span className="flex min-w-0 items-center gap-1 tabular-nums">
-            {formatInquiryQty(row.original.qty)}
-            <QtyAnnotationButton row={row.original} />
-            {/* PLAN-oi-cancelled-line-used-confirm.md (AC-CL-2): beside the `used`
-                pill above, never replacing it - a row can be both. A plain mark, not
-                a button: there is no note behind it the way `used` opens one. */}
-            {row.original.line_cancelled ? (
-              <WorklistPill testId={`qty-line-cancelled-${row.original.id}`}>
-                cancelled
-              </WorklistPill>
-            ) : null}
-          </span>
-        ),
+        cell: ({ row }) => <QtyCell row={row.original} />,
       },
       {
         accessorKey: 'delivery_date',
@@ -757,14 +828,7 @@ export function useOrderInquiryWorklistColumns({
         ),
         size: 140,
         meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) =>
-          row.original.delivery_date ? (
-            <span className="whitespace-nowrap">
-              {formatDateInMalaysia(row.original.delivery_date)}
-            </span>
-          ) : (
-            <Muted>No date</Muted>
-          ),
+        cell: ({ row }) => <DeliveryDateCell row={row.original} />,
       },
       {
         // PLAN-oi-worklist-split-customer-project.md (owner, 18 Sep: "here need to
@@ -805,14 +869,7 @@ export function useOrderInquiryWorklistColumns({
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
         // Blank means nobody has linked it yet, exactly as a blank cell does on their
         // sheet. Never filled in with a guess at who would supply it.
-        cell: ({ row }) =>
-          row.original.supplier ? (
-            <span className="block truncate" title={row.original.supplier}>
-              {row.original.supplier}
-            </span>
-          ) : (
-            <Muted>Not linked</Muted>
-          ),
+        cell: ({ row }) => <SupplierCell row={row.original} />,
       },
       {
         // WHICH PURCHASE ORDER this row stands on (AC-R-26..R-31, owner 14 Sep, live look
@@ -937,12 +994,7 @@ export function useOrderInquiryWorklistColumns({
         // Where the PO gets placed for, not where the item is bought TO. Blank when
         // nobody has stamped a location and the line has no fulfilment warehouse either -
         // never a dash standing in for "unknown".
-        cell: ({ row }) =>
-          row.original.location ? (
-            <span className="block truncate" title={row.original.location}>
-              {row.original.location}
-            </span>
-          ) : null,
+        cell: ({ row }) => <LocationCell row={row.original} />,
       },
       {
         accessorKey: 'inquiry_no',
@@ -1034,30 +1086,7 @@ export function useOrderInquiryWorklistColumns({
         // moves behind the info icon rather than sitting inline under the pill.
         // Qty already has its own column; repeating it here duplicated the number rather
         // than adding to it.
-        cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <OrderInquiryVerbPill verb={row.original.verb} />
-            {row.original.note && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Why this instruction"
-                    className="size-5 shrink-0 text-muted-foreground"
-                  >
-                    <Info className="size-3.5" aria-hidden />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs break-words">
-                  {row.original.note}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        ),
+        cell: ({ row }) => <InstructionCell row={row.original} />,
       },
       {
         // WHO pushed this to purchasing. Sorted server-side on the person's name, which

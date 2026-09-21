@@ -536,7 +536,9 @@ def test_every_company_id_table_is_registered():
     # the CRM `PATCH .../review-comments/{id}` and the Done toggle load a row BY ID off
     # a route that names only the request and the row, and the portal's list must never
     # surface another company's pins even when a line id is guessed.
-    expected_owned = 133
+    # PLAN-oi-header-list-detail.md adds 1: `order_inquiry_raises` is company-owned, not
+    # shared (security review 21 Sep 2026).
+    expected_owned = 134
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

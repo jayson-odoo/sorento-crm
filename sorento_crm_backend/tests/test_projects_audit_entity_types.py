@@ -67,6 +67,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-scm-fulfilment-feedback-2sep.md S4, migration 461: born straight into `projects`
     # the same way `so_supply_decisions` was.
     "so_supply_decision_drafts",
+    # PLAN-oi-header-list-detail.md S1, migration 523_oi_monthly_no_raises: born straight
+    # into `projects` the same way.
+    "order_inquiry_raises",
 })
 
 

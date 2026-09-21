@@ -1741,9 +1741,16 @@ export function SalesOrderDetail({ id }: { id: string }) {
                     {(so.order_inquiries ?? []).map((inquiry, index) => (
                       <span key={inquiry.inquiry_no ?? index} className="block">
                         <Link
-                          href={`/project-sales/order-inquiries?query=${encodeURIComponent(
-                            so.so_number,
-                          )}`}
+                          // S3, AC-LK-01: the OI detail page, by header id, when the
+                          // payload carries one; the old filtered-list search only for
+                          // a payload from before that column existed.
+                          href={
+                            inquiry.id
+                              ? `/project-sales/order-inquiries/${inquiry.id}`
+                              : `/project-sales/order-inquiries?query=${encodeURIComponent(
+                                  so.so_number,
+                                )}`
+                          }
                           className="text-primary hover:underline"
                           title={`${inquiry.rows_placed}/${inquiry.rows_total} placed`}
                         >

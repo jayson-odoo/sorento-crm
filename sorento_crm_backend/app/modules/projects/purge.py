@@ -56,6 +56,7 @@ from app.models.project_so import (
     OrderChangeNotice,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryRaise,
     OrderInquiryRow,
     ProjectDeliveryPhase,
     ProjectPOAnnotation,
@@ -114,6 +115,9 @@ PURGE_ORDER: List[Type] = [
     # link still gets its own statement so the operator sees the placements counted.
     OrderInquiryLink,
     OrderInquiryRow,
+    # order_inquiry_raises.order_inquiry_id CASCADEs off the header too (S1,
+    # `PLAN-oi-header-list-detail.md`) - same reason, its own statement for its own count.
+    OrderInquiryRaise,
     OrderInquiry,
     SOAmendment,
     # so_amendments.ocn_id points here, so the notice outlives the amendment by one step.

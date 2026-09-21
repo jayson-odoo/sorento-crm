@@ -678,9 +678,16 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 <span key={inquiry.inquiry_no ?? index}>
                   {index > 0 ? ', ' : null}
                   <Link
-                    href={`/project-sales/order-inquiries?query=${encodeURIComponent(
-                      row.original.so_number,
-                    )}`}
+                    // S3, AC-LK-01: the OI detail page, by header id, when the payload
+                    // carries one; the old filtered-list search only for a payload from
+                    // before that column existed.
+                    href={
+                      inquiry.id
+                        ? `/project-sales/order-inquiries/${inquiry.id}`
+                        : `/project-sales/order-inquiries?query=${encodeURIComponent(
+                            row.original.so_number,
+                          )}`
+                    }
                     onClick={(e) => e.stopPropagation()}
                     className="text-primary hover:underline"
                   >

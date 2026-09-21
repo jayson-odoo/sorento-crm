@@ -6,6 +6,11 @@ import type {
   AutoPlaceRequest,
   AutoPlaceResult,
   OrderInquiryDetail,
+  OrderInquiryHeader,
+  OrderInquiryHeaderDetail,
+  OrderInquiryHeaderListEnvelope,
+  OrderInquiryHeaderListParams,
+  OrderInquiryHeaderRelatedDocuments,
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
@@ -612,6 +617,9 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       searchQuery: params.query ?? '',
     },
     {
+      // `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: the OI detail page's own Lines
+      // tab and whole-OI Export Excel - every non-cancelled row of ONE header.
+      inquiry_id: params.inquiry_id,
       delivery_month: params.delivery_month,
       raised_date: params.raised_date,
       state: params.state,
@@ -760,5 +768,122 @@ export async function downloadOrderInquiryXlsx(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to export the order inquiry'));
   return response.blob();
+}
+
+/* -------------------------------------------------- the OI DOCUMENT (header)
+ *
+ * `PLAN-oi-header-list-detail.md`. One row per order inquiry HEADER - one sales order's
+ * whole set of purchasing instructions - as distinct from every row-level function above.
+ *
+ * PHASE 2 (this slice, W): every function below calls the real route. The hooks in
+ * `useOrderInquiry.ts` and every component that calls them are unchanged from Phase 1 -
+ * the swap happened at this service boundary and nowhere else.
+ *
+ * API CONTRACT:
+ *
+ *   GET /api/v1/project-sales/order-inquiry-headers
+ *     ?state=outstanding|completed|all (default outstanding)
+ *     &query= (OI no, legacy no, SO no, customer, project, agent, any line's product or
+ *       location) &raised_by=<user id> &agent=<agent name> &project=<project title text,
+ *       exact match on the Project column - never `project_id` (reviewer B2, fix round
+ *       22 Sep 2026)>
+ *     &sort=raised_at|inquiry_no|so_number|raised_by|lines_total|qty_total|customer|
+ *       project|agent|so_date|status
+ *     &dir=asc|desc (default raised_at asc) &page=1 &limit=25
+ *     -> { data: OrderInquiryHeader[], pagination: { total, page, limit } }
+ *     Permission `projects.projects.view`.
+ *
+ *   GET /api/v1/project-sales/order-inquiry-headers/{id}
+ *     -> OrderInquiryHeaderDetail (the header + Order/Customer blocks, counts, status and
+ *     `raise_history`). 404 for an unknown id or another company's header.
+ *
+ *   GET /api/v1/project-sales/order-inquiry-headers/{id}/related-documents
+ *     -> OrderInquiryHeaderRelatedDocuments. Empty lists when nothing is linked.
+ *
+ * The Lines tab reads the EXISTING worklist list, `listOrderInquiryWorklist`, with the
+ * `inquiry_id` filter `worklistParams` now sends - not a second worklist fetcher.
+ */
+
+export async function listOrderInquiryHeaders(
+  params: OrderInquiryHeaderListParams = {},
+): Promise<OrderInquiryHeaderListEnvelope> {
+  const limit = params.limit ?? 25;
+  const search = buildDataGridParams(
+    {
+      pageIndex: (params.page ?? 1) - 1,
+      pageSize: limit,
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : [],
+      searchQuery: params.query ?? '',
+    },
+    {
+      state: params.state,
+      raised_by: params.raised_by,
+      agent: params.agent,
+      project: params.project,
+    },
+  );
+  const response = await apiFetch(`${BASE}/order-inquiry-headers?${search.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the order inquiries'));
+  const body = (await response.json()) as {
+    data?: OrderInquiryHeader[];
+    pagination?: { total?: number; page?: number; limit?: number };
+  };
+  const rows = Array.isArray(body.data) ? body.data : [];
+  return {
+    data: rows,
+    total: body.pagination?.total ?? rows.length,
+    page: body.pagination?.page ?? params.page ?? 1,
+    limit: body.pagination?.limit ?? limit,
+  };
+}
+
+export async function getOrderInquiryHeader(
+  id: string,
+): Promise<OrderInquiryHeaderDetail> {
+  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}`);
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'This order inquiry no longer exists'),
+    );
+  return response.json();
+}
+
+/**
+ * The Lines tab's own read: every page of the worklist's `inquiry_id` filter, concatenated
+ * - the tab paginates CLIENT-side over the whole set (`OrderInquiryLinesTab.tsx`'s own
+ * `getPaginationRowModel`), and Unconfirm's "nothing ticked" scope needs every confirmed
+ * line of this header, not just whichever page a server response happened to return
+ * first. `limit` is the backend's own `MAX_PAGE_LIMIT` (1000); a header past that many
+ * lines (max measured, 242) pages again rather than truncating.
+ *
+ * Cancelled lines are NOT filtered here; the Lines tab hides them the same way the
+ * worklist does (S5), client-side.
+ */
+export async function getOrderInquiryHeaderLines(
+  id: string,
+): Promise<OrderInquiryWorklistRow[]> {
+  const limit = 1000;
+  let page = 1;
+  let rows: OrderInquiryWorklistRow[] = [];
+  for (;;) {
+    // Pages are read in order, not fanned out - each one depends on the last.
+    const envelope = await listOrderInquiryWorklist({ inquiry_id: id, limit, page });
+    rows = rows.concat(envelope.data);
+    if (envelope.data.length === 0 || rows.length >= envelope.total) break;
+    page += 1;
+  }
+  return rows;
+}
+
+export async function getOrderInquiryHeaderRelatedDocuments(
+  id: string,
+): Promise<OrderInquiryHeaderRelatedDocuments> {
+  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}/related-documents`);
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'Failed to load the related documents'),
+    );
+  return response.json();
 }
 

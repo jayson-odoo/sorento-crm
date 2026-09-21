@@ -964,6 +964,11 @@ class OrderInquiryWorklistService:
         # "Cancelled (n)" to ask for it. Never set by a route param; `summary()`'s
         # `by_state` grouping is the only caller that passes it.
         include_cancelled: bool = False,
+        # S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own scope - every
+        # row of exactly this header, nothing outside it. Feeds the page's Lines tab,
+        # the whole-OI Confirm (`AcknowledgeFilter.inquiry_id`) and gear > Auto link
+        # (`AutoPlaceRequest.filter.inquiry_id`).
+        inquiry_id: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -1051,6 +1056,8 @@ class OrderInquiryWorklistService:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
         if project:
             base = base.filter(_PROJECT_TITLE == project)
+        if inquiry_id:
+            base = base.filter(OrderInquiry.id == inquiry_id)
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
