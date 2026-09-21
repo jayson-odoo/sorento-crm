@@ -254,14 +254,12 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     }
   }
 
-  const backLink = (
-    <BackToList listPath="/project-sales/order-inquiries" label="Back to order inquiries" />
-  );
-
+  // S1 (reviewer, fix round 22 Sep 2026): `page.tsx`'s own `PageHeader` already renders
+  // a `BackToList` - a second one at the top of every state here was redundant. The
+  // in-card CTA on not-found stays: it is the page's own next step, not a nav duplicate.
   if (headerQuery.isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -276,10 +274,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   if (notFound) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">This order inquiry no longer exists</div>
-          {backLink}
+          <BackToList listPath="/project-sales/order-inquiries" label="Back to order inquiries" />
         </Card>
       </div>
     );
@@ -288,7 +285,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   if (headerQuery.isError || !header) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">Could not load this order inquiry</div>
           <p className="max-w-md text-sm text-muted-foreground">

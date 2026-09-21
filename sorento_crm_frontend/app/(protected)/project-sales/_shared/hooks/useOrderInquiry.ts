@@ -73,20 +73,31 @@ export function orderInquiryHeadersListQueryKey(params: OrderInquiryHeaderListPa
   return [ORDER_INQUIRY_HEADERS_KEY, params] as const;
 }
 
-/** The list query a detail URL describes, in the shape the header list passes. */
+/** The list query a detail URL describes, in the shape the header list passes.
+ *
+ * S3 (reviewer, fix round 22 Sep 2026): defaults `state`/`sort` the same way
+ * `OrderInquiryHeadersList`'s own `params` memo does (`stateFilter` defaults to
+ * `'outstanding'`, `sort` to `'raised_at'`) rather than leaving them `undefined`
+ * when the URL omits them (the list's own default view never writes `?state=` or
+ * `?sort=` - see its own `useEffect` above). Query-key hashing drops `undefined`
+ * properties, so an un-defaulted `state`/`sort` here builds a DIFFERENT key from
+ * the list's own `{state:'outstanding', sort:'raised_at', ...}` on the very page
+ * a reader opens a detail from by default - a cache miss on `useListPager`'s
+ * `useQuery`, which then fires a second, redundant list request. */
 function orderInquiryHeaderListParamsFromUrl(
   params: ListPagerParams,
 ): OrderInquiryHeaderListParams {
   return {
     page: params.pageIndex + 1,
     limit: params.pageSize,
-    sort: params.sorting?.[0]?.id,
+    sort: params.sorting?.[0]?.id ?? 'raised_at',
     dir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
     query: params.searchQuery || undefined,
-    state: (params.filters.state as OrderInquiryHeaderListParams['state']) || undefined,
+    state:
+      (params.filters.state as OrderInquiryHeaderListParams['state']) || 'outstanding',
     raised_by: params.filters.raised_by || undefined,
     agent: params.filters.agent || undefined,
-    project_id: params.filters.project_id || undefined,
+    project: params.filters.project || undefined,
   };
 }
 
@@ -511,7 +522,19 @@ export function useOrderInquiryHandshake() {
     // A confirm/reject/unconfirm moves the HEADER between Outstanding and Completed too
     // (AC-CF-01/02): the detail page's own counts and the Documents list both read it.
     // Link now (the cascade) also moves the Related PO/SPO tabs, the same as Auto link.
-    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
+    //
+    // S6 (reviewer, fix round 22 Sep 2026): `refetchType: 'all'`, not the default
+    // `'active'`, on the LIST's own key specifically - a Confirm pressed on the detail
+    // page runs while the Documents list is UNMOUNTED (the reader navigated away from
+    // it to get here), so the default only marks it stale; a plain browser Back then
+    // showed the OLD Outstanding row until a manual refresh, because nothing forced the
+    // now-inactive list query to refetch before that remount raced ahead of it. `'all'`
+    // refetches it immediately, so the list's cache already holds the new Completed
+    // status by the time the reader steps back onto it.
+    queryClient.invalidateQueries({
+      queryKey: [ORDER_INQUIRY_HEADERS_KEY],
+      refetchType: 'all',
+    });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY] });
