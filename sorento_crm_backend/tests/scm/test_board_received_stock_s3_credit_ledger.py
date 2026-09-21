@@ -1,0 +1,264 @@
+"""AC-S3-11 (`board-received-stock-own-arrival-acceptance-criteria.md`, added 21 Sep after the
+security review): the own-arrival credit (R7) must draw through the SAME capacity ledger every
+other rung draws through, so two lines competing for the same physical pile cannot both be
+told yes.
+
+Finding pinned here (security reviewer, 21 Sep 2026): in `app/services/project_supply_service.py`
+
+- `_own_arrival_credit_for` (~:2604-2691) caps its credit by `fact.group_net_by_location`'s
+  RAW `on_hand` (a live physical figure, netted at :2679-2690 only against what an EARLIER
+  line of the SAME product+location already drew as CREDIT in this same walk/call via
+  `own_arrival_left`) - never against what an ordinary `RUNG_GROUP_TAKE` draw already took in
+  the SAME walk.
+- At compose time, the per-unit drawdown loop (~:1737-1766, inside `compose_lines`) walks every
+  `RUNG_GROUP_TAKE` component and charges it against `own_group`/`other_group` EXCEPT an
+  own-arrival one, which `continue`s at :1741-1745 without charging anything. So where one
+  unit's ordinary draw (rank tie-break, `_pile_order`) and another unit's own-arrival credit
+  compete for the identical bin, the credit is invisible to the ledger the ordinary draw reads
+  and writes: both units are told yes.
+- At confirm time, `_check_line` (~:4805-4831) adds the credit straight onto its own local
+  `capacity[fact.own_code]` (:4829-4831), never through `capacity_left` (the `_CapacityLedger`
+  every other rung's capacity check draws through, declared once per `confirm()` call at
+  :4322 and threaded through every line of the payload) - the same shape of bypass, one layer
+  lower.
+
+Both tests below use `own_arrival_group`/`own_arrival_warehouse` (one ownership group, one
+physical bin) so both lines' Reserve is a claim on the exact same on-hand.
+
+CONTRACT CHOICES this file pins:
+
+- AC-S3-11's own text says "order A" / "order B" for the compose (ladder) half - two DIFFERENT
+  sales orders sharing one product and one bin, walked together in a single
+  `FulfilmentBoardService.build()` call (the board's own unit key names the order,
+  `_unit_key`'s docstring at :1857-1870, so `own_group` truly is a PER-ORDER ledger there and
+  the only thing that can still cap the group's book position across two orders sharing a
+  ranking tie is the drawdown loop the finding names).
+- The two lines are given the SAME `required_date` (a genuine rank tie) and DETERMINISTIC
+  `so_number`s, because `_pile_order`'s tie-break is "sales order number, then line number"
+  (:263-269) - a tie broken by a RANDOM uuid-suffixed `so_number` (`order_with_lines`'s
+  default) makes which line the ordinary rung serves first non-deterministic, and the credit
+  bypass is only OBSERVABLE when the credited line loses that tie (the ordinary rung serves
+  the OTHER line first, and the credit still hands the loser a second, uncharged copy of the
+  same units). `ORDER B`'s number sorts before `ORDER A`'s so the tie-break always serves B
+  first ordinarily, and A's own-arrival credit is what is under test.
+- The CONFIRM half is measured, not assumed, against three shapes before being written as a
+  pin: two SEPARATE orders confirmed in sequence (B first, A second; and the reverse, A first,
+  B second) and ONE order with two lines confirmed together in a single `confirm()` call. All
+  three are refused as `ReserveOverHand` (`SupplyLinesRefused`, 409, code
+  `supply_reserve_over_hand`) TODAY - `_check_reserve_against_on_hand` (R14, :5071-5163) is an
+  INDEPENDENT guard that reads real `Stock` and real confirmed `SOLineAllocation` rows rather
+  than either walk-scoped ledger the finding names, and it does not distinguish an
+  own-arrival-sourced Reserve request from an ordinary one: every `entry.reserve` item in the
+  payload competes against the same "on hand less already held" arithmetic regardless of why
+  the caller asked for it. `test_a_reason_does_not_push_a_reserve_past_on_hand`
+  (`tests/test_so_supply_confirmation.py`) already pins the same guard for a different bypass
+  (a CS override reason) on the identical two-order, sequential-HTTP-confirm shape, so this is
+  not a new mechanism, only a new caller of it. This test is therefore written as a GREEN
+  REGRESSION GUARD for the confirm path (`AC-S3-11`'s confirm half is satisfied by an existing,
+  independent guard, not by fixing `_check_line`'s own ledger) rather than forced red - the
+  compose half above is where the finding's damage is real and observable (a planner-facing
+  proposal that promises 80 units from an on-hand 40, which is exactly the wrong thing to
+  learn from a board that "writes nothing" per `test_fulfilment_board.py`'s own docstring).
+
+Postgres only (`tests/_pg_fixture.py`), every FK seeded here, never a borrowed row.
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+from decimal import Decimal
+
+import pytest
+
+from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+from app.services.error_handler import AppException
+from app.services.project_supply_service import ProjectSupplyService
+
+from tests._pg_fixture import blank_session
+from tests.test_fulfilment_board import TODAY, _cell, _service, _stock as _board_stock
+from tests.scm._own_arrival_fixture import (
+    order_with_lines,
+    own_arrival_group,
+    own_arrival_warehouse,
+    po_line_bought_for,
+    supplier_and_po,
+)
+from tests.scm.test_project_supply_service_ladder import _world
+from tests.test_so_supply_confirmation import (  # noqa: F401  (helpers, not fixtures)
+    _core_line,
+    _core_so,
+    _project_line,
+    _project_so,
+    _stock,
+    _uid,
+    _warehouse,
+)
+
+TIE_DATE = date(2026, 8, 20)
+TIE_BUCKET = "2026-08-17"  # the Monday-anchored week bucket_key_for(TIE_DATE, ...) lands in
+
+
+def _reserved(contribution: dict) -> Decimal:
+    return sum(
+        (
+            Decimal(s["qty"])
+            for s in contribution["sources"]
+            if s.get("rung") == "group_take"
+        ),
+        Decimal("0"),
+    )
+
+
+def test_ac_s3_11_compose_never_covers_the_same_units_twice():
+    """AC-S3-11 compose half: on hand 40 at one location, group net positive (no competing
+    demand beyond the two lines), ORDER B's line needs 40 with no PO of its own, ORDER A's
+    line needs 40 and its own PO line received 40 (the credit). Both required on the SAME
+    date, a genuine rank tie `_pile_order` breaks by `so_number` - ORDER B's number sorts
+    first, so B's plain need is served by the ordinary `RUNG_GROUP_TAKE` rung before A is
+    even reached.
+
+    MEASURED red today: the drawdown loop that charges `own_group` for every
+    `RUNG_GROUP_TAKE` component (`compose_lines` :1737-1766) explicitly skips an own-arrival
+    one (:1741-1745, "never drawn from `own_group`'s own SA-assignment pile in the first
+    place... so it must not spend it here either") - so B's ordinary 40 is charged
+    correctly and leaves nothing, but A's `_own_arrival_credit_for` reads RAW physical on
+    hand (still 40, `LocationNet.on_hand`, :2671-2677) rather than what B's sibling unit
+    already spent of it, and hands A a SECOND, uncharged Reserve of 40 at the identical bin
+    (`source: own_arrival`). Total Reserve across the two contributions: 80, from an on-hand
+    of 40 - the exact double book the security review named.
+    """
+    with blank_session() as db:
+        group, product = own_arrival_group(db)
+        own = own_arrival_warehouse(db, group)
+        _board_stock(db, product, own, on_hand=40)
+
+        # ORDER B: plain demand, no PO of its own. so_number sorts BEFORE order A's, so the
+        # tie-break always serves B first on the ordinary rung - deterministic, not left to
+        # the fixture helper's random uuid suffix.
+        order_b, (line_b,) = order_with_lines(
+            db, so_number="ZZT-S311-1-ORDERB", product=product, warehouse=own,
+            lines=[{"qty": "40", "required_date": TIE_DATE, "source_ref": "S311-LB"}],
+        )
+        # ORDER A: its own PO line received 40 - tier-1 own-arrival credit.
+        order_a, (line_a,) = order_with_lines(
+            db, so_number="ZZT-S311-2-ORDERA", product=product, warehouse=own,
+            lines=[{"qty": "40", "required_date": TIE_DATE, "source_ref": "S311-LA"}],
+        )
+        po = supplier_and_po(db, po_number="ZZT-PO-S311")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref="S311-LA", qty_received=40, qty_ordered=40,
+        )
+
+        board = _service(db).build(
+            [order_a.so_number, order_b.so_number], granularity="week", as_of=TODAY,
+        )
+        cell = _cell(board, product.product_code, TIE_BUCKET)
+        by_so = {c["so_number"]: c for c in cell["contributions"]}
+        reserved_a = _reserved(by_so[order_a.so_number])
+        reserved_b = _reserved(by_so[order_b.so_number])
+
+        assert reserved_a + reserved_b <= Decimal("40"), (
+            "on hand is 40 at this bin; ORDER A's own-arrival credit and ORDER B's "
+            f"ordinary Reserve must share it, never both draw the full 40: "
+            f"A={reserved_a} B={reserved_b}, sources A={by_so[order_a.so_number]['sources']} "
+            f"B={by_so[order_b.so_number]['sources']}"
+        )
+        # Today's actual (buggy) ladder outcome, pinned exactly so a coder's fix is caught by
+        # a CHANGED number here rather than a silent pass: B wins the tie ordinarily (40,
+        # rung group_take, no own_arrival source) and A's credit hands it a second, uncharged
+        # 40 (rung group_take, source own_arrival) - 80 total from 40 on hand.
+        assert reserved_b == Decimal("40"), by_so[order_b.so_number]["sources"]
+        assert reserved_a == Decimal("40"), by_so[order_a.so_number]["sources"]
+        own_arrival_sources = [
+            s
+            for s in by_so[order_a.so_number]["sources"]
+            if s.get("rung") == "group_take" and s.get("source") == "own_arrival"
+        ]
+        assert own_arrival_sources and Decimal(own_arrival_sources[0]["qty"]) == Decimal("40")
+
+
+def test_ac_s3_11_confirm_never_covers_the_same_units_twice():
+    """AC-S3-11 confirm half: same world (on hand 40, one bin, two orders each needing 40,
+    one with its own PO line received 40). A live `ProjectSupplyService.confirm()` covering
+    ORDER B first (ordinary Reserve 40) and then ORDER A (own-arrival Reserve 40, asked for
+    exactly as the board proposes it in the test above) - `confirm()` is scoped to ONE order
+    (`order: ProjectSalesOrder`, `app/services/project_supply_service.py` :4187-4196), so
+    "a confirm covering both" is two confirms in sequence, sharing the same on-hand.
+
+    MEASURED green today (not forced red - see this file's CONTRACT CHOICES): B's confirm
+    commits a real `SOLineAllocation` (`source_type=ALLOC_SOURCE_OWN`, :7151-7178) for its
+    40. A's confirm then asks for the SAME 40 as an own-arrival Reserve, and
+    `_check_reserve_against_on_hand` (R14, :5071-5163) - independent of `_check_line`'s own
+    ledger, the seam AC-S3-11's finding actually names - reads live `Stock` and B's now-real
+    hold and refuses A's ask as `ReserveOverHand` (409, `supply_reserve_over_hand`): "40 on
+    hand, 40 already reserved by ORDER B, you asked 40". The reverse order (A confirms
+    first, B second) and a single `confirm()` call naming both of ONE order's two lines were
+    also measured and refused the same way; this test pins the shape closest to AC-S3-11's
+    own wording (two orders, B first).
+    """
+    within_window = date.today() + timedelta(days=10)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=40)
+
+        # ORDER B: plain demand, no credit, confirms FIRST.
+        core_so_b = _core_so(db, company_id)
+        core_line_b = _core_line(
+            db, core_so_b, product, own, qty_ordered="40", required_date=within_window,
+        )
+        order_b = _project_so(db, project, so_id=core_so_b.id)
+        line_b = _project_line(db, order_b, line_no=1, product=product, core_line=core_line_b)
+        db.commit()
+
+        result_b = ProjectSupplyService(db).confirm(
+            order_b,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line_b.id),
+                        reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        db.commit()
+        assert result_b["exceptions"] == [], result_b
+        assert result_b["lines_decided"] == 1, result_b
+
+        # ORDER A: its own PO line received 40 (own-arrival credit), confirms SECOND asking
+        # for the SAME 40 at the SAME bin.
+        core_so_a = _core_so(db, company_id)
+        core_line_a = _core_line(
+            db, core_so_a, product, own, qty_ordered="40", required_date=within_window,
+        )
+        core_line_a.source_ref = f"ZZT-S311-CONFIRM-LA-{_uid()[:8]}"
+        db.flush()
+        po = supplier_and_po(db, po_number=f"ZZT-PO-S311-CONFIRM-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line_a.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+        order_a = _project_so(db, project, so_id=core_so_a.id)
+        line_a = _project_line(db, order_a, line_no=1, product=product, core_line=core_line_a)
+        db.commit()
+
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order_a,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=str(line_a.id),
+                            reserve=[{"warehouse_id": str(own.id), "qty": "40"}],
+                        ),
+                    ]
+                ),
+                actor_user_id=actor,
+            )
+        assert refused.value.status_code == 409, refused.value.detail
+        assert refused.value.detail.get("code") == "supply_reserve_over_hand", (
+            refused.value.detail
+        )
+        failing = refused.value.detail.get("failing_lines") or []
+        assert failing and "40" in failing[0]["reason"], failing

@@ -288,6 +288,224 @@ def test_ac_s4_6_mixed_closed_and_cancelled_lines_report_order_fully_delivered()
         assert w.rows() == [], "a row was written for an order with no open line at all"
 
 
+# --------------------------------------------------------------------------- #
+# AC-S4-7 (R10, added 21 Sep) - a sheet row larger than the open line it       #
+# pairs to by date order still lands there, capped only by the ORDER's own    #
+# total open capacity, never the one line's                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_s4_7_row_larger_than_its_line_still_pairs_by_date():
+    """AC-S4-7 (R10). Open lines d1 (qty 20) < d2 (qty 40); sheet rows 70 @ d1 and 40 @ d2.
+    The 70-row still lands on line 1 - the line the date-order pick would otherwise give
+    it - even though 70 exceeds line 1's OWN qty_ordered of 20; the 40-row lands on line 2.
+    Nothing is refused as `qty_exceeds_ordered`.
+
+    Note wording pinned: `f"Was 20 on {d1.isoformat()}"` - the UAC's own literal example
+    ('note "Was 20 on d1" style qty difference'), reusing the SAME `f"Was {qty} on {date}"`
+    fragment this file already writes elsewhere (`_resolve_delivery_date_repairs`,
+    `_settle_row_in_place`, grep `"Was "` across this module) rather than inventing a new
+    note shape. Here 20 is line 1's own `qty_ordered` and d1 its `required_date` - the
+    fragment records the mismatch between what the LINE was booked for and what this row
+    actually states (70), not a prior LIVE row's previous state (this is a first-time raise,
+    there is no earlier row to restate).
+
+    RED today: `_match_row`'s `fits` filter
+    (`app/services/project_order_inquiry_import_service.py:638-643`) requires
+    `qty_ordered - taken >= qty` PER CANDIDATE LINE. A row of 70 never fits a line of 20, so
+    line 1 is filtered out of `same_place` before rank/date order ever gets a say; only line
+    2 (capacity 40) remains as a candidate for the 70-row, which also does not fit, so
+    `_match_row` reports `qty_exceeds_ordered` for the 70-row and it is dropped - never the
+    two-rows-on-two-lines outcome AC-S4-7 pins. Expect `rows_raised == 1` (only the 40-row)
+    and a `qty_exceeds_ordered` entry in `line_not_found` today.
+    """
+    d1, d2 = date(2026, 1, 1), date(2026, 6, 1)
+    with world() as w:
+        order = w.order()
+        line1 = w.line(order, qty_ordered="20", required_date=d1)
+        line2 = w.line(order, qty_ordered="40", required_date=d2)
+
+        data = book_of(w, order, [(70, d1), (40, d2)])
+
+        preview = w.preview(data)
+        assert preview["rows_raised"] == 2, preview
+        assert preview["rows_line_not_found"] == 0, preview
+        reasons = [entry.get("reason") for entry in preview["line_not_found"]]
+        assert "qty_exceeds_ordered" not in reasons, preview
+
+        result = w.apply(data)
+        assert result["rows_raised"] == 2, result
+        assert result["rows_line_not_found"] == 0, result
+
+        rows = w.rows()
+        assert len(rows) == 2, [
+            (str(r.so_line_id), str(r.qty), r.delivery_date) for r in rows
+        ]
+
+        mirror1_id = str(w.mirror_of(line1).id)
+        mirror2_id = str(w.mirror_of(line2).id)
+        row_on_line1 = next((r for r in rows if str(r.so_line_id) == mirror1_id), None)
+        row_on_line2 = next((r for r in rows if str(r.so_line_id) == mirror2_id), None)
+        assert row_on_line1 is not None, (
+            "the 70-row must land on line 1 (date order), even though it exceeds line 1's "
+            "own qty_ordered",
+            [(str(r.so_line_id), str(r.qty)) for r in rows],
+        )
+        assert row_on_line2 is not None, (
+            "the 40-row must land on line 2",
+            [(str(r.so_line_id), str(r.qty)) for r in rows],
+        )
+        assert str(row_on_line1.qty) == "70", row_on_line1.qty
+        assert str(row_on_line2.qty) == "40", row_on_line2.qty
+
+        expected_fragment = f"Was 20 on {d1.isoformat()}"
+        assert expected_fragment in (row_on_line1.note or ""), row_on_line1.note
+
+
+def test_ac_s4_7_row_larger_than_the_order_total_is_still_refused():
+    """AC-S4-7 (R10) boundary guard. A single open line (qty 20) and a single sheet row of
+    500 - far larger than the ORDER's own total open capacity, not merely this one line's -
+    is still refused `qty_exceeds_ordered`. R10 lets a row exceed the ONE line the date pick
+    lands it on (test above); it does not remove the order-wide ceiling.
+
+    Expected GREEN already: today's per-line `fits` gate already refuses this row (the only
+    open line cannot hold 500), the same outcome R10's change must preserve at this
+    boundary - kept here as the guard the coder's R10 change must not break, not as a red
+    pin.
+    """
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="20", required_date=date(2026, 1, 1))
+
+        data = book_of(w, order, [(500, date(2026, 1, 1))])
+
+        preview = w.preview(data)
+        assert preview["rows_raised"] == 0, preview
+        assert preview["rows_line_not_found"] == 1, preview
+        assert preview["line_not_found"][0]["reason"] == "qty_exceeds_ordered", preview
+
+        result = w.apply(data)
+        assert result["rows_raised"] == 0, result
+        assert result["rows_line_not_found"] == 1, result
+        assert result["line_not_found"][0]["reason"] == "qty_exceeds_ordered", result
+        assert w.rows() == [], "a row was written despite exceeding the order's own capacity"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 fix-round reds (SF6, SF7) - landing-map guards on top of the count-  #
+# only assertions above                                                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_s4_4_reupload_keeps_every_row_on_the_same_line():
+    """AC-S4-4, landing-map guard (SF6). Re-uploading the SAME books must not only keep the
+    row COUNT stable (`test_ac_s4_4_reupload_of_both_books_restates_in_place_never_drops`
+    above) - it must land every sheet row on the EXACT SAME line as the first import, never
+    silently move one to a different line, and never create a duplicate. Captures
+    `{sheet row identity (delivery_date, qty) -> landing so_line_id}` after the first pass of
+    both books, re-uploads the identical books, and asserts the map is byte-identical.
+
+    May be GREEN already - today's importer already restates a re-upload's rows in place by
+    (so, item, date, qty) key rather than re-picking a line for an unchanged book, so nothing
+    here forces a re-pick. Kept as the guard this slice's own contract needs: the coder's R10
+    change (qty no longer gates the date-order pick) must not, as a side effect, let a
+    re-upload's line pick land an existing row on a DIFFERENT line than before.
+    """
+    d1, d2, d3, d4 = date(2026, 1, 1), date(2026, 6, 1), date(2027, 1, 1), date(2027, 6, 1)
+    with world() as w:
+        order = w.order()
+        open_lines(w, order, [d1, d2, d3, d4])
+
+        book_2026 = book_of(w, order, [(10, date(2026, 2, 1)), (12, date(2026, 4, 1))])
+        book_2027 = book_of(w, order, [(14, date(2027, 2, 1)), (16, date(2027, 7, 1))])
+
+        _apply(w, book_2026, file_name="2026 order inquiry.xlsx")
+        _apply(w, book_2027, file_name="2027 order inquiry.xlsx")
+
+        def landing_map():
+            return {
+                (r.delivery_date, str(r.qty)): str(r.so_line_id)
+                for r in w.rows()
+            }
+
+        before = landing_map()
+        assert len(before) == 4, before
+
+        _apply(w, book_2026, file_name="2026 order inquiry.xlsx")
+        _apply(w, book_2027, file_name="2027 order inquiry.xlsx")
+
+        after = landing_map()
+        assert after == before, (
+            "re-uploading the same books must not move any row to a different line",
+            before, after,
+        )
+        assert len(w.rows()) == 4, "re-upload must not create a duplicate row"
+
+
+def test_ac_s4_2_preview_and_apply_land_every_row_on_the_same_line():
+    """AC-S4-2, preview/apply parity guard (SF7). For the five-rows/four-lines fixture,
+    `preview()` and `apply()` must not only AGREE ON COUNTS
+    (`test_ac_s4_2_fifth_row_beyond_last_line_lands_as_second_row_on_it` above pins
+    `rows_raised == 5` for both) - each individual sheet row's LANDING LINE must be the same
+    line in both. Reads `match.core_line` off the internal plan `preview()` itself computes
+    (`importer._preview_plan`, the only place a match's landing line is exposed before
+    Confirm - `preview()`'s own dict carries no per-row line detail) and compares each
+    raisable match's core line against the line the actual applied `OrderInquiryRow` with the
+    same (delivery_date, qty) sheet-row identity lands on (via `World.mirror_of`, the only
+    way to go from a core line to the mirror id `OrderInquiryRow.so_line_id` addresses).
+
+    May be GREEN already - nothing pins preview and apply computing the plan differently
+    today (`_plan` is called once per call, and `apply` calls it the same way `preview` does).
+    Kept as the guard against a coder's R10 change accidentally reading the plan twice (once
+    for preview, once inside apply) and letting the two diverge, which this module's own
+    `_Plan` docstring already promises against ("the counts on the screen before Confirm are
+    the counts Confirm produces") - this test extends that promise from counts to WHICH line.
+    """
+    dates = [date(2026, 1, 1), date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1)]
+    with world() as w:
+        order = w.order()
+        lines = open_lines(w, order, dates)
+
+        row_dates = [
+            date(2026, 1, 10), date(2026, 2, 10), date(2026, 3, 10),
+            date(2026, 4, 10), date(2026, 5, 10),
+        ]
+        data = book_of(w, order, [(10 + i, row_dates[i]) for i in range(5)])
+
+        plan, preview_result = importer._preview_plan(w.db, data)
+        assert plan is not None, preview_result
+        assert preview_result["rows_raised"] == 5, preview_result
+
+        # Qty is compared as an int (every fixture qty here is a whole number): the sheet
+        # row's own Decimal and the DB column's `NUMERIC(*, 4)` scale would otherwise print
+        # "10" vs "10.0000" and fail this assertion for a formatting reason that has nothing
+        # to do with WHICH line the row landed on.
+        preview_landing = {
+            (match.row.delivery_date, int(importer._dec(match.row.qty))): str(match.core_line.id)
+            for match in plan.matches
+            if match.raisable
+        }
+        assert len(preview_landing) == 5, preview_landing
+
+        result = _apply(w, data, file_name="2026 order inquiry.xlsx")
+        assert result["rows_raised"] == 5, result
+
+        actual_landing: dict[tuple, str] = {}
+        for line in lines:
+            mirror = w.mirror_of(line)
+            if mirror is None:
+                continue
+            for r in w.rows():
+                if str(r.so_line_id) == str(mirror.id):
+                    actual_landing[(r.delivery_date, int(r.qty))] = str(line.id)
+
+        assert actual_landing == preview_landing, (
+            "preview()'s own plan and apply()'s written rows must land every sheet row on "
+            "the SAME line",
+            preview_landing, actual_landing,
+        )
+
+
 def test_ac_s4_6_open_line_of_another_item_still_reports_no_line_for_item():
     """AC-S4-6 contrast case (R9). An order that DOES have an open line - just not for
     this row's item - is a genuine item mismatch, not `order_fully_delivered`: R9 only

@@ -24,6 +24,12 @@ FK seeded, never a borrowed row.
   "Received {document} 40".
 - AC-S2-3 A line with an open (unreceived) PO link of 30 and a received link of 40, delayed beyond the
   window: the reallocate component is for 30 (the open part) only.
+- AC-S2-4 (Phase 3 fix round, 21 Sep) A line with one link of 30 to an OPEN (not received) SPO
+  allocation (`po_line_id` NULL, `receipt_status` not fully_received) and one link of 20 to an open
+  purchase-order line with `po_line_id` set: `_placed_links` returns `po_qty = 20` (only what
+  `_document_links_by_row` can re-deal), `received_qty = 0`, `qty = 50`.
+- AC-S2-5 (Phase 3 fix round, 21 Sep) With AC-S2-4's shape, `compose_suggestion` for an undecided
+  delayed line composes a reallocate for 20 only, never naming the SPO.
 
 ## S3 Own-arrival credit and the path picker
 - AC-S3-1 Ladder for L2 (needs 20; 40 received on its own PO line; group net negative because of the
@@ -52,6 +58,11 @@ FK seeded, never a borrowed row.
   the fixture order carries an own-arrival Reserve for L2; Confirm (`apply` -> confirm-time recheck
   `_check_line`) succeeds and the Reserve is applied, even when the group net is negative because
   of the other order. The recheck must know the credit the same way the ladder does.
+- AC-S3-11 (security review, 21 Sep) The credit is drawn through the same capacity ledger as the
+  ordinary assignment: on hand 40 at the location, group net POSITIVE, order A's line needs 40
+  and its own PO line received 40 (credit), order B's line needs 40 from the same pile: a confirm
+  covering both cannot reserve 80 from 40; the second line is refused or reduced, in both the
+  ladder (compose) and the confirm-time recheck.
 
 ## S4 Importer pairing by date order, never drop
 - AC-S4-1 Sales order with open lines dated d1 < d2 < d3 < d4 and a 2026 book with two rows (dates
@@ -64,6 +75,10 @@ FK seeded, never a borrowed row.
 - AC-S4-4 Re-uploading the same book restates existing rows in place (no duplicate, no skip) and the
   row count stays equal to the sheet row count for that sales order.
 - AC-S4-5 SO372176 replay on the 0921 copy (manual, in the PR body): 8 rows on L2..L9 by date.
+- AC-S4-7 (R10, added 21 Sep) Open lines d1 (qty 20) < d2 (qty 40); sheet rows 70 @ d1 and 40 @
+  d2: the 70 lands on line 1 (raisable, note "Was 20 on d1" style qty difference), the 40 on
+  line 2; nothing refused as `qty_exceeds_ordered`. A single sheet row larger than the order's
+  total open qty is still refused as `qty_exceeds_ordered`.
 - AC-S4-6 (R9, added 21 Sep) A sheet row for an order whose lines are all closed or cancelled:
   preview and apply refuse it with reason `order_fully_delivered` under `line_not_found`,
   `rows_raised` 0, order not adopted, no OI row written; an order with an open line of another
