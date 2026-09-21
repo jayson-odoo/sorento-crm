@@ -71,6 +71,27 @@ FK seeded, never a borrowed row.
   link because shifting it off the row is purchasing's own decision at Order Inquiries, not
   something a replan makes for them. `_redirect_row_if_received` must not release the open link
   as a side effect of a credit-covered settle.
+- AC-S3-13 (round-4 fix round, 21 Sep) The confirm-time credit is a second reading of the bin,
+  intersected with the ordinary one, never summed: ordinary reading 40 + credit 40 on 100 on hand
+  with an earlier 60-unit competitor -> Reserve 80 refused, Reserve 40 accepted.
+- AC-S3-14 (round-4 fix round, 21 Sep) The replan path picker charges the own-arrival ledger with
+  the linked quantity each row was measured against, not the row's qty; a second row of the same
+  line keeps its share; asking the same row twice gives the same answer. (probes: row qty 30 with
+  one fully-received link of 40 on a line whose own PO received 40, 40 on hand -> retained, not
+  redirected off a false 30-unit cap; one line whose PO received 70 with row 1 qty 70 but only 10
+  linked and row 2 qty 10 fully linked, both received -> both retained and the instance's ledger
+  for that bin reads 70 - 10 - 10 = 50, not 70 - 70 - 0 = 0)
+- AC-S3-15 (round-4 fix round, browser-pass finding, 21 Sep) R7's Buy-over-credit refusal is wired
+  only into `set_row_decision` (the planning-changes batch amend path, AC-S3-6's own seam) - the
+  ordinary board Confirm (`POST .../fulfilment-planning/confirm-all` -> `ProjectSupplyService.
+  confirm` -> `_check_line`) has no equivalent check, so CS can confirm a Buy on a line whose own
+  PO already landed the same units. A draft save stays lenient by design (a draft claims no
+  stock, so there is nothing to refuse there). Line needs 20, its own PO line received 40, 40 on
+  hand, no competing demand: a confirm naming `buy_qty=20` and no Reserve at the credited bin is
+  refused 409 `planning_change_buy_over_own_arrival` (the same code `_refuse_buy_over_own_arrival`
+  raises), the message naming 20 and the PO. Control: `buy_qty=5` beside `Reserve 15` when the
+  credit is only 15 (on hand 15) is accepted - the refusal only bites the part that would drop
+  Reserve below what is credited, never a Buy beside a credit already fully covered.
 
 ## S4 Importer pairing by date order, never drop
 - AC-S4-1 Sales order with open lines dated d1 < d2 < d3 < d4 and a 2026 book with two rows (dates
@@ -109,3 +130,12 @@ FK seeded, never a borrowed row.
 - E1 Fulfilment planning for the fixture order: Confirm succeeds; L2 shows Received 20; a Buy amend
   on it is refused with the message; the OI worklist shows the retained row not grey.
 - E2 Order inquiries import preview for the two fixture books: row count equals sheet row count.
+
+Evidence (`documentation/plans/scm/evidence/board-received-stock-own-arrival/`):
+- E1a-1280.png, E1a-375.png - fulfilment planning at 1280px and 375px.
+- E1a-breakdown-L2.png - L2's Received 20 breakdown.
+- E1a-backing-docs-PO202510-S0101.png - the backing-documents popover naming the PO.
+- E1b-refusal.png - the Buy amend refused with the R7 message.
+- E1c-confirm.png - Confirm succeeding on the fixture order.
+- E1d-worklist.png - the OI worklist showing the retained row not grey.
+- E2-2026-preview.png, E2-2027-preview.png - the two fixture books' import preview.

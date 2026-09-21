@@ -701,3 +701,206 @@ def test_path_picker_charges_only_what_each_row_used(api):
         "asking the same row's own credit twice on one instance must be idempotent - "
         f"first={first_credit} second={second_credit}"
     )
+
+
+# ============================================================================
+# Round-4 fix-round reds - two of the reviewer's own measured probes,
+# `_own_arrival_credit_for_row` capping/charging by the wrong number when a row's own
+# `qty` and its LINKED total (what `_redirect_row_if_received`'s own `>=` check compares
+# the credit against) diverge. AC-S3-13/AC-S3-14
+# (`board-received-stock-own-arrival-acceptance-criteria.md`).
+#
+# `_own_arrival_credit_for_row` (`project_order_inquiry_service.py`) today caps and
+# charges the credit at `credit = min(theoretical, max(row.qty, 0))` - `row.qty`, the
+# row's OWN quantity - even though `_redirect_row_if_received` compares that same credit
+# against `linked_qty` (`sum(link.qty for link in links)`), a DIFFERENT number whenever a
+# row's `qty` and its links' combined total diverge. The expected fix is
+# `_own_arrival_credit_for_row(row, need)` capping and charging by `need` - the caller's
+# own `linked_qty` - not `row.qty`.
+# ============================================================================
+
+
+def test_path_picker_charges_the_linked_need_not_the_rows_own_qty(api):
+    """PROBE A (round-4 brief, reviewer-measured): row qty 30, ONE fully-received link of
+    40, the line's own PO received 40, 40 on hand. `_redirect_row_if_received` compares
+    the row's own-arrival credit against `linked_qty` (here 40, the link's own qty, not
+    the row's), so the credit that answers that question must be capped/charged by 40 -
+    the line's own PO physically covers all of it (40 received, 40 on hand) - and the row
+    must be RETAINED (Path B, `None`).
+
+    RED today: `_own_arrival_credit_for_row` caps/charges the credit at
+    `row.qty` (30) instead of the linked total the caller is about to compare it
+    against, so `credit = min(theoretical=40, row.qty=30) = 30`, which is `< linked_qty
+    (40)` - the row is wrongly redirected (Path A, a fresh row raised) even though
+    nothing about its own line's landed stock is short.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        required_date=date(2027, 6, 1),
+    )
+    core_line.source_ref = f"ZZT-PROBEA-{_uid()[:8]}"
+    db.flush()
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    po = supplier_and_po(db, po_number=f"ZZT-PO-PROBEA-{_uid()[:8]}")
+    po_line_bought_for(
+        db, po, world.product, world.own_wh, from_so_line_ref=core_line.source_ref,
+        qty_received=40, qty_ordered=40,
+    )
+    _stock(db, world.product, world.own_wh, 40)
+    spo = spo_allocation_fully_received(
+        db, world.product, world.own_wh, qty=40, from_po_number=po.po_number,
+    )
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        amendment_id=None, state="raised", raised_by=world.actor,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("30"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    db.add(row)
+    db.flush()
+    link = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=row.id, spo_allocation_id=spo.id,
+        document=spo.spo_number, qty=Decimal("40"),
+    )
+    db.add(link)
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state=DECISION_ACTIVE, line_snapshots=[], confirmed_by=world.actor,
+    )
+    db.add(decision)
+    db.commit()
+
+    svc = ProjectOrderInquiryService(db)
+    result = svc._redirect_row_if_received(row, [link], decision)
+
+    assert result is None, (
+        "row qty 30, one fully-received 40-unit link: the line's own PO received 40, 40 "
+        "on hand - the credit `_redirect_row_if_received` compares against its own "
+        "linked total (40) must be 40, not row.qty (30), so the row is RETAINED "
+        f"(Path B), not redirected: {result}"
+    )
+    db.expire_all()
+    fresh = db.get(OrderInquiryRow, row.id)
+    assert fresh.redirected_to_pool is not True, fresh.redirected_to_pool
+
+
+def test_path_picker_charges_each_rows_own_linked_total_across_two_rows(api):
+    """PROBE B (round-4 brief, reviewer-measured): one line, its own PO line received 70,
+    70 on hand, no other order. TWO rows on that line: row 1 qty 70 but only 10 of it
+    LINKED (to a received SPO allocation); row 2 qty 10, fully linked (also received).
+    Both must be RETAINED (Path B, `None`) - 10 + 10 = 20 of the 70 physically landed is
+    all either row's own linked total ever asks for.
+
+    RED today: row 1's credit is capped/charged at `row.qty` (70), not its own
+    `linked_qty` (10) - `_redirect_row_if_received` charges the shared per-instance
+    `_own_arrival_left` ledger the full 70 on row 1's OWN check (`70 >= 10` passes
+    regardless, so row 1 still reads retained here, but the ledger is drained to 0 doing
+    it), leaving row 2's own check (`credit = min(70, remaining=0) = 0`) to read `0 <
+    10` and wrongly redirect row 2 even though 10 of the SAME 70 physically on hand is,
+    in truth, still exactly its own. Pinned on the LEDGER, read directly off the service
+    instance (`svc._own_arrival_left[product_id][warehouse_code]`, the shape
+    `_charge_own_arrival_credit`/`_own_arrival_credit_for_row` key it by): after both
+    rows are asked, 70 - 10 - 10 = 50 must be left, not 70 - 70 - 0 = 0.
+    """
+    client, world = api
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="70",
+        required_date=date(2027, 6, 1),
+    )
+    core_line.source_ref = f"ZZT-PROBEB-{_uid()[:8]}"
+    db.flush()
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    po = supplier_and_po(db, po_number=f"ZZT-PO-PROBEB-{_uid()[:8]}")
+    po_line_bought_for(
+        db, po, world.product, world.own_wh, from_so_line_ref=core_line.source_ref,
+        qty_received=70, qty_ordered=70,
+    )
+    _stock(db, world.product, world.own_wh, 70)
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        amendment_id=None, state="raised", raised_by=world.actor,
+    )
+    db.add(inquiry)
+    db.flush()
+
+    row1 = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("70"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    row2 = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("10"), verb=IV_ORDER, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    db.add_all([row1, row2])
+    db.flush()
+
+    spo1 = spo_allocation_fully_received(
+        db, world.product, world.own_wh, qty=10, from_po_number=po.po_number,
+    )
+    spo2 = spo_allocation_fully_received(
+        db, world.product, world.own_wh, qty=10, from_po_number=po.po_number,
+    )
+    link1 = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=row1.id, spo_allocation_id=spo1.id,
+        document=spo1.spo_number, qty=Decimal("10"),
+    )
+    link2 = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=row2.id, spo_allocation_id=spo2.id,
+        document=spo2.spo_number, qty=Decimal("10"),
+    )
+    db.add_all([link1, link2])
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state=DECISION_ACTIVE, line_snapshots=[], confirmed_by=world.actor,
+    )
+    db.add(decision)
+    db.commit()
+
+    svc = ProjectOrderInquiryService(db)
+    result1 = svc._redirect_row_if_received(row1, [link1], decision)
+    result2 = svc._redirect_row_if_received(row2, [link2], decision)
+
+    assert result1 is None, (
+        "row 1's own linked total is 10 (only one of its links is received, though its "
+        f"row qty is 70): retained (Path B), not redirected: {result1}"
+    )
+    db.expire_all()
+    fresh1 = db.get(OrderInquiryRow, row1.id)
+    assert fresh1.redirected_to_pool is not True, fresh1.redirected_to_pool
+
+    assert result2 is None, (
+        "row 2's own linked total is 10 (fully linked, fully received) - row 1's own "
+        "check must not charge the shared ledger with row 1's QTY (70) when row 1's own "
+        f"linked total only needed 10 to clear its own check: {result2}"
+    )
+    fresh2 = db.get(OrderInquiryRow, row2.id)
+    assert fresh2.redirected_to_pool is not True, fresh2.redirected_to_pool
+
+    ledger_key = str(world.product.id)
+    remaining = svc._own_arrival_left.get(ledger_key, {}).get(world.own_wh.warehouse_code)
+    assert remaining == Decimal("50"), (
+        "each row must charge the shared ledger with only what IT was measured against "
+        "(10 each), leaving 70 - 10 - 10 = 50 for anything asked after, not 70 - 70 = 0: "
+        f"svc._own_arrival_left={svc._own_arrival_left}"
+    )

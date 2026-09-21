@@ -443,19 +443,35 @@ def test_confirm_credit_is_stated_through_the_capacity_ledger():
 
 
 def test_confirm_credit_reserve_within_capacity_is_accepted():
-    """B1's control: the SAME bin arithmetic (on hand 100, an earlier-dated competing
-    core SO line for 60 nets the ordinary date-aware reading to 40) but this line needs
-    only 40, matching its own PO's receipt (tier-1 credit 40) exactly - a Reserve of 40
-    is the WHOLE line, no Buy beside it, so the "components add up" and "wholly stock or
-    wholly Buy" rules never enter into it, and the confirm exercises `_check_line`'s
-    capacity ledger alone.
+    """B1's control, re-aimed (round-4 brief): the earlier version of this control let
+    the ordinary reading ALONE satisfy the Reserve, because it set `before` (the
+    ordinary reading) equal to `credit_qty` (40 == 40) - a change that dropped the
+    credit-through-the-ledger fix ENTIRELY (`own_arrival_left`/`state_at_least` never
+    consulted at all) would still pass it, since `before` alone already covers Reserve
+    40. That is not a real control on the fix; it only pins that a WORKING credit does
+    not over-tighten the ledger.
 
-    GREEN both before and after B1's fix: `before` (the ordinary reading, 40) and
-    `credit_qty` (40) are equal here, so `max(before, credit_qty)` (the correct,
-    intersecting reading) and `before + credit_qty` (today's buggy, summing one) both
-    reach or exceed 40, and Reserve 40 clears either arithmetic. Pinned so a fix that
-    over-tightens the ledger - refusing a legitimate, fully-backed Reserve - is caught
-    here rather than only the over-permissive direction B1 pins.
+    Re-aimed so the ordinary reading is genuinely BELOW the Reserve and ONLY the credit
+    can lift it high enough to clear: on hand 100 at one bin, a competing, earlier-
+    required, UNCONFIRMED core SO line for the WHOLE 100 at that SAME bin, so the
+    ordinary date-aware reading `_check_line` seeds `capacity_left` with for THIS
+    line's own bin nets to 0 (100 on hand, 100 claimed ahead of it by an earlier date -
+    the AC-S3-1 date-aware shape, scaled to consume the whole pile rather than leaving
+    40 the ordinary reading could clear alone). This line needs 40, matching its own
+    PO's receipt (tier-1 credit 40) exactly - a Reserve of 40 is the WHOLE line, no Buy
+    beside it, so the "components add up" and "wholly stock or wholly Buy" rules never
+    enter into it, and the confirm exercises `_check_line`'s capacity ledger alone.
+
+    ACCEPTED only because the credit is read: `state_at_least(..., credit_qty=40)`
+    raises the bin's stated floor from `before=0` to `max(0, 40) = 40`, which clears
+    Reserve 40. Reasoned through `_check_line` directly (not by disabling the block):
+    if the own-arrival credit block were skipped, or the ordinary `capacity[own_code]`
+    were never raised past `before`, this same Reserve of 40 would read a floor of 0
+    and be refused as `ReserveOverHand` / a capacity refusal - so this control is now a
+    real one, not one the ordinary reading alone would also pass. GREEN today (S3's own
+    fix already reads the credit through `state_at_least`, per this file's B1 test
+    above); pinned so a fix that over-tightens the ledger - refusing a legitimate,
+    fully credit-backed Reserve - is caught here too.
     """
     within_window = date.today() + timedelta(days=10)
     dominant = date.today() + timedelta(days=5)
@@ -466,7 +482,7 @@ def test_confirm_credit_reserve_within_capacity_is_accepted():
 
         competing_so = _core_so(db, company_id)
         _core_line(
-            db, competing_so, product, own, qty_ordered="60", required_date=dominant,
+            db, competing_so, product, own, qty_ordered="100", required_date=dominant,
         )
 
         core_so = _core_so(db, company_id)
@@ -484,6 +500,17 @@ def test_confirm_credit_reserve_within_capacity_is_accepted():
         order = _project_so(db, project, so_id=core_so.id)
         line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
+
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        components = proposal["lines"][0]["components"]
+        reserve = sum(
+            (Decimal(c["qty"]) for c in components if c["kind"] == "reserve"), Decimal("0"),
+        )
+        assert reserve == Decimal("40"), (
+            "the board's own proposal must offer the whole line as Reserve (the "
+            f"own-arrival credit 40 covers it exactly, the ordinary reading here is "
+            f"0): components={components}"
+        )
 
         result = ProjectSupplyService(db).confirm(
             order,
@@ -657,3 +684,129 @@ def test_credit_ledger_is_charged_with_what_was_drawn_not_the_whole_credit():
             f"reserve={reserve_2} buy={buy_2} own_arrival={own_arrival_2} "
             f"components={components_2}"
         )
+
+
+# ============================================================================
+# AC-S3-15 (round-4 fix round, browser-pass finding, 21 Sep): R7's Buy-over-credit
+# refusal is wired ONLY into `set_row_decision` (`planning_change_service.py`'s
+# `_refuse_buy_over_own_arrival`, the planning-changes batch amend path). A draft save
+# is deliberately lenient by design ("a draft claims no stock", nothing to refuse there).
+# But the ORDINARY board Confirm (`POST .../fulfilment-planning/confirm-all` ->
+# `ProjectSupplyService.confirm` -> `_check_line`, the SAME seam `_check_line`'s own
+# `own_arrival_left`/`state_at_least` credit block already reads for Reserve) has no
+# equivalent check at all - `_check_line`'s buy handling never reads
+# `own_arrival_credit_for`/`own_arrival_left` the way its Reserve half does, so CS can
+# confirm "Buy 20" straight through on a line whose own PO already landed 20, the exact
+# thing R7 exists to stop `set_row_decision`'s amend from doing.
+# ============================================================================
+
+
+def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
+    """AC-S3-15: line needs 20, its own PO line received 40, 40 on hand, no competing
+    demand at all - the line's own-arrival credit (`min(tier1 40, open_qty 20)`, capped
+    by the 40 on hand) is a clean 20, the WHOLE line. A confirm naming `buy_qty=20` and
+    NO Reserve at the credited bin at all must be refused the same way
+    `_refuse_buy_over_own_arrival` refuses an amend of the identical shape - reused
+    code `planning_change_buy_over_own_arrival`, 409, message naming the credited
+    quantity (20) and the PO.
+
+    RED today: `_check_line`'s buy handling (`project_supply_service.py`) never reads
+    the line's own-arrival credit at all - `ProjectSupplyService(db).confirm(...)`
+    (the same call the board's own `POST .../fulfilment-planning/confirm-all` route
+    makes into `_check_line`) simply succeeds, `exceptions == []`, `lines_decided ==
+    1`, and `pytest.raises(AppException)` below fails with "DID NOT RAISE" - there is
+    no refusal to catch, because the seam that would raise one does not exist at
+    confirm time, only at `set_row_decision`'s amend time.
+    """
+    within_window = date.today() + timedelta(days=10)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=40)
+
+        core_so = _core_so(db, company_id)
+        core_line = _core_line(
+            db, core_so, product, own, qty_ordered="20", required_date=within_window,
+        )
+        core_line.source_ref = f"ZZT-S315-{_uid()[:8]}"
+        db.flush()
+        po = supplier_and_po(db, po_number=f"ZZT-PO-S315-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
+        db.commit()
+
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(project_line_id=str(line.id), buy_qty="20"),
+                    ]
+                ),
+                actor_user_id=actor,
+            )
+        assert refused.value.status_code == 409, refused.value.detail
+        assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
+            refused.value.detail
+        )
+        message = refused.value.detail.get("message") or ""
+        assert "20" in message and po.po_number in message, message
+
+
+def test_ac_s3_15_control_buy_beside_a_fully_reserved_credit_is_accepted():
+    """AC-S3-15's control: the SAME line shape (needs 20, own PO line received 40) but
+    on hand only 15, so the credit is capped at 15 (not the whole line) - a confirm
+    that Reserves exactly the credited 15 at the credited bin and Buys the remaining 5
+    (which the credit never claimed) must be ACCEPTED, both before and after AC-S3-15's
+    own fix: nothing about this Buy is "over" the credit, since the credit's own 15 is
+    fully Reserved. Pinned so a fix that over-tightens the eventual buy-refusal into
+    blocking ANY Buy beside a partially-credited line - rather than only the part that
+    would drop reserve below what is credited - is caught here.
+    """
+    within_window = date.today() + timedelta(days=10)
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        own = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=15)
+
+        core_so = _core_so(db, company_id)
+        core_line = _core_line(
+            db, core_so, product, own, qty_ordered="20", required_date=within_window,
+        )
+        core_line.source_ref = f"ZZT-S315-CTRL-{_uid()[:8]}"
+        db.flush()
+        po = supplier_and_po(db, po_number=f"ZZT-PO-S315-CTRL-{_uid()[:8]}")
+        po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=40, qty_ordered=40,
+        )
+
+        order = _project_so(db, project, so_id=core_so.id)
+        line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
+        db.commit()
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[{"warehouse_id": str(own.id), "qty": "15"}],
+                        buy_qty="5",
+                        # AC-L5 (`_check_line`'s own "wholly stock or wholly Buy" rule):
+                        # a mix reaching confirm is refused without a reason - unrelated
+                        # to AC-S3-15's own seam, so it is named here rather than left to
+                        # trip this control on the wrong guard.
+                        amend_reason="ZZT AC-S3-15 control - partial credit reserved, remainder bought",
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        assert result["exceptions"] == [], result
+        assert result["lines_decided"] == 1, result
