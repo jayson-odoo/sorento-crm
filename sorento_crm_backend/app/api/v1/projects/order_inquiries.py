@@ -154,6 +154,10 @@ def _worklist_filters(
     # its axis as its own argument.
     axis: Optional[str] = None,
     axis_key: Optional[str] = None,
+    # S5 (`PLAN-oi-project-label-from-so.md` section 5): the Project filter's own text,
+    # exact match on the SAME `_PROJECT_TITLE` the column and `_projects()` facet read -
+    # separate from `project_id`, which stays UUID-validated for any existing deep link.
+    project: Optional[str] = None,
 ) -> dict:
     filters = {
         "query": query,
@@ -161,6 +165,7 @@ def _worklist_filters(
         "raised_date": raised_date,
         "state": state,
         "project_id": project_id,
+        "project": project,
         "supplier_id": supplier_id,
         # `users.id` is a plain string, not a UUID column - it is never validated as one.
         "raised_by": raised_by,
@@ -224,6 +229,16 @@ def list_order_inquiry_worklist(
     # screen as "no work to do" when the truth is "that is not a state".
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
+    project: Optional[str] = Query(
+        None,
+        description=(
+            "The Project column's own text, exact match - a registered project's title "
+            "or an adopted order's SO-level label, off the summary's own `projects` "
+            "facet. Separate from `project_id`, which stays UUID-only. No length bound: "
+            "`projects.title` is TEXT with none, so a bounded param here would let the "
+            "facet offer an option the filter itself refused."
+        ),
+    ),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(
         None,
@@ -357,6 +372,7 @@ def list_order_inquiry_worklist(
                 delivery_to,
                 axis=axis,
                 axis_key=axis_key,
+                project=project,
             ),
         )
     except Exception as exc:
@@ -370,6 +386,7 @@ def order_inquiry_worklist_summary(
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
@@ -421,6 +438,7 @@ def order_inquiry_worklist_summary(
                 spo_number,
                 delivery_from,
                 delivery_to,
+                project=project,
             ),
         )
     except Exception as exc:
@@ -434,6 +452,7 @@ def export_order_inquiry_worklist(
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
@@ -475,6 +494,7 @@ def export_order_inquiry_worklist(
                 spo_number,
                 delivery_from,
                 delivery_to,
+                project=project,
             )
         )
         return Response(
@@ -497,6 +517,7 @@ def order_inquiry_worklist_matrix(
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
@@ -542,6 +563,7 @@ def order_inquiry_worklist_matrix(
                 spo_number,
                 delivery_from,
                 delivery_to,
+                project=project,
             ),
         )
         return {"data": cells}
@@ -1094,6 +1116,7 @@ def order_inquiry_unplace_all_preview(
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
@@ -1112,7 +1135,14 @@ def order_inquiry_unplace_all_preview(
     a pressed Buy card must not quietly shrink what "Unplace all" is about to unplace."""
     try:
         filters = _worklist_filters(
-            query, delivery_month, raised_date, None, project_id, supplier_id, raised_by
+            query,
+            delivery_month,
+            raised_date,
+            None,
+            project_id,
+            supplier_id,
+            raised_by,
+            project=project,
         )
         filters.pop("state", None)
         return OrderInquiryWorklistService(db).unplace_all_preview(**filters)
@@ -1143,6 +1173,7 @@ async def unplace_order_inquiry_rows_in_scope(
             delivery_month=payload.delivery_month,
             raised_date=payload.raised_date,
             project_id=payload.project_id,
+            project=payload.project,
             supplier_id=payload.supplier_id,
             raised_by=payload.raised_by,
         )

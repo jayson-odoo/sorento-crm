@@ -484,10 +484,15 @@ def _escape_like(token: str) -> str:
 
 
 _CUSTOMER_NAME = Customer.customer_name
+# The Project column's text. A registered project wins; an adopted AutoCount order
+# (`project_id` NULL by design) falls back to the free-text label the core sales order's
+# detail page already prints (`SalesOrder.project_label`, `app/services/
+# project_label_rules.py`). PLAN-oi-project-label-from-so.md.
+_PROJECT_TITLE = func.coalesce(Project.title, SalesOrder.project_label)
 # What `PROJECT/CUSTOMER` sorts and filters on. The printed label starts with the
 # customer when there is one and with the project when there is not, so this is the same
 # ordering the eye reads down the column.
-_PROJECT_CUSTOMER = func.coalesce(_CUSTOMER_NAME, Project.title)
+_PROJECT_CUSTOMER = func.coalesce(_CUSTOMER_NAME, _PROJECT_TITLE)
 _RAISED_AT = OrderInquiryRow.created_at
 # The per-day tab is a MALAYSIAN day. `created_at` is stored naive UTC (the session runs
 # with `timezone=utc`), so a row raised at 00:30 MYT belongs to the tab of the day that
@@ -617,7 +622,7 @@ _SORT_EXPRESSIONS = {
     "delivery_date": OrderInquiryRow.delivery_date,
     "project_customer": _PROJECT_CUSTOMER,
     "customer_name": _CUSTOMER_NAME,
-    "project_title": Project.title,
+    "project_title": _PROJECT_TITLE,
     "supplier": Supplier.supplier_name,
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
@@ -667,7 +672,7 @@ _COLUMNS = (
     Product.product_name.label("product_name"),
     _CUSTOMER_NAME.label("customer_name"),
     Project.id.label("project_id"),
-    Project.title.label("project_title"),
+    _PROJECT_TITLE.label("project_title"),
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
@@ -931,6 +936,12 @@ class OrderInquiryWorklistService:
         raised_date: Optional[str] = None,
         state: Optional[str] = None,
         project_id: Optional[str] = None,
+        # S5 (`PLAN-oi-project-label-from-so.md` section 5): the filter follows the
+        # COLUMN, which is `_PROJECT_TITLE` - text, exact match, never a uuid. Separate
+        # from `project_id` (which stays UUID-validated, for any existing deep link):
+        # an adopted order has no `Project` row to filter by id, only the label the
+        # column prints.
+        project: Optional[str] = None,
         supplier_id: Optional[str] = None,
         raised_by: Optional[str] = None,
         linked: Optional[str] = None,
@@ -1038,6 +1049,8 @@ class OrderInquiryWorklistService:
             base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
         if project_id:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
+        if project:
+            base = base.filter(_PROJECT_TITLE == project)
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
@@ -1216,8 +1229,8 @@ class OrderInquiryWorklistService:
             # which is what makes the pair of them name one row. No tokens - a blank or
             # all-space box - filters nothing, the same as no query at all.
             #
-            # Capped at ten, because every token is another OR across eleven columns over a
-            # joined query: a pasted paragraph would be a hundred of them. Dropped rather
+            # Capped at ten, because every token is another OR across a joined query's
+            # worth of columns: a pasted paragraph would be a hundred of them. Dropped rather
             # than refused - a clumsy paste deserves a search result, not a 422 - and the
             # route caps the string's own length beside this.
             for token in str(query).split()[:_MAX_QUERY_TOKENS]:
@@ -1235,6 +1248,10 @@ class OrderInquiryWorklistService:
                         Customer.customer_name.ilike(like, escape=_LIKE_ESCAPE),
                         Project.title.ilike(like, escape=_LIKE_ESCAPE),
                         Project.project_code.ilike(like, escape=_LIKE_ESCAPE),
+                        # An adopted AutoCount order has no registered Project - the
+                        # label above is blank, so the box has to reach the SO's own
+                        # free-text label instead (PLAN-oi-project-label-from-so.md).
+                        SalesOrder.project_label.ilike(like, escape=_LIKE_ESCAPE),
                         # The CS who raised it. By name, and by the FRONT of the email
                         # address rather than anywhere inside it: a buyer types "cindy",
                         # and matching `%cindy%` across a whole address would also return
@@ -2381,7 +2398,7 @@ class OrderInquiryWorklistService:
             "by_state": by_state,
             "by_month": self._by_month({**filters, "delivery_month": None}),
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
-            "projects": self._projects({**filters, "project_id": None}),
+            "projects": self._projects({**filters, "project_id": None, "project": None}),
             "raised_by": self._raised_by({**filters, "raised_by": None}),
             # S1, R-K: the Location and Agent filters' own lists, same shape as
             # `suppliers` (`[{id,label,rows}]`), each with its own filter dropped.
@@ -2622,17 +2639,25 @@ class OrderInquiryWorklistService:
         ]
 
     def _projects(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The Project filter's own list, off `_PROJECT_TITLE` - the SAME text the
+        column prints - not `Project.id`/`Project.title` alone (S5,
+        `PLAN-oi-project-label-from-so.md` section 5). An adopted order has no
+        `Project` row at all, so grouping on the registered project only left the
+        dropdown empty: 515 distinct labels across 12,716 rows and zero registered
+        projects, measured on the prod-copy clone. The option's own `id` is the text
+        itself - there is no second, id-shaped concept to encode - and `project`
+        (like every other axis here) filters exact-match on that same text.
+        """
         rows = (
             self._base(**filters)
-            .with_entities(Project.id, Project.title, func.count(OrderInquiryRow.id))
-            .filter(Project.id.isnot(None))
-            .group_by(Project.id, Project.title)
-            .order_by(Project.title.asc())
+            .with_entities(_PROJECT_TITLE, func.count(OrderInquiryRow.id))
+            .filter(_PROJECT_TITLE.isnot(None))
+            .group_by(_PROJECT_TITLE)
+            .order_by(_PROJECT_TITLE.asc())
             .all()
         )
         return [
-            {"id": project_id, "label": title, "rows": int(count)}
-            for project_id, title, count in rows
+            {"id": title, "label": title, "rows": int(count)} for title, count in rows
         ]
 
     def _raised_by(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:

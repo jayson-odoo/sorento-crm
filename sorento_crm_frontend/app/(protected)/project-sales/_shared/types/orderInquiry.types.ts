@@ -491,6 +491,13 @@ export interface OrderInquiryWorklistParams {
   raised_date?: string;
   state?: string;
   project_id?: string;
+  /**
+   * S5 (`PLAN-oi-project-label-from-so.md` section 5): the Project column's own text,
+   * exact match - a registered project's title or an adopted order's SO-level label,
+   * off the summary's own `projects` facet. Separate from `project_id`, which stays
+   * UUID-only for an existing deep link; the filter picker sends this one now.
+   */
+  project?: string;
   supplier_id?: string;
   /** The id of the person who raised the rows, picked off the summary's own list. */
   raised_by?: string;
@@ -945,6 +952,8 @@ export interface UnplaceAllRequest {
   delivery_month?: string;
   raised_date?: string;
   project_id?: string;
+  /** S5: text, exact match on the Project column - separate from `project_id`. */
+  project?: string;
   supplier_id?: string;
   raised_by?: string;
 }
