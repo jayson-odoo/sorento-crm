@@ -1955,6 +1955,9 @@ def _run_stages(  # noqa: PLR0915
                         if isinstance(resolver_payload, dict)
                         else None
                     ),
+                    # R4 (owner ruling 5): the record-key rerun gate asks the RESOLVER
+                    # what this message's token is, not the parser's hint.
+                    resolved_kinds=resolved_kinds,
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),

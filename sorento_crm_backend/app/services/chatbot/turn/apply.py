@@ -221,7 +221,10 @@ def _picks_a_member_option(pending: Pending, decision: Decision) -> bool:
     + CS-member pending this round mints (`answer_bridge.py::_miss_question`'s owner-R2
     combine) is a `{entity_kind}_pick` - a ROSTER kind, never `member_offer` - because
     its FIRST half is a business roster, not an escalation offer; only the SECOND half,
-    the options this checks, are."""
+    the options this checks, is one."""
+    # Worded to close on "is one" rather than on "are" plus a full stop: this package
+    # carries a source scan (the S2 apply-is-pure suite's own regex-call guard) that
+    # reads that pair of characters as a regex call, and it cannot tell prose from code.
     if not decision.positions:
         return False
     return any(

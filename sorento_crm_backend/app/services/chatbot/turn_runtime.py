@@ -36,6 +36,7 @@ from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGG
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn import policy_rows
+from app.services.chatbot.turn.reconcile import hits_for_token
 from app.services.chatbot.turn.state import (
     EXTRA_KIND_ALIASES,
     KIND_FIELD_MAP,
@@ -1233,7 +1234,10 @@ def outstanding_carry(
 
 
 def _record_key_rerun_split(
-    domain: str, verdict: dict[str, Any], entities: list[dict[str, Any]]
+    domain: str,
+    verdict: dict[str, Any],
+    entities: list[dict[str, Any]],
+    resolved: dict[str, dict[str, int]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]] | None:
     """Hand pass 12 round 2, Group C (owner ruling): the rerun's own entities (this
     domain's own RECORD KEY alone, `policy_rows.RECORD_KEY_KIND`), the ones it drops,
@@ -1252,6 +1256,21 @@ def _record_key_rerun_split(
     name as ITS OWN record) never matches `RECORD_KEY_KIND` and so never reruns (C3,
     C4, C6's own green guards). A record key typed ALONE (nothing to drop) or a domain
     with no record key at all both read `None` too - there is nothing to rerun for.
+
+    Hand pass 12 round 4, R4 (owner ruling 5): whether this message's own entity IS the
+    domain's record key is decided by what the RESOLVER placed its token as, never by
+    what the parser hinted. `resolved` is the resolver's own by-token map
+    (`resolve_kinds`'s `by_token`), joined through the ONE fold-aware copy of that join,
+    `reconcile.hits_for_token`. Turn 50082c60: a container number on an incoming focus
+    was hinted `product` by the parser, the resolver placed it as an `inbound_shipment`
+    and reconciliation rewrote the kind, but this gate still read the hint - so the
+    combined call's miss stood with no rerun at all, while the correctly-hinted sibling
+    turn reran on the shipment alone and answered. The hint is the FALLBACK only, for a
+    token the resolver said nothing about, which leaves a resolver-less caller reading
+    exactly as it did before. The MIRROR mishint (hinted `inbound_shipment`, resolved
+    `product`) still never reruns: a resolved `product` is not this domain's record key,
+    so this gate refuses it on the same fact the `keep`/`drop` split below already
+    refuses it on.
     """
     record_kind = policy_rows.RECORD_KEY_KIND.get(domain)
     if not record_kind:
@@ -1260,10 +1279,16 @@ def _record_key_rerun_split(
     def _fold(kind: Any) -> Any:
         return EXTRA_KIND_ALIASES.get(kind, kind) if isinstance(kind, str) else kind
 
+    def _typed_the_record_key(entity: dict[str, Any]) -> bool:
+        hits = hits_for_token(resolved, entity.get("raw"))
+        if hits:
+            return any(_fold(kind) == record_kind for kind, count in hits.items() if count)
+        return _fold(entity.get("hint")) == record_kind
+
     current_kind_entities = [
         e
         for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("current_message") is True and _fold(e.get("hint")) == record_kind
+        if isinstance(e, dict) and e.get("current_message") is True and _typed_the_record_key(e)
     ]
     if not current_kind_entities:
         return None
@@ -1339,6 +1364,7 @@ def make_tool_runner(
     counted_set: bool = False,
     resolver_gate: dict[str, Any] | None = None,
     resolver_tier_gate: dict[str, Any] | None = None,
+    resolved_kinds: dict[str, dict[str, int]] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1366,6 +1392,12 @@ def make_tool_runner(
     today's synthetic `_tier_gate(spec, verdict, focus)` recompose stands, unchanged -
     that is the KEPT lane's own tier x brand entitlement recomposition, not something
     the resolver's raw read replaces.
+
+    `resolved_kinds` is the resolver's OWN by-token map (`ResolveOutcome.resolved_kinds`,
+    the same one reconciliation rewrites a mishinted kind from). One reader: the
+    record-key rerun gate below, which asks what the resolver PLACED this message's
+    token as rather than what the parser hinted (R4, owner ruling 5). `None` (no
+    resolver ran) falls back to the hint, exactly as this read behaved before.
     """
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
@@ -1490,7 +1522,7 @@ def make_tool_runner(
         # gate. `page_predicate is None` keeps a `set_page` continuation (its own,
         # unrelated, id-only entities) out of this.
         if page_predicate is None and not (fragment.get("fetch") or {}).get("has_result"):
-            rerun_split = _record_key_rerun_split(domain, verdict, entities)
+            rerun_split = _record_key_rerun_split(domain, verdict, entities, resolved_kinds)
             if rerun_split is not None:
                 keep_entities, dropped_entities, record_words = rerun_split
                 rerun_gate = dict(gate)
