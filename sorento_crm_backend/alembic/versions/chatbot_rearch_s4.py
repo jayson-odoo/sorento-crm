@@ -15,13 +15,18 @@ declaration (edit it there, not here or in the schema's prose) - this migration 
 its base FROM the constant every time, so publishing can never carry a stale OUTPUT
 block forward.
 
-The ``production`` label is NOT moved. That is the whole shape of this registry and the
-reason the blocks are rendered at publish time rather than per turn: deploying this
-changes nothing about how a live turn is parsed, and promoting it is one label move the
-owner makes on the Prompts page once they have read the diff. AC-1552's staleness banner
-compares ``config_json["blocks_hash"]`` against the rows as they stand today, so a domain
-saved after this publish reads as "domain block out of date" instead of silently
-rewriting a version somebody already graded.
+The ``production`` label is NOT moved by THIS migration. That was the whole shape of this
+registry and the reason the blocks are rendered at publish time rather than per turn:
+deploying this changes nothing about how a live turn is parsed, and promoting it was one
+label move the owner made on the Prompts page once they had read the diff. AC-1552's
+staleness banner compares ``config_json["blocks_hash"]`` against the rows as they stand
+today, so a domain saved after this publish reads as "domain block out of date" instead of
+silently rewriting a version somebody already graded.
+
+**Superseded for later publishes by ``chatbot_rearch_s12`` (owner ruling 21 Sep 2026):**
+a migration that CHANGES the policy tables now republishes AND moves the label itself, so
+a deploy needs no hand setup on prod. See that revision's docstring. This one still leaves
+the label alone, because it publishes the tables unchanged.
 
 Idempotent: a version whose FULL rendered template (constant plus policy blocks)
 already matches today's is left alone - not just a `blocks_hash` match, since the

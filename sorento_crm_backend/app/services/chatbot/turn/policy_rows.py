@@ -83,7 +83,12 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         # S6b (owner ruling, hand-pass 1 finding 4): a document ask naming several
         # products asks which one, the same `must_narrow_one` the order domain applies
         # to its customer. Migration `chatbot_rearch_s6b` carries it onto a seeded DB.
-        narrowing={"attachment_type": "narrow_by_type", "product": "must_narrow_one"},
+        #
+        # S12 (owner ruling 21 Sep 2026, hand pass 12): `narrow_by_tier`, not
+        # `must_narrow_one` - a document ask over a family answers the tier the
+        # customer is on instead of asking which variant. Migration
+        # `chatbot_rearch_s12` carries it onto a seeded DB.
+        narrowing={"attachment_type": "narrow_by_type", "product": "narrow_by_tier"},
         reveal_key=None,
         supported=True,
         ladder=[],
@@ -99,7 +104,10 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         ],
         escalation_team_code="marketing_promotion",
         switch_words=["promo", "promos", "promotion", "promotions", "promosi"],
-        narrowing={"tier": "narrow_by_tier", "product": "optional_filter"},
+        # S12 (owner ruling 21 Sep 2026, hand pass 12): the product token on a promotion
+        # ask settles the same way the tier does. Migration `chatbot_rearch_s12` carries
+        # it onto a seeded DB.
+        narrowing={"tier": "narrow_by_tier", "product": "narrow_by_tier"},
         reveal_key=None,
         supported=True,
         ladder=[],
@@ -167,6 +175,12 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         # and FILTERS the answer. Without a policy of its own it contributed neither an
         # entity nor a filter, and the outstanding report ran over every product.
         #
+        # S12 (owner ruling 21 Sep 2026, hand pass 12): `list_all`, not
+        # `optional_filter` - an order ask naming a product family answers over every
+        # variant rather than narrowing to one code, the same way `inventory` and
+        # `purchase_cost` already do. Migration `chatbot_rearch_s12` carries it onto a
+        # seeded DB.
+        #
         # Hand pass 12, Group B: "order" narrows `narrow_to_code`, the same policy
         # value `incoming`/`purchase_order` already give their own `product` kind - a
         # did-you-mean pick over an order token is ALREADY SETTLED the moment it is
@@ -178,7 +192,7 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         # resolver types an order token with.
         narrowing={
             "customer": "must_narrow_one",
-            "product": "optional_filter",
+            "product": "list_all",
             "order": "narrow_to_code",
         },
         # answer._OUTSTANDING_SO_GRANT ("sales_orders.outstanding"): the SO arm of an
