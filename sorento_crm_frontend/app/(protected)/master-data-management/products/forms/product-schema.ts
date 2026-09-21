@@ -15,9 +15,6 @@ export const ProductSchema = z.object({
     .min(3, { message: 'Product name must be at least 3 characters long.' })
     .max(255, { message: 'Product name must not exceed 255 characters.' }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
-  // r10 S4: staff-authored tag copy, printed verbatim with its own line
-  // breaks - no length cap the tag text itself does not already impose.
-  price_tag_description: z.string().optional().nullable(),
   category_id: z.string().uuid({ message: 'Category is required.' }),
   brand_id: z.string().uuid().optional().nullable(),
   barcode: z
