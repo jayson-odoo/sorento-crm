@@ -49,6 +49,7 @@ import {
   Loader2,
   MessageSquare,
   Eye,
+  EyeOff,
   Maximize2,
   Minimize2,
   Package,
@@ -61,7 +62,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type {
-  ImpositionConfig,
   LineTagData,
   PlacedTag,
   TagBindingData,
@@ -71,25 +71,24 @@ import type {
   TagTemplateDoc,
   TagTemplateFamily,
 } from '@/lib/dealer-kit/tag-template-types';
-import { IMPOSITION_PRESETS, familyLabel } from '@/lib/dealer-kit/tag-template-types';
+import { familyLabel } from '@/lib/dealer-kit/tag-template-types';
 import { lineFamily } from '@/lib/dealer-kit/line-family';
 import {
   applyDesignToAllTags,
   applyDesignToSiblings,
   autoArrange,
+  DEFAULT_IMPOSITION,
   defaultTemplateFor,
-  normaliseImpositionPreset,
-  pinKeyForPlacement,
-  pinnedFromDoc,
   resizeAllTags,
   resizeTag,
+  STARTER_TEMPLATE_ID,
   starterTemplateFor,
   tagForTag,
   tagSizeBounds,
   tagSizePresets,
   tagsFromDoc,
   type ArrangeItem,
-  type PinnedPlacement,
+  type SheetGridConfig,
   type TagRequestTag,
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
@@ -127,9 +126,17 @@ import {
   restoreRequestVersion,
 } from '../../../../services/priceTagDataService';
 import { useTagDataChanges, tagDataChangesKey } from '../../../hooks/useTagDataChanges';
+import {
+  useDismissTagDataUpdate,
+  useUpdateRequestTag,
+} from '../../../hooks/useRequestTagMutations';
 import { isTerminalPriceTagStatus } from '@/lib/dealer-kit/print-collection';
-import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import {
+  AUTO_UPDATE_STATUSES,
+  type TagDataChangeSet,
+} from '@/lib/dealer-kit/product-data-changes';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
+import ProductDataUpdatedDialog from '@/components/dealer-kit/ProductDataUpdatedDialog';
 import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
@@ -243,18 +250,14 @@ export function RequestTagDesigner({
     for (const [tagId, tag] of tagsFromDoc(initialDoc)) map[tagId] = tag;
     return map;
   });
-  const [pinned, setPinned] = useState<Record<string, PinnedPlacement>>(() =>
-    pinnedFromDoc(initialDoc),
-  );
-  // A pre-S6 doc's `a4_3up`/`a4_2x2` preset migrates to 'auto' on load (S3,
-  // AC-S6-4) - the layout has been identical since S6, this just gets the
-  // saved value to catch up so the next autosave writes 'auto' instead of
-  // perpetuating history.
-  const [imposition, setImposition] = useState<ImpositionConfig>(
-    initialDoc?.imposition
-      ? normaliseImpositionPreset(initialDoc.imposition)
-      : { preset: 'auto', ...IMPOSITION_PRESETS.auto },
-  );
+  /**
+   * A per-A4 grid typed into the Tag Size panel THIS session, for a size
+   * that names no template/preset to persist it on yet (S7, AC-S7-14) -
+   * keyed `${width_mm}x${height_mm}` so it applies the moment a group of
+   * that size is arranged, without waiting for a save. `gridForSize` below
+   * checks this FIRST, ahead of the template/preset lookup.
+   */
+  const [customSheetGrids, setCustomSheetGrids] = useState<Record<string, SheetGridConfig>>({});
   /**
    * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
    * (S9 review B2) so it also applies to a line that has not been opened
@@ -438,6 +441,22 @@ export function RequestTagDesigner({
   }, [dataChanges]);
 
   /**
+   * r10 S8: tags whose pin was moved by an auto-update and nobody has
+   * dismissed yet - the SAME red dot, now meaning "updated, not yet seen".
+   * Read off the request's own tags, not the poll: once the pin has moved
+   * the live diff is empty again, so the poll cannot say it happened.
+   */
+  const updatedTags = useMemo(() => {
+    const map = new Map<string, PriceTagRequestTag>();
+    for (const line of request.lines) {
+      for (const tag of line.tags ?? []) {
+        if (tag.data_updated_at) map.set(tag.id, tag);
+      }
+    }
+    return map;
+  }, [request.lines]);
+
+  /**
    * "Check product data" (owner round finding 3): a Keep silences ONE drift
    * by recording its hash, and there was no way to ask again, so a red dot
    * silenced once stayed silent forever - even for a later, unrelated edit
@@ -504,6 +523,7 @@ export function RequestTagDesigner({
       requestTags.map(({ tag, line }) => ({
         id: tag.id,
         quantity: tag.quantity,
+        print_excluded: Boolean(tag.print_excluded),
         line,
       })),
     [requestTags],
@@ -568,29 +588,43 @@ export function RequestTagDesigner({
   // effect will then see.
   const autoCloneRef = useRef(false);
   useEffect(() => {
-    if (!selectedRequestTagId || tags[selectedRequestTagId]) return;
     if (templatesStatus === 'loading' || templatesStatus === 'error') return;
     if (pricesStatus === 'loading' || pricesStatus === 'error') return;
-    const entry = requestTags.find((row) => row.tag.id === selectedRequestTagId);
-    if (!entry) return;
-    const tagData = resolved.get(entry.tag.id);
-    const template =
-      defaultTemplateFor(entry.line, templates, tagData?.code) ??
-      starterTemplateFor(entry.line, tagData, newTagId);
+    // AC-S7-16: EVERY request tag with no design yet is cloned here, not
+    // just the selected one - a split line's second tag (D6: an open group
+    // resolved into its own tag per candidate at submit) must reach
+    // `arrangeItems` the moment Arrange opens, even when nobody has ever
+    // clicked into it on the canvas. One batched `setTags` update below, not
+    // one `applyTemplate` call per tag - N sequential updates would fire the
+    // autosave effect (which reads `tags`) once per tag instead of once.
+    const missing = requestTags.filter((row) => !tags[row.tag.id]);
+    if (missing.length === 0) return;
+    const patch: Record<string, PlacedTag> = {};
+    for (const { tag: requestTag, line } of missing) {
+      const tagData = resolved.get(requestTag.id);
+      const template =
+        defaultTemplateFor(line, templates, tagData?.code) ??
+        starterTemplateFor(line, tagData, newTagId);
+      let tag = tagForTag(
+        { id: requestTag.id, quantity: requestTag.quantity, line },
+        template,
+        newTagId(),
+      );
+      if (defaultTagSize) {
+        tag = resizeTag(tag, defaultTagSize.width_mm, defaultTagSize.height_mm);
+      }
+      patch[requestTag.id] = tag;
+    }
     autoCloneRef.current = true;
-    applyTemplate(
-      { id: entry.tag.id, quantity: entry.tag.quantity, line: entry.line },
-      template,
-    );
+    setTags((prev) => ({ ...prev, ...patch }));
   }, [
-    selectedRequestTagId,
+    requestTags,
     tags,
     templates,
     templatesStatus,
     pricesStatus,
     resolved,
-    requestTags,
-    applyTemplate,
+    defaultTagSize,
   ]);
 
   const selectedTag = selectedRequestTagId ? tags[selectedRequestTagId] ?? null : null;
@@ -643,7 +677,73 @@ export function RequestTagDesigner({
   const savedSizesQuery = useTagSizesQuery();
   const deleteSavedSize = useDeleteTagSizePreset();
   const [saveSizeOpen, setSaveSizeOpen] = useState(false);
-  const tagSizeBoundsForRequest = useMemo(() => tagSizeBounds(imposition), [imposition]);
+  const tagSizeBoundsForRequest = useMemo(() => tagSizeBounds(), []);
+
+  /**
+   * The per-A4 grid CONFIGURED for a size group at arrange time (S7,
+   * AC-S7-15): this session's own typed-but-unsaved value first, else the
+   * group's own template's `print_size.sheet` when it names this exact size,
+   * else a saved size preset with the same size, else null (arrange
+   * derives).
+   */
+  // Read through refs, not the state values directly (S7): `templates` and
+  // `savedSizesQuery.data` load ASYNCHRONOUSLY after mount, and a `doc`
+  // memoized off `gridForSize`'s own identity would otherwise get a fresh
+  // reference the moment either arrives - which the autosave-scheduling
+  // effect below reads as a real edit and persists nothing-changed. Only
+  // `customSheetGrids` (an actual typed edit) stays a real dependency.
+  const templatesRef = useRef(templates);
+  useEffect(() => {
+    templatesRef.current = templates;
+  }, [templates]);
+  const savedSizesRef = useRef(savedSizesQuery.data);
+  useEffect(() => {
+    savedSizesRef.current = savedSizesQuery.data;
+  }, [savedSizesQuery.data]);
+
+  const gridForSize = useCallback(
+    (width_mm: number, height_mm: number, templateId: string): SheetGridConfig | null => {
+      const key = `${width_mm}x${height_mm}`;
+      if (customSheetGrids[key]) return customSheetGrids[key];
+      const template = templatesRef.current.find((t) => t.id === templateId);
+      if (
+        template?.print_size.sheet &&
+        template.print_size.width_mm === width_mm &&
+        template.print_size.height_mm === height_mm
+      ) {
+        return template.print_size.sheet;
+      }
+      const preset = (savedSizesRef.current ?? []).find(
+        (s) => s.width_mm === width_mm && s.height_mm === height_mm && s.sheet_cols && s.sheet_rows,
+      );
+      if (preset?.sheet_cols && preset?.sheet_rows) {
+        return { cols: preset.sheet_cols, rows: preset.sheet_rows, turn: preset.sheet_turn ?? false };
+      }
+      return null;
+    },
+    [customSheetGrids],
+  );
+
+  /**
+   * A grid typed into the panel (S7, AC-S7-14): held for this session only
+   * (`customSheetGrids`), so arrange reflects it immediately without waiting
+   * on a save. Persisting it onto an EXISTING saved preset is a later slice -
+   * there is no update call for it here yet - a size with no preset carries
+   * it forward when "Save as size" is used (the dialog reads
+   * `customSheetGrids` directly, below).
+   */
+  const handleSheetGridChange = useCallback(
+    (width_mm: number, height_mm: number, grid: SheetGridConfig | null) => {
+      const key = `${width_mm}x${height_mm}`;
+      setCustomSheetGrids((prev) => {
+        if (!grid) {
+          return Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key));
+        }
+        return { ...prev, [key]: grid };
+      });
+    },
+    [],
+  );
 
   const handleResizeTag = useCallback(
     (width_mm: number, height_mm: number) => {
@@ -820,33 +920,39 @@ export function RequestTagDesigner({
 
   const arrangeItems: ArrangeItem[] = useMemo(
     () =>
-      tagRefs
-        .map((ref) => ({ tag: tags[ref.id], quantity: ref.quantity }))
-        .filter((item): item is ArrangeItem => Boolean(item.tag)),
+      tagRefs.flatMap((ref) => {
+        const tag = tags[ref.id];
+        return tag ? [{ tag, quantity: ref.quantity, print_excluded: ref.print_excluded }] : [];
+      }),
     [tagRefs, tags],
   );
 
-  // The size Arrange's fit line and empty state are computed off (S6): the
-  // largest tag REQUESTED across every line, not what `autoArrange` managed
-  // to place - a page too small for the tag places nothing, and that is
-  // exactly when the "0 per sheet" message most needs a size to quote.
-  const tagDims = useMemo(() => {
-    if (arrangeItems.length === 0) return null;
-    return {
-      width_mm: Math.max(...arrangeItems.map((item) => item.tag.width_mm)),
-      height_mm: Math.max(...arrangeItems.map((item) => item.tag.height_mm)),
-    };
-  }, [arrangeItems]);
+  // Arrange, size-grouped (S7): each size's own sheets, packed at zero gap
+  // inside the fixed 5mm margin (or a configured grid), before the next size
+  // starts a fresh sheet. `placement` is display-only metadata alongside
+  // `doc.sheets` (AC-S7-6) - never stored in the doc.
+  const arranged = useMemo(
+    () => autoArrange(arrangeItems, gridForSize),
+    [arrangeItems, gridForSize],
+  );
 
   const doc: TagSheetDoc = useMemo(
     () => ({
       kind: 'tag_sheet',
-      imposition,
-      sheets: autoArrange(arrangeItems, imposition, pinned),
+      imposition: DEFAULT_IMPOSITION,
+      sheets: arranged.sheets,
       default_tag_size: defaultTagSize,
     }),
-    [arrangeItems, imposition, pinned, defaultTagSize],
+    [arranged, defaultTagSize],
   );
+
+  /** Template name by id, for the Arrange view's per-sheet line (AC-S7-6) -
+   *  `templates` is already loaded for the size presets above. */
+  const templateNameById = useMemo(() => {
+    const map: Record<string, string> = { [STARTER_TEMPLATE_ID]: 'Starter' };
+    for (const t of templates) map[t.id] = t.name;
+    return map;
+  }, [templates]);
 
   // -- Autosave (D22, S8) ------------------------------------------------------
 
@@ -862,8 +968,8 @@ export function RequestTagDesigner({
   );
 
   // Every REAL change to `doc` schedules a debounced save - a layer edit
-  // (through `tags`), an arranged pin, an imposition change. Two changes are
-  // NOT edits and must persist nothing:
+  // (through `tags`), a resize, a quantity change (through `arrangeItems`).
+  // Two changes are NOT edits and must persist nothing:
   //
   //  * the very first `doc` (whatever `initialDoc` seeded, or the empty
   //    starting point) - already exactly what the server has;
@@ -922,16 +1028,6 @@ export function RequestTagDesigner({
       handler();
     };
   }, [flush]);
-
-  const handleMoveTag = useCallback(
-    (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => {
-      setPinned((prev) => ({
-        ...prev,
-        [pinKeyForPlacement(tag)]: { sheet: sheetIndex, x_mm, y_mm },
-      }));
-    },
-    [],
-  );
 
   /**
    * The deliberate save: one version, and never racing the autosave (S4).
@@ -1024,6 +1120,22 @@ export function RequestTagDesigner({
     [selectedRequestTagId, flush],
   );
 
+  /** r10 S10: the rail sits beside BOTH modes now (it used to live only
+   *  inside the design editor), so a click on a row drives whichever
+   *  selection that mode already reads - design's own `selectedRequestTagId`
+   *  (with the same pre-switch flush), or arrange's `selectedTagId`, which
+   *  `ArrangeSheetView` already highlights on the sheet. */
+  const handleRailSelect = useCallback(
+    (tagId: string) => {
+      if (mode === 'arrange') {
+        setSelectedTagId(tagId);
+      } else {
+        handleSelectTag(tagId);
+      }
+    },
+    [mode, handleSelectTag],
+  );
+
   /**
    * The request's tag set changed under us (a split), so re-read it and the
    * per-tag resolver rows with it. The placements in `tags` are untouched: the
@@ -1048,6 +1160,87 @@ export function RequestTagDesigner({
     if (fresh) setRequest(fresh);
     if (rows) setResolvedRows(rows);
   }, [request.id]);
+
+  /**
+   * r10 S8: in an auto-update status the FIRST poll that reports a change has
+   * already applied it server-side (the pin moved, the before-version was
+   * written), so the request and the resolved rows are stale the moment the
+   * report lands. Re-read both once per report: the tag then carries
+   * `data_updated_at` (the dot switches to the Dismiss / Roll back dialog)
+   * and the canvas redraws against the new pin. The next poll reports nothing
+   * - the diff is empty once the pin matches - so this cannot loop.
+   */
+  const reportedTagIds = useMemo(
+    () => Array.from(changesByTag.keys()).sort().join(','),
+    [changesByTag],
+  );
+  useEffect(() => {
+    if (!reportedTagIds || !AUTO_UPDATE_STATUSES.includes(request.status)) return;
+    void reloadRequest();
+  }, [reportedTagIds, request.status, reloadRequest]);
+
+  /** Restore one version - the History sheet's Restore and S8's Roll back
+   *  are the same call. Re-reads the request AND the rows: the pins moved. */
+  const restoreVersion = useCallback(
+    async (version: number) => {
+      await restoreRequestVersion(request.id, version);
+      await reloadRequest();
+      toast.success(`Restored v${version}`);
+    },
+    [request.id, reloadRequest],
+  );
+
+  const dismissUpdate = useDismissTagDataUpdate(request.id);
+  /** r10 S8 Dismiss: clears the indicator server-side, then re-reads the tag
+   *  so the dot goes without a page reload. Refused (the route is not there
+   *  yet, or the request moved on): the message is shown and the dot stays. */
+  const handleDismissUpdate = useCallback(
+    async (tagId: string) => {
+      try {
+        await dismissUpdate.mutateAsync(tagId);
+        await reloadRequest();
+        toast.success('Update dismissed');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not dismiss the update');
+        throw error;
+      }
+    },
+    [dismissUpdate, reloadRequest],
+  );
+
+  const updateTag = useUpdateRequestTag(request.id);
+  /**
+   * r10 S6 Not printed: flips `print_excluded` on the tag and writes the
+   * answer into the request held here from the response the PATCH sends
+   * back - falling back to the value just sent only if a response somehow
+   * carries none. Arrange re-runs off `tagRefs`, so the copies drop out at
+   * once.
+   */
+  const handleTogglePrintExcluded = useCallback(
+    async (tag: PriceTagRequestTag) => {
+      const next = !tag.print_excluded;
+      try {
+        const saved = await updateTag.mutateAsync({
+          tagId: tag.id,
+          data: { print_excluded: next },
+        });
+        const value = typeof saved?.print_excluded === 'boolean' ? saved.print_excluded : next;
+        setRequest((prev) => ({
+          ...prev,
+          lines: prev.lines.map((line) => ({
+            ...line,
+            tags: (line.tags ?? []).map((row) =>
+              row.id === tag.id ? { ...row, print_excluded: value } : row,
+            ),
+          })),
+        }));
+        toast.success(value ? `Tag ${tag.label} will not print` : `Tag ${tag.label} prints again`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not update the tag');
+      }
+    },
+    [updateTag],
+  );
 
   /** D15: the whole-request export, no sheet filter - the same call and
    *  toast the detail page's `handleExport` makes. */
@@ -1340,15 +1533,17 @@ export function RequestTagDesigner({
         pricesStatus={pricesStatus}
         tags={tags}
         openPinsByTag={openPinsByTag}
-        changedTagIds={new Set(changesByTag.keys())}
+        changedTagIds={new Set([...changesByTag.keys(), ...updatedTags.keys()])}
         onReviewTag={setReviewTagId}
-        selectedRequestTagId={selectedRequestTagId}
-        onSelect={handleSelectTag}
+        selectedRequestTagId={mode === 'arrange' ? selectedTagId : selectedRequestTagId}
+        onSelect={handleRailSelect}
         onUseTemplate={setPickerLineId}
         canApplyToAll={Boolean(selectedTag) && tagRefs.length > 1}
         onApplyToAll={handleApplyDesignToAll}
         onRemoveTag={handleRemoveTag}
         removingTagId={tagDeletion.isPending ? tagDeletion.targetId : null}
+        onTogglePrintExcluded={handleTogglePrintExcluded}
+        togglingTagId={updateTag.isPending ? (updateTag.variables?.tagId ?? null) : null}
       />
       {selectedTag ? (
         <TagSizeControl
@@ -1362,6 +1557,10 @@ export function RequestTagDesigner({
           onDeleteSavedSize={(id, name) => deleteSavedSize.run({ id, subject: name })}
           deletingSavedSizeId={deleteSavedSize.isPending ? deleteSavedSize.targetId : null}
           onSaveAsSize={() => setSaveSizeOpen(true)}
+          sheetGrid={gridForSize(selectedTag.width_mm, selectedTag.height_mm, selectedTag.template_id)}
+          onSheetGridChange={(grid) =>
+            handleSheetGridChange(selectedTag.width_mm, selectedTag.height_mm, grid)
+          }
         />
       ) : (
         <div className="shrink-0 border-b border-r p-3">
@@ -1379,6 +1578,7 @@ export function RequestTagDesigner({
           onOpenChange={setSaveSizeOpen}
           width_mm={selectedTag.width_mm}
           height_mm={selectedTag.height_mm}
+          sheetGrid={customSheetGrids[`${selectedTag.width_mm}x${selectedTag.height_mm}`] ?? null}
         />
       )}
     </>
@@ -1515,73 +1715,88 @@ export function RequestTagDesigner({
         )}
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        {mode === 'design' ? (
-          request.lines.length === 0 ? (
-            <CanvasMessage text="This request has no lines, so there is nothing to design." />
-          ) : templatesStatus === 'loading' ? (
-            <CanvasMessage text="Loading templates..." />
-          ) : templatesStatus === 'error' ? (
-            <CanvasMessage text="Failed to load tag templates.">
-              <Button variant="outline" size="sm" onClick={loadTemplates}>
-                <RefreshCw className="mr-1.5 size-3.5" />
-                Retry
-              </Button>
-            </CanvasMessage>
-          ) : pricesStatus === 'loading' ? (
-            <CanvasMessage text="Resolving prices..." />
-          ) : pricesStatus === 'error' ? (
-            <CanvasMessage text="Failed to resolve prices.">
-              <Button variant="outline" size="sm" onClick={loadPrices}>
-                <RefreshCw className="mr-1.5 size-3.5" />
-                Retry
-              </Button>
-            </CanvasMessage>
-          ) : selectedTag && selectedDoc ? (
-            <TagCanvasEditor
-              key={selectedTag.id}
-              doc={selectedDoc}
-              onChange={() => void save()}
-              // D1: a promotion is a LINE fact now, not the request's - the
-              // selected tag's own line carries it.
-              promotionId={selectedLine?.promotion_id ?? null}
-              boundData={boundData}
-              leftRail={rail}
-              onLayersChange={handleLayersChange}
-              onUseTemplate={() =>
-                selectedRequestTagId && setPickerLineId(selectedRequestTagId)
-              }
-              hideSaveBar
-              docId={selectedTag.id}
-              toolbarTrailing={toolbarTrailing}
-              reviewPins={canvasPins}
-              onReviewPinResolve={handleReviewPinResolve}
-            />
+      <div className="flex flex-1 overflow-hidden">
+        {/* r10 S10 (cause: `<TagCanvasEditor key={selectedTag.id} leftRail=
+            {rail}>` put the rail INSIDE the keyed subtree, so selecting a
+            tag remounted the rail's own scroll container along with the
+            canvas and a row picked at the bottom of a long list jumped out
+            of view). The rail now lives here, a sibling of both modes'
+            content, so it is never part of what remounts - and Arrange,
+            which had no rail of its own before, gets one for free. */}
+        <div className="hidden h-full w-64 shrink-0 flex-col overflow-hidden md:flex">
+          {rail}
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {mode === 'design' ? (
+            request.lines.length === 0 ? (
+              <CanvasMessage text="This request has no lines, so there is nothing to design." />
+            ) : templatesStatus === 'loading' ? (
+              <CanvasMessage text="Loading templates..." />
+            ) : templatesStatus === 'error' ? (
+              <CanvasMessage text="Failed to load tag templates.">
+                <Button variant="outline" size="sm" onClick={loadTemplates}>
+                  <RefreshCw className="mr-1.5 size-3.5" />
+                  Retry
+                </Button>
+              </CanvasMessage>
+            ) : pricesStatus === 'loading' ? (
+              <CanvasMessage text="Resolving prices..." />
+            ) : pricesStatus === 'error' ? (
+              <CanvasMessage text="Failed to resolve prices.">
+                <Button variant="outline" size="sm" onClick={loadPrices}>
+                  <RefreshCw className="mr-1.5 size-3.5" />
+                  Retry
+                </Button>
+              </CanvasMessage>
+            ) : selectedTag && selectedDoc ? (
+              <TagCanvasEditor
+                key={selectedTag.id}
+                doc={selectedDoc}
+                onChange={() => void save()}
+                // D1: a promotion is a LINE fact now, not the request's - the
+                // selected tag's own line carries it.
+                promotionId={selectedLine?.promotion_id ?? null}
+                boundData={boundData}
+                onLayersChange={handleLayersChange}
+                onUseTemplate={() =>
+                  selectedRequestTagId && setPickerLineId(selectedRequestTagId)
+                }
+                hideSaveBar
+                docId={selectedTag.id}
+                toolbarTrailing={toolbarTrailing}
+                reviewPins={canvasPins}
+                onReviewPinResolve={handleReviewPinResolve}
+              />
+            ) : (
+              <CanvasMessage text="Preparing this line..." />
+            )
           ) : (
-            <CanvasMessage text="Preparing this line..." />
-          )
-        ) : (
-          <ArrangeSheetView
-            doc={doc}
-            activeSheetIndex={Math.min(activeSheetIndex, doc.sheets.length - 1)}
-            onActiveSheetChange={setActiveSheetIndex}
-            zoom={arrangeZoom}
-            onZoomChange={setArrangeZoom}
-            selectedTagId={selectedTagId}
-            onSelectTag={setSelectedTagId}
-            resolved={resolved}
-            assetUrls={library.assetUrls}
-            onImpositionChange={setImposition}
-            onMoveTag={handleMoveTag}
-            onPrintSheet={handlePrintSheet}
-            printing={printing}
-            tagDims={tagDims}
-          />
-        )}
+            <ArrangeSheetView
+              doc={doc}
+              activeSheetIndex={Math.min(activeSheetIndex, doc.sheets.length - 1)}
+              onActiveSheetChange={setActiveSheetIndex}
+              zoom={arrangeZoom}
+              onZoomChange={setArrangeZoom}
+              selectedTagId={selectedTagId}
+              onSelectTag={setSelectedTagId}
+              resolved={resolved}
+              assetUrls={library.assetUrls}
+              onPrintSheet={handlePrintSheet}
+              printing={printing}
+              placement={arranged.placement}
+              templateNameById={templateNameById}
+            />
+          )}
+        </div>
       </div>
 
+      {/* r10 S8: an UPDATED tag (the pin already moved) reviews what changed
+          with Dismiss / Roll back; a tag with a pending diff and no update
+          keeps the r9 Keep / Update decision - the flag-only statuses. */}
       <ProductDataReviewDialog
-        open={reviewTagId !== null && changesByTag.has(reviewTagId)}
+        open={
+          reviewTagId !== null && changesByTag.has(reviewTagId) && !updatedTags.has(reviewTagId)
+        }
         onOpenChange={(next) => {
           if (!next) setReviewTagId(null);
         }}
@@ -1590,6 +1805,21 @@ export function RequestTagDesigner({
           reviewTagId ? decideTagPin(reviewTagId, action) : Promise.resolve()
         }
       />
+      {reviewTagId !== null && updatedTags.has(reviewTagId) && (
+        <ProductDataUpdatedDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setReviewTagId(null);
+          }}
+          code={resolved.get(reviewTagId)?.code ?? ''}
+          tagLabel={updatedTags.get(reviewTagId)?.label ?? ''}
+          name={resolved.get(reviewTagId)?.name}
+          changes={updatedTags.get(reviewTagId)?.data_update_changes ?? []}
+          version={updatedTags.get(reviewTagId)?.data_update_version ?? null}
+          onDismiss={() => handleDismissUpdate(reviewTagId)}
+          onRollBack={restoreVersion}
+        />
+      )}
 
       <RequestVersionsSheet
         open={historyOpen}
@@ -1603,12 +1833,7 @@ export function RequestTagDesigner({
             )
             .catch(() => toast.error('Could not open that version'));
         }}
-        onRestore={async (version) => {
-          await restoreRequestVersion(request.id, version);
-          const rows = await resolveRequestTags(request.id);
-          setResolvedRows(rows);
-          toast.success(`Restored v${version}`);
-        }}
+        onRestore={restoreVersion}
       />
 
       {/* A version, read-only, in the same lightbox the detail page uses (and
@@ -1713,6 +1938,8 @@ function LinesRail({
   onApplyToAll,
   onRemoveTag,
   removingTagId,
+  onTogglePrintExcluded,
+  togglingTagId,
 }: {
   lines: PriceTagRequestLine[];
   /** Resolved rows keyed by TAG id (D3). */
@@ -1732,6 +1959,9 @@ function LinesRail({
   onApplyToAll: () => void;
   onRemoveTag: (tag: PriceTagRequestTag) => void;
   removingTagId: string | null;
+  /** r10 S6: the row's Not printed toggle. */
+  onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
+  togglingTagId: string | null;
 }) {
   return (
     // D9 (AC-S3-2/S3-3): the 45% cap is gone - LINES fills whatever height
@@ -1806,6 +2036,8 @@ function LinesRail({
                     onReview={onReviewTag}
                     onSelect={onSelect}
                     onUseTemplate={onUseTemplate}
+                    toggling={togglingTagId === soleTag.id}
+                    onTogglePrintExcluded={onTogglePrintExcluded}
                   />
                 );
               }
@@ -1881,6 +2113,8 @@ function LinesRail({
                         onSelect={onSelect}
                         onUseTemplate={onUseTemplate}
                         onRemove={onRemoveTag}
+                        toggling={togglingTagId === tag.id}
+                        onTogglePrintExcluded={onTogglePrintExcluded}
                       />
                     ))}
                   </div>
@@ -1919,6 +2153,8 @@ function FoldedLineBlock({
   onReview,
   onSelect,
   onUseTemplate,
+  toggling,
+  onTogglePrintExcluded,
 }: {
   line: PriceTagRequestLine;
   tag: PriceTagRequestTag;
@@ -1935,7 +2171,10 @@ function FoldedLineBlock({
   onReview: (tagId: string) => void;
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
+  toggling: boolean;
+  onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
 }) {
+  const excluded = Boolean(tag.print_excluded);
   const priceSuffix =
     data && data.show_promo_price && data.sell_price != null
       ? ` / SP ${formatTagPrice(data.sell_price)}`
@@ -1950,7 +2189,10 @@ function FoldedLineBlock({
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
       <button
         type="button"
-        className="w-full px-3 py-2 pr-20 text-left transition-colors hover:bg-muted/50"
+        className={cn(
+          'w-full px-3 py-2 pr-24 text-left transition-colors hover:bg-muted/50',
+          excluded && 'opacity-60',
+        )}
         onClick={() => onSelect(tag.id)}
       >
         <div className="flex items-center gap-1.5">
@@ -1982,6 +2224,7 @@ function FoldedLineBlock({
               {priceSuffix}
               {overrideSuffix}
             </p>
+            {excluded && <NotPrintedPill />}
             {line.package_warning && (
               <Badge
                 variant="warning"
@@ -2000,9 +2243,9 @@ function FoldedLineBlock({
         )}
       </button>
       {/* Same action group `TagRailRow` uses (D12): pins first, then the
-          Changed dot, then Use template. No Remove here - a folded line's
-          only tag is already un-removable (`canRemove` is false when a line
-          has one tag), so the button never showed for it anyway. */}
+          Changed dot, then Not printed, then Use template. No Remove here - a
+          folded line's only tag is already un-removable (`canRemove` is false
+          when a line has one tag), so the button never showed for it anyway. */}
       <div className="absolute right-1 top-1 flex items-center gap-0.5">
         {openPins > 0 && (
           <span
@@ -2021,6 +2264,12 @@ function FoldedLineBlock({
             onClick={() => onReview(tag.id)}
           />
         )}
+        <NotPrintedToggle
+          tag={tag}
+          excluded={excluded}
+          toggling={toggling}
+          onToggle={onTogglePrintExcluded}
+        />
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2032,6 +2281,55 @@ function FoldedLineBlock({
         </button>
       </div>
     </div>
+  );
+}
+
+/** r10 S6: the pill a row marked Not printed wears (AC-S6-9). */
+function NotPrintedPill() {
+  return (
+    <Badge
+      variant="secondary"
+      appearance="light"
+      className="mt-1 px-1.5 py-0 text-2xs font-normal"
+      data-testid="not-printed-pill"
+    >
+      Not printed
+    </Badge>
+  );
+}
+
+/**
+ * r10 S6 (AC-S6-9): the Not printed toggle. `aria-pressed` carries the state,
+ * the label stays the same either way so a reader hears one control, not two.
+ * A tag marked this way is still openable and editable - only arrange, the
+ * PDF and the counts skip it - so the row itself stays live.
+ */
+function NotPrintedToggle({
+  tag,
+  excluded,
+  toggling,
+  onToggle,
+}: {
+  tag: PriceTagRequestTag;
+  excluded: boolean;
+  toggling: boolean;
+  onToggle: (tag: PriceTagRequestTag) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40',
+        excluded && 'text-foreground',
+      )}
+      title={excluded ? 'Not printed - press to print again' : 'Not printed'}
+      aria-label={`Not printed ${tag.label}`}
+      aria-pressed={excluded}
+      disabled={toggling}
+      onClick={() => onToggle(tag)}
+    >
+      <EyeOff className="size-3.5" />
+    </button>
   );
 }
 
@@ -2057,6 +2355,8 @@ function TagRailRow({
   onSelect,
   onUseTemplate,
   onRemove,
+  toggling,
+  onTogglePrintExcluded,
 }: {
   tag: PriceTagRequestTag;
   data: LineTagData | undefined;
@@ -2074,7 +2374,10 @@ function TagRailRow({
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
   onRemove: (tag: PriceTagRequestTag) => void;
+  toggling: boolean;
+  onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
 }) {
+  const excluded = Boolean(tag.print_excluded);
   // D6: every choice group is resolved into its own tag at submit now (the
   // tag builder), so `open_groups` is always empty by the time a request
   // reaches the designer - no Open pill, no Split, no Pick one anywhere in
@@ -2084,7 +2387,10 @@ function TagRailRow({
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
       <button
         type="button"
-        className="w-full py-1.5 pl-6 pr-20 text-left transition-colors hover:bg-muted/50"
+        className={cn(
+          'w-full py-1.5 pl-6 pr-28 text-left transition-colors hover:bg-muted/50',
+          excluded && 'opacity-60',
+        )}
         onClick={() => onSelect(tag.id)}
       >
         <div className="flex items-center gap-1.5">
@@ -2109,6 +2415,7 @@ function TagRailRow({
             ? ` / Override ${formatTagPrice(tag.marketing_price_override)}`
             : ''}
         </p>
+        {excluded && <NotPrintedPill />}
       </button>
       <div className="absolute right-1 top-1 flex items-center gap-0.5">
         {/* D12: the open-pins count is a SIBLING of the row button, first in
@@ -2134,6 +2441,12 @@ function TagRailRow({
             onClick={() => onReview(tag.id)}
           />
         )}
+        <NotPrintedToggle
+          tag={tag}
+          excluded={excluded}
+          toggling={toggling}
+          onToggle={onTogglePrintExcluded}
+        />
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"

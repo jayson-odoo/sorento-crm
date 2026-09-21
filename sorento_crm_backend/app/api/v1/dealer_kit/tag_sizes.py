@@ -70,6 +70,9 @@ def create_tag_size(
         width_mm=payload.width_mm,
         height_mm=payload.height_mm,
         created_by=created_by,
+        sheet_cols=payload.sheet_cols,
+        sheet_rows=payload.sheet_rows,
+        sheet_turn=payload.sheet_turn,
     )
     return _response_for(row, _creator_name(db, created_by))
 

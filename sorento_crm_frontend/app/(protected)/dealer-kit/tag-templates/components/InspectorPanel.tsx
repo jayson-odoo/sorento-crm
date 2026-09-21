@@ -1407,12 +1407,19 @@ function SubjectInspector({
     'subjectPart' in props && typeof props.subjectPart === 'number'
       ? props.subjectPart
       : undefined;
+  // r10 S6 (AC-S6-4): a tag's parts now carry every candidate of every
+  // choice group, not only the one this tag chose, so the list is grouped
+  // under the group's role ("Kitchen Tap") once any part carries one, and
+  // this tag's own candidate says so. A row without roles - a fixed part, or
+  // a row pinned before r10 - renders the same flat list it always did.
+  const grouped = parts.some((part) => Boolean(part.role));
   const options: SearchableSelectOption[] = [
     ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
     { value: '-1', label: parentCode || 'Parent' },
     ...parts.map((part, index) => ({
       value: String(index),
-      label: part.code || part.name,
+      label: `${part.code || part.name}${part.chosen ? ' (this tag)' : ''}`,
+      ...(grouped && part.role ? { group: part.role } : {}),
     })),
   ];
   const value =

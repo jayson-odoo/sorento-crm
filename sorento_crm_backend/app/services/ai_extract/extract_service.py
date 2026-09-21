@@ -743,20 +743,34 @@ class AIExtractService:
                 message="AI extract prompt is not configured for this form.",
                 code="ai_extract_prompt_missing",
             )
-        line_items_clause = (
-            (
+        is_price_tag_form = form_key == "portal.price_tag_request"
+        if has_line_items and is_price_tag_form:
+            # S2 (PLAN-price-tag-r10.md, rule 9): the entry shape itself drops
+            # the fields a document never states for this form - how many
+            # tags marketing wants is decided later, never read off a DO or a
+            # photo. The word this clause must never use is spelled out in
+            # rule 9's own text, not repeated here, so a stray mention never
+            # regresses AC-S2-2's "not present anywhere" assertion.
+            line_items_clause = (
+                " Include a top-level `products` array of "
+                "{product_code, product_name, notes} "
+                "when the document lists line items (see rule 8). Do not state "
+                "how many of each are wanted or their prices - see rule 9."
+            )
+        elif has_line_items:
+            line_items_clause = (
                 " Include a top-level `products` array of "
                 "{product_code, product_name, quantity, unit_price, total, notes} "
                 "when the document lists line items"
-                + (" (see rule 8)" if form_key == "portal.price_tag_request" else "")
-                + ". Only include `unit_price` and `total` when the document "
+                ". Only include `unit_price` and `total` when the document "
                 "actually shows them; omit otherwise."
             )
-            if has_line_items
-            else " Do NOT include a top-level `products` array - this form has "
-            "no line-item table. Distinct product codes belong in the "
-            "`product_code` field as a comma-separated string."
-        )
+        else:
+            line_items_clause = (
+                " Do NOT include a top-level `products` array - this form has "
+                "no line-item table. Distinct product codes belong in the "
+                "`product_code` field as a comma-separated string."
+            )
         user_text = (
             f"Form: {form_key}\n"
             f"Fields:\n{json.dumps(field_specs, ensure_ascii=False, indent=2)}\n\n"

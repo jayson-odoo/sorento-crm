@@ -114,7 +114,7 @@ import {
 } from '../../services/priceTagDataService';
 import { useTagDataChanges, tagDataChangesKey } from '../hooks/useTagDataChanges';
 import {
-  changedTagCount,
+  AUTO_UPDATE_STATUSES,
   type TagDataChangeSet,
 } from '@/lib/dealer-kit/product-data-changes';
 import RequestDesignSection from './RequestDesignSection';
@@ -654,7 +654,24 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       ? appConfig.price_tag_auto_collect_days
       : AUTO_COLLECT_DAYS_DEFAULT;
 
-  const changedCount = useMemo(() => changedTagCount(dataChanges), [dataChanges]);
+  /**
+   * r10 S8: the pill counts a tag once whether master data moved under a pin
+   * that is waiting on Keep / Update (the poll) or was already applied by an
+   * auto-update and not yet dismissed (`data_updated_at` on the tag) - the
+   * same union the designer's rail dots show.
+   */
+  const changedCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const set of dataChanges) {
+      if (set.changes.length > 0) ids.add(set.tag_id);
+    }
+    for (const line of request?.lines ?? []) {
+      for (const tag of line.tags ?? []) {
+        if (tag.data_updated_at) ids.add(tag.id);
+      }
+    }
+    return ids.size;
+  }, [dataChanges, request?.lines]);
   const changesByTag = useMemo(() => {
     const map = new Map<string, TagDataChangeSet>();
     for (const set of dataChanges) {
@@ -751,7 +768,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                     className={`${STATUS_PILL_BASE} bg-amber-100 text-amber-800`}
                     data-testid="product-data-changed-pill"
                   >
-                    Product data changed · {changedCount}
+                    {request.status && AUTO_UPDATE_STATUSES.includes(request.status)
+                      ? `Product data updated · ${changedCount}`
+                      : `Product data changed · ${changedCount}`}
                   </span>
                 )}
               </div>

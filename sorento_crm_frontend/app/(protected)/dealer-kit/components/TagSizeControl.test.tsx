@@ -334,3 +334,137 @@ describe('TagSizeControl - open state persisted per browser (AC-S5-3)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-S7-13/AC-S7-14 (PLAN-price-tag-r10.md S7): the "Per A4" row - derived
+// values greyed until typed, typing commits on blur, Turn toggles rotation,
+// Auto clears back to derived, a configured grid whose cell is too small for
+// the tag shows the one-line refusal. Already wired (`TagSizeControl.tsx`'s
+// own `resolvedGrid`/`commitGrid`/`setTurn`), so these are GREEN regression
+// guards - Phase 1 shipped the real control.
+// ---------------------------------------------------------------------------
+
+describe('TagSizeControl - Per A4 grid (AC-S7-13/S7-14)', () => {
+  it('shows the DERIVED cols x rows, greyed, when no grid is configured', () => {
+    render(
+      <TagSizeControl
+        width_mm={66.7}
+        height_mm={31.9}
+        presets={PRESETS}
+        onResize={vi.fn()}
+        sheetGrid={null}
+        onSheetGridChange={vi.fn()}
+      />,
+    );
+    openTagSizePanel();
+
+    expect(screen.getByLabelText('Grid columns per A4')).toHaveValue(3);
+    expect(screen.getByLabelText('Grid rows per A4')).toHaveValue(9);
+    expect(screen.getByLabelText('Grid columns per A4').closest('div')).toHaveClass(
+      'text-muted-foreground',
+    );
+    // No configured grid - no Auto affordance to clear.
+    expect(screen.queryByRole('button', { name: 'Auto' })).toBeNull();
+  });
+
+  it('typing 2 and 7 then blur calls onSheetGridChange({cols: 2, rows: 7, turn: false})', () => {
+    // 66.7 x 31.9 derives 3 x 9 (AC-S7-1) - deliberately DIFFERENT from the
+    // 2/7 typed below: a controlled input set to the value it already shows
+    // fires no React onChange at all (a jsdom/React quirk), which would pass
+    // this test for the wrong reason (0 calls looking like "nothing to do").
+    const onSheetGridChange = vi.fn();
+    render(
+      <TagSizeControl
+        width_mm={66.7}
+        height_mm={31.9}
+        presets={PRESETS}
+        onResize={vi.fn()}
+        sheetGrid={null}
+        onSheetGridChange={onSheetGridChange}
+      />,
+    );
+    openTagSizePanel();
+
+    const cols = screen.getByLabelText('Grid columns per A4');
+    fireEvent.change(cols, { target: { value: '2' } });
+    fireEvent.blur(cols);
+
+    expect(onSheetGridChange).toHaveBeenCalledWith({ cols: 2, rows: 9, turn: false });
+
+    // The control is stateless/controlled - the caller owns `sheetGrid` and
+    // this test does not re-render with the just-committed value, so the
+    // rows commit reads `cols` back off the DERIVED grid (3), not the 2 the
+    // first commit sent (that round trip is the caller's job, covered by
+    // `RequestTagDesigner.test.tsx`'s own wiring).
+    const rows = screen.getByLabelText('Grid rows per A4');
+    fireEvent.change(rows, { target: { value: '7' } });
+    fireEvent.blur(rows);
+
+    expect(onSheetGridChange).toHaveBeenLastCalledWith({ cols: 3, rows: 7, turn: false });
+  });
+
+  it('the Turn checkbox toggles turn on the configured (or derived) grid', () => {
+    const onSheetGridChange = vi.fn();
+    render(
+      <TagSizeControl
+        width_mm={100}
+        height_mm={41}
+        presets={PRESETS}
+        onResize={vi.fn()}
+        sheetGrid={{ cols: 2, rows: 7, turn: false }}
+        onSheetGridChange={onSheetGridChange}
+      />,
+    );
+    openTagSizePanel();
+
+    fireEvent.click(screen.getByLabelText('Turn 90 degrees'));
+
+    expect(onSheetGridChange).toHaveBeenCalledWith({ cols: 2, rows: 7, turn: true });
+  });
+
+  it('Auto clears the configured grid back to derived (null)', () => {
+    const onSheetGridChange = vi.fn();
+    render(
+      <TagSizeControl
+        width_mm={100}
+        height_mm={41}
+        presets={PRESETS}
+        onResize={vi.fn()}
+        sheetGrid={{ cols: 2, rows: 7, turn: false }}
+        onSheetGridChange={onSheetGridChange}
+      />,
+    );
+    openTagSizePanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+
+    expect(onSheetGridChange).toHaveBeenCalledWith(null);
+  });
+
+  it('AC-S7-13: a configured grid too small for the tag shows the one-line refusal naming the cell size', () => {
+    render(
+      <TagSizeControl
+        width_mm={66.7}
+        height_mm={31.9}
+        presets={PRESETS}
+        onResize={vi.fn()}
+        sheetGrid={{ cols: 5, rows: 5, turn: false }}
+        onSheetGridChange={vi.fn()}
+      />,
+    );
+    openTagSizePanel();
+
+    expect(
+      screen.getByText(/Cell is 40 x 57\.4 mm - too small for this tag/),
+    ).toBeInTheDocument();
+  });
+
+  it('the row is absent when the caller gives no onSheetGridChange (the template editor with no print size yet)', () => {
+    render(
+      <TagSizeControl width_mm={60} height_mm={40} presets={PRESETS} onResize={vi.fn()} />,
+    );
+    openTagSizePanel();
+
+    expect(screen.queryByText('Per A4')).toBeNull();
+  });
+});

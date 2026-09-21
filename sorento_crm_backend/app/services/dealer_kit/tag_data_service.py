@@ -26,6 +26,7 @@ Three rules it does not get to decide for itself:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Iterable, Optional, Sequence
@@ -240,19 +241,46 @@ def spec_lines(db: Session, product: Product, spec_row=None) -> list[str]:
     return _clean_lines((product.description or "").splitlines())
 
 
-def _spec_display_value(raw) -> str:
-    """One reviewed spec value, as a person reads it.
+#: Words a slug's title-cased form prints in full capitals rather than
+#: `Pvc`/`Led` - the flyer's own acronyms (S3, PLAN D-readable-spec-values).
+SPEC_ACRONYMS = {"pvc", "abs", "pp", "led", "uv", "ss", "sus"}
+
+#: A slug is lowercase words joined by `_` and nothing else (S3) - free text
+#: ("Made in Malaysia") and a bare number ("407") both fail this and are
+#: returned unchanged, since there is nothing to reformat.
+_SLUG_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
+
+
+def _spec_display_value(raw, value_labels: Optional[dict] = None) -> str:
+    """One reviewed spec value, as a person reads it (S3).
 
     `True` prints as `Yes` because a tag that said `True` under "Overflow"
     would be reading a database out loud. A whole number prints without the
     `.0` JSON gives a float, for the same reason `format_dimensions_mm`
     normalises a Decimal: the flyer says `407 mm`, never `407.0 mm`.
+
+    `value_labels` (the registry key's own override map, keyed by the raw
+    stored value) wins over everything below it - a curator who named an
+    exact reading for this value gets it verbatim, not the automatic form.
+    Otherwise a slug (`stainless_steel`) title-cases with spaces
+    (`Stainless Steel`), upper-casing any word that is a known acronym
+    (`pvc_pipe` -> `PVC Pipe`); anything that is not a slug - free text, a
+    bare number - passes through unchanged.
     """
     if isinstance(raw, bool):
         return "Yes" if raw else "No"
     if isinstance(raw, float) and raw.is_integer():
         return str(int(raw))
-    return str(raw)
+    text = str(raw)
+    labels = value_labels or {}
+    if text in labels:
+        return labels[text]
+    if _SLUG_RE.match(text):
+        return " ".join(
+            word.upper() if word in SPEC_ACRONYMS else word.capitalize()
+            for word in text.split("_")
+        )
+    return text
 
 
 def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
@@ -291,7 +319,7 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
             {
                 "key": key.spec_key,
                 "label": key.label,
-                "value": _spec_display_value(raw),
+                "value": _spec_display_value(raw, key.value_labels),
                 "unit": key.unit,
             }
         )
@@ -351,6 +379,9 @@ def product_tag_data(
         # Key by key, beside the rendered sentence: `{{spec.material}}` asks a
         # question `spec_lines` cannot answer (D58).
         "specs": product_specs(db, product, spec_row),
+        # S4: staff-authored tag copy. Absent (None) renders nothing (Q5) -
+        # no fallback to spec_lines/description.
+        "price_tag_description": product.price_tag_description or None,
         "images": gallery_images(db, product, viewer) if with_images else [],
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,
@@ -597,6 +628,73 @@ def _resolved_part_products(db: Session, line, tag) -> list:
     return [products[pid] for pid in wanted if pid in products]
 
 
+def _combo_products(
+    db: Session,
+    line,
+    tag,
+    viewer: ViewerContext,
+    promotion_id,
+    cache: dict,
+    *,
+    price_mode: str = "selling",
+) -> list[dict]:
+    """Every product a slot on this tag may point at (S6, AC-S6-3/S6-4).
+
+    The line's fixed parts plus EVERY candidate of every open choice group.
+    A superset of `_resolved_part_products`, which only carries the ONE
+    candidate this tag chose. Each row is a `_part_row` (the same resolver a
+    fixed part already goes through) plus `role` (the group's label, absent
+    on a fixed part) and `chosen` (true on the candidate THIS tag's own
+    `choices` names), so the subject picker can group candidates under their
+    role and mark this tag's own pick.
+
+    AC-S6-13: the ORDER is the pre-r10 narrow order first - this tag's own
+    fixed parts and its chosen candidate, exactly the order
+    `_resolved_part_products` produces - with the non-chosen candidates of
+    every open group appended at the end, in combo order. A slot index a
+    template already saved (D3/D4) must keep pointing at the same product
+    after r10 widens `parts`; interleaving a leftover candidate at the
+    group's own sort position would shift every index after it.
+    """
+    from app.models.product import Product
+
+    chosen = dict(tag.choices or {})
+    narrow: list[tuple[str, Optional[str], bool]] = []
+    leftovers: list[tuple[str, Optional[str], bool]] = []
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        if part.product_id:
+            narrow.append((str(part.product_id), None, False))
+            continue
+        role = part.role or ""
+        chosen_id = chosen.get(role)
+        for candidate in part.candidates or []:
+            candidate_id = str(candidate)
+            entry = (candidate_id, role, candidate_id == str(chosen_id))
+            (narrow if entry[2] else leftovers).append(entry)
+    wanted = narrow + leftovers
+    if not wanted:
+        return []
+
+    products = {
+        product.id: product
+        for product in db.query(Product)
+        .filter(Product.id.in_({product_id for product_id, _, _ in wanted}))
+        .all()
+    }
+    rows: list[dict] = []
+    for product_id, role, chosen_flag in wanted:
+        product = products.get(product_id)
+        if product is None:
+            continue
+        row = dict(
+            _part_row(db, product, viewer, promotion_id, cache, price_mode=price_mode)
+        )
+        row["role"] = role
+        row["chosen"] = chosen_flag
+        rows.append(row)
+    return rows
+
+
 def _part_row(
     db: Session,
     product,
@@ -644,6 +742,8 @@ def _part_row(
         "sell_price": data["offer_price"] if price_mode == "selling" else None,
         # AC-A11: this part's OWN product's currency, not the host's.
         "currency": data["currency"],
+        # AC-S4-4: this part's OWN product's tag copy, not the host's.
+        "price_tag_description": data["price_tag_description"],
     }
 
 
@@ -737,6 +837,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         spec_values = data["specs"]
         images = data["images"]
         barcode = data["barcode"]
+        price_tag_description = data["price_tag_description"]
         set_members = data["set_members"]
 
         open_groups = _open_groups_for(db, line, tag)
@@ -749,6 +850,14 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             )
             for product in part_products
         ]
+        # S6 (AC-S6-3/S6-4): every product this tag's combo could show - the
+        # subject picker's list, a superset of `part_rows` above, which
+        # stays the narrow "this tag's own choice" list every price sum and
+        # `set_members` below still reads.
+        combo_rows = _combo_products(
+            db, line, tag, viewer, promotion_id, parts_cache,
+            price_mode=request.price_mode,
+        )
 
         # D4. A tag with no parts is exactly today's product tag: the sums below
         # are over an empty list, so both prices and the slot text are the ones
@@ -835,7 +944,14 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "line_id": line.id,
                 "tag_label": _tag_label(line_index, tag_index),
                 "open_groups": open_groups,
-                "parts": part_rows,
+                # S6: `parts` is now the WIDE list (every candidate of every
+                # open group) - a slot may bind to any of them, and the print
+                # payload's image map has to reach a non-chosen candidate's
+                # photo too (AC-S6-5). `own_parts` is what this tag itself
+                # prints and prices - unchanged meaning, so `set_members`,
+                # Tag total and an unmodified template still read it.
+                "parts": combo_rows,
+                "own_parts": part_rows,
                 "code": code,
                 "name": name,
                 "dimensions": dimensions,
@@ -855,6 +971,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "quantity": tag.quantity,
                 "barcode": barcode,
                 "currency": data["currency"],
+                "price_tag_description": price_tag_description,
             }
         )
 
@@ -906,6 +1023,33 @@ def _tag_sell_price_basis(
     return cache[key]
 
 
+def _combo_lead_image(db: Session, line, images: list[dict]) -> list[dict]:
+    """AC-S5-6: when the line's combo names a picture, that photo leads the
+    tag's image list with `is_primary` forced true, followed by the ordinary
+    gallery - the SAME photo `gallery_images` already returns (it ranks a
+    Combo Image last, AC-S5-11), just reordered to the front for lines drawn
+    through THIS combo. A line naming a combo whose image was deleted (the
+    migration's FK is `ON DELETE SET NULL`) or whose picture the viewer
+    cannot see falls straight back to the plain gallery order (AC-S5-9).
+    """
+    combo_id = getattr(line, "combo_id", None)
+    if not combo_id:
+        return images
+    from app.models.product_combo import ProductCombo
+
+    combo = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
+    if combo is None or not combo.image_attachment_id:
+        return images
+    lead = next(
+        (img for img in images if img.get("attachment_id") == combo.image_attachment_id),
+        None,
+    )
+    if lead is None:
+        return images
+    rest = [img for img in images if img is not lead]
+    return [{**lead, "is_primary": True}, *rest]
+
+
 def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict]:
     """The line's own product or set, resolved ONCE for all of its tags.
 
@@ -928,6 +1072,9 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "specs": [],
             "images": [],
             "barcode": None,
+            # A set has no price_tag_description of its own - same rule as
+            # barcode above (S7).
+            "price_tag_description": None,
             "set_members": _set_member_text(data["members"]),
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
@@ -944,8 +1091,9 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "dimensions": data["dimensions"],
             "spec_lines_text": "\n".join(data["spec_lines"]),
             "specs": data["specs"],
-            "images": data["images"],
+            "images": _combo_lead_image(db, line, data["images"]),
             "barcode": data["barcode"],
+            "price_tag_description": data["price_tag_description"],
             "set_members": "",
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
@@ -954,7 +1102,161 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
     return None
 
 
-def resolve_request_line_data(db: Session, request) -> list[dict]:
+#: S8 (Q9 ruled, PLAN-price-tag-r10.md S8): the read seam applies a
+#: product-data change by itself in these statuses. A proof already out for
+#: review (`proof_ready` on) keeps today's flag-and-decide (Keep/Update).
+AUTO_UPDATE_STATUSES = {"designing", "changes_requested"}
+
+
+def apply_auto_data_updates(
+    db: Session, request, triples: list[tuple], *, user_id: Optional[str] = None
+) -> None:
+    """S8: re-pin every ``(tag, live_row, changes)`` in ``triples`` to its live
+    data. ``changes`` is the diff the CALLER already computed (the same list
+    that lands in the read response's ``data_changes``), reused rather than
+    recomputed, so what the person is told just happened and what gets
+    written to ``data_update_changes`` can never disagree.
+
+    The same steps a manual Update always took (D18): one "Before product
+    update" PageVersion snapshotting the pins being replaced, the re-pin
+    itself, then an "after" snapshot of the result - except this call covers
+    a whole SWEEP at once, so N tags changing between two polls fold into
+    ONE before-version and ONE after-version (AC-S8-3), not N of each.
+
+    Each re-pinned tag is stamped with the three S8 columns
+    (``data_updated_at``/``data_update_changes``/``data_update_version``) so
+    the rail's "updated" indicator can name the change and Roll back
+    (``POST versions/{n}/restore``) knows which version undoes it.
+    ``user_id`` (AC-S8-15) is the staff member whose poll triggered this
+    write - both PageVersions carry it as ``created_by``, an auto-applied
+    version is not an anonymous system row.
+
+    AC-S8-16: idempotent both against a repeat call with the same already-
+    applied triples (a triple whose diff is already reflected in the tag's
+    current pin is dropped before anything is written; an entirely
+    already-applied batch writes nothing) and against two pollers racing to
+    apply the SAME live edit (the page row is locked ``FOR UPDATE`` before
+    ``max(version)`` is read, so a second caller blocks behind the first for
+    the rest of this transaction; the whole write also runs inside its own
+    SAVEPOINT, so a version-number collision that still slips through costs
+    only this apply, not the caller's whole transaction - leaving the pins
+    as they were rather than 500ing the read that triggered it).
+    """
+    if not triples:
+        return
+    from sqlalchemy import func
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.dealer_kit import Page, PageVersion
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    triples = [
+        (tag, live, changes)
+        for tag, live, changes in triples
+        if tag.pinned_tag_data != pin_payload(live)
+    ]
+    if not triples:
+        return
+
+    PriceTagRequestService.ensure_tag_sheet_page(db, request, None)
+
+    now = datetime.utcnow()
+    changes_by_tag = {tag.id: changes for tag, _live, changes in triples}
+
+    def pins_snapshot() -> dict:
+        return {
+            t.id: t.pinned_tag_data
+            for line in request.lines
+            for t in (line.tags or [])
+            if t.pinned_tag_data is not None
+        }
+
+    savepoint = db.begin_nested()
+    try:
+        # AC-S8-16: FOR UPDATE - blocks a second caller computing the same
+        # `max(version) + 1` for this page until this transaction ends.
+        page = (
+            db.query(Page)
+            .filter(Page.id == request.page_id)
+            .with_for_update()
+            .first()
+        )
+
+        before_version_number = None
+        doc = None
+        label_suffix = ""
+        if page is not None:
+            # Lazy import: routes is the layer above services, but this is
+            # the one document shape both sides need to agree on, and
+            # duplicating it here is how it drifted (bleed_mm/gap_mm stale
+            # against the designer's own default until this fix).
+            from app.api.v1.dealer_kit.price_tag_requests import (
+                _default_tag_sheet_doc,
+            )
+
+            latest = (
+                db.query(PageVersion)
+                .filter(PageVersion.page_id == page.id)
+                .order_by(PageVersion.version.desc())
+                .first()
+            )
+            doc = page.draft_doc or (latest.doc if latest else None) or _default_tag_sheet_doc()
+            fields = sorted({
+                change["label"] for changes in changes_by_tag.values() for change in changes
+            })
+            label_suffix = f": {', '.join(fields)}" if fields else ""
+            current_max = (
+                db.query(func.max(PageVersion.version))
+                .filter(PageVersion.page_id == page.id)
+                .scalar()
+            ) or 0
+            before_version = PageVersion(
+                page_id=page.id,
+                version=current_max + 1,
+                doc=doc,
+                commit_message=f"Before product update{label_suffix}",
+                created_by=user_id,
+                pinned_line_data=pins_snapshot(),
+            )
+            db.add(before_version)
+            db.flush()
+            before_version_number = before_version.version
+            page.draft_doc = None
+
+        for tag, live, _changes in triples:
+            tag.pinned_tag_data = pin_payload(live)
+            tag.pinned_at = now
+            tag.data_change_ack_hash = None
+            tag.data_updated_at = now
+            tag.data_update_changes = changes_by_tag.get(tag.id) or []
+            tag.data_update_version = before_version_number
+
+        if page is not None:
+            db.flush()
+            after_version = PageVersion(
+                page_id=page.id,
+                version=before_version_number + 1,
+                doc=doc,
+                commit_message=f"Product update{label_suffix}",
+                created_by=user_id,
+                pinned_line_data=pins_snapshot(),
+            )
+            db.add(after_version)
+            db.flush()
+        savepoint.commit()
+    except IntegrityError:
+        savepoint.rollback()
+        logger.warning(
+            "apply_auto_data_updates: version race on page %s for request %s - "
+            "left pins as they were for this poll.",
+            request.page_id,
+            request.id,
+        )
+
+
+def resolve_request_line_data(
+    db: Session, request, *, apply_updates: bool = False, user_id: Optional[str] = None
+) -> list[dict]:
     """Display data for every TAG of a price tag request.
 
     The one resolver behind the designer's left panel, both design previews and
@@ -975,6 +1277,21 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
 
     The marketing override wins over the pinned offer (D9/AC-S5-7) - it is a
     decision somebody made and logged a reason for.
+
+    ``apply_updates`` (S8): the read seam that WRITES an auto-apply for a
+    request in ``AUTO_UPDATE_STATUSES`` - opt-in, defaulting to False, so
+    every plain read (the design canvas, the print/export payload, a version
+    restore, a direct service call) keeps answering the PIN exactly as it
+    stood, and only the two callers that are genuinely a "poll"
+    (``GET data-changes`` and the list's touched-row sweep) pass it. Passing
+    it from every reader would have master data move a tag the instant
+    anyone merely opens the design, which is the r9 pin gate's entire point
+    to prevent.
+
+    ``user_id`` (AC-S8-15) is who to attribute the write to when
+    ``apply_updates`` actually applies something - the caller's job to
+    resolve (a real staff session holding ``.process``), never this
+    resolver's; passed straight through to ``apply_auto_data_updates``.
     """
     from app.services.price_tag_request_service import PriceTagRequestService
 
@@ -1012,11 +1329,28 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
     # request - cached by promotion id, since several lines commonly share
     # the same promotion.
     promotion_live_by_id: dict = {}
+    # S8: every (tag, live, changes) this sweep found changed, for a request
+    # whose status auto-applies. Collected across the WHOLE walk and applied
+    # once at the end, so N tags changing between two polls fold into one
+    # before-version and one after-version (AC-S8-3), not one pair each.
+    auto_update = (
+        apply_updates and not terminal and request.status in AUTO_UPDATE_STATUSES
+    )
+    to_apply: list[tuple] = []
 
     for line_index, tag_index, line, tag in walk:
         pinned = tag.pinned_tag_data
         if pinned:
             row = _row_from_pin(db, line, tag, pinned, _tag_label(line_index, tag_index))
+            # AC-S8-13: "seen it or not", not "does a live diff exist right
+            # now" - the row carries the tag's OWN updated-at, read here at
+            # walk time, before this same sweep's own `apply_auto_data_
+            # updates` below might set it fresh. `_row_change_count` counts
+            # on this OR a non-empty live diff, so the poll that just
+            # auto-applied (diff still non-empty, `data_updated_at` not yet
+            # written) and every later poll before Dismiss (diff empty,
+            # `data_updated_at` already set) both count the tag.
+            row["data_updated_at"] = tag.data_updated_at
             if not terminal:
                 live = live_rows.get(tag.id)
                 if live is not None:
@@ -1027,7 +1361,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
                     # The PIN AS READ, not as stored: the marketing override is
                     # applied to both sides, so the office's own decision is not
                     # read back to it as "master data moved" (S4).
-                    row["data_changes"] = diff_pin_against_live(
+                    changes = diff_pin_against_live(
                         db,
                         line,
                         row,
@@ -1035,6 +1369,9 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
                         tag.data_change_ack_hash,
                         promotion_live=promotion_live_by_id[line.promotion_id],
                     )
+                    row["data_changes"] = changes
+                    if auto_update and changes:
+                        to_apply.append((tag, live, changes))
                 else:
                     row["data_changes"] = []
             rows.append(row)
@@ -1042,9 +1379,13 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
 
         live = live_rows.get(tag.id)
         if live is not None:
+            live["data_updated_at"] = tag.data_updated_at
             if not terminal:
                 live["data_changes"] = []
             rows.append(live)
+
+    if to_apply:
+        apply_auto_data_updates(db, request, to_apply, user_id=user_id)
 
     return rows
 
@@ -1078,10 +1419,14 @@ def resolve_version_line_data(db: Session, request, pinned_line_data: dict) -> l
 def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     """The pin, as the resolver's own row shape.
 
-    Four things are read fresh rather than from the pin: the photo URLs (a
-    signed link expires within the hour), the marketing override (a decision
-    that must survive whatever the pin says), the tag's quantity, and the
-    label, which is a POSITION - deleting the line above must renumber it.
+    Five things are read fresh rather than from the pin: the photo URLs (a
+    signed link expires within the hour), WHICH photo leads (AC-S5-10: a
+    combo's own cover picture is a catalogue fact, not a product fact the
+    review gate is meant to freeze - a marketing user who swaps it must see
+    the new cover on a request already pinned, the same reasoning that keeps
+    the URLs themselves live), the marketing override (a decision that must
+    survive whatever the pin says), the tag's quantity, and the label, which
+    is a POSITION - deleting the line above must renumber it.
     """
     from app.services.dealer_kit.product_images import resign_images
 
@@ -1089,7 +1434,7 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     row["tag_id"] = tag.id
     row["line_id"] = line.id
     row["tag_label"] = tag_label
-    row["images"] = resign_images(db, pinned.get("images") or [])
+    row["images"] = _combo_lead_image(db, line, resign_images(db, pinned.get("images") or []))
     # D7 gave every PART the host's own photos, and a part's signed link dies
     # on exactly the same hour. Re-signed here, at the one seam both readers
     # go through (`resolve_request_line_data` -> the export media map and
@@ -1100,6 +1445,17 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
             {**part, "images": resign_images(db, part.get("images") or [])}
             for part in pinned["parts"]
         ]
+    if pinned.get("own_parts"):
+        row["own_parts"] = [
+            {**part, "images": resign_images(db, part.get("images") or [])}
+            for part in pinned["own_parts"]
+        ]
+    elif "own_parts" not in pinned:
+        # AC-S6-11: a row pinned before r10 has no `own_parts` - its `parts`
+        # was already exactly this narrow list (nothing had widened it yet),
+        # kept as pinned rather than reprocessed, so `set_members`/Tag total
+        # keep reading the right thing.
+        row["own_parts"] = pinned.get("parts") or []
     row["quantity"] = tag.quantity
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
@@ -1141,7 +1497,18 @@ def _row_change_count(row: dict) -> int:
     list). ``changes`` stays as a second key only because the unit tests in
     ``test_price_tag_data_change_cache.py`` exercise this function directly
     with that shorter, hand-written shape.
+
+    AC-S8-13: the badge is "seen it or not", not "does a live diff exist
+    right now" - a tag ``resolve_request_line_data`` just auto-applied
+    re-pins to the live value, so a diff computed on the NEXT poll is empty
+    even though nobody has looked at what changed yet. Counted instead on
+    ``data_updated_at`` (set on apply, cleared only by Dismiss) for that
+    case, OR the live diff for a flag-only status exactly as before - a row
+    with neither key (the hand-written shape above) falls through to the
+    plain diff check unchanged.
     """
+    if row.get("data_updated_at") is not None:
+        return 1
     return 1 if (row.get("changes") or row.get("data_changes")) else 0
 
 
@@ -1208,11 +1575,39 @@ def data_hash(row: dict) -> str:
             "list_price",
             "sell_price",
             "barcode",
+            "price_tag_description",
         )
     }
-    subject["images"] = sorted(
-        image.get("attachment_id") for image in row.get("images") or []
-    )
+    # AC-S5-10: WHICH photo leads (`is_primary`) is part of what prints - a
+    # combo's picture swapping the lead (the designer's product-image slot
+    # draws `images[0]`) must move the hash even when the underlying set of
+    # attachment ids is unchanged, so order and `is_primary` both count, not
+    # just membership.
+    subject["images"] = [
+        {"attachment_id": image.get("attachment_id"), "is_primary": bool(image.get("is_primary"))}
+        for image in row.get("images") or []
+    ]
+    # S6: `parts` is the WIDE combo list (every candidate of every open
+    # group), which `own_parts`'s narrow sum does not cover - a candidate
+    # added or removed, or a non-chosen sibling's price moving, would
+    # otherwise never move the hash and the gate would stay silent even
+    # though `diff_pin_against_live` walks the same wide list per part.
+    subject["parts"] = [
+        {
+            "product_id": part.get("product_id"),
+            "role": part.get("role"),
+            "chosen": bool(part.get("chosen")),
+            "list_price": _plain(part.get("list_price")),
+            "sell_price": _plain(part.get("sell_price")),
+            # AC-S4-15: a part's OWN template is a fact about that part, not
+            # about the host - edited, it must move the hash the same way
+            # the host's own `price_tag_description` above already does, or
+            # the gate stays silent for the exact case `diff_pin_against_
+            # live`'s per-part loop already knows how to report.
+            "price_tag_description": part.get("price_tag_description"),
+        }
+        for part in row.get("parts") or []
+    ]
     return hashlib.sha256(
         json.dumps(subject, sort_keys=True, default=str).encode()
     ).hexdigest()
@@ -1272,6 +1667,12 @@ def diff_pin_against_live(
     add("spec_lines", "Specs", pinned.get("spec_lines"), live.get("spec_lines"))
     add("set_members", "Set members", pinned.get("set_members"), live.get("set_members"))
     add("barcode", "Barcode", pinned.get("barcode"), live.get("barcode"))
+    add(
+        "price_tag_description",
+        "Price tag description",
+        pinned.get("price_tag_description"),
+        live.get("price_tag_description"),
+    )
     add(
         "list_price",
         "List price",
@@ -1364,6 +1765,14 @@ def diff_pin_against_live(
             f"{code} offer price",
             _money(before.get("sell_price")),
             _money(after.get("sell_price")),
+        )
+        # AC-S4-15: a part's own template, diffed under that part's own code -
+        # mirrors the host's own `price_tag_description` comparison above.
+        add(
+            f"part:{code}:price_tag_description",
+            f"{code} price tag description",
+            before.get("price_tag_description"),
+            after.get("price_tag_description"),
         )
         before_images = {
             image.get("attachment_id") for image in before.get("images") or []

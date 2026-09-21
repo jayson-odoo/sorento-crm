@@ -24,12 +24,19 @@ class ProductComboPartOut(BaseModel):
     sort_order: int
 
 
+class ProductComboImageOut(BaseModel):
+    attachment_id: str
+    url: str
+
+
 class ProductComboOut(BaseModel):
     id: str
     host_product_id: str
     name: str
     sort_order: int
     parts: List[ProductComboPartOut] = []
+    #: The combo's own cover picture (S5), null with none uploaded yet.
+    image: Optional[ProductComboImageOut] = None
     created_at: datetime
     updated_at: datetime
 

@@ -139,9 +139,9 @@ describe('read-only view section order (AC-P11)', () => {
       'Sales Order',
       'Lines',
       'Price',
-      // r9 D7: who prints comes first in Additional Information, because it is
-      // the only field in the section that Submit refuses to go without.
-      'Printing',
+      // r10 S1: the "Who prints" control (and its `Printing` label) is gone -
+      // the portal never asks, `printBy` is a constant 'self'. Additional
+      // Information now opens directly on Need by / Notes.
       'Need by',
       'Notes',
     ]);

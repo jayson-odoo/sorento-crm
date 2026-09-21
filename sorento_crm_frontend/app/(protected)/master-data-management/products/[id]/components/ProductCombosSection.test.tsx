@@ -75,6 +75,21 @@ vi.mock('../../hooks/useProductCombos', () => ({
   useUpdateProductComboPart: () => ({ mutate: updatePartMutate }),
 }));
 
+// AC-S5-5 extended (captain's ruling, phase 3 review): the combo image
+// control should go through a `useProductComboImage` hook, the same shape
+// as every other combo mutation beside it - written test-FIRST, the hook
+// module does not exist yet.
+const uploadImageMutateAsync = vi.hoisted(() => vi.fn());
+const deleteImageMutateAsync = vi.hoisted(() => vi.fn());
+vi.mock('../../hooks/useProductComboImage', () => ({
+  useProductComboImage: () => ({
+    uploadMutateAsync: uploadImageMutateAsync,
+    deleteMutateAsync: deleteImageMutateAsync,
+    isUploading: false,
+    isDeleting: false,
+  }),
+}));
+
 import { ProductCombosSection } from './ProductCombosSection';
 
 const PRODUCT_ID = 'prod-cabinet';
@@ -282,5 +297,112 @@ describe('ProductCombosSection', () => {
     expect((row as HTMLElement).className).toContain('sm:grid-cols-');
     expect(screen.getAllByText(MIRROR.code)[0].className).toContain('truncate');
     expect(screen.getAllByText(MIRROR.product_name)[0].className).toContain('truncate');
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-S5-5 (PLAN-price-tag-r10.md S5): the combo block shows Upload when
+  // empty, else the thumbnail with Replace and Clear - image files only.
+  // Written test-FIRST: `ProductComboRow` carries no `image` field yet and
+  // the block renders no upload control at all, so this is red on a missing
+  // element rather than a wrong one.
+  // -------------------------------------------------------------------------
+
+  it('AC-S5-5: shows an Upload control when the combo has no image', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]');
+    expect(combo3).not.toBeNull();
+    expect(
+      within(combo3 as HTMLElement).getByRole('button', { name: /upload/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-S5-5: shows the thumbnail with Replace and Clear when the combo has an image', () => {
+    combosQuery.value = {
+      data: [
+        {
+          ...COMBO_3_IN_1,
+          image: { attachment_id: 'att-combo-1', url: 'https://cdn.example.test/combo.jpg' },
+        } as ProductComboRow,
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]');
+    expect(combo3).not.toBeNull();
+    const scoped = within(combo3 as HTMLElement);
+    expect(scoped.getByRole('img', { name: /3 in 1/i })).toHaveAttribute(
+      'src',
+      'https://cdn.example.test/combo.jpg',
+    );
+    expect(scoped.getByRole('button', { name: /replace/i })).toBeInTheDocument();
+    expect(scoped.getByRole('button', { name: /clear/i })).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-S5-5 extended (captain's ruling, phase 3 review): the upload/replace/
+  // clear controls route through a `useProductComboImage` hook (the same
+  // shape every other combo mutation on this page already uses), and the
+  // image row wraps at phone width.
+  // -------------------------------------------------------------------------
+
+  it('AC-S5-5 extended: selecting a file calls the useProductComboImage hook, not a bare service call', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]') as HTMLElement;
+    const input = within(combo3).getByLabelText(/cover picture/i) as HTMLInputElement;
+    const file = new File(['zzt'], 'combo.jpg', { type: 'image/jpeg' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(uploadImageMutateAsync).toHaveBeenCalled();
+  });
+
+  it('AC-S5-5 extended: Clear calls the useProductComboImage hook', () => {
+    combosQuery.value = {
+      data: [
+        {
+          ...COMBO_3_IN_1,
+          image: { attachment_id: 'att-combo-1', url: 'https://cdn.example.test/combo.jpg' },
+        } as ProductComboRow,
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]') as HTMLElement;
+    fireEvent.click(within(combo3).getByRole('button', { name: /clear/i }));
+
+    expect(deleteImageMutateAsync).toHaveBeenCalled();
+  });
+
+  it('AC-S5-5 extended: the image row wraps at phone width (flex-wrap)', () => {
+    combosQuery.value = {
+      data: [
+        {
+          ...COMBO_3_IN_1,
+          image: { attachment_id: 'att-combo-1', url: 'https://cdn.example.test/combo.jpg' },
+        } as ProductComboRow,
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+
+    const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]') as HTMLElement;
+    const img = within(combo3).getByRole('img', { name: /3 in 1/i });
+    let row: HTMLElement | null = img.parentElement;
+    while (row && !row.className.split(' ').includes('flex-wrap')) {
+      row = row.parentElement;
+      if (row === combo3) {
+        row = null;
+        break;
+      }
+    }
+    expect(row).not.toBeNull();
   });
 });

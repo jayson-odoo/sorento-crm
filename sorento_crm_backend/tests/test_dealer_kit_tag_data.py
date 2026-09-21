@@ -846,7 +846,10 @@ class TestProductSpecs:
             {
                 "key": f"{stem}_material",
                 "label": "Material",
-                "value": "ceramic",
+                # AC-S3-1 (r10): a stored slug title-cases automatically -
+                # "ceramic" prints as "Ceramic", the same rule
+                # `_spec_display_value` applies everywhere else.
+                "value": "Ceramic",
                 "unit": None,
             },
         ]
@@ -895,7 +898,8 @@ class TestLineSpecs:
         assert {
             "key": f"{stem}_material",
             "label": "Material",
-            "value": "granite",
+            # AC-S3-1 (r10): title-cased, like every other stored slug.
+            "value": "Granite",
             "unit": None,
         } in row["specs"]
 
@@ -1036,3 +1040,554 @@ class TestProductPhotoTiebreak:
 
         assert len(images) == 1
         assert images[0]["attachment_id"] == drawing.id
+
+
+# ---------------------------------------------------------------------------
+# AC-S3-1 .. AC-S3-4 (PLAN-price-tag-r10.md S3): readable spec values.
+#
+# `_spec_display_value` gains a second argument, `value_labels` - the call
+# below is the red import/signature until the coder adds it (`TypeError:
+# _spec_display_value() takes 1 positional argument but 2 were given`).
+# ---------------------------------------------------------------------------
+
+
+class TestSpecDisplayValue:
+    def test_ac_s3_1_a_slug_with_no_value_labels_title_cases_with_spaces(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("stainless_steel", {}) == "Stainless Steel"
+
+    def test_ac_s3_2_rose_gold_and_single_lever_title_case(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("rose_gold", {}) == "Rose Gold"
+        assert _spec_display_value("single_lever", {}) == "Single Lever"
+
+    def test_ac_s3_2_acronym_words_upper_case(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("pvc", {}) == "PVC"
+        assert _spec_display_value("pvc_pipe", {}) == "PVC Pipe"
+
+    def test_ac_s3_3_a_value_label_wins_over_the_automatic_form(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("pp", {"pp": "Polypropylene"}) == "Polypropylene"
+
+    def test_ac_s3_4_an_integer_valued_float_still_prints_bare(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value(407.0, {}) == "407"
+
+    def test_ac_s3_4_a_bool_still_prints_yes_no(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value(True, {}) == "Yes"
+        assert _spec_display_value(False, {}) == "No"
+
+    def test_ac_s3_4_free_text_with_spaces_is_returned_unchanged(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("Made in Malaysia", {}) == "Made in Malaysia"
+
+    def test_ac_s3_4_a_numeric_string_is_returned_unchanged(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("407", {}) == "407"
+
+    def test_ac_s3_4_an_empty_string_is_returned_unchanged(self):
+        from app.services.dealer_kit.tag_data_service import _spec_display_value
+
+        assert _spec_display_value("", {}) == ""
+
+
+def test_ac_s3_1_product_specs_reads_value_labels_off_the_registry_key(db):
+    """`product_specs` must pass the registry key's OWN `value_labels`
+    through to `_spec_display_value`, not an empty dict - a value label set
+    on the key has to win over the automatic slug form end to end."""
+    from app.services.dealer_kit import tag_data_service
+
+    product = _product(db)
+    key = _registry_key(db, "material", "Material")
+    key.value_labels = {"stainless_steel": "18/8 Stainless"}
+    db.flush()
+    _spec_values(db, product, {"material": {"value": "stainless_steel"}})
+
+    specs = tag_data_service.product_specs(db, product)
+
+    assert specs[0]["value"] == "18/8 Stainless"
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-4 (PLAN-price-tag-r10.md S4): `price_tag_description` on the line's
+# product row and on every part row. Red until the coder adds the column
+# (AttributeError off `Product.price_tag_description`) and threads it
+# through `resolve_tags_live`/`_part_row`.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s4_4_resolve_tags_live_carries_price_tag_description_on_the_host():
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        product = _product(db)
+        product.price_tag_description = "ZZT tag copy\nSecond line"
+        db.flush()
+        request = TestResolveLines()._request_with_line(db, product)
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+
+        assert rows[0]["price_tag_description"] == "ZZT tag copy\nSecond line"
+
+
+def test_ac_s4_4_part_row_carries_its_own_products_price_tag_description():
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        part_product = _product(db)
+        part_product.price_tag_description = "ZZT part copy"
+        db.flush()
+
+        part = tag_data_service._part_row(
+            db, part_product, tag_data_service.staff_viewer(), None, {}
+        )
+
+        assert part["price_tag_description"] == "ZZT part copy"
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-6 (PLAN-price-tag-r10.md S5): a line whose combo names an image
+# resolves `images[0]` to it with `is_primary: true`, followed by the
+# gallery; a line on the same product without a combo keeps the gallery
+# order.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s5_6_a_combo_image_leads_the_line_images_list():
+    from app.models.product_combo import ProductCombo
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        product = _product(db)
+        gallery_photo = _image(db, product, access_levels=["dealer", "end_user"])
+        combo_image = _image(db, product, access_levels=["dealer", "end_user"])
+        combo = ProductCombo(
+            id=str(uuid.uuid4()),
+            host_product_id=product.id,
+            name=unique_code("combo"),
+            sort_order=0,
+            image_attachment_id=combo_image.id,
+        )
+        db.add(combo)
+        db.flush()
+
+        request = TestResolveLines()._request_with_line(db, product)
+        request.lines[0].combo_id = combo.id
+        db.flush()
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+
+        images = rows[0]["images"]
+        assert images[0]["attachment_id"] == combo_image.id
+        assert images[0]["is_primary"] is True
+        assert any(img["attachment_id"] == gallery_photo.id for img in images[1:])
+
+
+def test_ac_s5_6_a_line_with_no_combo_keeps_the_plain_gallery_order():
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        product = _product(db)
+        photo = _image(db, product, access_levels=["dealer", "end_user"], is_primary=True)
+        request = TestResolveLines()._request_with_line(db, product)
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+
+        assert rows[0]["images"][0]["attachment_id"] == photo.id
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-3 (PLAN-price-tag-r10.md S6): every tag of a combo line exposes ALL
+# products of the combo - fixed parts plus every candidate of every open
+# group - each carrying `role`/`chosen`; `own_parts` keeps today's narrower
+# list (this tag's own resolved parts) for `set_members`/Tag total.
+# ---------------------------------------------------------------------------
+
+
+def _combo_line_request(db):
+    """A cabinet with a fixed mirror part and a 3-candidate open Kitchen Tap
+    group, submitted so it auto-splits into three tags (D6)."""
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = _product(db, code=unique_code("ZZTCAB"))
+    mirror = _product(db, code=unique_code("ZZTMIR"))
+    taps = [_product(db, code=unique_code(f"ZZTTAP{i}")) for i in range(3)]
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="4 in 1", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()),
+            combo_id=combo.id,
+            part_product_id=mirror.id,
+            choice_group=None,
+            sort_order=0,
+        )
+    )
+    for index, tap in enumerate(taps):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=tap.id,
+                choice_group="Kitchen Tap",
+                sort_order=index + 1,
+            )
+        )
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.submit_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 3,
+                    "parts": [
+                        {"product_id": mirror.id},
+                        {"role": "Kitchen Tap", "candidates": [tap.id for tap in taps]},
+                    ],
+                }
+            ],
+        },
+    )
+    db.commit()
+    return request, cabinet, mirror, taps
+
+
+def _combo_line_with_trailing_fixed_part(db):
+    """X (fixed, sort 0), an open Kitchen Tap group of A/B/C (sort 1), Y
+    (fixed, sort 2) - a fixed part AFTER the open group, so the WIDE order
+    the group's leftover candidates get appended in is distinguishable from
+    the pre-r10 narrow order they used to sit inside (AC-S6-13)."""
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = _product(db, code=unique_code("ZZTIDX"))
+    x = _product(db, code=unique_code("ZZTX"))
+    y = _product(db, code=unique_code("ZZTY"))
+    candidates = [_product(db, code=unique_code(f"ZZTC{i}")) for i in range(3)]
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="idx combo", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()), combo_id=combo.id, part_product_id=x.id,
+            choice_group=None, sort_order=0,
+        )
+    )
+    for index, candidate in enumerate(candidates):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()), combo_id=combo.id, part_product_id=candidate.id,
+                choice_group="Group", sort_order=1,
+            )
+        )
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()), combo_id=combo.id, part_product_id=y.id,
+            choice_group=None, sort_order=2,
+        )
+    )
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.submit_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 1,
+                    "parts": [
+                        {"product_id": x.id},
+                        {"role": "Group", "candidates": [c.id for c in candidates]},
+                        {"product_id": y.id},
+                    ],
+                }
+            ],
+        },
+    )
+    db.commit()
+    return request, x, y, candidates
+
+
+def test_ac_s6_13_part_index_is_stable_own_order_first_then_leftover_candidates():
+    """AC-S6-13: `parts` is the pre-r10 NARROW order first (this tag's own
+    fixed parts and its chosen candidate, in sort order) with the group's
+    non-chosen candidates APPENDED at the end, in combo order - never
+    interleaved at the group's own sort position. `own_parts` is that narrow
+    list alone."""
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, x, y, candidates = _combo_line_with_trailing_fixed_part(db)
+        line = request.lines[0]
+        tags = sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))
+        assert len(tags) == 3, "one tag per candidate, D6"
+
+        for tag in tags:
+            chosen_id = next(iter((tag.choices or {}).values()))
+            chosen = next(c for c in candidates if str(c.id) == str(chosen_id))
+            leftovers = [c for c in candidates if c.id != chosen.id]
+
+            rows = tag_data_service.resolve_tags_live(db, request, [tag])
+            row = rows[0]
+
+            own_codes = [p["code"] for p in row["own_parts"]]
+            assert own_codes == [x.product_code, chosen.product_code, y.product_code], (
+                tag.label if hasattr(tag, "label") else tag.id,
+                own_codes,
+            )
+
+            codes = [p["code"] for p in row["parts"]]
+            expected = (
+                [x.product_code, chosen.product_code, y.product_code]
+                + [c.product_code for c in leftovers]
+            )
+            assert codes == expected, codes
+            # The captain's own worked numbers: Y always at index 2, the
+            # chosen candidate always at index 1, whichever tag this is.
+            assert codes.index(y.product_code) == 2
+            assert codes.index(chosen.product_code) == 1
+
+
+def test_ac_s6_3_tag_1a_parts_lists_every_candidate_own_parts_is_the_narrow_list():
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, _cabinet, mirror, taps = _combo_line_request(db)
+        line = request.lines[0]
+        tag_1a = sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))[0]
+
+        rows = tag_data_service.resolve_tags_live(db, request, [tag_1a])
+
+        row = rows[0]
+        part_codes = {p["code"] for p in row["parts"]}
+        assert part_codes == {mirror.product_code, *[t.product_code for t in taps]}, row["parts"]
+
+        own_codes = [p["code"] for p in row["own_parts"]]
+        chosen_tap = next(
+            t for t in taps if str(t.id) in (tag_1a.choices or {}).values()
+        )
+        assert own_codes == [mirror.product_code, chosen_tap.product_code]
+
+        chosen_flags = {p["code"]: p.get("chosen") for p in row["parts"]}
+        assert chosen_flags[chosen_tap.product_code] is True
+        for other in taps:
+            if other.id != chosen_tap.id:
+                assert not chosen_flags[other.product_code]
+
+        roles = {
+            p["code"]: p.get("role") for p in row["parts"] if p["code"] != mirror.product_code
+        }
+        assert all(role == "Kitchen Tap" for role in roles.values())
+
+
+def test_ac_s4_15_resolve_tags_live_carries_price_tag_description_on_every_part_row():
+    """AC-S4-15 (S11 re-check, phase 3, 21 Sep): the fixed part, the CHOSEN
+    candidate and every non-chosen sibling all carry their own
+    `price_tag_description` on `parts`; the fixed part and the chosen
+    candidate also carry it on `own_parts`. Written to eliminate one of the
+    two hypotheses for the "a part template edit never reaches the tag"
+    defect: `_part_row`/`_combo_products` already thread the field through
+    correctly here (confirmed green) - the real gap is `data_hash`/
+    `diff_pin_against_live` never fingerprinting it, covered in
+    `test_price_tag_data_pin.py::TestAcS415APartProductsTemplateEditReachesThePin`."""
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, _cabinet, mirror, taps = _combo_line_request(db)
+        mirror.price_tag_description = "{{product.code}} MIRROR"
+        for index, tap in enumerate(taps):
+            tap.price_tag_description = f"{{{{product.code}}}} TAP-{index}"
+        db.flush()
+        line = request.lines[0]
+        tag_1a = sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))[0]
+        chosen_tap = next(
+            t for t in taps if str(t.id) in (tag_1a.choices or {}).values()
+        )
+
+        rows = tag_data_service.resolve_tags_live(db, request, [tag_1a])
+        row = rows[0]
+
+        parts_by_code = {p["code"]: p for p in row["parts"]}
+        assert parts_by_code[mirror.product_code]["price_tag_description"] == (
+            "{{product.code}} MIRROR"
+        )
+        for tap in taps:
+            assert parts_by_code[tap.product_code]["price_tag_description"] is not None, (
+                tap.product_code,
+                parts_by_code[tap.product_code],
+            )
+
+        own_by_code = {p["code"]: p for p in row["own_parts"]}
+        assert own_by_code[mirror.product_code]["price_tag_description"] == (
+            "{{product.code}} MIRROR"
+        )
+        assert (
+            own_by_code[chosen_tap.product_code]["price_tag_description"]
+            == parts_by_code[chosen_tap.product_code]["price_tag_description"]
+        )
+
+
+def test_ac_s6_3_set_members_still_prints_only_the_tags_own_parts():
+    """An unchanged template must keep printing exactly what it printed
+    before r10 - `set_members` reads `own_parts`, never the widened `parts`."""
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, _cabinet, mirror, taps = _combo_line_request(db)
+        line = request.lines[0]
+        tag_1a = sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))[0]
+        chosen_tap = next(t for t in taps if str(t.id) in (tag_1a.choices or {}).values())
+
+        rows = tag_data_service.resolve_tags_live(db, request, [tag_1a])
+
+        set_members = rows[0]["set_members"]
+        for other in taps:
+            if other.id != chosen_tap.id:
+                assert other.product_code not in set_members, set_members
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-11: a pinned row written before r10 (no `own_parts`) still renders
+# `set_members`/Tag total from `parts` - `_row_from_pin` falls back.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s6_11_row_from_pin_falls_back_to_parts_when_own_parts_is_absent():
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        request, _cabinet, mirror, taps = _combo_line_request(db)
+        line = request.lines[0]
+        tag = line.tags[0]
+        pinned = {
+            "code": "ZZT-PRE-R10",
+            "parts": [{"code": mirror.product_code, "name": "Mirror"}],
+            # deliberately NO "own_parts" key - the pre-r10 shape.
+        }
+
+        row = tag_data_service._row_from_pin(db, line, tag, pinned, "1a")
+
+        assert row.get("own_parts") == pinned["parts"]
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-9 / AC-S5-10 (PLAN-price-tag-r10.md S5): deleting the combo's image
+# attachment nulls the combo's own pointer (the migration's ON DELETE SET
+# NULL) and the line falls back to the gallery; changing the combo's picture
+# changes the tag's pinned-data hash, so an open request sees the red dot.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s5_9_deleting_the_attachment_nulls_the_combo_and_falls_back_to_gallery():
+    from app.models.product_combo import ProductCombo
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        product = _product(db)
+        gallery_photo = _image(db, product, access_levels=["dealer", "end_user"])
+        combo_image = _image(db, product, access_levels=["dealer", "end_user"])
+        combo = ProductCombo(
+            id=str(uuid.uuid4()),
+            host_product_id=product.id,
+            name=unique_code("combo"),
+            sort_order=0,
+            image_attachment_id=combo_image.id,
+        )
+        db.add(combo)
+        db.flush()
+
+        db.delete(combo_image)
+        db.flush()
+        db.refresh(combo)
+        assert combo.image_attachment_id is None, (
+            "the FK must be ON DELETE SET NULL - the migration's own contract"
+        )
+
+        request = TestResolveLines()._request_with_line(db, product)
+        request.lines[0].combo_id = combo.id
+        db.flush()
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+        images = rows[0]["images"]
+        assert images[0]["attachment_id"] == gallery_photo.id, (
+            "with no combo image, the line must fall back to the plain gallery"
+        )
+
+
+def test_ac_s5_10_changing_the_combo_image_changes_the_pinned_data_hash():
+    from app.models.product_combo import ProductCombo
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        product = _product(db)
+        first_image = _image(db, product, access_levels=["dealer", "end_user"])
+        second_image = _image(db, product, access_levels=["dealer", "end_user"])
+        combo = ProductCombo(
+            id=str(uuid.uuid4()),
+            host_product_id=product.id,
+            name=unique_code("combo"),
+            sort_order=0,
+            image_attachment_id=first_image.id,
+        )
+        db.add(combo)
+        db.flush()
+
+        request = TestResolveLines()._request_with_line(db, product)
+        request.lines[0].combo_id = combo.id
+        db.flush()
+
+        first_rows = tag_data_service.resolve_request_line_data(db, request)
+        first_hash = tag_data_service.data_hash(first_rows[0])
+
+        combo.image_attachment_id = second_image.id
+        db.flush()
+
+        second_rows = tag_data_service.resolve_request_line_data(db, request)
+        second_hash = tag_data_service.data_hash(second_rows[0])
+
+        assert first_hash != second_hash, (
+            "swapping the combo picture must move the pinned-data hash, or "
+            "an open request never sees the red dot for it"
+        )

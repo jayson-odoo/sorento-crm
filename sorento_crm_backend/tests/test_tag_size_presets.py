@@ -319,3 +319,80 @@ def test_a_foreign_companys_size_cannot_be_deleted(api):
     _scope(_SORENTO)
     db.expire_all()
     assert db.query(TagSizePreset).filter(TagSizePreset.id == mine_id).first() is not None
+
+
+# ---------------------------------------------------------------------------
+# AC-S7-11 (PLAN-price-tag-r10.md S7): the preset carries an optional per-A4
+# grid (`sheet_cols`/`sheet_rows`/`sheet_turn`) that arrange uses when set.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s7_11_a_preset_can_be_created_with_a_sheet_grid(api):
+    db, _as, _scope = api
+
+    with TestClient(app) as client:
+        name = unique_code("Small")
+        created = client.post(
+            BASE,
+            json={
+                "name": name,
+                "width_mm": 66.7,
+                "height_mm": 31.9,
+                "sheet_cols": 3,
+                "sheet_rows": 9,
+                "sheet_turn": False,
+            },
+        )
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert body["sheet_cols"] == 3
+        assert body["sheet_rows"] == 9
+        assert body["sheet_turn"] is False
+        preset_id = body["id"]
+
+        fetched = client.get(BASE)
+        row = next(r for r in fetched.json() if r["id"] == preset_id)
+        assert row["sheet_cols"] == 3
+        assert row["sheet_rows"] == 9
+
+    db.expire_all()
+    assert db.query(TagSizePreset).filter(TagSizePreset.id == preset_id).first() is not None
+
+
+def test_ac_s7_11_a_preset_with_no_grid_answers_null(api):
+    db, _as, _scope = api
+
+    with TestClient(app) as client:
+        created = client.post(
+            BASE, json={"name": unique_code("NoGrid"), "width_mm": 95, "height_mm": 44.5}
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["sheet_cols"] is None
+        assert created.json()["sheet_rows"] is None
+        assert created.json()["sheet_turn"] is False
+
+
+def test_ac_s7_11_the_grid_can_be_updated_and_cleared(api):
+    db, _as, _scope = api
+
+    with TestClient(app) as client:
+        created = client.post(
+            BASE,
+            json={
+                "name": unique_code("Kitchen"),
+                "width_mm": 143.5,
+                "height_mm": 100,
+                "sheet_cols": 2,
+                "sheet_rows": 2,
+                "sheet_turn": True,
+            },
+        )
+        preset_id = created.json()["id"]
+
+        updated = client.put(
+            f"{BASE}/{preset_id}",
+            json={"sheet_cols": None, "sheet_rows": None, "sheet_turn": False},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["sheet_cols"] is None
+        assert updated.json()["sheet_turn"] is False

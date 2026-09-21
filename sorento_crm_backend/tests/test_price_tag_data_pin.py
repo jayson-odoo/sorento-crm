@@ -1267,10 +1267,17 @@ class TestRecheckProductData:
     """
 
     def test_recheck_clears_the_ack_and_the_diff_reappears(self, crm):
+        # AC-S8-2 governs `designing` since r10 - the very next poll auto-
+        # applies the diff this test wants to see reappear as a FLAG, which
+        # would make it disappear (re-pinned) instead. `proof_ready` is
+        # outside `AUTO_UPDATE_STATUSES` (AC-S8-4), so recheck's r9 flag-only
+        # semantics are still exactly what this test guards there.
         client, db = crm
         product = seed.seed_product(db, list_price=1000.00)
         request, _product, _contact = _designing_request(db, product=product)
         seed.attach_design(db, request)
+        request.status = "proof_ready"
+        db.commit()
         tag_id = _tags(db, request.id)[0].id
 
         product.list_price = 1200.00
@@ -1348,3 +1355,834 @@ class TestRecheckProductData:
         # must exist and be the thing that refuses this id, or the assertion
         # above passes for a reason that has nothing to do with company scope.
         assert response.json().get("code") == "NOT_FOUND", response.text
+
+
+# ---------------------------------------------------------------------------
+# S8 (PLAN-price-tag-r10.md, "Product data change: auto-apply, keep the old
+# data for rollback, indicator"): `designing`/`changes_requested` no longer
+# wait for a person to click Update - the read seam itself (`resolve_request_
+# line_data`) applies the change the next time anything reads it. Written
+# test-FIRST: `data_updated_at`/`data_update_changes`/`data_update_version`
+# do not exist on the model yet, so every assertion reading them is red on
+# AttributeError; the auto-apply behaviour itself is red because today
+# nothing re-pins without an explicit `pin` action.
+# ---------------------------------------------------------------------------
+
+
+class TestS8AutoApplyOnDesigning:
+    def test_ac_s8_2_the_next_poll_applies_the_change_and_reports_it_once(self, crm):
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        page, _doc = seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        row = next(r for r in body if r["tag_id"] == tag_id)
+        assert any(c.get("field") == "list_price" for c in row["changes"]), row
+
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert float(tag.pinned_tag_data["list_price"]) == 1200.00, (
+            "the tag must be re-pinned to the LIVE value with no click"
+        )
+        assert tag.data_updated_at is not None
+        assert tag.data_update_changes, tag.data_update_changes
+        assert tag.data_update_version is not None
+
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        before = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Before product update:")
+        ]
+        assert len(before) == 1, [v.commit_message for v in versions]
+        assert tag.data_update_version == before[0].version
+
+    def test_ac_s8_2_a_second_poll_with_no_further_edit_reports_nothing(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        again = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
+        assert again == [], again
+
+    def test_ac_s8_3_three_tags_changing_together_fold_into_one_before_version(self, crm):
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        products = [seed.seed_product(db, list_price=100.00 * (i + 1)) for i in range(3)]
+        request, _p, _contact = _designing_request(db, product=products[0])
+        PriceTagRequestService.replace_lines(
+            db,
+            request,
+            [{"line_type": "product", "product_id": p.id} for p in products],
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        for p in products:
+            p.list_price = p.list_price + 50
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        tags = _tags(db, request.id)
+        assert len(tags) == 3
+        assert all(t.data_updated_at is not None for t in tags)
+
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        before = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Before product update:")
+        ]
+        assert len(before) == 1, (
+            "three tags changing in one sweep must fold into ONE before-version, "
+            f"got {[v.commit_message for v in versions]}"
+        )
+
+    def test_ac_s8_4_proof_ready_is_not_auto_applied_flag_only_as_today(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        request.status = "proof_ready"
+        db.commit()
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        row = next(r for r in body if r["tag_id"] == tag_id)
+        assert row["changes"], "the change must still be FLAGGED at proof_ready"
+
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert float(tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "proof_ready must NOT auto-apply - Keep/Update stay a person's own click"
+        )
+
+        # Keep still works exactly as before S8.
+        kept = client.post(
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin", json={"action": "keep"}
+        )
+        assert kept.status_code == 200, kept.text
+
+    def test_ac_s8_5_the_list_sweep_applies_the_update_too(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        listed = client.get("/api/v1/dealer-kit/price-tag-requests")
+        assert listed.status_code == 200, listed.text
+
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert tag.data_updated_at is not None, (
+            "the list sweep must apply the update the same way the detail poll does"
+        )
+
+        row = next(r for r in listed.json()["data"] if r["id"] == request.id)
+        assert row["data_changed_tag_count"] >= 1
+
+    def test_ac_s8_13_the_badge_holds_its_count_across_a_second_sweep_until_dismiss(
+        self, crm
+    ):
+        """AC-S8-13 (new, extends AC-S8-5): the list badge is "seen it or not",
+        not "does a live diff exist right now" - the FIRST sweep after a
+        product edit auto-applies (S8-2) and re-pins the tag to the live
+        value, so a diff computed AFTER that has nothing left to report. If
+        the stored count tracked that live diff it would silently drop to 0
+        on the very next poll, and the "Product data updated" badge would
+        vanish before anyone opened Review - the auto-apply's whole point is
+        to be SEEN, not applied invisibly. The count must instead track
+        `data_updated_at` (set on apply, cleared only by Dismiss).
+
+        Polls through `GET .../data-changes` (AC-S8-2's own poll endpoint,
+        which always re-resolves) rather than the list route - the list
+        route's OWN `touched_request_ids` cap would skip a row nothing has
+        touched since its last check and read the stored column back
+        unchanged, which would pass this test without ever exercising the
+        gap. `data_changed_tag_count` is asserted straight off the row
+        `store_data_change_count` (shared by both routes) writes.
+
+        Red today (captain's test list, 20 Sep): `_row_change_count`/
+        `store_data_change_count` still count `row.get("changes") or
+        row.get("data_changes")` - the LIVE diff, empty the moment the tag
+        is re-pinned - so the second poll's count silently drops to 0.
+        """
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+
+        def _stored_count() -> int:
+            db.expire_all()
+            from app.models.price_tag import PriceTagRequest
+
+            return (
+                db.query(PriceTagRequest.data_changed_tag_count)
+                .filter(PriceTagRequest.id == request.id)
+                .scalar()
+            )
+
+        first_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert first_poll.status_code == 200, first_poll.text
+        assert _stored_count() == 1, "the first poll must auto-apply and count the tag"
+
+        tag_id = _tags(db, request.id)[0].id
+
+        second_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert second_poll.status_code == 200, second_poll.text
+        assert _stored_count() == 1, (
+            "the badge must hold its count across a second poll with no "
+            "further edit - it means 'not yet dismissed', not 'a live diff "
+            "exists right now'"
+        )
+
+        dismissed = client.post(f"{_CRM.format(id=request.id)}/tags/{tag_id}/dismiss")
+        assert dismissed.status_code == 200, dismissed.text
+
+        third_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert third_poll.status_code == 200, third_poll.text
+        assert _stored_count() == 0, "Dismiss must be what finally clears the badge"
+
+    def test_ac_s8_6_dismiss_clears_the_three_columns_and_the_count_drops(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        response = client.post(f"{_CRM.format(id=request.id)}/tags/{tag_id}/dismiss")
+
+        assert response.status_code == 200, response.text
+        db.expire_all()
+        tag = _tags(db, request.id)[0]
+        assert tag.data_updated_at is None
+        assert tag.data_update_changes is None
+        assert tag.data_update_version is None
+
+    def test_ac_s8_6_extended_dismiss_does_not_auto_apply_another_tags_own_diff(
+        self, crm
+    ):
+        """AC-S8-6 extended (captain's ruling, phase 3 review): Dismiss's own
+        count-refresh must pass `apply_updates=False`, the same way the pin
+        route's does (its own comment: a second, uncoordinated before/after
+        pair for some OTHER tag must never ride in on this call)."""
+        client, db = crm
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product_a = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product_a)
+        seed.attach_design(db, request)
+        product_a.list_price = 1200.00
+        db.commit()
+        tag_a_id = _tags(db, request.id)[0].id
+
+        first_poll = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert first_poll.status_code == 200, first_poll.text
+
+        product_b = seed.seed_product(db, list_price=1000.00)
+        PriceTagRequestService.replace_lines(
+            db,
+            request,
+            [
+                {"line_type": "product", "product_id": product_a.id},
+                {"line_type": "product", "product_id": product_b.id},
+            ],
+        )
+        db.commit()
+        # Pins the new tag fresh (no diff yet).
+        client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        product_b.list_price = 1300.00
+        db.commit()
+        db.expire_all()
+        tag_b_id = next(
+            t.id for t in _tags(db, request.id) if t.id != tag_a_id
+        )
+
+        dismissed = client.post(f"{_CRM.format(id=request.id)}/tags/{tag_a_id}/dismiss")
+        assert dismissed.status_code == 200, dismissed.text
+
+        db.expire_all()
+        tag_b = next(t for t in _tags(db, request.id) if t.id == tag_b_id)
+        assert tag_b.data_updated_at is None, (
+            "tag B's own diff must not be swept up by tag A's dismiss call"
+        )
+        assert float(tag_b.pinned_tag_data["list_price"]) == 1000.00
+
+    def test_ac_s8_10_a_terminal_request_is_never_re_pinned(self, db_only):
+        from app.services.dealer_kit import tag_data_service
+
+        product = seed.seed_product(db_only, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db_only)
+        request = seed.seed_request(
+            db_only, contact_id, status="collected", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        line = request.lines[0]
+        tag = seed.first_tag(request)
+        tag.pinned_tag_data = {"code": product.product_code, "list_price": 1000.00}
+        tag.pinned_at = seed.utcnow()
+        db_only.commit()
+        product.list_price = 1200.00
+        db_only.commit()
+
+        tag_data_service.resolve_request_line_data(db_only, request)
+
+        db_only.expire_all()
+        fresh = (
+            db_only.query(type(tag)).filter_by(id=tag.id).first()
+        )
+        assert float(fresh.pinned_tag_data["list_price"]) == 1000.00
+        assert fresh.data_updated_at is None
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-8 (PLAN-price-tag-r10.md S4): editing `price_tag_description` on a
+# product with an open request changes the tag's data hash, so `GET
+# data-changes` flags it - the same gate every other pinned field already
+# goes through. Checked at `proof_ready`, outside `AUTO_UPDATE_STATUSES`
+# (S8), so this is a clean "flag, not auto-apply" assertion.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s4_8_a_price_tag_description_edit_is_flagged_as_a_data_change():
+    with blank_session() as db:
+        seed.seed_marketer(db)
+        product = seed.seed_product(db)
+        product.price_tag_description = "Original copy"
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product],
+            print_by="office", assigned_to_id=seed.MARKETER_ID,
+        )
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        request.status = "proof_ready"
+        db.commit()
+
+        product.price_tag_description = "Changed copy"
+        db.commit()
+
+        from app.services.dealer_kit import tag_data_service
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+
+        row = rows[0]
+        fields = {c.get("field") for c in (row.get("data_changes") or [])}
+        assert "price_tag_description" in fields, row.get("data_changes")
+
+
+# ---------------------------------------------------------------------------
+# AC-S8-15 (captain's ruling, phase 3 review): auto-apply must require the
+# ACTING principal to hold `.process`, on a REAL staff session - a `.view`
+# only caller (or an X-API-Key call, whatever the acted-as user's own grants
+# are) may still poll and see the diff, but the resolver must not write on
+# their behalf. A `.process` holder's own PageVersions must name them
+# (`created_by`), not go in as an anonymous system write.
+# ---------------------------------------------------------------------------
+
+
+def _seed_role(db, *, user_id: str, role_id: str, slug: str, permissions: list[str]):
+    from app.models.user import (
+        User,
+        UserPermission,
+        UserRole,
+        UserRoleAssignment,
+        UserRolePermission,
+    )
+
+    db.add(
+        UserRole(
+            id=role_id, slug=slug, name=slug, description="",
+            is_protected=False, is_default=False,
+        )
+    )
+    db.add(User(id=user_id, email=f"{slug}@test.com", name=slug, status="ACTIVE"))
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
+    for perm_slug in permissions:
+        existing = (
+            db.query(UserPermission).filter(UserPermission.slug == perm_slug).first()
+        )
+        if existing is None:
+            existing = UserPermission(id=str(uuid.uuid4()), slug=perm_slug, name=perm_slug, description="")
+            db.add(existing)
+            db.flush()
+        db.add(
+            UserRolePermission(
+                id=str(uuid.uuid4()), role_id=role_id, permission_id=existing.id
+            )
+        )
+    db.commit()
+
+
+_VIEW_ONLY_ID = "a1b2c3d4-0001-4000-8000-000000000001"
+_VIEW_ONLY_ROLE = "a1b2c3d4-0001-4000-8000-000000000002"
+_PROCESS_HOLDER_ID = "a1b2c3d4-0002-4000-8000-000000000001"
+_PROCESS_HOLDER_ROLE = "a1b2c3d4-0002-4000-8000-000000000002"
+
+
+def _diff_request_in_designing(db):
+    """A designing request, already pinned, whose product then changes -
+    exactly the shape `AUTO_UPDATE_STATUSES` auto-applies on today."""
+    product = seed.seed_product(db, list_price=1000.00)
+    contact_id = seed.seed_portal_contact(db)
+    request = seed.seed_request(
+        db, contact_id, status="new", products=[product], print_by="office",
+    )
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    PriceTagRequestService.transition_status(
+        db, request.id, "designing", user_id=seed.MARKETER_ID
+    )
+    db.commit()
+    seed.attach_design(db, request)
+    product.list_price = 1200.00
+    db.commit()
+    tag_id = _tags(db, request.id)[0].id
+    return request, tag_id
+
+
+@pytest.fixture
+def rbac_client():
+    from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    with blank_session() as db:
+        seed.seed_marketer(db)  # the .process holder `crm` fixtures already use
+        _seed_role(
+            db, user_id=_VIEW_ONLY_ID, role_id=_VIEW_ONLY_ROLE, slug="zzt_ptag_view_only",
+            permissions=["dealer_kit.price_tag_requests.view"],
+        )
+
+        def _override_get_db():
+            yield db
+
+        async def _override_scope():
+            scope = frozenset({seed.SORENTO})
+            set_company_scope(db, scope)
+            return scope
+
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[apply_company_scope] = _override_scope
+
+        def _as_view_only():
+            app.dependency_overrides[get_current_user] = lambda: {
+                "id": _VIEW_ONLY_ID, "email": "zzt_ptag_view_only@test.com",
+            }
+            app.dependency_overrides[get_current_user_or_api_key] = (
+                app.dependency_overrides[get_current_user]
+            )
+
+        def _as_marketer():
+            principal = {"id": seed.MARKETER_ID, "email": "zzt-ptag-r9-marketer@test.com"}
+            app.dependency_overrides[get_current_user] = lambda: principal
+            app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+        def _as_api_key_acting_as(user_id: str):
+            # The real integration_auth marker (`auth_method`) that tells a
+            # route apart from a normal session - `get_current_user` (JWT
+            # only) is never reachable via an API key, only the combined
+            # dependency is.
+            principal = {"id": user_id, "email": "zzt-api-key@test.com", "auth_method": "integration_api_key"}
+            app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+        try:
+            with TestClient(app) as client:
+                yield client, db, _as_view_only, _as_marketer, _as_api_key_acting_as
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestS8AutoApplyRequiresAProcessHoldingStaffSession:
+    def test_a_view_only_principal_sees_the_diff_but_does_not_apply(self, rbac_client):
+        client, db, as_view_only, _as_marketer, _as_api_key = rbac_client
+        request, tag_id = _diff_request_in_designing(db)
+        as_view_only()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        row = next((r for r in body if r["tag_id"] == tag_id), None)
+        assert row is not None and row["changes"], (
+            "a viewer must still be TOLD about the change"
+        )
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "a .view-only caller must never trigger the re-pin"
+        )
+        assert tag.data_updated_at is None
+
+    def test_an_api_key_principal_does_not_apply_even_acting_as_a_process_holder(
+        self, rbac_client
+    ):
+        client, db, _as_view_only, _as_marketer, as_api_key = rbac_client
+        request, tag_id = _diff_request_in_designing(db)
+        _seed_role(
+            db, user_id=_PROCESS_HOLDER_ID, role_id=_PROCESS_HOLDER_ROLE,
+            slug="zzt_ptag_process_holder",
+            permissions=[
+                "dealer_kit.price_tag_requests.view",
+                "dealer_kit.price_tag_requests.process",
+            ],
+        )
+        as_api_key(_PROCESS_HOLDER_ID)
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1000.00, (
+            "an API-key channel must never auto-apply, whatever the acted-as "
+            "user's own grants are"
+        )
+        assert tag.data_updated_at is None
+
+    def test_a_process_holder_applies_and_the_versions_carry_their_created_by(
+        self, rbac_client
+    ):
+        client, db, _as_view_only, as_marketer, _as_api_key = rbac_client
+        request, tag_id = _diff_request_in_designing(db)
+        as_marketer()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequestTag
+
+        tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).one()
+        assert float(tag.pinned_tag_data["list_price"]) == 1200.00, (
+            "a .process holder must apply exactly as today"
+        )
+        assert tag.data_updated_at is not None
+
+        versions = (
+            db.query(PageVersion)
+            # `ilike`, not `like` - Postgres LIKE is case-sensitive, and the
+            # AFTER version's own message is "Product update..." (capital P).
+            .filter(PageVersion.commit_message.ilike("%product update%"))
+            .all()
+        )
+        assert len(versions) == 2, "the auto-apply must have written its before/after pair"
+        assert all(v.created_by == seed.MARKETER_ID for v in versions), (
+            "an auto-applied version must be attributed to the staff member "
+            "whose read triggered it, not written as an anonymous system row",
+            [(v.commit_message, v.created_by) for v in versions],
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-S8-16 (captain's ruling, phase 3 review): a version-number race guard.
+# Two pollers computing the SAME `triples` before either has flushed (two
+# concurrent requests both diffing the same live edit) must not each write
+# their own before/after pair - `apply_auto_data_updates` has no idempotency
+# check today, so calling it twice in a row with the same triples writes
+# TWO pairs (4 versions), not one. Single-session version per the captain's
+# fallback: a true two-connection lock test is not attempted here - the
+# scratch-schema fixture (`blank_session`) gives one connection per test, and
+# building a second real connection against the SAME scratch schema outside
+# that fixture is its own can of worms this slice does not need opened to
+# pin the observable contract (one pair, however many times the same
+# already-applied triples are handed in).
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s8_16_apply_auto_data_updates_called_twice_with_the_same_triples_writes_one_pair():
+    from app.models.dealer_kit import PageVersion
+    from app.services.dealer_kit import tag_data_service
+
+    with blank_session() as db:
+        seed.seed_marketer(db)
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db, contact_id, status="new", products=[product], print_by="office",
+        )
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        tag = _tags(db, request.id)[0]
+
+        product.list_price = 1200.00
+        db.commit()
+
+        live_rows = tag_data_service.resolve_tags_live(db, request, [tag])
+        changes = [{"field": "list_price", "label": "List price", "old": "1000.00", "new": "1200.00"}]
+        triples = [(tag, live_rows[0], changes)]
+
+        tag_data_service.apply_auto_data_updates(db, request, triples)
+        tag_data_service.apply_auto_data_updates(db, request, triples)
+
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id, PageVersion.commit_message.ilike("%product update%"))
+            .all()
+        )
+        assert len(versions) == 2, (
+            "a second call with the SAME (already-applied) triples must be a "
+            "no-op, not a duplicate before/after pair",
+            [v.commit_message for v in versions],
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-15 (S11 re-check, phase 3, 21 Sep): a template edit on ANY product of
+# the line's combo reaches the tag - not only the line's own host product
+# (AC-S4-8 only ever covered that one). Root cause probed and confirmed:
+# `_part_row`/`_combo_products` already carry `price_tag_description` on
+# every part row correctly (see `test_dealer_kit_tag_data.py` and
+# `test_dealer_kit_tag_data_routes.py`) - the gap is entirely in
+# `data_hash`'s `subject["parts"]` sub-hash (`product_id`, `role`, `chosen`,
+# `list_price`, `sell_price` only, no `price_tag_description`) and in
+# `diff_pin_against_live`'s per-part loop (`list_price`/`sell_price`/images
+# only). A part's own template changing moves neither the hash nor the
+# named diff, so `diff_pin_against_live`'s own `if data_hash(live) ==
+# data_hash(pinned): return []` guard fires and the change is never
+# detected, never listed, and never auto-applied - the tag's pin stays on
+# the OLD template forever.
+# ---------------------------------------------------------------------------
+
+
+def _designing_combo_request(db):
+    """A designing request whose line has a fixed part X and a 2-candidate
+    open group (C chosen, `candidate_other` not) - D6 splits this into two
+    tags, one per candidate, each carrying X as a fixed `own_parts` member."""
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = seed.seed_product(db)
+    part_x = seed.seed_product(db)
+    candidate_c = seed.seed_product(db)
+    candidate_other = seed.seed_product(db)
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="ZZT combo", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    db.add(
+        ProductComboPart(
+            id=str(uuid.uuid4()),
+            combo_id=combo.id,
+            part_product_id=part_x.id,
+            choice_group=None,
+            sort_order=0,
+        )
+    )
+    for index, candidate in enumerate([candidate_c, candidate_other]):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=candidate.id,
+                choice_group="Group",
+                sort_order=index + 1,
+            )
+        )
+    db.flush()
+
+    contact_id = seed.seed_portal_contact(db)
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact_id,
+        company_id=seed.SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 1,
+                    "parts": [
+                        {"product_id": part_x.id},
+                        {"role": "Group", "candidates": [candidate_c.id, candidate_other.id]},
+                    ],
+                }
+            ],
+        },
+    )
+    request.portal_draft_at = None
+    request.assigned_to_id = seed.MARKETER_ID
+    request.print_by = "office"
+    request.status = "new"
+    db.flush()
+    db.commit()
+
+    PriceTagRequestService.transition_status(
+        db, request.id, "designing", user_id=seed.MARKETER_ID
+    )
+    db.commit()
+    return request, cabinet, part_x, candidate_c, candidate_other
+
+
+def _tag_choosing(db, request, candidate):
+    """The tag among this request's line whose `choices` names `candidate`."""
+    for tag in _tags(db, request.id):
+        if str(candidate.id) in (tag.choices or {}).values():
+            return tag
+    raise AssertionError(f"no tag chose {candidate.id}")
+
+
+def _part_row_of(pinned_tag_data, key, product):
+    rows = pinned_tag_data.get(key) or []
+    return next((row for row in rows if str(row.get("product_id")) == str(product.id)), None)
+
+
+class TestAcS415APartProductsTemplateEditReachesThePin:
+    def test_a_fixed_parts_own_template_edit_flags_and_auto_applies_on_every_tag(
+        self, crm
+    ):
+        client, db = crm
+        request, _cabinet, part_x, candidate_c, candidate_other = (
+            _designing_combo_request(db)
+        )
+        seed.attach_design(db, request)
+        tags = _tags(db, request.id)
+        assert len(tags) == 2, "one tag per open-group candidate (D6)"
+
+        part_x.price_tag_description = "{{product.code}} FIXED-NEW"
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        for tag_id in [t.id for t in tags]:
+            tag = next(t for t in _tags(db, request.id) if t.id == tag_id)
+            assert tag.data_updated_at is not None, (
+                "X is a FIXED part on every tag of this line - editing its "
+                "own template must flag/auto-apply every one of them",
+                tag_id,
+            )
+            own_row = _part_row_of(tag.pinned_tag_data, "own_parts", part_x)
+            assert own_row is not None, tag.pinned_tag_data
+            assert own_row["price_tag_description"] == "{{product.code}} FIXED-NEW"
+            wide_row = _part_row_of(tag.pinned_tag_data, "parts", part_x)
+            assert wide_row is not None
+            assert wide_row["price_tag_description"] == "{{product.code}} FIXED-NEW"
+
+    def test_the_chosen_candidates_own_template_edit_flags_and_auto_applies_its_tag(
+        self, crm
+    ):
+        client, db = crm
+        request, _cabinet, _part_x, candidate_c, _candidate_other = (
+            _designing_combo_request(db)
+        )
+        seed.attach_design(db, request)
+        tag = _tag_choosing(db, request, candidate_c)
+
+        candidate_c.price_tag_description = "{{product.code}} CHOSEN-NEW"
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        tag = next(t for t in _tags(db, request.id) if t.id == tag.id)
+        assert tag.data_updated_at is not None, (
+            "the CHOSEN candidate's own template edit must flag/auto-apply "
+            "the tag that chose it"
+        )
+        own_row = _part_row_of(tag.pinned_tag_data, "own_parts", candidate_c)
+        assert own_row is not None, tag.pinned_tag_data
+        assert own_row["price_tag_description"] == "{{product.code}} CHOSEN-NEW"
+        wide_row = _part_row_of(tag.pinned_tag_data, "parts", candidate_c)
+        assert wide_row is not None
+        assert wide_row["price_tag_description"] == "{{product.code}} CHOSEN-NEW"
+
+    def test_a_non_chosen_candidates_own_template_edit_still_flags_the_tag(
+        self, crm
+    ):
+        """`parts` is the WIDE per-tag list (every candidate of the line's
+        open group, D6/S6) - a non-chosen sibling's own template still rides
+        on every tag's `parts`, even though it never reaches `own_parts`
+        there, so its own edit must still flag/auto-apply."""
+        client, db = crm
+        request, _cabinet, _part_x, candidate_c, candidate_other = (
+            _designing_combo_request(db)
+        )
+        seed.attach_design(db, request)
+        tag = _tag_choosing(db, request, candidate_c)
+
+        candidate_other.price_tag_description = "{{product.code}} SIBLING-NEW"
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/data-changes")
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        tag = next(t for t in _tags(db, request.id) if t.id == tag.id)
+        assert tag.data_updated_at is not None, (
+            "a NON-chosen sibling's own template edit must still flag/auto-"
+            "apply the tag - it is still on that tag's wide `parts` list"
+        )
+        wide_row = _part_row_of(tag.pinned_tag_data, "parts", candidate_other)
+        assert wide_row is not None, tag.pinned_tag_data
+        assert wide_row["price_tag_description"] == "{{product.code}} SIBLING-NEW"
+        # Never chosen on THIS tag, so it must not be in `own_parts` either
+        # before or after - the point under test is only that the CHANGE
+        # was detected, not that ownership moved.
+        assert _part_row_of(tag.pinned_tag_data, "own_parts", candidate_other) is None

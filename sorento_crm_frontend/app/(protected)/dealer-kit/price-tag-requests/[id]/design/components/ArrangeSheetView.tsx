@@ -3,34 +3,27 @@
 /**
  * The Arrange half of the request designer (D51).
  *
- * Where the tags PRINT, once they have been designed. The sheet canvas, the
- * sheet tabs and the imposition controls are the parts of the old
- * `TagSheetDesigner` worth keeping: everything about EDITING a tag now happens
- * in the template editor next door, so a tag here is an object on a page that
- * can be nudged and nothing else.
- *
- * The arrangement itself is computed (`autoArrange`), auto-fit off the tag's
- * own size (S6, D8) - there is no preset to pick, only the page/bleed/gap and
- * a read-only "C x R = N per sheet" line - so this view is normally something
- * to glance at rather than something to do. A tag somebody drags is pinned by
- * the host and survives the next re-arrange.
+ * Where the tags PRINT, once they have been designed. The sheet canvas and
+ * the sheet tabs are what is left of the old `TagSheetDesigner` - everything
+ * about EDITING a tag now happens in the template editor next door, and
+ * since S7 there is nothing to CONFIGURE here either: `autoArrange` groups
+ * every copy by size and packs each group's own sheets at zero gap inside a
+ * fixed 5mm margin, turning a size 90deg when that seats more (or following
+ * a grid configured on the template/size, S7). This view is a place to look,
+ * not a thing to do - no page/bleed/gap fields, no drag.
  */
 
 import { useCallback, useMemo } from 'react';
 import type Konva from 'konva';
 import { Loader2, Minus, Plus, Printer } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import type {
-  ImpositionConfig,
-  ImpositionPreset,
   LineTagData,
   PlacedTag,
   TagBindingData,
   TagSheetDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import { layerDisplay } from '@/lib/dealer-kit/product-block';
-import { impositionFit } from '@/lib/dealer-kit/request-tags';
+import type { SheetPlacement } from '@/lib/dealer-kit/request-tags';
 
 // Rendered inside a component the shell loads with ssr:false, so the direct
 // react-konva imports are safe.
@@ -54,19 +47,13 @@ interface Props {
   /** Resolved line data, keyed by request line id. */
   resolved: Map<string, LineTagData>;
   assetUrls: Record<string, string>;
-  onImpositionChange: (imposition: ImpositionConfig) => void;
-  onMoveTag: (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => void;
   onPrintSheet: (sheetIndex: number) => void;
   printing: boolean;
-  /**
-   * The size the fit line and grid are computed off: the largest of every
-   * line's tag, REQUESTED rather than placed (S6). `doc.sheets` cannot answer
-   * this on its own - when the page is too small for the tag at all,
-   * `autoArrange` seats zero unpinned copies, so reading the size off what
-   * got placed would go blank exactly when AC-S6-3's "0 per sheet" message
-   * most needs a size to quote. Null before any line has a tag yet.
-   */
-  tagDims: { width_mm: number; height_mm: number } | null;
+  /** One entry per `doc.sheets` entry, same index (S7, AC-S7-6): what that
+   *  sheet's size group resolved to - never stored in the doc. */
+  placement: SheetPlacement[];
+  /** Template name by id, for the per-sheet line (S7, AC-S7-6). */
+  templateNameById: Record<string, string>;
 }
 
 export function ArrangeSheetView({
@@ -79,13 +66,13 @@ export function ArrangeSheetView({
   onSelectTag,
   resolved,
   assetUrls,
-  onImpositionChange,
-  onMoveTag,
   onPrintSheet,
   printing,
-  tagDims,
+  placement,
+  templateNameById,
 }: Props) {
   const activeSheet = doc.sheets[activeSheetIndex] ?? doc.sheets[0];
+  const activePlacement = placement[activeSheetIndex] ?? null;
   const scale = DEFAULT_SCALE * zoom;
   const pageW = doc.imposition.page_width_mm;
   const pageH = doc.imposition.page_height_mm;
@@ -97,18 +84,6 @@ export function ArrangeSheetView({
     [doc.sheets],
   );
 
-  const fit = useMemo(() => {
-    if (!tagDims) return null;
-    return impositionFit(
-      doc.imposition.page_width_mm,
-      doc.imposition.page_height_mm,
-      doc.imposition.bleed_mm,
-      doc.imposition.gap_mm,
-      tagDims.width_mm,
-      tagDims.height_mm,
-    );
-  }, [doc.imposition, tagDims]);
-
   const handleStageClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
       if (e.target === e.target.getStage()) onSelectTag(null);
@@ -116,16 +91,14 @@ export function ArrangeSheetView({
     [onSelectTag],
   );
 
-  const handleField = useCallback(
-    (field: keyof ImpositionConfig, value: number) => {
-      onImpositionChange({
-        ...doc.imposition,
-        [field]: value,
-        preset: 'custom' as ImpositionPreset,
-      });
-    },
-    [doc.imposition, onImpositionChange],
-  );
+  // AC-S7-10: a size that fits the page in neither rotation still gets one
+  // overflowing sheet per copy - say so, rather than draw a grid that implies
+  // there was ever a choice of how many fit.
+  const noFit = activePlacement !== null && activePlacement.capacity === 0;
+
+  const sheetLabel = activePlacement
+    ? `${templateNameById[activePlacement.template_id] ?? 'Tag'} - ${activePlacement.cols} x ${activePlacement.rows}, ${activeSheet?.tags.length ?? 0} of ${activePlacement.capacity}`
+    : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -135,6 +108,11 @@ export function ArrangeSheetView({
           {doc.sheets.length} sheet{doc.sheets.length === 1 ? '' : 's'} / {totalTags} tag
           {totalTags === 1 ? '' : 's'}
         </span>
+        {sheetLabel && (
+          <span className="truncate text-xs text-foreground" title={sheetLabel}>
+            {sheetLabel}
+          </span>
+        )}
         <div className="flex-1" />
         <button
           type="button"
@@ -161,16 +139,16 @@ export function ArrangeSheetView({
         {/* Sheet canvas */}
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-auto bg-muted/30">
-            {fit && fit.perSheet === 0 ? (
-              // AC-S6-3: the page cannot hold even one tag at its current
-              // size - nothing to arrange, so say why instead of drawing an
-              // empty page.
+            {noFit ? (
+              // AC-S7-10: the page cannot hold even one copy of this size at
+              // its current size in either rotation - nothing to arrange, so
+              // say why instead of drawing an empty page.
               <div className="flex h-full min-h-full flex-col items-center justify-center gap-1.5 p-8 text-center">
                 <p className="text-sm font-medium">No tag fits this page</p>
                 <p className="max-w-xs text-xs text-muted-foreground">
-                  {tagDims!.width_mm} x {tagDims!.height_mm} mm needs more usable space than{' '}
-                  {pageW} x {pageH} mm leaves after a {doc.imposition.bleed_mm}mm bleed. Grow the
-                  page or shrink the bleed/gap.
+                  {activePlacement!.width_mm} x {activePlacement!.height_mm} mm needs more usable
+                  space than {pageW} x {pageH} mm leaves after the printable margin. Shrink the tag
+                  to fit.
                 </p>
               </div>
             ) : (
@@ -214,13 +192,10 @@ export function ArrangeSheetView({
                           key={tag.id}
                           tag={tag}
                           scale={scale}
-                          isSelected={selectedTagId === tag.id}
+                          isSelected={selectedTagId === tag.request_tag_id}
                           resolvedData={resolved.get(tag.request_tag_id) ?? null}
                           assetUrls={assetUrls}
                           onSelect={onSelectTag}
-                          onDragEnd={(xPx, yPx) =>
-                            onMoveTag(activeSheetIndex, tag, xPx / scale, yPx / scale)
-                          }
                         />
                       ))}
                     </KonvaLayer>
@@ -270,73 +245,6 @@ export function ArrangeSheetView({
             </span>
           </div>
         </div>
-
-        {/* Imposition */}
-        <div className="hidden w-60 shrink-0 border-l bg-background lg:block">
-          <div className="space-y-2 px-3 py-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Imposition
-            </h3>
-
-            <div className="grid grid-cols-2 gap-1.5">
-              <div>
-                <Label className="text-2xs text-muted-foreground">Page W (mm)</Label>
-                <Input
-                  type="number"
-                  className="mt-0.5 h-7 text-xs"
-                  value={doc.imposition.page_width_mm}
-                  onChange={(e) => handleField('page_width_mm', Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <Label className="text-2xs text-muted-foreground">Page H (mm)</Label>
-                <Input
-                  type="number"
-                  className="mt-0.5 h-7 text-xs"
-                  value={doc.imposition.page_height_mm}
-                  onChange={(e) => handleField('page_height_mm', Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Bleed (mm)</Label>
-                <Input
-                  type="number"
-                  className="mt-0.5 h-7 text-xs"
-                  value={doc.imposition.bleed_mm}
-                  onChange={(e) => handleField('bleed_mm', Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Gap (mm)</Label>
-                <Input
-                  type="number"
-                  className="mt-0.5 h-7 text-xs"
-                  value={doc.imposition.gap_mm}
-                  onChange={(e) => handleField('gap_mm', Number(e.target.value))}
-                />
-              </div>
-            </div>
-
-            {/* Auto-fit (S6, D8): nothing to choose, just what the tag's own
-                size fits on this page. */}
-            <div className="rounded-md bg-muted px-2.5 py-2 text-xs">
-              {fit ? (
-                <>
-                  <p className="font-medium">
-                    {fit.cols} x {fit.rows} = {fit.perSheet} per sheet
-                  </p>
-                  <p className="mt-0.5 text-muted-foreground">
-                    {totalTags} tag{totalTags === 1 ? '' : 's'} of {tagDims!.width_mm} x{' '}
-                    {tagDims!.height_mm} mm, {doc.sheets.length} sheet
-                    {doc.sheets.length === 1 ? '' : 's'}
-                  </p>
-                </>
-              ) : (
-                <p className="text-muted-foreground">Add a tag to see how many fit per sheet.</p>
-              )}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -353,7 +261,6 @@ function TagOnCanvas({
   resolvedData,
   assetUrls,
   onSelect,
-  onDragEnd,
 }: {
   tag: PlacedTag;
   scale: number;
@@ -361,26 +268,26 @@ function TagOnCanvas({
   resolvedData: LineTagData | null;
   assetUrls: Record<string, string>;
   onSelect: (tagId: string) => void;
-  onDragEnd: (xPx: number, yPx: number) => void;
 }) {
   const x = tag.x_mm * scale;
   const y = tag.y_mm * scale;
+  // The tag's own NATURAL (unrotated) footprint - what its layers are laid
+  // out against - not the placed box (S7): rotation is a transform of this
+  // whole group, the same as `TagSheetRenderer` on the print page.
   const w = tag.width_mm * scale;
   const h = tag.height_mm * scale;
+  const rotated = tag.rotation === 90;
 
   const handleClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
       e.cancelBubble = true;
-      onSelect(tag.id);
+      // AC-S10-3: selection is keyed on the REQUEST tag, not this placed
+      // copy's own `-c0`/`-c1` id - the rail and the pin dialog both key off
+      // the request tag id, and a split line's second copy must select the
+      // same row the rail highlights.
+      onSelect(tag.request_tag_id);
     },
-    [onSelect, tag.id],
-  );
-
-  const handleDragEnd = useCallback(
-    (e: Konva.KonvaEventObject<DragEvent>) => {
-      onDragEnd(e.target.x(), e.target.y());
-    },
-    [onDragEnd],
+    [onSelect, tag.request_tag_id],
   );
 
   const sortedLayers = useMemo(
@@ -400,10 +307,11 @@ function TagOnCanvas({
       y={y}
       width={w}
       height={h}
-      draggable
+      rotation={rotated ? 90 : 0}
+      offsetX={0}
+      offsetY={rotated ? h : 0}
       onClick={handleClick}
       onTap={handleClick}
-      onDragEnd={handleDragEnd}
       clipFunc={(ctx: Konva.Context) => {
         ctx.rect(0, 0, w, h);
       }}

@@ -180,12 +180,10 @@ function submittedLines() {
  * (Merge reconciliation: this spec was written before that control existed.)
  */
 async function pickPrinting() {
-  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
-    fireEvent.click(
-      screen.getByRole('button', { name: /Additional Information/ }),
-    );
-  }
-  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
+  // AC-S1-1/S1-2 (r10): the portal no longer asks who prints - `printBy` is a
+  // constant 'self' every payload sends, so there is nothing left to click.
+  // Callers keep calling this (kept as a no-op) so the rest of each test body
+  // reads the same as it always has.
 }
 
 // ---------------------------------------------------------------------------

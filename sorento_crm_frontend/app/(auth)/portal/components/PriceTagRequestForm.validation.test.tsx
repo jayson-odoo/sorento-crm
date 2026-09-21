@@ -172,10 +172,10 @@ async function addLineWithAProduct() {
  * every test here that expects the POST to happen has to answer it first.
  */
 async function pickPrinting() {
-  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
-    openAdditionalInformationSection();
-  }
-  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
+  // AC-S1-1/S1-2 (r10): the portal no longer asks who prints - `printBy` is a
+  // constant 'self' every payload sends, so there is nothing left to click.
+  // Callers keep calling this (kept as a no-op) so the rest of each test body
+  // reads the same as it always has.
 }
 
 describe('Save Draft validates nothing (D48a)', () => {
@@ -292,8 +292,10 @@ describe('Save Draft validates nothing (D48a)', () => {
 
 describe('Submit says what is missing (D48b)', () => {
   it('is enabled on an empty form and reports instead of posting', async () => {
-    // Need by no longer blocks Submit (D-P2b, AC-P8b); Printing DOES since
-    // r9 D7, so a blank form has three gaps: Customer, Lines, Printing.
+    // Need by no longer blocks Submit (D-P2b, AC-P8b). r10 AC-S1-3: Printing
+    // no longer blocks Submit either - the control (and its refusal) is gone,
+    // `print_by` is a constant 'self' - so a blank form has two gaps left:
+    // Customer, Lines.
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
@@ -310,8 +312,12 @@ describe('Submit says what is missing (D48b)', () => {
     openSalesOrderSection();
     expect(screen.getByText('Add at least one line.')).toBeInTheDocument();
     expect(screen.queryByText('Pick the date you need them by.')).toBeNull();
+    // AC-S1-3: "Say who prints these tags." must never appear.
+    expect(
+      screen.queryByText('Say who prints these tags.'),
+    ).toBeNull();
     expect(screen.getByTestId('submit-problem-summary')).toHaveTextContent(
-      '3 things need attention',
+      '2 things need attention',
     );
     expect(createRequest).not.toHaveBeenCalled();
   });

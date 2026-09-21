@@ -82,6 +82,14 @@ export interface TagDataChangeSet {
   changes: LineDataChange[];
 }
 
+/**
+ * r10 S8: the statuses in which a product-data change is applied to the tag
+ * by itself (the pin moves, a "Before product update" version records the
+ * old data) rather than waiting on a Keep / Update decision. Everything
+ * else - `proof_ready` on - keeps the r9 flag-and-decide path exactly.
+ */
+export const AUTO_UPDATE_STATUSES: readonly string[] = ['designing', 'changes_requested'];
+
 export interface RequestVersionSummary {
   version: number;
   commit_message: string | null;

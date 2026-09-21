@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { LoaderCircleIcon, Plus, Trash2 } from 'lucide-react';
+import { ImagePlus, LoaderCircleIcon, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
@@ -17,6 +17,7 @@ import {
   useProductCombos,
   useUpdateProductComboPart,
 } from '../../hooks/useProductCombos';
+import { useProductComboImage } from '../../hooks/useProductComboImage';
 import { getProducts } from '../../services/productService';
 import type { ProductComboPartRow, ProductComboRow } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
@@ -124,6 +125,123 @@ function PartRow({
   );
 }
 
+/**
+ * The combo's own cover picture (AC-S5-2/S5-3/S5-5): Upload when there is
+ * none, else the thumbnail with Replace and Clear. Through
+ * `useProductComboImage`, the same query-cache mutation shape every other
+ * combo edit on this page already uses - the list refetches itself on
+ * success, so this control carries no `onChanged` callback of its own.
+ */
+function ComboImageControl({
+  combo,
+  canEdit,
+}: {
+  combo: ProductComboRow;
+  canEdit: boolean;
+}) {
+  const { uploadMutateAsync, deleteMutateAsync, isUploading, isDeleting } =
+    useProductComboImage(combo.host_product_id);
+  const busy = isUploading || isDeleting;
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFile = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setError(null);
+      try {
+        await uploadMutateAsync({ comboId: combo.id, file });
+      } catch (caught) {
+        setError((caught as Error).message || 'Failed to upload the image');
+      } finally {
+        if (inputRef.current) inputRef.current.value = '';
+      }
+    },
+    [combo.id, uploadMutateAsync],
+  );
+
+  const handleClear = useCallback(async () => {
+    setError(null);
+    try {
+      await deleteMutateAsync(combo.id);
+    } catch (caught) {
+      setError((caught as Error).message || 'Failed to clear the image');
+    }
+  }, [combo.id, deleteMutateAsync]);
+
+  if (!canEdit && !combo.image) return null;
+
+  return (
+    // `flex-wrap` (AC-S5-5 extended): the thumbnail, Replace/Clear and the
+    // error text below crowd a single row off the edge at phone width.
+    <div className="flex flex-wrap items-center gap-3 border-b p-3">
+      {/* Images only (AC-S5-2) - the accept attribute plus the backend's own
+          content-type check, which is what actually refuses a non-image. */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        aria-label={`${combo.name} cover picture`}
+        className="hidden"
+        onChange={(event) => void handleFile(event.target.files?.[0])}
+      />
+      {combo.image ? (
+        <>
+          {/* A signed CDN URL, not a local/static asset next/image can
+              optimise. */}
+          <img
+            src={combo.image.url}
+            alt={combo.name}
+            className="size-14 shrink-0 rounded-md border object-cover"
+          />
+          {canEdit ? (
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => inputRef.current?.click()}
+                disabled={busy}
+              >
+                {busy ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                Replace
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleClear()}
+                disabled={busy}
+              >
+                <X className="size-4" />
+                Clear
+              </Button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+        >
+          {busy ? (
+            <LoaderCircleIcon className="size-4 animate-spin" />
+          ) : (
+            <ImagePlus className="size-4" />
+          )}
+          Upload picture
+        </Button>
+      )}
+      {/* Its own line (AC-S5-5 extended): `w-full` forces a wrap onto a row
+          by itself rather than squeezing in beside the buttons. */}
+      {error ? <p className="w-full text-sm text-destructive">{error}</p> : null}
+    </div>
+  );
+}
+
 interface ComboBlockProps {
   combo: ProductComboRow;
   canEdit: boolean;
@@ -186,7 +304,7 @@ function ComboBlock({
   );
 
   return (
-    <div className="rounded-lg border" data-combo-id={combo.id}>
+    <div className="rounded-lg border" data-combo-id={combo.id} data-testid="combo-block">
       <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="min-w-0 truncate font-medium" title={combo.name}>
           {combo.name}
@@ -209,6 +327,7 @@ function ComboBlock({
           </Button>
         ) : null}
       </div>
+      <ComboImageControl combo={combo} canEdit={canEdit} />
       <div className="space-y-3 p-3">
         {combo.parts.length === 0 ? (
           <p className="text-sm text-muted-foreground">No parts yet.</p>

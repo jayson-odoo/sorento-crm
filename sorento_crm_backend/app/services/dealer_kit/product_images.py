@@ -32,9 +32,13 @@ from app.services.storage_router import resolve_signed_url
 # images, "Product Photos" wins over anything else, which wins over
 # "Technical Specifications", so a drawing linked before the real photo (the
 # SRTKS8547 bug the plan measured) no longer wins on `created_at` alone.
+# AC-S5-11 (r10 S5): a Combo Image ranks LAST of all - it is the package
+# picture from ONE combo, not the product's own tag photo, so it never wins a
+# gallery slot over even a technical drawing.
 _PRODUCT_PHOTOS_RANK = 0
 _OTHER_TYPE_RANK = 1
 _TECHNICAL_SPECS_RANK = 2
+_COMBO_IMAGE_RANK = 3
 
 # What an anonymous reader of a public catalogue counts as. The public page is
 # the consumer-facing surface, so consumer imagery is what it may show; dealer
@@ -76,6 +80,7 @@ def primary_image_urls(
     rows = (
         db.query(ProductAttachment, Attachment)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
         .filter(ProductAttachment.product_id.in_(product_ids))
         # Images only. `product_attachments` links whatever is attached to a
         # product - the live data holds 532 PDFs and a couple of videos - and a
@@ -87,6 +92,12 @@ def primary_image_urls(
         # manager about what exists. The picker filters the same way, so the two
         # surfaces of this feature cannot drift.
         .filter(Attachment.is_deleted.is_(False))
+        # AC-S5-11: a combo's own picture is never a catalogue tile image, not
+        # even one somebody marked primary by accident.
+        .filter(
+            (AttachmentType.type_name.is_(None))
+            | (AttachmentType.type_name != "Combo Image")
+        )
         .order_by(
             ProductAttachment.product_id,
             # Someone deliberately marked one as primary; ordering must not
@@ -155,6 +166,7 @@ def gallery_images(
             case(
                 (AttachmentType.type_name == "Product Photos", _PRODUCT_PHOTOS_RANK),
                 (AttachmentType.type_name == "Technical Specifications", _TECHNICAL_SPECS_RANK),
+                (AttachmentType.type_name == "Combo Image", _COMBO_IMAGE_RANK),
                 else_=_OTHER_TYPE_RANK,
             ),
             ProductAttachment.sort_order.nullslast(),

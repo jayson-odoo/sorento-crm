@@ -29,6 +29,7 @@ import {
   isUnlinked,
   layerDisplay,
   layerText,
+  ownPartsOf,
   priceBadgeInput,
   primaryImageOf,
   resolveBarcodeValue,
@@ -935,5 +936,45 @@ describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
     // parent's OWN LIST PRICE by coincidence of this construction - the bug
     // this test is named for.
     expect(priceBadgeInput(data, badgeLayer).offerPrice).toBe(700);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S6-3/AC-S6-11 (PLAN-price-tag-r10.md S6): `ownPartsOf` reads `own_parts`
+// when the row carries it, else falls back to `parts` (a row pinned before
+// r10, where `parts` was already the narrow list).
+// ---------------------------------------------------------------------------
+
+describe('ownPartsOf', () => {
+  function part(code: string): TagPartData {
+    return {
+      product_id: `p-${code}`,
+      code,
+      name: code,
+      dimensions: '',
+      spec_lines: [],
+      specs: [],
+      images: [],
+      barcode: null,
+      list_price: 100,
+      sell_price: null,
+      currency: 'MYR',
+    };
+  }
+
+  it('AC-S6-3: reads own_parts when present, not the wider parts list', () => {
+    const line = {
+      parts: [part('A'), part('B'), part('C')],
+      own_parts: [part('A')],
+    };
+    expect(ownPartsOf(line).map((p) => p.code)).toEqual(['A']);
+  });
+
+  it('AC-S6-11: falls back to parts when own_parts is absent (a pre-r10 pinned row)', () => {
+    const line = { parts: [part('A'), part('B')] } as {
+      parts: TagPartData[];
+      own_parts?: TagPartData[];
+    };
+    expect(ownPartsOf(line).map((p) => p.code)).toEqual(['A', 'B']);
   });
 });

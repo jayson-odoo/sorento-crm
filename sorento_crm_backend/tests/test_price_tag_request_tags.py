@@ -450,3 +450,73 @@ def test_print_payload_one_row_per_tag(api):
     assert [row["quantity"] for row in requantified] == [3, 1, 3, 3]
     assert sum(row["quantity"] for row in requantified) == 10
     assert len(basins) == 4
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-2 (PLAN-price-tag-r10.md S6): round 4 replaced the earlier "merge onto
+# one tag" design - submit still mints ONE TAG PER CANDIDATE off an open
+# group. This pins the kept behaviour through the S6 refactor.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s6_2_submit_with_a_3_candidate_open_group_still_mints_three_tags(api):
+    _client, db = api
+    request, _cabinet, _mirror, basins = _open_basin_request(db, candidates=3)
+
+    tags = _tags_of(db, request.lines[0].id)
+
+    assert len(tags) == 3
+    assert len(basins) == 3
+    # Each tag resolved a DIFFERENT candidate - never the same one twice, and
+    # never all three folded onto one tag's `choices`.
+    chosen = [set(tag.choices.values()) for tag in tags]
+    assert all(len(c) == 1 for c in chosen)
+    assert len({frozenset(c) for c in chosen}) == 3
+
+
+# ---------------------------------------------------------------------------
+# AC-S6-7 (PLAN-price-tag-r10.md S6): `PATCH .../tags/{tag_id}` accepts
+# `print_excluded`; refused (409) once the request has reached `proof_ready`,
+# like every other design edit. Cross-company 404 is covered by the existing
+# B1 guard, `test_price_tag_combos_security.py::
+# test_cross_company_tag_routes_404_and_change_nothing`, which already PATCHes
+# this same route - a new field on an already-guarded route inherits that
+# guard rather than needing its own copy.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s6_7_print_excluded_round_trips_through_patch(api):
+    client, db = api
+    request, _cabinet, _mirror, _basins = _open_basin_request(db)
+    tag = _tags_of(db, request.lines[0].id)[0]
+
+    response = client.patch(
+        f"{_BASE}/{request.id}/tags/{tag.id}", json={"print_excluded": True}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["print_excluded"] is True
+
+    db.expire_all()
+    stored = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag.id).one()
+    assert stored.print_excluded is True
+
+    cleared = client.patch(
+        f"{_BASE}/{request.id}/tags/{tag.id}", json={"print_excluded": False}
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["print_excluded"] is False
+
+
+def test_ac_s6_7_print_excluded_refused_at_proof_ready(api):
+    client, db = api
+    request, _cabinet, _mirror, _basins = _open_basin_request(db)
+    tag = _tags_of(db, request.lines[0].id)[0]
+    request.status = "proof_ready"
+    db.commit()
+
+    response = client.patch(
+        f"{_BASE}/{request.id}/tags/{tag.id}", json={"print_excluded": True}
+    )
+
+    assert response.status_code == 409, response.text
