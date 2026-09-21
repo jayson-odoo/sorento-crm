@@ -107,4 +107,23 @@ describe('useDiscardPull (AC-DS-10)', () => {
     // regardless of which id it was mounted with.
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['import-job'] }));
   });
+
+  it('DH4: also invalidates the job STATUS query (fix round 2, browser pass) - `[\'import-job\']` does not prefix-match `[\'import-job-status\', jobId]` (react-query matches per array element), which is what the Job Summary card actually reads its status from, and whose polling has already stopped on a finished/dead job', async () => {
+    discardPull.mockResolvedValue({ job_id: 'job-1', entity: 'products', phase: 'discarded' });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    function localWrapper({ children }: { children: React.ReactNode }) {
+      return React.createElement(QueryClientProvider, { client }, children);
+    }
+
+    const { result } = renderHook(() => autocountPullHooks.useDiscardPull(), { wrapper: localWrapper });
+
+    await act(async () => {
+      result.current.mutate('job-1');
+    });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['import-job-status'] }),
+    );
+  });
 });

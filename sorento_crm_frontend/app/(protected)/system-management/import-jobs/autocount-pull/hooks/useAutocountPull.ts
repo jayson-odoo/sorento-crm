@@ -175,7 +175,14 @@ export function useConfirmPull() {
  *  E2 already notes can differ) so the generic Job Summary card and its Cancel Job
  *  button (`[id]/page.tsx`'s own `useQuery({ queryKey: ['import-job', id], ... })`)
  *  refresh too - a discard from `building`/`previewing` leaves that card showing a
- *  `canCancel` Cancel Job button and a stale status otherwise. */
+ *  `canCancel` Cancel Job button and a stale status otherwise.
+ *
+ *  Fix round 2 (browser pass): ALSO `['import-job-status']` - react-query's prefix match
+ *  is per array ELEMENT, so `['import-job']` alone does not match `useImportJobStatus`'s
+ *  own key (`['import-job-status', jobId]`, `hooks/useImportJobs.ts`), which is what the
+ *  Job Summary card's status pill actually reads (`statusData?.status || job.status`) -
+ *  without this the card kept showing FINISHED/PENDING after a discard until a reload,
+ *  since that query's own polling has already stopped on a finished/dead job. */
 export function useDiscardPull() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -185,6 +192,7 @@ export function useDiscardPull() {
       queryClient.invalidateQueries({ queryKey: ['autocount-pull', pull.job_id] });
       queryClient.invalidateQueries({ queryKey: ['autocount-pull-current', pull.entity] });
       queryClient.invalidateQueries({ queryKey: ['import-job'] });
+      queryClient.invalidateQueries({ queryKey: ['import-job-status'] });
       toast.success('Pull discarded');
     },
     onError: (error) => {
