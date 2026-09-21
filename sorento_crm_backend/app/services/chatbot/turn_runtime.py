@@ -1566,7 +1566,16 @@ def make_tool_runner(
         # unrelated, id-only entities) out of this.
         if page_predicate is None and not (fragment.get("fetch") or {}).get("has_result"):
             rerun_split = _record_key_rerun_split(domain, verdict, entities, resolved_kinds)
-            if rerun_split is not None:
+            # P3 (hand pass 12 Phase 3, reviewer S1): the `would_be_unfiltered` guard
+            # above is computed once, before the FIRST `run_fetch`, and this rerun
+            # never re-consults it - `_record_key_rerun_split`'s own `keep` can carry
+            # a record-key entity that never resolved to a uuid at all (a bogus token
+            # naming NOTHING real), and the rerun used to fire anyway, a second
+            # tool call with zero uuids on it. Nothing to rerun on when no KEPT row
+            # carries one.
+            if rerun_split is not None and any(
+                isinstance(e, dict) and e.get("uuid") for e in rerun_split[0]
+            ):
                 keep_entities, dropped_entities, record_words = rerun_split
                 rerun_gate = dict(gate)
                 rerun_gate["compatible_entities"] = keep_entities
