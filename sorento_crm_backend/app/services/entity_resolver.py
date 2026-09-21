@@ -3346,6 +3346,13 @@ def _word_variants(word: str) -> list[str]:
     minor plural typos ('Fira ventures' vs DB 'FIRA VENTURE') don't drop the
     match. Codes containing digits are NEVER stripped - `TT440s` must keep its
     trailing s.
+
+    Hand pass 11, defect 4: 'catalog'/'catalogue' is the same US/UK spelling
+    swap `references.py::_resolve_attachment_type_for_hint` already treats as
+    one word - a customer typing "cabana catalogue" must still cover a file
+    literally named "... CATALOG ..." (measured against the clone: the Cabana
+    file has no "UE", the Sorento one does). Same precedent, same word pair,
+    applied here so the AND-mode filename-coverage probe sees it too.
     """
     if not word:
         return []
@@ -3358,6 +3365,10 @@ def _word_variants(word: str) -> list[str]:
         and word.isalpha()
     ):
         out.append(word[:-1])
+    if low == "catalog":
+        out.append("catalogue")
+    elif low == "catalogue":
+        out.append("catalog")
     return out
 
 
