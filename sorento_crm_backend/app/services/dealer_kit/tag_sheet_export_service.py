@@ -480,6 +480,33 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
     doc = inputs["doc"] or {}
 
     rows, media = design_media(db, request, doc)
+
+    # AC-S6-12 (extended): `design_media` above only filters the resolver
+    # ROWS - the SAVED doc's own placements pass straight through. A tag
+    # marked Not printed AFTER the doc was last arranged leaves a stale
+    # placement in `doc.sheets` that the print page draws from directly, so
+    # the doc itself needs the same filter here, and a sheet a filter
+    # empties out entirely is dropped rather than printing a blank page -
+    # the export's own sheet list then counts printed tags only.
+    if request is not None and doc.get("sheets"):
+        excluded_tag_ids = {
+            tag.id
+            for line in (request.lines or [])
+            for tag in (line.tags or [])
+            if tag.print_excluded
+        }
+        if excluded_tag_ids:
+            filtered_sheets = []
+            for sheet in doc["sheets"]:
+                tags = [
+                    placed
+                    for placed in (sheet.get("tags") or [])
+                    if placed.get("request_tag_id") not in excluded_tag_ids
+                ]
+                if tags:
+                    filtered_sheets.append({**sheet, "tags": tags})
+            doc = {**doc, "sheets": filtered_sheets}
+
     resolved_data: dict[str, dict] = {}
 
     for row in rows:
