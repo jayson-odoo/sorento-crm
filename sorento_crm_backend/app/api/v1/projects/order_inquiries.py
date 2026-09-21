@@ -231,11 +231,12 @@ def list_order_inquiry_worklist(
     project_id: Optional[str] = Query(None),
     project: Optional[str] = Query(
         None,
-        max_length=255,
         description=(
             "The Project column's own text, exact match - a registered project's title "
             "or an adopted order's SO-level label, off the summary's own `projects` "
-            "facet. Separate from `project_id`, which stays UUID-only."
+            "facet. Separate from `project_id`, which stays UUID-only. No length bound: "
+            "`projects.title` is TEXT with none, so a bounded param here would let the "
+            "facet offer an option the filter itself refused."
         ),
     ),
     supplier_id: Optional[str] = Query(None),
@@ -385,7 +386,7 @@ def order_inquiry_worklist_summary(
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None, max_length=255),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
@@ -451,7 +452,7 @@ def export_order_inquiry_worklist(
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None, max_length=255),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
@@ -516,7 +517,7 @@ def order_inquiry_worklist_matrix(
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None, max_length=255),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
@@ -1115,7 +1116,7 @@ def order_inquiry_unplace_all_preview(
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None, max_length=255),
+    project: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(ACTION)),

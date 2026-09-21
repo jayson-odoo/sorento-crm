@@ -53,8 +53,11 @@ against it. Seed the whole chain in the test; never `LIMIT 1` off an existing ta
   still lists all three options.
 - **AC-16 every entry point honours it.** Summary counts, the matrix, and the export
   with `project=ALPHA` cover only ALPHA rows.
-- **AC-17 bulk scope honours it.** The acknowledge-scope and unplace-all preview bodies with
-  `project: 'ALPHA'` count only ALPHA rows, never BETA's.
+- **AC-17 bulk scope honours it.** The acknowledge-scope body and unplace-all, preview AND
+  apply, with `project: 'ALPHA'` act only on ALPHA rows: the apply unplaces ALPHA's rows
+  and BETA's link still exists afterwards.
+- **AC-21 long text.** A `project` value of 300 characters is accepted (returns no rows),
+  never a 422.
 - **AC-18 `project_id` unchanged.** `project_id=<uuid>` still filters by registered project
   and a non-UUID value is still rejected the way it is today.
 - **AC-19 frontend (vitest).** Picking an option in the Project filter sends

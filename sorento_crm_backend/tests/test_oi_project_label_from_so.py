@@ -926,7 +926,7 @@ def test_bulk_scopes_honour_the_project_filter(write_api):
     BETA is linked (and so in `unplace_all_preview`'s scope) and awaiting (and so in
     `acknowledge`'s) exactly the same as ALPHA."""
     client, db, company_id = write_api
-    _project_filter_world(db, company_id)
+    world = _project_filter_world(db, company_id)
 
     preview = client.get(
         f"{BASE}/order-inquiries/unplace-all-preview",
@@ -940,6 +940,33 @@ def test_bulk_scopes_honour_the_project_filter(write_api):
     )
     assert result.status_code == 200, result.text
     assert result.json()["acknowledged"] == 2
+
+    #: The apply half of the SAME scope (`POST /order-inquiries/unplace-all`), not just
+    #: its preview: a kill test that dropped `project=payload.project` from the apply
+    #: route left this file green, because nothing else here calls the apply route with
+    #: the project filter in play. ALPHA's two linked rows come back; BETA's own link -
+    #: linked the same way, in scope for an unfiltered call - must survive untouched.
+    beta_link = (
+        db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.row_id == world["beta"]["row"].id)
+        .first()
+    )
+    assert beta_link is not None
+
+    unplace_result = client.post(
+        f"{BASE}/order-inquiries/unplace-all",
+        json={"project": f"{MARKER} ALPHA"},
+    )
+    assert unplace_result.status_code == 200, unplace_result.text
+    assert unplace_result.json()["unplaced"] == 2
+
+    db.expire_all()
+    beta_link_after = (
+        db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.row_id == world["beta"]["row"].id)
+        .first()
+    )
+    assert beta_link_after is not None
 
 
 def test_project_id_filter_still_works_by_uuid(api):
@@ -962,3 +989,17 @@ def test_project_id_filter_still_rejects_a_non_uuid(api):
     response = client.get(LIST, params={"project_id": "not-a-uuid"})
 
     assert response.status_code == 404, response.text
+
+
+def test_project_filter_carries_no_length_bound(api):
+    """AC-21: `projects.title` is TEXT with no maximum, so a bounded `project` param
+    would let the facet offer a title long enough for the filter itself to 422. A
+    300-char value is still a well-formed request - it matches nothing and comes back
+    200 with zero rows, never a validation error."""
+    client, db, company_id = api
+    _project_filter_world(db, company_id)
+
+    response = client.get(LIST, params={"project": "A" * 300, "limit": 100})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []

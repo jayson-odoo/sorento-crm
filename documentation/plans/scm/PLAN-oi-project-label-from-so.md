@@ -1,6 +1,6 @@
 # PLAN: Order inquiry Project column and handover email read the sales order's project label
 
-Status: in progress, draft PR #1084. Sections 1-4 reviewed + browser passed 21 Sep 2026; section 5 (Project filter) building. Track: started as small fix, section 5 adds a query param and a frontend change.
+Status: in review, PR #1084. Sections 1-5 reviewed (two passes) 21 Sep 2026; browser AC-8 by agent, AC-20 by the owner's hand-test on :3084. Track: started as small fix, section 5 adds a query param and a frontend change.
 Branch: `fix/oi-project-label-from-so` (worktree `sorento_crm-oi-project-label`, off origin/main 170d6ece3)
 UAC: `oi-project-label-from-so-acceptance-criteria.md`
 
@@ -82,11 +82,15 @@ prints. So the filter works on that text; no id encoding, no second concept.
 - `_projects()` groups by `_PROJECT_TITLE` (non-null), returns `{id: <text>, label: <text>,
   rows}` ordered by label, and is computed with `project` cleared (as it clears
   `project_id` today).
-- `project_id` stays as it is (UUID-validated) for any existing deep link; the dropdown no
-  longer sends it.
+- `project_id` stays as it is (UUID-validated) for direct API callers; the page never put
+  it in the URL and the dropdown no longer sends it.
+- `project` carries no `max_length`: it is a bound parameter against TEXT, and
+  `projects.title` has no maximum, so a bound would let the facet offer an option that
+  422s the whole page.
 - Frontend: the Project filter sends `project=<text>`; the stored filter blob key becomes
-  `project` (a stored `project_id` from before is ignored). Types and the two services
-  (`orderInquiryService.ts`, `orderInquiryMatrixService.ts`) gain `project`.
+  `project` (a stored `project_id` from before is ignored). Types and
+  `orderInquiryService.ts` gain `project`; `orderInquiryMatrixService.ts` reuses
+  `worklistParams`, so it needed no change.
 
 ## Known, not fixed here
 
