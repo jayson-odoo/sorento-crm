@@ -2917,6 +2917,7 @@ class ProjectOrderInquiryService:
                 ProjectSalesOrder.created_at,
                 Project.title,
                 Customer.customer_name,
+                SalesOrder.project_label,
             )
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -2936,11 +2937,22 @@ class ProjectOrderInquiryService:
         if row is None:
             facts: Dict[str, Any] = {}
         else:
-            autocount_doc_no, provisional_ref, published_at, created_at, title, customer_name = row
+            (
+                autocount_doc_no,
+                provisional_ref,
+                published_at,
+                created_at,
+                title,
+                customer_name,
+                project_label,
+            ) = row
             facts = {
                 "so_number": autocount_doc_no or provisional_ref,
                 "customer": customer_name,
-                "project": title,
+                # A registered project wins; an adopted AutoCount order (`project_id`
+                # NULL by design) falls back to the SO's own free-text label
+                # (PLAN-oi-project-label-from-so.md).
+                "project": title or project_label,
                 "so_date": published_at or created_at,
             }
         self._handover_order_facts_cache[pso_id] = facts
@@ -3713,7 +3725,10 @@ class ProjectOrderInquiryService:
     def _hand_to_purchasing(
         self, order: ProjectSalesOrder, inquiry: OrderInquiry, row_count: int
     ) -> None:
-        """A task on the project's delivery phase, with the rows attached (AC-I4).
+        """A task on the project's delivery phase, with the rows attached (AC-I4), when
+        the order has a registered project - and the purchasing notification either way
+        (owner ruling, `PLAN-oi-project-label-from-so.md` section 4: "whether got
+        project or not should also hand to purchasing").
 
         Best-effort on purpose. The rows this task points at are already written when
         this runs, so a notification backend that is down must not turn that success
@@ -3732,6 +3747,12 @@ class ProjectOrderInquiryService:
         this through) called this unconditionally, so a batch that both confirmed and
         reacted minted a second `ProjectTask` and a second notification for one header.
         A caller that already holds a task for this inquiry gets nothing more.
+
+        An order ADOPTED from the AutoCount book has `project_id` NULL by design, and
+        `tasks.project_id` is NOT NULL - a task only surfaces under a project's Tasks
+        tab, so a project-less order has nowhere for one to appear. That order still
+        skips the `ProjectTask` here, but purchasing is still told: the notification
+        alone carries the SO's own project label (or its reference, with neither).
         """
         if self.task_for(inquiry.id) is not None:
             return
@@ -3741,6 +3762,23 @@ class ProjectOrderInquiryService:
                     self.db.query(Project).filter(Project.id == order.project_id).first()
                 )
                 if project is None:
+                    # No task without a project (`tasks.project_id` is NOT NULL) - but
+                    # purchasing still needs to know. The only duplicate guard is the
+                    # notification's own dedup key (`{inquiry_id}:order_inquiry_raised`,
+                    # `uq_notification_user_dedup_event`): a same-transaction pending-
+                    # queue check here would never fire, since this savepoint's own
+                    # commit drains the queue before a second call could see it.
+                    project_label = (
+                        self.db.query(SalesOrder.project_label)
+                        .filter(SalesOrder.id == order.so_id)
+                        .scalar()
+                        if order.so_id
+                        else None
+                    )
+                    to_buy = self._buying_count(inquiry.id)
+                    self._notify_purchasing(
+                        None, order, inquiry, row_count, to_buy, project_label
+                    )
                     return
                 reference = order.autocount_doc_no or order.provisional_ref
                 to_buy = self._buying_count(inquiry.id)
@@ -3759,7 +3797,7 @@ class ProjectOrderInquiryService:
                 )
                 self.db.add(task)
                 self.db.flush()
-                self._notify_purchasing(project, order, inquiry, row_count, to_buy)
+                self._notify_purchasing(project, order, inquiry, row_count, to_buy, None)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "order inquiry %s raised, but the purchasing task was not created (%s)",
@@ -3769,11 +3807,12 @@ class ProjectOrderInquiryService:
 
     def _notify_purchasing(
         self,
-        project: Project,
+        project: Optional[Project],
         order: ProjectSalesOrder,
         inquiry: OrderInquiry,
         row_count: int,
         to_buy: int,
+        project_label: Optional[str],
     ) -> None:
         """QUEUED, never sent from here.
 
@@ -3796,6 +3835,10 @@ class ProjectOrderInquiryService:
         user_ids = self._purchasing_user_ids()
         if not user_ids:
             return
+        # A registered project's title wins; an adopted order (no project) falls back
+        # to the core sales order's own free-text label, then to its reference when
+        # neither exists (PLAN-oi-project-label-from-so.md section 4).
+        heading = (project.title if project else None) or project_label or reference
         self.db.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
             {
                 #: Which savepoint this was earned under (C2), so a sibling order's
@@ -3804,12 +3847,12 @@ class ProjectOrderInquiryService:
                 "user_ids": [str(user_id) for user_id in user_ids],
                 "title": f"Order inquiry {reference}",
                 "body": (
-                    f"{project.title}: {row_count} instruction"
+                    f"{heading}: {row_count} instruction"
                     f"{'' if row_count == 1 else 's'}, {to_buy} still to buy."
                 ),
                 "data": {
-                    "project_id": str(project.id),
-                    "project_code": project.project_code,
+                    "project_id": str(project.id) if project else None,
+                    "project_code": project.project_code if project else None,
                     "order_inquiry_id": str(inquiry.id),
                     "sales_order_ref": reference,
                     "row_count": row_count,
@@ -4538,6 +4581,7 @@ class ProjectOrderInquiryService:
                 ProjectSalesOrder.is_pre_order,
                 Project.title,
                 Customer.customer_name,
+                SalesOrder.project_label,
             )
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -4558,8 +4602,10 @@ class ProjectOrderInquiryService:
             .all()
         )
         return {
-            pso_id: project_customer_label(customer_name, title, is_pre_order)
-            for pso_id, is_pre_order, title, customer_name in rows
+            pso_id: project_customer_label(
+                customer_name, title or project_label, is_pre_order
+            )
+            for pso_id, is_pre_order, title, customer_name, project_label in rows
         }
 
     def _remark(self, row: OrderInquiryRow) -> str:

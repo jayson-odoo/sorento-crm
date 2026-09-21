@@ -484,10 +484,15 @@ def _escape_like(token: str) -> str:
 
 
 _CUSTOMER_NAME = Customer.customer_name
+# The Project column's text. A registered project wins; an adopted AutoCount order
+# (`project_id` NULL by design) falls back to the free-text label the core sales order's
+# detail page already prints (`SalesOrder.project_label`, `app/services/
+# project_label_rules.py`). PLAN-oi-project-label-from-so.md.
+_PROJECT_TITLE = func.coalesce(Project.title, SalesOrder.project_label)
 # What `PROJECT/CUSTOMER` sorts and filters on. The printed label starts with the
 # customer when there is one and with the project when there is not, so this is the same
 # ordering the eye reads down the column.
-_PROJECT_CUSTOMER = func.coalesce(_CUSTOMER_NAME, Project.title)
+_PROJECT_CUSTOMER = func.coalesce(_CUSTOMER_NAME, _PROJECT_TITLE)
 _RAISED_AT = OrderInquiryRow.created_at
 # The per-day tab is a MALAYSIAN day. `created_at` is stored naive UTC (the session runs
 # with `timezone=utc`), so a row raised at 00:30 MYT belongs to the tab of the day that
@@ -617,7 +622,7 @@ _SORT_EXPRESSIONS = {
     "delivery_date": OrderInquiryRow.delivery_date,
     "project_customer": _PROJECT_CUSTOMER,
     "customer_name": _CUSTOMER_NAME,
-    "project_title": Project.title,
+    "project_title": _PROJECT_TITLE,
     "supplier": Supplier.supplier_name,
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
@@ -667,7 +672,7 @@ _COLUMNS = (
     Product.product_name.label("product_name"),
     _CUSTOMER_NAME.label("customer_name"),
     Project.id.label("project_id"),
-    Project.title.label("project_title"),
+    _PROJECT_TITLE.label("project_title"),
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
@@ -1216,8 +1221,8 @@ class OrderInquiryWorklistService:
             # which is what makes the pair of them name one row. No tokens - a blank or
             # all-space box - filters nothing, the same as no query at all.
             #
-            # Capped at ten, because every token is another OR across eleven columns over a
-            # joined query: a pasted paragraph would be a hundred of them. Dropped rather
+            # Capped at ten, because every token is another OR across a joined query's
+            # worth of columns: a pasted paragraph would be a hundred of them. Dropped rather
             # than refused - a clumsy paste deserves a search result, not a 422 - and the
             # route caps the string's own length beside this.
             for token in str(query).split()[:_MAX_QUERY_TOKENS]:
@@ -1235,6 +1240,10 @@ class OrderInquiryWorklistService:
                         Customer.customer_name.ilike(like, escape=_LIKE_ESCAPE),
                         Project.title.ilike(like, escape=_LIKE_ESCAPE),
                         Project.project_code.ilike(like, escape=_LIKE_ESCAPE),
+                        # An adopted AutoCount order has no registered Project - the
+                        # label above is blank, so the box has to reach the SO's own
+                        # free-text label instead (PLAN-oi-project-label-from-so.md).
+                        SalesOrder.project_label.ilike(like, escape=_LIKE_ESCAPE),
                         # The CS who raised it. By name, and by the FRONT of the email
                         # address rather than anywhere inside it: a buyer types "cindy",
                         # and matching `%cindy%` across a whole address would also return
