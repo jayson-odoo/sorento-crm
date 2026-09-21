@@ -1396,6 +1396,16 @@ async def get_outstanding_report(
             "but at least one of product_code / customer_ids / customer_query is required."
         ),
     ),
+    product_codes: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Exact product codes (csv/JSON/repeated), case-insensitive - the SEVERAL-code "
+            "form of product_code, for a caller answering one question about a whole "
+            "family (\"all\" over a ten-variant product roster). The header names every "
+            "one of them, the way the Customer line names every ledger. Wins over "
+            "product_code when both are given."
+        ),
+    ),
     scope: str = Query(
         "both",
         description="Which block(s) to compute: so | do | both (default both).",
@@ -1476,7 +1486,13 @@ async def get_outstanding_report(
     # R13: the SUBJECT is a product, a customer, or both - but never nothing. An
     # unfiltered report would sum every open sales order line in the company, which is
     # not an answer to any question a customer can ask.
-    if not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip():
+    resolved_product_codes = _normalize_entities(product_codes)
+    if (
+        not (product_code or "").strip()
+        and not resolved_product_codes
+        and not customer_ids
+        and not (customer_query or "").strip()
+    ):
         raise AppException(
             422,
             "This report needs a subject: give at least one of product_code, customer_ids "
@@ -1506,6 +1522,7 @@ async def get_outstanding_report(
     for values, name in (
         (resolved_customer_ids, "customer_ids"),
         (resolved_warehouse_codes, "warehouse_codes"),
+        (resolved_product_codes, "product_codes"),
     ):
         if values is not None and len(values) > 50:
             raise AppException(
@@ -1518,6 +1535,7 @@ async def get_outstanding_report(
     data = outstanding_report(
         db,
         product_code=product_code,
+        product_codes=resolved_product_codes,
         scope=scope,
         customer_query=customer_query,
         customer_ids=resolved_customer_ids,

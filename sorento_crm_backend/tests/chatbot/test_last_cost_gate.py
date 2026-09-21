@@ -377,12 +377,15 @@ def _collapsed(text: str) -> str:
 
 
 @pytest.mark.parametrize(
+    # SEMANTIC_PARSER_PROMPT_SLIM retired outright (D8, "one prompt lineage (v3
+    # shape), v1 and SLIM retired") - mechanical port 16 Sep 2026, same shape as
+    # `test_parser_low_stock_words.py`'s own SLIM retirement this session.
     "body_name",
-    ["SEMANTIC_PARSER_PROMPT", "SEMANTIC_PARSER_PROMPT_SLIM"],
+    ["SEMANTIC_PARSER_PROMPT"],
 )
 def test_ac25_parser_prompt_teaches_purchase_cost(body_name: str) -> None:
     import app.services.chatbot_parser_prompt as prompt_mod
-    from app.services.chatbot.contracts import DOMAIN_SPEC
+    from app.services.chatbot.turn.policy import default_policy
 
     body = getattr(prompt_mod, body_name)
     for phrase in _PHRASES:
@@ -402,9 +405,14 @@ def test_ac25_parser_prompt_teaches_purchase_cost(body_name: str) -> None:
     # purchase_cost has NO switch words, precedent = how purchase_order shipped: "cost" is
     # the everyday word for the SELLING price too, and a whole-token switch on it would drag
     # every such ask into this domain and refuse it for every ungranted contact. Routing is
-    # the parser prompt's job alone. Domain-spec-level, so this only needs asserting once,
-    # not once per body - kept inside the parametrized test purely for a single call site.
-    assert DOMAIN_SPEC["purchase_cost"].switch_words == ()
+    # the parser prompt's job alone. Domain-level, so this only needs asserting once, not
+    # once per body - kept inside the parametrized test purely for a single call site.
+    # Mechanical port 16 Sep 2026 (AC-1592/AC-1594, S6): `contracts.DOMAIN_SPEC` deleted,
+    # successor is `turn/policy.py`'s domain-row table (same accessor tester 8 already
+    # used to port `test_low_stock_lane.py`'s equivalent DOMAIN_SPEC read).
+    domain = default_policy().domain("purchase_cost")
+    assert domain is not None
+    assert domain.switch_words == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -443,15 +451,22 @@ def test_ac27b_warehouse_entity_passes_warehouse_ids() -> None:
 
 
 def test_ac27c_brand_only_ask_is_refused_not_found_with_zero_mcp_calls() -> None:
-    """The tool is in `fetch.ENTITY_FILTER_REQUIRED_TOOLS`, and a brand-only ask (the
-    gate passes - brand is an allowed entity type for `purchase_cost` - but
+    """The tool is in `policy_rows.ENTITY_FILTER_REQUIRED_TOOLS`, and a brand-only ask
+    (the gate passes - brand is an allowed entity type for `purchase_cost` - but
     `TYPE_TO_PARAM` has no "brand" key, so `entity_ids_transformer` builds no `*_ids` at
     all) is refused as `not_found` with ZERO MCP calls, never answered from the unscoped
     branch (which would otherwise hand back a plain `top_n` cap over EVERY product's
     cost line, a directory dump nobody asked for). Mirrors `test_s6b_fetch_lane.py::
     TestEngineDispatch::test_a_resource_attachment_fetch_with_no_resolved_entity_never_ships_unfiltered`
-    for the sibling document-tool rule."""
-    assert TOOL in fetch.ENTITY_FILTER_REQUIRED_TOOLS
+    for the sibling document-tool rule.
+
+    Mechanical port 16 Sep 2026 (AC-1592/AC-1594, S6): `fetch.ENTITY_FILTER_REQUIRED_
+    TOOLS` moved to `turn/policy_rows.py` (`fetch.py`'s own comment names the move and
+    the reason - a hand-curated per-tool exception list, not domain/kind policy data).
+    """
+    from app.services.chatbot.turn import policy_rows
+
+    assert TOOL in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS
 
     from app.services.chatbot.lanes import business as business_mod
 

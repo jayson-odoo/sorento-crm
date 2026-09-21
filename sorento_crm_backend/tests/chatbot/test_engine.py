@@ -69,6 +69,17 @@ def _parser_output(**overrides: Any) -> dict[str, Any]:
         "correction": False,
         "routing": {"suggested_team": None, "suggested_agent": None, "team_source": None},
         "escalation": {"is_escalation_confirmation": False, "company_pick": None},
+        # v3 schema keys (AC-1506/AC-1317, cluster 4) - `assert_emission` checks every
+        # `DECLARED_KEYS` entry is present, so a bare mock without these fails at
+        # `understood` with "parser emission missing ..." (coder 10, ba684f9a6: a harness
+        # emission is now held to the same declared keys a real model answer is).
+        "continuation": None,
+        "group_by": None,
+        "top_n": None,
+        "document": None,
+        "status": None,
+        "answers_open_question": {"resolved": None, "picks": None, "answer": None},
+        "anaphora": {"backward_reference": None},
     }
     base.update(overrides)
     return base
@@ -165,7 +176,15 @@ def _turn_row(session_factory, turn_id: str) -> ChatbotTurn:
 
 
 class TestHappyPath:
-    def test_returns_ctx_item_branch_and_delegate(
+    """Ported (AC-1592, S6c): `business_query` is in `CRM_COMPLETED_BRANCH_KINDS` and the
+    switch that used to hold it back (`chatbot_completed_lanes`) no longer gates
+    completion (contract line 73 superseded, `delegate.py` module docstring) - a bare
+    default `_parser_output()` turn today runs end to end inside `run_turn` and closes
+    `status="done"` at `stage="sent"`, never `"delegated"` at `"routed"`. Measured with a
+    scratch probe, not guessed.
+    """
+
+    def test_returns_ctx_item_branch_and_no_delegate(
         self, session_factory, seeded, stub_parser, stub_access
     ):
         stub_parser()
@@ -173,15 +192,14 @@ class TestHappyPath:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
         assert result.branch_kind == "business_query"
-        # S1 still hands the lane to n8n; S3 onwards shrinks this to null.
-        assert result.delegate == "business_query"
+        assert result.delegate is None, "CRM_COMPLETED_BRANCH_KINDS covers business_query now"
         assert set(result.ctx) == {"contact", "text", "session", "parse", "access", "media"}
         # AC-101: `item` is what route-turn emits - the access response plus branch_kind.
         assert result.item["branch_kind"] == "business_query"
         assert result.item["allowed"] is True
         assert result.item["decision"] == "allow"
 
-    def test_the_turn_row_is_recorded_as_delegated(
+    def test_the_turn_row_is_recorded_as_done(
         self, session_factory, seeded, stub_parser, stub_access
     ):
         stub_parser()
@@ -189,8 +207,8 @@ class TestHappyPath:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
         row = _turn_row(session_factory, result.turn_id)
-        assert row.status == "delegated", row.error
-        assert row.stage == "routed"
+        assert row.status == "done", row.error
+        assert row.stage == "sent"
         assert row.branch_kind == "business_query"
         assert row.message_id == "ZZT-msg-1"
         assert row.ingress == "webhook"
@@ -204,8 +222,8 @@ class TestHappyPath:
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        trace = _turn_row(session_factory, result.turn_id).trace
-        assert [r["stage"] for r in trace] == ["received", "understood", "access", "routed"]
+        trace = [r for r in _turn_row(session_factory, result.turn_id).trace if r.get("stage")]
+        assert [r["stage"] for r in trace] == list(TURN_STAGES)
         for record in trace:
             assert record["summary"] and record["why"]
             assert "{" not in record["summary"], record["summary"]
@@ -213,17 +231,19 @@ class TestHappyPath:
             assert record["ms"] >= 0
             assert "raw" in record
 
-    def test_every_stage_the_head_owns_is_a_declared_turn_stage(
+    def test_every_stage_recorded_is_a_declared_turn_stage(
         self, session_factory, seeded, stub_parser, stub_access
     ):
+        """Ported: the file-header split ("the four the HEAD owns, then hands off") is
+        gone with the delegate architecture - `business_query` now runs every stage in
+        one call. `looked_up`, `replied`, `remembered`, `sent` are no longer a lane's or
+        a tail's own turn; they are `run_turn`'s."""
         stub_parser()
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        trace = _turn_row(session_factory, result.turn_id).trace
+        trace = [r for r in _turn_row(session_factory, result.turn_id).trace if r.get("stage")]
         assert all(r["stage"] in TURN_STAGES for r in trace)
-        # The four the HEAD owns. `looked_up` onwards arrive with the lanes and the tail;
-        # a stage that did not run is omitted, never recorded empty (AC-252).
-        assert [r["stage"] for r in trace] == list(TURN_STAGES[:4])
+        assert [r["stage"] for r in trace] == list(TURN_STAGES)
 
 
 class TestParserFailure:
@@ -307,10 +327,14 @@ class TestHumanIntervened:
     def test_no_action_when_the_flag_is_not_set(
         self, session_factory, seeded, stub_parser, stub_access
     ):
+        """Ported (AC-1592): `business_query` completes in-process now and always seals a
+        `send_message` action, so `result.actions == []` is stale - the property this
+        test actually protects is that NO `update_contact_fields` action appears when the
+        flag was never set."""
         stub_parser()
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        assert result.actions == []
+        assert "update_contact_fields" not in [a["kind"] for a in result.actions]
 
 
 class TestAccessDenied:
@@ -348,8 +372,20 @@ class TestDryRun:
         ).scalar()
         assert after == before
         assert _turn_row(session_factory, result.turn_id).is_test is True
-        # S1's head writes no session state, so there is nothing to patch yet.
-        assert result.session_patch is None
+        # Ported (AC-1592): S1's head-only turn wrote no session state, so there was
+        # nothing to patch yet; `business_query` completes end to end today (D9), so a
+        # dry run now DOES compute the five-key patch it would have written - and D14's
+        # own contract for that is that it is populated ONLY on a dry run, never applied.
+        # The "nothing written" guarantee above (`after == before`) is what this test is
+        # really pinning; this assertion is the shape check for what a dry run PREVIEWS.
+        assert result.session_patch is not None
+        assert set(result.session_patch) == {
+            "focus",
+            "open_question",
+            "ideation",
+            "access_levels",
+            "contains_flyer",
+        }
 
     def test_every_action_carries_dry_run_true(
         self, session_factory, seeded, stub_parser, stub_access
@@ -517,7 +553,12 @@ class TestPendingMarkerRead:
     def test_the_parser_is_told_what_the_bot_is_waiting_for(
         self, session_factory, seeded, stub_parser, stub_access
     ):
-        """R3: the ONE prompt-input change S1 makes (D16 slimming is S1b)."""
+        """R3: the ONE prompt-input change S1 makes (D16 slimming is S1b).
+
+        Ported (AC-1592): the flat five-key shape's pending slot is `open_question`, not
+        `pending` (`session_state.FIVE_KEYS`); `session_state.pending_of` reads it via
+        `turn/pending.py::from_wire`, which needs only `{"kind": ...}` at minimum.
+        """
         db = session_factory()
         db.execute(
             text(
@@ -526,7 +567,7 @@ class TestPendingMarkerRead:
             ),
             {
                 "c": str(CONTACT_ID),
-                "sv": json.dumps({"variables": {"pending": {"kind": "escalation_offer"}}}),
+                "sv": json.dumps({"open_question": {"kind": "escalation_offer"}}),
             },
         )
         db.commit()
@@ -586,13 +627,26 @@ class TestStockDenialGateEndToEnd:
     def _stock_envelope(*, message_id: str) -> Envelope:
         envelope = _envelope()
         envelope.message["message"]["messageId"] = message_id
-        # A contact without stock access - not one missing the field outright, which is
-        # the OTHER covered property (test_route_unit's "still throws exactly as live does").
+        # S6 ruling (coordinator, 16 Sep 2026): stock allowance moved OFF the envelope's
+        # own custom_fields onto `respond_contacts.chatbot_stock_allowed` - the envelope
+        # is now IGNORED entirely by `_stock_check_denied`, so `custom_fields` here is
+        # deliberately plain (the gate is set on the contact ROW instead, see
+        # `_deny_stock_access` below).
         envelope.contact["custom_fields"] = [
             {"name": "is_human_intervened", "value": "false"},
-            {"name": "is_allowed_stock", "value": "false"},
         ]
         return envelope
+
+    @staticmethod
+    def _deny_stock_access(session_factory, *, contact_id) -> None:
+        from sqlalchemy import text
+
+        db = session_factory()
+        db.execute(
+            text("UPDATE respond_contacts SET chatbot_stock_allowed = false WHERE respond_io_id = :c"),
+            {"c": str(contact_id)},
+        )
+        db.commit()
 
     def test_off_by_default_a_stock_check_still_answers_business_query(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access
@@ -622,6 +676,7 @@ class TestStockDenialGateEndToEnd:
         setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
         setting.chatbot_stock_denial_enabled = True
         db.commit()
+        self._deny_stock_access(session_factory, contact_id=CONTACT_ID)
 
         stub_parser(
             _parser_output(
@@ -640,35 +695,37 @@ class TestStockDenialGateEndToEnd:
 
 
 class TestCarriedDomainHintGuard:
-    """F3, the carried half. `_drop_unknown_carried_domain` is what turn
-    fca4aa5e-806b-4403-aa2e-fc2d0961fb2d needed and the emission guard could not give it:
-    that turn parsed cleanly as `incoming` and still reached the gate as `purchasing`,
-    inherited from `variables.domain_hint` in the contact's stored memory (eight sites
-    across `output_exchange` and `resolve_gate.retype_shipment_miss` adopt a carried domain
-    verbatim). Cleaned once, where the stored state enters the turn.
+    """F3, ported (AC-1592) onto `contracts.coerce_domain_hint` - engine's own
+    `_drop_unknown_carried_domain(variables)` is gone (`AttributeError`, grep-confirmed:
+    only a comment in `contracts.py` still names it). `coerce_domain_hint` is the ONE
+    guard now, called at both entry points a domain reaches a turn from (the parser's own
+    emission and the contact's stored memory) - a single value in, the same value or
+    `None` out, rather than the old in-place dict mutation: `value if value in
+    DOMAIN_HINTS else None`.
 
     `TestF3DomainHintNeverLeavesTheEnumEndToEnd` in `test_s6c_engine_paths.py` grades the
     same guard through a whole turn; these pin the function's own edges.
     """
 
-    def test_a_team_name_in_the_carried_memory_is_dropped(self) -> None:
-        variables = {"domain_hint": "purchasing", "intent_hint": "stock_check"}
-        engine_mod._drop_unknown_carried_domain(variables)
-        assert variables["domain_hint"] is None
-        assert variables["intent_hint"] == "stock_check", "only the domain is cleaned"
+    def test_a_team_name_is_coerced_to_none(self) -> None:
+        from app.services.chatbot.contracts import coerce_domain_hint
 
-    def test_a_declared_domain_in_the_carried_memory_survives(self) -> None:
-        variables = {"domain_hint": "inventory"}
-        engine_mod._drop_unknown_carried_domain(variables)
-        assert variables["domain_hint"] == "inventory"
+        assert coerce_domain_hint("purchasing") is None, (
+            "'purchasing' is a team name (lanes/escalation.ESCALATION_TEAMS), not a "
+            "DOMAIN_HINTS member"
+        )
 
-    def test_memory_that_carries_no_domain_is_untouched(self) -> None:
-        """The key is not INVENTED: a contact who has never had a domain must keep a
-        `variables` dict of exactly the keys it was stored with, because the tail
-        validates the write against `SessionVars(extra="forbid")`."""
-        variables = {"response": "hello"}
-        engine_mod._drop_unknown_carried_domain(variables)
-        assert variables == {"response": "hello"}
+    def test_a_declared_domain_survives(self) -> None:
+        from app.services.chatbot.contracts import coerce_domain_hint
 
-    def test_the_guard_survives_a_non_dict(self) -> None:
-        engine_mod._drop_unknown_carried_domain(None)  # no raise: a contact with no memory
+        assert coerce_domain_hint("inventory") == "inventory"
+
+    def test_none_is_untouched(self) -> None:
+        from app.services.chatbot.contracts import coerce_domain_hint
+
+        assert coerce_domain_hint(None) is None
+
+    def test_the_guard_survives_a_non_string(self) -> None:
+        from app.services.chatbot.contracts import coerce_domain_hint
+
+        assert coerce_domain_hint(123) is None  # no raise: not a DOMAIN_HINTS member either

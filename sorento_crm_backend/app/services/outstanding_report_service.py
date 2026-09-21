@@ -1,4 +1,4 @@
-"""Outstanding report: SO backlog + DO pending, one product at a time.
+"""Outstanding report: SO backlog + DO pending, for the products named (usually one).
 
 `documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` ("Backend
 contract"); `documentation/plans/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
@@ -92,15 +92,30 @@ def _as_date(v: DateLike) -> Optional[date]:
     return v
 
 
-def _resolve_product(db: Session, product_code: str) -> Optional[Product]:
-    code = (product_code or "").strip()
-    if not code:
-        return None
-    return (
+def _resolve_products(db: Session, product_codes: list[str]) -> list[Product]:
+    """Every named code as a row, in the order the caller named them.
+
+    A LIST since hand pass 3: "all" over a ten-variant product roster is one question
+    answered with ten codes, and a scalar filter reported on whichever the picker had
+    listed first (turn 0a6f0379, 16 Sep 2026, header `Product: SRTWC286-SH-200` over a
+    report the customer had asked for all ten of). One code is the ordinary case and
+    behaves exactly as before.
+    """
+    codes = [c.strip() for c in product_codes if c and c.strip()]
+    if not codes:
+        return []
+    rows = (
         db.query(Product)
-        .filter(func.lower(Product.product_code) == code.lower())
-        .first()
+        .filter(func.lower(Product.product_code).in_([c.lower() for c in codes]))
+        .all()
     )
+    by_code = {row.product_code.lower(): row for row in rows if row.product_code}
+    found: list[Product] = []
+    for code in codes:
+        row = by_code.get(code.lower())
+        if row is not None and row not in found:
+            found.append(row)
+    return found
 
 
 def _customer_echo(
@@ -144,6 +159,7 @@ def outstanding_report(
     db: Session,
     *,
     product_code: Optional[str] = None,
+    product_codes: Optional[list[str]] = None,
     scope: str = "both",
     customer_query: Optional[str] = None,
     customer_ids: Optional[list[str]] = None,
@@ -166,16 +182,22 @@ def outstanding_report(
     A group the subject does not want is `None` here and ABSENT from the response, never
     an empty list: "nobody" and "not asked" are different answers.
     """
-    product = _resolve_product(db, product_code) if (product_code or "").strip() else None
-    if (product_code or "").strip() and product is None:
-        raise handle_not_found("Product", product_code)
+    named_codes = [c for c in (product_codes or []) if str(c).strip()]
+    if not named_codes and (product_code or "").strip():
+        named_codes = [product_code]
+    products = _resolve_products(db, [str(c) for c in named_codes])
+    if named_codes and not products:
+        raise handle_not_found("Product", named_codes[0])
+    product = products[0] if products else None
 
     warehouse_ids = resolve_warehouse_ids(db, warehouse_codes)
     customer_ids = [str(c).strip() for c in (customer_ids or []) if str(c).strip()] or None
     has_customer = bool(customer_ids) or bool((customer_query or "").strip())
 
     result: dict = {
-        "product_code": product.product_code if product is not None else None,
+        # One line for however many codes were named, joined the way the `Customer:`
+        # line joins several ledgers - the presenter prints this verbatim.
+        "product_code": ", ".join(p.product_code for p in products) if products else None,
         "customer_name": _customer_echo(db, customer_query, customer_ids),
         "warehouse_codes": [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()],
         "order_date_from": _as_date(order_date_from),
@@ -194,13 +216,13 @@ def outstanding_report(
 
     if scope in ("so", "both"):
         _fill_so(
-            db, product, result,
+            db, products, result,
             customer_query=customer_query, customer_ids=customer_ids, warehouse_ids=warehouse_ids,
             order_date_from=order_date_from, order_date_to=order_date_to,
         )
     if scope in ("do", "both"):
         _fill_do(
-            db, product, result,
+            db, products, result,
             customer_query=customer_query, customer_ids=customer_ids, warehouse_ids=warehouse_ids,
             order_date_from=order_date_from, order_date_to=order_date_to,
         )
@@ -209,7 +231,7 @@ def outstanding_report(
 
 def _fill_so(
     db: Session,
-    product: Product,
+    products: list[Product],
     result: dict,
     *,
     customer_query: Optional[str],
@@ -246,8 +268,8 @@ def _fill_so(
     )
     # R13: the product is the subject only when one was named; a customer-subject ask
     # spans every product that customer is waiting for.
-    if product is not None:
-        q = q.filter(SalesOrderLine.product_id == product.id)
+    if products:
+        q = q.filter(SalesOrderLine.product_id.in_([p.id for p in products]))
     if customer_query:
         q = q.filter(
             Customer.customer_name.ilike(
@@ -393,7 +415,7 @@ def _fill_so(
 
 def _fill_do(
     db: Session,
-    product: Product,
+    products: list[Product],
     result: dict,
     *,
     customer_query: Optional[str],
@@ -439,8 +461,8 @@ def _fill_do(
         .filter(Order.deleted_at.is_(None))
     )
     # R13: as on the SO side - the product narrows only when one was named.
-    if product is not None:
-        q = q.filter(OrderLine.product_id == product.id)
+    if products:
+        q = q.filter(OrderLine.product_id.in_([p.id for p in products]))
     # `None` means no delivered status is configured at all, so every DO is outstanding
     # and no filter is needed (`_outstanding_clause`'s own docstring).
     if outstanding_clause is not None:

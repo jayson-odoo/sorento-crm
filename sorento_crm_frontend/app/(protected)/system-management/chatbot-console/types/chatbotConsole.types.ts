@@ -2,6 +2,7 @@
  * dry-run page under System Management. Every turn is `is_test=True`, `ingress=console`
  * (D14) - nothing here reaches a real customer.
  */
+import type { TurnAttachment } from '@/components/chatbot/TurnAttachments';
 
 export interface ConsoleMediaInput {
   kind: 'image' | 'audio';
@@ -45,6 +46,11 @@ export interface ConsoleTurnResponse {
   /** Item 6: the parser prompt version this turn actually ran (the trace's own
    * `understood` fact); null when the turn never reached the parser. */
   prompt_version: number | null;
+  /** The turn's own raw `TurnResult.actions`, loosely typed like `send_messages`'
+   * source (it is the engine's shape, not this endpoint's own) - carried through so
+   * `extractTurnAttachments` can read a `send_attachments` action's own file list,
+   * the same source Chat History's `ChatbotTurn.response.actions` already gives. */
+  actions?: Record<string, unknown>[] | null;
 }
 
 export type ConsolePromptBase = 'full' | 'compact' | 'other';
@@ -91,6 +97,9 @@ export interface ChatbotConsoleMessage {
   /** Carried on a FAILED status bubble so its Retry chip can resend the exact same
    * attachment without asking the user to re-attach it. */
   mediaRetry?: ConsoleMediaInput | null;
+  /** Only the LAST bot bubble of a turn carries these - the files a `send_attachments`
+   * action on this turn would send, via `extractTurnAttachments`. */
+  attachments?: TurnAttachment[];
 }
 
 export const CONSOLE_GREETING_MESSAGES: readonly string[] = [

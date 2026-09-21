@@ -24,7 +24,10 @@
  *       "args_short": {...} | null,
  *       "crossdomain_rungs": ["<rung>", ...],
  *       "reveals_dropped": ["<field key>", ...]
- *     }
+ *     },
+ *     "actions": [{...}] | null  // raw TurnResult.actions - a `send_attachments`
+ *                                 // entry's own file list, read via
+ *                                 // `extractTurnAttachments`
  *   }
  *   404 `{code: "CHATBOT_CONSOLE_NO_ENVELOPE", ...}` - the contact has no prior chatbot
  *   turn to borrow a session shape from.

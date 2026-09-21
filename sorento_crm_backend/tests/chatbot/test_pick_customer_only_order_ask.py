@@ -15,8 +15,17 @@ back through a different door: a by-product pick is now impossible rather than f
 """
 from __future__ import annotations
 
-from app.services.chatbot.contracts import DOMAIN_SPEC
 from app.services.chatbot.lanes.business import fetch
+from app.services.chatbot.turn.policy import Policy
+from app.services.chatbot.turn.policy_rows import DEFAULT_DOMAIN_ROWS, DEFAULT_KIND_ROWS
+
+# AC-1594: contracts.DOMAIN_SPEC is deleted - Policy.from_rows(DEFAULT_DOMAIN_ROWS, ...)
+# is the same seed data a migration and a blank-schema fixture both fall back to.
+_POLICY = Policy.from_rows(
+    domains=[dict(row) for row in DEFAULT_DOMAIN_ROWS],
+    kinds=[dict(row) for row in DEFAULT_KIND_ROWS],
+    tier_order=["dealer", "office", "end_user"],
+)
 
 _BY_PRODUCT = "crm_order_management_orders_by_product_list"
 _ORDERS = "crm_order_management_orders_list"
@@ -40,7 +49,7 @@ class TestAnOrderAskAlwaysPicksTheOrdersList:
     def test_the_by_product_tool_is_not_a_candidate_for_any_domain(self) -> None:
         """It stays in `DOMAIN_SPEC["order"].tools` as an allow-list member (the probes
         may name it), but it is never `tools[0]`, so nothing can select it."""
-        assert _BY_PRODUCT in DOMAIN_SPEC["order"].tools
+        assert _BY_PRODUCT in _POLICY.domain("order").tools
         assert _BY_PRODUCT not in {
-            spec.tools[0] for spec in DOMAIN_SPEC.values() if spec.tools
+            spec.tools[0] for spec in _POLICY.domains if spec.tools
         }

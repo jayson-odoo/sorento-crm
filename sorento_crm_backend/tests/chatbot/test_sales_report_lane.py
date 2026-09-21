@@ -239,9 +239,13 @@ class TestNoKeyDeniesBeforeFetch:
         )
         reply = (result.reply or {}).get("text") or ""
         assert reply.strip() == SALES_REPORT_DENIAL, reply
-        stored = _session_of(session_factory)["variables"]
-        assert not stored.get("pending"), stored.get("pending")
-        assert stored.get("selection_context") != "sales_report_detail", stored.get("selection_context")
+        # Session-shape port (AC-1592, 16-17 Sep 2026, see test_outstanding_lane.py's
+        # module docstring): `pending`/`selection_context` are this file's OLD names -
+        # `_session_of` now returns the flat session_vars dict directly (no `variables`
+        # nesting) and an armed offer lives at `open_question`. A total denial before
+        # any fetch must leave NO open question at all.
+        stored = _session_of(session_factory)
+        assert not stored.get("open_question"), stored.get("open_question")
 
     def test_with_the_key_the_fetch_runs_once(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
@@ -400,14 +404,21 @@ class TestHitArmsSalesReportDetail:
         assert "would you like me to escalate" not in reply.lower(), (
             f"a hit must never also offer to escalate: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "sales_report_detail", stored.get("pending")
-        assert stored.get("selection_context") == "sales_report_detail", stored.get("selection_context")
-        rows = stored.get("last_result_set") or []
-        assert len(rows) == 1, rows
-        assert rows[0].get("label") == "Sales order list", rows[0]
-        assert rows[0].get("value") == "so", rows[0]
-        filters_out = stored.get("outstanding_filters") or {}
+        # Session-shape port (AC-1592, see test_outstanding_lane.py's module
+        # docstring): `pending`/`selection_context`/`last_result_set`/
+        # `outstanding_filters` are this file's OLD names for what `open_question` now
+        # carries whole - `.kind` is both the old `selection_context` and
+        # `pending.kind`, `.options` is `last_result_set` (one option per row, its
+        # `payload.value` the old row's bare `value`), and `.payload.filters` is
+        # `outstanding_filters` (measured directly, not guessed).
+        stored = _session_of(session_factory)
+        open_question = stored.get("open_question") or {}
+        assert open_question.get("kind") == "sales_report_detail", open_question
+        options = open_question.get("options") or []
+        assert len(options) == 1, options
+        assert options[0].get("label") == "Sales order list", options[0]
+        assert options[0].get("payload", {}).get("value") == "so", options[0]
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("tool") == "crm_sales_report", (
             f"tester's own naming choice (module docstring): the stored filter set "
             f"must carry which tool the offer belongs to: {filters_out}"
@@ -459,6 +470,13 @@ def _seed_open_detail(
     }
     if kind == "sales_report_detail":
         filters["tool"] = "crm_sales_report"
+    if kind == "outstanding_detail":
+        # `turn/apply.py:298`/`turn/decide.py:321` read `filters["scope"]` on a
+        # refinement re-run (R15) - `TestDateNarrowingUnderAnOpenOffer`'s own seed in
+        # test_outstanding_lane.py (`_seed_open_outstanding_detail`) carries it for the
+        # same reason; both `KINDS` rows here offer "so"/"do" from a report that read
+        # BOTH documents, matching `REPORT_HIT`'s own shape.
+        filters["scope"] = "both"
     if channel is not None:
         filters["channel"] = channel
     _seed_contact(
@@ -513,13 +531,28 @@ class TestDetailOfferLifecycle:
             mcp_response=_KIND_MOCK_HIT[kind],
         )
         assert captured1 and captured1[0][1].get("detail") == "so", (kind, captured1)
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == kind, (
-            kind, "the offer must still be open after one pick", stored.get("pending"),
+        # Session-shape port: `pending`/`variables` -> `open_question` (see
+        # test_outstanding_lane.py's module docstring).
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == kind, (
+            kind, "the offer must still be open after one pick", open_question,
         )
 
     @pytest.mark.parametrize("kind", KINDS)
     def test_offer_survives_a_casual_turn(self, session_factory, monkeypatch, kind: str) -> None:
+        """KEPT RED, confirmed a real still-open defect, not ported around (20 Sep
+        2026): `test_rearch_s6_open_question_parser.py::
+        TestAbsentAnswerCarriesThePendingWithoutReprinting` proves `apply()` itself
+        already returns an EMPTY `plan.fetch` for a casual message over an open
+        pending (its own AC-1593 docstring names the finding this test polices) - but
+        a REAL two-turn probe through `engine.run_turn` (armed by a genuine turn 1,
+        not `_seed_open_detail`'s hand-written dict, to rule out a seeding artifact)
+        still shows `crm_order_management_orders_list` fetched on the casual turn,
+        and the `sales_report_detail`/`outstanding_detail` `open_question` gets
+        REPLACED by a fresh `team_pick` escalate offer - the original offer is lost,
+        not merely re-fetched. The gap sits somewhere between `apply()` and the
+        fetch call (`turn/decide.py`/`engine.py` orchestration), not inside `apply()`
+        itself. Flagged for a coder pass; not this tester's fix to make."""
         _seed_open_detail(session_factory, kind)
         _r1, captured1 = _run_turn(
             session_factory, monkeypatch,
@@ -531,9 +564,29 @@ class TestDetailOfferLifecycle:
             attributes=_KIND_ATTRS[kind],
         )
         assert captured1 == [], (kind, captured1)
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == kind, (kind, stored.get("pending"))
+        # Session-shape port: `pending`/`variables` -> `open_question`.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == kind, (kind, open_question)
 
+    @pytest.mark.skip(
+        reason=(
+            "retired premise, not a port gap (20 Sep 2026): this test's whole claim "
+            "is 'an unreadable turn reprints the offer once, then a second one closes "
+            "it' - the COORDINATOR RULING of 17 Sep 2026 (test_outstanding_lane.py's "
+            "module docstring, 'S6 cluster 4') amends this away for EVERY pending kind "
+            "including sales_report_detail: an open question is answered only when "
+            "the PARSER says so, and a casual aside carries the pending SILENTLY, "
+            "never re-prints it and never closes it. The same-shaped tests this file "
+            "mirrors in test_outstanding_lane.py (test_detail_offer_survives_a_casual_"
+            "turn, test_a_casual_turn_under_an_open_offer_reprints_it_rather_than_"
+            "greeting, test_the_reprint_uses_the_same_offer_form_the_report_used) were "
+            "already retired the same way, with the ruling's own replacement coverage "
+            "named: test_rearch_s6_open_question_parser.py::"
+            "TestAbsentAnswerCarriesThePendingWithoutReprinting, parametrized over "
+            "every PENDING_KINDS value (sales_report_detail included). Kept here, "
+            "skipped rather than silently deleted, so the retirement is traceable."
+        )
+    )
     @pytest.mark.parametrize("kind", KINDS)
     def test_an_unreadable_turn_reprints_once_then_the_second_closes_it(
         self, session_factory, monkeypatch, kind: str
@@ -581,12 +634,23 @@ class TestDetailOfferLifecycle:
     def test_a_decline_closes_it_with_the_offer_declined_copy(
         self, session_factory, monkeypatch, kind: str
     ) -> None:
+        """Measured 20 Sep 2026, a real still-open porting gap, kept RED rather than
+        forced: `run_fetch`'s own `outstanding_offer_declined` branch (`lanes/business/
+        __init__.py:999`, R22(a)'s "Okay, noted." registry copy) is old-engine code the
+        new turn engine never reaches for this shape - `turn/apply.py:617` routes ANY
+        `is_affirmative: false` with no entities to the generic `escalation_declined`
+        lane ("Escalation declined.") regardless of what `open_question` kind was
+        open, even with `outstanding_offer_declined: True` also set on the verdict
+        (probed directly). Declining a SPECIFIC open detail offer (as opposed to a
+        generic escalation offer) has no seam in the new engine yet - flagged for a
+        coder pass, not this tester's fix to make."""
         _seed_open_detail(session_factory, kind)
         result, captured = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
                 message_type="casual", is_affirmative=False, reference_positions=[],
                 entities=[], domain_hint=None, entity_op="reuse",
+                outstanding_offer_declined=True,
             ),
             text_body="no", msg_id=f"ZZT-{kind}-decline-1",
             attributes=_KIND_ATTRS[kind],
@@ -594,13 +658,11 @@ class TestDetailOfferLifecycle:
         assert captured == [], (kind, captured)
         reply = (result.reply or {}).get("text") or ""
         assert reply.strip() == "Okay, noted.", (
-            kind, "R22(a)'s own registry copy, chatbot_reply_copy.CHATBOT_REPLY_OFFER_DECLINED", reply,
+            kind, "R22(a)'s own registry copy, chatbot_reply_copy's offer_declined key", reply,
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != kind, (kind, stored.get("pending"))
-        assert "outstanding_filters" not in stored, (
-            kind, "the carried filter set dies with the closed offer", stored.get("outstanding_filters"),
-        )
+        # Session-shape port: `pending`/`variables` -> `open_question`.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != kind, (kind, open_question)
 
 
 # --------------------------------------------------------------------------- #
@@ -631,8 +693,8 @@ class TestRefinementAndNewAsk:
         name, args = captured[0]
         assert name == _KIND_TOOL[kind], (kind, name)
         assert "detail" not in args, (kind, args)
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == kind, (kind, stored.get("pending"))
+        stored = _session_of(session_factory)
+        assert (stored.get("open_question") or {}).get("kind") == kind, (kind, stored.get("open_question"))
 
     @pytest.mark.parametrize("kind", KINDS)
     def test_a_location_word_reruns_with_no_detail(
@@ -704,8 +766,8 @@ class TestRefinementAndNewAsk:
         assert args.get("customer_ids") == [CUSTOMER_UUID], (kind, args)
         assert args.get("product_code") == PRODUCT_CODE, (kind, args)
         assert "detail" not in args, (kind, args)
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == kind, (kind, stored.get("pending"))
+        stored = _session_of(session_factory)
+        assert (stored.get("open_question") or {}).get("kind") == kind, (kind, stored.get("open_question"))
 
     @pytest.mark.parametrize("kind", KINDS)
     def test_a_business_query_with_a_domain_hint_is_a_new_ask_and_drops_the_offer(
@@ -728,9 +790,9 @@ class TestRefinementAndNewAsk:
             attributes=_KIND_ATTRS[kind],
             matches={"hanlim": {"uuid": other_uuid, "entity_type": "customer", "canonical_code": "HANLIM TRADING SDN BHD"}},
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != kind, (
-            kind, "a business question of its own (R24) must drop the offer", stored.get("pending"),
+        stored = _session_of(session_factory)
+        assert (stored.get("open_question") or {}).get("kind") != kind, (
+            kind, "a business question of its own (R24) must drop the offer", stored.get("open_question"),
         )
 
 
@@ -740,6 +802,13 @@ class TestRefinementAndNewAsk:
 
 
 def _seed_open_sales_report_customer_pick(session_factory) -> None:
+    """UNUSED as of 20 Sep 2026 - `TestPickerNoDoHintAndPickContinues`'s two pick
+    tests were re-armed with a REAL turn 1 instead (measured: this hand-written
+    `variables` dict never reaches a real `customer_pick` answer, the same
+    "invisible to the current engine" class of gap `test_outstanding_lane.py`'s
+    module docstring names for its own hand-seeded fixtures). Kept, not deleted -
+    the shape is still useful reference for what the OLD engine's picker-
+    continuation session looked like."""
     roster = [
         {"idx": 1, "label": "HANLIM TRADING SDN BHD (SRT)", "uuid": HANLIM_UUID_1, "product": HANLIM_CODE_1, "entity_type": "customer"},
         {"idx": 2, "label": "HANLIM TRADING (JB) SDN BHD (SRT)", "uuid": HANLIM_UUID_2, "product": HANLIM_CODE_2, "entity_type": "customer"},
@@ -828,7 +897,45 @@ class TestPickerNoDoHintAndPickContinues:
     def test_pick_one_continues_the_sales_report_with_the_original_filters(
         self, session_factory, monkeypatch
     ) -> None:
-        _seed_open_sales_report_customer_pick(session_factory)
+        """Re-armed with a REAL turn 1 (20 Sep 2026), not `_seed_open_sales_report_
+        customer_pick`'s hand-written `variables` dict - see the class module's own
+        history for that reasoning. `tool`/`customer_ids` FIXED (coder 30:
+        `answer_bridge._offer_answer` stamps `payload["status"]` from the asking
+        turn's own `order_status`, and `turn/apply.py::_answer_pending` carries it back
+        onto `focus.status`), GREEN on those two axes.
+
+        DEFECT ADJUDICATION (tester 34, 20 Sep 2026, coder 30's own report): the
+        `date_from`/`date_to`/`channel` assertions below were themselves wrong, not a
+        code gap. MEASURED verbatim: `lanes/business/fetch.py:672-689`'s own S18 comment
+        ("a PRODUCT-ONLY ask ... with no date window defaults to the CURRENT CALENDAR
+        YEAR ... a customer ask, or a customer+product ask, with no date stays all
+        dates (S4, unchanged)") and its own code guard
+        (`jsc.truthy(out.get("product_code")) and not jsc.truthy(out.get("customer_ids"))`)
+        - this scenario is a CUSTOMER-only ask (no product_code), so the current-year
+        default explicitly does NOT apply; production correctly leaves `date_from`/
+        `date_to` unset. `channel` has no default mechanism anywhere in the codebase
+        (`semantic_input.sales_channel` or `.outstanding_carried_channel`, both absent
+        here, are the only two readers, `fetch.py:661-665`) - no access-type-to-channel
+        mapping exists for `crm_sales_report`. Re-pinned to what production actually,
+        correctly does."""
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                entities=[
+                    {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
+                ],
+            ),
+            text_body="sales report for hanlim",
+            msg_id="ZZT-sales-report-pick-arm-1",
+            attributes=["sales_orders.sales_report"],
+            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
+        )
+        assert (_session_of(session_factory).get("open_question") or {}).get("kind") == (
+            "customer_pick"
+        ), "setup: the customer picker must be armed before the pick answer"
+
         _result, captured = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
@@ -847,14 +954,35 @@ class TestPickerNoDoHintAndPickContinues:
         name, args = captured[0]
         assert name == "crm_sales_report", (name, args)
         assert args.get("customer_ids") == [HANLIM_UUID_1], args
-        assert args.get("date_from") == "2026-01-01", args
-        assert args.get("date_to") == "2026-12-31", args
-        assert args.get("channel") == "dealer", args
+        assert not args.get("date_from") and not args.get("date_to"), (
+            "S18 (fetch.py:672-689): a customer-only ask with no date stays ALL DATES - "
+            f"a current-year default only applies to a product-only ask: {args!r}"
+        )
+        assert not args.get("channel"), (
+            f"no channel-default mechanism exists for this ask's inputs: {args!r}"
+        )
 
     def test_pick_all_continues_the_sales_report_for_every_family(
         self, session_factory, monkeypatch
     ) -> None:
-        _seed_open_sales_report_customer_pick(session_factory)
+        """Re-armed with a REAL turn 1, same reasoning as
+        `test_pick_one_continues_the_sales_report_with_the_original_filters` above - see
+        its docstring, including the `date_from`/`date_to`/`channel` re-pin to S18's own
+        documented "customer ask stays all dates" rule."""
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                entities=[
+                    {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
+                ],
+            ),
+            text_body="sales report for hanlim",
+            msg_id="ZZT-sales-report-pick-all-arm-1",
+            attributes=["sales_orders.sales_report"],
+            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
+        )
         _result, captured = _run_turn(
             session_factory, monkeypatch,
             qf=_all_pick_parser_output(),
@@ -866,9 +994,13 @@ class TestPickerNoDoHintAndPickContinues:
         name, args = captured[0]
         assert name == "crm_sales_report", (name, args)
         assert args.get("customer_ids") == [HANLIM_UUID_1, HANLIM_UUID_2], args
-        assert args.get("date_from") == "2026-01-01", args
-        assert args.get("date_to") == "2026-12-31", args
-        assert args.get("channel") == "dealer", args
+        assert not args.get("date_from") and not args.get("date_to"), (
+            "S18 (fetch.py:672-689): a customer-only ask with no date stays ALL DATES - "
+            f"a current-year default only applies to a product-only ask: {args!r}"
+        )
+        assert not args.get("channel"), (
+            f"no channel-default mechanism exists for this ask's inputs: {args!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -898,8 +1030,8 @@ class TestMissTakesNotFoundPath:
         assert "escalate" in reply.lower(), (
             f"a total miss must reach the existing escalate offer: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "sales_report_detail", (
+        stored = _session_of(session_factory)
+        assert (stored.get("open_question") or {}).get("kind") != "sales_report_detail", (
             f"a miss offers no detail list: {stored.get('pending')!r}"
         )
 
@@ -960,8 +1092,12 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
     def test_sales_channel_is_declared_on_the_parser_output_schema(self) -> None:
+        """Retired `head/output_exchange.py` (AC-1592, S0): the retired module's
+        `_EXEMPT_FROM_REQUIRED` is now `head/parser.py::TOLERATED_ABSENT`, the SAME
+        set both `parser.parse`'s own emission check and `engine.run_turn`'s harness
+        bypass read through the module-level `assert_emission` (coder 25's own
+        pins table)."""
         from app.services.chatbot.head import parser as parser_mod
-        from app.services.chatbot.head import output_exchange as output_exchange_mod
 
         schema = parser_mod.PARSE_OUTPUT_JSON_SCHEMA
         assert "sales_channel" in schema["properties"], (
@@ -977,32 +1113,47 @@ class TestParserPromptAndContractsTeachSalesReport:
             "sales_channel must be required in the strict json_schema sent to the "
             "provider, or the live parser call 400s"
         )
-        assert "sales_channel" in output_exchange_mod._EXEMPT_FROM_REQUIRED, (
-            "sales_channel must be exempted from output_exchange's own required-key "
+        assert "sales_channel" in parser_mod.TOLERATED_ABSENT, (
+            "sales_channel must be exempted from assert_emission's own required-key "
             "check the same way group_by/top_n are, or a turn that never emits it "
             "(every non-sales-report ask) fails to post-process"
         )
 
     def test_an_emission_without_sales_channel_still_post_processes(self) -> None:
         """The wire compatibility half: `sales_channel` is required-but-exempt (schema
-        `required`, `output_exchange._EXEMPT_FROM_REQUIRED`), mirroring `group_by` /
-        `top_n` (`test_parser_growth_r1_reachability.py::
+        `required`, `parser.TOLERATED_ABSENT`), mirroring `group_by` / `top_n`
+        (`test_parser_growth_r1_reachability.py::
         test_a_pre_growth_r1_emission_still_post_processes`) - a published prompt
         version that predates the key, or simply a non-sales-report ask, must not fail
         a turn for lacking it."""
-        from app.services.chatbot.head.output_exchange import _assert_emission
+        from app.services.chatbot.head.parser import assert_emission
 
-        emission = _parser_output()
+        # `asks`/`topic_reset` are supplied explicitly: `_parser_output`'s shared base
+        # dict predates both (an unrelated, pre-existing fixture gap) and they are NOT
+        # in `TOLERATED_ABSENT` - only `sales_channel` is meant to be absent here.
+        emission = _parser_output(asks=[], topic_reset=False)
         assert "sales_channel" not in emission
-        _assert_emission(emission)  # must not raise
+        assert_emission(emission)  # must not raise
 
     def test_sales_channel_is_allowlisted_on_session_vars(self) -> None:
+        """S4 wiring point 2's 'Carry' step, re-homed onto the turn re-architecture's
+        session shape (AC-1504): `SessionVars` (the five-key shape, `extra='forbid'`)
+        carries no bare `sales_channel` of its own any more - the axis lives on the
+        SAME `Focus` (`session_vars.focus`) that carries `status`, `products`,
+        `customers`, ... (contracts.py:504-543). `LegacyVariables.sales_channel`
+        (the pre-rearch flat shape) also still exists, kept for the parked #930 lane -
+        both are checked so neither the legacy nor the current home silently drops the
+        field."""
         from app.services.chatbot import contracts as contracts_mod
 
-        assert "sales_channel" in contracts_mod.SessionVars.model_fields, (
-            "sales_channel must be a declared SessionVars field (extra='forbid') the "
-            "same way order_status is (S4 wiring point 2's 'Carry' step), or the "
-            "tail's write of it is silently dropped"
+        assert "sales_channel" in contracts_mod.Focus.model_fields, (
+            "sales_channel must be a declared Focus field (extra='forbid') - the "
+            "carried-axis home `session_vars.focus` gives it in the turn "
+            "re-architecture - or the tail's write of it is silently dropped"
+        )
+        assert "sales_channel" in contracts_mod.LegacyVariables.model_fields, (
+            "sales_channel must stay a declared LegacyVariables field too, for the "
+            "parked #930 lane's own five-key shape"
         )
 
     def test_sales_report_detail_is_an_allowed_pending_kind(self) -> None:
@@ -1015,42 +1166,39 @@ class TestParserPromptAndContractsTeachSalesReport:
             f"{contracts_mod.PENDING_KINDS}"
         )
 
-    def test_the_addendum_is_appended_to_both_bodies(self) -> None:
-        """Both texts ship: prod's `production` label is on the FULL body and dev's is on
-        the SLIM one, so a vocabulary published to only one is taught to only one
-        environment - which reads as "works on dev, silent in prod". Same treatment as
-        `test_parser_low_stock_words.py::TestBothPublishedBodiesCarryTheVocabulary`:
-        `SALES_REPORT_ADDENDUM` is the newest addendum, so it is the tail of both
-        published bodies."""
+    def test_the_addendum_is_appended_to_the_single_body(self) -> None:
+        """Coder 25's merge resolution (`e421d6127`): `SEMANTIC_PARSER_PROMPT_SLIM`
+        stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
+        body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
+        is deliberately dropped, so the original "both texts ship" premise (dev vs
+        prod split) no longer applies. `SALES_REPORT_ADDENDUM` is still the newest
+        addendum, so it is still the tail of the one body that exists."""
         from app.services.chatbot_parser_prompt import (
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
-            SEMANTIC_PARSER_PROMPT_SLIM,
         )
 
-        bodies = {"FULL": SEMANTIC_PARSER_PROMPT, "SLIM": SEMANTIC_PARSER_PROMPT_SLIM}
-        for name, body in bodies.items():
-            assert body.endswith(SALES_REPORT_ADDENDUM), (
-                f"{name} body does not end with SALES_REPORT_ADDENDUM - it is the newest "
-                "addendum, so it is the tail"
-            )
+        assert SEMANTIC_PARSER_PROMPT.endswith(SALES_REPORT_ADDENDUM), (
+            "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM - it is "
+            "the newest addendum, so it is the tail"
+        )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
         """The ORDER the existing pins' strip chains assume (`test_parser_prompt_is_live`,
         `test_parser_growth_r1_reachability`, `test_parser_low_stock_words`). A new
-        addendum inserted anywhere but the end makes all of them wrong."""
+        addendum inserted anywhere but the end makes all of them wrong.
+
+        `SEMANTIC_PARSER_PROMPT_SLIM` stays retired on this lane (see
+        `test_the_addendum_is_appended_to_the_single_body` above) - one body, not two."""
         from app.services.chatbot_parser_prompt import (
             LOW_STOCK_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
-            SEMANTIC_PARSER_PROMPT_SLIM,
         )
 
-        bodies = {"FULL": SEMANTIC_PARSER_PROMPT, "SLIM": SEMANTIC_PARSER_PROMPT_SLIM}
-        for name, body in bodies.items():
-            assert body.removesuffix(SALES_REPORT_ADDENDUM).endswith(LOW_STOCK_ADDENDUM), (
-                f"{name}: SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
-            )
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(SALES_REPORT_ADDENDUM).endswith(
+            LOW_STOCK_ADDENDUM
+        ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
 
 
 # --------------------------------------------------------------------------- #
@@ -1159,6 +1307,14 @@ class TestChannelSurvivesPickAndRefinement:
 def test_an_unresolvable_product_word_in_a_refinement_is_ignored(
     session_factory, monkeypatch, kind: str
 ) -> None:
+    """KEPT RED, measured 20 Sep 2026 for BOTH kinds equally (so not a sales-report-
+    only artifact, and not a seeding gap - `_seed_open_detail`'s own `scope` fix
+    already lands the sibling refinement tests green for outstanding_detail): the
+    resolver's own diagnostics correctly flag "cheaper" as `missing_or_bad_uuid`
+    (`skipped`), but the fetch args still carry `product_code: "cheaper"` verbatim -
+    the raw unresolved token reaches the tool call instead of being dropped. A real,
+    still-open defect in the shared refinement product_code derivation, not a fixture
+    bug; flagged for a coder pass."""
     _seed_open_detail(session_factory, kind, subject="customer")
     _result, captured = _run_turn(
         session_factory, monkeypatch,
@@ -1266,8 +1422,9 @@ class TestProductOnlyDefaultsToCurrentYear:
         assert args.get("date_from") == f"{year}-01-01", args
         assert args.get("date_to") == f"{year}-12-31", args
 
-        stored = _session_of(session_factory)["variables"]
-        filters_out = stored.get("outstanding_filters") or {}
+        stored = _session_of(session_factory)
+        open_question = stored.get("open_question") or {}
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("date_filter_start") == f"{year}-01-01", (
             "the stored filter set must carry the same default window, so a later "
             f"'1' lists that window only: {filters_out}"
@@ -1438,21 +1595,28 @@ class TestTypedStemWinsOverFamilySibling:
             f"family sibling the OR-mode probe also matched: {args}"
         )
 
-    def test_a_stem_that_is_not_itself_a_product_documents_current_behaviour(
+    def test_a_stem_that_is_not_itself_a_product_now_rosters_instead_of_guessing(
         self, session_factory, monkeypatch
     ) -> None:
-        """The edge case the captain's brief asks to REPORT rather than force:
-        "SRT567" is a prefix of several products but not itself one of them.
-        No resolved candidate's own code casefold-equals the typed raw, so the
-        typed-code-wins match in `_resolve_report_product_and_location` never
-        fires; `outstanding_product_code`'s own fallback then picks whichever
-        product entity is FIRST in resolution order - here, deliberately, the
-        member that is NOT alphabetically first, to show the choice is
-        POSITIONAL (resolution order), not the customer's own stem. This is a
-        gap, not a fix: pinned so a future change to either function shows up
-        here rather than silently, and reported to the captain as measured
-        behaviour rather than silently patched.
-        """
+        """The edge case the captain's brief originally asked to REPORT rather than
+        force: "SRT567" is a prefix of several products but not itself one of them.
+
+        RE-PINNED AGAIN (owner ruling 21 Sep 2026, hand pass 12, S12): the owner
+        reversed `order.product`'s own narrowing to `list_all` - a typed family stem
+        now answers over EVERY variant it names, the same way `inventory`/
+        `purchase_cost` already do, rather than rostering an ambiguity that `list_
+        all` no longer treats as one. Re-measured directly (this pass, tester 55):
+        the turn runs exactly ONE fetch, `crm_sales_report`, and that call's own
+        `product_code` arg is the RAW TYPED STEM ("SRT567") - `outstanding_product_
+        code`'s typed-code-wins rule (AC-1119, the SAME rule the sibling test above
+        pins for a stem that IS itself a product) fires here too, unconditionally
+        on the raw text, not conditioned on whether the stem itself resolves to a
+        product. There is no `product_ids` key on this call at all - a captain's
+        brief guess ("product_ids = every variant of the stem") did not survive
+        measurement; flagged here rather than forced. No roster is left open - the
+        report's own normal `sales_report_detail` follow-up offer ("Reply 1 for the
+        sales order list") is a different, unrelated pending shape and is not what
+        this test refuses."""
         first_uuid = "55555555-5555-5555-5555-555555555555"
         second_uuid = "66666666-6666-6666-6666-666666666666"
         resolve_services = _family_resolve_services(
@@ -1464,7 +1628,7 @@ class TestTypedStemWinsOverFamilySibling:
         )
 
         _seed_contact(session_factory, variables={})
-        _result, captured = _run_turn(
+        result, captured = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
                 domain_hint="order", intent_hint="check_order", order_status="sales_report",
@@ -1481,15 +1645,22 @@ class TestTypedStemWinsOverFamilySibling:
             resolve_services=resolve_services,
             mcp_response=SALES_REPORT_HIT,
         )
-        assert captured, "the report must run"
+        assert result.status == "done", result.error
+        assert len(captured) == 1, (
+            f"a typed family stem must answer over every variant it names with ONE "
+            f"fetch, never a roster (owner ruling 21 Sep 2026, list_all): {captured!r}"
+        )
         name, args = captured[0]
         assert name == "crm_sales_report", name
-        # MEASURED, not desired: today's code sends the FIRST resolved match
-        # (resolution order), never the customer's own typed stem "SRT567".
-        assert args.get("product_code") == "SRT5679", (
-            "current (gap) behaviour: the first resolved match wins, not the "
-            f"typed stem - if this now reads 'SRT567' the gap has been closed "
-            f"and this test's docstring/report line is stale: {args}"
+        assert args.get("product_code") == "SRT567", (
+            "typed-code-wins (AC-1119) must send the RAW TYPED STEM here too, the "
+            f"SAME rule the sibling test above pins for an exact-match stem: {args!r}"
+        )
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "product_pick", (
+            f"no product roster may be left open once the family answers directly - "
+            f"a stem that is not itself a product must never guess a single sibling "
+            f"NOR still roster: {open_question!r}"
         )
 
 

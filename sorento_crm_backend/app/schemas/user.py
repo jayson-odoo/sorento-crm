@@ -36,6 +36,10 @@ class RespondContactUpdate(BaseModel):
     workspace_id: Optional[str] = None
     requires_registered_project: Optional[bool] = None
     access_type_codes: Optional[List[str]] = None  # When set, replaces the contact's M2M assignment
+    # Chatbot turn re-architecture (AC-1503): the Profile shelf and the recall toggle,
+    # written by the Contact > Access "Chatbot" card (AC-1515).
+    chatbot_profile: Optional[dict] = None
+    chatbot_recall_enabled: Optional[bool] = None
 
 
 class RespondContactResponse(RespondContactBase):
@@ -53,6 +57,11 @@ class RespondContactResponse(RespondContactBase):
     # POST /api/v1/system/respond-contacts/{id}/outbound, never through a contact
     # update, so this is deliberately absent from RespondContactUpdate.
     outbound_enabled: bool = True
+    # Chatbot turn re-architecture (AC-1503).
+    chatbot_profile: dict = {}
+    chatbot_recall_enabled: bool = False
+    # S6: stock allowance on the contact row, default on.
+    chatbot_stock_allowed: bool = True
 
     class Config:
         from_attributes = True

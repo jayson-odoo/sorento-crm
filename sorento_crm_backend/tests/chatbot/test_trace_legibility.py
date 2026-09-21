@@ -2,10 +2,35 @@
 
 `test_engine.py::TestHappyPath.test_the_trace_is_sentences_not_json` proves this for the
 one branch kind its happy path exercises (`business_query`). This file drives `run_turn`
-through the other 12 - the AC's own wording is "any stage of a turn", not "the common
-one" - and adds the "is a sentence" property `test_engine.py` did not check: a summary or
-`why` a machine assembled by string-joining without a separator is not a sentence even
-though it contains no `{`/`[`, so every record here must also contain a space.
+through the remaining declared kinds - the AC's own wording is "any stage of a turn", not
+"the common one" - and adds the "is a sentence" property `test_engine.py` did not check: a
+summary or `why` a machine assembled by string-joining without a separator is not a
+sentence even though it contains no `{`/`[`, so every record here must also contain a
+space.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling - the S3/S6 rearch changed what these
+`branch_kind`s mean or how they are reached, so the OLD scenario setup here no longer
+exercises the branch it claims to):
+
+- `test_escalate_offer`, `test_out_of_scope` - both routed through the now-retired
+  `output_exchange` module (AC-1594). Since the S3 rearch, `branch_kind == "out_of_scope"`
+  is reached via the escalation-arm team-pick offer (contract 106/108) whose acknowledgement
+  lives in `send_message`/`add_comment` actions, never `reply["text"]` - replacement
+  coverage (including trace-record shape) is `test_rearch_s3_team_pick_and_866.py`
+  (`TestPort866AsRunTurnCases`).
+- `test_offer_hold` - asserted the legacy flat `session_vars["selection_context"]` /
+  `routing_roster_plan"]` keys (AC-1504/1521 nested-shape retirement); the S6/S0 rearch
+  moved this state under `session_vars["variables"]["focus"]`. No standalone
+  trace-legibility replacement was named for `offer_hold` specifically - flagged, not
+  ported, per the coordinator's instruction to retire per the verdict list as given.
+- `test_stock_denied`, `test_demand_qty` - the S6 ruling replaced the direct
+  `custom_fields[].name == "is_allowed_stock"` injection this file used with the real
+  stock-visibility gate; replacement coverage is `test_rearch_s6_stock_allowed.py`.
+
+`test_ideate` is NOT retired - its failure was an ENV gap (the autouse MCP-`call_tool`
+guard in `conftest.py` forbids an unstubbed `crm_ideation_turn` call), fixed below by
+stubbing `ideate_mod.call_ideation_tool` the same way `test_s3_canned_and_ideate.py`'s
+`test_ideate_branch_calls_mcp_tool` does.
 
 Nothing here reaches an LLM, n8n, respond.io or the MCP server - same seam as
 `test_engine.py`.
@@ -85,69 +110,22 @@ class TestTraceLegibilityAcrossBranchKinds:
         assert result.branch_kind == "access_denied"
         _assert_trace_is_legible(trace)
 
-    def test_escalate_offer(self, session_factory, seeded, stub_parser, stub_access):
-        """Via `is_explicit_correction`: correction=True on a non-casual, non-business
-        message_type - simpler to construct than the CS-order-enquiry-pick arm. No
-        entities/domain_hint, or `output_exchange`'s own normalisation re-derives
-        `message_type` back to `business_query` before `route.decide` ever sees it."""
-        stub_parser(
-            _parser_output(
-                message_type="clarification",
-                domain_hint=None,
-                intent_hint=None,
-                entities=[],
-                correction=True,
-            )
-        )
-        stub_access()
-        result, trace = _run(session_factory, _envelope())
-        assert result.branch_kind == "escalate_offer"
-        _assert_trace_is_legible(trace)
+    def test_ideate(self, session_factory, seeded, stub_parser, stub_access, monkeypatch):
+        from app.services.chatbot.lanes import ideate as ideate_mod
 
-    def test_out_of_scope(self, session_factory, seeded, stub_parser, stub_access):
-        # A pure help request: no entity named this turn. Since 8 Sep 2026 a
-        # `request_for_help` that names an entity beside a decisive intent or a switch
-        # word is retyped `business_query` (owner turn 2d903c96, "delivery to hanlim"),
-        # and the default fixture carries exactly that shape.
-        stub_parser(
-            _parser_output(
-                message_type="request_for_help", domain_hint="order", intent_hint=None, entities=[]
-            )
-        )
-        stub_access()
-        result, trace = _run(session_factory, _envelope())
-        assert result.branch_kind == "out_of_scope"
-        _assert_trace_is_legible(trace)
+        def _fake_call(**kwargs):
+            return {
+                "status": "complete",
+                "reply_text": "Idea IDEA-1 recorded. Thank you!",
+                "link": None,
+                "session_vars": {"ideation": None},
+            }
 
-    def test_ideate(self, session_factory, seeded, stub_parser, stub_access):
+        monkeypatch.setattr(ideate_mod, "call_ideation_tool", _fake_call)
         stub_parser(_parser_output(domain_hint="ideate", intent_hint="submit_idea"))
         stub_access()
         result, trace = _run(session_factory, _envelope())
         assert result.branch_kind == "ideate"
-        _assert_trace_is_legible(trace)
-
-    def test_offer_hold(self, session_factory, seeded, stub_parser, stub_access):
-        _set_session_vars(
-            session_factory,
-            {
-                "selection_context": "member_offer",
-                "routing_roster_plan": [{"id": "a"}, {"id": "b"}],
-            },
-        )
-        stub_parser(
-            _parser_output(
-                message_type="clarification",
-                member_pick_context=True,
-                escalation={
-                    "is_escalation_confirmation": False,
-                    "escalation_declined": False,
-                    "offer_hold": True,
-                },
-            )
-        )
-        stub_access()
-        result, trace = _run(session_factory, _envelope())
-        assert result.branch_kind == "offer_hold"
         _assert_trace_is_legible(trace)
 
     def test_escalation_declined(self, session_factory, seeded, stub_parser, stub_access):
@@ -198,40 +176,6 @@ class TestTraceLegibilityAcrossBranchKinds:
         assert result.branch_kind == "not_supported"
         _assert_trace_is_legible(trace)
 
-    def test_stock_denied(self, session_factory, seeded, system_settings_row, stub_parser, stub_access):
-        from app.models.user import SystemSetting
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_stock_denial_enabled = True
-        db.commit()
-
-        stub_parser(_parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=5))
-        stub_access()
-        envelope = _envelope()
-        envelope.contact["custom_fields"] = [{"name": "is_allowed_stock", "value": "false"}]
-        result, trace = _run(session_factory, envelope)
-        assert result.branch_kind == "stock_denied"
-        _assert_trace_is_legible(trace)
-
-    def test_demand_qty(self, session_factory, seeded, system_settings_row, stub_parser, stub_access):
-        from app.models.user import SystemSetting
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_stock_denial_enabled = True
-        db.commit()
-
-        stub_parser(
-            _parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=None)
-        )
-        stub_access()
-        envelope = _envelope()
-        envelope.contact["custom_fields"] = [{"name": "is_allowed_stock", "value": "false"}]
-        result, trace = _run(session_factory, envelope)
-        assert result.branch_kind == "demand_qty"
-        _assert_trace_is_legible(trace)
-
     def test_business_query(self, session_factory, seeded, stub_parser, stub_access):
         stub_parser(_parser_output())
         stub_access()
@@ -240,20 +184,29 @@ class TestTraceLegibilityAcrossBranchKinds:
         _assert_trace_is_legible(trace)
 
     def test_every_declared_branch_kind_has_a_test_above(self) -> None:
-        """A new BRANCH_KINDS entry must add a scenario here, not silently go untested."""
+        """A new BRANCH_KINDS entry must add a scenario here, not silently go untested.
+
+        `escalate_offer`, `out_of_scope`, `offer_hold`, `stock_denied`, `demand_qty` are
+        NOT in `tested` below - their scenarios here were retired 16 Sep 2026 (AC-1592,
+        see the module docstring); trace-legibility coverage for `escalate_offer`/
+        `out_of_scope` lives in `test_rearch_s3_team_pick_and_866.py` instead, so this
+        completeness check is scoped to the branch kinds this file itself still drives.
+        """
         tested = {
             "access_denied",
-            "escalate_offer",
-            "out_of_scope",
             "ideate",
-            "offer_hold",
             "escalation_declined",
             "check_promotion",
             "low_signal",
             "clarify_menu",
             "not_supported",
-            "stock_denied",
-            "demand_qty",
             "business_query",
         }
-        assert tested == set(BRANCH_KINDS)
+        retired_elsewhere_or_flagged = {
+            "escalate_offer",
+            "out_of_scope",
+            "offer_hold",
+            "stock_denied",
+            "demand_qty",
+        }
+        assert tested | retired_elsewhere_or_flagged == set(BRANCH_KINDS)

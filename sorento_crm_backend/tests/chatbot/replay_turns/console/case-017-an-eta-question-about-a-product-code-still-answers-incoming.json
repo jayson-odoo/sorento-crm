@@ -1,0 +1,245 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Incoming Stock Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "srtwc287 any eta",
+              "type": "text"
+            },
+            "messageId": "console-check-f75b7c3447ec",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "dbc021e1-a1f5-40e5-957a-2a50188f98c3"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
+        "text": "No incoming stock (ETA) found for SRTWC287.\nNo incoming for SRTWC287-S-150-RL, SRTWC287A-P-RL, SRTWC287A-RL-320, SRTWC287A-SC, SRTWC287-RL, SRTWC287-P-RL, SRTWC287-S-200-RL.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWC287-S-150-RL\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 170\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-150-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 23\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-150-RL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 22\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-P-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 32\n*Outstanding:* 126\n\n- *Product Code:* SRTWC287A-P-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 17\n*Outstanding:* 20\n\n- *Product Code:* SRTWC287A-RL-320\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 8\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-SC\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 142\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-SC\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 14\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-SC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 8\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 18\n*Outstanding:* 1\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n- *Product Code:* SRTWC287-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n- *Product Code:* SRTWC287-S-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n- *Product Code:* SRTWC287-P-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 33\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-P-RL\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 31\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-P-RL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 23\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-200-RL\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 82\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-200-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 53\n*Outstanding:* 0\n\nNo incoming, no stock and nothing on order for SRTWC287-S-150, SRTWC287-LID, SRTWC287A-RL-7405, SRTWC287AA, SRTWC287-RL-289UF, SRTWC287-SC, SRTWC287.\n\nNo incoming, stock is 0 at every location and nothing on order for SRTWC287-S-200.\n\nRelated products:\n1. SRTWC287 - no incoming\n2. SRTWC287-LID - no incoming\n3. SRTWC287-P - no incoming\n4. SRTWC287-P-RL - no incoming\n5. SRTWC287-RL - no incoming\n6. SRTWC287-RL-289UF - no incoming\n7. SRTWC287-S-150 - no incoming\n8. SRTWC287-S-150-RL - no incoming\n9. SRTWC287-S-200 - no incoming\n10. SRTWC287-S-200-RL - no incoming\n11. SRTWC287-S-300 - no incoming\n12. SRTWC287-SC - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_incoming_stock_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "srtwc287",
+                "entity_type": "product",
+                "uuid": "dbc021e1-a1f5-40e5-957a-2a50188f98c3"
+              }
+            ],
+            "resolved": true,
+            "token": "srtwc287"
+          }
+        ],
+        "tokens": [
+          "srtwc287"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:51:19.284250+09:00",
+        "turn_id": "c950c6e5-c61b-4902-86c8-f89ff92208b3"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "dbc021e1-a1f5-40e5-957a-2a50188f98c3"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "alternatives": [
+              {
+                "display": "SRTWC287A-RL",
+                "id": "4600db95-f245-4c80-b33f-f19b36a404e6",
+                "is_variant": true,
+                "sim": 0.615,
+                "value": "SRTWC287A-RL"
+              }
+            ],
+            "attachments": [],
+            "field_vocabulary": {
+              "approval_date": "CIDB Approval",
+              "china_forwarder": "China Forwarder",
+              "coa_permit_no": "COA Permit No.",
+              "collection_date": "Collection",
+              "consignee": "Consignee",
+              "delivery_warehouse": "Delivery Warehouse",
+              "estimated_arrival_date": "ETA",
+              "eta_delay_date": "ETA Delay",
+              "etc_date": "ETC",
+              "etd_date": "ETD",
+              "free_days_available": "Free Days Available",
+              "gatepass_date": "Gatepass",
+              "informed_collection_date": "Collection Informed",
+              "inspection_date": "CIDB Inspection",
+              "liner_code": "Liner",
+              "loading_date": "Loading",
+              "loc": "Location",
+              "malaysia_forwarder": "Malaysia Forwarder",
+              "stacked": "Stacked",
+              "warehouse_arrival_date": "Warehouse Arrival"
+            },
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": null,
+            "relaxed_axis": "entity",
+            "result_type": "incoming_stock"
+          },
+          "tool": "crm_incoming_stock_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "incoming",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc287"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_incoming",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "estimated_arrival_date"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check the ETA for SRTWC287"
+      }
+    }
+  ]
+}

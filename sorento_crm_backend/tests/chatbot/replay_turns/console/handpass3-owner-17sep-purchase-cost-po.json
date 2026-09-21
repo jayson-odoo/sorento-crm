@@ -1,0 +1,1878 @@
+{
+  "_note": "rulings proposed 17 Sep 2026, pending owner go - see documentation/plans/chatbot/evidence/turn-rearch/hand-pass-3-17sep.md (coder worktree). Recorded verbatim off the source clone (observed, currently-broken behaviour, NOT edited to the proposed ruling: hand-editing a multi-KB real order/DO listing to a hypothetical post-fix shape would be inventing data this session never measured, which AC-1592 forbids - 'never re-derive replay expectations from the engine'). The proposed-ruling assertions live instead in the companion unit-red file, tests/chatbot/test_rearch_handpass3_owner_17sep.py, one class per row, against the real turn/apply.py + turn/narrow.py + turn_runtime.py seams directly.",
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Purchase cost for wc286",
+              "type": "text"
+            },
+            "messageId": "console-f5f395110382",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "date_window": null,
+            "document": [
+              "DO"
+            ],
+            "domains": [
+              "order"
+            ],
+            "extra": {},
+            "products": [],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1854,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "entity_type": "outstanding_detail",
+                "label": "Delivery order list",
+                "payload": {
+                  "value": "do"
+                },
+                "position": 1
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the delivery order list.",
+                "product_code": null,
+                "scope": "do",
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+          "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+          "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+          "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+          "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+          "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+          "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+          "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+          "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+          "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "*last purchase cost* for SRTWC286-SH-200, SRTWC286-SH-P, SRTWC286-SH-PP, SRTWC286-SH, SRTWC286-SH-UF, SRTWC286-SH-NEW-150, SRTWC286-SH-150, SRTWC286-SH-NEW-P, SRTWC286-SH-NEW-200, SRTWC286-SH-NEW:\n1. *PO Number:* 202606-S0072\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 43\n*PO Date:* 2026-06-19\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-SYNT\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n2. *PO Number:* 202606-S0058\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 9\n*PO Date:* 2026-06-16\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-IB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n3. *PO Number:* 202604-S0031\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 12\n*PO Date:* 2026-04-08\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-HP\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n4. *PO Number:* 202604-S0031\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 34\n*PO Date:* 2026-04-08\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-BB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n5. *PO Number:* 202604-S0031\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 53\n*PO Date:* 2026-04-08\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n6. *PO Number:* 202510-S0093\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 1\n*PO Date:* 2025-10-17\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-SMC\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n7. *PO Number:* 202409-S0108\n*Product Code:* SRTWC286-SH\n*PO Quantity:* 7\n*PO Date:* 2024-09-25\n*Cost / unit:* CNY 295.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 295.00\n*Warehouse:* BRW-IR\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n8. *PO Number:* 202606-S0072\n*Product Code:* SRTWC286-SH-150\n*PO Quantity:* 180\n*PO Date:* 2026-06-19\n*Cost / unit:* CNY 0.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 0.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n9. *PO Number:* 202510-S0093\n*Product Code:* SRTWC286-SH-150\n*PO Quantity:* 1\n*PO Date:* 2025-10-17\n*Cost / unit:* CNY 295.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 295.00\n*Warehouse:* BRW-IR\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n10. *PO Number:* 202509-S0069\n*Product Code:* SRTWC286-SH-150\n*PO Quantity:* 2\n*PO Date:* 2025-09-29\n*Cost / unit:* CNY 295.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 295.00\n*Warehouse:* BRW-SMC\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n11. *PO Number:* 202409-S0108\n*Product Code:* SRTWC286-SH-150\n*PO Quantity:* 1\n*PO Date:* 2024-09-25\n*Cost / unit:* CNY 0.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 0.00\n*Warehouse:* BRW-ACTS\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n12. *PO Number:* 202606-S0072\n*Product Code:* SRTWC286-SH-200\n*PO Quantity:* 100\n*PO Date:* 2026-06-19\n*Cost / unit:* CNY 0.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 0.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n13. *PO Number:* 202604-S0031\n*Product Code:* SRTWC286-SH-200\n*PO Quantity:* 15\n*PO Date:* 2026-04-08\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-HP\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n14. *PO Number:* 202601-S0025\n*Product Code:* SRTWC286-SH-200\n*PO Quantity:* 2\n*PO Date:* 2026-01-09\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-AM\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n15. *PO Number:* 202608-S0072\n*Product Code:* SRTWC286-SH-NEW\n*PO Quantity:* 20\n*PO Date:* 2026-08-20\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-SYNT\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n16. *PO Number:* 202608-S0008\n*Product Code:* SRTWC286-SH-NEW\n*PO Quantity:* 84\n*PO Date:* 2026-08-06\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n17. *PO Number:* 202608-S0008\n*Product Code:* SRTWC286-SH-NEW\n*PO Quantity:* 13\n*PO Date:* 2026-08-06\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-BB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n18. *PO Number:* 202509-S0069\n*Product Code:* SRTWC286-SH-NEW\n*PO Quantity:* 10\n*PO Date:* 2025-09-29\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-HP\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n19. *PO Number:* 202608-S0008\n*Product Code:* SRTWC286-SH-NEW-150\n*PO Quantity:* 61\n*PO Date:* 2026-08-06\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n20. *PO Number:* 202609-S0032\n*Product Code:* SRTWC286-SH-NEW-200\n*PO Quantity:* 50\n*PO Date:* 2026-09-10\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n21. *PO Number:* 202607-S0095\n*Product Code:* SRTWC286-SH-NEW-200\n*PO Quantity:* 6\n*PO Date:* 2026-07-29\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-IR\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n22. *PO Number:* 202608-S0072\n*Product Code:* SRTWC286-SH-NEW-P\n*PO Quantity:* 5\n*PO Date:* 2026-08-20\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-SYNT\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n23. *PO Number:* 202608-S0008\n*Product Code:* SRTWC286-SH-NEW-P\n*PO Quantity:* 118\n*PO Date:* 2026-08-06\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n24. *PO Number:* 202607-S0095\n*Product Code:* SRTWC286-SH-NEW-P\n*PO Quantity:* 22\n*PO Date:* 2026-07-29\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-BB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n25. *PO Number:* 202606-S0058\n*Product Code:* SRTWC286-SH-P\n*PO Quantity:* 2\n*PO Date:* 2026-06-16\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n26. *PO Number:* 202510-S0113\n*Product Code:* SRTWC286-SH-P\n*PO Quantity:* 15\n*PO Date:* 2025-10-27\n*Cost / unit:* CNY 295.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 295.00\n*Warehouse:* BRW-SYNT\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n27. *PO Number:* 202509-S0069\n*Product Code:* SRTWC286-SH-P\n*PO Quantity:* 1\n*PO Date:* 2025-09-29\n*Cost / unit:* CNY 295.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 295.00\n*Warehouse:* BRW-SMC\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n28. *PO Number:* 202604-S0036\n*Product Code:* SRTWC286-SH-PP\n*PO Quantity:* 38\n*PO Date:* 2026-04-08\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-BB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n29. *PO Number:* 202608-S0008\n*Product Code:* SRTWC286-SH-UF\n*PO Quantity:* 13\n*PO Date:* 2026-08-06\n*Cost / unit:* CNY 310.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 310.00\n*Warehouse:* BRW-IR\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_procurement_po_last_cost_list"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                }
+              ],
+              "date_window": null,
+              "document": [
+                "DO"
+              ],
+              "domains": [
+                "order"
+              ],
+              "extra": {},
+              "products": [],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1854,
+              "expects": "pick",
+              "kind": "outstanding_detail",
+              "options": [
+                {
+                  "entity_type": "outstanding_detail",
+                  "label": "Delivery order list",
+                  "payload": {
+                    "value": "do"
+                  },
+                  "position": 1
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "6b52807a-537b-437d-9f55-12f7fda29df8",
+                    "2a4575e0-836b-4a5d-8566-73223465020d",
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ],
+                  "date_filter_end": null,
+                  "date_filter_start": null,
+                  "location_token": null,
+                  "offer_text": "Reply 1 for the delivery order list.",
+                  "product_code": null,
+                  "scope": "do",
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "wc286",
+                "entity_type": "product",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              }
+            ],
+            "resolved": true,
+            "token": "wc286"
+          }
+        ],
+        "tokens": [
+          "wc286"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:38:22.294978+09:00",
+        "turn_id": "2f0f58f9-5b62-4ff1-8d43-9d7c0eb10964"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 10,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 10,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+              "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+              "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+              "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+              "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+              "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+              "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+              "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+              "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+              "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 24935,
+            "head": "{\"result_type\": \"po_last_cost\", \"intro\": \"Here is the last purchase cost per product and location.\", \"items\": [{\"title\": \"202606-S0072\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0072\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"43\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-19\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-SYNT\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-S0058\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0058\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"9\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-16\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202604-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202604-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"12\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-04-08\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-HP\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202604-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202604-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"34\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-04-08\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202604-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202604-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"53\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-04-08\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202510-S0093\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202510-S0093\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"1\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2025-10-17\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 285.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-SMC\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202409-S0108\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202409-S0108\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"7\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2024-09-25\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 295.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 295.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-IR\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-S0072\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0072\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH-150\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"180\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-19\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202510-S0093\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202510-S0093\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH-150\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"1\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2025-10-17\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 295.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 295.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-IR\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202509-S0069\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202509-S0069\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC286-SH-150\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"2\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2025-09-29\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 295.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_disco",
+            "truncated": true
+          },
+          "tool": "crm_procurement_po_last_cost_list"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": "purchase_cost",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "hint_confident": true,
+            "raw": "wc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po_cost",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "general_enquiries",
+          "suggested_team": "purchasing"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to check the purchase cost for wc286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "PO for this",
+              "type": "text"
+            },
+            "messageId": "console-5371ba38433a",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [],
+            "date_window": null,
+            "document": [
+              "DO"
+            ],
+            "domains": [
+              "purchase_cost"
+            ],
+            "extra": {},
+            "products": [
+              {
+                "canonical_code": "SRTWC286-SH-200",
+                "hint": "product",
+                "raw": "SRTWC286-SH-200",
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-P",
+                "hint": "product",
+                "raw": "SRTWC286-SH-P",
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-PP",
+                "hint": "product",
+                "raw": "SRTWC286-SH-PP",
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+              },
+              {
+                "canonical_code": "SRTWC286-SH",
+                "hint": "product",
+                "raw": "SRTWC286-SH",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-UF",
+                "hint": "product",
+                "raw": "SRTWC286-SH-UF",
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-150",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-150",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-150",
+                "hint": "product",
+                "raw": "SRTWC286-SH-150",
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-P",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-P",
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-200",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-200",
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW",
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+              }
+            ],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": null
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "SRTWC286-SH-200",
+            "SRTWC286-SH-P",
+            "SRTWC286-SH-PP",
+            "SRTWC286-SH",
+            "SRTWC286-SH-UF",
+            "SRTWC286-SH-NEW-150",
+            "SRTWC286-SH-150",
+            "SRTWC286-SH-NEW-P",
+            "SRTWC286-SH-NEW-200",
+            "SRTWC286-SH-NEW"
+          ]
+        },
+        "text": "Which product do you mean?\n1. SRTWC286-SH-200\n2. SRTWC286-SH-P\n3. SRTWC286-SH-PP\n4. SRTWC286-SH\n5. SRTWC286-SH-UF\n6. SRTWC286-SH-NEW-150\n7. SRTWC286-SH-150\n8. SRTWC286-SH-NEW-P\n9. SRTWC286-SH-NEW-200\n10. SRTWC286-SH-NEW",
+        "tools": []
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [],
+              "date_window": null,
+              "document": [
+                "DO"
+              ],
+              "domains": [
+                "purchase_cost"
+              ],
+              "extra": {},
+              "products": [
+                {
+                  "canonical_code": "SRTWC286-SH-200",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-200",
+                  "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-P",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-P",
+                  "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-PP",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-PP",
+                  "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH",
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-UF",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-UF",
+                  "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-150",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-150",
+                  "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-150",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-150",
+                  "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-P",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-P",
+                  "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-200",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-200",
+                  "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW",
+                  "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                }
+              ],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": null
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:38:35.317320+09:00",
+        "turn_id": "fb8b32cb-3b10-43f3-98bc-dd3e04a27b1e"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": true
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": true,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [
+          "PO"
+        ],
+        "domain_hint": "purchase_order",
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "general_enquiries",
+          "suggested_team": "purchasing"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to check the purchase order for this item"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "All",
+              "type": "text"
+            },
+            "messageId": "console-b4f327c32c47",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [],
+            "date_window": null,
+            "document": [
+              "PO"
+            ],
+            "domains": [
+              "purchase_order"
+            ],
+            "extra": {},
+            "products": [
+              {
+                "canonical_code": "SRTWC286-SH-200",
+                "hint": "product",
+                "raw": "SRTWC286-SH-200",
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-P",
+                "hint": "product",
+                "raw": "SRTWC286-SH-P",
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-PP",
+                "hint": "product",
+                "raw": "SRTWC286-SH-PP",
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+              },
+              {
+                "canonical_code": "SRTWC286-SH",
+                "hint": "product",
+                "raw": "SRTWC286-SH",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-UF",
+                "hint": "product",
+                "raw": "SRTWC286-SH-UF",
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-150",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-150",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-150",
+                "hint": "product",
+                "raw": "SRTWC286-SH-150",
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-P",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-P",
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-200",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-200",
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW",
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW",
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+              }
+            ],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1857,
+            "expects": "pick",
+            "kind": "product_pick",
+            "options": [
+              {
+                "code": "SRTWC286-SH-200",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-200",
+                "payload": {},
+                "position": 1,
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                "uuids": [
+                  "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-P",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-P",
+                "payload": {},
+                "position": 2,
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                "uuids": [
+                  "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-PP",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-PP",
+                "payload": {},
+                "position": 3,
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                "uuids": [
+                  "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH",
+                "entity_type": "product",
+                "label": "SRTWC286-SH",
+                "payload": {},
+                "position": 4,
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                "uuids": [
+                  "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-UF",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-UF",
+                "payload": {},
+                "position": 5,
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                "uuids": [
+                  "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-150",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-150",
+                "payload": {},
+                "position": 6,
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                "uuids": [
+                  "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-150",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-150",
+                "payload": {},
+                "position": 7,
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                "uuids": [
+                  "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-P",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-P",
+                "payload": {},
+                "position": 8,
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                "uuids": [
+                  "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-200",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-200",
+                "payload": {},
+                "position": 9,
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                "uuids": [
+                  "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW",
+                "payload": {},
+                "position": 10,
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                "uuids": [
+                  "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                ]
+              }
+            ],
+            "payload": {
+              "domain": "purchase_order",
+              "domains": [
+                "purchase_order"
+              ]
+            },
+            "team": "purchasing"
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+          "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+          "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+          "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+          "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+          "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+          "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+          "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+          "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+          "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "*outstanding purchase orders* for SRTWC286-SH-200, SRTWC286-SH-P, SRTWC286-SH-PP, SRTWC286-SH, SRTWC286-SH-UF, SRTWC286-SH-NEW-150, SRTWC286-SH-150, SRTWC286-SH-NEW-P, SRTWC286-SH-NEW-200, SRTWC286-SH-NEW:\n1. *PO Number:* 202606-S0105\n*Product Code:* SRTWC286-SH-NEW\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-06-30\n*Location:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n2. *PO Number:* 202604-S0036\n*Product Code:* SRTWC286-SH-PP\n*Ordered Qty:* 36\n*Outstanding Qty:* 36\n*PO Date:* 2026-04-08\n*Location:* BRW-BB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n3. *PO Number:* 202607-S0095\n*Product Code:* SRTWC286-SH-NEW\n*Ordered Qty:* 73\n*Outstanding Qty:* 73\n*PO Date:* 2026-07-29\n*Location:* BRW-BB\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_procurement_po_placed_list"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [],
+              "date_window": null,
+              "document": [
+                "PO"
+              ],
+              "domains": [
+                "purchase_order"
+              ],
+              "extra": {},
+              "products": [
+                {
+                  "canonical_code": "SRTWC286-SH-200",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-200",
+                  "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-P",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-P",
+                  "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-PP",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-PP",
+                  "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH",
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-UF",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-UF",
+                  "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-150",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-150",
+                  "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-150",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-150",
+                  "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-P",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-P",
+                  "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-200",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-200",
+                  "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW",
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW",
+                  "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                }
+              ],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1857,
+              "expects": "pick",
+              "kind": "product_pick",
+              "options": [
+                {
+                  "code": "SRTWC286-SH-200",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-200",
+                  "payload": {},
+                  "position": 1,
+                  "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                  "uuids": [
+                    "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-P",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-P",
+                  "payload": {},
+                  "position": 2,
+                  "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                  "uuids": [
+                    "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-PP",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-PP",
+                  "payload": {},
+                  "position": 3,
+                  "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                  "uuids": [
+                    "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH",
+                  "payload": {},
+                  "position": 4,
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                  "uuids": [
+                    "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-UF",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-UF",
+                  "payload": {},
+                  "position": 5,
+                  "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                  "uuids": [
+                    "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-150",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-150",
+                  "payload": {},
+                  "position": 6,
+                  "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                  "uuids": [
+                    "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-150",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-150",
+                  "payload": {},
+                  "position": 7,
+                  "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                  "uuids": [
+                    "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-P",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-P",
+                  "payload": {},
+                  "position": 8,
+                  "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                  "uuids": [
+                    "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-200",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-200",
+                  "payload": {},
+                  "position": 9,
+                  "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                  "uuids": [
+                    "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW",
+                  "payload": {},
+                  "position": 10,
+                  "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                  "uuids": [
+                    "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                  ]
+                }
+              ],
+              "payload": {
+                "domain": "purchase_order",
+                "domains": [
+                  "purchase_order"
+                ]
+              },
+              "team": "purchasing"
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:38:43.788830+09:00",
+        "turn_id": "c103216e-7e32-4ad8-bed8-b9b8c47f3a07"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 10,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 10,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+              "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+              "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+              "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+              "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+              "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+              "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+              "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+              "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+              "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "has_result": true,
+            "intro": "Here is the PO placed I found.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202606-S0105"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-NEW"
+                  },
+                  {
+                    "key": "ordered_qty",
+                    "label": "Ordered Qty",
+                    "value": "2"
+                  },
+                  {
+                    "key": "outstanding_qty",
+                    "label": "Outstanding Qty",
+                    "value": "2"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-06-30"
+                  },
+                  {
+                    "key": "location",
+                    "label": "Location",
+                    "value": "BRW"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "kind": "po",
+                "title": "202606-S0105"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202604-S0036"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-PP"
+                  },
+                  {
+                    "key": "ordered_qty",
+                    "label": "Ordered Qty",
+                    "value": "36"
+                  },
+                  {
+                    "key": "outstanding_qty",
+                    "label": "Outstanding Qty",
+                    "value": "36"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-04-08"
+                  },
+                  {
+                    "key": "location",
+                    "label": "Location",
+                    "value": "BRW-BB"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "kind": "po",
+                "title": "202604-S0036"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202604-S0036"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-PP"
+                  },
+                  {
+                    "key": "ordered_qty",
+                    "label": "Ordered Qty",
+                    "value": "36"
+                  },
+                  {
+                    "key": "outstanding_qty",
+                    "label": "Outstanding Qty",
+                    "value": "36"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-04-08"
+                  },
+                  {
+                    "key": "location",
+                    "label": "Location",
+                    "value": "BRW-BB"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "kind": "po",
+                "title": "202604-S0036"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202607-S0095"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-NEW"
+                  },
+                  {
+                    "key": "ordered_qty",
+                    "label": "Ordered Qty",
+                    "value": "73"
+                  },
+                  {
+                    "key": "outstanding_qty",
+                    "label": "Outstanding Qty",
+                    "value": "73"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-07-29"
+                  },
+                  {
+                    "key": "location",
+                    "label": "Location",
+                    "value": "BRW-BB"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "kind": "po",
+                "title": "202607-S0095"
+              }
+            ],
+            "last_updated_at": null,
+            "restricted_fields": {
+              "supplier": "purchase_orders.supplier"
+            },
+            "result_type": "purchase_orders_placed"
+          },
+          "tool": "crm_procurement_po_placed_list"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "All",
+          "picks": "all",
+          "resolved": true
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to select all product options"
+      }
+    }
+  ]
+}

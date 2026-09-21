@@ -1,0 +1,183 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "custom_fields": [],
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "message": {
+          "contact": {
+            "id": "437264483"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": "whatsapp",
+            "contactId": "437264483",
+            "message": {
+              "text": "delivery to hanlim",
+              "type": "text"
+            },
+            "messageId": "console-79f5df1a0861",
+            "traffic": "incoming"
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "0c7ea742-9d47-4fd7-bf0b-f891e12f8c1b"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-a3e55dce-2fdb-4198-92b5-4abee1fde22f"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "known_gap_not_corrected_here": "hand-pass-1-16sep.md finding 3: recorded text shows customer roster options labelled by CODE, with two codes appearing twice (six rows, four distinct codes) - turn/narrow.py::_options labels an option `raw or canonical_code`, never the customer's NAME. Ruling: label by NAME, one line per name when two rows share a code, uuid kept. NOT corrected in this case's `expected.text`: this case's own `resolutions` field is empty (no matches - see the module docstring's own 'known gap' paragraph: a customer/product-set clarify_menu built off a direct-SQL candidate lookup, not `resolve_entity`, is not made reachable by this harness's four stubs on a blank schema with no seeded customer rows), so replaying this exact case cannot independently prove the corrected label wording - a hand-built `text` here would be inventing the fix's output, not reproducing it. The dedicated unit red (test_rearch_s6_handpass1_findings.py::TestCustomerRosterLabelsByName) tests the labelling function directly against a synthetic duplicate-code candidate list instead.",
+        "pending": null,
+        "text": "Which customer do you mean?\n1. 300-H070\n2. 300-H030\n3. 300-H118\n4. 300-H119\n5. 300-H030\n6. 300-H118",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "hanlim"
+          }
+        ],
+        "tokens": [
+          "hanlim"
+        ],
+        "unresolved_tokens": [
+          "hanlim"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 22,
+        "recorded_at": "2026-09-16T08:45:05.389290+09:00",
+        "turn_id": "205c518c-0397-4c23-adb0-a98c4cfd107c"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "hint_confident": true,
+            "raw": "hanlim"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to check delivery order to hanlim"
+      }
+    }
+  ]
+}

@@ -271,7 +271,11 @@ class TestOrderingFlagDefaultOffBypassesTickets:
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert result.status in ("delegated", "failed")  # ran to completion either way
+        # Ported (AC-1592): `business_query` is in `CRM_COMPLETED_BRANCH_KINDS`
+        # unconditionally today (S6c full coverage), so a bare default turn now
+        # completes `done` in-process rather than delegating or failing - "ran to
+        # completion either way" still holds, `"done"` is simply a third way to.
+        assert result.status in ("delegated", "failed", "done")
         assert result.branch_kind == "business_query"
 
 
@@ -665,16 +669,25 @@ class TestS7ModeRefusesADelegatingLane:
     `system_settings.chatbot_completed_lanes`, on a build that can complete it) is written
     in `app/config.py` next to the flag.
 
-    `business_query` is the subject, and after S6c it is the DATA half that makes it
-    delegate, not the code half: the build can complete the lane, the settings row has not
-    switched it on. Both tests below pin the enabled set to empty rather than reading the
-    real singleton, so switching a lane on in the shared database cannot silently turn this
-    guard's subject into a completed turn.
+    Ported (AC-1592): `chatbot_completed_lanes`/`_enabled_lanes` no longer gates
+    completion at all (contract 73 superseded) - `completes_here = branch_kind in
+    CRM_COMPLETED_BRANCH_KINDS` alone decides, and that frozenset covers all 13
+    `BRANCH_KINDS` today, so `business_query` (and every other real branch kind) always
+    completes in-process now; monkeypatching `_enabled_lanes` to empty (this class's own
+    prior attempt to account for S6c) no longer reaches this guard at all, since nothing
+    reads it for that decision anymore (measured: `_nothing_enabled` alone left both
+    cells `"done"`, never `"failed"`/`"delegated"`). This class's own subject - the S7
+    orphan guard, `delegate is not None and s7_mode` - is genuinely UNREACHABLE via any
+    real branch kind today; it stays live code for a future 14th branch kind or a
+    rollback build with a narrower `CRM_COMPLETED_BRANCH_KINDS` (AC-1507), so both tests
+    below force THAT frozenset empty directly - the same seam `test_s3_switch_and_
+    complete_by_body.py::delegated_turn` uses for the identical reason - to reach it.
     """
 
     @staticmethod
     def _nothing_enabled(monkeypatch) -> None:
         monkeypatch.setattr(engine_mod, "_enabled_lanes", lambda db, row=None: frozenset())
+        monkeypatch.setattr(engine_mod, "CRM_COMPLETED_BRANCH_KINDS", frozenset())
 
     def test_s7_mode_fails_a_lane_the_crm_cannot_complete(
         self, real_contacts, stub_engine_seams, monkeypatch

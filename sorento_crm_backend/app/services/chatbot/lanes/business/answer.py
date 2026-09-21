@@ -386,6 +386,38 @@ def _field_pref(it: Any, k: str, *labels: str) -> Any:
     return None
 
 
+_ON_HAND_WITH_OUTSTANDING = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*\(O/S:")
+
+
+def _on_hand_number(value: Any) -> Any:
+    """The ON-HAND part of a compact Total that already carries its outstanding suffix.
+
+    MEASURED, hand pass 11 defect 1 (live turn cfee5933, contact 437264483 on the
+    0921 clone): `_stock_compact` (sorento_crm_mcp/presenters.py) publishes the
+    compact per-product total as `{"key": "total_on_hand", "value": 0,
+    "granted_value": "0 (O/S: 0)"}` and restricts it behind `inventory.sellable`, and
+    `fetch.py::_keep_field` SWAPS the granted string INTO `value` (`f["value"] =
+    f.pop("granted_value")`) for a contact that holds the grant. So by the time any
+    reader here sees the row, a granted compact total's `value` is the STRING
+    `"0 (O/S: 0)"`, not the number `0` - `Number("0 (O/S: 0)")` is NaN, which made
+    `_rows_all_zero` below answer False for a reply that plainly read "Total: 0" and
+    the cross-domain ladder never probed. The DETAILED row is unaffected (its
+    `quantity_on_hand` is never restricted; its outstanding is a separate
+    `open_so_qty` field), which is why the ladder has always worked for a detailed
+    zero reply and never for a compact granted one.
+
+    The leading number IS the on-hand total in that string, so reading it is the same
+    fact the ungranted reader gets from `value` verbatim - not a second definition of
+    "on hand". Anything else passes through untouched, so a plain numeric value keeps
+    `jsc.js_number`'s own reading exactly.
+    """
+    if isinstance(value, str):
+        m = _ON_HAND_WITH_OUTSTANDING.match(value)
+        if m:
+            return m.group(1)
+    return value
+
+
 def _row_qty(it: Any) -> float:
     """A row's own quantity, `NaN` when it carries none at all.
 
@@ -395,9 +427,10 @@ def _row_qty(it: Any) -> float:
     "Total: 0" is exactly as zero as a detailed row reading 0 at every location. AVAILABLE
     mode carries no quantity field at all, by design (the point of that mode is never
     stating one), so it stays unreachable here on purpose - `value` there is always the
-    plain number even under `include_sellable`; only the COMPACT presenter's own
-    `granted_value` ever carries the "(O/S: n)" suffix (`_stock_compact`,
-    sorento_crm_mcp/presenters.py), and this function never reads that key.
+    plain number even under `include_sellable`. The COMPACT total's own "(O/S: n)"
+    suffix arrives IN `value` (never as `granted_value`, which the field drop has
+    already consumed by now) for a contact holding `inventory.sellable`, so
+    `_on_hand_number` above unwraps it back to the on-hand figure first.
 
     `?? NaN`, not `?? 0`: `fieldPref` returns `None` when every key/label tried is
     ABSENT, and `Number(None)` is 0 in JS - which would make "some row has a quantity"
@@ -408,7 +441,7 @@ def _row_qty(it: Any) -> float:
     value = _field_pref(it, "quantity_on_hand", "quantity on hand")
     if value is None:
         value = _field_pref(it, "total_on_hand", "Total")
-    n = jsc.js_number(jsc.UNDEFINED if value is None else value)
+    n = jsc.js_number(jsc.UNDEFINED if value is None else _on_hand_number(value))
     return float("nan") if jsc.is_nan(n) else float(n)
 
 
@@ -581,9 +614,18 @@ def crossdomain_zeroset(
                 intersection.extend(value if isinstance(value, list) else [value])
         else:
             intersection = []
+        # Hand pass 12 round 2: the whole pool's own normalised codes, read once - what
+        # `_token_requests` needs to tell "this token names a REAL code exactly" from
+        # "this token merely shares a prefix with several", over the SAME intersection
+        # a single AND-mode/single-token resolve call returns (M2's own measurement).
+        all_norm_codes = {
+            _type_norm(jsc.get(m, "canonical_code"))
+            for m in intersection
+            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code"))
+        }
         for m in intersection:
             if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _token_requests(
-                _type_norm(jsc.get(m, "canonical_code")), tokens
+                _type_norm(jsc.get(m, "canonical_code")), tokens, all_norm_codes
             ):
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
 
@@ -823,6 +865,17 @@ def crossdomain_render(
     origin_incoming = zs.get("origin_domain") == "incoming"
 
     blocks: list[str] = []
+    # Hand pass 11 defect 1 (owner retest, live turn 27f60a71): a probe row is printed
+    # ONCE per block, however many `missing` entries claim it. The zero-entry lookup
+    # below deliberately matches a prefixed sibling's rows (finding 7, so a typed family
+    # prefix still finds its members on the other side), so for "check stock srtwc6022"
+    # the ONE incoming row the probe returned - SRTWC6022-SH-UF-NEW, container
+    # IAAU1697450 - was collected by SRTWC6022-SH-UF's entry AND by its own, and the
+    # customer read the same container twice off a tool envelope holding one item.
+    # Identity, not rendered text: `by_code` holds the probe's own row dicts, so the
+    # same row reached through two entries is the same object, while two genuinely
+    # different rows that happen to render alike stay two rows.
+    seen_rows: set[int] = set()
     # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
     # offer an escalation, rather than dropping them so the reply lists only the codes that
     # had something to show. "Positive facts only" still holds for a code the probe never
@@ -895,6 +948,8 @@ def crossdomain_render(
         elif any(eta(it) for it in rows):
             rows.sort(key=eta)
         for it in rows:
+            if id(it) in seen_rows:
+                continue
             field_lines = "\n".join(
                 f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(_field_render_value(f))}"
                 for f in (jsc.get(it, "fields") or [])
@@ -912,6 +967,7 @@ def crossdomain_render(
             elif jsc.truthy(jsc.get(flags, "partially_allocated")):
                 line += "\n\U0001f6a9  *(PARTIAL ALLOCATION)*"
             blocks.append(line)
+            seen_rows.add(id(it))
 
     lead = (
         "But here are the stock details for the requested products:"
@@ -1076,6 +1132,14 @@ _CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.pl
 #: (that drop still runs too, belt and braces: AC-18). A domain with no row here is
 #: ungated, same convention as `_CROSSDOMAIN_RUNG_GRANT` above.
 DOMAIN_GRANT_REQUIRED: dict[str, str] = {"purchase_cost": "purchase_orders.cost"}
+#: What the refusal CALLS the domain it just refused, for the one registered
+#: `access_denied` template (`canned.field_grant_denied_text`). A plain-language FEATURE
+#: name, not the domain's own label ("last purchase cost") and not the parser's agent
+#: guess: the customer asked for a thing, and the sentence names that thing. Beside
+#: `DOMAIN_GRANT_REQUIRED` because it is the same per-domain fact wearing its other half,
+#: and it is the wording `complete_answer` used to hand out before the turn package
+#: became the one that answers.
+DOMAIN_GRANT_SUBJECT: dict[str, str] = {"purchase_cost": "purchase cost"}
 #: The shipped ladder (migration 491, D7): stock -> incoming -> PO from either side. The
 #: DATABASE row is where the default lives; `engine._crossdomain_ladder` hands this out
 #: only for a settings row that carries no usable ladder (a `create_all` schema), never
@@ -1395,6 +1459,10 @@ def _apply_crossdomain_rung(
         )
 
 
+# NOT ON THE TURN PATH since the re-architecture: its only caller was `complete_answer`,
+# which `run_turn` no longer reaches. Contract 3 and 125's rung walk is
+# `turn/fetch.py::_climb` now, through the same fan-out fetch every domain uses. Kept
+# only because the KEPT-node replay corpus still drives it directly.
 def run_crossdomain(
     validator_result: dict[str, Any] | None,
     *,
@@ -2191,6 +2259,9 @@ _CODE_FIRST_TYPES = frozenset({"product"})
 # allowed type does carry a param today, so if the CRM later gives `category` one this
 # UNDER-claims instead of over-claiming. Silence is recoverable; a false statement is not.
 _NO_TOOL_ID = frozenset({"brand", "category"})
+#: Public alias (reviewer nit, hand pass 11 final): `answer_bridge._searched_companies`
+#: imports this across modules and a private name should not cross that boundary.
+NO_TOOL_ID = _NO_TOOL_ID
 
 _SCOPE_WORD = {
     "order": "delivery order",
@@ -2208,16 +2279,17 @@ _SCOPE_WORD = {
 def _domain_takes_a_date_filter(domain: Any) -> bool:
     """Does any tool this domain can call accept a date range?
 
-    Derived from the two declarations that already answer it - `DOMAIN_SPEC[domain].tools`
-    and `fetch.DATE_PARAMS` - rather than from a third hand-kept list that would drift
-    away from both. `spo_allocation`'s only tool
+    `Policy.domain(domain).takes_date_filter` now (AC-1594: was derived here from the
+    retired hand-written tool list against `fetch.DATE_PARAMS`); the S0 migration seeded that
+    column with the SAME derivation, off `turn/policy_rows.py::DATE_PARAM_TOOLS`, so
+    reading the column is not a second copy. `spo_allocation`'s only tool
     (`crm_procurement_spo_allocations_last_receipt_list`) takes no date parameter, so the
     scoping ask offered the customer a filter nothing downstream could have applied.
     """
-    from app.services.chatbot.contracts import DOMAIN_SPEC
+    from app.services.chatbot.turn.policy import default_policy
 
-    spec = DOMAIN_SPEC.get(jsc.js_string(domain if jsc.truthy(domain) else "").lower())
-    return any(tool in DATE_PARAMS for tool in (spec.tools if spec is not None else ()))
+    row = default_policy().domain(jsc.js_string(domain if jsc.truthy(domain) else "").lower())
+    return bool(row.takes_date_filter) if row is not None else False
 
 # `allowed_lookup` holds the resolver's INTERNAL entity types. Printing them raw asks the
 # customer to speak our schema, and several are the same thing to them.
@@ -2315,7 +2387,7 @@ def _type_norm(value: Any) -> str:
 _TOKEN_PREFIX_MIN_LEN = 4
 
 
-def _token_requests(norm_code: str, tokens: set[str]) -> bool:
+def _token_requests(norm_code: str, tokens: set[str], all_norm_codes: set[str]) -> bool:
     """D4 (12 Sep 2026, finding 4): does a typed token request this intersection product?
 
     Owner finding, 12 Sep 2026: "ETA SRTWT6236" resolved (tier `and`) to the one family
@@ -2327,10 +2399,36 @@ def _token_requests(norm_code: str, tokens: set[str]) -> bool:
     member, so the two halves disagreed about what "requested" means. Fixed here: a
     product is requested when a typed token EQUALS its normalised code, OR when a token of
     at least `_TOKEN_PREFIX_MIN_LEN` characters is a PREFIX of it.
+
+    Hand pass 12 round 2 (owner ruling, M2's own measurement, turn 0c6730a2 "Mfg6661
+    eta"): the cross-domain block crosses ONLY for what the PRIMARY fetch used - a typed
+    token that fold-equals a REAL code exactly (the same fold-equality `turn/narrow.py:
+    372-387`'s own `typed_exact_settles` branch uses to settle the primary fetch on ONE
+    product, never its siblings) must not ALSO sweep every sibling sharing its prefix
+    into the crossdomain probe, the way `_TOKEN_PREFIX_MIN_LEN`'s own loose rule still
+    does for a token that resolves to no exact code at all (SRTWT6236, this function's
+    own founding case, is not itself a real product - only its variants are). A token
+    that exactly names a real candidate SOMEWHERE in the pool (`all_norm_codes`, every
+    candidate's own normalised code, computed once by the caller) refuses the prefix
+    half FOR THAT TOKEN - "requested" narrows to the one thing actually typed, not its
+    whole family.
+
+    Hand pass 12 Phase 3 finding P4 (reviewer S2): the refusal used to be GLOBAL
+    (`tokens & all_norm_codes: return False`) rather than scoped to the exact match's
+    own token - one unrelated token being a real code ANYWHERE in the whole pool
+    refused the prefix half for every OTHER candidate too, so "mfg6661 srtwt6236bl"
+    (mfg6661 an exact code elsewhere in the pool) lost srtwt6236's own prefix match
+    against srtwt6236bl, a different family entirely. Scoped per-token: a token that is
+    itself an exact code is excluded from the PREFIX check (the `norm_code in tokens`
+    line above already grants the exact candidate its own True), every OTHER token
+    still gets to request a prefix match.
     """
     if norm_code in tokens:
         return True
-    return any(len(t) >= _TOKEN_PREFIX_MIN_LEN and norm_code.startswith(t) for t in tokens)
+    return any(
+        len(t) >= _TOKEN_PREFIX_MIN_LEN and t not in all_norm_codes and norm_code.startswith(t)
+        for t in tokens
+    )
 
 
 def _prettify_type(value: Any) -> str:
@@ -2379,6 +2477,225 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
+def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
+    """True when a token the customer typed missed AND has real did-you-mean neighbours.
+
+    AC-1703. The described-set branches below all assert something about the SET the
+    question described - "I don't know 'new' as a product type", "I don't know 'Technical
+    drawings' as a document type", "Couldn't find a SRTWT165-FT with a certificate". Every
+    one of them is a false statement when the SUBJECT itself is a code the catalogue does
+    not carry: nothing was described, a token was mistyped, and production's own answer is
+    the did-you-mean for that token ('Couldn't find "X" (product). Did you mean ...').
+    Three live F8 turns came back with the set answer over the top of it
+    (5cde645f "Incoming srtwt7202-new", 0d4abc93 "Technical drawings sttwc286-SH",
+    55ca1323 "SRTWT165-FT CERT"), and `build_suggest_offer` cannot recover any of them:
+    its own `if not is_clar and not require_spec` gate means a clarify SUPPRESSES the
+    did-you-mean candidates entirely, so the two can never both reach the customer.
+
+    Read through `miss_resolutions` + `_ms_is_exact`, the same two `build_suggest_offer`'s
+    own D1 arm is built on, so this guard cannot claim a did-you-mean D1 then declines to
+    print. `allowed_lookup` narrows it the same way D1 does.
+    """
+    r = resolved if isinstance(resolved, dict) else {}
+    g = gate if isinstance(gate, dict) else {}
+    allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
+    allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
+    for res in _ms_miss_resolutions(r, gate=g):
+        candidates = [
+            *jsc.array(jsc.get(res, "matches")),
+            *jsc.array(jsc.get(res, "alternatives")),
+        ]
+        for match in candidates:
+            if not jsc.truthy(jsc.get(match, "canonical_code")) or _ms_is_exact(match):
+                continue
+            entity_type = jsc.get(match, "entity_type")
+            if allowed is not None and jsc.truthy(entity_type) and entity_type not in allowed:
+                continue
+            return True
+    return False
+
+
+# F1 (attribute-first asks, AC-1319): a HAS turn's noun per leg, for the miss sentence.
+# `attachment_type` has no fixed noun - its own value already IS the customer's label.
+_PREDICATE_NOUN: dict[str, str] = {
+    "certificate": "a certificate",
+    "stock": "stock",
+    "promotion": "a promotion",
+    "incoming": "incoming stock",
+}
+
+
+def _predicate_phrase(require: dict[str, Any]) -> str:
+    """"a certificate", "stock and a certificate" - the leg(s) a HAS turn asked for.
+
+    `require`'s keys are AND'd (`product_predicate_service.resolve_product_set`'s own
+    contract), so the phrase joins on "and", never "or".
+    """
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip()
+            parts.append(f"a {label}" if label else "an attachment")
+            continue
+        noun = _PREDICATE_NOUN.get(key)
+        if noun:
+            parts.append(noun)
+    return _and_list(parts) if parts else "that"
+
+
+# E2 (attribute-first asks, AC-1316): the SET-ANSWER header's noun per leg - plural,
+# said of the WHOLE qualifying set ("X taps HAVE certificates"), never the miss
+# sentence's singular "a certificate" `_PREDICATE_NOUN` carries above.
+_HEADER_PREDICATE_NOUN: dict[str, str] = {
+    "certificate": "certificates",
+    "stock": "stock",
+    "promotion": "a promotion",
+    "incoming": "incoming stock",
+}
+
+
+def _header_predicate_phrase(require: dict[str, Any]) -> str:
+    """"certificates", "PPS certificates", "certificates and stock" - the
+    header's own predicate noun, joined the same way `_predicate_phrase` joins
+    the miss sentence's.
+
+    Second console pass, AC-1316: a scheme-narrowed certificate leg
+    (`{"certificate": {"scheme": "PPS"}}`) names the SCHEME - "940 products
+    have PPS certificates." - never the bare "certificates" a `_HEADER_
+    PREDICATE_NOUN` lookup alone would give every certificate leg regardless
+    of scheme (measured live on "which item has PPS cert"). A bare
+    `{"certificate": True}` require is untouched.
+    """
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip().lower()
+            parts.append(label if label else "an attachment")
+            continue
+        if key == "certificate" and isinstance(value, dict):
+            scheme = jsc.js_string(jsc.get(value, "scheme")).strip()
+            if scheme:
+                parts.append(f"{scheme} certificates")
+                continue
+        noun = _HEADER_PREDICATE_NOUN.get(key)
+        if noun:
+            parts.append(noun)
+    return _and_list(parts) if parts else "that"
+
+
+def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
+    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
+    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
+    block below it is untouched). "Showing <n>" is dropped when every qualifying
+    product already fits on the page (`qualifying_total <= shown`).
+
+    A pure string function: `qualifying_total` and `shown` are counts the caller
+    already has (the resolver's own `qualifying_total`, and the page the domain
+    tool actually rendered), never re-derived here.
+    """
+    verb = "has" if qualifying_total == 1 else "have"
+    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
+    if qualifying_total > shown:
+        header += f" Showing {shown}."
+    return header
+
+
+# REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets
+# wrong - tried on the label's LAST word before the default rule.
+_IRREGULAR_PLURAL_ENDINGS: dict[str, str] = {
+    "accessory": "accessories",
+    "jacuzzi": "jacuzzis",
+}
+
+
+def set_noun_for(class_labels: list[str] | None) -> str:
+    """AC-1316 (work item E2): the header's noun, off the described set's class
+    label(s). Exactly one class names a single noun ("Tap" -> "taps"); zero
+    classes (no class bound the described set at all) or more than one (a blended
+    set with no single noun) both fall back to the generic "products".
+
+    REV-N2/AC-1337: pluralised via `_IRREGULAR_PLURAL_ENDINGS` first ("Bathroom
+    Accessory" -> "bathroom accessories", never the bare "+s" rule's
+    "bathroom accessorys"), the default "+s" rule otherwise.
+    """
+    labels = [label for label in (class_labels or []) if label and label.strip()]
+    if len(labels) != 1:
+        return "products"
+    words = labels[0].strip().split()
+    if not words:
+        return "products"
+    last = words[-1].lower()
+    words[-1] = _IRREGULAR_PLURAL_ENDINGS.get(last, f"{last}s")
+    return " ".join(w.lower() for w in words)
+
+
+# --------------------------------------------------------------------------- #
+# E3 (attribute-first asks, AC-1317): "more" paging through the set_page carry.
+# --------------------------------------------------------------------------- #
+
+#: The carried id list's own cap - a 2,704-long qualifying set is carried as ids,
+#: not re-queried, so it has to stop somewhere short of the whole catalogue.
+#: Named so a test can monkeypatch it (`raising=False`) rather than seed the real
+#: count.
+SET_PAGE_ID_CAP = 200
+
+# REV-N1/AC-1337 (third console pass): the fixed set a paging reply must EQUAL,
+# lower-cased and stripped of punctuation - never a bare substring/word search,
+# which let "no more" and "next week?" wrongly page a carry that was never
+# asked to continue.
+_MORE_FIXED_PHRASES: frozenset[str] = frozenset(
+    {"more", "next", "lagi", "more please", "show more", "next 5", "next five", "lagi 5"}
+)
+_MORE_NUMBER_RE = re.compile(r"^more \d+$")
+_PUNCTUATION_RE = re.compile(r"[^\w\s]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def is_more_reply(text: Any) -> bool:
+    """AC-1317/AC-1337: a bare "more" / "next" / "lagi" reply, or one of the
+    fixed short courtesy/paging phrases, lower-cased and stripped of
+    punctuation - equality only, never a substring/word search over an
+    arbitrary short message: "no more", "next week?" and "more taps with
+    stock" must NOT page a carry that was never asked to continue.
+    """
+    normalized = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub("", jsc.js_string(text).lower())).strip()
+    if not normalized:
+        return False
+    return normalized in _MORE_FIXED_PHRASES or bool(_MORE_NUMBER_RE.match(normalized))
+
+
+def build_set_page_header(
+    qualifying_total: int, start: int, end: int, set_noun: str, require: dict[str, Any]
+) -> str:
+    """AC-1317: "<qualifying_total> <set noun> have <predicate noun>. Showing
+    <start> to <end>." - the CONTINUATION page's own header, off the SAME
+    predicate-noun phrase `build_set_header` uses, with a pre-known `set_noun`
+    (the carry's own, never re-derived from `class_labels` - a "more" turn runs
+    no resolver call and so never re-computes them).
+    """
+    verb = "has" if qualifying_total == 1 else "have"
+    return (
+        f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}. "
+        f"Showing {start} to {end}."
+    )
+
+
+def build_set_page_exhausted_message(qualifying_total: int, set_noun: str) -> str:
+    """AC-1317: "That was all <N> <noun>." - the fixed idiom, never conjugated
+    off `qualifying_total` ("was", not "were", even for a plural count)."""
+    return f"That was all {qualifying_total:,} {set_noun}."
+
+
+def build_set_page_narrow_message(set_noun: str) -> str:
+    """AC-1317: past the CARRIED id list's own cap (`SET_PAGE_ID_CAP`) - real
+    qualifying products remain, but the carry ran out before they did, so the
+    honest answer is to ask for a narrower question, never "that was all"."""
+    return (
+        f"That's as many {set_noun} as I can carry in one list - narrow the ask "
+        f"(a brand, or a more specific type) and I can show you the right ones."
+    )
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,
@@ -2417,8 +2734,24 @@ def not_found_error_message(
     allowed_types = allowed_lookup if allowed_lookup is not None else []
 
     domain_hint = jsc.get(q, "domain_hint")
+    # R34/AC-1359: a resolver predicate whose `require` carries `certificate`
+    # or `attachment_type` already IS the document-type answer - the gate's
+    # own fix (R34, `gate.py`) means `gate_passed` is normally already True
+    # here too, but this stays a direct check of the SAME fact rather than
+    # relying on that alone: "any tap has PPS cert" recovers the leg off the
+    # message text server-side, and asking for the attachment type again
+    # would discard a predicate that already qualified (or honestly missed)
+    # a real row.
+    predicate = jsc.get(r, "predicate")
+    predicate_require = jsc.get(predicate, "require") if isinstance(predicate, dict) else None
+    has_document_leg = isinstance(predicate_require, dict) and (
+        jsc.truthy(predicate_require.get("certificate")) or jsc.truthy(predicate_require.get("attachment_type"))
+    )
     missing_attachment_type = (
-        domain_hint == "product_attachment" and not gate_passed and not have_attachment_type
+        domain_hint == "product_attachment"
+        and not gate_passed
+        and not have_attachment_type
+        and not has_document_leg
     )
     unresolved = jsc.array(jsc.get(r, "unresolved_tokens"))
     has_unresolved = len(unresolved) > 0
@@ -2664,6 +2997,15 @@ def not_found_error_message(
             entity_type = entity_type if jsc.truthy(entity_type) else "item"
             base = disp_by_uuid.get(jsc.get(c, "uuid"))
             if not jsc.truthy(base):
+                # Hand pass 12, Group F: `disp_by_uuid` is built from the RESOLVER's own
+                # matches (`r["resolutions"]`), empty on a turn that resolved nothing
+                # fresh (a pure pick). The row's OWN `display_name` - `turn_runtime.
+                # fill_customer_names`'s DB-resolved per-ledger name - is the same fact
+                # by a different route, and outranks the code for the same reason
+                # `disp_by_uuid` does: a code is not a name, and a multi-ledger pick's
+                # own code names EVERY ledger it covers at once.
+                base = jsc.get(c, "display_name")
+            if not jsc.truthy(base):
                 base = jsc.get(c, "code")
             # A uuid is not a name. When neither the resolver display nor the code yields a
             # human-readable identifier the candidate is DROPPED, never printed raw - the
@@ -2893,8 +3235,19 @@ def not_found_error_message(
                         words.append(value)
             if not words:  # 3. last resort: the gate's own label
                 for row in rows:
+                    # Hand pass 12, Group F: a multi-ledger customer pick's own rows
+                    # carry a real per-row `display_name` (`turn_runtime.
+                    # fill_customer_names`, DB-resolved by uuid) - preferred over
+                    # `title`/`code`, neither of which a customer row has ever set to
+                    # anything but the shared account CODE, so a three-ledger pick
+                    # named the same code three times instead of three ledgers.
+                    display_name = jsc.get(row, "display_name")
                     title = jsc.get(row, "title")
-                    value = jsc.nullish_str(title if title is not None else jsc.get(row, "code")).strip()
+                    value = jsc.nullish_str(
+                        display_name
+                        if jsc.truthy(display_name)
+                        else (title if title is not None else jsc.get(row, "code"))
+                    ).strip()
                     if value and value not in words:
                         words.append(value)
             return ", ".join(words)
@@ -3002,8 +3355,161 @@ def not_found_error_message(
                 )
         else:
             require_specific = jsc.get(g, "require_specific")
+            predicate = jsc.get(g, "predicate")
+            # AC-1703: the four described-set answers below all state something about the
+            # SET the question described, and none of them is true when the SUBJECT is a
+            # code the catalogue does not carry. A mistyped token with real neighbours is
+            # production's did-you-mean, and it has to be reachable: `build_suggest_offer`
+            # skips its own D1 candidates entirely whenever a clarify fired here, so the
+            # set answer does not merely come FIRST, it silences the other one.
+            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(r, g)
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
+            elif described_set_answers and "schemes_on_file" in predicate:
+                # F3 (AC-1321): a certificate SCHEME word the register cannot read -
+                # names what IS on file instead of the generic "no {attach_noun}
+                # matched these" below, which would say nothing about schemes at all.
+                require_echo = jsc.get(predicate, "require") or {}
+                scheme_word = jsc.js_string(jsc.get(require_echo, "certificate")).strip()
+                schemes = jsc.array(jsc.get(predicate, "schemes_on_file"))
+                schemes_text = (
+                    ", ".join(jsc.js_string(s) for s in schemes) if schemes else "none on file yet"
+                )
+                escalate_message = (
+                    f"The register has no {scheme_word or 'that'} certificates. "
+                    f"Schemes on file: {schemes_text}. "
+                    f"Would you like me to escalate to {team} team?"
+                )
+            elif described_set_answers and "attachment_types_on_file" in predicate:
+                # R6/AC-1329 (console fix round 2): the unrecognised word is an
+                # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
+                # document-type miss answers the wrong question with the
+                # product-type sentence below. `_leg_attachment_type`'s own
+                # `_UnrecognizedLabel` is the ONLY leg that carries this key, so
+                # it takes priority over the generic F2 branch beneath it.
+                term = jsc.js_string(
+                    jsc.get(jsc.get(predicate, "require") or {}, "attachment_type")
+                ).strip()
+                types_on_file = jsc.array(jsc.get(predicate, "attachment_types_on_file"))
+                types_text = (
+                    ", ".join(jsc.js_string(t) for t in types_on_file)
+                    if types_on_file
+                    else "none on file yet"
+                )
+                escalate_message = (
+                    f"I don't know '{term}' as a document type. Types I know: {types_text}."
+                )
+                is_clarification = True
+            elif (
+                described_set_answers
+                and jsc.get(predicate, "qualifying_total") == 0
+                and jsc.array(jsc.get(predicate, "unrecognized_terms"))
+            ):
+                # AC-1320 (work item F2): the described set named NOTHING this
+                # catalogue can read - clarify the term, never answer the
+                # honest-zero copy below, which would falsely say "none of these
+                # qualify" for a set that was never actually described.
+                term = jsc.js_string(jsc.array(jsc.get(predicate, "unrecognized_terms"))[0])
+                suggestions = [
+                    jsc.js_string(s).strip().lower()
+                    for s in jsc.array(jsc.get(predicate, "suggestions"))
+                    if jsc.truthy(s)
+                ]
+                if suggestions:
+                    escalate_message = (
+                        f"I don't know '{term}' as a product type. "
+                        f"Did you mean {_human_list(suggestions)}?"
+                    )
+                else:
+                    # Fix round, F2: NOTHING was near enough to offer as a real
+                    # "did you mean" - the catalogue's own most common class
+                    # labels (`common_class_labels`) still give a real answer,
+                    # never the contentless "Did you mean the product types I
+                    # know?".
+                    common = [
+                        jsc.js_string(c).strip().lower()
+                        for c in jsc.array(jsc.get(predicate, "common_class_labels"))
+                        if jsc.truthy(c)
+                    ]
+                    common_text = ", ".join(common) if common else "a class or product type I know"
+                    escalate_message = (
+                        f"I don't know '{term}' as a product type. "
+                        f"Try a product type such as {common_text}."
+                    )
+                is_clarification = True
+            elif (
+                described_set_answers
+                and jsc.get(predicate, "qualifying_total") == 0
+                and not jsc.array(jsc.get(predicate, "unrecognized_terms"))
+            ):
+                # AC-1319: a HAS turn's described set is honest (every content word
+                # bound to something, C4's gate bypass let the qualifying matches
+                # through), and NONE of them satisfy the predicate. Name the set and
+                # the predicate, and the codes actually checked - never the generic
+                # "no {attach_noun} matched these" below, which names only the
+                # predicate word and drops the set the customer actually asked about.
+                # R16/AC-1340 (third console pass): a category / product_type raw
+                # names the subject too, not only brand + product - "which
+                # bathroom accessory has stock" carries no brand and no `hint:
+                # "product"` entity at all, so the old subject_words stayed
+                # empty and the literal fallback "a match" glued onto the
+                # sentence's own leading "a" read "Couldn't find a a match with
+                # stock.". When NO raw of any kind names it either, the
+                # predicate's OWN `class_labels` (real evidence: the described
+                # set's class) is the next fallback; only when THAT is also
+                # empty does the sentence drop the article entirely ("any
+                # product"), never "a" + a placeholder noun.
+                brand_raw = jsc.get(
+                    jsc.find(entities_list, lambda e: jsc.get(e, "hint") == "brand"), "raw"
+                )
+                product_raw_words = [
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") == "product" and jsc.truthy(jsc.get(e, "raw"))
+                ]
+                category_or_type_raw_words = [
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type") and jsc.truthy(jsc.get(e, "raw"))
+                ]
+                subject_words = (
+                    ([jsc.js_string(brand_raw)] if jsc.truthy(brand_raw) else [])
+                    + product_raw_words
+                    + category_or_type_raw_words
+                )
+                if not subject_words:
+                    predicate_class_labels = [
+                        jsc.js_string(c).strip()
+                        for c in jsc.array(jsc.get(predicate, "class_labels"))
+                        if jsc.truthy(c)
+                    ]
+                    if predicate_class_labels:
+                        subject_words = [predicate_class_labels[0].lower()]
+                subject_phrase = f"a {' '.join(subject_words)}" if subject_words else "any product"
+                # Read straight off the RESOLVER's own resolutions, never off this
+                # gate's `compatible_entities` - the zero-qualifying carve-out
+                # (`gate.py`'s `_is_a_described_word` branch) deliberately keeps a
+                # described-set word's matches OUT of `compatible_entities` (so the
+                # miss gate still fires), which would otherwise empty this list too.
+                checked_codes: list[str] = []
+                for res in jsc.array(jsc.get(r, "resolutions")):
+                    for m in jsc.array(jsc.get(res, "matches")):
+                        if not jsc.truthy(m) or jsc.get(m, "entity_type") != "product":
+                            continue
+                        code = jsc.get(m, "canonical_code")
+                        if jsc.truthy(code) and code not in checked_codes:
+                            checked_codes.append(jsc.js_string(code))
+                checked_codes = checked_codes[:5]
+                checked = (
+                    f" (checked {', '.join(jsc.js_string(c) for c in checked_codes)})"
+                    if checked_codes
+                    else ""
+                )
+                escalate_message = (
+                    f"Couldn't find {subject_phrase} with "
+                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
+                    f"Would you like me to escalate to {team} team?"
+                )
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [

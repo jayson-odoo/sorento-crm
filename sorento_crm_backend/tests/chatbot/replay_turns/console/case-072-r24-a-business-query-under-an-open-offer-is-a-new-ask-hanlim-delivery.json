@@ -1,0 +1,475 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT7443 sales order outstanding",
+              "type": "text"
+            },
+            "messageId": "console-check-71e43cbcbe51",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7443\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 82\nOrdered: 14,262\nTransferred to DO: 15\nOutstanding: 14,247\nOrder date range: 14/12/2022 to 02/09/2026\n*_By location_*\nBRW-BB: 6,847 (O/S: 6,847)\nBRW-IB: 3,545 (O/S: 3,530)\nBRW-IR: 3,365 (O/S: 3,365)\nUnassigned: 328 (O/S: 328)\nBRW: 167 (O/S: 167)\nBRW-SMC: 10 (O/S: 10)\n*_By customer_*\nOTM GROUP SDN BHD: 2,528 (O/S: 2,528)\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nECO WORLD TRADING SDN BHD (PROJECT): 1,083 (O/S: 1,083)\nPESONA METRO SDN BHD (PROJECT): 1,050 (O/S: 1,050)\nKEE LIN TRADING SDN BHD (PROJECT ACCOUNT): 986 (O/S: 986)\nSETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 795 (O/S: 795)\nBUIMACO SDN BHD (PROJECT): 788 (O/S: 788)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nJV PERKASA SDN BHD (PROJECT): 442 (O/S: 442)\nLOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT): 420 (O/S: 420)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 373 (O/S: 373)\nGLOBAL INGRESS SDN BHD (PROJECT): 358 (O/S: 358)\nPARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 282 (O/S: 282)\nVIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT): 248 (O/S: 248)\nUNIJOH DEVELOPMENT SDN BHD (PROJECT): 200 (O/S: 200)\nLEN MIN STEEL SDN BHD (PROJECT): 188 (O/S: 188)\nUnassigned: 178 (O/S: 178)\nYEW LEAN MARKETING SDN BHD (PROJECT): 156 (O/S: 156)\nTOONG STAR SDN BHD: 150 (O/S: 150)\nSUNWAY MARKETING SDN BHD: 104 (O/S: 104)\nAT & E BUILDING MATERIALS: 60 (O/S: 60)\nBEYOND BATH SDN BHD: 56 (O/S: 56)\nHONG BEE HARDWARE COMPANY SDN BHD (PROJECT): 46 (O/S: 46)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nBUILDERS HARDWARE HOME APPLIANCES SDN BHD: 27 (O/S: 27)\nSTONIX SDN BHD (PROJECT): 25 (O/S: 25)\nJAYAPLUS DEVELOPMENT SDN BHD (PROJECT): 19 (O/S: 19)\nEXACO MARKETING SDN BHD (PROJECT): 18 (O/S: 18)\nHILLCREST GARDENS SDN BHD: 18 (O/S: 18)\nJATI CERAMIC SDN BHD [PROJECT]: 16 (O/S: 16)\nFULLSHUN SANITARYWARE SDN BHD: 12 (O/S: 12)\nA & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 10 (O/S: 10)\nCHIN CHUN HOMEMART SDN BHD: 10 (O/S: 10)\nSK ONE STOP HOME CENTRE SDN BHD: 10 (O/S: 10)\nWM BATH KITCHEN WARE: 9 (O/S: 9)\nCPI EMPOWER SDN BHD (PROJECT): 8 (O/S: 8)\nUNIMAX LIVINGMART (M) SDN BHD: 8 (O/S: 8)\nDEPARAMAX SDN BHD: 6 (O/S: 6)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCOMMERCE HOUSE SDN BHD (PROJECT): 5 (O/S: 5)\nI BATH STUDIO: 5 (O/S: 5)\nTOTAL HOME DIY SDN BHD: 5 (O/S: 5)\nGLORY MOTION SDN BHD: 4 (O/S: 4)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\nEUROTAN ENTERPRISE SDN BHD: 3 (O/S: 3)\nHOME PRODUCT CENTER (MALAYSIA) SDN BHD: 3 (O/S: 3)\nHARMONI BATH & KITCHEN SDN BHD [A/C I]: 2 (O/S: 2)\nJIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]: 1 (O/S: 1)\nKBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI): 1 (O/S: 1)\nPERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER): 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT7443"
+          }
+        ],
+        "tokens": [
+          "SRTWT7443"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7443"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:07:22.775061+09:00",
+        "turn_id": "a1b0fbe5-e254-4b5d-9951-96585c068cd1"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_code": "SRTWT7443",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT7443\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 82\nOrdered: 14,262\nTransferred to DO: 15\nOutstanding: 14,247\nOrder date range: 14/12/2022 to 02/09/2026\n*_By location_*\nBRW-BB: 6,847 (O/S: 6,847)\nBRW-IB: 3,545 (O/S: 3,530)\nBRW-IR: 3,365 (O/S: 3,365)\nUnassigned: 328 (O/S: 328)\nBRW: 167 (O/S: 167)\nBRW-SMC: 10 (O/S: 10)\n*_By customer_*\nOTM GROUP SDN BHD: 2,528 (O/S: 2,528)\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nECO WORLD TRADING SDN BHD (PROJECT): 1,083 (O/S: 1,083)\nPESONA METRO SDN BHD (PROJECT): 1,050 (O/S: 1,050)\nKEE LIN TRADING SDN BHD (PROJECT ACCOUNT): 986 (O/S: 986)\nSETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 795 (O/S: 795)\nBUIMACO SDN BHD (PROJECT): 788 (O/S: 788)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nJV PERKASA SDN BHD (PROJECT): 442 (O/S: 442)\nLOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT): 420 (O/S: 420)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 373 (O/S: 373)\nGLOBAL INGRESS SDN BHD (PROJECT): 358 (O/S: 358)\nPARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 282 (O/S: 282)\nVIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT): 248 (O/S: 248)\nUNIJOH DEVELOPMENT SDN BHD (PROJECT): 200 (O/S: 200)\nLEN MIN STEEL SDN BHD (PROJECT): 188 (O/S: 188)\nUnassigned: 178 (O/S: 178)\nYEW LEAN MARKETING SDN BHD (PROJECT): 156 (O/S: 156)\nTOONG STAR SDN BHD: 150 (O/S: 150)\nSUNWAY MARKETING SDN BHD: 104 (O/S: 104)\nAT & E BUILDING MATERIALS: 60 (O/S: 60)\nBEYOND BATH SDN BHD: 56 (O/S: 56)\nHONG BEE HARDWARE COMPANY SDN BHD (PROJECT): 46 (O/S: 46)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nBUILDERS HARDWARE HOME APPLIANCES SDN BHD: 27 (O/S: 27)\nSTONIX SDN BHD (PROJECT): 25 (O/S: 25)\nJAYAPLUS DEVELOPMENT SDN BHD (PROJECT): 19 (O/S: 19)\nEXACO MARKETING SDN BHD (PROJECT): 18 (O/S: 18)\nHILLCREST GARDENS SDN BHD: 18 (O/S: 18)\nJATI CERAMIC SDN BHD [PROJECT]: 16 (O/S: 16)\nFULLSHUN SANITARYWARE SDN BHD: 12 (O/S: 12)\nA & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 10 (O/S: 10)\nCHIN CHUN HOMEMART SDN BHD: 10 (O/S: 10)\nSK ONE STOP HOME CENTRE SDN BHD: 10 (O/S: 10)\nWM BATH KITCHEN WARE: 9 (O/S: 9)\nCPI EMPOWER SDN BHD (PROJECT): 8 (O/S: 8)\nUNIMAX LIVINGMART (M) SDN BHD: 8 (O/S: 8)\nDEPARAMAX SDN BHD: 6 (O/S: 6)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCOMMERCE HOUSE SDN BHD (PROJECT): 5 (O/S: 5)\nI BATH STUDIO: 5 (O/S: 5)\nTOTAL HOME DIY SDN BHD: 5 (O/S: 5)\nGLORY MOTION SDN BHD: 4 (O/S: 4)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\nEUROTAN ENTERPRISE SDN BHD: 3 (O/S: 3)\nHOME PRODUCT CENTER (MALAYSIA) SDN BHD: 3 (O/S: 3)\nHARMONI BATH & KITCHEN SDN BHD [A/C I]: 2 (O/S: 2)\nJIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]: 1 (O/S: 1)\nKBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI): 1 (O/S: 1)\nPERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER): 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7443"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check outstanding sales orders for SRTWT7443"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "delivery status for hanlim",
+              "type": "text"
+            },
+            "messageId": "console-check-43b0ef9eb1a1",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 31,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 31,
+              "source": "current_message",
+              "value": "so_outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 31,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7443"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 31,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the sales order list.",
+                "product_code": "SRTWT7443",
+                "scope": "so",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "Yes"
+          ]
+        },
+        "text": "Customer: hanlim\nProduct: all products\nDates: all dates\n\nHere are the orders I found.\n\n1. *Order Number:* 202609-0916\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 07/09/2026\n*Actual Delivery Date:* 07/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:18:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRT320-CR (200)\n\n2. *Order Number:* 202609-0927\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 07/09/2026\n*Actual Delivery Date:* 07/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:18:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTSS5650-GM (4)\n\n3. *Order Number:* 202609-0886\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 03/09/2026\n*Actual Delivery Date:* 04/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:03:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWT7203 (10), SRTWT7203 (1)\n\n4. *Order Number:* 202609-0688\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 02/09/2026\n*Actual Delivery Date:* 03/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:36:00\n*Transporter:* SORENTO\n*Driver:* HAQEM\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRT106-BL (10), SRT106-BL (2), SRT107-GM (10), SRT107-GM (2), SRT1000-CR (10), SRT1000-CR (1), SRT86-BL (20), SRT86-BL (6)\n\n5. *Order Number:* 202609-0689\n*Customer:* HANLIM TRADING SDN BHD [A/C IV]\n*Order Date:* 02/09/2026\n*Actual Delivery Date:* 03/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:36:00\n*Transporter:* SORENTO\n*Driver:* HAQEM\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* KS8846-NL (10)\n\n6. *Order Number:* 202609-0642\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 02/09/2026\n*Actual Delivery Date:* 03/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:36:00\n*Transporter:* SORENTO\n*Driver:* HAQEM\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRT61-CR (3), SRT61-CR (5), SRTSS5650-GM (5)\n\n7. *Order Number:* 202609-0304\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 01/09/2026\n*Actual Delivery Date:* 02/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:46:00\n*Transporter:* SORENTO\n*Driver:* KAMARUL\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWT9606-GM (2), SRTWT9606-GM (1)\n\n8. *Order Number:* 202609-0303\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 01/09/2026\n*Actual Delivery Date:* 02/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:46:00\n*Transporter:* SORENTO\n*Driver:* KAMARUL\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWT9606-GM (3), SRTWT9606-GM (1)\n\n9. *Order Number:* 202609-0351\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 01/09/2026\n*Actual Delivery Date:* 02/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:46:00\n*Transporter:* SORENTO\n*Driver:* KAMARUL\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWB1408 (2)\n\n10. *Order Number:* 202609-0127\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 01/09/2026\n*Actual Delivery Date:* 02/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:46:00\n*Transporter:* SORENTO\n*Driver:* KAMARUL\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTBK7005 (1)\n\n11. *Order Number:* 202609-0348\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 01/09/2026\n*Actual Delivery Date:* 02/09/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:46:00\n*Transporter:* SORENTO\n*Driver:* KAMARUL\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWB1408 (15)\n\n12. *Order Number:* 202608-4458\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:33:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWT7445 (10), SRTWT7445 (1)\n\n13. *Order Number:* 202608-4490\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:37:00\n*Transporter:* SORENTO\n*Driver:* YUSUF\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n*Products:* SRTWC8366-300-RL-UF (1), WESERP10B (1)\n\n14. *Order Number:* 202608-4478\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:37:00\n*Transporter:* SORENTO\n*Driver:* YUSUF\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n*Products:* CWC7601-S-ECO (55), WESERP10B (55)\n\n15. *Order Number:* 202608-4389\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:37:00\n*Transporter:* SORENTO\n*Driver:* YUSUF\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n*Products:* SRTWB8003 (1)\n\n16. *Order Number:* RMA-SRT2608-0282\n*Customer:* HANLIM TRADING SDN BHD\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:37:00\n*Transporter:* SORENTO\n*Driver:* YUSUF\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n\n17. *Order Number:* 202608-4342\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 26/08/2026\n*Actual Delivery Date:* 27/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:41:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTBF11502 (10)\n\n18. *Order Number:* REP202608-0516\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 27/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:41:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTSCBD330-UF (1)\n\n19. *Order Number:* 202608-4311\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 26/08/2026\n*Actual Delivery Date:* 27/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:41:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTSA830 (10), SRTSA830 (2), SRTKS7082-BL (1), SRTKT72SS-BL (1)\n\n20. *Order Number:* 202608-4447\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 27/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 12:41:00\n*Transporter:* SORENTO\n*Driver:* JAYDEN\n*Lorry Plate:* VNN86\n*Warehouse:* BRW\n*Products:* SRT1369-5 (10), SRT1369-5 (1)\n\n_Data last updated: 07/09/2026 10:27:40_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_order_management_orders_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "hanlim",
+                "entity_type": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              }
+            ],
+            "resolved": true,
+            "token": "hanlim"
+          }
+        ],
+        "tokens": [
+          "hanlim"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:07:33.681192+09:00",
+        "turn_id": "15e0f118-cd05-48e1-8fc2-789bf64af25a"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 6,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 6,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 15129,
+            "head": "{\"result_type\": \"orders\", \"intro\": \"Here are the orders I found.\", \"items\": [{\"title\": \"202609-0916\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0916\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-07T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-07T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:18:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRT320-CR (200)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0927\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0927\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-07T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-07T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:18:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTSS5650-GM (4)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0886\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0886\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-03T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-04T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:03:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWT7203 (10), SRTWT7203 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0688\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0688\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-03T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:36:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"HAQEM\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRT106-BL (10), SRT106-BL (2), SRT107-GM (10), SRT107-GM (2), SRT1000-CR (10), SRT1000-CR (1), SRT86-BL (20), SRT86-BL (6)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0689\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0689\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C IV]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-03T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:36:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"HAQEM\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"KS8846-NL (10)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0642\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0642\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-03T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:36:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"HAQEM\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRT61-CR (3), SRT61-CR (5), SRTSS5650-GM (5)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0304\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0304\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-01T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:46:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"KAMARUL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWT9606-GM (2), SRTWT9606-GM (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0303\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0303\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-01T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:46:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"KAMARUL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWT9606-GM (3), SRTWT9606-GM (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0351\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0351\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-01T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:46:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"KAMARUL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWB1408 (2)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0127\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0127\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-01T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:46:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"KAMARUL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTBK7005 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-0348\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-0348\"}, {\"label\": \"Customer\", \"value\": \"HANLIM TRADING SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-01T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-09-02T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:46:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"KAMARUL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWB1408 (15",
+            "truncated": true
+          },
+          "tool": "crm_order_management_orders_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "hanlim"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "delivery"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check delivery status for hanlim"
+      }
+    }
+  ]
+}

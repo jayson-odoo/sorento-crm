@@ -269,6 +269,7 @@ class _Builder:
         expiring_soon=False,
         unallocated=False,
         partially_allocated=False,
+        entity_id: Any = None,
     ) -> None:
         # A pair is either (label, value) or (key, label, value). The 3-tuple form
         # carries the CRM field key, which is what a consumer must match on: the
@@ -278,6 +279,13 @@ class _Builder:
         # `field_access.denied[].field` reports, so a consumer can tell "withheld"
         # from "not yet reached" by comparing the same token on both sides.
         # `key` is omitted, never null, when the source key is unknown.
+        #
+        # `entity_id` (item 1, 17 Sep 2026) rides at the TOP LEVEL of the item, never
+        # inside `fields` - a field is rendered verbatim to the customer
+        # (`_item_line`/`output_structurer`), and a raw uuid must never be. It is the
+        # same identity `narrow.py::_options` carries as `uuid` for a resolver-matched
+        # roster; a caller that arms a pick from a flat item list (a forms browse) reads
+        # it off here instead.
         fields: list[dict[str, Any]] = []
         for pair in pairs:
             key, lbl, val = pair if len(pair) == 3 else (None, *pair)
@@ -302,6 +310,7 @@ class _Builder:
                     "unallocated": bool(unallocated),
                     "partially_allocated": bool(partially_allocated),
                 },
+                **({"id": entity_id} if _filled(entity_id) else {}),
             }
         )
 
@@ -1417,7 +1426,10 @@ def _availability_intro(payload: dict) -> str:
 
 def _forms(rows: list[dict], b: _Builder) -> None:
     for f in rows:
-        b.item(f.get("name"), [("Form Name", f.get("name"))])
+        # `id` rides at the item's top level (browse rows only - `_FORMS_LIST_KEEP_
+        # BROWSE`), never as a rendered field: it is what the engine arms a numbered
+        # pick with, not something to say to the customer.
+        b.item(f.get("name"), [("Form Name", f.get("name"))], entity_id=f.get("id"))
         # Narrowed form lookups carry the attachment so the form file can be sent.
         if f.get("attachment"):
             b.attach(f["attachment"])
@@ -1890,11 +1902,17 @@ def _outstanding_do_block(
     return "\n".join(lines)
 
 
-def _outstanding_report(report: dict) -> str:
-    """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
-    reply (contract for Phase 1)"). See the module-level note above for the
-    `report` shape."""
-    lines = [
+def _outstanding_header_lines(report: dict) -> list[str]:
+    """The four lines that say WHAT WAS SEARCHED - the report's own scope, always all
+    four, `all` where the filter was not given (R13/R19).
+
+    One writer, three readers: the report, the detail list (owner hand pass 3, row 6 -
+    "the detail list starts at 1. DO Number with no Product / Customer / Location / Order
+    date header", so the reader of a list could not tell what it was a list OF), and the
+    chatbot lane's own copy of the rule for the scope question it asks before either
+    exists.
+    """
+    return [
         # R13: `all` when no product was named, the same word the other header lines use
         # for "every one of them" - a customer-subject report is about all their products.
         f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
@@ -1902,6 +1920,13 @@ def _outstanding_report(report: dict) -> str:
         f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
         f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
     ]
+
+
+def _outstanding_report(report: dict) -> str:
+    """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
+    reply (contract for Phase 1)"). See the module-level note above for the
+    `report` shape."""
+    lines = _outstanding_header_lines(report)
 
     blocks: list[str] = []
     offer: list[str] = []
@@ -2002,9 +2027,15 @@ def _outstanding_envelope(report: dict) -> dict:
             if detail == "both"
             else bool(report.get(f"{detail}_rows"))
         )
+        # Row 6 (owner hand pass 3): the list carries the SAME scope header the summary
+        # prints. The list itself is unchanged - `_outstanding_detail` renders the rows
+        # and nothing else, which is what its own goldens pin - and the header is added
+        # here, where the summary's is, so the two cannot drift.
         return {
             "result_type": "outstanding_detail",
-            "response": _outstanding_detail(report, detail),
+            "response": "\n".join(_outstanding_header_lines(report))
+            + "\n\n"
+            + _outstanding_detail(report, detail),
             "has_result": rows_present,
         }
     so = report.get("so")

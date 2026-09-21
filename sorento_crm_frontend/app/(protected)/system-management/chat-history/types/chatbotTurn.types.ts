@@ -119,6 +119,11 @@ export interface TurnResponseBody {
   actions?: Record<string, unknown>[] | null;
 }
 
+// `TurnAttachment` moved to `@/components/chatbot/turnAttachments` (round 2) - the
+// chatbot console shares the identical `actions[].kind === 'send_attachments'` shape
+// off its own `ConsoleTurnResponse`, so the type lives with the shared extractor
+// rather than duplicated per screen.
+
 export interface ChatbotTurn {
   id: string;
   contact_respond_id: string;
@@ -275,9 +280,84 @@ export interface TurnDetailSession {
   diff: TurnDetailSessionDiffEntry[];
 }
 
+/**
+ * APPLY and Memory (chatbot turn re-architecture S1/S3, AC-1514, AC-1549).
+ *
+ * Both are OPTIONAL on `TurnDetail`: a turn recorded before S3 ships never carries
+ * them, and the drawer's own `Section` renders that as the same "nothing recorded
+ * yet" empty state every other kind here already uses - never an error.
+ */
+export interface TurnDetailApplyDiffEntry {
+  slot: string;
+  before: unknown;
+  after: unknown;
+  /** Which rule moved it, e.g. "exclusive narrows the named axis". */
+  reason?: string | null;
+}
+
+/**
+ * What the backend actually sends: `turn_runtime.focus_diff` returns a MAP keyed by the
+ * focus slot (`{ customers: { before, after } }`), and only a slot that moved is in it.
+ * The array form is the older shape some recorded turns still carry, so the drawer
+ * accepts either and renders one list.
+ */
+export type TurnDetailApplyDiff =
+  | TurnDetailApplyDiffEntry[]
+  | Record<string, { before?: unknown; after?: unknown; reason?: string | null }>;
+
+/**
+ * What APPLY read the message as, before any rule acted on it: one of `answer`,
+ * `refine`, `new_ask` or `carry`, with the single rule that decided it.
+ */
+export interface TurnDetailApplyDecision {
+  kind: string;
+  why: string;
+}
+
+export interface TurnDetailApply {
+  /** The parser verdict APPLY read, as sent (contract 102 to 105's shape). */
+  verdict: Record<string, unknown> | null;
+  decision?: TurnDetailApplyDecision | null;
+  state_diff: TurnDetailApplyDiff | null;
+  /** One line per (domain, entity kind) the narrower touched this turn. */
+  narrowing: string[];
+  /** `reconciled: <from> -> <to>`, or null when nothing was rewritten. */
+  reconciliation?: string | null;
+  /**
+   * The turn's plan. The backend sends the `apply` record's own object (domains,
+   * fetch, denied, ask, lane); an older turn carries the one-line string.
+   */
+  plan: string | Record<string, unknown> | null;
+  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
+  prompt_text: string | null;
+}
+
+export interface TurnDetailMemorySlot {
+  key: string;
+  value: unknown;
+  /** Who last wrote this slot, and when - "turn 9, pick", "set this turn". */
+  writer: string | null;
+}
+
+export interface TurnDetailMemoryEpisodes {
+  recall_hit: boolean;
+  /** Why recall did or did not fire, e.g. "no backward reference". */
+  reason: string | null;
+  last_frame_summary: string | null;
+  frame_count: number | null;
+}
+
+export interface TurnDetailMemory {
+  focus: TurnDetailMemorySlot[];
+  profile: TurnDetailMemorySlot[];
+  episodes: TurnDetailMemoryEpisodes | null;
+}
+
 export interface TurnDetail {
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
+  apply?: TurnDetailApply | null;
+  memory?: TurnDetailMemory | null;
   decay: TurnDetailDecay[];
   open_question: TurnDetailOpenQuestion | null;
   focus: TurnDetailFocus[];

@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -167,6 +167,10 @@ class SystemSettingUpdate(BaseModel):
     # A7 (chatbot-growth-r1): the cross-domain probe ladder, per origin domain -
     # {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]} by default.
     chatbot_crossdomain_ladder: Optional[Dict[str, List[str]]] = None
+    # Chatbot turn re-architecture (AC-1502): the tier order, one copy.
+    chatbot_tier_order: Optional[List[str]] = None
+    # Chatbot turn re-architecture (AC-1513): the Memory card, one JSONB.
+    chatbot_memory: Optional[Dict[str, Any]] = None
     # Which chatbot lanes the CRM may FINISH, by `branch_kind`. `[]` (the default) means
     # none, and every turn delegates to n8n exactly as today. Validated as a list of
     # strings only: an unknown branch kind is the ENGINE's problem to ignore-and-warn, not
@@ -409,6 +413,8 @@ async def get_settings(
                 "local_buy_routing_enabled": getattr(settings, "local_buy_routing_enabled", False) if settings else None,
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,
+                "chatbot_tier_order": getattr(settings, "chatbot_tier_order", None) if settings else None,
+                "chatbot_memory": getattr(settings, "chatbot_memory", None) if settings else None,
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
@@ -667,12 +673,38 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
+    # `chatbot_memory` is one JSONB carrying four named keys (AC-1513). An unknown key
+    # would be stored, returned and read by nobody, and the card that was meant to set it
+    # would read as broken with no error anywhere - the same silent failure the
+    # `chatbot_completed_lanes` check above exists for. A key set is validated, not the
+    # values: those are the owner's to get wrong and fix.
+    if update_data.get("chatbot_memory") is not None:
+        from app.modules.chatbot.lane_vocabulary import CHATBOT_MEMORY_KEYS
+
+        memory = update_data["chatbot_memory"]
+        if not isinstance(memory, dict):
+            raise HTTPException(
+                status_code=422, detail="chatbot_memory must be an object."
+            )
+        unknown_keys = sorted(set(memory) - set(CHATBOT_MEMORY_KEYS))
+        if unknown_keys:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "chatbot_memory does not carry "
+                    + ", ".join(unknown_keys)
+                    + ". Its keys are: "
+                    + ", ".join(CHATBOT_MEMORY_KEYS)
+                    + "."
+                ),
+            )
+
     # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
     # means "reset to the default" - not a null write. Without this the loop below sends
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
     # an outage rather than as the clear it asked for. The defaults repeat
     # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
-    from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
+    from app.modules.chatbot.lane_vocabulary import default_chatbot_memory, default_tier_order, default_unsupported_domains
 
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
         # Not a chatbot column, but it has the identical shape and the identical
@@ -697,6 +729,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             "inventory": ["incoming", "purchase_order"],
             "incoming": ["inventory"],
         },
+        # Chatbot turn re-architecture (AC-1502): repeats `SystemSetting.
+        # chatbot_tier_order`'s own default (app/models/user.py), through the same
+        # doorway `chatbot_unsupported_domains` above uses.
+        "chatbot_tier_order": default_tier_order(),
+        # AC-1513: repeats `SystemSetting.chatbot_memory`'s own default through the
+        # same doorway, so an explicit null on the form resets the whole card.
+        "chatbot_memory": default_chatbot_memory(),
     }
     for column, default in _CHATBOT_COLUMN_DEFAULTS.items():
         if column in update_data and update_data[column] is None:

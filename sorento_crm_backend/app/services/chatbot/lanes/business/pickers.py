@@ -111,6 +111,19 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
         message += "\n\nNone of these have incoming stock right now."
     out["escalate_message"] = message
     out["is_clarification"] = False  # parity with the not-found require_specific branch
+    # The same fact the sentence above states, kept as DATA (turn re-architecture,
+    # AC-1526): the new narrower builds its roster from `compatible_entities` and needs
+    # the has/no stamp per code, and re-reading it out of the rendered lines would be
+    # parsing our own prose. Computed here because this is where the probe answer is.
+    out["incoming_by_code"] = {
+        code: _norm(code) in has_incoming
+        for code in (
+            jsc.js_string(jsc.get(e, "code") or jsc.get(e, "canonical_code") or jsc.get(e, "raw"))
+            for e in jsc.array(out.get("compatible_entities"))
+            if jsc.truthy(e)
+        )
+        if code
+    }
     return out
 
 
@@ -158,6 +171,76 @@ def _customer_of_row(a: Any) -> Any:
     if jsc.truthy(value):
         return jsc.js_string(value)
     return jsc.get(a, "customer_name") or jsc.get(a, "customer") or None
+
+
+def _bases_with_do(rows: list[Any]) -> set[str]:
+    """The customer family bases the probe found a real DELIVERY ORDER for.
+
+    ONLY rows that carry a delivery-order date count. `crm_order_management_orders_list`
+    returns every matching ORDER, delivered or not, so the old membership test ("this
+    customer appears in the probe") stamped "has delivery" on a customer whose orders had
+    not shipped.
+    """
+    with_do: set[str] = set()
+    for row in rows:
+        if not _row_has_do(row):
+            continue
+        base = _customer_base(_customer_of_row(row))
+        if base:
+            with_do.add(base)
+    return with_do
+
+
+def customer_bases_with_do(probe: Any) -> set[str] | None:
+    """The same answer `annotate_customer` stamps its lines from, for a caller that
+    builds its OWN roster (the re-architected narrower, owner hand pass 2 item 2).
+
+    `None` means NOT MEASURED - the probe failed, or its page saturated - which is the
+    annotator's own unprobed arm and must read as "no stamp", never as "no DO". One
+    rule, two callers, so the line a customer reads and the roster the session stores
+    cannot disagree about which families have a delivery order.
+    """
+    rows = _probe_rows(probe)
+    if rows is None or len(rows) >= PAGE_SATURATION:
+        return None
+    return _bases_with_do(rows)
+
+
+def product_codes_in(probe: Any) -> set[str] | None:
+    """The product codes a probe's rows are ABOUT, or None for NOT MEASURED.
+
+    The general shape of `annotate_incoming`'s own `has_incoming` set, for the two
+    rosters that have no annotator of their own: the promotion products read and the PO
+    placed read (owner hand pass 3, rows 1 and 7 - "product roster without stamps"). The
+    CODE is read off the "Product Code" field first and the row title second, because a
+    PO row is titled by its PO number while a promotion-product row is titled by the
+    code; reading the title first stamped a roster with PO numbers nothing matched.
+
+    An EXPIRED row does not count. A promotion that ended is not a promotion the customer
+    can be offered, and stamping "has promo" from one would promise a price that is gone.
+
+    `None` means the probe did not run or its page saturated, which every caller reads as
+    "no stamp", never as "no promo".
+    """
+    rows = _probe_rows(probe)
+    if rows is None or len(rows) >= PAGE_SATURATION:
+        return None
+    codes: set[str] = set()
+    for row in rows:
+        flags = jsc.get(row, "flags") if jsc.truthy(row) else None
+        if jsc.truthy(flags) and jsc.get(flags, "expired") is True:
+            continue
+        value = _row_field(row, _PRODUCT_CODE_LABEL)
+        if not jsc.truthy(value):
+            value = jsc.get(row, "title") if jsc.truthy(row) else None
+        if jsc.truthy(value):
+            codes.add(_norm(value))
+    return codes
+
+
+def customer_base(value: Any) -> str:
+    """The family base of one customer name - `_customer_base` for callers outside."""
+    return _customer_base(value)
 
 
 def annotate_customer(
@@ -208,13 +291,7 @@ def annotate_customer(
     # returns every matching ORDER, delivered or not, so the old membership test ("this
     # customer appears in the probe") stamped "has delivery" on a customer whose orders
     # had not shipped.
-    with_do: set[str] = set()
-    for row in rows:
-        if not _row_has_do(row):
-            continue
-        base = _customer_base(_customer_of_row(row))
-        if base:
-            with_do.add(base)
+    with_do = _bases_with_do(rows)
 
     # NO reordering, no renumbering - the numbers are the pick affordance. Suffixes only,
     # and a plain hyphen, never an em-dash. The wording is the owner's: "has DO" / "no DO",

@@ -108,7 +108,24 @@ def db():
 
 
 def _table_exists(db, table: str) -> bool:
-    return db.execute(sa.text(f"SELECT to_regclass('{table}') IS NOT NULL")).scalar()
+    """Whether THIS test's scratch schema (not `public`, wherever it sits on the
+    search_path) carries the table.
+
+    `to_regclass('bare_name')` resolves across the whole search_path, and `public` is
+    on it (`tests/_pg_fixture.py::blank_session`, so app code's bare `similarity()`
+    calls resolve). The real `public.product_spec_flyer_batches` / `_proposals` exist
+    there too - this app has ORM models for both, so `Base.metadata.create_all` builds
+    them for real wherever the suite's actual database gets bootstrapped. Once this
+    file's fixture drops the scratch schema's own copy, an unqualified `to_regclass`
+    falls through to that real `public` table and reports "exists" regardless of what
+    THIS test did. `current_schema()` is always this test's scratch schema (see
+    `blank_session`'s own comment on schema order), so qualifying by it is what makes
+    "does not exist" mean "not in my scratch schema" again.
+    """
+    return db.execute(
+        sa.text("SELECT to_regclass(current_schema() || '.' || :table) IS NOT NULL"),
+        {"table": table},
+    ).scalar()
 
 
 def _insert_batch(db, reading_id: str) -> str:

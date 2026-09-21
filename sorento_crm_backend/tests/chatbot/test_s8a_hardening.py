@@ -38,12 +38,10 @@ from app.schemas.respond_workspace import RespondWorkspaceCreate, RespondWorkspa
 from app.services.ai_prompt_service import AIPromptService
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod
-from app.services.chatbot.head.output_exchange import ParserOutputError, post_process
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 from app.services.respond_workspace_service import RespondWorkspaceService
 from app.services.user_service import UserPermissionService
 from tests._pg_fixture import blank_session
-from tests.chatbot import _corpus
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     CONTACT_ID,
     _envelope,
@@ -548,49 +546,54 @@ class TestPromptOverridesAC807:
 # --------------------------------------------------------------------------- #
 
 
-class TestPostProcessEmissionValidation:
-    def test_a_right_key_wrong_container_type_fails_naming_key_and_type(self):
-        """`entities: {}` carries the right KEY with the wrong CONTAINER - a dict where
-        the schema (and every reader downstream) requires a list. `_assert_emission`'s own
-        per-key type loop is what this exercises; a missing-key emission is a different
-        branch and already covered elsewhere (`test_a_mock_that_is_an_object_but_not_an_
-        emission_names_the_missing_key`, `tests/chatbot/test_harness_injections.py`)."""
-        malformed = _parser_output(entities={})
+# AC-1592: `TestPostProcessEmissionValidation` is REMOVED here, split two ways.
+#
+# `test_a_real_capture_with_no_broaden_axis_key_replays_cleanly` replayed ONE real
+# `runData` capture through `output_exchange`'s own post-processor - exactly what
+# `test_turn_replay.py` (S6 deliverable 1-2, `f38ae3f52`) now does for the whole
+# corpus end to end through `engine.run_turn`. RETIRED, superseded (contract line 98
+# territory, same rule as the `test_replay.py` family's doomed node runners above).
+#
+# `test_a_right_key_wrong_container_type_fails_naming_key_and_type` asserted
+# `_assert_emission`'s own per-key type loop (`ParserOutputError`, named key + type
+# in the message). Grepped this session: neither `_assert_emission` nor
+# `ParserOutputError` exists anywhere in `app/services/chatbot/` - the S3 rewrite
+# passes `json_schema=PARSE_OUTPUT_JSON_SCHEMA` straight to the LLM provider
+# (`head/parser.py::parse`), so a REAL call cannot return a malformed container type
+# at all (the schema is enforced server-side). Probed `turn/apply.py::apply()`
+# directly with a malformed `entities` dict this session: an EMPTY dict degrades
+# silently to `[]` (`verdict.get("entities") or []` - `{}` is falsy) with no error at
+# all; a NON-empty malformed dict raises `AttributeError: 'str' object has no
+# attribute 'get'` - unclear, unnamed, but still a loud failure, not a silent wrong
+# answer. Ported below as RED (the clear-message contract is gone, not fully
+# replaced) - low severity relative to the other findings this triage pass surfaced
+# (only reachable via a test-harness-injected malformed mock, not a real LLM
+# response), flagged rather than escalated.
+class TestMalformedEntitiesContainerNoLongerNamesKeyAndType:
+    def test_a_non_empty_malformed_entities_dict_fails_with_a_named_message(self) -> None:
+        from tests.chatbot._turn_helpers import build_policy, verdict
+        from app.services.chatbot.turn.apply import apply
+        from app.services.chatbot.turn.state import Focus, Profile, State
 
-        with pytest.raises(ParserOutputError) as excinfo:
-            post_process({"output": malformed}, {}, {})
+        state = State(focus=Focus(), pending=None, profile=Profile())
+        v = verdict(entities={"hint": "product"})
+
+        with pytest.raises(Exception) as excinfo:
+            apply(state, v, build_policy())
 
         message = str(excinfo.value)
-        assert "entities" in message
-        assert "array" in message
-        assert "dict" in message
-
-    def test_a_real_capture_with_no_broaden_axis_key_replays_cleanly(self):
-        """AC-806's own comment: `broaden_axis` is EXEMPT from the required-key check
-        because 216 of 481 real captures never carry it (a later addition to the parser's
-        schema). This picks one such real `runData` capture from the vendored corpus and
-        replays it end to end through `output_exchange`'s own post-processor, rather than
-        asserting the exemption in the abstract - a real emission missing the key must
-        post-process to the SAME output n8n actually recorded, not merely "not raise"."""
-        fixtures = _corpus.vendored("output_exchange")
-        target = next(f for f in fixtures if f.name == "exec-13484619")
-        assert target.graded, "this fixture must be a real runData capture, not reasoned"
-
-        parsed_input = target.input[0]["json"]["output"]
-        parsed_input = json.loads(parsed_input) if isinstance(parsed_input, str) else parsed_input
-        assert "broaden_axis" not in parsed_input, (
-            "exec-13484619 is expected to be the broaden_axis-absent capture; if this "
-            "fails the fixture on disk changed and a different one should be picked"
+        assert "entities" in message and (
+            "array" in message or "list" in message
+        ), (
+            "the old `_assert_emission` guard named the bad KEY and the expected TYPE "
+            f"('entities' ... 'array' ... 'dict'); the new failure is unnamed - got "
+            f"{type(excinfo.value).__name__}: {excinfo.value!r}. Neither "
+            "_assert_emission nor ParserOutputError exists anywhere in "
+            "app/services/chatbot/ (grepped this session); head/parser.py now relies "
+            "on the LLM provider's own json_schema enforcement instead, which cannot "
+            "catch a test-harness-injected malformed mock the way a real LLM call "
+            "would never produce one."
         )
-
-        from app.services.chatbot.head.output_exchange import output_exchange
-
-        parent_input = target.first("When Executed by Another Workflow")
-        actual = _corpus.json_round_trip(
-            [{"json": output_exchange(item.get("json") or {}, parent_input)} for item in target.input]
-        )
-        expected = _corpus.json_round_trip(target.expected)
-        assert actual == expected
 
 
 # --------------------------------------------------------------------------- #

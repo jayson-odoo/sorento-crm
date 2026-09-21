@@ -108,6 +108,30 @@ def _set_order_status(db: Session, payload: dict):
     )
 
 
+def _delete_chatbot_domain(db: Session, payload: dict):
+    """The same two lines `DELETE /system/chatbot/domains/{id}` runs.
+
+    There is no `ChatbotDomainService` to call: the route builds the query itself, so
+    there is nothing to delegate to and inventing a service for one delete would be more
+    machinery than the rule it is meant to protect. Resolved by id only - the route also
+    accepts a NAME, for a caller holding one, and a parked action always carries the id.
+    """
+    from app.api.v1.system.chatbot_config import refuse_if_last_domain
+    from app.models.chatbot_policy import ChatbotDomain
+
+    row = (
+        db.query(ChatbotDomain).filter(ChatbotDomain.id == _entity_id(payload)).first()
+    )
+    if row is None:
+        return None
+    # The same rule the route enforces, imported rather than repeated: the loader falls
+    # back to the frozen seed when it reads no domains, so an emptied table gives the
+    # operator fourteen domains back on the next turn and a screen showing none.
+    refuse_if_last_domain(db, row)
+    db.delete(row)
+    return None
+
+
 def _delete_user(db: Session, payload: dict):
     from app.services.user_service import UserService
 
@@ -128,6 +152,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.delete",
         label="Delete product",
+    )
+)
+
+register(
+    FormAction(
+        key="chatbot_domain.delete",
+        entity_types=("chatbot_domain",),
+        execute=_delete_chatbot_domain,
+        window=WINDOW_DESTRUCTIVE,
+        permission="system.chatbot_config.manage",
+        label="Delete chatbot domain",
     )
 )
 

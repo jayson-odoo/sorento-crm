@@ -1,0 +1,702 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "DO outstanding for chin chun",
+              "type": "text"
+            },
+            "messageId": "console-check-06d7215f2bc3",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "chin chun"
+          }
+        ],
+        "tokens": [
+          "chin chun"
+        ],
+        "unresolved_tokens": [
+          "chin chun"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:40:53.374578+09:00",
+        "turn_id": "ca855f38-82b5-4584-9677-7419c11b1b4b"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "chin chun"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check an outstanding delivery order for chin chun"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-b416bc313d2f",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 42,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "chin chun"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 42,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 42,
+              "source": "current_message",
+              "value": "outstanding"
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 42,
+            "expects": "pick_or_yes_no",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014"
+                ],
+                "filename": null,
+                "idx": 1,
+                "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                "product": "300-C043",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+                  "9288358f-7032-4dec-af46-65119eb611bb",
+                  "74fc2fcd-1e05-4c20-85cc-bcaa223c2bfa",
+                  "b8ad73b4-106d-472c-8126-48ec4b48d301"
+                ],
+                "filename": null,
+                "idx": 2,
+                "label": "CHIN CHUN HOMEMART SDN BHD (MCH)",
+                "product": "300-C124",
+                "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                  "70cf8cc0-88c2-4a7a-bc5b-3f7ee3804e52",
+                  "b72c62bc-6dc2-4ecf-98c2-f23d5ab8c4f1"
+                ],
+                "filename": null,
+                "idx": 3,
+                "label": "CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
+                "product": "300-C001",
+                "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "60c392e9-78ed-443d-8ae0-f8a01467dbb4",
+                  "a83e2257-7533-4031-931f-07ecced33022"
+                ],
+                "filename": null,
+                "idx": 4,
+                "label": "JIMMY - I (MCH)",
+                "product": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "uuid": "60c392e9-78ed-443d-8ae0-f8a01467dbb4"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": [],
+              "offer": {
+                "domain": "order",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "customer_service",
+                    "team": "customer_service"
+                  }
+                ],
+                "team": "customer_service"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III]\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:41:10.518887+09:00",
+        "turn_id": "b3c7b208-8dc3-422b-9304-62389bee1414"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick option 1 from the customer list"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-8431396eb121",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 43,
+              "source": "pick",
+              "value": {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "family_uuids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014"
+                ],
+                "hint": "customer",
+                "ordinal": 1,
+                "raw": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 43,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 42,
+              "source": "reuse",
+              "value": "outstanding"
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 43,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": null,
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+          "78dab676-49c4-476f-a406-5644cf81f014",
+          "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+          "a6a2f62a-eeef-48b0-a032-aa926de57199",
+          "b7289132-29f0-47af-8da5-7726705a3cd4",
+          "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III]\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 1\nTransferred to DO: 0\nOutstanding: 1\nOrder date range: 15/06/2024\n*_By location_*\nBRW: 1 (O/S: 1)\n*_By product_*\nSRTWC287-LID: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:41:27.315591+09:00",
+        "turn_id": "b84b7f38-729d-432c-bfec-92e1ae742400"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+              "a6a2f62a-eeef-48b0-a032-aa926de57199",
+              "b7289132-29f0-47af-8da5-7726705a3cd4",
+              "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+              "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+              "78dab676-49c4-476f-a406-5644cf81f014"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III]\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 1\nTransferred to DO: 0\nOutstanding: 1\nOrder date range: 15/06/2024\n*_By location_*\nBRW: 1 (O/S: 1)\n*_By product_*\nSRTWC287-LID: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose sales orders as the outstanding document scope"
+      }
+    }
+  ]
+}

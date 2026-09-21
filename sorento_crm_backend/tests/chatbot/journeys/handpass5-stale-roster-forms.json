@@ -1,0 +1,34 @@
+{
+  "name": "handpass5-stale-roster-forms",
+  "source": "hand pass 5 owner console turns 38, 42, 43 (contact_respond_id 437264483, 2026-09-17 05:27-05:30 +09) / ruling R6: after a one-option or any roster, a NEW business ask that fetched ('Incoming and stock CB2805A', 'any markeitng forms?') closes it: '1' after the forms list picks form 1 (a reply about that form), never an incoming/stock answer. Recorded pre-fix turn 43 ('1' after the forms roster) is exactly the stale incoming/stock answer this pins - it names an .xlsx attachment and 'cb2805q' from several turns earlier, nothing about a form.",
+  "cases": [
+    {
+      "name": "forms-roster-closes-the-stale-incoming-stock-pending-and-1-picks-the-form",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Incoming and stock CB2805A",
+          "expect": {}
+        },
+        {
+          "text": "any markeitng forms?",
+          "expect": {
+            "roster_min_options": 5
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["Form"],
+            "reply_not_contains": [
+              "*incoming stock*",
+              "*stock* for",
+              "cb2805q",
+              ".xlsx"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

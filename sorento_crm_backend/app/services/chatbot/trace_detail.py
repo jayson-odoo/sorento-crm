@@ -239,6 +239,53 @@ def _open_question(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+#: `prompt_text` cap (AC-1549): 64 KB, code points (a trace's own text field, not the
+#: byte-cap `_cap_envelope` above uses for a tool envelope).
+PROMPT_TEXT_CHAR_CAP = 65_536
+
+
+def _apply(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The turn re-architecture's `apply` stage record (AC-1549): verdict in, the one
+    decision it was read as, state diff out, narrowing fired, reconciliation if any, the
+    turn plan."""
+    entries = _kind_records(records, "apply")
+    if not entries:
+        return None
+    entry = entries[-1]
+    return {
+        "verdict": entry.get("verdict"),
+        "decision": entry.get("decision"),
+        "state_diff": entry.get("state_diff"),
+        "narrowing": entry.get("narrowing"),
+        "reconciled": entry.get("reconciled"),
+        "plan": entry.get("plan"),
+    }
+
+
+def _memory(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The three memory shelves before/after, each with its own writer (AC-1549)."""
+    entries = _kind_records(records, "memory")
+    if not entries:
+        return None
+    entry = entries[-1]
+    return {
+        "focus": entry.get("focus"),
+        "profile": entry.get("profile"),
+        "episodes": entry.get("episodes"),
+    }
+
+
+def _prompt_text(records: list[dict[str, Any]]) -> str | None:
+    """The rendered user block plus hint blocks, capped at 64 KB (AC-1549)."""
+    entries = _kind_records(records, "prompt_text")
+    if not entries:
+        return None
+    text = entries[-1].get("text")
+    if not isinstance(text, str):
+        return None
+    return text[:PROMPT_TEXT_CHAR_CAP]
+
+
 def compose_trace_detail(row: ChatbotTurn) -> dict[str, Any]:
     records = _records(row)
     return {
@@ -251,4 +298,7 @@ def compose_trace_detail(row: ChatbotTurn) -> dict[str, Any]:
         "crossdomain": _crossdomain(records),
         "reveals": _reveals(records),
         "session": _session(records),
+        "apply": _apply(records),
+        "memory": _memory(records),
+        "prompt_text": _prompt_text(records),
     }

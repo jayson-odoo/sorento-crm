@@ -2,12 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { RiErrorWarningFill } from '@remixicon/react';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { usePromptKeys } from '../../hooks/useAIAssistantPrompts';
+import { usePromptBlocksStatus } from '../../hooks/usePromptBlocksStatus';
 import type { PromptKeySummary } from '../../services/aiPromptsService';
 
 const VIEW_PERMISSION = 'system.ai_assistant_settings.view';
@@ -24,6 +27,10 @@ function formatDate(d: string | null): string {
 export function PromptsList() {
   const hasPermission = useHasPermission(VIEW_PERMISSION);
   const { data, isLoading, isError, error } = usePromptKeys();
+  // Chatbot turn re-architecture (AC-1552): whether `chatbot_domains` / `chatbot_entity_kinds`
+  // have moved since the labelled parser version was published. Read-only, never blocks
+  // the list - a stale block does not stop an owner from editing an unrelated prompt.
+  const blocksStatus = usePromptBlocksStatus();
   const [showInactive, setShowInactive] = useState(false);
 
   const { active, dormant } = useMemo(() => {
@@ -62,6 +69,25 @@ export function PromptsList() {
         Every prompt the assistant uses is versioned here. Edit → save a new immutable version → publish to move
         the live <span className="font-medium">production</span> label. No redeploy needed.
       </p>
+
+      {blocksStatus.data?.stale ? (
+        <Alert variant="mono" icon="warning" data-testid="domain-block-stale-banner">
+          <AlertIcon>
+            <RiErrorWarningFill />
+          </AlertIcon>
+          <AlertTitle>
+            Domain block out of date - a Chatbot Domain or Entity kind changed since{' '}
+            {blocksStatus.data.published_version != null
+              ? `v${blocksStatus.data.published_version}`
+              : 'the published version'}{' '}
+            went live. Publish a new{' '}
+            <Link href="/system-management/ai-assistant/prompts/chatbot_semantic_parser" className="underline">
+              chatbot_semantic_parser
+            </Link>{' '}
+            version to pick it up.
+          </AlertTitle>
+        </Alert>
+      ) : null}
 
       <PromptTable rows={active} />
 

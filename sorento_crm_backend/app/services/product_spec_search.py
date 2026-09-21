@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import cast, func, literal, or_
+from sqlalchemy import and_, cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -525,6 +525,21 @@ _PHRASE_STOPWORDS: frozenset[str] = NEGATOR_WORDS | frozenset(
         "any", "some", "all", "want", "wanted", "need", "have", "has", "got",
         "looking", "look", "find", "get", "send", "show", "please", "can", "you",
         "do", "does", "like", "would", "also", "just", "about", "price",
+        # Question words: "which basin got stock" asks about basins, not about
+        # "which" - a set answer names the described thing, never the question
+        # word that introduced it (AC-1320 / work item A2).
+        "which", "what", "who", "where", "when", "how", "many",
+        # R9 (console fix round 2, AC-1330): the customer's own imperative verb,
+        # not a description - "check stock srtwc286" is not naming a product
+        # attribute called "check". Measured live: `unrecognized_terms: ["check"]`.
+        "check", "checking", "list", "tell",
+        # R23 (console pass 6, AC-1347): the head's entity_op: reuse hands a
+        # carry-less "more" reply straight to the HAS branch once its own set
+        # is gone (R21/R19), and this word must never become a described-set
+        # term either. Measured live: "I don't know 'more' as a product type".
+        # "please" and "show" are already covered above; "show more" (the test's
+        # own two-word case) clears through the same per-word filter as both.
+        "more", "next", "lagi",
     }
 )
 
@@ -673,46 +688,134 @@ def unrecognized_terms(
     return reported
 
 
-def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
+# Words that name NO set at all and are not reported as unrecognized either -
+# "item", "product(s)", "anything" are the customer saying nothing about WHAT they
+# mean, not naming something this catalogue fails to understand (C2 repair,
+# attribute-first asks S3: "which item has cert" must leave the described set
+# unscoped, never clarify "I don't know 'item'"). Distinct from `_PHRASE_STOPWORDS`
+# (grammar words dropped before a term is even formed) - these ARE the customer's
+# whole free term, and still mean "no description given".
+_GENERIC_DESCRIPTION_WORDS: frozenset[str] = frozenset(
+    {"item", "items", "product", "products", "anything", "thing", "things"}
+)
+
+
+def is_generic_free_term(term: str) -> bool:
+    """True when `term` names NO set at all - every content word in it is a
+    generic stand-in ("item", "product", "anything"), never a real description.
+
+    Exposed so `product_predicate_service.resolve_product_set` can tell "the
+    caller described nothing" (leave the set unscoped) apart from "the caller
+    described something this catalogue could not read" (AC-1302's honest zero) -
+    `filter_specs` alone only reports the DIFFERENCE in its clause/unrecognized
+    shape, not in a boolean a caller can branch on before calling it.
+    """
+    content = _content_words(term)
+    return bool(content) and all(word in _GENERIC_DESCRIPTION_WORDS for word in content)
+
+
+# R27/AC-1352 (owner test on the local stack): a spec entry with a STRING
+# value is a membership filter WHATEVER its key - `class` and `product_type`
+# (the noun a customer says inside a class, "bidet", "shower set") and `brand`
+# (the catalogue's own name column) exactly as before, but also a narrower
+# registry key like `trap_type`, `finish`, `colour` - "s trap" or "matte
+# black" is as unambiguous a described-set word as a class name. A NUMERIC
+# value stays out of membership and boost-only: it carries ops (at_least,
+# tolerance windows) that have no boolean meaning, so a filter on it would
+# silently undercount ("250mm" excluding every close-but-not-exact match).
+
+
+def filter_specs(
+    db: Session,
+    *,
+    specs: list[dict] | None = None,
+    free_terms: list[str] | None = None,
+    scope_terms: list[str] | None = None,
+) -> dict:
     """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
-    Class-only by decision: class coverage is broad, so a class filter is safe;
-    spec-VALUE derivation is partial, so a value filter silently undercounts, and
-    numeric entries carry ops (at_least, tolerance windows) that have no boolean
-    meaning. Non-class entries are dropped here and still reach the ranker as
-    boosts, so the customer's number is heard, just not membership-defining.
+    Any spec entry whose value is a non-empty STRING is membership-defining,
+    whatever its key: their coverage is unambiguous yes/no, so a filter on any
+    of them is safe. A numeric entry is dropped here and still reaches the
+    ranker as a boost, so the customer's number is heard, just not
+    membership-defining (R27/AC-1352).
 
-    Three verdicts per word, because n8n renders them differently:
-    - names a class            -> membership
-    - names a known spec value -> dropped (recognized, boost-only)
-    - names nothing            -> `unrecognized_terms` (clarify, never "none")
+    `scope_terms` are read the same way, one step earlier: a term the caller's
+    own parser NAMED as what the thing IS ("close couple wc", "p trap") has its
+    registry bindings joined into membership exactly as if the caller had sent
+    them under `specs`, instead of only its class reading. Hand pass 12 R8
+    (owner ruling, turn 7c39e638): "close couple wc available stock in p trap"
+    reached here with the two phrases as scope terms and NO `specs` (the chatbot
+    derives `specs` from the message text, which on a carried/picked turn is not
+    this ask's own sentence), so the only membership the set ever had was the
+    class - and the qualifying set spanned every water closet with stock,
+    wall-hung and s-trap ones included. `free_terms` keeps its old reading
+    untouched: a descriptive word there that names a VALUE key stays boost-only
+    (see the three verdicts below), because a sparse key would silently exclude
+    products that are the thing but carry no derived value for it.
 
-    The third verdict is reached WORD by word, not term by term. A term that
-    bound something can still carry an alien word inside it - "sorento grommet"
-    resolves the brand and says nothing about the grommet - and a term-level
-    check called that a success, so the one thing the CRM could not honour was
-    the one thing it never mentioned. A term whose every content word is alien
-    is still reported verbatim: they asked it as one thing.
+    Different KEYS are ANDed together (a water closet AND an s_trap is a
+    narrower set than either alone); repeated VALUES on the SAME key stay
+    unioned (two finishes named for one key is either, not both, since one
+    product carries exactly one value per key).
+
+    Three verdicts per free-text word, because n8n renders them differently:
+    - names a class / product_type / brand -> membership
+    - names a known spec value (any registry key) -> dropped (recognized,
+      boost-only, e.g. "wall hung" names `mounting` without being a class)
+    - names nothing this catalogue can act on   -> `unrecognized_terms`
+      (clarify, never "none")
+
+    The third verdict is reached WORD by word for a term that is entirely
+    alien, but a term whose individual words are each independently known
+    ("water", "tap") is STILL reported verbatim when the phrase as a whole
+    binds nothing - a class, a product_type, a brand, or any other registry
+    spec (AC-1301). Answering that silently as "membership undefined" reads as
+    "understood, and none qualify", which is a different, false, answer.
 
     Returns `{"clause", "class_labels", "unrecognized_terms"}`; `clause` is a
-    predicate over `ProductSpecifications.values`, or None when no class was named.
+    predicate over `ProductSpecifications.values`, or None when nothing named
+    a member.
     """
     free_terms = [t for t in (free_terms or []) if t and t.strip()]
+    scope_terms = [t for t in (scope_terms or []) if t and t.strip()]
+    # One pass over both, so the honesty check and the class reading are identical
+    # for either kind of term; only what a BINDING does differs (see the docstring).
+    scoping = {t for t in scope_terms}
+    terms = free_terms + [t for t in scope_terms if t not in set(free_terms)]
 
-    labels: set[str] = set()
+    membership: dict[str, set[str]] = {}
+
+    def _join(key: Any, value: Any) -> None:
+        if key and isinstance(value, str) and value.strip():
+            membership.setdefault(str(key), set()).add(value)
+
     for entry in specs or []:
-        if entry.get("key") == "class" and entry.get("value"):
-            labels.add(str(entry["value"]))
+        _join(entry.get("key"), entry.get("value"))
 
-    vocabulary = _search_vocabulary(db) if free_terms else frozenset()
+    vocabulary = _search_vocabulary(db) if terms else frozenset()
     unrecognized: list[str] = []
-    for term in free_terms:
+    for term in terms:
+        content = _content_words(term)
+        if is_generic_free_term(term):
+            continue  # "no description given" - never a label, never unrecognized
         classes = resolve_classes_for_term(db, term)
         if classes:
-            labels.update(classes)
-        content = _content_words(term)
+            membership.setdefault("class", set()).update(classes)
+        # Any registry spec at all - a value key like `mounting` counts as
+        # "understood" here even though it is never membership-defining... unless
+        # the caller named this term as the set's own SCOPE, in which case it
+        # defines membership exactly as a `specs` entry does.
+        bound_specs = resolve_terms_to_specs(db, [term])
+        if term in scoping:
+            for entry in bound_specs:
+                _join(entry.get("key"), entry.get("value"))
         alien = [word for word in content if word not in vocabulary]
         if content and len(alien) == len(content):
+            if term not in unrecognized:
+                unrecognized.append(term)
+            continue
+        if content and not classes and not bound_specs:
             if term not in unrecognized:
                 unrecognized.append(term)
             continue
@@ -721,22 +824,41 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
                 unrecognized.append(word)
 
     clause = None
-    if labels:
+    key_clauses = []
+    for key, values in membership.items():
+        if not values:
+            continue
         # Scalar branch is case-insensitive, matching the ranker's `_states`. The
         # containment branch (case-sensitive, against the stored spelling the
         # resolvers returned) exists because a value may be a LIST - two finishes
         # on one product - and `#>>` renders a list as its JSON text.
-        lowered = [label.lower() for label in labels]
-        scalar = func.lower(ProductSpecifications.values["class"]["value"].astext).in_(lowered)
+        lowered = [value.lower() for value in values]
+        scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
         contained = [
-            ProductSpecifications.values["class"]["value"].op("@>")(cast(literal(json.dumps(label)), JSONB))
-            for label in sorted(labels)
+            ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
+            for value in sorted(values)
         ]
-        clause = or_(scalar, *contained)
+        key_clause = or_(scalar, *contained)
+        # R15/AC-1339 (third console pass): a category-sourced class row IS
+        # real membership, not excluded from it - a product filed under
+        # Bathroom Accessory by its own category is a member of the described
+        # set for "bathroom accessory" exactly as one whose description named
+        # it. Measured on the prod copy: two class labels exist ONLY through
+        # category filing (Bathroom Accessory 2,040 products, Bathtub and
+        # Jacuzzi 93) - excluding provenance.class.source == "category"
+        # reported "which bathroom accessory has stock" as zero qualifying
+        # against a real 999. The company's own filing is the strongest
+        # statement of what the product is.
+        key_clauses.append(key_clause)
+    if key_clauses:
+        # R27/AC-1352: DIFFERENT keys AND together (a water closet AND an
+        # s_trap is narrower than either alone) - repeated values WITHIN one
+        # key stayed unioned above, unchanged.
+        clause = key_clauses[0] if len(key_clauses) == 1 else and_(*key_clauses)
 
     return {
         "clause": clause,
-        "class_labels": sorted(labels),
+        "class_labels": sorted(membership.get("class", set())),
         "unrecognized_terms": unrecognized,
     }
 
