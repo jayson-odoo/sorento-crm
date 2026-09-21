@@ -1,0 +1,81 @@
+{
+  "name": "sales-report",
+  "source": "coder 25's own journey gate (PLAN-chatbot-sales-report.md port, 20 Sep 2026), driven live against :8081 (git_sha 484c79d92, prompt v39, contact 437264483): 5 asks, all 5/5 PASS at the time - 'give me the dealer sales report for hanlim' then '1' (By-product breakdown, then the SO detail list), 'sales report for SRTWC286' (product-only ask, S18 current-year default window, S19 several-code carry, S20 both breakdowns), 'project sales report for hanlim' (Channel: Project), 'how much did hanlim buy this year' (the fuzzy ask still reaches the sales report, year window), 'dealer outstanding quantity for hanlim' (the trap - still the OUTSTANDING report, not the sales report, despite the word 'dealer' beside 'outstanding'). Re-run here as a persisted regression chain, contact 440987225 (also holds sales_orders.sales_report on the clone).",
+  "cases": [
+    {
+      "name": "dealer-sales-report-hanlim-by-product-then-so-detail",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "give me the dealer sales report for hanlim",
+          "expect": {
+            "reply_contains": ["Channel: Dealer", "*_By product_*", "Reply 1 for the sales order list."],
+            "reply_contains_any": ["Sales orders:"]
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["*SO Number:*", "*Customer:*"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "product-only-ask-defaults-to-current-year-and-both-breakdowns",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "sales report for SRTWC286",
+          "expect": {
+            "reply_contains": ["Product: SRTWC286", "01/01/2026 to 31/12/2026", "*_By product_*"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "project-channel-worded-ask",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "project sales report for hanlim",
+          "expect": {
+            "reply_contains": ["Channel: Project"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "fuzzy-how-much-did-hanlim-buy-this-year",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "how much did hanlim buy this year",
+          "expect": {
+            "reply_contains_any": ["Sales orders:", "*_By product_*"],
+            "reply_not_contains": ["*Sales order outstanding*", "*Delivery order outstanding*"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "dealer-outstanding-trap-still-reaches-outstanding-report",
+      "cold": true,
+      "contact": "440987225",
+      "_note": "the word 'dealer' sits beside 'outstanding', not a sales-report status word - the trap this case guards is a channel word alone flipping the report kind.",
+      "turns": [
+        {
+          "text": "dealer outstanding quantity for hanlim",
+          "expect": {
+            "reply_contains_any": ["*Sales order outstanding*", "*Delivery order outstanding*"],
+            "reply_not_contains": ["Sales orders:", "Ordered:", "Confirmed (DO):"]
+          }
+        }
+      ]
+    }
+  ]
+}

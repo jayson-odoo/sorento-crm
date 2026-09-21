@@ -525,6 +525,11 @@ export interface SalesOrder {
 
 /** One order inquiry raised against a sales order, by NUMBER - never by id. */
 export interface SalesOrderInquiry {
+  /** The order inquiry HEADER's own id (`PLAN-oi-header-list-detail.md`, S3, AC-LK-01) -
+   *  addresses `/project-sales/order-inquiries/<id>`, never shown. Absent on a payload
+   *  from before that column existed; the link then falls back to the old filtered-list
+   *  search. */
+  id?: string | null;
   inquiry_no: string | null;
   state: string;
   /** ISO datetime, or null on a record that predates the column. */

@@ -30,7 +30,6 @@ import pytest
 
 from app.services.chatbot import contracts
 from app.services.chatbot.head import parser as parser_mod
-from app.services.chatbot.head.route import DEFAULT_UNSUPPORTED_DOMAINS, decide
 from app.services.chatbot.lanes.business import _fetch_semantic_input
 from app.services.chatbot.lanes.business.fetch import (
     CHATBOT_READ_ONLY_TOOLS,
@@ -42,8 +41,11 @@ from app.services.chatbot_parser_prompt import (
     LOW_STOCK_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
-    SEMANTIC_PARSER_PROMPT_SLIM,
 )
+
+# AC-1592/D8: SEMANTIC_PARSER_PROMPT_SLIM is retired ("one prompt lineage (v3 shape).
+# v1 and SLIM retired") - every `for body in (SEMANTIC_PARSER_PROMPT,
+# SEMANTIC_PARSER_PROMPT_SLIM)` loop below now iterates the one real body only.
 
 #: The corpus lives INSIDE the test package, and that is not tidiness (CI, 8 Sep 2026).
 #: The backend image's build context is `./sorento_crm_backend` only, so nothing under the
@@ -126,15 +128,14 @@ class TestTheSchemaDeclaresTheTwoNewKeys:
             "type": ["integer", "null"]
         }
 
-    def test_a_pre_growth_r1_emission_still_post_processes(self) -> None:
-        """AC-910's compatibility half. Every captured raw emission predates these keys, so
-        `_assert_emission` must not require them or the whole replay corpus dies at the
-        first line of the post-processor."""
-        from app.services.chatbot.head.output_exchange import _required_emission_keys
-
-        required = _required_emission_keys()
-        assert "group_by" not in required
-        assert "top_n" not in required
+    # AC-1592: `test_a_pre_growth_r1_emission_still_post_processes` REMOVED here,
+    # RETIRED not ported. `_assert_emission`/`_required_emission_keys` no longer
+    # exist anywhere (grepped this session). AC-910's own compatibility concern - an
+    # old capture recorded before `group_by`/`top_n` existed must still replay clean
+    # - is now the REPLAY HARNESS's design, not a Python allow-list function:
+    # `test_turn_replay.py` mocks the parser straight from a recorded `verdict` dict
+    # and never enforces a required-key set on it at all, so an old verdict missing
+    # these two keys already replays with no special-casing needed.
 
 
 # --------------------------------------------------------------------------- #
@@ -154,19 +155,21 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
-            assert body.removesuffix(SALES_REPORT_ADDENDUM).removesuffix(LOW_STOCK_ADDENDUM).removesuffix(
+        for body in (SEMANTIC_PARSER_PROMPT,):
+            assert body.removesuffix(SALES_REPORT_ADDENDUM).removesuffix(
+                LOW_STOCK_ADDENDUM
+            ).removesuffix(
                 LAST_COST_ADDENDUM
             ).endswith(GROWTH_R1_ADDENDUM)
 
     @pytest.mark.parametrize("key", ["group_by", "top_n"])
     def test_the_output_block_declares_each_new_key(self, key: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert f'"{key}"' in body
 
     @pytest.mark.parametrize("value", ["so_outstanding", "purchase_order", "check_po"])
     def test_the_new_enum_values_are_named(self, value: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert value in body
 
     @pytest.mark.parametrize("sample", _phrases(), ids=lambda s: s["phrase"])
@@ -214,7 +217,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 class TestTheOutstandingVocabularyIsTaught:
     @pytest.mark.parametrize("value", ["do_outstanding", "outstanding_both"])
     def test_both_bodies_name_the_two_new_buckets(self, value: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert value in body, (
                 f"{value} is a bucket the report lane reads, and the model can only emit "
                 "what the published prompt teaches"
@@ -401,26 +404,11 @@ class TestCheckPoReachesThePurchaseOrderTool:
         the tool-search filter entirely (turn b5b19cec)."""
         assert contracts.coerce_domain_hint("purchase_order") == "purchase_order"
 
-    def test_the_domain_is_supported_by_default(self) -> None:
-        assert "purchase_order" not in DEFAULT_UNSUPPORTED_DOMAINS
-
-    def test_a_po_turn_routes_to_the_business_lane_not_not_supported(self) -> None:
-        branch, _ = decide(
-            {
-                "parse": {
-                    "output": {
-                        "message_type": "business_query",
-                        "intent_hint": "check_po",
-                        "domain_hint": "purchase_order",
-                        "entities": [{"raw": "SRTWC8517", "hint": "product"}],
-                        "escalation": {},
-                    }
-                },
-                "access": {"allowed": True},
-                "contact": {"custom_fields": []},
-            }
-        )
-        assert branch == "business_query"
+    # AC-1592: `test_the_domain_is_supported_by_default` and `test_a_po_turn_routes_
+    # to_the_business_lane_not_not_supported` REMOVED here, ported to
+    # `test_rearch_port_growth_r1_reachability.py` against `Policy.from_rows`/
+    # `apply()`/`route()` (`head.route.DEFAULT_UNSUPPORTED_DOMAINS`/`decide` are
+    # deleted). Both confirmed CORRECT there.
 
     def test_the_tool_is_callable_and_takes_the_product_entity(self) -> None:
         assert PO_TOOL in CHATBOT_READ_ONLY_TOOLS
@@ -440,9 +428,9 @@ class TestCheckPoReachesThePurchaseOrderTool:
 
 
 class TestCheckSpoReachesTheLastReceiptTool:
-    def test_the_domain_is_supported_and_goods_receive_still_is_not(self) -> None:
-        assert "spo_allocation" not in DEFAULT_UNSUPPORTED_DOMAINS
-        assert "goods_receive" in DEFAULT_UNSUPPORTED_DOMAINS
+    # AC-1592: `test_the_domain_is_supported_and_goods_receive_still_is_not` REMOVED
+    # here, ported to `test_rearch_port_growth_r1_reachability.py` against
+    # `Policy.from_rows` (same as above). Confirmed CORRECT.
 
     def test_the_tool_is_callable(self) -> None:
         assert SPO_TOOL in CHATBOT_READ_ONLY_TOOLS
@@ -460,12 +448,13 @@ class TestCheckSpoReachesTheLastReceiptTool:
         assert "limit" not in args
         assert args["product_ids"] == [uuid]
 
-    def test_the_product_entity_is_not_blocked_by_the_domain(self) -> None:
-        """A6 unblocked the domain; the blocklist still dropped the only thing that narrows
-        the read, so "last in for SRTWC8517" answered about everything."""
-        from app.services.chatbot.head.output_exchange import DOMAIN_BLOCKED_HINTS
-
-        assert "product" not in DOMAIN_BLOCKED_HINTS["spo_allocation"]
+    # AC-1592: `test_the_product_entity_is_not_blocked_by_the_domain` REMOVED here,
+    # RETIRED not ported - `DOMAIN_BLOCKED_HINTS` no longer exists anywhere (kept
+    # deliberately inside the now-deleted `head/output_exchange.py`, per
+    # `contracts.py`'s own `DomainSpec` docstring). The fact itself is a DUPLICATE of
+    # already-green coverage: `test_warehouse_entity.py::TestGateKeepsWarehouse::
+    # test_spo_allocation_keeps_product_and_warehouse_and_drops_customer` already
+    # proves `gate.run_gate` keeps "product" compatible for `spo_allocation`.
 
 
 # --------------------------------------------------------------------------- #

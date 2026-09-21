@@ -40,18 +40,76 @@ def lane_options(*, business_lane_enabled: bool) -> list[tuple[str, bool]]:
 def default_unsupported_domains() -> list[str]:
     """The domains the bot refuses out of the box (AC-304, AC-931).
 
-    `contracts.DEFAULT_UNSUPPORTED_DOMAINS`, projected off `DOMAIN_SPEC` (D9), reached
-    through this doorway for the same AC-002 reason `completed_lane_kinds` exists: the two
-    core-side readers - `SystemSetting.chatbot_unsupported_domains`' Python default and
-    `api/v1/user_management/settings.py`'s null-reset table - may not import
-    `app/services/chatbot/`, and hand-copied literals in those two places are exactly what
-    drifted when A6 unblocked `spo_allocation` (the settings copy was found only after the
-    other two were fixed).
+    Reached through this doorway for the same AC-002 reason `completed_lane_kinds`
+    exists: the two core-side readers - `SystemSetting.chatbot_unsupported_domains`'
+    Python default and `api/v1/user_management/settings.py`'s null-reset table - may not
+    import `app/services/chatbot/`, and hand-copied literals in those two places are
+    exactly what drifted when A6 unblocked `spo_allocation` (the settings copy was found
+    only after the other two were fixed). Since the chatbot turn re-architecture (AC-1594,
+    S6) the source is `turn.policy.default_policy()`'s frozen seed rather than the retired
+    `contracts.DEFAULT_UNSUPPORTED_DOMAINS`, and any per-tenant override lives in
+    `chatbot_domains.supported`, not here - this is only the blank-install default.
 
-    A LIST, not the tuple, because both readers hand the value to SQLAlchemy as a JSONB
+    A LIST, not a tuple, because both readers hand the value to SQLAlchemy as a JSONB
     column value and a tuple serialises differently. Read at call time, so a slice that
     changes the table needs no edit here.
     """
-    from app.services.chatbot.contracts import DEFAULT_UNSUPPORTED_DOMAINS
+    from app.services.chatbot.turn.policy import default_policy
 
-    return list(DEFAULT_UNSUPPORTED_DOMAINS)
+    return [row.name for row in default_policy().domains if not row.supported]
+
+
+def escalation_teams() -> tuple[str, ...]:
+    """The team codes the escalation lane knows how to route to (AC-1561, AC-002).
+
+    `app/api/v1/system/chatbot_config.py` validates `escalation_team_code` against this
+    list before a domain row can save it - reached through this doorway rather than
+    `from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS` directly, for
+    the same AC-002 reason as the rest of this module: `tests/chatbot/
+    test_import_boundary.py` only allows `app/api/v1/external/chat.py`,
+    `app/api/v1/system/chatbot.py` and `app/tasks/chat_turns.py` to reach into the
+    package, and a config-CRUD route is not one of those three doorways.
+    """
+    from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
+
+    return ESCALATION_TEAMS
+
+
+def default_tier_order() -> list[str]:
+    """The tier order default (chatbot turn re-architecture, AC-1502 captain ruling
+    16 Sep 2026, AC-1594 captain ruling 16 Sep 2026).
+
+    The ONE literal every reader without a live `system_settings.chatbot_tier_order` row
+    falls back to - `SystemSetting.chatbot_tier_order`'s Python default, the S0
+    migration's seed and `turn.policy.load_policy` / `default_policy`'s own fallback all
+    read this function rather than keeping their own copy, which is what stops the three
+    `TIER_ORDER` literals this replaced (`lanes/business/tier_gate.py`,
+    `lanes/business/fetch.py`, `turn/policy_rows.py::DEFAULT_TIER_ORDER`) drifting from
+    each other. No import of `app/services/chatbot/` needed here at all - the value is a
+    plain default, not derived from anything else in the package.
+    """
+    return ["dealer", "office", "end_user"]
+
+
+# The Memory card's defaults (AC-1513, AC-1561). One declaration, read by
+# `SystemSetting.chatbot_memory`'s Python default and by the settings endpoint's own
+# null-reset table, through this doorway for the same AC-002 reason as the rest of this
+# module: core may not import `app/services/chatbot/`.
+CHATBOT_MEMORY_KEYS: tuple[str, ...] = (
+    "recall_default",
+    "episode_retention_days",
+    "profile_fields",
+    "focus_reset_events",
+)
+
+
+def default_chatbot_memory() -> dict:
+    """Recall off by default (D3: "global default off"), a six-month episode horizon,
+    the three profile slots the parser is told about, and the one event that resets the
+    focus besides an explicit topic reset."""
+    return {
+        "recall_default": False,
+        "episode_retention_days": 180,
+        "profile_fields": ["tier", "language", "default_ledgers"],
+        "focus_reset_events": ["topic_switch"],
+    }

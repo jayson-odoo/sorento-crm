@@ -24,6 +24,7 @@ from app.api.v1.system import (
     respond_outbox,
     chat_history,
     chatbot,
+    chatbot_config,
     chatbot_field_reveals,
     statuses,
     translations,
@@ -59,6 +60,14 @@ router.include_router(chat_history.router, tags=["chat-history"])
 router.include_router(
     chatbot.router,
     tags=["chatbot-turns"],
+    dependencies=[Depends(require_module_enabled_with_api_key("chatbot"))],
+)
+# The chatbot's POLICY tables (turn re-architecture S5, AC-1561): domains and entity
+# kinds, the rows `turn/policy.py::load_policy` reads once per turn. Same module guard
+# as the trace above - config for an engine that is not installed answers nothing.
+router.include_router(
+    chatbot_config.router,
+    tags=["chatbot-config"],
     dependencies=[Depends(require_module_enabled_with_api_key("chatbot"))],
 )
 # Per-contact field reveals (Slice C): admin config over the chatbot's field-gate

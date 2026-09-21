@@ -21,7 +21,11 @@ from __future__ import annotations
 import json
 
 from sorento_crm_mcp.catalog import CATALOG
-from sorento_crm_mcp.presenters import _outstanding_detail, present_response
+from sorento_crm_mcp.presenters import (
+    _outstanding_detail,
+    _outstanding_header_lines,
+    present_response,
+)
 
 NEW_ORDER_LIST_PARAMS = ("customer_query", "warehouse_codes")
 
@@ -114,13 +118,25 @@ def test_detail_param_renders_outstanding_detail_not_the_report():
 
     The rendered text rides in the envelope's `response` (review round, 13 Sep 2026):
     the report's own reply needs `has_result` beside it, because its header renders on a
-    total miss too and the lane has to tell the two apart (AC-1107)."""
+    total miss too and the lane has to tell the two apart (AC-1107).
+
+    Re-pinned (hand pass 3 row 6, `83e473522`): the detail list now carries the SAME
+    scope header the summary prints, prepended at the envelope - `_outstanding_detail`
+    itself is unchanged (its own goldens still pin the bare list, see
+    `test_presenters_outstanding.py`), the header is added where the summary's is so
+    the two cannot drift."""
     raw = json.dumps(REPORT_WITH_SO_ROWS)
     envelope = json.loads(present_response("crm_outstanding_report", raw))
     rendered = envelope["response"]
     assert envelope["has_result"] is True, envelope
-    assert rendered == _outstanding_detail(REPORT_WITH_SO_ROWS, "so"), (
-        f"present_response must dispatch to _outstanding_detail when detail is set: {rendered!r}"
+    expected = (
+        "\n".join(_outstanding_header_lines(REPORT_WITH_SO_ROWS))
+        + "\n\n"
+        + _outstanding_detail(REPORT_WITH_SO_ROWS, "so")
+    )
+    assert rendered == expected, (
+        f"present_response must dispatch to _outstanding_detail (with the envelope's "
+        f"own header) when detail is set: {rendered!r}"
     )
     assert "SO331785" in rendered, rendered
     assert "Reply with a number for detail" not in rendered, (

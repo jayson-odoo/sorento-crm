@@ -217,6 +217,62 @@ async def update_contact(
         raise handle_internal_error(str(e))
 
 
+class ContactChatbotUpdate(BaseModel):
+    """The Contact > Access "Chatbot" card (AC-1515, AC-1561).
+
+    A PUT of its own rather than two more fields on the contact PUT: these two decide
+    what the bot REMEMBERS about a person (their tier and language, and whether closed
+    topics may be recalled at all), which is a privacy decision with its own audience -
+    D3's per-contact recall toggle, global default off. Keeping it separate is what lets
+    the card be granted, audited and reasoned about on its own.
+    """
+
+    chatbot_profile: dict | None = None
+    chatbot_recall_enabled: bool | None = None
+    # S6: absent = leave alone, same rule as the two above.
+    chatbot_stock_allowed: bool | None = None
+
+
+@router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
+async def update_contact_chatbot(
+    contact_id: str,
+    body: ContactChatbotUpdate,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Set a contact's chatbot profile and recall toggle.
+
+    Absent means "leave it alone", not "clear it": the card sends whichever half the
+    operator touched, and a recall toggle must never be switched off as a side effect of
+    saving a language.
+
+    Guarded by the same `user_management.contacts.edit` the rest of the contact's
+    editable surface is: this writes the stock-check and recall switches, which decide
+    what the chatbot will tell that contact.
+    """
+    _ = current_user
+    try:
+        contact = ContactService(db).get_contact(contact_id)
+        if body.chatbot_profile is not None:
+            contact.chatbot_profile = body.chatbot_profile
+        if body.chatbot_recall_enabled is not None:
+            contact.chatbot_recall_enabled = body.chatbot_recall_enabled
+        if body.chatbot_stock_allowed is not None:
+            contact.chatbot_stock_allowed = body.chatbot_stock_allowed
+        # `get_db` never commits (it only closes), so a flush here rolled back on
+        # return: PUT 200, row untouched. Main's convention is the commit in the route.
+        db.commit()
+        db.refresh(contact)
+        return RespondContactResponse.model_validate(
+            ContactService.contact_to_response_dict(contact)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating contact chatbot settings {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
 # No permission dependency by design: the gate is in the handler body, which calls
 # `_require_superadmin(db, current_user)` before reading anything. See
 # `documentation/plans/security/PLAN-user-management-read-gates.md`.

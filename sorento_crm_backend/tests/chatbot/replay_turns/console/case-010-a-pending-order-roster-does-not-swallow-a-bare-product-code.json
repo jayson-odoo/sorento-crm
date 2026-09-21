@@ -1,0 +1,900 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "delivery to hanlim, product srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-check-a3de02c54238",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+          "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+          "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+          "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+          "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+          "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+          "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+          "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Customer: hanlim\nProduct: srtwc286\nDates: all dates\n\nHere's what you want:\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_order_management_orders_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "hanlim",
+                "entity_type": "customer",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              }
+            ],
+            "resolved": true,
+            "token": "hanlim"
+          },
+          {
+            "matches": [
+              {
+                "canonical_code": "srtwc286",
+                "entity_type": "product",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              }
+            ],
+            "resolved": true,
+            "token": "srtwc286"
+          }
+        ],
+        "tokens": [
+          "hanlim",
+          "srtwc286"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:48:22.627563+09:00",
+        "turn_id": "51ea38c4-c814-4f86-b131-14ce84198f1b"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 16,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 16,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+              "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+              "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+              "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+              "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+              "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+              "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+              "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+              "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+              "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": null,
+            "result_type": "orders"
+          },
+          "tool": "crm_order_management_orders_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "hanlim"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check delivery orders for hanlim and product srtwc286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "last month",
+              "type": "text"
+            },
+            "messageId": "console-check-947fd2b0d05e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 12,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "hanlim"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 12,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 12,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "srtwc286"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 12,
+            "expects": "yes_no",
+            "kind": "member_offer",
+            "options": [
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 1,
+                "label": "Maryam Ariffin",
+                "respond_user_id": "1144607",
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 2,
+                "label": "Cyndi",
+                "respond_user_id": "1144556",
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 3,
+                "label": "Aisyah",
+                "respond_user_id": "1144561",
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 4,
+                "label": "Balqis",
+                "respond_user_id": "1144558",
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 5,
+                "label": "Niki",
+                "respond_user_id": "1144554",
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 6,
+                "label": "Nurain",
+                "respond_user_id": "1144604",
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75"
+              }
+            ],
+            "payload": {
+              "companies": [
+                {
+                  "brand_code": "sorento",
+                  "codes": [
+                    "300-H070",
+                    "300-H030",
+                    "300-H118",
+                    "300-H119",
+                    "HANLIM TRADING SDN BHD [A/C IV]",
+                    "HANLIM TRADING SDN BHD",
+                    "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                    "HANLIM TRADING SDN BHD [A/C III]",
+                    "HANLIM TRADING SDN BHD [A/C I]",
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "labels": [
+                    "HANLIM TRADING SDN BHD [A/C II]",
+                    "HANLIM TRADING SDN BHD [A/C I]",
+                    "HANLIM TRADING SDN BHD [A/C III]",
+                    "HANLIM TRADING SDN BHD [A/C IV]",
+                    "HANLIM TRADING SDN BHD",
+                    "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ]
+                }
+              ],
+              "domain": "order",
+              "roster_plan": [
+                {
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "plan_idx": 0
+                }
+              ],
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "low_signal",
+        "canned": [],
+        "corrected_per_ruling": "S6 cluster 4 ruling (UAC 'S6 rulings' block, 16 Sep 2026): 'last month' names no entity and no answers_open_question - it is NOT an attempt to answer the open member_offer roster from turn 12 (`previous_conversation_state.open_question`). Recorded pre-fix, the engine unconditionally cleared/re-asked any pending it could not resolve as an accept/decline, so the recording shows `pending: null`. Ruling: an unresolved-but-not-attempted message runs for what it is (here, a low_signal date clarifier - branch_kind is unchanged) and CARRIES the pending unchanged (sticky, never repeated) rather than dropping it - so post-fix this step's pending must still be the SAME six-agent member_offer roster the previous step opened. `option_labels` corrected to that roster; text/tools/entity_ids unaffected (a low_signal turn does not touch them). NOTE (tester 7, measured on the harness): this step ALREADY diverges before either fix lands - the harness's ACTUAL branch_kind for steps 2 and 3 comes back `escalate_offer`, not `low_signal`, because step 1 (`branch_kind: business_query`, the ASK arm) never wrote a `session_patch` either (finding 2a - same bug), so the DB `respond_contacts.session_vars` this step actually reads from carries whatever the blank-schema fixture seeded, not the recorded `previous_conversation_state`. This file was already counted in the 96 pre-existing replay failures (unsigned) before this edit; the correction above states the CONTRACT once findings 2a and cluster 4 both land, it does not itself make the file green - re-verify branch_kind against a real post-fix run before treating this file as done.",
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "option_labels": [
+            "Maryam Ariffin",
+            "Cyndi",
+            "Aisyah",
+            "Balqis",
+            "Niki",
+            "Nurain"
+          ]
+        },
+        "text": "Sure - do you mean last month in a specific context, like an order, invoice, or report?",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:48:34.929128+09:00",
+        "turn_id": "d0edf41f-43d9-44cf-9e74-608a1703f36f"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": "2026-08-31",
+        "date_filter_start": "2026-08-01",
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to refer to last month"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "rpacc",
+              "type": "text"
+            },
+            "messageId": "console-check-4e0196c93bb0",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 12,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "hanlim"
+              }
+            },
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": {
+                "end": "2026-08-31",
+                "mode": null,
+                "start": "2026-08-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 12,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 12,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "srtwc286"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 12,
+            "expects": "yes_no",
+            "kind": "member_offer",
+            "options": [
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 1,
+                "label": "Maryam Ariffin",
+                "respond_user_id": "1144607",
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 2,
+                "label": "Cyndi",
+                "respond_user_id": "1144556",
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 3,
+                "label": "Aisyah",
+                "respond_user_id": "1144561",
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 4,
+                "label": "Balqis",
+                "respond_user_id": "1144558",
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 5,
+                "label": "Niki",
+                "respond_user_id": "1144554",
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd"
+              },
+              {
+                "brand_code": "sorento",
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 6,
+                "label": "Nurain",
+                "respond_user_id": "1144604",
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75"
+              }
+            ],
+            "payload": {
+              "domain": null,
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "low_signal",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Hi there! How can I help?",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:48:47.087307+09:00",
+        "turn_id": "ff2324cf-1e55-44ca-bad6-39cd9c41c8f7"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to reply with a short fragment"
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "promo-tier",
+  "source": "hand pass 3 owner ruling item 1 / browser-pass-6 chain 1 / browser-pass-7 row 1",
+  "cases": [
+    {
+      "name": "promo-tier-srtwc286-single-code",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Promo for srtwc286",
+          "expect": {
+            "branch_kind": "check_promotion",
+            "reply_contains": ["access level"]
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_not_contains": ["No matching results found"],
+            "reply_contains": ["promo"]
+          }
+        }
+      ]
+    }
+  ]
+}

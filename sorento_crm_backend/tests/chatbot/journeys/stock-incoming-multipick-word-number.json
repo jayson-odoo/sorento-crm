@@ -1,0 +1,44 @@
+{
+  "name": "stock-incoming-multipick-word-number",
+  "source": "browser-pass-6 chain 5 (handpass3-owner-17sep-stock-incoming-multipick-word-number.json), hand pass 3 ruling: 'Word numbers (\"eight\") are positions; the prompt says so.' Re-pinned 17 Sep 2026 (tester 24, coder 23's R-a ruling `1a065da1c`): the original precondition ('Check stock srtwc286' settling a ten-code carry, then a bare 'Incoming' domain switch to arm the roster) was itself the roster-on-a-settled-carry-domain-switch behaviour R-a retires - a settled multi-code carry switching domain now runs for ALL codes, no roster. This chain's own defect under test is the word-number POSITION PICK (steps 4/5), which needs a roster to answer against regardless, so the precondition swapped to 'incoming for srtwc286' (the `incoming` domain's product narrowing is `narrow_to_code`, which still asks even under R-a since it must settle to ONE code, not all ten) - confirmed live (17 Sep 2026): identical ten-item, same-order stamped roster, every downstream pick (bare number, multi-number, word number, misspelled word number) still resolves the same positions.",
+  "cases": [
+    {
+      "name": "stock-then-incoming-roster-multipick-word-number",
+      "cold": true,
+      "turns": [
+        {
+          "text": "incoming for srtwc286",
+          "expect": {
+            "roster_min_options": 10,
+            "roster_stamped": true
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-200"]
+          }
+        },
+        {
+          "text": "2 3 4",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-P", "SRTWC286-SH-PP", "SRTWC286-SH"]
+          }
+        },
+        {
+          "text": "Eight",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-NEW-P"],
+            "reply_not_contains": ["Which product do you mean"]
+          }
+        },
+        {
+          "text": "The eigthh one",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-NEW-P"]
+          }
+        }
+      ]
+    }
+  ]
+}

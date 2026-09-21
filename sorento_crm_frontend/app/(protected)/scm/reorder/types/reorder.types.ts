@@ -456,6 +456,16 @@ export interface ReorderRun {
   /** Re-plan supersede pointers (G8). At most one is ever set on a given run. */
   supersedes_run_id?: string | null;
   superseded_by_run_id?: string | null;
+  /**
+   * Which leg of demand this run netted (`reorder-plan-demand-class-orders`, 21 Sep):
+   * `project` = Order Inquiry demand only, `retail` = the book leg only, null = both
+   * (unnarrowed - today's behaviour, and every legacy run).
+   */
+  demand_class?: 'project' | 'retail' | null;
+  /** The SO scope this run was launched with, project runs only. `null` on a run that
+   *  named no SO scope; an empty array means "every project order in range" - not
+   *  narrowed to none. */
+  so_numbers?: string[] | null;
 }
 
 /** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope
@@ -488,4 +498,10 @@ export interface CreateReorderRunRequest {
    * already gets.
    */
   plan_horizon_start?: string | null;
+  /** Demand scope (21 Sep 2026): which leg to net. Omitted = both, today's behaviour. */
+  demand_class?: 'project' | 'retail';
+  /** SO scope, project only. Sent only when `demand_class === 'project'` and non-empty
+   *  (the service omits an empty list - "no SO narrowing" and "every project order in
+   *  range" are the same request on the wire). */
+  so_numbers?: string[];
 }

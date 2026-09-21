@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   type ColumnDef,
@@ -32,6 +33,7 @@ import { useExportChatHistory } from './hooks/useChatHistory';
 import { useFailedChatbotContacts } from './hooks/useChatbotTurns';
 import { stageLabel } from './turnPresentation';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
+import { TurnDetailDrawer } from './components/TurnDetailDrawer';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type {
   ChatHistoryFilters,
@@ -82,6 +84,17 @@ export default function ChatHistoryPage() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sent_at', desc: true }]);
   const [selected, setSelected] = useState<ChatMessageRow | null>(null);
+
+  // The Chatbot Console's own "trace" link lands here as `?turn=<id>`. The list below is
+  // the WhatsApp message table and a console turn never writes a row in it, so the turn
+  // is opened by id straight into its own drawer instead of being looked for in a list
+  // that can never hold it (browser pass 2, step 3).
+  const searchParams = useSearchParams();
+  const linkedTurnId = searchParams.get('turn');
+  const [tracedTurnId, setTracedTurnId] = useState<string | null>(linkedTurnId);
+  useEffect(() => {
+    setTracedTurnId(linkedTurnId);
+  }, [linkedTurnId]);
 
   const range: ChatHistoryFilters = useMemo(
     () => ({
@@ -423,6 +436,10 @@ export default function ChatHistoryPage() {
       </Container>
 
       <ChatThreadDrawer row={selected} onOpenChange={(open) => !open && setSelected(null)} />
+      <TurnDetailDrawer
+        turnId={tracedTurnId}
+        onOpenChange={(open) => !open && setTracedTurnId(null)}
+      />
     </>
   );
 }

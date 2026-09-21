@@ -5,6 +5,7 @@
     "projects.so_divergences",
     "projects.order_inquiry_links",
     "projects.order_inquiry_rows",
+    "projects.order_inquiry_raises",
     "projects.order_inquiries",
     "projects.so_amendments",
     "projects.order_change_notices",

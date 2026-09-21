@@ -75,7 +75,75 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # woven into the `domain_hint = ONE of:` literal and one "- check_po_cost - ..." bullet
 # woven into the intent_hint list, both inside the OUTPUT/INTENT & DOMAIN section, ahead
 # of where `LAST_COST_ADDENDUM` stacks. Intentional content, not drift.
-CONSTANT_CHARS = 49095
+# +206 chars (16 Sep 2026, S4 ruling, PLAN-chatbot-turn-rearch.md): the fallback
+# prompt declares the four v3 schema keys the coder's S4 slice adds
+# (`document`/`status`/`anaphora`/`continuation` - the parser verdict fields the
+# turn re-architecture's APPLY stage reads). RED until that declaration lands;
+# written ahead of the coder's change (test-first) rather than after.
+# +1423 chars (16 Sep 2026, S6 cluster 4 ruling, `chatbot-turn-rearch-acceptance-
+# criteria.md` "S6 rulings"): the fallback prompt documents `answers_open_question`
+# (`{resolved, picks, answer}`) - the parser now says whether THIS message answers a
+# still-open question rather than the engine inferring it. Measured against the coder's
+# landed change (`72eabc6a0`), not derived.
+# +1589 chars (17 Sep 2026, hand pass 2 item 12, `71109d8d3`): a `== DOCUMENT ==` section
+# - the closed set (SO/DO/PO/SPO/GRN), current message only, default `[]`, worked examples
+# including turn c45e2929 - plus an OUTPUT line describing the key. Owner report: the
+# `document` key was declared in the schema and explained nowhere, so the model had the
+# field and no rule for filling it; `focus.document` and `outstanding_scope_ask_candidate`
+# already read it correctly (no engine change, prompt-only fix). Measured against the
+# coder's landed change, not derived.
+# 52313 -> 52139 (17 Sep 2026, hand pass 3, `ddd6dc970`/`0353b9138`): the OPEN QUESTION
+# section and the `answers_open_question` OUTPUT key line came OUT (the key is retired),
+# and a `Current subject` block went IN (the focus, printed every turn, so refinements and
+# domain switches are judged with context). Net -174. Measured against the coder's landed
+# change.
+# 52139 -> 53753 (17 Sep 2026, coder 14's last item, `4427bb6bb`): `asks` (an array of
+# {domain, intent} objects, replacing the bare-code two-domain reading) and `topic_reset`
+# join `DECLARED_KEYS`, each with its own `== ASKS ==` / `== TOPIC RESET ==` prompt
+# section. Net +1614. Measured against the coder's landed change, not derived.
+# 53753 -> 54793 (16 Sep 2026, `944452a8b`, owner's 16 Sep turns): a grammar particle is
+# never an entity, a bare family code is always a product token wherever it sits, "PO"
+# alone is purchase_order (only COST words make a message purchase_cost, and domain_hint
+# is the first ask). Net +1040. Measured against the coder's landed change, not derived.
+# 54793 -> 55227 (17 Sep 2026, `3cdf6ba21`, journey chain
+# `hanlim-outstanding-detail-then-so-switch` step 3): a message that is ONLY a paper word
+# ("Sales order" over an open detail offer) is that document and never casual - the
+# DOCUMENT section's worked examples were all full sentences, none a bare two-word
+# document name. Net +434. Measured against the coder's landed change, not derived.
+# 55227 -> 59247 (17 Sep 2026, coder 20's S4-adjacent slice, `8f1ac903c` and descendants):
+# four prompt edits - the status invariant, `domain_in_message` joining the schema (the
+# `domain_in_message`/entities discriminator table, `turn/decide.py::_subject_reading`),
+# `broaden_to` joining the schema, and `broaden_to`'s own worked examples. Net +4020.
+# Measured against the coder's landed change (`3c19a8533`), not derived. `scope_exclusive`
+# stays DECLARED in both the schema and the prompt per the same ruling (only the engine
+# read is retired), so it does not move this number by itself.
+# 59247 -> 58853 (17 Sep 2026, coder 21's item 2, `3fc38c409`): `scope_exclusive` comes
+# OUT of the schema and the prompt entirely (the engine read was already retired by
+# coder 20; this is the follow-up that drops the declaration too, per the same 17 Sep
+# ruling). Net -394. Measured against the coder's landed change, not derived.
+# 58853 -> 61284 (17 Sep 2026, coder 23's hand pass 6 R-a/R-b/R-c + defect 7, `1a065da1c`):
+# four additions to PRONOUN REFERENCE / DOCUMENT / POSITIONAL REFERENCES / ASKS - R-b's
+# prompt half (a pronoun pointing outside the message sets `anaphora.backward_reference`
+# instead of naming an entity), a worked example for "can show both?" over a detail offer
+# (defect 7a), the bare-number-no-larger-than-the-roster rule plus "reference_positions is
+# only set when a numbered list is open" (defect 7b / defect 4's prompt half), and the
+# "also"/"as well"/"too" union rule (defect 7c). Net +2431. Measured against the coder's
+# landed change (`str.replace` count-verified edits on the raw source), not derived.
+# 61284 -> 62981 (20 Sep 2026, hand pass 7 B2, coders 24/25, `c338cd525`): a general
+# READING THE CURRENT MESSAGE IN CONTEXT rule - the current subject's own domain is the
+# weakest signal there is, a continuing subject does not carry a continuing domain -
+# plus coder 24's earlier typo-tolerance bullets for a garbled "outstanding"/"quantity"
+# spelling. Measured via `_without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)`, not
+# derived; full prompt (all four addenda included) is 84160 chars.
+# 62981 -> 63657 (21 Sep 2026, hand pass 12 round 2, C7(ii), coder 44, `e58f3bea9`):
+# `entity_op`'s OUTPUT SCHEMA enum gains `"replace"` (was `"clear|replace_combine|
+# modify|reuse"` only) plus one new bullet beside `replace_combine` in the entity_op
+# explanation list - "only X"/"just X" sets entity_op "replace" when X is not the
+# whole subject already, explicitly distinguished from `replace_combine` (which keeps
+# every OTHER carried axis; `replace` drops the whole scope to this message's own
+# entities alone). Net +676. Measured via `_without_growth_r1_addendum
+# (SEMANTIC_PARSER_PROMPT)` against the coder's landed change, not derived.
+CONSTANT_CHARS = 63657
 
 
 def _without_growth_r1_addendum(text: str) -> str:

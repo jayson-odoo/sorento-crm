@@ -200,6 +200,9 @@ def test_an_undo_dispatches_one_undone_event_after_commit_with_the_lines(api, mo
     # either attribute is touched after `db.commit()` below (`ObjectDeletedError`).
     expected_source_id = str(fixture["decision2"].id)
     expected_revision_no = fixture["decision2"].revision_no
+    # Same reason: `row_1` does not survive the undo either, so its own `order_inquiry_id`
+    # (the header this fixture's rows share - one header per SO) is read now too.
+    expected_header_id = str(fixture["row_1"].order_inquiry_id)
 
     from app.services.project_supply_undo_service import undo_last_confirm
 
@@ -224,7 +227,13 @@ def test_an_undo_dispatches_one_undone_event_after_commit_with_the_lines(api, mo
 
     from app.services.automation_triggers import build_order_inquiry_link
 
-    assert undo_ctx["link"] == build_order_inquiry_link(fixture["core_so"].so_number)
+    # `build_order_inquiry_link` now takes the HEADER id, not the SO number (S3,
+    # `PLAN-oi-header-list-detail.md`, AC-LK-01) - a self-comparison against the same call
+    # cannot catch a wrong id being passed in, so also assert the real shape.
+    assert undo_ctx["link"] == build_order_inquiry_link(expected_header_id)
+    assert undo_ctx["link"].endswith(
+        f"/project-sales/order-inquiries/{expected_header_id}"
+    )
     assert ctx["today"] == date.today().strftime("%d/%m/%Y")
 
     lines = undo_ctx["lines"]

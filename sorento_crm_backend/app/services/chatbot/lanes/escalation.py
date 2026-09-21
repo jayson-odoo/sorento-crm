@@ -48,6 +48,21 @@ from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
 
+# The eight teams a turn can escalate to (was `contracts.SUGGESTED_TEAMS`, AC-1594/S6):
+# escalation-lane vocabulary, not domain data, so it lives here rather than on `Policy` -
+# `purchasing_certification` and `it_admin` answer from no `chatbot_domains` row of their
+# own, so a union over the domain table's `escalation_team_code` could never recover them.
+ESCALATION_TEAMS: tuple[str, ...] = (
+    "purchasing",
+    "purchasing_certification",
+    "customer_service",
+    "marketing_product",
+    "marketing_form",
+    "warehouse",
+    "marketing_promotion",
+    "it_admin",
+)
+
 # `escalation-context`'s own STOPGAP mirror of the parser fork's map. The real source is
 # the CRM `companies.code` column threaded through the resolver; kept byte-identical here
 # and in `head/output_exchange.CO_ALIASES` until that lands.
@@ -307,21 +322,43 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
 # --------------------------------------------------------------------------- #
 
 
+def _company_clarify_rows(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """The company POOL this clarify offers, in printed order, one row per name.
+
+    The rows, not just the names, because the numbered pick the customer answers with
+    has to route: `engine._question_offered` mints the `company_pick` options off these
+    and `turn/apply.py::_answer_offer` hands the picked row's `company_id` back to
+    `escalation_context` (hand pass 11, blocker 2). Two pool rows sharing one name
+    collapse to one option, exactly as they collapse to one printed name.
+    """
+    prev = _prev_variables(ctx)
+    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
+    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
+    rows: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for entry in pools:
+        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
+        if not jsc.truthy(name) or name in seen:
+            continue
+        seen.add(name)
+        rows.append(
+            {
+                "idx": len(rows) + 1,
+                "company_id": jsc.get(entry, "company_id") or None,
+                "company_name": name,
+                "brand_code": jsc.get(entry, "brand_code") or None,
+            }
+        )
+    return rows
+
+
 def _company_clarify_options(ctx: dict[str, Any]) -> list[str]:
     """The company names this clarify offers, in printed order.
 
     Extracted so the ASK and the quick replies that answer it cannot list different
     companies: `clarify_company_reply` prints these and `_clarify_actions` taps them.
     """
-    prev = _prev_variables(ctx)
-    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
-    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
-    names: list[str] = []
-    for entry in pools:
-        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-    return names
+    return [row["company_name"] for row in _company_clarify_rows(ctx)]
 
 
 def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -334,7 +371,8 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
     per name). With no names at all the ask degrades to number-or-name: never invite a
     reply that cannot resolve.
     """
-    names = _company_clarify_options(ctx)
+    rows = _company_clarify_rows(ctx)
+    names = [row["company_name"] for row in rows]
     bold = [f"*{name}*" for name in names]
     listed = " / ".join(bold)
     if len(bold) > 1:
@@ -354,7 +392,16 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
         if names
         else f"{lead} - reply a number or a name and I'll assign automatically."
     )
-    return {**item, "clarify_company": True, "clarify_text": clarify_text}
+    # `clarify_company_options` rides beside the text for the SAME reason
+    # `clarify_team_options` does on the team clarify: the question the customer sees and
+    # the numbered options the next turn resolves against are built from ONE list, so
+    # they cannot name different companies (hand pass 11, blocker 2).
+    return {
+        **item,
+        "clarify_company": True,
+        "clarify_text": clarify_text,
+        "clarify_company_options": rows,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -410,17 +457,35 @@ def _malaysia(value: Any) -> str:
 
 
 def _clarify_gate(context_item: dict[str, Any], ctx: dict[str, Any]) -> bool:
-    """`clarify-company-gate`: an OPEN member picker whose pool nobody chose from.
+    """`clarify-company-gate`: an offer whose company pool nobody chose from.
 
-    Three conditions, all of them state: the previous turn left a member offer open, it
-    carried rows, and `escalation-context` came out of the ladder at
-    `multi_company_unpicked`. Assigning here would round-robin a pool the customer was
-    never shown a choice from, which is the live bug this arm exists to close.
+    `multi_company_unpicked` is the trigger on both arms, and it means one thing:
+    assigning now would round-robin a pool the customer was never asked to choose from,
+    which is the live bug this arm exists to close.
+
+    * The n8n arm, unchanged: the previous turn left a MEMBER offer open and it carried
+      rows (`selection_context` + `last_result_set`, the pair `compile-current-state`
+      persists).
+    * The re-arch arm: a multi-company ROSTER PLAN, which is the pool the escalate offer
+      itself listed. Reachable on EITHER path, deliberately (reviewer SF-1, hand pass 11
+      final re-check): this engine mints its own offer
+      (`turn_runtime.escalation_roster_plan`, off the accepted offer's own options), but
+      `tail/member_offer.cs_roster_plan` also emits one row per `gate.routing_companies`
+      entry, which `compile-current-state` persists verbatim as the SAME
+      `variables.routing_roster_plan` (`sub_answer.miss_roster_plan` caps only ITS OWN
+      producer's plan at one row). So a carried-over n8n session with a 2-row plan and no
+      `selection_context == "member_offer"` - its own member-roster read came back empty -
+      now clarifies where it used to fall through to a blind round robin. Fail-safe by
+      direction (a clarify beats a wrong assignment); the owner ruling above ("we clarify
+      the company with the user when it is not clear") covers this arm too.
     """
     prev = _prev_variables(ctx)
+    if jsc.get(context_item, "routing_source") != "multi_company_unpicked":
+        return False
+    if len(jsc.array(jsc.get(prev, "routing_roster_plan"))) > 1:
+        return True
     return (
-        jsc.get(context_item, "routing_source") == "multi_company_unpicked"
-        and jsc.get(prev, "selection_context") == "member_offer"
+        jsc.get(prev, "selection_context") == "member_offer"
         and len(jsc.array(jsc.get(prev, "last_result_set"))) > 0
     )
 
@@ -782,7 +847,7 @@ def _person_routing(
             if matched
             else _team_clarify_pairs([])
         )
-    from app.services.chatbot.head.output_exchange import offer_is_open
+    from app.services.chatbot.session_state import offer_is_open
 
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))
@@ -813,14 +878,12 @@ def _catalogue_teams(word: Any) -> list[str]:
     An exact member always wins outright: `purchasing` is a team in its own right and
     must not be read as the family `purchasing_certification` also belongs to.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     token = jsc.nullish_str(word).strip().lower().replace(" ", "_").replace("-", "_")
     if not token:
         return []
-    if token in SUGGESTED_TEAMS:
+    if token in ESCALATION_TEAMS:
         return [token]
-    return [t for t in SUGGESTED_TEAMS if token in t.split("_")]
+    return [t for t in ESCALATION_TEAMS if token in t.split("_")]
 
 
 def _clarify_over(
@@ -856,8 +919,6 @@ def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
     the slug, which is the only string routing can act on. De-duplicated by label, which is
     what the printed list can distinguish.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     pairs: list[dict[str, Any]] = []
     seen: set[str] = set()
     for hit in hits:
@@ -866,7 +927,7 @@ def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
         if jsc.truthy(label) and label not in seen:
             seen.add(label)
             pairs.append({"team": code, "label": label})
-    return pairs or [{"team": t, "label": _pretty_team(t)} for t in SUGGESTED_TEAMS]
+    return pairs or [{"team": t, "label": _pretty_team(t)} for t in ESCALATION_TEAMS]
 
 
 def _team_clarify_options(hits: list) -> list[str]:
@@ -1120,10 +1181,24 @@ def _sla_body(
         "team_set_code": prefer("team_set_code", jsc.get(context_item, "team") or ""),
         "brand_code": prefer("brand_code", jsc.get(context_item, "brand_code") or None),
         "company_id": prefer("company_id", jsc.get(context_item, "company_id") or None),
-        "message_id": message_id if message_id is not None else None,
+        "message_id": _numeric_message_id(message_id),
         "source_message_id": None if message_id is None else jsc.js_string(message_id),
         "source_message_text": input_message or "",
     }
+
+
+def _numeric_message_id(message_id: Any) -> int | None:
+    """`ConversationSLATrackingCreate.message_id` is an int FK-ish correlation field -
+    respond.io's own ids are base-10; a channel or harness id that is not (a dry-run /
+    test sentinel) degrades to None rather than failing the whole escalation, exactly
+    as an absent id already does. `source_message_id` (a plain string) is what keeps
+    the real value regardless."""
+    if message_id is None:
+        return None
+    try:
+        return int(str(message_id).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _input_message(ctx: dict[str, Any]) -> str:

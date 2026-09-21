@@ -98,16 +98,29 @@ _LINE_RE = re.compile(r"^\s*[0-9]+\.\s+(.+?)\s*\Z")
 # --------------------------------------------------------------------------- #
 
 
-def _seed_attachment_type(session_factory: Any, type_name: str) -> str:
+def _seed_attachment_type(
+    session_factory: Any,
+    type_name: str,
+    *,
+    description: str | None = None,
+    is_certificate: bool = False,
+) -> str:
     """An admin attachment-type row. `code` is NULL exactly as production's "Product Photos"
-    is (it predates `021_add_attachment_type_code_and_complaint_document.py`)."""
+    is (it predates `021_add_attachment_type_code_and_complaint_document.py`).
+
+    `description` defaults to a synthetic ZZT string; pass the real row's wording (tester 38,
+    20 Sep 2026 - `test_rearch_r7_live_parity_replay.py`'s `_REAL_ATTACHMENT_TYPE_DESCRIPTIONS`)
+    when a test needs a token to reach the type the way it does against production data, since
+    the resolver's `_prefix_probe_attachment_type` matches on `description` too.
+    """
     db = session_factory()
     attachment_type = AttachmentType(
         type_name=type_name,
         code=None,
-        description=f"{type_name}, seeded by ZZT",
+        description=description if description is not None else f"{type_name}, seeded by ZZT",
         allowed_extensions="jpg,jpeg,png,webp,gif,pdf",
         max_file_size_mb=10,
+        is_certificate=is_certificate,
     )
     db.add(attachment_type)
     db.commit()

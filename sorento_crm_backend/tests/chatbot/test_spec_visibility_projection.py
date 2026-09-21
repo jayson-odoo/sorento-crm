@@ -17,6 +17,7 @@ import json
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import text
 
 from app.models.user import SystemSetting
@@ -593,7 +594,16 @@ class TestEndToEndRenderedAnswerHonoursHiddenSpecs:
         containment both miss), so it can only ever produce an ordinary "not
         recorded" line with ZERO spec fields carried either way - a vacuous
         pass regardless of whether the leak exists, verified by hand before
-        this was written."""
+        this was written.
+
+        20 Sep 2026: was `xfail(strict=True)` ("the engine silently ignores
+        requested_attributes and composes the generic full product-info card") - now
+        genuinely PASSES, a side effect of R-d (`turn/compose.py` reusing the fetch
+        lane's own per-attribute `lane_text`, which already carried the attribute-scoped
+        "not available" line; the engine just never surfaced it before R-d). Confirmed
+        real, not a wrong-reason green: re-ran with `--runxfail` before removing the
+        marker and both assertions in `_assert_no_leak` plus the "not available" line
+        genuinely hold, not just "does not raise"."""
         self._wire(session_factory, monkeypatch)
         stub_parser(
             _parser_output(

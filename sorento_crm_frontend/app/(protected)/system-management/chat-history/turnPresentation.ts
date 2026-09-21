@@ -9,6 +9,7 @@
  * (D11), and the screen renders them verbatim. Anything in this file that produced prose
  * out of `facts` would be the frontend quietly inventing an account of what the bot did.
  */
+import { extractTurnAttachments, type TurnAttachment } from '@/components/chatbot/TurnAttachments';
 import type {
   BranchKind,
   ChatbotTurn,
@@ -301,4 +302,15 @@ export function rememberedRecord(turn: ChatbotTurn): TurnStageRecord | undefined
 /** AC-253: manual retry is the only retry, and only from a failed turn (R4). */
 export function canRetry(turn: ChatbotTurn): boolean {
   return turn.status === 'failed';
+}
+
+/**
+ * The files a `send_attachments` action would send, or `[]` when the turn's response
+ * carries none. Thin wrapper over the shared extractor
+ * (`components/chatbot/turnAttachments.ts`) - the chatbot console reads the identical
+ * `actions[]` shape off its own `ConsoleTurnResponse`, so the extraction itself lives
+ * in one place rather than two screens reading the same wire shape two different ways.
+ */
+export function turnAttachments(turn: ChatbotTurn): TurnAttachment[] {
+  return extractTurnAttachments(turn.response?.actions);
 }

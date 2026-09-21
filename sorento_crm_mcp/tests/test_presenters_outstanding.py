@@ -32,6 +32,7 @@ import pytest
 
 from sorento_crm_mcp.presenters import (
     _outstanding_detail,
+    _outstanding_header_lines,
     _outstanding_report,
     present_response,
 )
@@ -426,7 +427,12 @@ def test_the_envelope_carries_has_result_so_a_miss_can_escalate():
     detail["detail"] = "so"
     rendered = json.loads(present_response("crm_outstanding_report", json.dumps(detail)))
     assert rendered["has_result"] is True
-    assert rendered["response"] == _outstanding_detail(detail, "so")
+    # Re-pinned (hand pass 3 row 6, `83e473522`): the detail envelope carries the same
+    # scope header the summary prints, prepended - `_outstanding_detail` itself still
+    # renders the bare list (see the golden-byte-equal tests below, unchanged).
+    assert rendered["response"] == (
+        "\n".join(_outstanding_header_lines(detail)) + "\n\n" + _outstanding_detail(detail, "so")
+    )
 
 
 # --------------------------------------------------------------------------
@@ -579,7 +585,12 @@ def test_envelope_dispatches_detail_both_to_the_combined_render():
     detail["detail"] = "both"
     rendered = json.loads(present_response("crm_outstanding_report", json.dumps(detail)))
     assert rendered["has_result"] is True
-    assert rendered["response"] == _outstanding_detail(detail, "both")
+    # Re-pinned (hand pass 3 row 6, `83e473522`): the header is added ONCE at the
+    # envelope, not inside `_outstanding_detail`'s own "both" render (which would print
+    # it three times if the header lived inside the list).
+    assert rendered["response"] == (
+        "\n".join(_outstanding_header_lines(detail)) + "\n\n" + _outstanding_detail(detail, "both")
+    )
     assert "*SO Number:*" in rendered["response"] and "*DO Number:*" in rendered["response"]
 
 

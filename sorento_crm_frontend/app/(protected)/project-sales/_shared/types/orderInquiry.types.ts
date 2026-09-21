@@ -485,6 +485,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
 
 export interface OrderInquiryWorklistParams {
   query?: string;
+  /**
+   * `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: every non-cancelled row of ONE header -
+   * the OI detail page's own Lines tab, Export Excel, and a whole-OI Confirm's `filter`
+   * payload (AC-CF-01).
+   */
+  inquiry_id?: string;
   /** `YYYY-MM`, the delivery month, which is the sheet tab. */
   delivery_month?: string;
   /** `YYYY-MM-DD`, the day the rows were raised, which is the per-day tab. */
@@ -924,6 +930,13 @@ export interface AutoPlaceRequest {
    * Omitted still means the plan's own; `'date'` is implied by `link_up_to`.
    */
   link_horizon?: 'date' | 'plan' | 'none';
+  /**
+   * `PLAN-oi-header-list-detail.md`, AC-AL-01: the OI detail page's own "Auto link" with
+   * nothing ticked - runs the cascade over that header's linkable rows only, touching no
+   * row of another header. Mutually exclusive with `row_ids` on the wire, same as the
+   * acknowledge endpoint's own `filter`.
+   */
+  filter?: { inquiry_id: string };
 }
 
 export interface AutoPlaceResult {
@@ -1094,4 +1107,102 @@ export interface OrderInquirySpoDetail {
 export interface OrderInquiryBulkRejectResult {
   rejected: number;
   results?: { row_id: string; ok: boolean; error?: string | null }[];
+}
+
+/* -------------------------------------------------- the OI DOCUMENT (header)
+ *
+ * `PLAN-oi-header-list-detail.md` (contract section). One row per order inquiry HEADER -
+ * one sales order's whole set of purchasing instructions - as distinct from the per-LINE
+ * worklist above. `orderInquiryService.ts`'s header functions call the real
+ * `GET /api/v1/project-sales/order-inquiry-headers*` routes; this shape matches the
+ * backend response models field for field.
+ */
+
+export type OrderInquiryHeaderStatus = 'outstanding' | 'completed';
+
+/** One row of the Documents view (AC-HL-02). */
+export interface OrderInquiryHeader {
+  id: string;
+  inquiry_no: string;
+  /** The pre-renumbering number (plan S1) - never shown, only ever matched by search. */
+  legacy_inquiry_no?: string | null;
+  /** The FIRST raise, fixed for life (owner ruling R5). */
+  raised_at?: string | null;
+  raised_by_name?: string | null;
+  /** The CORE sales order id, for the S/O no link (AC-HL-06). Null when there is none. */
+  sales_order_id?: string | null;
+  project_sales_order_id?: string | null;
+  so_number?: string | null;
+  so_date?: string | null;
+  customer_name?: string | null;
+  customer_code?: string | null;
+  project_id?: string | null;
+  project_title?: string | null;
+  agent_name?: string | null;
+  /** Non-cancelled rows only (AC-LS-05). */
+  lines_total: number;
+  lines_to_confirm: number;
+  qty_total: string;
+  /** Derived, never stored (plan S2): `lines_to_confirm > 0` is outstanding. */
+  status: OrderInquiryHeaderStatus;
+}
+
+/** One entry of the detail page's Raise history card (AC-DP-07). Newest first. */
+export interface OrderInquiryHeaderRaiseEntry {
+  kind: 'raised' | 'reconfirmed';
+  by_name?: string | null;
+  at?: string | null;
+}
+
+/** `GET /order-inquiry-headers/{id}` (AC-DT-01). */
+export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
+  /** The ERP document type, when the order carries one (General tab's Order card). */
+  order_type?: string | null;
+  raise_history: OrderInquiryHeaderRaiseEntry[];
+}
+
+export interface OrderInquiryHeaderListParams {
+  state?: OrderInquiryHeaderStatus | 'all';
+  query?: string;
+  raised_by?: string;
+  agent?: string;
+  /** Exact match on the Project column's own text (reviewer B2, fix round 22 Sep
+   * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
+   * registered project. */
+  project?: string;
+  page?: number;
+  limit?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+}
+
+export interface OrderInquiryHeaderListEnvelope {
+  data: OrderInquiryHeader[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** One purchase order this header's lines are linked to (AC-DT-03, AC-DP-08). */
+export interface OrderInquiryRelatedPurchaseOrder {
+  po_id: string;
+  po_number: string;
+  supplier_name?: string | null;
+  po_date?: string | null;
+  lines_linked: number;
+  qty_linked: string;
+}
+
+/** One shipping order this header's lines are linked to. */
+export interface OrderInquiryRelatedSpo {
+  spo_number: string;
+  supplier_name?: string | null;
+  lines_linked: number;
+  qty_linked: string;
+}
+
+/** `GET /order-inquiry-headers/{id}/related-documents`. */
+export interface OrderInquiryHeaderRelatedDocuments {
+  purchase_orders: OrderInquiryRelatedPurchaseOrder[];
+  spos: OrderInquiryRelatedSpo[];
 }

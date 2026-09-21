@@ -312,7 +312,18 @@ type OrderInquiryViewFilters = {
  * Nothing is authored here. A row is derived when CS confirms supply, which is the only
  * moment the instruction is true, so there is no Add button and there never should be.
  */
-export function OrderInquiriesClient() {
+export function OrderInquiriesClient({
+  extraHeaderActions,
+}: {
+  /**
+   * `PLAN-oi-header-list-detail.md`, AC-HL-01: the Documents | Lines toggle, rendered by
+   * the page-level view switch (`OrderInquiryHeadersOrLinesView.tsx`) BESIDE this
+   * screen's own List | Schedule toggle rather than under a second `PageHeader`. One
+   * additive, optional slot - a caller that omits it renders exactly as before, and
+   * nothing else about this component changes.
+   */
+  extraHeaderActions?: React.ReactNode;
+} = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1616,7 +1627,15 @@ export function OrderInquiriesClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Order inquiries" actions={viewToggle} />
+      <PageHeader
+        title="Order inquiries"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {extraHeaderActions}
+            {viewToggle}
+          </div>
+        }
+      />
 
       <div className="flex flex-wrap items-start gap-2">
         {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the

@@ -1,0 +1,1270 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "outstanding dealer quantity for CNK HARDWARE",
+              "type": "text"
+            },
+            "messageId": "console-check-b8c4b8caf2e6",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "CNK HARDWARE"
+          }
+        ],
+        "tokens": [
+          "CNK HARDWARE"
+        ],
+        "unresolved_tokens": [
+          "CNK HARDWARE"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:02:06.761635+09:00",
+        "turn_id": "becfdd35-d477-439f-937a-bbb7b5608026"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "CNK HARDWARE"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check outstanding dealer quantity for CNK HARDWARE"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "3",
+              "type": "text"
+            },
+            "messageId": "console-check-fefbddef3e97",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [
+            "dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "CNK HARDWARE"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 2,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+                  "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": null,
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "53a671ae-67d7-41da-a46a-30d18da4fcc1",
+          "bf722285-60ab-41f0-815c-dc2ebf6f6c80"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 11\nOrdered: 23,140\nTransferred to DO: 0\nOutstanding: 23,140\nOrder date range: 12/05/2023 to 01/09/2026\n*_By location_*\nBRW-IB: 11,785 (O/S: 11,785)\nBRW-BB: 9,442 (O/S: 9,442)\nBRW-IR: 1,912 (O/S: 1,912)\nBRW: 1 (O/S: 1)\n*_By product_*\nCSA150: 1,576 (O/S: 1,576)\nTPE-9101: 1,310 (O/S: 1,310)\nCB2807-DIY: 1,247 (O/S: 1,247)\nCSH2072: 1,057 (O/S: 1,057)\nB2155-NL-BLUE: 1,056 (O/S: 1,056)\nC-FH14: 1,056 (O/S: 1,056)\nCB1505SS: 1,045 (O/S: 1,045)\nCB2800-DIY: 971 (O/S: 971)\nCB55CR-PJ: 971 (O/S: 971)\nWESERP10B: 954 (O/S: 954)\nCB2805A-DIY: 913 (O/S: 913)\nCWB242: 589 (O/S: 589)\nCB65SS: 529 (O/S: 529)\nTPE-9204: 529 (O/S: 529)\nCB313-NL: 525 (O/S: 525)\nCB315: 519 (O/S: 519)\nCSH2073: 519 (O/S: 519)\nCSK11A: 489 (O/S: 489)\nCB1178A-SS-NEW: 362 (O/S: 362)\nCB81CR-PJ: 362 (O/S: 362)\nCB2829-DIY: 351 (O/S: 351)\nSRT2403-CR: 320 (O/S: 320)\nCB313: 275 (O/S: 275)\nCSA404: 270 (O/S: 270)\nCSH2074-GRY: 270 (O/S: 270)\nCWCSC605: 266 (O/S: 266)\nCWCX605-RL: 266 (O/S: 266)\nCWCY605: 266 (O/S: 266)\nCB1519SS: 260 (O/S: 260)\nCKS1050: 260 (O/S: 260)\nCKSW015: 260 (O/S: 260)\nTPE-9201-300: 260 (O/S: 260)\nCWC1009-SC: 259 (O/S: 259)\nCWCX1009-SH: 259 (O/S: 259)\nCWCY1009: 259 (O/S: 259)\nCB230SS: 186 (O/S: 186)\nCGB762: 186 (O/S: 186)\nCWCSC604-QQ: 185 (O/S: 185)\nCWCX604-S-RL-NEW: 185 (O/S: 185)\nCWCY604: 185 (O/S: 185)\nSRTWT2207: 121 (O/S: 121)\nSRTWC8840-SC: 118 (O/S: 118)\nSRTWCX8840-S-RL: 118 (O/S: 118)\nSRTWCY8840: 118 (O/S: 118)\nSRT78-CR: 110 (O/S: 110)\nSRTWT806: 107 (O/S: 107)\nCB270SS: 90 (O/S: 90)\nCWB1218: 90 (O/S: 90)\nCWC7603-SH-P: 90 (O/S: 90)\nSRTWB245: 88 (O/S: 88)\nSRTWT7408: 80 (O/S: 80)\nSRTWT2203: 68 (O/S: 68)\nSRTWC8605-SC-RL: 61 (O/S: 61)\nSRTWCY8605-PJ: 61 (O/S: 61)\nSRTSP224: 37 (O/S: 37)\nSRTWCX8605-P-RL-PJ: 35 (O/S: 35)\nSRTSC07: 23 (O/S: 23)\nSRTWB246: 23 (O/S: 23)\nSRTWT2215: 11 (O/S: 11)\nSRTWT5902: 10 (O/S: 10)\nSRT59-CR: 8 (O/S: 8)\nSRTWT2216: 8 (O/S: 8)\nSRTH022: 7 (O/S: 7)\nSRTSH882: 7 (O/S: 7)\nSRTSS5590: 7 (O/S: 7)\nSRTWB7018: 7 (O/S: 7)\nSRTWT2219: 6 (O/S: 6)\nSRTWB7055: 3 (O/S: 3)\nCF-6-DF-LL-SI-02: 2 (O/S: 2)\nCS102: 2 (O/S: 2)\nMFV113: 2 (O/S: 2)\nMUB206: 2 (O/S: 2)\nPVC 3 SECTION FLUSH PIPE: 2 (O/S: 2)\nREDUCER: 2 (O/S: 2)\nSRT392-24: 2 (O/S: 2)\nSRT5732: 2 (O/S: 2)\nCWC7603-SH-250: 1 (O/S: 1)\nM502: 1 (O/S: 1)\nM508: 1 (O/S: 1)\nSRTWB248: 1 (O/S: 1)\nSRTWT5813: 1 (O/S: 1)\n\n*Delivery order outstanding*\nDelivery orders: 4\nDO qty: 80\nDelivered: 0\nOutstanding: 80\nDO date range: 21/07/2026 to 07/09/2026\n*_By location_*\nBRW: 72 (O/S: 72)\nBRW-BB: 8 (O/S: 8)\n*_By product_*\nCB2800-DIY: 22 (O/S: 22)\nCB55CR-PJ: 22 (O/S: 22)\nCSA150: 18 (O/S: 18)\nCWCY604: 6 (O/S: 6)\nCB2807-DIY: 4 (O/S: 4)\nCSH2072: 4 (O/S: 4)\nTPE-9203: 3 (O/S: 3)\nSRTUFV101: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:02:17.298021+09:00",
+        "turn_id": "b73de062-86be-418b-a402-4f2f4450ac92"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "dealer"
+            ],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+              "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "scope": "both",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 11\nOrdered: 23,140\nTransferred to DO: 0\nOutstanding: 23,140\nOrder date range: 12/05/2023 to 01/09/2026\n*_By location_*\nBRW-IB: 11,785 (O/S: 11,785)\nBRW-BB: 9,442 (O/S: 9,442)\nBRW-IR: 1,912 (O/S: 1,912)\nBRW: 1 (O/S: 1)\n*_By product_*\nCSA150: 1,576 (O/S: 1,576)\nTPE-9101: 1,310 (O/S: 1,310)\nCB2807-DIY: 1,247 (O/S: 1,247)\nCSH2072: 1,057 (O/S: 1,057)\nB2155-NL-BLUE: 1,056 (O/S: 1,056)\nC-FH14: 1,056 (O/S: 1,056)\nCB1505SS: 1,045 (O/S: 1,045)\nCB2800-DIY: 971 (O/S: 971)\nCB55CR-PJ: 971 (O/S: 971)\nWESERP10B: 954 (O/S: 954)\nCB2805A-DIY: 913 (O/S: 913)\nCWB242: 589 (O/S: 589)\nCB65SS: 529 (O/S: 529)\nTPE-9204: 529 (O/S: 529)\nCB313-NL: 525 (O/S: 525)\nCB315: 519 (O/S: 519)\nCSH2073: 519 (O/S: 519)\nCSK11A: 489 (O/S: 489)\nCB1178A-SS-NEW: 362 (O/S: 362)\nCB81CR-PJ: 362 (O/S: 362)\nCB2829-DIY: 351 (O/S: 351)\nSRT2403-CR: 320 (O/S: 320)\nCB313: 275 (O/S: 275)\nCSA404: 270 (O/S: 270)\nCSH2074-GRY: 270 (O/S: 270)\nCWCSC605: 266 (O/S: 266)\nCWCX605-RL: 266 (O/S: 266)\nCWCY605: 266 (O/S: 266)\nCB1519SS: 260 (O/S: 260)\nCKS1050: 260 (O/S: 260)\nCKSW015: 260 (O/S: 260)\nTPE-9201-300: 260 (O/S: 260)\nCWC1009-SC: 259 (O/S: 259)\nCWCX1009-SH: 259 (O/S: 259)\nCWCY1009: 259 (O/S: 259)\nCB230SS: 186 (O/S: 186)\nCGB762: 186 (O/S: 186)\nCWCSC604-QQ: 185 (O/S: 185)\nCWCX604-S-RL-NEW: 185 (O/S: 185)\nCWCY604: 185 (O/S: 185)\nSRTWT2207: 121 (O/S: 121)\nSRTWC8840-SC: 118 (O/S: 118)\nSRTWCX8840-S-RL: 118 (O/S: 118)\nSRTWCY8840: 118 (O/S: 118)\nSRT78-CR: 110 (O/S: 110)\nSRTWT806: 107 (O/S: 107)\nCB270SS: 90 (O/S: 90)\nCWB1218: 90 (O/S: 90)\nCWC7603-SH-P: 90 (O/S: 90)\nSRTWB245: 88 (O/S: 88)\nSRTWT7408: 80 (O/S: 80)\nSRTWT2203: 68 (O/S: 68)\nSRTWC8605-SC-RL: 61 (O/S: 61)\nSRTWCY8605-PJ: 61 (O/S: 61)\nSRTSP224: 37 (O/S: 37)\nSRTWCX8605-P-RL-PJ: 35 (O/S: 35)\nSRTSC07: 23 (O/S: 23)\nSRTWB246: 23 (O/S: 23)\nSRTWT2215: 11 (O/S: 11)\nSRTWT5902: 10 (O/S: 10)\nSRT59-CR: 8 (O/S: 8)\nSRTWT2216: 8 (O/S: 8)\nSRTH022: 7 (O/S: 7)\nSRTSH882: 7 (O/S: 7)\nSRTSS5590: 7 (O/S: 7)\nSRTWB7018: 7 (O/S: 7)\nSRTWT2219: 6 (O/S: 6)\nSRTWB7055: 3 (O/S: 3)\nCF-6-DF-LL-SI-02: 2 (O/S: 2)\nCS102: 2 (O/S: 2)\nMFV113: 2 (O/S: 2)\nMUB206: 2 (O/S: 2)\nPVC 3 SECTION FLUSH PIPE: 2 (O/S: 2)\nREDUCER: 2 (O/S: 2)\nSRT392-24: 2 (O/S: 2)\nSRT5732: 2 (O/S: 2)\nCWC7603-SH-250: 1 (O/S: 1)\nM502: 1 (O/S: 1)\nM508: 1 (O/S: 1)\nSRTWB248: 1 (O/S: 1)\nSRTWT5813: 1 (O/S: 1)\n\n*Delivery order outstanding*\nDelivery orders: 4\nDO qty: 80\nDelivered: 0\nOutstanding: 80\nDO date range: 21/07/2026 to 07/09/2026\n*_By location_*\nBRW: 72 (O/S: 72)\nBRW-BB: 8 (O/S: 8)\n*_By product_*\nCB2800-DIY: 22 (O/S: 22)\nCB55CR-PJ: 22 (O/S: 22)\nCSA150: 18 (O/S: 18)\nCWCY604: 6 (O/S: 6)\nCB2807-DIY: 4 (O/S: 4)\nCSH2072: 4 (O/S: 4)\nTPE-9203: 3 (O/S: 3)\nSRTUFV101: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          3
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose both sales orders and delivery orders for the outstanding report"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "i want to see this month only",
+              "type": "text"
+            },
+            "messageId": "console-check-e0b23548679d",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [
+            "dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "reuse",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "CNK HARDWARE"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "pick",
+              "value": "outstanding_both"
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "reuse",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 3,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery order list",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both lists",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+                  "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+                "product_code": null,
+                "scope": "both",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "53a671ae-67d7-41da-a46a-30d18da4fcc1",
+          "bf722285-60ab-41f0-815c-dc2ebf6f6c80"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: 01/09/2026 to 30/09/2026\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 60\nTransferred to DO: 0\nOutstanding: 60\nOrder date range: 01/09/2026\n*_By location_*\nBRW-BB: 60 (O/S: 60)\n*_By product_*\nCWB242: 60 (O/S: 60)\n\n*Delivery order outstanding*\nDelivery orders: 3\nDO qty: 77\nDelivered: 0\nOutstanding: 77\nDO date range: 03/09/2026 to 07/09/2026\n*_By location_*\nBRW: 69 (O/S: 69)\nBRW-BB: 8 (O/S: 8)\n*_By product_*\nCB2800-DIY: 22 (O/S: 22)\nCB55CR-PJ: 22 (O/S: 22)\nCSA150: 18 (O/S: 18)\nCWCY604: 6 (O/S: 6)\nCB2807-DIY: 4 (O/S: 4)\nCSH2072: 4 (O/S: 4)\nSRTUFV101: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "order_date_from",
+              "order_date_to",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:02:27.857635+09:00",
+        "turn_id": "1c104742-bd12-4feb-a81a-50df2b7bb47a"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "dealer"
+            ],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+              "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "order_date_from": "2026-09-01",
+            "order_date_to": "2026-09-30",
+            "scope": "both",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: 01/09/2026 to 30/09/2026\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 60\nTransferred to DO: 0\nOutstanding: 60\nOrder date range: 01/09/2026\n*_By location_*\nBRW-BB: 60 (O/S: 60)\n*_By product_*\nCWB242: 60 (O/S: 60)\n\n*Delivery order outstanding*\nDelivery orders: 3\nDO qty: 77\nDelivered: 0\nOutstanding: 77\nDO date range: 03/09/2026 to 07/09/2026\n*_By location_*\nBRW: 69 (O/S: 69)\nBRW-BB: 8 (O/S: 8)\n*_By product_*\nCB2800-DIY: 22 (O/S: 22)\nCB55CR-PJ: 22 (O/S: 22)\nCSA150: 18 (O/S: 18)\nCWCY604: 6 (O/S: 6)\nCB2807-DIY: 4 (O/S: 4)\nCSH2072: 4 (O/S: 4)\nSRTUFV101: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": "date",
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": "2026-09-30",
+        "date_filter_start": "2026-09-01",
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to narrow the current outstanding report to this month only"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-0b5fa33f5442",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [
+            "dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "reuse",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "CNK HARDWARE"
+              }
+            },
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": {
+                "end": "2026-09-30",
+                "mode": null,
+                "start": "2026-09-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": "outstanding_both"
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "reuse",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 3,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery order list",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both lists",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+                  "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+                ],
+                "date_filter_end": "2026-09-30",
+                "date_filter_start": "2026-09-01",
+                "location_token": null,
+                "offer_text": "Reply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+                "product_code": null,
+                "scope": "both",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "53a671ae-67d7-41da-a46a-30d18da4fcc1",
+          "bf722285-60ab-41f0-815c-dc2ebf6f6c80"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "1. *SO Number:* SO419240\n*Customer:* CNK HARDWARE SDN BHD\n*Product:* CWB242\n*Location:* BRW-BB\n*Ordered:* 60\n*Transferred to DO:* 0\n*Outstanding:* 60\n*Order Date:* 01/09/2026",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "detail",
+              "is_active",
+              "order_date_from",
+              "order_date_to",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:02:38.515586+09:00",
+        "turn_id": "5a932557-84fb-4600-a189-6e76edc6dc7c"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "dealer"
+            ],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+              "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+            ],
+            "date_mode": null,
+            "detail": "so",
+            "is_active": null,
+            "order_date_from": "2026-09-01",
+            "order_date_to": "2026-09-30",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "1. *SO Number:* SO419240\n*Customer:* CNK HARDWARE SDN BHD\n*Product:* CWB242\n*Location:* BRW-BB\n*Ordered:* 60\n*Transferred to DO:* 0\n*Outstanding:* 60\n*Order Date:* 01/09/2026",
+            "result_type": "outstanding_detail"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose the sales order list"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "only BRW",
+              "type": "text"
+            },
+            "messageId": "console-check-e8bb150b830e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [
+            "dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "reuse",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "CNK HARDWARE"
+              }
+            },
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 5,
+              "source": "current_message",
+              "value": {
+                "end": "2026-09-30",
+                "mode": null,
+                "start": "2026-09-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 5,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 5,
+              "source": "pick",
+              "value": "so_outstanding"
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "reuse",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 3,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery order list",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both lists",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "bf722285-60ab-41f0-815c-dc2ebf6f6c80",
+                  "53a671ae-67d7-41da-a46a-30d18da4fcc1"
+                ],
+                "date_filter_end": "2026-09-30",
+                "date_filter_start": "2026-09-01",
+                "location_token": null,
+                "offer_text": "Reply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+                "product_code": null,
+                "scope": "both",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Reply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:02:49.170909+09:00",
+        "turn_id": "b5079fd4-682a-4353-8713-9705aa3636c5"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": "warehouse",
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to narrow the outstanding detail to BRW only"
+      }
+    }
+  ]
+}

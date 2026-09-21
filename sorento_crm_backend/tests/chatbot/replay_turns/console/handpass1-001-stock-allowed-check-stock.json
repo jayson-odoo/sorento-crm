@@ -1,0 +1,186 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "custom_fields": [],
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "message": {
+          "contact": {
+            "id": "437264483"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": "whatsapp",
+            "contactId": "437264483",
+            "message": {
+              "text": "check stock srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-393de96a01ff",
+            "traffic": "incoming"
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "0c7ea742-9d47-4fd7-bf0b-f891e12f8c1b"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-27d89f6e-b061-4d46-b42e-786b427f3109"
+      },
+      "expected": {
+        "action_kinds": [],
+        "branch_kind": "business_query",
+        "canned": [],
+        "corrected_per_ruling": "hand-pass-1-16sep.md finding 1: recorded turn was DENIED (branch_kind demand_qty) by the console-borrowed-envelope bug (custom_fields: [], read as is_allowed_stock=missing). Ruling: stock allowance moves to respond_contacts.chatbot_stock_allowed, default TRUE, envelope ignored - this contact must NOT be denied, so branch_kind corrects to business_query. tools/action_kinds/text left UNASSERTED (empty/null), not the buggy recorded values: the real live turn never called crm_inventory_stock_balance_list (it was denied before reaching fetch), so there is no REAL recorded tool result for the corrected happy path to replay against - asserting a fabricated one would invent evidence this case does not have.",
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
+        "text": null,
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "srtwc286"
+          }
+        ],
+        "tokens": [
+          "srtwc286"
+        ],
+        "unresolved_tokens": [
+          "srtwc286"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 22,
+        "recorded_at": "2026-09-16T08:30:50.557063+09:00",
+        "turn_id": "7ab515a3-6d3c-4abe-9010-bfd530528b9c"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "hint_confident": true,
+            "raw": "srtwc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "general_enquiries",
+          "suggested_team": "warehouse"
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for SRTWC286"
+      }
+    }
+  ]
+}

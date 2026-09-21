@@ -1,0 +1,34 @@
+{
+  "name": "handpass5-fanout-carried-product",
+  "source": "hand pass 5 owner console turns 38-39 (contact_respond_id 437264483, 2026-09-17 05:27-05:28 +09) / ruling R7: 'incoming and stock and PO' with a carried product renders three sections, each header once, no '0 products have incoming stock' line repeated. Recorded pre-fix turn 39 reply is 'incoming stock', 'stock' and 'outstanding purchase orders' headers ALL missing, replaced by the phrase '0 products have incoming stock.' repeated four times and 'No matching results found.' repeated twice - the defect this pins.",
+  "cases": [
+    {
+      "name": "incoming-and-stock-and-po-renders-three-sections-once-each",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Incoming and stock CB2805A",
+          "expect": {
+            "reply_contains": ["CB2805A"]
+          }
+        },
+        {
+          "text": "incoming and stock and PO",
+          "expect": {
+            "reply_contains": [
+              "*incoming stock*",
+              "*stock*",
+              "*outstanding purchase orders*"
+            ],
+            "max_occurrences": {
+              "*incoming stock*": 1,
+              "*stock*": 1,
+              "*outstanding purchase orders*": 1,
+              "0 products have incoming stock.": 1
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

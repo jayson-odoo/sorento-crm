@@ -1,0 +1,79 @@
+{
+  "name": "handpass5-stock-set-cursor",
+  "source": "hand pass 5 owner console turns 1-4 (contact_respond_id 437264483, 2026-09-17 05:16 +09) / ruling R1: a bare code token after any stock answer is a LIST answer, never a set-style 'N taps have stock.' summary and never a broadened 'Showing X to Y' across unrelated products.",
+  "cases": [
+    {
+      "name": "srtwc286-then-bare-7445-is-a-list-not-a-set",
+      "cold": true,
+      "turns": [
+        {
+          "text": "check stock srtwc286",
+          "expect": {
+            "reply_contains": ["*stock* for SRTWC286"]
+          }
+        },
+        {
+          "text": "7445",
+          "expect": {
+            "reply_contains": ["*stock* for SRTWT7445"],
+            "reply_not_contains": ["taps have stock", "Showing"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "wc287-bare-code-never-broadens-to-unrelated-products",
+      "cold": true,
+      "turns": [
+        {
+          "text": "check stock srtwc286",
+          "expect": {
+            "reply_contains": ["*stock* for SRTWC286"]
+          }
+        },
+        {
+          "text": "wc287",
+          "expect": {
+            "reply_contains": ["*stock* for"],
+            "reply_not_contains": [
+              "taps have stock",
+              "Showing 6 to 10",
+              "2160H",
+              "4002",
+              "4003",
+              "4004",
+              "32MM TAIL PIECE COUPLING"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "srtwc287-full-code-never-broadens-to-unrelated-products",
+      "cold": true,
+      "turns": [
+        {
+          "text": "check stock srtwc286",
+          "expect": {
+            "reply_contains": ["*stock* for SRTWC286"]
+          }
+        },
+        {
+          "text": "srtwc287",
+          "expect": {
+            "reply_contains": ["*stock* for SRTWC287"],
+            "reply_not_contains": [
+              "taps have stock",
+              "Showing 6 to 10",
+              "2160H",
+              "4002",
+              "4003",
+              "4004",
+              "32MM TAIL PIECE COUPLING"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

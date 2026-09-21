@@ -1,0 +1,525 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "delivery for chin chun product wc286",
+              "type": "text"
+            },
+            "messageId": "console-check-bd9ccffc8ec2",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT) - has DO\n2. CHIN CHUN HOMEMART SDN BHD (MCH, SRT) - no DO\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT) - no DO",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "chin chun"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "wc286"
+          }
+        ],
+        "tokens": [
+          "chin chun",
+          "wc286"
+        ],
+        "unresolved_tokens": [
+          "chin chun",
+          "wc286"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:42:35.112754+09:00",
+        "turn_id": "e1b9bf92-dafc-4524-a324-149ffd8fec0d"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "chin chun"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "wc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "delivery"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check delivery for chin chun product wc286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-28b35cf03a22",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 48,
+              "source": "current_message",
+              "value": [
+                "delivery"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 48,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "chin chun"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 48,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 48,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "wc286"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 48,
+            "expects": "pick_or_yes_no",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014",
+                  "3ebe7f85-3798-42b3-8c89-e11ac5056c1e"
+                ],
+                "filename": null,
+                "idx": 1,
+                "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                "product": "300-C043",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+                  "9288358f-7032-4dec-af46-65119eb611bb",
+                  "74fc2fcd-1e05-4c20-85cc-bcaa223c2bfa",
+                  "b8ad73b4-106d-472c-8126-48ec4b48d301",
+                  "423b2146-bc9d-4988-9a30-cec00ca3707e"
+                ],
+                "filename": null,
+                "idx": 2,
+                "label": "CHIN CHUN HOMEMART SDN BHD (MCH, SRT)",
+                "product": "300-C124",
+                "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                  "70cf8cc0-88c2-4a7a-bc5b-3f7ee3804e52",
+                  "b72c62bc-6dc2-4ecf-98c2-f23d5ab8c4f1"
+                ],
+                "filename": null,
+                "idx": 3,
+                "label": "CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
+                "product": "300-C001",
+                "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "wc286"
+                }
+              ],
+              "offer": {
+                "domain": "order",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "customer_service",
+                    "team": "customer_service"
+                  }
+                ],
+                "team": "customer_service"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+          "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+          "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+          "3ebe7f85-3798-42b3-8c89-e11ac5056c1e",
+          "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+          "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+          "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+          "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+          "78dab676-49c4-476f-a406-5644cf81f014",
+          "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+          "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+          "a6a2f62a-eeef-48b0-a032-aa926de57199",
+          "b7289132-29f0-47af-8da5-7726705a3cd4",
+          "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+          "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+          "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+          "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
+        "text": "Customer: CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\nProduct: wc286\nDates: all dates\n\nHere are the orders I found.\n\n1. *Order Number:* 202608-4397\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 27/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:33:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-NEW-200 (5), SRTWC8318-RL-N (5), WESERP10B (10), SRTBF11412 (2)\n\n2. *Order Number:* 202608-3892\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 24/08/2026\n*Actual Delivery Date:* 27/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:23:00\n*Transporter:* SORENTO\n*Driver:* KECIK\n*Lorry Plate:* VCH1678\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-NEW (10), WESERP10B (10)\n\n3. *Order Number:* REP202607-0567\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C I]\n*Order Date:* 28/07/2026\n*Actual Delivery Date:* 29/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:19:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-150 (1)\n\n4. *Order Number:* 202606-2578\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 18/06/2026\n*Actual Delivery Date:* 19/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:10:00\n*Transporter:* MOCHA\n*Driver:* RIZAL\n*Lorry Plate:* VDJ8711\n*Warehouse:* BRW\n*Products:* SRTWB7292 (2), SRTSP124 (4), SRTWCX8826-S (2), SRTWCY8826 (2), SRTWC8826-SC (2), SRTWC286-SH-200 (5), WESERP10B (7)\n\n5. *Order Number:* 202606-1650\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 10/06/2026\n*Actual Delivery Date:* 11/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:34:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-P (6), WESERP10B (6)\n\n6. *Order Number:* 202606-1649\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 10/06/2026\n*Actual Delivery Date:* 11/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:49:00\n*Transporter:* MOCHA\n*Driver:* FAIZAL\n*Lorry Plate:* VDJ8711\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-P (5), WESERP10B (5)\n\n7. *Order Number:* 202606-1651\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 10/06/2026\n*Actual Delivery Date:* 11/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:49:00\n*Transporter:* MOCHA\n*Driver:* FAIZAL\n*Lorry Plate:* VDJ8711\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-P (2), WESERP10B (2)\n\n8. *Order Number:* REP202606-0075\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C I]\n*Order Date:* 08/06/2026\n*Actual Delivery Date:* 08/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:03:00\n*Transporter:* SORENTO\n*Driver:* HAQEM\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-150 (1)\n\n9. *Order Number:* 202606-0863\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 04/06/2026\n*Actual Delivery Date:* 05/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:22:00\n*Transporter:* SORENTO\n*Driver:* RAUF\n*Lorry Plate:* VAR1678\n*Warehouse:* BRW\n*Products:* SRTWCX8608-P-RL (2), SRTWCY8608 (2), SRTWC8608-SC (2), SRTWC286-SH-NEW (20), SRTWC8152-SH (10), WESERP10B (32), SRTPCAT125 (1)\n\n10. *Order Number:* 202605-3686\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 28/05/2026\n*Actual Delivery Date:* 29/05/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:02:00\n*Transporter:* SORENTO\n*Driver:* EZRAIRIN\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-NEW (5), SRTWC8354-SH (2), WESERP10B (7)\n\n11. *Order Number:* 202609-1170\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 07/09/2026\n*Status:* New Order\n*Warehouse:* BRW\n*Products:* SRTWCX8840-S-RL (6), SRTWCY8840 (6), SRTWC8840-SC (6), SRTWC286-SH-150 (2), SRTWC8366-RL-UF (3), SRTWC8354-SH-UF-200 (3), SRTWCX8826-S (2), SRTWCY8826 (2), SRTWC8826-SC (2), WESERP10B (16)\n\n12. *Order Number:* 202604-3674\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 27/04/2026\n*Status:* New Order\n*Warehouse:* BRW\n*Products:* SRTWC286-SH (8), SRTWC286-SH-150 (2), SRTWC286-SH-150 (3), WESERP10B (13), SRTSP131 (3)\n\n13. *Order Number:* 202604-3987\n*Customer:* CHIN CHUN HARDWARE SDN BHD [A/C III]\n*Order Date:* 27/04/2026\n*Status:* New Order\n*Warehouse:* BRW-RSV\n*Products:* SRTWC286-SH-200 (4), WESERP10B (4), SRTSP131 (1)\n\n_Data last updated: 07/09/2026 10:29:20_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_order_management_orders_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:42:52.480511+09:00",
+        "turn_id": "59cbdd32-0d04-405c-bd4d-169913a5a5cc"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 17,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 17,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+              "a6a2f62a-eeef-48b0-a032-aa926de57199",
+              "b7289132-29f0-47af-8da5-7726705a3cd4",
+              "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+              "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+              "78dab676-49c4-476f-a406-5644cf81f014",
+              "3ebe7f85-3798-42b3-8c89-e11ac5056c1e"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+              "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+              "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+              "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+              "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+              "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+              "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+              "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+              "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+              "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 9705,
+            "head": "{\"result_type\": \"orders\", \"intro\": \"Here are the orders I found.\", \"items\": [{\"title\": \"202608-4397\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202608-4397\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-27T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-28T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:33:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-NEW-200 (5), SRTWC8318-RL-N (5), WESERP10B (10), SRTBF11412 (2)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-3892\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202608-3892\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-24T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-27T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:23:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"KECIK\"}, {\"label\": \"Lorry Plate\", \"value\": \"VCH1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-NEW (10), WESERP10B (10)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"REP202607-0567\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"REP202607-0567\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-07-28T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-07-29T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"10:19:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"PPS1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-150 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-2578\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202606-2578\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-06-18T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-06-19T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"10:10:00\"}, {\"label\": \"Transporter\", \"value\": \"MOCHA\"}, {\"label\": \"Driver\", \"value\": \"RIZAL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VDJ8711\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWB7292 (2), SRTSP124 (4), SRTWCX8826-S (2), SRTWCY8826 (2), SRTWC8826-SC (2), SRTWC286-SH-200 (5), WESERP10B (7)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-1650\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202606-1650\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-06-10T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-06-11T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:34:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-P (6), WESERP10B (6)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-1649\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202606-1649\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-06-10T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-06-11T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:49:00\"}, {\"label\": \"Transporter\", \"value\": \"MOCHA\"}, {\"label\": \"Driver\", \"value\": \"FAIZAL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VDJ8711\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-P (5), WESERP10B (5)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-1651\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202606-1651\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-06-10T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-06-11T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:49:00\"}, {\"label\": \"Transporter\", \"value\": \"MOCHA\"}, {\"label\": \"Driver\", \"value\": \"FAIZAL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VDJ8711\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-P (2), WESERP10B (2)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"REP202606-0075\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"REP202606-0075\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-06-08T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-06-08T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:03:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"HAQEM\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-150 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-0863\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202606-0863\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-06-04T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-06-05T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"10:22:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"RAUF\"}, {\"label\": \"Lorry Plate\", \"value\": \"VAR1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWCX8608-P-RL (2), SRTWCY8608 (2), SRTWC8608-SC (2), SRTWC286-SH-NEW (20), SRTWC8152-SH (10), WESERP10B (32), SRTPCAT125 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202605-3686\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202605-3686\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-05-28T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-05-29T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"10:02:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO\"}, {\"label\": \"Driver\", \"value\": \"EZRAIRIN\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-NEW (5), SRTWC8354-SH (2), WESERP10B (7)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-1170\", \"fields\": [{\"label\": \"Order Number\", \"value\": \"202609-1170\"}, {\"label\": \"Customer\", \"value\": \"CHIN CHUN HARDWARE SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-09-07T00:00:00\"}, {\"label\": \"Status\", \"value\": \"New Order\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWCX8840",
+            "truncated": true
+          },
+          "tool": "crm_order_management_orders_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick option 1 from the open customer choices"
+      }
+    }
+  ]
+}

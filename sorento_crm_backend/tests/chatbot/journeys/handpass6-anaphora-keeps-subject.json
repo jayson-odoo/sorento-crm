@@ -1,0 +1,65 @@
+{
+  "name": "handpass6-anaphora-keeps-subject",
+  "source": "hand pass 6 owner console turns 13:52:15-13:55:21 and 13:57:04-13:56:51 (contact_respond_id 437264483, 17 Sep 2026). Ruling R-b: anaphora wins - when the parser flags anaphora.backward_reference, the carried subject stays even though the message carries a domain word AND a new entity; a pronoun phrase ('this customer', 'the previous product') is never resolved as an entity. Case 1 exact real texts: 'did golden win deliver these?' (13:54:43, real reply named ONLY GOLDEN WIN, zero SRTWC286 mention - the defect) and 'purchase cost for the previous product' (13:55:21, real reply 'I could not fetch last purchase cost just now'). Case 1 uses `contact: '437264483'` (the real owner's own contact) rather than the default 440987225 - confirmed by running: 440987225 holds no `purchase_orders.cost` row in `contact_field_reveals` and is refused outright regardless of the anaphora bug; 437264483 is one of only 3 contacts in the whole DB that hold it. Case 2 exact real texts build a settled Chin Chun outstanding precondition then probe 'any outstaning quantity for this customer' (13:56:51, real reply re-rostered into THIEN YONG/BS BATHING/etc - unrelated customers, the defect).",
+  "cases": [
+    {
+      "name": "these-and-the-previous-product-keep-the-carried-srtwc286-family",
+      "cold": true,
+      "contact": "437264483",
+      "turns": [
+        {
+          "text": "check stock srtwc286",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": ["*stock*", "SRTWC286-SH"]
+          }
+        },
+        {
+          "text": "did golden win deliver these?",
+          "expect": {
+            "reply_contains": ["SRTWC286"]
+          }
+        },
+        {
+          "text": "purchase cost for the previous product",
+          "expect": {
+            "reply_contains": ["*last purchase cost*", "SRTWC286"],
+            "reply_not_contains": ["could not fetch"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "this-customer-keeps-the-carried-chin-chun-accounts",
+      "cold": true,
+      "turns": [
+        {
+          "text": "outstanig quantity for chin chn",
+          "expect": {
+            "reply_contains": ["Which customer do you mean?"],
+            "roster_min_options": 2
+          }
+        },
+        {
+          "text": "1 2",
+          "expect": {
+            "reply_contains": ["CHIN CHUN"]
+          }
+        },
+        {
+          "text": "all",
+          "expect": {
+            "reply_contains": ["CHIN CHUN"]
+          }
+        },
+        {
+          "text": "any outstaning quantity for this customer",
+          "expect": {
+            "reply_contains": ["CHIN CHUN"],
+            "reply_not_contains": ["THIEN YONG", "BS BATHING"]
+          }
+        }
+      ]
+    }
+  ]
+}

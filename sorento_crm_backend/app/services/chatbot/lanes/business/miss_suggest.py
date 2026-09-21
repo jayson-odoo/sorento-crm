@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from app.services.chatbot import jsc
 
@@ -57,7 +57,14 @@ def _norm(value: Any) -> str:
 
 
 def _cap3(value: Any) -> list:
-    """`(a) => (Array.isArray(a) ? a.slice(0, 3) : [])`."""
+    """`(a) => (Array.isArray(a) ? a.slice(0, 3) : [])`.
+
+    `answer.py::build_suggest_offer` imports this directly for its OWN re-derived D1
+    candidate blocks (a SEPARATE walk of `resolved`/`gate` from this module's own
+    `_dym_plan`, which is why the two must not be conflated) - kept here, unchanged,
+    for that caller; `_dym_plan`'s own print cut point is `cap_for_block`, which reads
+    `roster_caps` instead (AC-1710).
+    """
     return list(value[:3]) if isinstance(value, list) else []
 
 
@@ -339,6 +346,22 @@ def _scoping_from(requires: list, *, gate: Any, resolved: Any) -> list:
     return out
 
 
+#: PLAN-chatbot-answer-half-reattach.md R4, AC-1710: the did-you-mean print cap's own
+#: fallback - a missing kind, or `roster_caps` itself missing/`None` entirely (a caller
+#: with no opinion on the column at all). MEASURED (not the R3 `gate.py::_roster_cap`
+#: convention of 10): every existing caller of `dym_transform`/`run_miss_lane` - the
+#: still-live `complete_answer` path and `test_s6c_answer_lane.py`'s own byte-for-byte
+#: n8n replay corpus - passes no `roster_caps` at all and is graded against today's
+#: hard `_cap3` (3) print cut; widening the fallback to 10 changed the PRINTED
+#: candidate count for every one of those captures (measured: 11 divergences,
+#: `dym-transform` and `dym-transform-partial` fixtures). AC-1710's own red test
+#: (`test_a_missing_or_none_roster_caps_keeps_a_default`) only asserts `<= 10`, which
+#: 3 already satisfies - so the fallback stays 3, byte-identical to `_cap3`, and only a
+#: caller with a REAL opinion (the bridge, via the entity kind's own `roster_cap`
+#: column) ever prints more.
+_DYM_CAP_DEFAULT = 3
+
+
 def _dym_plan(
     item: dict[str, Any] | None,
     *,
@@ -347,6 +370,7 @@ def _dym_plan(
     gate: Any,
     partial_lane: bool,
     variant: str,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """The did-you-mean PROBE PLANNER, shared by both deployments of the body.
 
@@ -426,8 +450,25 @@ def _dym_plan(
 
     # F2 (owner ruling): the per-token UX cap is BYPASSED for `product_attachment` on the
     # uuid-keyed lanes, so "every uuid row stamped" has something to render, not just probe.
+    #
+    # AC-1710 (R4): the print cut point itself honours `roster_caps`, keyed by the
+    # block's own candidate kind (`entity_type`) - a missing kind, or `roster_caps`
+    # itself missing/`None` (no opinion at all), falls back to `_DYM_CAP_DEFAULT`. This
+    # is a DIFFERENT cap from `DOMAIN_PROBE[domain]["probe_cap"]` (how many candidates
+    # get PROBED for the has/no annotation, never how many are PRINTED) - the two must
+    # never be conflated.
     def cap_for_block(cands: list) -> list:
-        return list(cands) if uuid_keyed_domain else _cap3(cands)
+        if uuid_keyed_domain:
+            return list(cands)
+        kind = None
+        if cands:
+            kind = jsc.nullish_str(jsc.get(cands[0], "entity_type")).strip().lower() or None
+        cap = _DYM_CAP_DEFAULT
+        if isinstance(roster_caps, Mapping):
+            configured = roster_caps.get(kind or "")
+            if isinstance(configured, int) and configured > 0:
+                cap = configured
+        return list(cands[:cap])
 
     survivors: list[dict[str, Any]] = []
     for block in d1s:
@@ -677,17 +718,23 @@ def dym_transform(
     resolved: Any,
     gate: Any = None,
     central_exchange: Any = None,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """`dym-transform` (561 lines), the miss lane's probe planner.
 
     `gate` is `ctx.gate` off `build-ctx-resolved`; `central_exchange` is the three-state
     `isExecuted` read that tells this ONE body which of its two deployments is running (it
     is never executed inside `sub-miss-suggest`, so the lane is `d1` there).
+
+    `roster_caps` (PLAN-chatbot-answer-half-reattach.md R4, AC-1710) is the printed
+    did-you-mean list's own cut point, keyed by entity kind - `chatbot_entity_kinds.
+    roster_cap`, the SAME column R3's gate arms read, threaded through here too.
     """
     return _dym_plan(
         item,
         parser=parser,
         resolved=resolved,
+        roster_caps=roster_caps,
         gate=gate,
         partial_lane=central_exchange is not None,
         variant="full",
@@ -1013,7 +1060,7 @@ def _annotate(
     # (`inventory`, `promotion`) declare no `requires` and so never reach this.
     #
     # BOTH keys are `full`-only. The partial lane's annotator is a separate deployed copy
-    # whose reader (`tail/compile_state.py::_partial_dym_block`) keys by code and takes its
+    # whose reader keys by code and takes its
     # noun from the parser, so a key it never reads would move that node's contract for
     # nothing. On the FULL lane the type name IS emitted for a code-keyed turn too (it says
     # what the probe was scoped to, which has nothing to do with the key mode), and that is
@@ -1280,6 +1327,7 @@ def run_miss_lane(
     space_id: Any = None,
     execution_id: Any = None,
     dry_run: bool = False,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """`sub-miss-suggest` end to end, from `not-found-error-message`'s payload to the exit.
 
@@ -1347,7 +1395,7 @@ def run_miss_lane(
             miss_suggest_result(payload, sibling_transform=transformed, sibling_probe=probe)
         )
 
-    plan = dym_transform(payload, parser=parser, resolved=resolved, gate=gate)
+    plan = dym_transform(payload, parser=parser, resolved=resolved, gate=gate, roster_caps=roster_caps)
     if plan.get("probe_needed") is not True:
         return _compose(miss_suggest_result(plan))
 

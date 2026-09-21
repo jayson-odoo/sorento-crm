@@ -1,0 +1,228 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "last purchase cost for SRTWC8517",
+              "type": "text"
+            },
+            "messageId": "console-check-08e7bb257f20",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473516"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "21c0dfe9-e519-450d-9701-2b82f664fb7e",
+          "26548d85-82e2-471d-b1ea-65810a9ed96e",
+          "2b5d6513-6a30-4f77-b2ff-ff5ca17b7479",
+          "48b0b8e8-d40d-4f26-bee8-326b5fa6c0fe",
+          "53c05e68-fb9b-4157-8094-fdddf62fd671",
+          "5e72a0d1-9867-443e-a044-505f6aa6601f",
+          "6f1a2b85-a7e7-462d-a7d2-502d264b268e",
+          "b9092b1a-eaaf-4e3d-a5e7-8a7ecb975144"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "last purchase cost"
+          ]
+        },
+        "text": "Here is the last purchase cost per product and location.\n\n1. *PO Number:* 202608-S0027\n*Product Code:* SRTWC8517-SH-UF\n*PO Quantity:* 3\n*PO Date:* 2026-08-12\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n2. *PO Number:* 202606-S0042\n*Product Code:* SRTWC8517-SH-UF\n*PO Quantity:* 17\n*PO Date:* 2026-06-11\n*Cost / unit:* CNY 293.50\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 293.50\n*Warehouse:* BRW-SYNT\n*Supplier:* GUANGDONG LANYI INTELLIGENT KITCHEN AND BATHROOM CO., LTD.\n\n3. *PO Number:* 202606-S0042\n*Product Code:* SRTWC8517-SH-UF\n*PO Quantity:* 4\n*PO Date:* 2026-06-11\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW-HP\n*Supplier:* GUANGDONG LANYI INTELLIGENT KITCHEN AND BATHROOM CO., LTD.\n\n4. *PO Number:* 202601-S0001\n*Product Code:* SRTWC8517-SH-UF\n*PO Quantity:* 3\n*PO Date:* 2026-01-02\n*Cost / unit:* CNY 308.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 308.00\n*Warehouse:* BRW-BB\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n5. *PO Number:* 202608-S0027\n*Product Code:* SRTWC8517-SH-UF-150\n*PO Quantity:* 9\n*PO Date:* 2026-08-12\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n6. *PO Number:* 202608-S0027\n*Product Code:* SRTWC8517-SH-UF-200\n*PO Quantity:* 2\n*PO Date:* 2026-08-12\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n7. *PO Number:* 202601-S0001\n*Product Code:* SRTWC8517-SH-UF-200\n*PO Quantity:* 1\n*PO Date:* 2026-01-02\n*Cost / unit:* CNY 308.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 308.00\n*Warehouse:* BRW-IR\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n8. *PO Number:* 202609-S0015\n*Product Code:* SRTWC8517-SH-UF-200-NEW\n*PO Quantity:* 20\n*PO Date:* 2026-09-03\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n9. *PO Number:* 202609-S0015\n*Product Code:* SRTWC8517-SH-UF-NEW\n*PO Quantity:* 61\n*PO Date:* 2026-09-03\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n10. *PO Number:* 202608-S0027\n*Product Code:* SRTWC8517-SH-UF-P\n*PO Quantity:* 15\n*PO Date:* 2026-08-12\n*Cost / unit:* CNY 290.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 290.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\n\n11. *PO Number:* 202606-S0042\n*Product Code:* SRTWC8517-SH-UF-P\n*PO Quantity:* 10\n*PO Date:* 2026-06-11\n*Cost / unit:* CNY 293.50\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 293.50\n*Warehouse:* BRW-SYNT\n*Supplier:* GUANGDONG LANYI INTELLIGENT KITCHEN AND BATHROOM CO., LTD.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_procurement_po_last_cost_list"
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "variables": {}
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "SRTWC8517",
+                "entity_type": "product",
+                "uuid": "21c0dfe9-e519-450d-9701-2b82f664fb7e"
+              }
+            ],
+            "resolved": true,
+            "token": "SRTWC8517"
+          }
+        ],
+        "tokens": [
+          "SRTWC8517"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:59:06.128050+09:00",
+        "turn_id": "1ca79ba7-6fad-49aa-a57d-2a1301067607"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 8,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 8,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "2b5d6513-6a30-4f77-b2ff-ff5ca17b7479",
+              "53c05e68-fb9b-4157-8094-fdddf62fd671",
+              "5e72a0d1-9867-443e-a044-505f6aa6601f",
+              "48b0b8e8-d40d-4f26-bee8-326b5fa6c0fe",
+              "6f1a2b85-a7e7-462d-a7d2-502d264b268e",
+              "b9092b1a-eaaf-4e3d-a5e7-8a7ecb975144",
+              "21c0dfe9-e519-450d-9701-2b82f664fb7e",
+              "26548d85-82e2-471d-b1ea-65810a9ed96e"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 9805,
+            "head": "{\"result_type\": \"po_last_cost\", \"intro\": \"Here is the last purchase cost per product and location.\", \"items\": [{\"title\": \"202608-S0027\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202608-S0027\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"3\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-08-12\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-S0042\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0042\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"17\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-11\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 293.50\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 293.50\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-SYNT\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"GUANGDONG LANYI INTELLIGENT KITCHEN AND BATHROOM CO., LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202606-S0042\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0042\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"4\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-11\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-HP\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"GUANGDONG LANYI INTELLIGENT KITCHEN AND BATHROOM CO., LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202601-S0001\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202601-S0001\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"3\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-01-02\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 308.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 308.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-S0027\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202608-S0027\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF-150\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"9\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-08-12\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-S0027\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202608-S0027\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF-200\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"2\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-08-12\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202601-S0001\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202601-S0001\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF-200\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"1\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-01-02\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 308.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 308.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW-IR\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-S0015\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202609-S0015\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF-200-NEW\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"20\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-09-03\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202609-S0015\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202609-S0015\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF-NEW\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"61\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-09-03\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"discount_per_unit\", \"label\": \"Discount / unit\", \"value\": \"CNY 0.00\"}, {\"key\": \"unit_cost_after_discount\", \"label\": \"Cost after discount / unit\", \"value\": \"CNY 290.00\"}, {\"key\": \"warehouse\", \"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"CHAOZHOU JINSHUNCI CERAMICS TECHNOLOGY CO. LTD.\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-S0027\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202608-S0027\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWC8517-SH-UF-P\"}, {\"key\": \"po_quantity\", \"label\": \"PO Quantity\", \"value\": \"15\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-08-12\"}, {\"key\": \"unit_cost\", \"label\": \"Cost / unit\", \"value\": \"CNY 290.00\"}, {\"key",
+            "truncated": true
+          },
+          "tool": "crm_procurement_po_last_cost_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "purchase_cost",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWC8517"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po_cost",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the last purchase cost for SRTWC8517"
+      }
+    }
+  ]
+}

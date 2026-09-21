@@ -32,10 +32,37 @@ aliasing is behaviourally inert: the only reader downstream of the mutation
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from functools import cmp_to_key
 from typing import Any
 
 from app.services.chatbot import jsc
+
+# PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
+# `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
+# `chatbot_entity_kinds.roster_cap` entirely - a raw `disallowed-entity-gate` port-
+# replay fixture (`tests/chatbot/test_replay.py`) or a hand-built low-level test with
+# no opinion on the feature - and gets `legacy_default` back: 10 for the customer
+# picker (`test_rearch_r3_roster_cap.py::test_a_missing_customer_key_or_none_means_10`
+# - a widening from the old literal 8, never a narrowing, so no recorded capture with
+# 8 or fewer real matches moves), uncapped for the product/attachment one (that arm
+# had NO ceiling at all before this column existed, and one port-replay capture in
+# the corpus - `exec-14213018` - genuinely has 13 real candidates; capping it by
+# default would be a port-fidelity regression `test_replay.py` has no signed
+# divergence for). A caller that DOES supply a mapping - `resolve_gate.run`, reached
+# from the real turn engine, which always builds one from every seeded
+# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the
+# column's own server default) for any kind missing from it.
+_DEFAULT_ROSTER_CAP = 10
+
+
+def _roster_cap(
+    roster_caps: Mapping[str, int] | None, kind: str, *, legacy_default: int | None
+) -> int | None:
+    if roster_caps is None:
+        return legacy_default
+    value = roster_caps.get(kind)
+    return int(value) if isinstance(value, int) and value > 0 else _DEFAULT_ROSTER_CAP
 
 # --------------------------------------------------------------------------- #
 # The matrices, verbatim.
@@ -70,6 +97,22 @@ ALLOWED: dict[str, list[str]] = {
     # above, and the same "no ALLOWS_EMPTY row" ruling - a bare "last purchase cost"
     # with no product fails the gate and asks, same as `spo_allocation`.
     "purchase_cost": ["product", "warehouse", "category", "brand"],
+    # AC-1592 test triage (review S1, live exec 11818957): NO row here used to mean
+    # "domain not in matrix, pass every entity through unscoped" - which let an
+    # ordinary-looking warehouse code (HOLD, DISPLAY, REPAIR) reach a document-list
+    # fetch as a filter, even though none of this domain's three tools
+    # (`crm_resource_attachments_list`/`_catalogue`/`_current_stock_list`) takes a
+    # `warehouse_ids` parameter at all (confirmed: `fetch.TYPE_TO_PARAM`'s own
+    # `"warehouse"` comment names the four tools that DO, and none of these three is
+    # among them). `attachment_type` and `attachment` are the entity kinds these tools
+    # actually filter on (`fetch.TYPE_TO_PARAM` maps them to `attachment_type_ids` /
+    # `attachment_ids`, and `NARROWING_PARAMS` carries both). `attachment` was missing
+    # from the first cut of this row, and it is the kind the resolver returns for a file
+    # the customer NAMES ("catalog", "stock list"), so a named-file ask built no filter
+    # at all and `ENTITY_FILTER_REQUIRED_TOOLS` refused the whole turn as not_found -
+    # measured on replay case `console/case-024`, whose live call carried
+    # `attachment_ids` with two real uuids.
+    "resource_attachment": ["attachment_type", "attachment"],
 }
 
 #: PLAN-low-stock-report S6 (owner ruling, console round 2, 14 Sep 2026): INTENTS that
@@ -135,6 +178,26 @@ _CODE_SHAPED = re.compile(
 # --------------------------------------------------------------------------- #
 # Small helpers the JS declares inline.
 # --------------------------------------------------------------------------- #
+
+
+def _is_a_described_word(token: Any) -> bool:
+    """Not a code the customer typed - the SAME rule the dropped-filter gate below
+    already uses (`_df_not_code_shaped`, inlined there), promoted here for C4's own
+    need: a token with no digit at all, or one that is not code-shaped, is a
+    DESCRIPTION word ("bidet", "tap") rather than a real product code ("srtwc286").
+
+    C4 (attribute-first asks, AC-1326/AC-1319) needs exactly this distinction for
+    its zero-qualifying carve-out: "which sorento bidet has cert" naming zero
+    qualifying products must reach the miss flow, never the picker, but "cert for
+    srtwc286" - a real, still-ambiguous product CODE - must keep going through the
+    existing disambiguation picker (issue #750) even when none of its candidates
+    happen to qualify. The predicate mechanism cannot tell the two apart from
+    match_tier alone once neither produced a `spec_search` match; this is the same
+    ordinary-language distinction `_df_not_code_shaped` already draws for the same
+    reason on a different gate.
+    """
+    v = jsc.nullish_str(token).strip()
+    return len(v) > 0 and not (bool(_HAS_DIGIT.search(v)) and bool(_CODE_SHAPED.match(v)))
 
 
 def _norm(value: Any) -> str:
@@ -278,14 +341,34 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     session: Any = None,
     tier_gate: dict[str, Any] | None = None,
     aggregate: dict[str, Any] | None = None,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS."""
+    """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS.
+
+    `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap", owner ruling
+    20 Sep 2026) is `{entity kind: chatbot_entity_kinds.roster_cap}`, read at the two
+    rosters this gate builds: the ambiguous-customer picker (kind "customer") and the
+    ambiguous-product/attachment picker (kind "product"). A missing kind or `None`
+    means 10, the column's own server default.
+    """
     parser = parser if isinstance(parser, dict) else {}
     # Annotated `Any` deliberately: `domain` indexes the matrices above, and every one of
     # those lookups is `ALLOWED[domain]` in the JS, where a null key is a plain miss.
     domain: Any = parser.get("domain_hint")  # `parser.domain_hint ?? null`
     resolver = resolver if isinstance(resolver, dict) else item
     resolver = resolver if isinstance(resolver, dict) else {}
+    # C4 (attribute-first asks, AC-1326): a resolver result carrying a `predicate`
+    # block AT ALL - any `qualifying_total`, zero included - already answered the
+    # gate's own question ("does this turn scope to real records"): the described
+    # set is exactly the qualifying matches the resolver put in `resolutions[]`.
+    # Nothing here needs to disambiguate a spec-search match against a sibling one
+    # (they are not a customer's ambiguous typing, they are the honest count), and
+    # nothing needs to refuse an unresolved product raw as a missed subject - the
+    # predicate already carries that outcome. Bypasses the ambiguity picker
+    # (REQUIRE_SPECIFIC_DOMAINS) and the product_attachment "subject did not
+    # resolve" block below; a zero-qualifying predicate falls through unblocked
+    # into `if3_miss`, which is the existing miss flow (AC-1319).
+    predicate_bypass = isinstance(resolver.get("predicate"), dict)
 
     # ── Flatten + de-dupe resolver matches ──────────────────────────────────
     flat: list[Any] = []
@@ -372,6 +455,22 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     if gate_passed and isinstance(REQUIRED_TYPES.get(domain), list):  # `Array.isArray(...)`
         have_types = {e["entity_type"] for e in entities}
         have_types |= {jsc.get(e, "hint") for e in jsc.array(parser.get("entities"))}
+        # R34/AC-1359: a `certificate` (or `attachment_type`) LEG in the
+        # resolver's own predicate IS the document-type answer - the same
+        # principle as the AC-1326 `predicate_bypass` above, narrowed to just
+        # this requirement. "any tap has PPS cert" drops BOTH the category
+        # and the attachment_type entity (the head normalises an entity with
+        # no `canonical_code` away entirely), yet `derive_require`/
+        # `recover_certificate_scheme` still recovered `{"certificate":
+        # {"scheme": "PPS"}}` off the message text and the resolver genuinely
+        # qualified a row - the gate must not then ask again for what the
+        # predicate already answered.
+        predicate_require = jsc.get(resolver.get("predicate"), "require") if predicate_bypass else None
+        if isinstance(predicate_require, dict) and (
+            jsc.truthy(predicate_require.get("certificate"))
+            or jsc.truthy(predicate_require.get("attachment_type"))
+        ):
+            have_types.add("attachment_type")
         missing = [t for t in REQUIRED_TYPES[domain] if t not in have_types]
         if len(missing) > 0:
             gate_passed = False
@@ -404,7 +503,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # entities` is non-empty and the blanket incompatible-types branch above never runs),
     # so this is the one place that catches it before the fetch scopes on the certificate
     # alone and answers about products that were never the one asked about.
-    if gate_passed and domain == "product_attachment":
+    if gate_passed and domain == "product_attachment" and not predicate_bypass:
         unresolved = [_lower_trim_nullish(t) for t in jsc.array(resolver.get("unresolved_tokens"))]
         unresolved += [_lower_trim_nullish(t) for t in incompatible_only]
         product_raws = {
@@ -548,6 +647,38 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                                 "code": jsc.get(m, "canonical_code"),
                             }
                         )
+                    elif predicate_bypass and all(
+                        jsc.get(m, "match_tier") == "spec_search" for m in products
+                    ):
+                        # C4 (AC-1326): a `spec_search`-tier group is the described set
+                        # HAS already qualified, not a customer's ambiguous typing - the
+                        # answer to "which products have X" IS several products. Every
+                        # OTHER token's ordinary ambiguity (issue #750: "srtwc286" prefix-
+                        # matching ten variants) is untouched - only a group whose matches
+                        # are ALL `spec_search` skips the picker.
+                        for m in products:
+                            exact_entities.append(
+                                {
+                                    "uuid": jsc.get(m, "uuid"),
+                                    "entity_type": jsc.get(m, "entity_type"),
+                                    "code": jsc.get(m, "canonical_code"),
+                                }
+                            )
+                    elif (
+                        predicate_bypass
+                        and jsc.get(resolver.get("predicate"), "qualifying_total") == 0
+                        and _is_a_described_word(jsc.get(r, "token"))
+                    ):
+                        # C4 / AC-1319 (zero-qualifying HAS ask): nothing satisfies the
+                        # predicate, so these ordinary LOOKUP-tier matches for a
+                        # DESCRIBED-SET word never earned a `spec_search` replacement
+                        # (`_emit_spec_matches` only fires on a non-empty outcome) - but
+                        # they still must not become a disambiguation picker over a class
+                        # word nobody could ever "pick one of". Contributes nothing, same
+                        # as an empty match list; `not_found_error_message` reads the
+                        # checked codes straight off `resolved.resolutions`, not off this
+                        # gate's own compatible-entities.
+                        pass
                     else:
                         still_ambiguous.append({"token": jsc.get(r, "token"), "products": products})
 
@@ -742,6 +873,23 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     }
                     for o in specific_options
                 ]
+            # Roster cap (owner ruling 20 Sep 2026): trimmed HERE, on `specific_options`
+            # itself, so the printed roster and the `compatible_entities` the FIX A block
+            # below derives from the SAME `specific_options` never disagree on which
+            # candidates are actually pickable. `legacy_default=None`: this arm was
+            # UNCAPPED before the column existed, so a caller with no `roster_caps`
+            # opinion (the raw port-replay corpus) keeps that exactly.
+            product_cap = _roster_cap(roster_caps, "product", legacy_default=None)
+            if product_cap is not None:
+                capped_options: list[dict[str, Any]] = []
+                kept = 0
+                for o in specific_options:
+                    if kept >= product_cap:
+                        break
+                    candidates = o["candidates"][: product_cap - kept]
+                    kept += len(candidates)
+                    capped_options.append({**o, "candidates": candidates})
+                specific_options = capped_options
             flat_labels = [c["label"] for o in specific_options for c in o["candidates"]]
             numbered = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(flat_labels))
             # mc-prefix-collapse: say what DID resolve. A header line, never a numbered
@@ -839,7 +987,9 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if cust_pinned:
             cust_pin_kept = True
         if not pick_applied and not cust_pinned and len(bases) > 1:
-            reps = list(bases.values())[:8]  # cap the list; 8 lines is already a lot
+            # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
+            # per `test_a_missing_customer_key_or_none_means_10`.
+            reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
             # matching delivery?" under the SAME filters. Send the WHOLE ACCOUNT FAMILY,

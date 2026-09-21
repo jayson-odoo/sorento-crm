@@ -29,6 +29,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
+from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
@@ -102,7 +103,7 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
     # AC-1119 / console run 4 finding 5: the SAME rule the tool arguments use - the code
     # the customer typed wins over a family sibling. Shared, because the question, its
     # answer and the header all have to name one product.
-    product_code = fetch_mod.outstanding_product_code(entities, semantic_input)
+    product_codes = fetch_mod.outstanding_product_codes(entities, semantic_input)
     customer_ids: list[Any] = []
     for e in entities or []:
         if not isinstance(e, dict):
@@ -121,7 +122,10 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
             uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
         ]
     return {
-        "product_code": product_code,
+        "product_code": product_codes[0] if product_codes else None,
+        # Only when there are SEVERAL: one code keeps the single key every reader
+        # already speaks, so an ordinary ask's stored filters are unchanged.
+        **({"product_codes": product_codes} if len(product_codes) > 1 else {}),
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
@@ -254,7 +258,17 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
     the report named the ledger rows. AC-1163's distinct, first-seen rule comes with
     it, because it lives in that one function.
     """
-    product_code = jsc.js_string(filters.get("product_code") or "").strip()
+    # The `Product:` line names every code the question is about, the way the `Customer:`
+    # line names every ledger: "all" over a ten-variant roster is one question about ten
+    # products, and naming one of them read as a report about that one (turn 0a6f0379).
+    product_codes = [
+        jsc.js_string(c).strip() for c in jsc.array(filters.get("product_codes")) if jsc.truthy(c)
+    ]
+    product_code = (
+        ", ".join(product_codes)
+        if product_codes
+        else jsc.js_string(filters.get("product_code") or "").strip()
+    )
 
     codes = [jsc.js_string(c) for c in jsc.array(filters.get("warehouse_codes")) if jsc.truthy(c)]
     token = jsc.js_string(filters.get("location_token") or "").strip()
@@ -267,12 +281,9 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
     else:
         location = "all"
 
-    start = _outstanding_ddmmyyyy(filters.get("date_filter_start"))
-    end = _outstanding_ddmmyyyy(filters.get("date_filter_end"))
-    if start and end:
-        order_date = start if start == end else f"{start} to {end}"
-    else:
-        order_date = start or end or "all"
+    order_date = order_date_text(
+        filters.get("date_filter_start"), filters.get("date_filter_end")
+    )
 
     return [
         f"Product: {product_code or 'all'}",
@@ -280,6 +291,23 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
         f"Location: {location}",
         f"Order date: {order_date}",
     ]
+
+
+def order_date_text(start: Any, end: Any) -> str:
+    """What the `Order date:` line SAYS: `01/09/2026 to 30/09/2026`, one date when the
+    two match, `all` when the fetch ran with no window at all.
+
+    One writer, two readers: the scope question's own four-line header above, and the
+    answer header a fetch that ran with a window now carries
+    (`turn_runtime.envelope_of` -> `turn/compose.py`, browser pass 6 item 4 - the
+    September window reached the tool and the reply never said so). Two copies of this
+    would let the question and the answer state the same window in different words.
+    """
+    first = _outstanding_ddmmyyyy(start)
+    last = _outstanding_ddmmyyyy(end)
+    if first and last:
+        return first if first == last else f"{first} to {last}"
+    return first or last or "all"
 
 
 def _outstanding_ddmmyyyy(value: Any) -> str:
@@ -812,8 +840,17 @@ def _resolve_report_product_and_location(
     resolver never returns it). `db` is None outside a real turn (this module's own
     direct `run_fetch` tests), which is a no-op, same as no location word at all.
     """
+    carried_codes = [
+        jsc.js_string(c)
+        for c in jsc.array(parse_output.get("outstanding_carried_product_codes"))
+        if jsc.truthy(c)
+    ]
     carried_code = parse_output.get("outstanding_carried_product_code")
-    if jsc.truthy(carried_code):
+    if carried_codes:
+        # The SEVERAL-code form of the same carry: `outstanding_product_codes` reads
+        # this list, so the answering turn re-runs for every code the question named.
+        semantic_input["outstanding_product_codes"] = carried_codes
+    elif jsc.truthy(carried_code):
         semantic_input["outstanding_product_code"] = jsc.js_string(carried_code)
     else:
         typed_codes = {
@@ -859,12 +896,25 @@ def _resolve_report_product_and_location(
     # the asking turn already resolved are restored here - the alternative is a
     # re-run over every warehouse under a header that says otherwise.
     if not semantic_input.get("outstanding_warehouse_codes"):
-        carried_codes = parse_output.get("outstanding_carried_warehouse_codes")
-        if isinstance(carried_codes, list) and carried_codes:
-            semantic_input["outstanding_warehouse_codes"] = carried_codes
-            semantic_input["outstanding_location_token"] = parse_output.get(
-                "outstanding_carried_location_token"
-            )
+        carried_wh_codes = parse_output.get("outstanding_carried_warehouse_codes")
+        carried_token = jsc.js_string(
+            parse_output.get("outstanding_carried_location_token") or ""
+        ).strip()
+        if (
+            not (isinstance(carried_wh_codes, list) and carried_wh_codes)
+            and carried_token
+            and db is not None
+        ):
+            # The focus carries the WORD the customer said; a focus written by a turn
+            # that predates the codes riding along with it (or by any build that only
+            # ever kept the word) still has to answer for the same warehouses, and a
+            # location word resolves the same way on every turn - unlike a product
+            # code, which D10 forbids re-resolving because a family sibling can take
+            # its place.
+            carried_wh_codes = resolve_warehouse_token(db, carried_token)
+        if isinstance(carried_wh_codes, list) and carried_wh_codes:
+            semantic_input["outstanding_warehouse_codes"] = carried_wh_codes
+            semantic_input["outstanding_location_token"] = carried_token or None
 
 
 def run_fetch(
@@ -1003,7 +1053,7 @@ def run_fetch(
         }
 
     # ── tool selection ───────────────────────────────────────────────────────
-    # ONE candidate, read off `DOMAIN_SPEC` - no embedding call, no database read, so
+    # ONE candidate, read off the domain row - no embedding call, no database read, so
     # nothing here can fail and there is nothing to catch. Measured over the 740 business
     # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
     # first-listed tool on every one of them.
@@ -1279,10 +1329,20 @@ def run_fetch(
         # `check_access` to fill it from `contact_field_reveals`; until then it is
         # always None, so every restricted field stays hidden by construction.
         "access": ctx.get("access"),
+        # E2 (attribute-first asks): the resolver's `predicate` block, carried
+        # through the gate untouched (`resolved`/`gate` are the same mutated dict,
+        # `gate.py`'s own C4 bypass reads it off `resolver.get("predicate")` the
+        # same way) - the ONLY place a HAS turn's `require`/`qualifying_total`
+        # reach the fetch step at all. Absent on an ordinary turn, so
+        # `fetch.entity_ids_transformer`'s own `trig.get("predicate") is not None`
+        # check (limit=5, S1's E1) and `output_structurer`'s header (below) both
+        # stay byte-inert for every non-HAS turn.
+        "predicate": gate.get("predicate"),
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
-    if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
-        args, tool_name=tool_name
+    if (
+        tool_name in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS
+        and not fetch_mod.has_narrowing_filter(args, tool_name=tool_name)
     ):
         # Nothing the customer named resolved, so no filter could be built, and the document
         # tools answer an unfiltered call with the whole library. Refused as an ABSENCE (the
@@ -1387,6 +1447,12 @@ def run_fetch(
                     {"hidden": hidden_list, "dropped": dropped_list},
                 )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
+    # SEC-B1/AC-1333: the RECOMPOSED access_levels this turn's tool call actually
+    # carried (`semantic_input`'s own, built above from `tier_gate.access_levels_
+    # recomposed` when a tier gate ran) - `_set_page_carry` stores this in the
+    # set_page carry so a later "more" page can re-inject the SAME tier, rather
+    # than falling to the bare parser's own (empty, on a "more" turn) list.
+    item["access_levels"] = semantic_input.get("access_levels")
     return {
         "kind": "result",
         "_fetch_arm": item["_fetch_arm"],
@@ -1423,6 +1489,11 @@ __all__ = [
 ]
 
 
+# NOT ON THE TURN PATH since the re-architecture: `run_turn` calls `run_fetch` above and
+# composes with `turn/compose.py`. Zero callers under `app/`; still driven directly by the
+# KEPT-node replay corpus (`tests/chatbot/test_replay.py`, `divergences.py`) and by
+# `test_crossdomain_ladder.py`, which is why it is not deleted yet - contract 3's ladder
+# now lives in `turn/fetch.py::_climb`.
 def complete_answer(
     payload: dict[str, Any],
     *,
@@ -1488,7 +1559,17 @@ def complete_answer(
     aggregate = payload.get("aggregate") if isinstance(payload.get("aggregate"), dict) else None
     entities_names = aggregate.get("name") if aggregate is not None else None
 
-    fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
+    fragments: dict[str, Any] = {
+        "ctx": ctx,
+        "resolved": resolved,
+        "gate": gate,
+        # SEC-B1/AC-1333: the recomposed access_levels THIS fetch actually used
+        # (None on any arm that never called the tool - tier_ask, error, offer)
+        # - `compile_state._set_page_carry` reads it off `values["access_levels_
+        # used"]` for the set_page carry, and it is what tells that function
+        # whether a set answer actually rendered this turn at all.
+        "access_levels_used": fetch.get("access_levels"),
+    }
     lane_item: dict[str, Any]
 
     # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a

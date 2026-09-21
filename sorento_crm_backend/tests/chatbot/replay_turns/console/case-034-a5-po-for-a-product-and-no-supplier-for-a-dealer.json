@@ -1,0 +1,208 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "any PO for SRTWT7445-LV-NEW",
+              "type": "text"
+            },
+            "messageId": "console-check-23d335fd4ff3",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "e6d87826-d2c4-4332-98ec-7381ea821a9f"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "Yes"
+          ]
+        },
+        "text": "Here is the PO placed I found.\n\n1. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 153\n*Outstanding Qty:* 153\n*PO Date:* 2026-05-18\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n2. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 191\n*Outstanding Qty:* 191\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n3. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n4. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 1\n*Outstanding Qty:* 1\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n5. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 1\n*Outstanding Qty:* 1\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n6. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 12\n*Outstanding Qty:* 12\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n7. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 6\n*Outstanding Qty:* 6\n*PO Date:* 2026-06-04\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n8. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 4\n*Outstanding Qty:* 4\n*PO Date:* 2026-05-18\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n9. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 35\n*Outstanding Qty:* 35\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n10. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 37\n*Outstanding Qty:* 37\n*PO Date:* 2026-07-30\n*Location:* BRW\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n11. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 148\n*Outstanding Qty:* 148\n*PO Date:* 2026-07-30\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n12. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 10\n*Outstanding Qty:* 10\n*PO Date:* 2026-06-04\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n13. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-06-04\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n14. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 12\n*Outstanding Qty:* 12\n*PO Date:* 2026-07-30\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n15. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 25\n*Outstanding Qty:* 25\n*PO Date:* 2026-06-04\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n16. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 5\n*Outstanding Qty:* 5\n*PO Date:* 2026-06-04\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n17. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 145\n*Outstanding Qty:* 145\n*PO Date:* 2026-06-04\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n18. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 66\n*Outstanding Qty:* 66\n*PO Date:* 2026-07-30\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n19. *PO Number:* 202609-S0020\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 300\n*Outstanding Qty:* 300\n*PO Date:* 2026-09-03\n*Location:* BRW\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n20. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 6\n*Outstanding Qty:* 6\n*PO Date:* 2026-06-04\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n21. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-30\n*Location:* BRW-NTC\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n22. *PO Number:* 202605-S0060\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 1\n*Outstanding Qty:* 1\n*PO Date:* 2026-05-18\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n23. *PO Number:* 202606-S0006\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 1\n*Outstanding Qty:* 1\n*PO Date:* 2026-06-04\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n24. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 66\n*Outstanding Qty:* 66\n*PO Date:* 2026-07-30\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n25. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 61\n*Outstanding Qty:* 61\n*PO Date:* 2026-07-30\n*Location:* BRW-IB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT\n\n26. *PO Number:* 202607-S0112\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered Qty:* 8\n*Outstanding Qty:* 8\n*PO Date:* 2026-07-30\n*Location:* BRW-BB\n*Supplier:* KAILU SANITARY WARE MANAGEMENT DEPARTMENT",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_procurement_po_placed_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "SRTWT7445-LV-NEW",
+                "entity_type": "product",
+                "uuid": "e6d87826-d2c4-4332-98ec-7381ea821a9f"
+              }
+            ],
+            "resolved": true,
+            "token": "SRTWT7445-LV-NEW"
+          }
+        ],
+        "tokens": [
+          "SRTWT7445-LV-NEW"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:54:37.173935+09:00",
+        "turn_id": "e0a97387-9968-4484-bab4-c82ea45e13ed"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "e6d87826-d2c4-4332-98ec-7381ea821a9f"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 17981,
+            "head": "{\"result_type\": \"purchase_orders_placed\", \"intro\": \"Here is the PO placed I found.\", \"items\": [{\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"153\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"153\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"191\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"191\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"2\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"2\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"1\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"1\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"1\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"1\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"12\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"12\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202606-S0006\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0006\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"6\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"6\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-04\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"4\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"4\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202605-S0060\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202605-S0060\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"35\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"35\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-05-18\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0112\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0112\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"37\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"37\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-30\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0112\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0112\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"148\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"148\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-30\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202606-S0006\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202606-S0006\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"SRTWT7445-LV-NEW\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"10\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"10\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-06-04\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"KAILU SANITARY WARE MANAGEMENT DEPARTMENT\"}], \"flags\": {\"discontinued\": false, \"expired\": false, ",
+            "truncated": true
+          },
+          "tool": "crm_procurement_po_placed_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "purchase_order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7445-LV-NEW"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check purchase orders for SRTWT7445-LV-NEW"
+      }
+    }
+  ]
+}

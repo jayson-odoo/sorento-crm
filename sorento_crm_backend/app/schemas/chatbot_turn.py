@@ -159,6 +159,12 @@ class ConsoleTurnResponse(BaseModel):
     # `understood` stage's own fact, the same value the trace screen shows), so each bot
     # bubble can wear it. None when the turn never reached the parser.
     prompt_version: int | None = None
+    # The turn's own raw `TurnResult.actions` (loosely typed on purpose, like
+    # `ChatbotTurnResponse.response` above - it is the engine's shape, not this
+    # endpoint's own). Carried through so the console can render a `send_attachments`
+    # action's own file list under the reply it belongs to, the same source
+    # `ChatbotTurn.response.actions` already gives the Chat History screen.
+    actions: list[dict[str, Any]] | None = None
 
 
 class ConsolePromptVersion(BaseModel):

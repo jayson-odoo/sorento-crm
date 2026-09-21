@@ -252,8 +252,22 @@ def test_migration_510_creates_table_checks_and_seeds(db):
 
     with Operations.context(context):
         module.downgrade()
-    with pytest.raises(Exception):
-        db.execute(sa_text("SELECT 1 FROM spec_visibility_policies")).all()
+    # An UNQUALIFIED name falls through `search_path` past this test's own scratch
+    # schema to a real `public.spec_visibility_policies` on any database where the
+    # migration has already landed for real (this worktree's own private test DB
+    # included - measured: `\dt public.spec_visibility_policies` lists it) - so
+    # `SELECT 1 FROM spec_visibility_policies` after the drop finds THAT row instead
+    # of raising, and the postcondition silently passes for the wrong reason. Scope
+    # the check to `current_schema()` (this session's own scratch schema, first on
+    # its search_path) so it only ever answers for the copy `downgrade()` actually
+    # dropped, not whatever `public` happens to hold.
+    still_present = db.execute(
+        sa_text(
+            "SELECT 1 FROM pg_catalog.pg_tables "
+            "WHERE schemaname = current_schema() AND tablename = 'spec_visibility_policies'"
+        )
+    ).first()
+    assert still_present is None, "downgrade() must drop the table from this test's own scratch schema"
     db.rollback()
 
 

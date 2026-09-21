@@ -1,0 +1,58 @@
+{
+  "name": "handpass6-date-window-resets-on-new-ask",
+  "source": "hand pass 6 owner console turns 13:57:04-13:59:05 (contact_respond_id 437264483, 17 Sep 2026). A date filter set on one outstanding ask ('aug 2026' -> Order date: 01/08/2026 to 31/08/2026) must NOT survive into a NEW, unrelated ask that re-names the customer from scratch. Measured pre-fix (real reply text, 13:58:35 'all'): Order date stayed 01/08/2026 to 31/08/2026 after 'outstanign SO for chin chun' re-rostered the customer - the date window from the earlier probe leaked into a fresh query. Final step: switching domain away from outstanding entirely (a stock check) must carry NO Order date line at all.",
+  "cases": [
+    {
+      "name": "a-new-ask-resets-the-date-window-and-a-domain-switch-drops-it-entirely",
+      "cold": true,
+      "turns": [
+        {
+          "text": "outstanig quantity for chin chn",
+          "expect": {
+            "reply_contains": ["Which customer do you mean?"],
+            "roster_min_options": 2
+          }
+        },
+        {
+          "text": "1 2",
+          "expect": {
+            "reply_contains": ["CHIN CHUN"]
+          }
+        },
+        {
+          "text": "all",
+          "expect": {
+            "reply_contains": ["Order date: all"]
+          }
+        },
+        {
+          "text": "aug 2026",
+          "expect": {
+            "reply_contains": ["Order date: 01/08/2026 to 31/08/2026"]
+          }
+        },
+        {
+          "text": "outstanign SO for chin chun",
+          "expect": {
+            "reply_contains": ["Which customer do you mean?"]
+          }
+        },
+        {
+          "text": "all",
+          "expect": {
+            "reply_contains": ["Order date: all"],
+            "reply_not_contains": ["Order date: 01/08/2026 to 31/08/2026"]
+          }
+        },
+        {
+          "text": "check stock srtwc286",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": ["*stock*"],
+            "reply_not_contains": ["Order date:"]
+          }
+        }
+      ]
+    }
+  ]
+}

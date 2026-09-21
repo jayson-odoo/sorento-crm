@@ -96,6 +96,21 @@ first cut of this file wrongly seeded and no production row carries), and assert
 things the AC actually wants: (1) "photo" resolves to Product Photos with NO did-you-mean,
 and (2) the product resolves by its exact code and the turn reaches `send_attachments` with
 the correct tool call args.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling, "resolve_gate key") -
+`TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData`'s two tests. Measured:
+the `"looked_up"` trace record's `raw` is now `{"envelopes": envelopes}` (`engine.py`,
+the new plan-based per-domain fetch), not the old `{"resolve_gate": {"ctx": {"gate":
+...}}}` single-call shape - `run_fetch`'s envelope (`turn_runtime.envelope_of`) carries
+only code STRINGS (`entities: [str, ...]`), not the rich `compatible_entities`/
+`resolutions` structures these two tests read off the trace. That detail is built
+earlier in `run_turn` (the `gate`/`predicate`/`compatible_entities` locals
+`make_tool_runner` closes over) and is never written to the persisted trace at this
+level - there is nothing left in the trace to port these assertions onto. No
+replacement is named: re-deriving an equivalent assertion through a different seam
+(e.g. driving `resolve_gate.run()` directly) would be new coverage of the resolver's
+domain-scoped "photo" disambiguation, not a mechanical port, and is out of this
+pass's scope.
 """
 from __future__ import annotations
 
@@ -349,117 +364,6 @@ def _run_turn_seeded(
         ),
         session_factory=session_factory,
     )
-
-
-class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
-    """The real seed - `Product Photos` (pre-existing) PLUS `Shipment Line Photo` /
-    `Proforma Invoice` (`485_shipment_line_photo_type.py`) - production's actual shape,
-    linked through `product_attachments` the way a real product photo actually is.
-    Watched red on 043e2a0be."""
-
-    def test_photo_resolves_to_product_photos_with_no_did_you_mean(
-        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        result = _run_turn_seeded(
-            session_factory,
-            stub_parser,
-            stub_access,
-            system_settings_row,
-            monkeypatch,
-            contact_id="ZZT-contact-photo-alias-1",
-            calls=[],
-        )
-        reply_text = (result.reply or {}).get("text") or ""
-
-        # THE RED ASSERTION (1): today, a second real attachment_types row that shares
-        # the substring "photo" ("Shipment Line Photo", migration 485) makes this
-        # ambiguous - gate.py's own non-product ambiguity handling (~360-393) either
-        # silently keeps whichever row the DB returns first (no did-you-mean, but a
-        # SILENT, non-deterministic pick - not the deterministic "Product Photos" the AC
-        # wants either) or, once that picked type's own fetch comes up empty, surfaces
-        # a did-you-mean. Neither is the AC's ask: a DETERMINISTIC resolution, asserted
-        # here as a same-turn absence of any did-you-mean AND explicit confirmation the
-        # gate landed on Product Photos specifically (not merely "landed on something").
-        assert "did you mean" not in reply_text.lower(), (
-            "an ambiguous 'photo' either silently mis-picks or falls to a did-you-mean - "
-            f"see this test's docstring for the measured mechanism: {reply_text!r}"
-        )
-        db = session_factory()
-        from app.models.chatbot_turn import ChatbotTurn
-
-        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
-        looked_up = next(r for r in row.trace if r["stage"] == "looked_up" and r["status"] == "ok")
-        gate = looked_up["raw"]["resolve_gate"]["ctx"]["gate"]
-        compatible_codes = {
-            e["code"] for e in gate.get("compatible_entities", []) if e.get("entity_type") == "attachment_type"
-        }
-        assert compatible_codes == {"Product Photos"}, (
-            "the turn must land on Product Photos deterministically, not on whichever "
-            f"candidate the DB happened to return first: {compatible_codes!r}"
-        )
-
-        # THE ACTUAL KILL TEST (review round 2): `compatible_codes` alone does not kill,
-        # because gate.py:393's silent `non_products[0]` pick can ALSO land on "Product
-        # Photos" by DB row order with the domain scoping removed - measured, this seed
-        # order does exactly that, so the assertion above stays green with
-        # `entity_resolver._product_attachment_type_ids` disabled and proves nothing about
-        # this item's own fix. What the fix actually changes is the RESOLVER's own
-        # candidate set for the "photo" token - two matches (Product Photos AND Shipment
-        # Line Photo) without the scoping, one WITH it - so pin that directly, on the
-        # resolver's own `resolutions`, which is what gate.py's non-product branch reads.
-        photo_resolution = next(r for r in gate.get("resolutions", []) if r.get("token") == "photo")
-        photo_matches = photo_resolution.get("matches") or []
-        assert len(photo_matches) == 1, (
-            "the RESOLVER itself must return exactly one candidate for \"photo\" once "
-            "domain-scoped - two candidates (Product Photos AND Shipment Line Photo) is "
-            f"the pre-fix shape, and gate.py's own silent pick can land on either by row "
-            f"order regardless of this test's other assertions: {photo_matches!r}"
-        )
-        assert photo_matches[0].get("canonical_code") == "Product Photos", photo_matches
-
-
-    def test_product_resolves_exact_and_send_attachments_is_reached(
-        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """THE FIX end to end, crossing the real fetch seam (review round 1, Q1/#727):
-        the resolved product + attachment_type reach `crm_master_product_attachments_list`
-        with the correct filter args, and the turn's own actions carry `send_attachments`
-        with the file the seeded `product_attachments` link names."""
-        calls: list[tuple[str, dict]] = []
-        result = _run_turn_seeded(
-            session_factory,
-            stub_parser,
-            stub_access,
-            system_settings_row,
-            monkeypatch,
-            contact_id="ZZT-contact-photo-alias-2",
-            calls=calls,
-        )
-
-        db = session_factory()
-        from app.models.chatbot_turn import ChatbotTurn
-
-        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
-        looked_up = next(r for r in row.trace if r["stage"] == "looked_up" and r["status"] == "ok")
-        gate = looked_up["raw"]["resolve_gate"]["ctx"]["gate"]
-        product_entities = [
-            e for e in gate.get("compatible_entities", []) if e.get("entity_type") == "product"
-        ]
-        assert any(e.get("code") == PRODUCT_CODE for e in product_entities), (
-            f"the exact product code must resolve: {product_entities!r}"
-        )
-
-        assert calls, f"the MCP tool was never called: actions={result.actions!r}"
-        tool_name, args = calls[0]
-        assert tool_name == _PRODUCT_ATTACHMENTS_TOOL, tool_name
-        product_uuid = next(e["uuid"] for e in product_entities if e.get("code") == PRODUCT_CODE)
-        assert args.get("product_ids") == [product_uuid], args
-        assert args.get("attachment_type_ids") == [PRODUCT_PHOTOS_UUID], args
-
-        kinds = [a["kind"] for a in result.actions]
-        assert "send_attachments" in kinds, (
-            f"a cleanly resolved photo request must reach send_attachments: actions={result.actions!r}"
-        )
 
 
 class TestPass5Item1IsolatedMechanismCheckSingleAttachmentType:

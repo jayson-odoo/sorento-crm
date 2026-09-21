@@ -271,6 +271,22 @@ def _default_unsupported_domains() -> list[str]:
     return default_unsupported_domains()
 
 
+def _default_chatbot_memory():
+    """`SystemSetting.chatbot_memory`'s Python default, through the module doorway core
+    may import (AC-002) - the same shape `lane_vocabulary` declares once."""
+    from app.modules.chatbot.lane_vocabulary import default_chatbot_memory
+
+    return default_chatbot_memory()
+
+
+def _default_tier_order() -> list[str]:
+    """`tier_gate.TIER_ORDER`, via the chatbot module's doorway - same reasoning as
+    `_default_unsupported_domains` above (chatbot turn re-architecture, AC-1502)."""
+    from app.modules.chatbot.lane_vocabulary import default_tier_order
+
+    return default_tier_order()
+
+
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     # id as String so UPDATE/WHERE work when DB column is TEXT (avoids "operator does not exist: text = uuid")
@@ -584,6 +600,35 @@ class SystemSetting(Base):
         nullable=False,
         server_default='{"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]}',
         default=lambda: {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]},
+    )
+    # Chatbot turn re-architecture (AC-1502, captain ruling 16 Sep 2026): the tier
+    # order, ONE copy - `lanes/business/tier_gate.TIER_ORDER`'s own literal order today,
+    # retired from that module and its two other copies once this table is the only
+    # source (AC-1594). Not a `chatbot_entity_kinds` row: "tier" is not one of the 12
+    # `ENTITY_HINTS` and never gets one.
+    chatbot_tier_order = Column(
+        JSONB,
+        nullable=False,
+        server_default='["dealer", "office", "end_user"]',
+        default=lambda: _default_tier_order(),
+    )
+    # Chatbot turn re-architecture (AC-1513, AC-1561): the Memory card's four settings,
+    # in ONE JSONB rather than four columns - they are one decision ("how much does the
+    # bot remember") made on one card, and a column each would be four migrations for a
+    # screen that shows them together. `recall_default` is the per-contact toggle's
+    # default for a NEW contact (the contact's own `chatbot_recall_enabled` always wins);
+    # `episode_retention_days` is how long a closed frame is worth recalling;
+    # `profile_fields` is which profile slots the parser is told about; and
+    # `focus_reset_events` is what clears the focus besides an explicit topic reset.
+    chatbot_memory = Column(
+        JSONB,
+        nullable=False,
+        server_default=(
+            '{"recall_default": false, "episode_retention_days": 180, '
+            '"profile_fields": ["tier", "language", "default_ledgers"], '
+            '"focus_reset_events": ["topic_switch"]}'
+        ),
+        default=lambda: _default_chatbot_memory(),
     )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
