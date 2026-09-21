@@ -1,6 +1,6 @@
 # PLAN: price tag r10 - self print by default, no quantity from the image, all variations on one tag, automatic arrange, combo image, price tag description, readable spec values
 
-Status: building (owner "ok go" on the lavish page, 20 Sep 2026, round 5; the six lost round-1 comments were never re-sent and are treated as covered by rounds 2 to 5)
+Status: in review (draft PR, 21 Sep 2026; never merged without owner go)
 Source: owner's price tag testing notes, 17 Sep 2026 (WhatsApp): "always i print myself, qty ignore",
 "promo only follow dealer use A3 flyer", "sometimes dealer want all variation in 1 price tag", "gap easier to
 cut", "1. combo image 2. description 3. templates".
