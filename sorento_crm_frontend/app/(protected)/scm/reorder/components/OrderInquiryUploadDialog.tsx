@@ -142,6 +142,7 @@ const LINE_NOT_FOUND_REASON: Record<LineNotFoundReason, string> = {
   no_line_for_item: 'No sales order line for this item',
   location_differs: 'No line for this item at that stock location',
   qty_exceeds_ordered: 'Quantity exceeds what the line ordered',
+  order_fully_delivered: 'No open line left: every line is closed or cancelled',
 };
 
 /** `SO · item · qty · reason`, one per line (AC-S2-3). */

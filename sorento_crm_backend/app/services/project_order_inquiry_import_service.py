@@ -1168,6 +1168,14 @@ def _pick_lines_by_date_order(
                 )
                 continue
             if not candidates:
+                if order_lines:
+                    # AC-S4-6 (R9): the order DOES carry lines, and every one of them is
+                    # closed or cancelled - no open line survives at all. Its own reason
+                    # rather than `_match_row`'s `no_line_for_item`, which speaks to an
+                    # item/location/quantity mismatch against an open line that, here,
+                    # never existed to check against.
+                    match.reason = oc.ORDER_FULLY_DELIVERED
+                    continue
                 _, reason = _match_row(match.row, [], taken, rank=_line_pick_key)
                 match.reason = reason
                 continue

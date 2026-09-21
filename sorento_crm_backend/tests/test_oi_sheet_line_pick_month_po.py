@@ -553,30 +553,22 @@ def test_ac_lp_12_charge_already_raised_line():
         ], result
 
 
-def test_ac_lp_12_bumped_row_takes_the_next_free_line():
-    """AC-LP-12 (bumped, re-upload = first upload). Line A is already raised; the sheet's
-    first row (150) lands there and charges the ledger, leaving only 50 - too little for
-    the second row's 100 - so the second row is bumped onto line B, the next free line
-    that fits.
+def test_ac_lp_12_bumped_row_becomes_a_second_row_on_the_taken_line():
+    """AC-LP-12 (bumped). Line A already carries a row from an earlier import; line B is
+    free. The sheet states two rows, both dated Oct: 150 then 100. The 150 row is
+    processed first and pairs onto B, the free candidate; the 100 row is then bumped onto
+    A - not skipped as `already_raised`, but raised as a genuine SECOND row on A
+    (`already_raised` False, an ordinary migration note), because A's own item DID have a
+    free candidate (B) before this walk spent it on the earlier row. Nothing is dropped:
+    two rows raised, zero already-raised, zero line-not-found; the DB ends up holding the
+    old row on A, the new 100 on A, and the 150 on B.
 
-    This is exactly the landing a FIRST upload of this sheet would give against a clean
-    line A: charging the ledger on an already-raised line (AC-LP-12's own "charge" half)
-    is what makes a RE-upload land the rest of its rows the same way the first upload
-    would have, rather than silently absorbing every same-item row onto the one already-
-    raised line no matter how many the file states.
-
-    LEFT RED ON PURPOSE (tester reconciliation, 21 Sep 2026, class (c) - a genuine
-    regression, not a rule R4 justifies): `_pick_lines_by_date_order`'s rank now PREFERS a
-    free (not-yet-raised) candidate line over an already-raised one, so the FIRST row (150)
-    is pushed onto line B (free) instead of line A (already raised) - the opposite of what
-    this fixture used to see. The SECOND row (100) then only fits on line A by quantity
-    (line B has 50 left), lands there, and because `_resolve_recovery_matches` finds no
-    `Replaces N used` shape or decision snapshot for line A, the ordinary `already_raised`
-    skip stands: the 100-qty sheet row is silently absorbed into `rows_already_raised`
-    with NO new row, NO Was/Now note and NO reported reason - a genuine drop of a sheet
-    row's own quantity, which R4's "never dropped" does not license. Reported to the owner
-    in the tester's handback; no rule invented here, and this file's implementation is not
-    touched to fix it.
+    Re-pinned under R4, PLAN-board-received-stock-own-arrival, 21 Sep 2026: the
+    "bumped row" fix round in `_pick_lines_by_date_order`
+    (`app/services/project_order_inquiry_import_service.py`, `row_has_free`) closes the
+    silent drop this test used to pin as a known regression - a row bumped off a free line
+    by an earlier row of the SAME walk is now raised honestly as a second row instead of
+    being absorbed into `rows_already_raised` with no report at all.
     """
     with world() as w:
         order = w.order()
@@ -593,15 +585,25 @@ def test_ac_lp_12_bumped_row_takes_the_next_free_line():
 
         result = w.apply(data)
 
-        assert result["rows_already_raised"] == 1, result
-        assert result["rows_raised"] == 1, result
+        assert result["rows_raised"] == 2, result
+        assert result["rows_already_raised"] == 0, result
         assert result["rows_line_not_found"] == 0, result
+        mirror_a = w.mirror_of(line_a)
         mirror_b = w.mirror_of(line_b)
-        assert mirror_b is not None
-        bumped = [row for row in w.rows() if Decimal(str(row.qty)) == Decimal("100")]
-        assert len(bumped) == 1, [str(row.qty) for row in w.rows()]
-        assert str(bumped[0].so_line_id) == str(mirror_b.id), (
-            "the bumped row did not land on the next free line"
+        assert mirror_a is not None and mirror_b is not None
+        qtys_by_line: dict[str, list[Decimal]] = {}
+        for row in w.rows():
+            qtys_by_line.setdefault(str(row.so_line_id), []).append(
+                Decimal(str(row.qty))
+            )
+        assert sorted(qtys_by_line.get(str(mirror_a.id), [])) == [
+            Decimal("5"), Decimal("100"),
+        ], (
+            "line A should hold both the old already-raised row and the new bumped "
+            f"second row: {qtys_by_line}"
+        )
+        assert qtys_by_line.get(str(mirror_b.id)) == [Decimal("150")], (
+            f"line B should hold only the first, unbumped row: {qtys_by_line}"
         )
 
 
@@ -826,10 +828,11 @@ def test_single_sheet_variant_never_dedupes_a_repeat():
 # same-required-date candidate lines are ordered only by `created_at` then `id` - which is
 # R4's OWN explicitly simple design (date order alone, per the plan and AC-S4), not a
 # regression it forbids: the resulting `qty_exceeds_ordered` refusal, when it happens, is
-# reported honestly through `line_not_found`, never a silent drop (contrast
-# `test_ac_lp_12_bumped_row_takes_the_next_free_line` above, left red, where a row is
-# swallowed with NO report at all). Worth the owner's awareness as a known trade-off of the
-# simpler pick, not reported as a defect here.
+# reported honestly through `line_not_found`, never a silent drop (see
+# `test_ac_lp_12_bumped_row_becomes_a_second_row_on_the_taken_line` above, re-pinned
+# 21 Sep 2026, for the sibling shape - a row bumped off a free line - which the same fix
+# round now raises honestly instead of dropping). Worth the owner's awareness as a known
+# trade-off of the simpler pick, not reported as a defect here.
 
 
 # --------------------------------------------------------------------------- #
