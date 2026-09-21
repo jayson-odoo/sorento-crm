@@ -1185,6 +1185,11 @@ class ProductTagData(BaseModel):
     # none, which the layer renders as an editor placeholder / nothing on
     # print.
     barcode: Optional[str] = None
+    # S4: staff-authored tag copy, a template rendered against this SAME
+    # product's own data (S11). Absent renders nothing (Q5) - no fallback to
+    # spec_lines/description. Declared here or `response_model` drops it
+    # without a word - see `ResolvedLineData.data_changes`'s own note.
+    price_tag_description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
@@ -1299,6 +1304,9 @@ class TagPartData(BaseModel):
     sell_price: Optional[float] = None
     # AC-A11: this part's OWN product's currency, not the host's.
     currency: str = "MYR"
+    #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
+    #: subjectPart layer reads THIS, never the host's.
+    price_tag_description: Optional[str] = None
     #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
     #: subject picker groups candidates under it. Absent on a fixed part.
     role: Optional[str] = None
@@ -1348,6 +1356,13 @@ class ResolvedLineData(BaseModel):
     barcode: Optional[str] = None
     # AC-A11/A12: the tag's own currency (response_model gate).
     currency: str = "MYR"
+    # S4: staff-authored tag copy, a template rendered against this SAME
+    # line's own data (S11) - the line host's own value, distinct from each
+    # part's own `price_tag_description` above. Declared here or
+    # `response_model` drops it without a word, exactly like `data_changes`
+    # below - measured, `test_dealer_kit_tag_data_routes.py::
+    # test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts`.
+    price_tag_description: Optional[str] = None
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did
