@@ -361,6 +361,11 @@ def test_product_tag_data_keeps_every_field(api):
         "promotion_id",
         "barcode",
         "currency",
+        # r10 S11 (5ce3bd5d8): declared on `ProductTagData` too, so the
+        # template designer's own preview (bound to a bare product, not a
+        # request line) can resolve `{{product.price_tag_description}}`
+        # the same way the canvas already does off a line binding.
+        "price_tag_description",
     }
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
