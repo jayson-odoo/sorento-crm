@@ -357,6 +357,146 @@ class TestC1VariantParserHintMismatchResolvedKindWins:
         )
 
 
+class TestReconcileFindsADashedTokenByItsFoldedKey:
+    def test_dashed_container_still_reconciles_to_inbound_shipment(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Same shape as `TestC1VariantParserHintMismatchResolvedKindWins`'s own
+        rewritten test, with exactly ONE fact changed: the typed record-key token
+        carries a dash (`unique_code("CONT")`'s own "ZZT-CONT-xxxx" shape - the
+        fixture this file's own C1-variant test first drafted, before measuring
+        that `app/services/chatbot/turn/reconcile.py::apply_reconciliation` looks
+        up the resolver's own `by_token` map (`turn_runtime.resolve_kinds`) by RAW
+        text (`resolved.get(e.get("raw"))`), while that map is keyed by the FOLDED
+        token (`fold_token`, dashes and whitespace stripped) - a dashed typed token
+        never finds its own resolver hit under that key, so the parser's mishint is
+        never rewritten. A real, general, pre-existing defect, separate from owner
+        ruling 5's rerun-gate bug (`_record_key_rerun_split`'s own `current_kind_
+        entities` gate, which the undashed sibling targets) - this test pins the
+        reconcile step on its own, asserted FIRST, so it fails there today rather
+        than at the rerun step (already red for the other reason).
+
+        Expected once BOTH are fixed: identical to the undashed sibling -
+        `apply_reconciliation` rewrites the parser's "product" mishint to
+        "inbound_shipment" (turn 50082c60's own recorded state-diff shape,
+        `focus.extra.inbound_shipment` carrying the container under its RESOLVED
+        kind, `focus.products` untouched), one combined call, then the rerun."""
+        _seed_contact_and_get(session_factory)
+        code = unique_code("D1RPROD")
+        product_id = _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=code)
+        # THE ONE CHANGED FACT vs the undashed sibling: a dashed token, not
+        # `_no_dash_code`.
+        container = unique_code("CONT")
+        _seed_shipment(session_factory, container=container)
+        other_code = unique_code("D1ROTHER")
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=other_code)
+
+        _seed_state(
+            session_factory,
+            focus=_focus(
+                domains=["incoming"],
+                products=[
+                    {
+                        "raw": code,
+                        "hint": "product",
+                        "uuid": product_id,
+                        "company_name": "Sorento",
+                        "canonical_code": code,
+                    }
+                ],
+            ),
+        )
+
+        verdict = _parser_output(
+            message_type="business_query",
+            intent_hint="check_incoming",
+            domain_hint="incoming",
+            domain_in_message=False,
+            continuation=False,
+            entity_op="replace_combine",
+            entities=[
+                {
+                    # THE MISHINT - same as the undashed sibling.
+                    "raw": container,
+                    "hint": "product",
+                    "canonical_code": None,
+                    "hint_confident": True,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+            document=[],
+            status=None,
+            order_status=None,
+            routing={
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries",
+                "team_source": None,
+            },
+        )
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == INCOMING_TOOL:
+                if args.get("product_ids") and args.get("shipment_ids"):
+                    return json.dumps(_unknown_envelope_with_rows([]))
+                if args.get("shipment_ids") and not args.get("product_ids"):
+                    return json.dumps(_unknown_envelope_with_rows([(other_code, container)]))
+            return _unknown_envelope()
+
+        mcp_call, fetch_calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=verdict,
+            text_body=container,
+            msg_id="zzt-d1-rerun-mishint-dashed",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+        said = _said(result)
+
+        # THE RECONCILE FACT, asserted FIRST: `apply_reconciliation` must rewrite
+        # the mishint to the RESOLVED kind and land the container on `focus.extra.
+        # inbound_shipment` (turn 50082c60's own recorded state-diff shape),
+        # whatever separator the raw token carries - today it does not, because
+        # `apply_reconciliation`'s own lookup key (raw) never matches the
+        # resolver's own key (folded) for a token with a dash in it.
+        state = _state_of(session_factory)
+        focus_state = state.get("focus") or {}
+        shipment_extra = (focus_state.get("extra") or {}).get("inbound_shipment") or []
+        assert any(e.get("raw") == container for e in shipment_extra), (
+            f"the dashed container must still reconcile onto focus.extra."
+            f"inbound_shipment, the same as the undashed turn does: {focus_state!r}"
+        )
+
+        incoming_calls = [args for name, args in fetch_calls if name == INCOMING_TOOL]
+        assert incoming_calls, f"no incoming call went out at all: {fetch_calls!r}"
+        assert "product_ids" in incoming_calls[0], incoming_calls[0]
+        assert "shipment_ids" in incoming_calls[0], incoming_calls[0]
+
+        assert len(incoming_calls) == 2, (
+            f"a REFINE miss on a mishinted record key must still rerun once, on "
+            f"the RESOLVED kind (a shipment), the same as the undashed turn does: "
+            f"{fetch_calls!r}"
+        )
+        assert "shipment_ids" in incoming_calls[1], incoming_calls[1]
+        assert "product_ids" not in incoming_calls[1], (
+            f"the rerun must drop every carried filter, keeping only the current "
+            f"message's own record key: {incoming_calls[1]!r}"
+        )
+
+        lines = said.split("\n")
+        combo_lines = [ln for ln in lines if code in ln and container in ln]
+        assert combo_lines, (
+            f"the carried product AND the container must both appear in one "
+            f"sentence, naming what the rerun dropped: {said!r}"
+        )
+        assert other_code in said, f"the rerun's own rows must print: {said!r}"
+        assert "escalate" not in said.lower(), (
+            f"a successful rerun must not still offer to escalate: {said!r}"
+        )
+
+
 def _unknown_envelope_with_rows(rows: list[tuple[str, str]]) -> dict[str, Any]:
     return {
         "intro": "Here is the incoming stock I found." if rows else "No matching results found.",
