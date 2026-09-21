@@ -336,6 +336,201 @@ describe('BoardLineDecisionPanel: an approved draft carries the suggested compos
 });
 
 /**
+ * BOARD-CONFIRM-LEFT-OUT (SO420745, 21 Sep 2026): an approving Save used to drop the reasons
+ * the planner typed - the discontinued Buy's own reason, and a suggested borrow row's - because
+ * the approving branch posted `decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`
+ * verbatim (which seeds `buy_reason` from nothing) and the reseed afterwards put the SAME
+ * reason-less draft back on screen. `matchesSuggestion` rightly compares quantities only, so
+ * typing a reason with the quantities untouched still reads as an approval - the fix is that
+ * approval carrying the reason across, not the comparison.
+ */
+describe('BoardLineDecisionPanel: an approving save carries the reasons the planner typed (AC-1/AC-2/AC-3)', () => {
+  const discontinuedFlags = {
+    dealer_hot_selling: false,
+    dealer_hot_selling_where: [],
+    project_hot_selling: false,
+    project_hot_selling_where: [],
+    dealer_classified: false,
+    project_classified: false,
+    discontinued: true,
+    retail_classification_available: true,
+  };
+
+  it('a discontinued Buy suggestion keeps the typed reason after Save, and the blocker does not return', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|32|SRTWT9610-GM|2026-09-10',
+          line_no: 32,
+          item_code: 'SRTWT9610-GM',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '3',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '3',
+          item_flags: discontinuedFlags,
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'project order' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    // AC-1: the SAME press carries verdict and reason both - one Save, one call.
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        buy_reason: 'project order',
+      }),
+    );
+
+    // AC-1: the box still holds what was typed, and the red blocker is gone - the reseed used
+    // to put the engine's own (reason-less) draft back, which emptied the box and brought the
+    // "buying a discontinued product needs a reason" blocker straight back.
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue('project order');
+    expect(screen.queryByText(/needs a reason/)).not.toBeInTheDocument();
+  });
+
+  it('a suggested borrow row keeps its typed reason after an approving Save (AC-3)', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|5|MWH-BRW|2026-09-10',
+          line_no: 5,
+          item_code: 'MWH-BRW',
+          qty: '5',
+          qty_ordered: '5',
+          qty_outstanding: '5',
+          sources: [
+            {
+              kind: 'borrow',
+              qty: '5',
+              location: 'MWH-IB',
+              warehouse_id: 'wh-mwh-ib',
+              reason: 'Cross-group cap allows this.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '0',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Confirmed with the other site on WhatsApp.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-ib',
+            reason: 'Confirmed with the other site on WhatsApp.',
+          }),
+        ]),
+      }),
+    );
+    // Fix round 2 (reviewer, nit c - kill test K2): the BORROW half of the reseed was never
+    // actually asserted on screen, only the outgoing payload - this is the same box the Buy
+    // reason test above checks, for the row the save just carried a reason for.
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue(
+      'Confirmed with the other site on WhatsApp.',
+    );
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 2 (reviewer, S2): "same silent drop one field over" - a
+ * wholly-bought approving line shows the Order back switch and the Document cited box, but the
+ * approving branch used to take both from `suggestionDraftFrom`'s own draft (always false/''),
+ * and the reseed blanked them the same way it used to blank the Buy reason and the borrow
+ * reason (measured cause 1).
+ */
+describe('BoardLineDecisionPanel: an approving save carries Order back and the cited document (S2, fix round 2)', () => {
+  it('keeps Order back and Document cited after Save, and after the reseed', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|9|BUY9|2026-09-10',
+          line_no: 9,
+          item_code: 'BUY9',
+          qty: '5',
+          qty_ordered: '5',
+          qty_outstanding: '5',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '5',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '5',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Order back' }));
+    fireEvent.change(screen.getByLabelText('Document cited'), {
+      target: { value: 'SPO-2026/09-0042' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        order_back: true,
+        cited_document: 'SPO-2026/09-0042',
+      }),
+    );
+
+    // The reseed: both still on screen, the same guard the reason boxes already have.
+    expect(screen.getByRole('switch', { name: 'Order back' })).toBeChecked();
+    expect(screen.getByLabelText('Document cited')).toHaveValue('SPO-2026/09-0042');
+  });
+});
+
+/**
  * C7, in the UAC's own words: "Editing Reserve BRW-AM from 9 to 5 shows the hint 4 short and
  * Save is disabled; setting BRW to 19 clears the hint, and Save enables once the reason is
  * typed (a composition that differs from the suggestion always needs the reason)."

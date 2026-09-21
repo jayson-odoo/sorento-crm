@@ -1606,10 +1606,13 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
+    const banner = await screen.findByTestId('board-left-out-banner');
+    expect(banner).toHaveAttribute('role', 'alert');
+    expect(banner).toHaveTextContent(
+      'is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.',
+    );
     expect(
-      await screen.findByText(
-        'TPE-9204 line 2 is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.',
-      ),
+      within(banner).getByRole('button', { name: 'TPE-9204 line 2' }),
     ).toBeInTheDocument();
     // `plannedLineCount` still counts it here: it cannot tell "adopted, but this one line's
     // mirror lags" from "not adopted at all", where the count DOES have to include a
@@ -1655,10 +1658,12 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
+    const banner = await screen.findByTestId('board-left-out-banner');
+    expect(banner).toHaveTextContent(
+      'reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.',
+    );
     expect(
-      await screen.findByText(
-        'TPE-9204 line 2 reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.',
-      ),
+      within(banner).getByRole('button', { name: 'TPE-9204 line 2' }),
     ).toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
       'Confirm (1)',
@@ -1690,14 +1695,176 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
+    const banner = await screen.findByTestId('board-left-out-banner');
+    expect(banner).toHaveTextContent(
+      'buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+    );
     expect(
-      await screen.findByText(
-        'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
-      ),
+      within(banner).getByRole('button', { name: 'TPE-9204 line 2' }),
     ).toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
       'Confirm (1)',
     );
+  });
+
+  /**
+   * Board-confirm-left-out AC-4/AC-5: the owner's own words on SO420745 - "we should have a
+   * banner to raise attention, with hyperlink to go to that line directly". The link switches
+   * the board to List (the grid's cells pivot by product/date and do not carry one row per
+   * line) and opens that line's own decision panel, scrolled into view.
+   */
+  it('the banner link switches to List and opens that line’s decision panel (AC-4/AC-5)', async () => {
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({
+          ...entry,
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        }),
+      ),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const banner = await screen.findByTestId('board-left-out-banner');
+    fireEvent.click(within(banner).getByRole('button', { name: 'TPE-9204 line 2' }));
+
+    // Grid gone, List on screen, and the named line's own decision panel is open.
+    await waitFor(() =>
+      expect(screen.queryByTestId('fulfilment-board-matrix')).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByTestId(/^line-decision-so-a\|2\|TPE-9204/),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * Fix round 2 (reviewer, B1, blocking): `setProductSearchInput('')` only moved the BOX -
+   * `productSearch` (`useDebouncedSearch`'s `debouncedValue`, what the list actually filters
+   * by) still lagged it by 200ms, so a banner click made while an excluding search was active
+   * found the row still filtered out, the page jump saw index -1, the scroll no-op'd, and the
+   * search only caught up a beat later - too late for anything still waiting on it.
+   * `focusLeftOutLine` now calls the hook's own `reset('')`, which clears both halves
+   * synchronously.
+   */
+  /**
+   * B2 (fix round 3, reviewer, blocking): the round-2 version of this test used
+   * `await screen.findByTestId(...)`, which POLLS for up to a second - long enough for
+   * `useDebouncedSearch`'s real 200ms timer to fire on its own even with the round-2 bug
+   * back in place (`setProductSearchInput('')` instead of `reset('')`), and S3's node-guard
+   * (fix round 2) then found the row on ITS OWN once that later render arrived. A 2-line
+   * fixture never exercised the page jump either. This version asserts SYNCHRONOUSLY, right
+   * on the commit the click itself produces - no `findBy`/`waitFor`, no timer advance - which
+   * only the SAME-TICK `reset('')` can satisfy, over 30 lines so the target genuinely sits
+   * beyond `PanelDataGrid`'s first 25-row page.
+   */
+  it('reaches the left-out line, beyond page 1, on the SAME commit as the click, even while a search that excludes it is still active (AC-5, fix round 3, B1/B2)', async () => {
+    const scrollSpy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {});
+    const lines = Array.from({ length: 30 }, (_, index) =>
+      demand({ line_no: index + 1, item_code: `ITEM${index + 1}` }),
+    );
+    // The 28th line: index 27 in `so_number`/`line_no` order, page floor(27 / 25) = page 2.
+    const board = withContribution(
+      allSaved(boardOf(lines)),
+      (entry) => entry.line_no === 28,
+      (entry) => ({
+        ...entry,
+        item_flags: {
+          dealer_hot_selling: false,
+          dealer_hot_selling_where: [],
+          project_hot_selling: false,
+          project_hot_selling_where: [],
+          dealer_classified: false,
+          project_classified: false,
+          discontinued: true,
+          retail_classification_available: true,
+        },
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const searchBox = screen.getByPlaceholderText(
+      'Search sales order, customer, project or product',
+    );
+    // A search that EXCLUDES the left-out line (ITEM28) - not just typed, but SETTLED:
+    // waiting for the grid to actually narrow is what proves the debounced value (not only
+    // the box) now reads "ITEM1", which is the state the bug needed to reproduce.
+    fireEvent.change(searchBox, { target: { value: 'ITEM1' } });
+    await waitFor(() => expect(screen.queryByText('ITEM28')).not.toBeInTheDocument());
+
+    const banner = await screen.findByTestId('board-left-out-banner');
+    fireEvent.click(within(banner).getByRole('button', { name: 'ITEM28 line 28' }));
+
+    // SYNCHRONOUS: `fireEvent.click` already flushed every cascading render and effect this
+    // click produces (React's `act()` drains the whole chain - the state updates, the page
+    // jump, the expand, the scroll - before returning), so if the search reset lagged (the
+    // B1 bug) this row is STILL filtered out right here, and `getByTestId` throws immediately
+    // rather than retrying past it.
+    expect(screen.getByTestId(/^line-decision-so-a\|28\|ITEM28/)).toBeInTheDocument();
+    expect(searchBox).toHaveValue('');
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+
+    scrollSpy.mockRestore();
+  });
+
+  /**
+   * Board-confirm-left-out AC-6: the owner's own words - "confirming silently is dangerous".
+   * The success toast already states what Confirm committed; once a press leaves lines out it
+   * states that too, in the SAME toast rather than a second one.
+   */
+  it('states both counts in an AMBER toast when a line is left out (AC-6, fix round 2, S4)', async () => {
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        board,
+        (entry) => entry.item_code === 'TPE-9204',
+        (entry) => ({
+          ...entry,
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        }),
+      ),
+    );
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    // S4: a press that left something out is not an unqualified success (the owner's own
+    // words: "confirming silently is dangerous") - `toast.warning`, never `toast.success`.
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('1 line confirmed'));
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('1 left out'));
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   // The "no planning record, so no Confirm" state is deliberately GONE: pressing Confirm on
@@ -3307,8 +3474,10 @@ describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)'
 });
 
 /**
- * The notice beside the button: since the 8 Sep 2026 ruling (reverses R11) every line reaching
- * here carries a SAVED decision, so every one of them is NAMED, capped at five.
+ * The notice beside the banner's own links (board-confirm-left-out, AC-4): since the 8 Sep
+ * 2026 ruling (reverses R11) every line reaching here carries a SAVED decision, so every one
+ * of them is NAMED, capped at five - the CLAUSE names none of them any more, because the
+ * caller (`FulfilmentBoardPanel`) puts each one on its own link instead of in the prose.
  */
 describe('unpostableNotices', () => {
   function line(lineNo: number) {
@@ -3321,19 +3490,31 @@ describe('unpostableNotices', () => {
     };
   }
 
-  it('names a line and states the fix', () => {
-    expect(unpostableNotices('buy_reason_missing', [line(2)])).toEqual([
-      'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
-    ]);
+  it('names a line and states the fix, with no name baked into the clause', () => {
+    const [notice] = unpostableNotices('buy_reason_missing', [line(2)]);
+    expect(notice.named).toEqual([{ label: 'TPE-9204 line 2', line: line(2) }]);
+    expect(notice.moreCount).toBe(0);
+    expect(notice.clause).toBe(
+      'buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+    );
   });
 
   it('caps the names at five and counts the rest', () => {
-    const [sentence] = unpostableNotices(
+    const [notice] = unpostableNotices(
       'buy_reason_missing',
       [1, 2, 3, 4, 5, 6, 7].map((no) => line(no)),
     );
-    expect(sentence).toContain('line 5 and 2 more');
-    expect(sentence).not.toContain('line 6');
+    expect(notice.named.map((entry) => entry.label)).toEqual([
+      'TPE-9204 line 1',
+      'TPE-9204 line 2',
+      'TPE-9204 line 3',
+      'TPE-9204 line 4',
+      'TPE-9204 line 5',
+    ]);
+    expect(notice.moreCount).toBe(2);
+    // Several lines: the clause reads "buy"/"them", not the one-line "buys"/"it".
+    expect(notice.clause).toContain('buy a discontinued product');
+    expect(notice.clause).toContain('leaves them out');
   });
 });
 
