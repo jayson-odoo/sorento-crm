@@ -1,13 +1,15 @@
 /**
- * AC-S4-3 (PLAN-price-tag-r10.md S4): the product Overview edit form shows a
- * "Price tag description" textarea below Description; saving sends the field.
+ * AC-S4-3 amended (PLAN-price-tag-r10.md S11, owner amendment 21 Sep): the
+ * Overview edit form's "Price tag description" textarea is REMOVED - the
+ * field has exactly one home now, the Specifications tab
+ * (`ProductSpecificationsTab.priceTagDescription.test.tsx`), where it is a
+ * per-product TEMPLATE with its own Insert field picker and live preview,
+ * not a second plain-text copy of Description.
  *
- * NEW file (no `ProductForm.test.tsx` exists to extend) - mirrors
- * `ProductForm.excludeFromPlanning.test.tsx`'s stub stack exactly, the
- * precedent for testing one new field on this form in isolation.
- *
- * Written test-FIRST: `ProductForm.tsx` has no such field at all yet, so
- * every test here is red on a missing element.
+ * Flipped test-FIRST from the ORIGINAL S4 version of this file (which
+ * asserted the textarea's presence): `ProductForm.tsx` still HAS the field
+ * today (S4 shipped it), so every test here is red until the coder deletes
+ * it.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -100,36 +102,22 @@ async function fillRequiredFields() {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('ProductForm - Price tag description (AC-S4-3)', () => {
-  it('renders a "Price tag description" textarea directly below Description', () => {
+describe('ProductForm - Price tag description is GONE from Overview (AC-S4-3 amended, S11)', () => {
+  it('renders no "Price tag description" label and no textarea by that name anywhere on the form', () => {
     render(<ProductForm />);
 
-    const descriptionLabel = screen.getByText('Description');
-    const priceTagLabel = screen.getByText('Price tag description');
-    expect(priceTagLabel).toBeInTheDocument();
-    // Document order: Price tag description comes AFTER Description.
-    // eslint-disable-next-line no-bitwise
-    expect(
-      descriptionLabel.compareDocumentPosition(priceTagLabel) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-
-    const textarea = screen.getByLabelText('Price tag description');
-    expect(textarea.tagName).toBe('TEXTAREA');
+    expect(screen.queryByText('Price tag description')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Price tag description')).not.toBeInTheDocument();
   });
 
-  it('round-trips price_tag_description into the create payload on submit', async () => {
+  it('the create payload carries no price_tag_description key at all', async () => {
     render(<ProductForm />);
     await fillRequiredFields();
-
-    fireEvent.change(screen.getByLabelText('Price tag description'), {
-      target: { value: 'Made in Malaysia\nStainless steel' },
-    });
 
     fireEvent.click(screen.getByRole('button', { name: /Save|Create/i }));
 
     await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
     const [payload] = createMutateAsync.mock.calls[0];
-    expect(payload.price_tag_description).toBe('Made in Malaysia\nStainless steel');
+    expect(Object.prototype.hasOwnProperty.call(payload, 'price_tag_description')).toBe(false);
   });
 });

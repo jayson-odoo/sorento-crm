@@ -50,8 +50,11 @@ left stale.
 - AC-S4-1 Migration adds `products.price_tag_description` nullable text. (pytest migration)
 - AC-S4-2 `PATCH /products/{id}` with `price_tag_description` stores it; `GET /products/{id}` returns it, and
   the list serializer and `get_product` dict builder both include the key. (pytest)
-- AC-S4-3 The product Overview edit form shows a "Price tag description" textarea below Description; saving
-  sends the field; the detail view shows it with line breaks preserved. (vitest ProductForm / ProductDetail)
+- AC-S4-3 (amended by the tester, owner amendment 21 Sep after seeing S4 on the lane build, see S11) The
+  product Overview edit form and Overview detail row are REMOVED - a "Price tag description" textarea does
+  NOT appear on the Overview edit form, and no "Price tag description" row appears in the Overview detail
+  view; the field has exactly one home, the Specifications tab (AC-S4-10 to AC-S4-14). (vitest ProductForm /
+  ProductDetail)
 - AC-S4-4 `resolve_tags_live` carries `price_tag_description` on the line's product row and on every part
   row. (pytest tag_data)
 - AC-S4-5 `{{product.price_tag_description}}` renders the line's text; with `subjectPart: n` renders that
@@ -62,6 +65,31 @@ left stale.
   `GET data-changes` flags the tag. (pytest data change)
 - AC-S4-9 The AutoCount masters push does not write `price_tag_description`. (pytest, existing push test
   extended)
+- AC-S4-10 (added by the tester, owner amendment 21 Sep, S11) The Specifications tab shows a "Price tag
+  description" block directly under "Product description": the stored template in a read-only mono box, or
+  `(none)` when empty; an "Edit price tag description" action (visible only with `master_data.products.edit`)
+  swaps it for a prefilled textarea with Save and Cancel; Save calls the product update through
+  `useUpdateProduct` with `{ price_tag_description }` and shows the new text; Cancel and Escape both discard
+  the edit without saving. (vitest ProductSpecificationsTab.priceTagDescription.test.tsx)
+- AC-S4-11 (added by the tester, owner amendment 21 Sep, S11) While editing, an "Insert field" button opens
+  `InsertFieldDialog`; picking `Material` (from `spec.material`) inserts `{{spec.material}}` at the textarea's
+  caret; the dialog offers only the Product and Specs groups - no Line, Set or part group, a product's own
+  description cannot address a line. (vitest ProductSpecificationsTab.priceTagDescription.test.tsx)
+- AC-S4-12 (added by the tester, owner amendment 21 Sep, S11) Under the box, "Prints as:" renders the stored
+  template against THIS product's own data, built on the client from the tab's own spec rows in READABLE
+  form (not the raw stored slug) - no backend call. A product whose `material` spec reads `Stainless Steel`
+  and whose template is `{{spec.material}} tap` shows "Prints as: Stainless Steel tap". (vitest
+  ProductSpecificationsTab.priceTagDescription.test.tsx)
+- AC-S4-13 (added by the tester, owner amendment 21 Sep, S11, amends AC-S4-5) `resolvePath('product.
+  price_tag_description', data, layer)` renders the STORED TEXT AS A TEMPLATE against the same subject's own
+  data, one pass, not the raw text: `{{product.name}} in {{spec.material}}` stored on a product named
+  `Basin Tap` with `spec.material = Stainless Steel` resolves to `Basin Tap in Stainless Steel`; with
+  `subjectPart: n` the PART's own stored template renders against the PART's own data; a spec VALUE that
+  itself contains the literal text `{{product.name}}` is never re-expanded (single left-to-right scan, no
+  recursion); a template naming a token the data cannot answer renders that token empty; an empty or absent
+  template renders empty (Q5, unchanged). (vitest merge-fields.test.tsx)
+- AC-S4-14 (added by the tester, owner amendment 21 Sep, S11) No backend change: `GET`/`PATCH /products/{id}`
+  already carry `price_tag_description` (AC-S4-2); this amendment is FE-only. (no new pytest)
 
 ## S5. Combo image
 

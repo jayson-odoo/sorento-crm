@@ -603,6 +603,81 @@ describe('renderMergeFields - product.price_tag_description (AC-S4-5/S4-6)', () 
   });
 });
 
+// ---------------------------------------------------------------------------
+// AC-S4-13 (owner amendment 21 Sep, S11, amends AC-S4-5): the stored
+// `price_tag_description` is a per-product TEMPLATE now, not plain text -
+// `resolvePath` renders it ONE MORE TIME against the same subject's own
+// data before it reaches the tag. Written test-FIRST: today `resolvePath`
+// still returns the raw stored text unexpanded (a plain `PATH_SLOTS` read),
+// so every test below but the last is red on that raw, unexpanded text.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - product.price_tag_description is a template (AC-S4-13, S11)', () => {
+  it('a stored template resolves its own tokens against the SAME subject', () => {
+    const data = product({
+      name: 'Basin Tap',
+      price_tag_description: '{{product.name}} in {{spec.material}}',
+      specs: [{ key: 'material', label: 'Material', value: 'Stainless Steel', unit: null }],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Basin Tap in Stainless Steel',
+    );
+  });
+
+  it("with subjectPart: n the PART's own stored template renders against the PART's own data, not the parent's", () => {
+    const part: TagPartData = {
+      product_id: 'part-2',
+      code: 'PART-2',
+      name: 'Part Two',
+      dimensions: '',
+      specs: [{ key: 'finish', label: 'Finish', value: 'Matte black', unit: null }],
+      price_tag_description: '{{product.code}} - {{spec.finish}}',
+    };
+    const data = line({
+      price_tag_description: '{{product.name}} - parent template',
+      parts: [
+        { product_id: 'part-1', code: 'PART-1', name: 'Part One', dimensions: '' },
+        part,
+      ],
+    });
+    const layer = { props: { kind: 'text' as const, subjectPart: 1 } };
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print', layer)).toBe(
+      'PART-2 - Matte black',
+    );
+  });
+
+  it('a SPEC VALUE that itself contains the literal text {{product.name}} is never re-expanded - one pass only', () => {
+    const data = product({
+      name: 'Basin Tap',
+      price_tag_description: '{{spec.material}}',
+      specs: [
+        { key: 'material', label: 'Material', value: 'Contains {{product.name}} literally', unit: null },
+      ],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Contains {{product.name}} literally',
+    );
+  });
+
+  it('a template naming a token the data cannot answer renders that token empty, the rest of the sentence intact', () => {
+    const data = product({
+      price_tag_description: '[{{spec.nonexistent}} tap]',
+      specs: [],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe('[ tap]');
+  });
+
+  it('an empty stored template still renders empty (Q5, unchanged)', () => {
+    const data = product({ price_tag_description: '' } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('[{{product.price_tag_description}}]', data, 'print')).toBe('[]');
+  });
+});
+
 describe('mergeFieldCatalog - Price tag description (AC-S4-7)', () => {
   it('lists Price tag description in group Product, directly after Spec lines', () => {
     const catalog = mergeFieldCatalog([]);

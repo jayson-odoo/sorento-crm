@@ -1,16 +1,18 @@
 /**
- * AC-S4-3 (PLAN-price-tag-r10.md S4): the product detail's Overview tab
- * renders `price_tag_description` verbatim, with line breaks preserved.
+ * AC-S4-3 amended (PLAN-price-tag-r10.md S11, owner amendment 21 Sep): the
+ * product detail's Overview tab no longer renders a "Price tag description"
+ * row at all - the field moved to the Specifications tab
+ * (`ProductSpecificationsTab.priceTagDescription.test.tsx`), one home, not
+ * two.
  *
- * NEW file (no `ProductDetail.test.tsx` exists to extend, per
- * `[id]/page.backHref.test.tsx`'s own "the record itself has its own suite"
- * comment - it did not yet). Only the "overview" tab's own content mounts
- * (Radix `TabsContent` unmounts inactive tabs by default), so every OTHER
- * tab component is a safe no-op import; what has to be stubbed is what
- * `ProductDetail` itself calls directly and what renders inside Overview.
+ * Only the "overview" tab's own content mounts (Radix `TabsContent`
+ * unmounts inactive tabs by default), so every OTHER tab component is a
+ * safe no-op import; what has to be stubbed is what `ProductDetail` itself
+ * calls directly and what renders inside Overview.
  *
- * Written test-FIRST: `ProductDetail.tsx` has no such field at all yet, so
- * the test is red on a missing element.
+ * Flipped test-FIRST from the ORIGINAL S4 version of this file (which
+ * asserted the row's presence): `ProductDetail.tsx` still renders the row
+ * today (S4 shipped it), so the test is red until the coder deletes it.
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -101,24 +103,13 @@ function renderDetail() {
   );
 }
 
-describe('ProductDetail - Overview - Price tag description (AC-S4-3)', () => {
-  it('renders the stored text with line breaks preserved', async () => {
+describe('ProductDetail - Overview - Price tag description is GONE (AC-S4-3 amended, S11)', () => {
+  it('renders no "Price tag description" row and no price-tag-description-value node', async () => {
     renderDetail();
 
     await screen.findAllByText('ZZT Kitchen Sink');
-    expect(screen.getByText('Price tag description')).toBeInTheDocument();
 
-    const value = screen.getByTestId('price-tag-description-value');
-    expect(value).toHaveTextContent('Made in Malaysia');
-    expect(value).toHaveTextContent('Stainless steel');
-    // Line breaks must actually be PRESERVED (CSS `white-space: pre-line`,
-    // or two literal `<br>`-separated text nodes) - not collapsed into one
-    // line the way a plain `<p>{text}</p>` renders whitespace by default.
-    const collapsesWhitespace =
-      getComputedStyle(value).whiteSpace !== 'pre-line' &&
-      getComputedStyle(value).whiteSpace !== 'pre-wrap' &&
-      getComputedStyle(value).whiteSpace !== 'pre';
-    const hasLineBreakElements = value.querySelectorAll('br').length > 0;
-    expect(collapsesWhitespace && !hasLineBreakElements).toBe(false);
+    expect(screen.queryByText('Price tag description')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('price-tag-description-value')).not.toBeInTheDocument();
   });
 });

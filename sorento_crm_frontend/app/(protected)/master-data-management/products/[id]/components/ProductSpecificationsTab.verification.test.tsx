@@ -43,6 +43,20 @@ vi.mock('../../hooks/useProductSpecTable', () => ({
   useProductSpecTable: (...a: unknown[]) => useProductSpecTable(...a),
 }));
 
+// S11 (PLAN-price-tag-r10.md, owner amendment 21 Sep): the tab also reads
+// `useProduct`/`useUpdateProduct` now, for the price tag description block
+// (`ProductSpecificationsTab.priceTagDescription.test.tsx` owns that
+// behaviour) - mocked here purely so THIS file's own render does not reach
+// the real react-query hook with no `QueryClientProvider` in scope; nothing
+// below reads `useProduct`'s return value.
+vi.mock('../../hooks/useProducts', () => ({
+  useProduct: () => ({
+    data: { id: 'p-1', product_code: 'WC100', product_name: 'WC100', list_price: null, price_tag_description: null },
+    isLoading: false,
+  }),
+  useUpdateProduct: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 function baseDetail(verification: VerificationBlock): ProductSpecDetail {
   return {
     product_id: 'p-1',

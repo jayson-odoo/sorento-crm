@@ -286,6 +286,58 @@ long list jumps out of view.
   side benefit, and the selected row highlights the tag on the sheet as `selectedTagId` already does).
 - No scrollIntoView on select; the row the person clicked is under their pointer already.
 
+### S11. Price tag description is a template on the Specifications tab (owner, 21 Sep, amends S4)
+
+Owner amendment after seeing S4 on the lane build: a plain textarea on the Overview edit form reads like a
+second `description` field, and it is not one - marketing wants to write "Made in Malaysia · {{spec.material}}"
+once per product and have it print the real material on every tag, the same way a tag template's own text
+layer does. Measured: `products.price_tag_description` (the column, `ProductBase`/`ProductUpdate` schemas) is
+untouched and needs no migration - it already round-trips through `GET`/`PATCH /products/{id}`
+(`useProduct`/`useUpdateProduct` in `products/hooks/useProducts.ts`), so this is a FE-only amendment: no new
+column, no new route, no response_model change.
+
+1. One home, not two. `ProductSpecificationsTab.tsx` (the tab already resolves the product's own read model
+   for this page) gains a "Price tag description" block directly under "Product description" (~line 337):
+   the stored template in a read-only mono box (matching the block already there), an "Edit price tag
+   description" action visible only when `canEdit` (the tab's existing `master_data.products.edit` gate),
+   swapping to a prefilled `<textarea aria-label="Price tag description">` with Save and Cancel; Escape
+   discards the same way Cancel does. Save calls `useUpdateProduct().mutateAsync({ id, data: {
+   price_tag_description } })` - the SAME hook `ProductForm.tsx` already uses for every other product edit -
+   toasts and lets the existing `['product', id]`/spec-detail invalidation refetch. Empty stored value reads
+   `(none)`. The Overview edit-form textarea and the Overview detail row S4 added are DELETED, not merely
+   hidden (AC-S4-3 amended) - one editable home, not a second one that silently goes stale the moment
+   somebody edits it from the tab instead.
+2. Data plumbing. The tab calls `useProduct(productId)` (`../../hooks/useProducts`) alongside its existing
+   `useProductSpecTable(productId)` - the SAME query key (`['product', id]`) `ProductDetail.tsx` already
+   populates when it mounts this tab, so no second round trip on the page's own first paint. No backend
+   change: `price_tag_description`, `product_name`/`code` and `list_price` are already on that response.
+3. Insert field. While editing, an "Insert field" button opens the existing `InsertFieldDialog`
+   (`dealer-kit/tag-templates/components/InsertFieldDialog.tsx`) with `specKeys` built from the tab's own
+   spec registry. `InsertFieldDialog` today always offers all four `mergeFieldCatalog` groups (Product,
+   Specs, Set, Line) with no way to narrow them - it needs a way to restrict to Product and Specs only here:
+   a product's own description cannot address a line, a set or a combo part, none of which this page has any
+   concept of. Picking a field inserts `{{token}}` at the textarea's caret, same as the template designer.
+4. Live preview, no backend call. Under the box, "Prints as:" renders the (possibly just-typed) template
+   against a small `TagBindingData` built on the client from what the tab already has once (1) lands: the
+   product's own code/name/list price (from `useProduct`) and its spec values in READABLE form (`rows` +
+   `readableEntry`, the exact helper the table itself already renders through) - not the raw stored slugs.
+   `renderMergeFields(template, productBinding, 'print')`. A token the binding cannot answer (a spec this
+   product does not hold) renders empty, same rule every other merge field follows.
+5. Resolution on the tag (`lib/dealer-kit/merge-fields.ts`). `resolvePath('product.price_tag_description', ...)`
+   changes from "read the subject's raw field" (today, via `PATH_SLOTS`/`resolveSlotText`) to "read the
+   subject's raw field, THEN render it as a template against that SAME subject's data" -
+   `renderMergeFields(rawTemplate, subjectBinding, mode)`, one call. Still fully subject-aware (D7): a layer
+   with `subjectPart: n` resolves the PART's own stored template against the PART's own data; Parent (`-1`)
+   or no subject resolves the parent's. `String.replace`'s single left-to-right scan already makes this
+   one pass with no recursion risk - a spec VALUE that happens to contain the literal text `{{product.name}}`
+   is never re-scanned, because `renderMergeFields` only ever scans the text it was originally called with.
+   An empty or absent template renders empty (Q5, unchanged). Pinned tag data keeps the RAW template
+   (data-change detection is unaffected - S8 already diffs the raw field); the PDF resolves through the same
+   FE `renderMergeFields`/`resolvePath` the canvas does, so print matches the canvas exactly as every other
+   merge field already guarantees.
+6. Backend: unchanged. `GET`/`PATCH /products/{id}` already carry `price_tag_description` (S4, AC-S4-2); no
+   migration, no schema change, no new pytest.
+
 ## Migration `ptag_0013_r10`
 
 1. `products.price_tag_description TEXT NULL`
@@ -301,9 +353,10 @@ Downgrade drops 1 to 3 (the type row stays if any attachment uses it); the data 
 ## Tickets (after go)
 
 S1 print default, S2 extract quantity, S3 spec labels, S4 description field, S5 combo image, S6 any product
-on any tag + Not printed, S7 auto arrange, S8 auto-update + rollback, S9 portal PDF, S10 rail scroll. One
-lane, one PR. Phase 1 FE mock: S1, S2 (FE half), S6 designer, S7, S8 dialog, S9 button states, S10.
-Phase 2 tester-first: everything.
+on any tag + Not printed, S7 auto arrange, S8 auto-update + rollback, S9 portal PDF, S10 rail scroll, S11
+description is a template on the Specifications tab. One lane, one PR. Phase 1 FE mock: S1, S2 (FE half), S6
+designer, S7, S8 dialog, S9 button states, S10. Phase 2 tester-first: everything, S11 included (added after
+the lane's Phase 3 review, same test-first order).
 
 ## Rulings (owner, 20 Sep 2026, on the lavish page)
 

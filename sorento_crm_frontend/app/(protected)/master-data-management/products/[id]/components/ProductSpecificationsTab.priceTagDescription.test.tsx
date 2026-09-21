@@ -1,0 +1,322 @@
+/**
+ * ProductSpecificationsTab - the price tag description is a per-product
+ * TEMPLATE now (PLAN-price-tag-r10.md S11, owner amendment 21 Sep, amends
+ * S4): edited in place on THIS tab, directly under "Product description",
+ * with the same Insert field picker the tag template designer uses, and
+ * previewed rendered for THIS product's own spec values before it is ever
+ * saved. The Overview edit form and Overview detail row are gone (see
+ * `ProductForm.priceTagDescription.test.tsx` /
+ * `ProductDetail.priceTagDescription.test.tsx`) - this is the one home.
+ *
+ * `useProductSpecTable` and `usePermissions` are mocked exactly as
+ * `ProductSpecificationsTab.verification.test.tsx` already does. New here:
+ * `useProduct`/`useUpdateProduct` (`../../hooks/useProducts`) are mocked too
+ * - the SAME hook `ProductForm.tsx` already saves every other product edit
+ * through, and the SAME `['product', id]` query `ProductDetail.tsx` already
+ * populates when it mounts this tab (AC-S4-10, S11 design point 2).
+ * `InsertFieldDialog` is left REAL (not stubbed): the group-restriction
+ * assertion below has to see what it actually renders.
+ *
+ * Written test-FIRST: `ProductSpecificationsTab.tsx` has no such block, no
+ * `useProduct`/`useUpdateProduct` call and no Insert field wiring at all
+ * yet - it renders "Product description" alone. Every test here is red on a
+ * missing element.
+ */
+import type { ReactNode } from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+
+import ProductSpecificationsTab from './ProductSpecificationsTab';
+import type { ProductSpecDetail } from '../../../product-specifications/types/productSpec.types';
+import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
+
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+vi.mock('next/link', () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
+
+vi.mock('@/components/spec-table', () => ({
+  SpecTable: () => <div data-testid="spec-table-stub" />,
+  AddSpecificationDialog: () => null,
+}));
+
+// The extraction panel is its own feature with its own suite; it fetches
+// through react-query, which this test deliberately does not provide.
+vi.mock('./SpecExtractPanel', () => ({ default: () => null }));
+
+const usePermissions = vi.fn();
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => usePermissions(),
+}));
+
+const useProductSpecTable = vi.fn();
+vi.mock('../../hooks/useProductSpecTable', () => ({
+  useProductSpecTable: (...a: unknown[]) => useProductSpecTable(...a),
+}));
+
+// AC-S4-10/S11: `useProduct` supplies name/list_price/`price_tag_description`
+// to a component that until now only ever knew the product id;
+// `useUpdateProduct` is the SAME mutation hook `ProductForm.tsx` already
+// saves every other product field through.
+const updateMutateAsync = vi.fn().mockResolvedValue({});
+const useProduct = vi.fn();
+vi.mock('../../hooks/useProducts', () => ({
+  useProduct: (...a: unknown[]) => useProduct(...a),
+  useUpdateProduct: () => ({ mutateAsync: updateMutateAsync, isPending: false }),
+}));
+
+const VERIFIED: VerificationBlock = {
+  state: 'verified',
+  verified_by_name: 'Jay Odoo',
+  verified_at: '2026-08-10T09:00:00',
+  invalidated_at: null,
+  invalidated_reason: null,
+  invalidated_by_name: null,
+  invalidated_diff: null,
+};
+
+const MATERIAL_KEY = {
+  spec_key: 'material',
+  label: 'Material',
+  data_type: 'enum',
+  unit: null,
+  allowed_values: [],
+  synonyms: {},
+  value_labels: { stainless_steel: 'Stainless Steel' },
+};
+
+function baseDetail(overrides: Partial<ProductSpecDetail> = {}): ProductSpecDetail {
+  return {
+    product_id: 'p-1',
+    product_code: 'WC100',
+    category_code: 'BR-KS',
+    searchable: true,
+    diagnosis: { reason: 'eligible', class_label: 'Kitchen Sink', brand_hint: 'Sorento', suffix: null },
+    spec: {
+      values: { material: { value: 'stainless_steel' } },
+      provenance: { material: { source: 'human', confidence: 1, evidence: 'manual' } },
+      rendered_text: 'A stainless steel basin tap',
+      status: 'authored',
+      derived_at: '2026-08-01T09:00:00',
+    },
+    exceptions: [],
+    source_text: 'WC100 basin tap',
+    verification: VERIFIED,
+    values_hash: 'hash-1',
+    ...overrides,
+  } as ProductSpecDetail;
+}
+
+/** The row `SpecTable` would render, in the exact READABLE shape the tab's
+ *  own preview must read through (never the raw stored slug). */
+const MATERIAL_ROW = {
+  specKey: 'material',
+  label: 'Material',
+  value: 'stainless_steel',
+  unit: null,
+  dataType: 'enum',
+  options: [],
+  source: 'human',
+  evidence: null,
+  unknownKey: false,
+  valueLabels: { stainless_steel: 'Stainless Steel' },
+};
+
+function mockSpecHook(
+  detail: ProductSpecDetail,
+  overrides: Partial<ReturnType<typeof useProductSpecTable>> = {},
+) {
+  useProductSpecTable.mockReturnValue({
+    detail,
+    rows: [MATERIAL_ROW],
+    registry: [MATERIAL_KEY],
+    applicableKeys: [],
+    otherKeys: [],
+    heldKeys: [],
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+    verify: vi.fn(),
+    unverify: vi.fn(),
+    verificationBusy: false,
+    setValue: vi.fn(),
+    tombstone: vi.fn(),
+    revert: vi.fn(),
+    addValue: vi.fn(),
+    createKey: vi.fn(),
+    checkSimilarKey: vi.fn(),
+    ...overrides,
+  });
+}
+
+function baseProduct(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'p-1',
+    product_code: 'WC100',
+    product_name: 'Basin Tap',
+    list_price: 250,
+    price_tag_description: 'Stored template text',
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.edit']) });
+  useProduct.mockReturnValue({ data: baseProduct(), isLoading: false });
+});
+
+afterEach(() => cleanup());
+
+function editButton() {
+  return screen.getByRole('button', { name: /edit price tag description/i });
+}
+
+function descriptionTextarea() {
+  return screen.getByLabelText('Price tag description') as HTMLTextAreaElement;
+}
+
+describe('Price tag description block on the Specifications tab (AC-S4-10)', () => {
+  it('renders the stored template read-only, directly under Product description', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    const productDescriptionLabel = screen.getByText('Product description');
+    const priceTagLabel = screen.getByText('Price tag description');
+    expect(screen.getByText('Stored template text')).toBeInTheDocument();
+    // eslint-disable-next-line no-bitwise
+    expect(
+      productDescriptionLabel.compareDocumentPosition(priceTagLabel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('shows "(none)" when the product has no stored template yet', () => {
+    useProduct.mockReturnValue({ data: baseProduct({ price_tag_description: null }), isLoading: false });
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.getByText('(none)')).toBeInTheDocument();
+  });
+
+  it('Edit turns the box into a prefilled textarea', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+
+    expect(descriptionTextarea().value).toBe('Stored template text');
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+  });
+
+  it('Cancel discards the edit without saving', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.change(descriptionTextarea(), { target: { value: 'Changed but not saved' } });
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(screen.queryByLabelText('Price tag description')).not.toBeInTheDocument();
+    expect(screen.getByText('Stored template text')).toBeInTheDocument();
+    expect(updateMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('Escape discards the edit the same way Cancel does', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.change(descriptionTextarea(), { target: { value: 'Changed but not saved' } });
+    fireEvent.keyDown(descriptionTextarea(), { key: 'Escape' });
+
+    expect(screen.queryByLabelText('Price tag description')).not.toBeInTheDocument();
+    expect(screen.getByText('Stored template text')).toBeInTheDocument();
+    expect(updateMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('Save PATCHes price_tag_description through useUpdateProduct and shows the new text', async () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.change(descriptionTextarea(), { target: { value: '{{spec.material}} tap' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+    expect(updateMutateAsync).toHaveBeenCalledWith({
+      id: 'p-1',
+      data: { price_tag_description: '{{spec.material}} tap' },
+    });
+  });
+
+  it('the Edit action is hidden without master_data.products.edit', () => {
+    usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.view']) });
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(
+      screen.queryByRole('button', { name: /edit price tag description/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('Insert field from the Specifications tab (AC-S4-11)', () => {
+  it('Insert field opens the dialog and picking Material inserts {{spec.material}} at the caret', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.click(screen.getByRole('button', { name: /insert field/i }));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Material'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^done$/i }));
+
+    expect(descriptionTextarea().value).toContain('{{spec.material}}');
+  });
+
+  it('offers only Product and Specs - no Line, Set or part group (a description cannot address a line)', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.click(screen.getByRole('button', { name: /insert field/i }));
+
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Product')).toBeInTheDocument();
+    expect(dialog.getByText('Specs')).toBeInTheDocument();
+    expect(dialog.queryByText('Set')).not.toBeInTheDocument();
+    expect(dialog.queryByText('Line')).not.toBeInTheDocument();
+  });
+});
+
+describe('Live preview - "Prints as:" (AC-S4-12)', () => {
+  it("renders the template against THIS product's own spec values, in readable form, no backend call", () => {
+    mockSpecHook(baseDetail());
+    useProduct.mockReturnValue({
+      data: baseProduct({ price_tag_description: '{{spec.material}} tap' }),
+      isLoading: false,
+    });
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    expect(screen.getByText('Prints as:')).toBeInTheDocument();
+    expect(screen.getByText('Stainless Steel tap')).toBeInTheDocument();
+  });
+
+  it('updates live off the textarea while editing, before Save', () => {
+    mockSpecHook(baseDetail());
+    render(<ProductSpecificationsTab productId="p-1" />);
+
+    fireEvent.click(editButton());
+    fireEvent.change(descriptionTextarea(), { target: { value: '{{spec.material}} basin' } });
+
+    expect(screen.getByText('Stainless Steel basin')).toBeInTheDocument();
+    // Nothing saved yet.
+    expect(updateMutateAsync).not.toHaveBeenCalled();
+  });
+});
