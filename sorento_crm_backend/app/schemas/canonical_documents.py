@@ -92,7 +92,9 @@ class _CanonicalLine(BaseModel):
     uom: Optional[str] = Field(None, max_length=100)
     # AutoCount's Seq (D11). Position only, for telling apart ref-less rows
     # that share the same (product, warehouse, outstanding) key at cutover -
-    # never persisted, no column exists for it on either line table.
+    # and, since PLAN-so-lines-autocount-order.md, ALSO persisted verbatim as
+    # `sales_order_lines.line_no` (the Lines tab's own ordering address). A
+    # purchase-order line still has no column for it - popped there as before.
     line_number: Optional[int] = Field(None, ge=0)
 
     @model_validator(mode="after")

@@ -19,7 +19,7 @@ back, and deleted when the line it belongs to is confirmed.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Optional, Tuple
 
@@ -37,6 +37,7 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import plan_qty_of
 from app.services.scm.demand import is_undecided_demand
 from app.services.scm.front_planning_engine import qty_text
@@ -120,11 +121,12 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
     filter - an order that belongs to another company reads back as "no such order", the
     same as one that never existed.
 
-    Mirrors `FulfilmentBoardService._line_numbers`: a line number per core line, because the
-    core table has none. Derived per order by (required date nulls last, item code, line
-    id), the same deterministic rule adoption uses to number the mirror - so a key the board
-    handed out and a key resolved here name the same line. Where a mirror line exists for
-    EVERY line of the order and numbers them distinctly, its numbers win.
+    Mirrors `FulfilmentBoardService._line_numbers`: `project_line_numbering.number_lines`
+    (B1 review round) - AutoCount's own `line_no` wins once every contributing line of the
+    order carries one, distinctly (gaps and all); otherwise derived per order by (required
+    date nulls last, item code, line id). One rule, shared, so a key the board handed out
+    and a key resolved here name the same line. Where a mirror line exists for EVERY line
+    of the order and numbers them distinctly, its numbers win over both.
 
     The SET of lines numbered is the board's own `_demand_rows` set - `SalesOrder.status in
     (open, closed)`, `SalesOrder.demand_class == "project"`, `is_undecided_demand()` on the
@@ -182,18 +184,11 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
         )
         .all()
     )
-    ordered = sorted(
-        lines,
-        key=lambda pair: (
-            pair[0].required_date is None,
-            pair[0].required_date or date.min,
-            pair[1] or "",
-            str(pair[0].id),
-        ),
-    )
-    derived: Dict[str, int] = {
-        str(line.id): index for index, (line, _code) in enumerate(ordered, start=1)
-    }
+    entries = [
+        LineFacts(str(line.id), line.line_no, line.required_date, product_code or "")
+        for line, product_code in lines
+    ]
+    derived = number_lines(entries)
     numbers = [mirrored.get(line.id) for line, _code in lines]
     if all(number is not None for number in numbers) and len(set(numbers)) == len(numbers):
         derived = {str(line.id): int(mirrored[line.id]) for line, _code in lines}

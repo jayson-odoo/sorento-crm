@@ -62,7 +62,11 @@ _ORDER_INQUIRIES_SORT_PSO = ProjectSalesOrder.__table__.alias("order_inquiries_s
 #: Filter value -> the `source_system` values it selects. `manual` is everything NOT here,
 #: so a source added to `_source_label` and forgotten here would silently fall into Manual -
 #: which is the one label that must never be wrong, since it claims a person keyed the order.
+#: `autocount` (PLAN-so-lines-autocount-order.md, AC-S1-13/14) used to fall through to
+#: `manual` here - 150,286 AutoCount orders read Manual on the list and the Manual filter
+#: silently selected them, which is the defect this entry closes.
 _SOURCE_SYSTEMS = {
+    "autocount": ("autocount",),
     "inquiry": ("scm_order_inquiry",),
     "upload": ("scm_upload",),
     "history": ("scm_so_history",),
@@ -70,6 +74,10 @@ _SOURCE_SYSTEMS = {
 
 
 def _source_label(source_system: Optional[str]) -> str:
+    """One label, for the HEADER's own `source_system` and a LINE's own (R2): a line
+    carries no provenance of its own and reads `manual`, whatever its header says."""
+    if source_system == "autocount":
+        return "autocount"
     if source_system == "scm_order_inquiry":
         return "inquiry"
     if source_system == "scm_upload":
@@ -132,7 +140,12 @@ def _order_amount(lines: list[SalesOrderLine]) -> Optional[Decimal]:
 
 
 def _line_sort_key(ln: SalesOrderLine):
-    """OPEN lines first, then delivery date ascending (nulls last), then product code.
+    """AutoCount's own `line_no` first (numeric, nulls last) - the address the Lines tab
+    reads the order by (PLAN-so-lines-autocount-order.md). R1: open-first is dropped once
+    a line carries a number; AutoCount shows every line in `Seq` order whatever its
+    status. A line AutoCount never numbered (order inquiry, upload, absorbed history,
+    manual) sorts after every numbered one, and among themselves by today's rule: OPEN
+    first, then delivery date ascending (nulls last), then product code.
 
     Applied here rather than on the FE, so the list and the detail screen - both built from
     `serialize()` - and any other consumer of the payload (n8n via MCP, a future export) see
@@ -140,6 +153,8 @@ def _line_sort_key(ln: SalesOrderLine):
     works on top of this: it is the table's default order, not a lock on the rows.
     """
     return (
+        ln.line_no is None,
+        ln.line_no or 0,
         0 if ln.line_status == "open" else 1,
         ln.required_date is None,
         ln.required_date or date.min,
@@ -453,6 +468,13 @@ class SalesOrderService:
                 required_dates.append(ln.required_date)
             lines.append({
                 "id": ln.id,
+                # AutoCount's own line number - the address the Lines tab sorts and
+                # labels by. `None` for a line AutoCount never numbered.
+                "line_no": ln.line_no,
+                # This LINE's own provenance, never the header's (R2): a line with no
+                # source system of its own reads `manual` even under an AutoCount or
+                # uploaded header.
+                "source": _source_label(ln.source_system),
                 "sku": ln.product.product_code if ln.product else "",
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": qo,

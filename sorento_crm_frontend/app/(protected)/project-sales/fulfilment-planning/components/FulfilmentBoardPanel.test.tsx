@@ -529,6 +529,73 @@ describe('FulfilmentBoardPanel: the axes', () => {
   });
 });
 
+/**
+ * AC-S4-1 (panel), owner ruling S4 fix round #1076: the LIST view reads sales order then
+ * AutoCount line number, never the grid's product axis - at the PANEL, the level that
+ * actually wires `board.data.productRows` and `orderListRows`/`orderByProductRows` together
+ * (the unit-level coverage of the two functions themselves lives in
+ * `boardViewRowOrder.test.tsx`, which this does not replace).
+ *
+ * `productRows` is overridden AFTER `boardOf` builds it (that fixture always sorts the axis
+ * alphabetically) to a sequence - Z, A, Q - that disagrees with BOTH the alphabet and
+ * (so_number, line_no), so a panel that fed the list `orderByProductRows(contributions,
+ * productRows)` would print Z, A, Q (the axis order) while the correct behaviour prints by
+ * sales order then line number: SO-A's line 2 (item Q), SO-A's line 10 (item A), then SO-B's
+ * line 1 (item Z) - `Q, A, Z`. The two sequences share no adjacent pair, so this fails loudly
+ * under either regression: a panel that reverted to `orderByProductRows`, or one that
+ * inherited a plain alphabetical/insertion order instead.
+ */
+describe('FulfilmentBoardPanel: AC-S4-1 (panel) - the List view reads AutoCount order, not the grid axis', () => {
+  it('lists SO-A line 2, SO-A line 10, then SO-B line 1 - never the Z, A, Q product axis', async () => {
+    const board = boardOf([
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO-B',
+        line_no: 1,
+        item_code: 'Z',
+        required_date: '2026-09-04',
+      }),
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO-A',
+        line_no: 10,
+        item_code: 'A',
+        required_date: '2026-09-04',
+      }),
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO-A',
+        line_no: 2,
+        item_code: 'Q',
+        required_date: '2026-09-04',
+      }),
+    ]);
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      productRows: [
+        { item_code: 'Z', description: null },
+        { item_code: 'A', description: null },
+        { item_code: 'Q', description: null },
+      ],
+    });
+
+    renderPanel(['SO-A', 'SO-B']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    const table = await screen.findByRole('table');
+    // Select, Sales order, Agent, Customer, PRODUCT, ... - same column convention
+    // `boardViewRowOrder.test.tsx`'s own `PRODUCT_CELL` pins for this list.
+    const PRODUCT_CELL = 4;
+    const productSequence = within(table)
+      .getAllByRole('row')
+      .slice(1) // the header row
+      .map((row) => within(row).getAllByRole('cell')[PRODUCT_CELL]?.textContent ?? '');
+
+    expect(productSequence).toEqual(['Q', 'A', 'Z']);
+  });
+});
+
 describe('FulfilmentBoardPanel: the cells', () => {
   it('aggregates several orders into one cell and says how many', async () => {
     getPlanningBoard.mockResolvedValue(
@@ -2895,6 +2962,21 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
   }
 
   /**
+   * The list's OPEN expansion panel for one line, by the line's own item code rather than
+   * by its position among however many panels happen to be open (S4, #1076: the list order
+   * moved from product-first to sales-order-then-line-number, so an index into
+   * `findAllByRole` is no longer stable). The DataGrid renders an expanded row as the
+   * clicked row's `<tr>`'s own NEXT SIBLING (`DataGridTableBodyRowExpandded`), never nested
+   * inside it, so the panel is reached from the item code's row rather than containing it.
+   */
+  async function panelFor(itemCode: string): Promise<HTMLElement> {
+    const row = (await screen.findByText(itemCode)).closest('tr');
+    const panel = row?.nextElementSibling as HTMLElement | null;
+    if (!panel) throw new Error(`No expanded panel is open for ${itemCode}`);
+    return panel;
+  }
+
+  /**
    * B1 (code review round 3): "Undo all" used to loop `decide(key, null)`, each call reading
    * `draft` off the SAME stale closure - N batched calls each dropped only their own key and
    * the last write wins, so a second saved line was still reading Saved after Undo all said
@@ -2977,10 +3059,13 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
 
     // The coder's multi-open rework (8d7b06766): opening B never closes A any more, so
     // A's own rejected-and-reopened panel is still up - two "Save decision" buttons on
-    // screen, and B's is the second of them.
+    // screen. Found by B's OWN row rather than by index (S4, #1076): the list now sorts
+    // by sales order then AutoCount line number rather than by product, so which row -
+    // and therefore which "Save decision" button - comes first is no longer something
+    // this test may assume.
     fireEvent.click(await screen.findByText('WESERP20B'));
     fireEvent.click(
-      (await screen.findAllByRole('button', { name: 'Save decision' }))[1],
+      within(await panelFor('WESERP20B')).getByRole('button', { name: 'Save decision' }),
     );
     await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
 

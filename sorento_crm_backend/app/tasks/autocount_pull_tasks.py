@@ -194,7 +194,7 @@ def apply_autocount_pull(db_job_id: str) -> None:
 
 
 def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
-    client = FoundryxAutocountClient()
+    client = FoundryxAutocountClient(db)
     header, rows, warnings = fetch_verified_snapshot(
         client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
     )
@@ -232,7 +232,7 @@ def _apply_stock(db, job: ImportJob, snapshot_id: str, pull_job_id: Optional[str
     - only once the import has committed (AC-SC-4c); a failed import archives nothing.
     `pull_job_id` is where an archive failure's warning goes (see below) - the apply
     job's own metadata is not what the review page reads."""
-    client = FoundryxAutocountClient()
+    client = FoundryxAutocountClient(db)
     header, rows, warnings = fetch_verified_snapshot(
         client, snapshot_id=snapshot_id, company_code=_company_code(db, job.company_id)
     )
@@ -338,7 +338,7 @@ def _company_code(db, company_id) -> str:
 
 
 def _preview_products(db, job: ImportJob, pull: dict) -> dict:
-    client = FoundryxAutocountClient()
+    client = FoundryxAutocountClient(db)
     header, rows, warnings = fetch_verified_snapshot(
         client, snapshot_id=pull.get("snapshot_id"), company_code=pull.get("company_code")
     )
@@ -415,7 +415,7 @@ def _preview_stock(db, job: ImportJob, pull: dict) -> dict:
     applied / would-skip / negative-pair / quantity-change rows, store all eight
     counters, and set `confirm_blocked_reason` when the header itself says Confirm
     cannot run yet - the preview still finishes in `review` either way (AC-SP-1)."""
-    client = FoundryxAutocountClient()
+    client = FoundryxAutocountClient(db)
     header, rows, warnings = fetch_verified_snapshot(
         client, snapshot_id=pull.get("snapshot_id"), company_code=pull.get("company_code")
     )

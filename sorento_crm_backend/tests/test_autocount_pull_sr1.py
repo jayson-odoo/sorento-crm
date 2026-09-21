@@ -54,6 +54,7 @@ from app.main import app  # noqa: E402
 
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
+import tests.support.fake_foundryx as fake_foundryx
 from tests._pg_fixture import _BLANK, blank_schema_engine, blank_session, unique_code
 
 MARKER = "ZZTAP1"
@@ -120,18 +121,16 @@ class _FakeFoundryX:
         return httpx.Response(404, json={"code": "UNKNOWN_ROUTE"})
 
 
-def _patch_foundryx(monkeypatch, fake: _FakeFoundryX) -> None:
-    """Point Settings + the client's shared TRANSPORT at the fake.
+def _patch_foundryx(monkeypatch, fake: _FakeFoundryX, db) -> None:
+    """Seed the ``foundryx-esb`` row (SR6: the client reads the integrations row, not
+    settings) and point the client's shared TRANSPORT at the fake.
 
-    Every one of these three attributes is the CONTRACT the coder builds - none exists
-    today, so this raises (ValueError on the Settings assignment, ModuleNotFoundError on
-    the client import) until SR1 lands. That is the correct red for every test that calls
-    this helper.
+    ``db`` is whichever session the calling test already has open - the same one
+    `FoundryxAutocountClient(db)` will resolve the row through, so seeding it here
+    is what makes every call `_FakeFoundryX` (never a real socket) instead of a
+    NOT_CONFIGURED refusal.
     """
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "foundryx_base_url", BASE_URL, raising=False)
-    monkeypatch.setattr(settings, "foundryx_api_key", API_KEY, raising=False)
+    fake_foundryx.seed_foundryx_connection(db, base_url=BASE_URL, api_key=API_KEY)
 
     import app.services.foundryx_autocount_client as client_mod
 
@@ -350,9 +349,9 @@ def env(monkeypatch):
     from app.services.company_scope_resolver import apply_company_scope
 
     fake = _FakeFoundryX()
-    _patch_foundryx(monkeypatch, fake)
 
     with blank_session() as db:
+        _patch_foundryx(monkeypatch, fake, db)
         e = _Env(db, fake)
 
         def _override_get_db():
@@ -585,9 +584,10 @@ class TestPullStartErrorLadder:
         assert _job_count(env.db) == 0
 
     def test_pl_7_settings_unset_refuses_with_zero_outbound_calls(self, env, monkeypatch):
-        from app.config import settings
-
-        monkeypatch.setattr(settings, "foundryx_base_url", "", raising=False)
+        # SR6: no more `settings.foundryx_base_url` to blank - the row itself is what
+        # "not configured" means now, so blank its `base_url` instead.
+        fake_foundryx.seed_foundryx_connection(env.db, base_url="", api_key=API_KEY)
+        env.db.commit()
         user = env.user("master_data.products.autocount_pull")
         env.as_user(user)
 
@@ -906,7 +906,7 @@ class TestProductsPreview:
     def test_pp_1a_pages_through_every_snapshot_page(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         snapshot_id = f"{MARKER}-snap-pages"
         row1 = _canonical_row(f"{MARKER}-PG1")
@@ -930,7 +930,7 @@ class TestProductsPreview:
     def test_pp_1_task_fetches_the_snapshot_status_exactly_once(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = _fixture("products-rows-page1.json")["rows"]
         snapshot_id = f"{MARKER}-snap-statusonce"
         job_id = _prepare_preview(db, fake, rows=rows, snapshot_id=snapshot_id)
@@ -956,7 +956,7 @@ class TestProductsPreview:
         preview time is wrong. The job must refuse because of the fetched one."""
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = [_canonical_row(f"{MARKER}-GUARD")]
         job_id = _prepare_preview(
             db, fake, rows=rows, fetched_header=_header(rows, **overrides)
@@ -973,7 +973,7 @@ class TestProductsPreview:
     def test_pp_1e_matching_content_hash_records_no_warning(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = _fixture("products-rows-page1.json")["rows"]
         fixture_header = _fixture("products-header-ready.json")
         # The committed fixture pair is genuinely consistent under the A5 rule.
@@ -996,7 +996,7 @@ class TestProductsPreview:
     def test_pp_1e_content_hash_mismatch_warns_and_never_refuses(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = _fixture("products-rows-page1.json")["rows"]
         fixture_header = _fixture("products-header-ready.json")
         tampered = {**fixture_header, "contentHash": "0" * 64}
@@ -1023,7 +1023,7 @@ class TestProductsPreview:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         category = ProductCategory(category_code=unique_code(MARKER), category_name="cat")
         uom = UnitOfMeasure(uom_code=unique_code(MARKER)[:20], uom_name="unit")
@@ -1066,7 +1066,7 @@ class TestProductsPreview:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         # "updated": stored at a different list_price than the fixture row (SRTW1000, 81.0).
         cat1 = ProductCategory(category_code=unique_code(MARKER), category_name="cat1")
@@ -1146,7 +1146,7 @@ class TestProductsPreview:
 
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
 
         # ACC-SRT9013 (row 5): fixture list_price is "0.0" (clamped from -1.0). Seeded
         # non-zero, so this becomes the price_to_zero record.
@@ -1190,7 +1190,7 @@ class TestProductsPreview:
         from the default UoM on create, so an empty company takes all ten rows."""
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = _fixture("products-rows-page1.json")["rows"]
         mocha = next(r for r in rows if r["code"] == "MWT2800-N/H")
         assert "brand_code" not in mocha  # the fixture's own premise
@@ -1222,7 +1222,7 @@ class TestProductsPreview:
     def test_pp_6_success_leaves_the_job_finished_in_review_phase(self, task_db, monkeypatch):
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = _fixture("products-rows-page1.json")["rows"]
         job_id = _prepare_preview(db, fake, rows=rows)
 
@@ -1240,7 +1240,7 @@ class TestProductsPreview:
         """
         db, factory = task_db
         fake = _FakeFoundryX()
-        _patch_foundryx(monkeypatch, fake)
+        _patch_foundryx(monkeypatch, fake, db)
         rows = _fixture("products-rows-page1.json")["rows"]
         assert len(rows) == 10
         job_id = _prepare_preview(db, fake, rows=rows)
