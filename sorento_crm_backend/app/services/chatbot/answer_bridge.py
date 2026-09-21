@@ -943,7 +943,13 @@ def _miss_question(
         and len(roster_options) >= _MIN_ROSTER_OPTIONS
         and combined_member_rows
     ):
-        offset = len(roster_options)
+        # P7 (hand pass 12 Phase 3, security L1): a bare COUNT of roster_options
+        # under-counts once `_stamped_roster_options` has SKIPPED a row (a non-dict
+        # row `_roster_option` refuses outright) - a surviving row's own `idx` can
+        # still be the pool's highest position even though fewer options survived to
+        # be counted. The member half must start after the roster's own HIGHEST
+        # position, never after a bare count of what is left.
+        offset = max((option.get("position") for option in roster_options), default=0)
         member_options = [
             option
             for option in (
