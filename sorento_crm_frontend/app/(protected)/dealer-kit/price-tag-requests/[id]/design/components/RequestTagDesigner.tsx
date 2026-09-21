@@ -1709,7 +1709,7 @@ export function RequestTagDesigner({
             of view). The rail now lives here, a sibling of both modes'
             content, so it is never part of what remounts - and Arrange,
             which had no rail of its own before, gets one for free. */}
-        <div className="flex h-full w-64 shrink-0 flex-col overflow-hidden">
+        <div className="hidden h-full w-64 shrink-0 flex-col overflow-hidden md:flex">
           {rail}
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">

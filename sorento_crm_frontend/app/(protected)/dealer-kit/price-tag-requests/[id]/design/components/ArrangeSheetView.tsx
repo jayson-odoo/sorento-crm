@@ -192,7 +192,7 @@ export function ArrangeSheetView({
                           key={tag.id}
                           tag={tag}
                           scale={scale}
-                          isSelected={selectedTagId === tag.id}
+                          isSelected={selectedTagId === tag.request_tag_id}
                           resolvedData={resolved.get(tag.request_tag_id) ?? null}
                           assetUrls={assetUrls}
                           onSelect={onSelectTag}
@@ -281,9 +281,13 @@ function TagOnCanvas({
   const handleClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
       e.cancelBubble = true;
-      onSelect(tag.id);
+      // AC-S10-3: selection is keyed on the REQUEST tag, not this placed
+      // copy's own `-c0`/`-c1` id - the rail and the pin dialog both key off
+      // the request tag id, and a split line's second copy must select the
+      // same row the rail highlights.
+      onSelect(tag.request_tag_id);
     },
-    [onSelect, tag.id],
+    [onSelect, tag.request_tag_id],
   );
 
   const sortedLayers = useMemo(
