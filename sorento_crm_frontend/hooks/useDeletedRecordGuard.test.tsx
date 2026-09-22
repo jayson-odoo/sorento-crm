@@ -16,7 +16,11 @@ const toastPlain = vi.fn();
 vi.mock('@/lib/toast', () => ({
   toast: Object.assign(
     (...args: unknown[]) => toastPlain(...args),
-    { success: vi.fn(), error: vi.fn() },
+    // `dismiss` is here even though this file never arms a real timer: the
+    // pending-entity store's follow-through calls `toast.dismiss` on
+    // whatever mock is in scope, and a mock missing the key throws if that
+    // ever changes.
+    { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() },
   ),
 }));
 
