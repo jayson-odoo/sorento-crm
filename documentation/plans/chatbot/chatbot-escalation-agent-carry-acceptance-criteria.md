@@ -74,9 +74,13 @@ All ACs are backend, pytest, `tests/chatbot/`. "Wire body" = the dict
   `escalate_offered` flag carries no agent at all, even when its payload happens to hold
   one: `with_routing_agent_default` falls straight to `DEFAULT_SUGGESTED_AGENT`, matching
   `lane_parse_output`'s own team chain, which also does not read that pending (SHOULD-1).
-- **AC-1797** The SAME roster pending WITH `escalate_offered: True` DOES carry its agent
-  (the gate's other side - `pending.kind in OFFER_KINDS or payload.get("escalate_offered")
-  is True`).
+- **AC-1797** The SAME roster pending WITH `escalate_offered: True` DOES carry its agent,
+  given an ACCEPTING verdict (the gate's other side - `pending.kind in OFFER_KINDS or
+  payload.get("escalate_offered") is True`). Reworded in review round 2 (see AC-1802):
+  this AC's own point - `escalate_offered` matters, where AC-1796's otherwise-identical
+  roster without the flag never carries - is unchanged, but its test now also grants an
+  accepting verdict, since AC-1802 pins the accept axis on its own and an AC-1797 verdict
+  with neither would be red for a DIFFERENT reason than the one this AC is about.
 - **AC-1798** A numbered pick over a combined roster+CS-member offer that lands on a
   MEMBER option (no `payload["agent"]`, no `payload["hold"]`) carries the pending's own
   top-level agent, not `None` (SHOULD-3); a pick that lands on the explicit hold option
@@ -87,7 +91,34 @@ All ACs are backend, pytest, `tests/chatbot/`. "Wire body" = the dict
   roster re-arm) each stamp the minting turn's `routing.suggested_agent` the same way the
   two already-fixed sites do. At minimum: the company clarify's answering "1" turn carries
   the right `agent_code` on the wire body end to end; every other site gets a pure
-  assertion that the minted pending's payload carries the agent.
+  assertion that the minted pending's payload carries the agent. The roster re-arm's OWN
+  two tests are corrected in review round 2 (AC-1801 below supersedes the "falls to ctx
+  when the roster carries no agent" framing, which was pinning the bug AC-1801 fixes).
+
+## Review round 2
+
+- **AC-1801** (SHOULD-A, BLOCKING) The roster re-arm's `team` and `agent` come from the
+  SAME source, not two independent ones: a carried roster with a TEAM but no agent
+  (`answer_bridge.py`'s D4 narrower roster, `turn/apply.py`'s narrow ask both produce
+  this shape), re-armed under a LATER, different-domain miss, carries `agent: None` -
+  never that later turn's own agent paired with the earlier, stale team. A carried
+  roster with NO team of its own takes BOTH halves from the turn doing the re-arming.
+  A carried roster that already has both keeps its own, over either.
+- **AC-1802** (SHOULD-1 residual) The acceptable-offer gate is "ACCEPTABLE", not
+  "ACCEPTED": an `escalate_offered` roster (not an `OFFER_KINDS` pending) only carries
+  its agent when THIS turn actually accepts - `is_affirmative`, `escalation.
+  is_escalation_confirmation`, or a numbered pick landing on one of the roster's own
+  options (the same signal `decide()` itself reads at `turn/decide.py:571-573`). A
+  non-accepting verdict over the same still-open roster falls to `DEFAULT_SUGGESTED_
+  AGENT`. An `OFFER_KINDS` pending (`team_pick`/`company_pick`/`member_offer`) is
+  unaffected - its team is read unconditionally at the same `lane_parse_output` line,
+  so its agent stays unconditional too.
+- **AC-1803** The two `team_pick` mint sites round 1 missed: `answer_bridge.py::
+  apply_silent_company_offer`'s pending stamps THIS turn's agent (its team is already
+  this turn's own `routing.suggested_team`, read off `raw_team`); `answer_bridge.py::
+  _crossdomain_offer_pending`'s pending carries NO agent at all, deliberately - its team
+  comes off the cross-domain rung's own render block, not off this turn's routing (the
+  function takes no `parser` argument to read one from).
 
 ## Regression
 

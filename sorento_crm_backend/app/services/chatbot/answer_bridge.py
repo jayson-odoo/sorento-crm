@@ -278,6 +278,11 @@ def _crossdomain_offer_pending(
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return None
     team = block.get("team")
+    # SRTSC07 review round 2, item 3: deliberately UNSTAMPED. `team` above comes off
+    # the cross-domain RUNG's own render block, not off this turn's `routing` at
+    # all (this function takes no `parser`/`routing` argument to read one from) -
+    # there is no "this turn's agent" to stamp here, so the carry falls through to
+    # the default chain exactly as it did before this fix, same as always.
     return pending.ask(
         "team_pick",
         [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
@@ -406,6 +411,12 @@ def apply_silent_company_offer(
             team=raw_team,
             asked_at_turn=asked_at_turn,
             expects="yes_no",
+            # SRTSC07 review round 2, item 3: `raw_team` is already THIS turn's own
+            # `routing.suggested_team`, so the agent half rides beside it on the
+            # pending's top-level payload, the same as `_miss_question`'s own
+            # bare-"Yes"/company-clarify arms - a bare "yes" over this offer answers
+            # it without a position.
+            payload={"agent": (routing or {}).get("suggested_agent")},
         )
         from dataclasses import replace
 

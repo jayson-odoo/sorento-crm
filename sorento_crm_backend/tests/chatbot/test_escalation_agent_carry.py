@@ -513,7 +513,13 @@ class TestGateOnAcceptableOffers:
         assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
 
     def test_ac_1797_the_same_roster_with_escalate_offered_does_carry(self) -> None:
-        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
+        # Review round 2, SHOULD-1 residual: `escalate_offered` alone is no longer
+        # enough - the turn must also ACCEPT (`TestAC1802EscalateOfferedRosterCarries
+        # OnlyOnAccept` pins that axis on its own). This AC's own point survives
+        # unmodified once accept is granted: the gate's OTHER side, an
+        # `escalate_offered` roster (not `OFFER_KINDS`) DOES carry, where AC-1796's
+        # otherwise-identical roster without the flag does not.
+        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}, "is_affirmative": True}
         pending = pending_ask(
             "product_pick",
             [{"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}}],
@@ -1084,10 +1090,16 @@ class TestAC1799SixMoreMintSitesStampTheAgent:
 
         assert question.payload.get("agent") == "incoming_stock_enquiries", question.payload
 
-    def test_compose_roster_re_arm_falls_to_ctx_when_the_roster_carries_no_agent(self) -> None:
+    def test_compose_roster_re_arm_keeps_no_agent_when_the_roster_already_has_a_team(self) -> None:
+        # Corrected in review round 2, SHOULD-A (this test's own original name and
+        # assertion, "falls to ctx when the roster carries no agent", was the BUG:
+        # this helper's `carried` always carries its OWN team ("purchasing"), so
+        # mixing THIS turn's ctx agent onto it is exactly the stale-team/fresh-agent
+        # mismatch the fix closes. See `TestAC1801RosterReArmKeepsBothHalvesFrom
+        # OneSource` for the fuller two-axis picture (team present vs absent).
         question = self._roster_re_arm(carried_agent=None, ctx_agent="incoming_stock_enquiries")
 
-        assert question.payload.get("agent") == "incoming_stock_enquiries", question.payload
+        assert question.payload.get("agent") is None, question.payload
 
 
 # --------------------------------------------------------------------------- #
@@ -1114,3 +1126,232 @@ class TestAC1800TeamPickQuestionDirectUnitTest:
         assert pending is not None
         assert pending.expects == "yes_no", pending
         assert pending.payload.get("agent") == "x", pending.payload
+
+
+# --------------------------------------------------------------------------- #
+# AC-1801 (review round 2, SHOULD-A, BLOCKING): the roster re-arm's `team` and
+# `agent` come from the SAME source, not independently. A carried roster CAN hold a
+# team with no agent at all (`answer_bridge.py`'s D4 narrower roster, `turn/
+# apply.py`'s narrow ask), and mixing a STALE carried team with THIS turn's fresh
+# agent produced a pair no `agent_teams` link exists for (measured: an incoming
+# miss with no agent, re-armed under a later order-domain miss, paired
+# `order_enquiries` with the OLD `purchasing` team).
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1801RosterReArmKeepsBothHalvesFromOneSource:
+    def _re_arm(
+        self,
+        *,
+        carried_team: str | None,
+        carried_agent: str | None,
+        ctx_agent: str | None,
+        miss_domain: str = "incoming",
+        miss_team: str = "purchasing",
+    ):
+        from app.services.chatbot.turn.compose import compose as _compose
+        from app.services.chatbot.turn.policy import Policy
+        from app.services.chatbot.turn.state import Focus, Profile, State
+
+        from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
+
+        row = _domain_row(miss_domain, narrowing={"product": "narrow_to_code"})
+        row["escalation_team_code"] = miss_team
+        policy = Policy.from_rows(domains=[row], kinds=[], tier_order=TIER_ORDER_FIXTURE)
+
+        carried = pending_ask(
+            "product_pick",
+            [{"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}}],
+            team=carried_team,
+            payload={"agent": carried_agent, "escalate_offered": True},
+        )
+        state = State(focus=Focus(), pending=carried, profile=Profile(), turn_no=2)
+        envelopes = [
+            {
+                "domain": miss_domain,
+                "denied": False,
+                "entities": ["A"],
+                "figures": [],
+                "files": [],
+                "miss": ["A"],
+            }
+        ]
+
+        answer = _compose(envelopes, state, policy, SimpleNamespace(suggested_agent=ctx_agent))
+
+        assert answer.question is not None and answer.question.kind == "product_pick", answer.question
+        return answer.question
+
+    def test_ac_1801_a_carried_team_with_no_agent_re_armed_under_a_different_domain_carries_no_agent(
+        self,
+    ) -> None:
+        # The measured bug: an incoming miss left `team=purchasing` with no agent;
+        # a LATER order-domain miss over the SAME still-open roster used to pair
+        # THIS turn's own agent (`order_enquiries`) with the STALE carried team
+        # (`purchasing`) - a pool `/external/next-assignee` has no link for. The
+        # team stays exactly what it was (round 1's own rule, unchanged); the
+        # agent now stays with it, not with this turn.
+        question = self._re_arm(
+            carried_team="purchasing",
+            carried_agent=None,
+            ctx_agent="order_enquiries",
+            miss_domain="order",
+            miss_team="order_team",
+        )
+
+        assert question.team == "purchasing", question.team
+        assert question.payload.get("agent") is None, question.payload
+
+    def test_ac_1801_a_carried_roster_with_no_team_takes_both_halves_from_this_turn(self) -> None:
+        question = self._re_arm(
+            carried_team=None,
+            carried_agent=None,
+            ctx_agent="incoming_stock_enquiries",
+            miss_domain="incoming",
+            miss_team="purchasing",
+        )
+
+        assert question.team == "purchasing", question.team
+        assert question.payload.get("agent") == "incoming_stock_enquiries", question.payload
+
+    def test_ac_1801_a_carried_roster_that_already_has_its_own_agent_keeps_it_over_this_turns(
+        self,
+    ) -> None:
+        # Round 1's own case, pinned again alongside the new one: a roster that
+        # already carries BOTH halves keeps its own, regardless of what this
+        # turn's miss would otherwise have supplied.
+        question = self._re_arm(
+            carried_team="purchasing",
+            carried_agent="incoming_stock_enquiries",
+            ctx_agent="general_enquiries",
+            miss_domain="incoming",
+            miss_team="purchasing",
+        )
+
+        assert question.team == "purchasing", question.team
+        assert question.payload.get("agent") == "incoming_stock_enquiries", question.payload
+
+
+# --------------------------------------------------------------------------- #
+# AC-1802 (review round 2, SHOULD-1 residual): the acceptable-offer gate is
+# "ACCEPTABLE", not "ACCEPTED" - an `escalate_offered` roster (not an `OFFER_KINDS`
+# pending) only carries its agent when THIS turn actually accepts it, the same
+# signal `decide()` itself reads (`turn/decide.py:571-573`), or a numbered pick
+# that lands on one of the roster's own options.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1802EscalateOfferedRosterCarriesOnlyOnAccept:
+    def _plant(self):
+        return pending_ask(
+            "product_pick",
+            [{"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}}],
+            team="purchasing",
+            payload={"escalate_offered": True, "agent": "incoming_stock_enquiries"},
+        )
+
+    def test_ac_1802_a_non_accepting_verdict_over_an_escalate_offered_roster_falls_to_the_default(
+        self,
+    ) -> None:
+        # A message that names something else entirely while the roster (with its
+        # attached escalate sentence) is still open - no yes, no escalation
+        # confirmation, no number over the roster.
+        verdict_in = {
+            "routing": {"suggested_team": None, "suggested_agent": None},
+            "is_affirmative": False,
+            "escalation": {"is_escalation_confirmation": False},
+        }
+        pending = self._plant()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
+
+    def test_ac_1802_an_affirmative_verdict_over_the_same_roster_carries_the_agent(self) -> None:
+        verdict_in = {
+            "routing": {"suggested_team": None, "suggested_agent": None},
+            "is_affirmative": True,
+        }
+        pending = self._plant()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
+
+    def test_ac_1802_an_escalation_confirmation_flag_also_carries(self) -> None:
+        verdict_in = {
+            "routing": {"suggested_team": None, "suggested_agent": None},
+            "escalation": {"is_escalation_confirmation": True},
+        }
+        pending = self._plant()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
+
+    def test_ac_1802_a_numbered_pick_landing_on_the_rosters_own_option_also_carries(self) -> None:
+        verdict_in = _position_verdict(1)
+        pending = self._plant()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
+
+
+# --------------------------------------------------------------------------- #
+# AC-1803 (review round 2, item 3): the two `team_pick` mint sites round 1 missed.
+# The silent-company escalate offer's team is THIS turn's own `routing.
+# suggested_team`, so the agent rides beside it; the cross-domain rung's offer
+# names a team off the RUNG's own render block, never this turn's routing at all,
+# and is deliberately left unstamped.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1803TheTwoMissedTeamPickMintSites:
+    def test_the_silent_company_offer_stamps_this_turns_agent(self) -> None:
+        from app.services.chatbot.turn.compose import Answer as _Answer
+
+        bridge = pytest.importorskip("app.services.chatbot.answer_bridge")
+
+        envelope = {
+            "figures": [{"fields": [{"label": "Product", "value": "SRTSC07"}]}],
+            "denied": False,
+            "raw_fragment": {
+                "fetch": {
+                    "lookup_companies": [
+                        {"id": "zzt-co-1", "name": "Sorento"},
+                        {"id": "zzt-co-2", "name": "Mocha"},
+                    ],
+                    "answers": [
+                        {
+                            "fields": [
+                                {"key": "company_name", "label": "Company", "value": "Sorento"}
+                            ]
+                        }
+                    ],
+                }
+            },
+        }
+        parser = {"routing": {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}}
+        answer = _Answer(text="Found it in Sorento.", question=None)
+
+        result = bridge.apply_silent_company_offer(
+            answer, envelope=envelope, parser=parser, gate={}, asked_at_turn=1, turn_id="zzt-turn-1"
+        )
+
+        assert result.question is not None, result
+        assert result.question.kind == "team_pick", result.question
+        assert result.question.team == "purchasing", result.question
+        assert result.question.payload.get("agent") == "incoming_stock_enquiries", result.question.payload
+
+    def test_the_crossdomain_offer_pending_carries_no_agent(self) -> None:
+        bridge = pytest.importorskip("app.services.chatbot.answer_bridge")
+
+        result = {"render": {"_xdBlock": {"any": True, "block": "some rendered text", "team": "purchasing"}}}
+
+        question = bridge._crossdomain_offer_pending(result, asked_at_turn=1)
+
+        assert question is not None, question
+        assert question.kind == "team_pick", question
+        assert question.team == "purchasing", question
+        assert question.payload.get("agent") is None, question.payload

@@ -399,11 +399,27 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     payload={
                         **carried.payload,
                         "escalate_offered": True,
-                        # SRTSC07 review round 1, SHOULD-2: mirrors the team
-                        # expression right above - the roster's own carried agent
-                        # first (it was already minted with one, or it was not),
-                        # else THIS turn's own `routing.suggested_agent`.
-                        "agent": carried.payload.get("agent") or getattr(ctx, "suggested_agent", None),
+                        # SRTSC07 review round 2, SHOULD-A: both halves come from
+                        # the SAME source as the `team` expression right above, not
+                        # independently. A roster CAN carry a team with no agent at
+                        # all (`answer_bridge.py`'s D4 narrower roster,
+                        # `turn/apply.py`'s narrow ask) - `carried.payload.get(
+                        # "agent") or ctx.suggested_agent` mixed a STALE carried
+                        # team with THIS turn's fresh agent whenever that happened,
+                        # a pair `/external/next-assignee` has no link for
+                        # (measured: an incoming miss with no agent, re-armed under
+                        # a later order-domain miss, paired `order_enquiries` with
+                        # the old `purchasing` team). When the team is the roster's
+                        # OWN (`carried.team` truthy), the agent is the roster's own
+                        # too, carried or not - never THIS turn's, which named no
+                        # opinion about the roster's team at all. Only when the team
+                        # itself falls to `teams[0]` (this turn's own) does the
+                        # agent follow it.
+                        "agent": (
+                            carried.payload.get("agent")
+                            if carried.team
+                            else getattr(ctx, "suggested_agent", None)
+                        ),
                     },
                 )
             else:

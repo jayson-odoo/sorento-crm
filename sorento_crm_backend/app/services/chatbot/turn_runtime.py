@@ -456,31 +456,65 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
     own - picking one IS still an escalation acceptance (`turn/apply.py:546`) - so
     it falls through to the pending's own top-level agent instead of returning
     `None` outright.
+
+    SRTSC07 review round 2, SHOULD-1 residual: the round 1 gate was "ACCEPTABLE",
+    not "ACCEPTED" - an `escalate_offered` roster (not in `OFFER_KINDS`) still open
+    while THIS turn asks about something else entirely (no yes, no escalation
+    confirmation, no number landing on the roster) supplied its carried agent
+    unconditionally, while the TEAM half stays at `DEFAULT_SUGGESTED_TEAM` for that
+    same roster - `lane_parse_output`'s own chain only reads `pending.team` for an
+    `OFFER_KINDS` pending (`turn_runtime.py:647`), never a roster, accepted or not.
+    An extra accept check now gates ONLY that arm, using the same signal `decide()`
+    itself reads at `turn/decide.py:571-573` (a bare "yes"/escalation-confirmation
+    flag) plus a numbered pick that actually lands on one of the roster's own
+    options. A proper `OFFER_KINDS` pending (`team_pick`/`company_pick`/
+    `member_offer`) keeps round 1's behaviour unconditionally - its team is ALSO
+    read unconditionally at that same `lane_parse_output` line, so the two halves
+    stay in step either way.
     """
     if pending is None:
         return None
     payload = pending.payload if isinstance(pending.payload, Mapping) else {}
-    if pending.kind not in OFFER_KINDS and payload.get("escalate_offered") is not True:
+    acceptable_offer = pending.kind in OFFER_KINDS
+    escalate_offered_roster = not acceptable_offer and payload.get("escalate_offered") is True
+    if not acceptable_offer and not escalate_offered_roster:
         return None
     try:
         picked = picked_positions(pending, dict(verdict))
     except Exception:  # noqa: BLE001 - a malformed verdict must not break the carry
         picked = None
+    picked_position = None
     if picked:
         positions, _via = picked
         if len(positions) == 1:
-            for opt in pending.options:
-                if not isinstance(opt, Mapping) or opt.get("position") != positions[0]:
-                    continue
-                opt_payload = opt.get("payload")
-                opt_payload = opt_payload if isinstance(opt_payload, Mapping) else {}
-                agent = opt_payload.get("agent")
-                if agent or opt_payload.get("hold") is True:
-                    return agent or None
-                # A matched option that names neither an agent nor the hold flag (a
-                # MEMBER option) falls through to the pending's own top-level agent
-                # below, rather than returning `None` here.
-                break
+            picked_position = positions[0]
+    if escalate_offered_roster:
+        escalation = verdict.get("escalation")
+        escalation = escalation if isinstance(escalation, Mapping) else {}
+        landed_on_an_option = picked_position is not None and any(
+            isinstance(opt, Mapping) and opt.get("position") == picked_position
+            for opt in pending.options
+        )
+        accepted = (
+            verdict.get("is_affirmative") is True
+            or escalation.get("is_escalation_confirmation") is True
+            or landed_on_an_option
+        )
+        if not accepted:
+            return None
+    if picked_position is not None:
+        for opt in pending.options:
+            if not isinstance(opt, Mapping) or opt.get("position") != picked_position:
+                continue
+            opt_payload = opt.get("payload")
+            opt_payload = opt_payload if isinstance(opt_payload, Mapping) else {}
+            agent = opt_payload.get("agent")
+            if agent or opt_payload.get("hold") is True:
+                return agent or None
+            # A matched option that names neither an agent nor the hold flag (a
+            # MEMBER option) falls through to the pending's own top-level agent
+            # below, rather than returning `None` here.
+            break
     agent = payload.get("agent")
     return agent or None
 
