@@ -294,7 +294,7 @@ def get_planning_board(
             "and reloaded. At most 50 (PLAN 13.2)."
         ),
     ),
-    granularity: Literal["day", "week", "month"] = Query("week"),
+    granularity: Literal["day", "date", "week", "month"] = Query("week"),
     day_window: Optional[date] = Query(
         None,
         description=(

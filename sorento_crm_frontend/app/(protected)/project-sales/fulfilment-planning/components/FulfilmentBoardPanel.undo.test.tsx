@@ -619,9 +619,16 @@ describe('SF-5: "Undo all" returns a batch-named line to "Change proposed" too',
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    await screen.findByTitle('SO381895 (Line 1)');
+    // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13/AC-B6-14) split the old
+    // "SO381895 (Line 1)" cell title: the Sales order cell now titles the number alone,
+    // which every row of this one order shares. The row's own select checkbox still names
+    // the line ("Select SO381895 line 1", `buildSelectColumn`'s `rowLabel`), so it is what
+    // tells two rows of one order apart here.
     const rowOf = (lineNo: number) =>
-      screen.getByTitle(`SO381895 (Line ${lineNo})`).closest('tr') as HTMLElement;
+      screen
+        .getByRole('checkbox', { name: `Select SO381895 line ${lineNo}` })
+        .closest('tr') as HTMLElement;
+    await screen.findByRole('checkbox', { name: 'Select SO381895 line 1' });
 
     // BOTH lines are named by the open batch, so both open pre-marked.
     await waitFor(() =>

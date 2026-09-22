@@ -202,6 +202,14 @@ EXPORT_HEADINGS = (
     # APPENDED, never inserted: their own filters and habits are keyed on the columns
     # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
     "ACKNOWLEDGED",
+    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
+    # row-level Taken/Remaining the grid has shown since S3, never the retired
+    # LINE-scoped `taken_from_po`/`remaining_open` pair. APPENDED for the same reason
+    # ACKNOWLEDGED was (review round, 22 Sep): they first landed BETWEEN Location and
+    # Acknowledged, which pushed a column purchasing's own filters already point at one
+    # place to the right.
+    "TAKEN",
+    "REMAINING",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -683,6 +691,17 @@ _COLUMNS = (
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the "SO line" cell resolves
+    # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`, so the only
+    # NEW column the deep link needs is the core LINE's own id - the sales-order half is
+    # `core_sales_order_id` above, which the cell already reads. A second label for that
+    # same column (review round, 22 Sep) put one fact on the wire under two names. Null
+    # when the mirror has no core line.
+    SalesOrderLine.id.label("core_line_id"),
+    # Fix round (22 Sep): AutoCount's own line number, for the S/O no cell's `SO402757 ·
+    # L5` label (`orderInquirySoLineLabel`) - the SAME `SalesOrderLine` join `core_line_id`
+    # above already reads, so this adds no join of its own.
+    SalesOrderLine.line_no.label("line_no"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.id.label("po_id"),
@@ -738,6 +757,30 @@ def _dec(value: Any) -> Decimal:
 def _qty_str(value: Decimal) -> str:
     """`600`, not `600.0000`. ``normalize()`` alone turns 100 into `1E+2`."""
     return format(_dec(value).normalize(), "f")
+
+
+#: Fix round (22 Sep, AC-D15 parity): the export's own Taken/Remaining, read off the SAME
+#: serialized row dict the grid's own `linked_qty`/`qty`/`bundled_qty` come from - so the
+#: file and the screen can never print two different numbers for one row. Mirrors the FE's
+#: `inquiryRowTaken`/`inquiryRowRemaining` (`orderInquiryWorklist.ts`) exactly, including
+#: the buy-verb gate (`_SUGGESTION_LINKABLE_VERBS`, the same set the FE's
+#: `TAKEN_REMAINING_VERBS` names): `-` on a notice row (it never carries a link of its
+#: own), `0` on a row or line already cancelled.
+def _export_taken(row: Dict[str, Any]) -> str:
+    if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
+        return "-"
+    return _qty_str(_dec(row.get("linked_qty")))
+
+
+def _export_remaining(row: Dict[str, Any]) -> str:
+    if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
+        return "-"
+    if row.get("state") == "cancelled" or row.get("line_cancelled"):
+        return "0"
+    remaining = (
+        _dec(row.get("qty")) - _dec(row.get("linked_qty")) - _dec(row.get("bundled_qty"))
+    )
+    return _qty_str(max(remaining, _ZERO))
 
 
 def ack_label(row: Dict[str, Any]) -> str:
@@ -2079,6 +2122,14 @@ class OrderInquiryWorklistService:
             "project_id": row.project_id,
             "project_sales_order_id": row.project_sales_order_id,
             "core_sales_order_id": row.core_sales_order_id,
+            # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id,
+            # which the "SO line" cell puts on
+            # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`
+            # beside `core_sales_order_id` above - null when the mirror has no core line.
+            "core_line_id": row.core_line_id,
+            # Fix round (22 Sep): AutoCount's own line number, beside the id above - the
+            # S/O line cell's own `SO402757 · L5` label reads this.
+            "line_no": row.line_no,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,
@@ -2961,7 +3012,14 @@ class OrderInquiryWorklistService:
             .all()
         )
         bundle_map = self._bundle_map_for_rows(rows)
-        return [self._serialize(row, bundle_map=bundle_map) for row in rows]
+        # Fix round (22 Sep, AC-D15 parity): the SAME per-row links the paged list reads
+        # (`list_rows` above) - without this, `_serialize`'s own `linked_qty` sums an
+        # empty `links` dict for every row, and the export's new Taken/Remaining columns
+        # would print "0"/the bare qty regardless of what is actually linked.
+        links = ProjectOrderInquiryService(self.db).links_for_rows([row.id for row in rows])
+        return [
+            self._serialize(row, bundle_map=bundle_map, links=links) for row in rows
+        ]
 
     def _write_sheet(
         self, workbook, title: str, rows: Sequence[Dict[str, Any]]
@@ -3005,5 +3063,7 @@ class OrderInquiryWorklistService:
                         row.get("po_number") or "",
                         row.get("location") or "",
                         ack_label(row),
+                        _export_taken(row),
+                        _export_remaining(row),
                     ]
                 )

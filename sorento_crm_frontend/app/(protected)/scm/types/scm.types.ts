@@ -432,6 +432,15 @@ export interface SalesOrderLineInquiry {
    *  `cancelled`), not the header's: "has purchasing linked this line" is the question
    *  the column answers. `placed` reads "Linked". */
   state: string;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2/AC-B6-8): the order inquiry
+   * HEADER's own id and this LINE's OI row id, addressing the "Order inquiry" cell's own
+   * link (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`). Optional because a
+   * row raised before inquiries were numbered carries neither - absent means the cell
+   * stays plain text.
+   */
+  inquiry_id?: string | null;
+  row_id?: string | null;
 }
 
 export interface SalesOrder {

@@ -645,6 +645,11 @@ class SalesOrderService:
                 ProjectSalesOrderLine.core_sales_order_line_id,
                 OrderInquiry.inquiry_no,
                 OrderInquiryRow.state,
+                # AC-B6-8 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids
+                # the Order inquiry cell resolves to
+                # `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`.
+                OrderInquiry.id,
+                OrderInquiryRow.id,
             )
             .select_from(OrderInquiryRow)
             .join(
@@ -657,8 +662,13 @@ class SalesOrderService:
             .all()
         )
         return {
-            str(core_id): {"inquiry_no": inquiry_no, "state": state}
-            for core_id, inquiry_no, state in rows
+            str(core_id): {
+                "inquiry_no": inquiry_no,
+                "state": state,
+                "inquiry_id": inquiry_id,
+                "row_id": row_id,
+            }
+            for core_id, inquiry_no, state, inquiry_id, row_id in rows
         }
 
     def _line_planning_changes(self, so: SalesOrder) -> dict[str, dict]:

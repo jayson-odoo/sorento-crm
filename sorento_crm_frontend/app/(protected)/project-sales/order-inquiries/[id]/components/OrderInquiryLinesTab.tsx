@@ -17,6 +17,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
@@ -71,6 +72,16 @@ export function OrderInquiryLinesTab({
     enableColumnResizing: true,
   });
 
+  // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-4/10/11/12): a link from the SO detail's
+  // own "Order inquiry" cell lands on this exact row (`?row=<id>`).
+  const deepLink = useTableDeepLinkHighlight(table, {
+    paramName: 'row',
+    rowId: (row: OrderInquiryWorklistRow) => row.id,
+    currentSearch: search,
+    clearSearch: () => setSearch(''),
+    enabled: !isLoading,
+  });
+
   return (
     <DataGrid
       table={table}
@@ -81,6 +92,8 @@ export function OrderInquiryLinesTab({
         lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
       }
       listingKey={LISTING_KEY}
+      rowAttributes={deepLink.rowAttributes}
+      rowClassName={deepLink.rowClassName}
     >
       <Card>
         <CardHeader className="block">

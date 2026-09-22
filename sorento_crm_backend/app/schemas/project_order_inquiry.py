@@ -147,6 +147,15 @@ class OrderInquiryRowOut(BaseModel):
     order_inquiry_id: str
     so_line_id: Optional[str] = None
     project_sales_order_id: Optional[str] = None
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids the "SO line"
+    # column resolves to `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>`
+    # - `sales_order_id` is the CORE `sales_orders.id`, `core_line_id` the mirror's own
+    # `core_sales_order_line_id`. Both null when the mirror has no core line yet.
+    # `response_model` drops a field it has not been told about (same lesson as
+    # `ack_state` above), so both are declared here even though `serialize_rows` already
+    # reads them.
+    sales_order_id: Optional[str] = None
+    core_line_id: Optional[str] = None
     sales_order_ref: Optional[str] = None
     # AC-D06: the Project SO reference, its line number and the decision revision the Buy
     # came from. Absent on an amendment exception row, which no revision decided.
@@ -363,6 +372,18 @@ class OrderInquiryWorklistRow(BaseModel):
     project_id: Optional[str] = None
     project_sales_order_id: Optional[str] = None
     core_sales_order_id: Optional[str] = None
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id, which the
+    # "SO line" cell puts on
+    # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>` beside
+    # `core_sales_order_id` above - the cell reads THAT one, so this row carries no second
+    # name for the same sales order (review round, 22 Sep). `response_model` drops a field
+    # it has not been told about, so this is declared here even though `_serialize`
+    # already reads it. Null when the mirror has no core line.
+    core_line_id: Optional[str] = None
+    # Fix round (22 Sep): AutoCount's own line number, beside the id above - the S/O line
+    # cell's own `SO402757 · L5` label (`orderInquirySoLineLabel`) reads this. Null when
+    # the mirror has no core line (same as `core_line_id`).
+    line_no: Optional[int] = None
     is_adopted: bool = False
     # The placed purchase order this row traces to (same coalesce the PO NO column reads),
     # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without
