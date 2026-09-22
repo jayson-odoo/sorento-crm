@@ -584,6 +584,12 @@ class TestAC1791AccessCheckedAgainstTheCarriedAgent:
         self._plant_roster_offer(session_factory)
         stub_parser(_yes_verdict())
         calls = self._spy_access(monkeypatch, allowed_agent=DEFAULT_SUGGESTED_AGENT)
+        # Today's bug means this check is made against `DEFAULT_SUGGESTED_AGENT`, which
+        # this contact IS granted - so today the turn is wrongly ALLOWED through and
+        # reaches the real escalation lane. Mocked so that misbehaviour never reaches a
+        # real service call while this test is red for the documented reason.
+        _capture_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
 
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
