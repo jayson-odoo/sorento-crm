@@ -1,4 +1,4 @@
-"""Migration `bftp_0001_brand_flows_to_purchasing` (PLAN-brand-flows-to-purchasing.md, AC-1).
+"""Migration `bftp_0001_flows_to_purchasing` (PLAN-brand-flows-to-purchasing.md, AC-1).
 
 RED for Phase 2: the migration module does not exist yet at the path below - every test here
 fails on import (`FileNotFoundError` from `spec_from_file_location`/`exec_module`) against
@@ -28,7 +28,7 @@ _MIGRATION_PATH = (
     Path(__file__).resolve().parent.parent
     / "alembic"
     / "versions"
-    / "bftp_0001_brand_flows_to_purchasing.py"
+    / "bftp_0001_flows_to_purchasing.py"
 )
 _TABLE = "brands"
 _COLUMN = "flows_to_purchasing"
@@ -36,7 +36,7 @@ _COLUMN = "flows_to_purchasing"
 
 def _migration_module():
     spec = importlib.util.spec_from_file_location(
-        "zzt_migration_bftp_0001_brand_flows_to_purchasing", _MIGRATION_PATH
+        "zzt_migration_bftp_0001_flows_to_purchasing", _MIGRATION_PATH
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -84,6 +84,19 @@ export function buildBrandColumns(handlers: {
       ),
     },
     {
+      id: 'purchasing',
+      accessorFn: (row) => row.flows_to_purchasing,
+      header: ({ column }) => <DataGridColumnHeader title="Purchasing" column={column} />,
+      size: 120,
+      enableSorting: false,
+      meta: { headerTitle: 'Purchasing' },
+      cell: ({ row }) => (
+        <span className="truncate block" title={row.original.flows_to_purchasing ? 'Yes' : 'No'}>
+          {row.original.flows_to_purchasing ? 'Yes' : 'No'}
+        </span>
+      ),
+    },
+    {
       id: 'product_count',
       accessorFn: (row) => row.product_count ?? 0,
       header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,
