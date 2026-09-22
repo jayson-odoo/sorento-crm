@@ -634,6 +634,19 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
         row = svc.get(download_id)
         filename = row.filename if row else None
 
+        # Fix round 2 (S2): `generate_order_sheet`'s twin check raises the SAME 404
+        # implicitly - under UNSET scope, `export_report`'s own `_run_for` lookup finds
+        # nothing and raises `AppException(404, "That plan does not exist.")`, which this
+        # function converts to a FAILED download. This task calls no ORM query on
+        # `ReorderRun` past this point (`run_scope_oi_rows` is raw SQL, and its own
+        # company predicate renders `1=0` under UNSET - EMPTY rows, not an exception), so
+        # the same case has to be raised explicitly here, or a missing/company-less run
+        # would render a "ready" workbook with nothing wrong reported.
+        from app.services.error_handler import AppException
+
+        if run is None or not getattr(run, "company_id", None):
+            raise AppException(404, "That plan does not exist.")
+
         from app.services.order_inquiry_worklist_service import (
             EXPORT_HEADINGS,
             OrderInquiryWorklistService,
@@ -645,7 +658,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
         scope_rows = run_scope_oi_rows(
             db, run.product_ids, so_numbers=run.so_numbers,
             horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
-        ) if run is not None else []
+        )
         row_ids = [r["row_id"] for r in scope_rows]
 
         fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(

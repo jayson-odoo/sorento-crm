@@ -839,7 +839,9 @@ def _project_inquiry_map(
     a placed, actioned, awaiting-ack, redirected or fully linked row is still excluded, the
     same as it is from the plan's own Buy.
 
-    ``so_numbers`` (non-``None``) narrows to the run's picked orders; ``horizon_start``/
+    ``so_numbers`` (truthy - fix round 4, Lane C review: `None` AND `[]` both mean "not
+    narrowed", the same `bool(so_numbers)` reading `reorder_run_service._planning_rows`
+    gives its own `so_scoped` flag) narrows to the run's picked orders; ``horizon_start``/
     ``horizon`` narrow to the run's own window, undated rows always included - see
     `run_scope_oi_rows`'s own docstring for the exact predicate.
 
