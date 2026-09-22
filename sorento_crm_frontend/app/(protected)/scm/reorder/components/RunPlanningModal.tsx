@@ -343,71 +343,72 @@ export function RunPlanningModal({
           </div>
 
           {demand === 'project' ? (
-            <div>
-              <Label className="mb-1 block">Inquiries raised</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label htmlFor="plan-raised-from" className="mb-1 block text-2xs text-muted-foreground">
-                    Raised from
-                  </Label>
-                  <Input
-                    id="plan-raised-from"
-                    type="date"
-                    value={raisedFrom}
-                    onChange={(e) => setRaisedFrom(e.target.value)}
-                  />
+            <>
+              <div>
+                <Label className="mb-1 block">Inquiries raised</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="plan-raised-from" className="mb-1 block text-2xs text-muted-foreground">
+                      Raised from
+                    </Label>
+                    <Input
+                      id="plan-raised-from"
+                      type="date"
+                      value={raisedFrom}
+                      onChange={(e) => setRaisedFrom(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="plan-raised-to" className="mb-1 block text-2xs text-muted-foreground">
+                      Raised to
+                    </Label>
+                    <Input
+                      id="plan-raised-to"
+                      type="date"
+                      value={raisedTo}
+                      onChange={(e) => setRaisedTo(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <Label htmlFor="plan-raised-to" className="mb-1 block text-2xs text-muted-foreground">
-                    Raised to
-                  </Label>
-                  <Input
-                    id="plan-raised-to"
-                    type="date"
-                    value={raisedTo}
-                    onChange={(e) => setRaisedTo(e.target.value)}
-                  />
-                </div>
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  Empty = any raise date. Pre-selects the matching orders; the list still
+                  shows them all.
+                </p>
               </div>
-              <p className="mt-1 text-2xs text-muted-foreground">
-                Empty = any raise date.
-              </p>
-            </div>
-          ) : null}
 
-          {demand === 'project' ? (
-            <div>
-              <Label className="mb-1 block">Orders</Label>
-              <SearchableMultiSelect
-                value={soNumbers}
-                onChange={handleSoNumbersChange}
-                options={orderOptions}
-                disabled={candidatesLoading}
-                placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
-                emptyMessage={
-                  candidatesError ? 'Could not load orders.' : 'No project orders found.'
-                }
-                renderOption={(opt) => {
-                  const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
-                  return (
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="break-words">{opt.label}</span>
-                      <span className="break-words text-xs text-muted-foreground">
-                        {opt.description}
-                        {awaiting > 0 ? (
-                          <span className="text-warning">
-                            {`, ${awaiting} awaiting ack`}
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-                  );
-                }}
-              />
-              <p className="mt-1 text-2xs text-muted-foreground">
-                Empty = every project order in range.
-              </p>
-            </div>
+              <div>
+                <Label className="mb-1 block">Orders</Label>
+                <SearchableMultiSelect
+                  value={soNumbers}
+                  onChange={handleSoNumbersChange}
+                  options={orderOptions}
+                  disabled={candidatesLoading}
+                  placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
+                  emptyMessage={
+                    candidatesError ? 'Could not load orders.' : 'No project orders found.'
+                  }
+                  renderOption={(opt) => {
+                    const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
+                    return (
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="break-words">{opt.label}</span>
+                        <span className="break-words text-xs text-muted-foreground">
+                          {opt.description}
+                          {awaiting > 0 ? (
+                            <span className="text-warning">
+                              {`, ${awaiting} awaiting ack`}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    );
+                  }}
+                />
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  Empty = every project order in range.
+                </p>
+              </div>
+            </>
           ) : null}
 
           <div>

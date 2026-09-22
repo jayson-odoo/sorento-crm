@@ -623,11 +623,16 @@ def get_candidate_orders(
                count(*) FILTER (
                    WHERE NOT (cr.ack_state = ANY(:planned_ack_states))
                ) AS rows_awaiting,
+               -- created_at is stored naive UTC by every writer; a header raised 17 Sep
+               -- 23:00 UTC is 18 Sep in Kuala Lumpur (app-wide convention, see
+               -- reorder_run_service.py:460, models/project_so.py:881).
                count(*) FILTER (
                    WHERE (CAST(:raised_from AS date) IS NULL
-                          OR cr.created_at::date >= CAST(:raised_from AS date))
+                          OR ((cr.created_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+                             >= CAST(:raised_from AS date))
                      AND (CAST(:raised_to AS date) IS NULL
-                          OR cr.created_at::date <= CAST(:raised_to AS date))
+                          OR ((cr.created_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+                             <= CAST(:raised_to AS date))
                ) AS rows_raised_in_window,
                MIN(cr.delivery_date) AS first_delivery,
                MAX(cr.delivery_date) AS last_delivery

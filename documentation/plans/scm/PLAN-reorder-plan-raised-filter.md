@@ -37,8 +37,9 @@ exactly the orders that gained a row in that window; the buyer can still add or 
 
 ## 3. Rulings (owner, 22 Sep 2026)
 
-- R1: raise date = the row's first upload day (`created_at`), because the book has none.
-  Meaningful when the book is uploaded the day rows are added.
+- R1: raise date = the row's first upload day in Asia/Kuala_Lumpur (`created_at`, stored
+  naive UTC, converted the app-wide way), because the book has none. Meaningful when the
+  book is uploaded the day rows are added.
 - R2: the window only drives PRE-SELECTION. The list still shows every candidate order; the
   buyer adds or removes as today.
 
@@ -53,8 +54,9 @@ exactly the orders that gained a row in that window; the buyer can still add or 
   delivery range, shown only while Demand = Project, helper "Empty = any raise date". Both
   ride into `getCandidateOrders({from, to, raised_from, raised_to})` and the query key.
   Pre-selection becomes `rows_in_range > 0 && rows_raised_in_window > 0` (with no raise
-  window every row counts, so behaviour is unchanged). The picker option label appends
-  "raised N" only when a window is set. `touchedOrdersRef` semantics unchanged.
+  window every row counts, so behaviour is unchanged). The picker option DESCRIPTION
+  appends "raised N" only when a window is set - the accessible name (the option label)
+  stays stable either way. `touchedOrdersRef` semantics unchanged.
 - S3 Service: `getCandidateOrders` passes the two new params through `buildDataGridParams`
   or the existing param builder used there (no hand-rolled URLSearchParams).
 

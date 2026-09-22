@@ -5,8 +5,9 @@ Plan: `PLAN-reorder-plan-raised-filter.md`. AC-RF-n.
 - AC-RF-1: `GET /scm/reorder-runs/candidate-orders` accepts `raised_from` and `raised_to`
   (dates, optional) and every returned order carries `rows_raised_in_window`.
 - AC-RF-2: `rows_raised_in_window` counts the order's candidate rows whose first upload day
-  (`order_inquiry_rows.created_at`) falls inside the window, bounds inclusive, an omitted
-  bound open; with both omitted it equals `rows_total`.
+  in Asia/Kuala_Lumpur (`order_inquiry_rows.created_at`, stored naive UTC, converted the
+  app-wide way) falls inside the window, bounds inclusive, an omitted bound open; with
+  both omitted it equals `rows_total`.
 - AC-RF-3: An order with zero rows in the window is still listed (the window never removes
   an order from the list).
 - AC-RF-4: `rows_in_range`, `rows_awaiting`, `rows_total` are unaffected by the raise window.
