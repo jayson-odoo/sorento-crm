@@ -125,11 +125,31 @@ export function useListingColumnPreferences<TData extends object>({
   }, []); // capture once at mount
 
   const appliedRef = useRef(false);
-  // State twin of `appliedRef`, read-only outside this hook (`isLoading` below). A saved
-  // row that carries ONLY `pageSize` and no column keys calls none of the `table.set*`
-  // column setters that used to be what made the "loaded" render happen - so the ref
-  // flipping alone is not enough here, this needs its own state update to guarantee a
-  // re-render.
+  /**
+   * State twin of `appliedRef`, read-only outside this hook (`isLoading` below).
+   *
+   * Review round 2 (SF2) asked for this to be dropped, on the premise that no case
+   * exists where it changes the outcome - the reviewer's own example was a `{
+   * pageSize: 25 }`-only row against a table already at 25. Re-checked against the
+   * two round-1 tests that predate this round, WITHOUT the twin (verified: both fail
+   * with `ready-state` stuck at `'loading'`):
+   *
+   * - Red 2 (a saved `pageSize` OUTSIDE the bound, e.g. 500): no column keys AND an
+   *   invalid size apply to nothing, so no `table.set*` call fires.
+   * - B2 (no saved row at all, `config: null` - review round 1): the single most
+   *   common real case there is, since it is every listing for a user who has never
+   *   customized it. Same reason: nothing to apply, no `table.set*` call.
+   *
+   * The consequence is not cosmetic: `DataGridProvider` defaults `loadingMode` to
+   * `'skeleton'` (`components/ui/data-grid.tsx:276`, every grid unless a call site
+   * opts out) and `useBodySkeleton` (`data-grid-table.tsx`) draws the skeleton
+   * whenever `isColumnPreferencesLoading` is true regardless of `hasRows` - so a
+   * `false` `appliedRef` that a ref-only `isLoading` cannot surface until some
+   * UNRELATED re-render happens to occur reads, in the worst case (a page nothing
+   * else ever re-renders), as a grid stuck on its loading skeleton forever, on the
+   * single most common case there is. Kept for this reason; flagged to the captain
+   * rather than silently overridden.
+   */
   const [applied, setApplied] = useState(false);
   const skipSaveOnceRef = useRef(false);
   // Own one-shot guard for the page-size save effect below, distinct from
@@ -159,38 +179,22 @@ export function useListingColumnPreferences<TData extends object>({
   });
 
   // Apply saved config to the TanStack table.
+  //
+  // `saved.config` is treated as `{}` when there is no row yet (first open) or the row
+  // carries no config, NOT as an early return (review round 2, N3): the block below
+  // already handles an absent key correctly (each `if (Array.isArray(payload.columnOrder)
+  // ...)` guard is a no-op when the key is missing, falling through to the table's own
+  // LIVE column model), so running "no saved row" through the exact same path as "a saved
+  // row with no column keys" means both agree on what "already saved" means - the live
+  // model, not a separate snapshot of the mount-time defaults. Before this, the two
+  // branches fingerprinted from different sources and could disagree for a grid whose
+  // columns arrive after mount (a report's data-dependent columns).
   useEffect(() => {
     if (!key) return;
     if (!saved) return;
     if (appliedRef.current) return;
 
-    const payload = saved.config as UserListColumnConfigPayload | null;
-    if (!payload) {
-      appliedRef.current = true;
-      setApplied(true);
-      // B2 (review round 1, blocker): without this, "nothing saved yet" left
-      // `persistedPageSizeRef` at its initial `null`, so the page-size save effect
-      // read that as "the server holds something different from the table's current
-      // size" and wrote the table's own default straight back on first open - a
-      // write nobody asked for.
-      persistedPageSizeRef.current = table.getState().pagination?.pageSize ?? null;
-      // Same gap, same fix, for the column keys: `persistedRef` was left at its
-      // initial `null` here too, so the column-save effect's first run (right after
-      // apply) compared the table's current defaults against `null`, found a
-      // "difference", and wrote a full default-column-state row on first open - the
-      // exact B2 failure, via the OTHER writer this hook owns. The table has not
-      // moved from its mount-time defaults in this branch (nothing was applied), so
-      // those defaults are exactly what "already saved" means here.
-      persistedRef.current = columnStateFingerprint({
-        columnOrder: mergeColumnOrderWithLeafColumns(
-          defaultOrder,
-          table.getAllLeafColumns().map((c) => c.id),
-        ),
-        columnVisibility: defaultVisibility,
-        columnSizing: defaultSizing,
-      });
-      return;
-    }
+    const payload = (saved.config ?? {}) as UserListColumnConfigPayload;
 
     const canHideIds = new Set(table.getAllLeafColumns().filter((c) => c.getCanHide()).map((c) => c.id));
     const leafIds = table.getAllLeafColumns().map((c) => c.id);
@@ -283,7 +287,7 @@ export function useListingColumnPreferences<TData extends object>({
 
     appliedRef.current = true;
     setApplied(true);
-  }, [key, saved, table, defaultOrder, defaultVisibility, defaultSizing]);
+  }, [key, saved, table]);
 
   const columnOrderState = (table.getState() as ColumnStateFromTanStack)?.columnOrder;
   const columnVisibilityState = (table.getState() as ColumnStateFromTanStack)?.columnVisibility;
@@ -349,22 +353,46 @@ export function useListingColumnPreferences<TData extends object>({
     },
   });
 
-  const debouncedSaveRef = useRef(
-    debounce((payload: unknown) => {
-      upsertMutation.mutate(payload as UserListColumnConfigPayload);
-    }, debounceMs),
-  );
+  /**
+   * The one payload every save writes into before it is sent, so a column change and a
+   * page-size change land in the SAME PUT when they fall inside the same debounce
+   * window (review round 2, SF1 - blocker). Two independent debounce instances each
+   * still called `upsertMutation.mutate` on their own, which is two concurrent PUTs to
+   * the SAME row: the endpoint's read-modify-write
+   * (`app/api/v1/list_query.py:296-313`) is not concurrency-safe against itself, so
+   * whichever request's SELECT ran first and committed last could silently lose the
+   * OTHER request's key, or a first-ever save on a listing (no row yet) could 500 on
+   * the row's unique constraint. One writer, one debounce, one merged payload removes
+   * the race instead of narrowing it.
+   */
+  const pendingPayloadRef = useRef<UserListColumnConfigPayload>({});
 
-  // B1 (review round 1, blocker): a SEPARATE debounce instance from the column-save
-  // effect below, not shared. `debounce` (`lib/helpers.ts`) keeps ONE timer and only
-  // its LATEST call's args - a page-size change inside the same window as a column
-  // change replaced the column payload outright, and both `persisted*Ref`s had
-  // already advanced past it, so the dropped write was never retried. Two independent
-  // timers mean a column change and a page-size change inside one window are two
-  // separate PUTs instead of one clobbering the other.
-  const debouncedSavePageSizeRef = useRef(
-    debounce((payload: unknown) => {
-      upsertMutation.mutate(payload as UserListColumnConfigPayload);
+  const debouncedFlushRef = useRef(
+    debounce(() => {
+      const payload = pendingPayloadRef.current;
+      pendingPayloadRef.current = {};
+      if (Object.keys(payload).length === 0) return;
+
+      // Advance the "known-saved" refs only from what is ACTUALLY being sent, not
+      // eagerly when an effect merges a key in - a key that gets merged in and then
+      // changes back before this flush fires must not be recorded as saved when it
+      // was never written.
+      if (
+        payload.columnOrder !== undefined ||
+        payload.columnVisibility !== undefined ||
+        payload.columnSizing !== undefined
+      ) {
+        persistedRef.current = columnStateFingerprint({
+          columnOrder: payload.columnOrder ?? [],
+          columnVisibility: payload.columnVisibility ?? {},
+          columnSizing: payload.columnSizing ?? {},
+        });
+      }
+      if (payload.pageSize !== undefined) {
+        persistedPageSizeRef.current = payload.pageSize ?? null;
+      }
+
+      upsertMutation.mutate(payload);
     }, debounceMs),
   );
 
@@ -405,23 +433,44 @@ export function useListingColumnPreferences<TData extends object>({
       columnVisibility: filteredVisibility,
       columnSizing: filteredSizing,
     });
-    if (persistedRef.current === fingerprint) return;
-    persistedRef.current = fingerprint;
+    if (persistedRef.current === fingerprint) {
+      // Matches what the server already holds - including "matches again, having
+      // changed and changed back inside this same debounce window". An EARLIER run in
+      // that window may have staged the since-reverted value into the pending
+      // payload; drop it rather than let the eventual flush send state the user no
+      // longer has (`persistedRef` only advances once a flush actually sends, so this
+      // gate compares against the server, not against whatever is merely pending).
+      if (
+        pendingPayloadRef.current.columnOrder !== undefined ||
+        pendingPayloadRef.current.columnVisibility !== undefined ||
+        pendingPayloadRef.current.columnSizing !== undefined
+      ) {
+        const next = { ...pendingPayloadRef.current };
+        delete next.columnOrder;
+        delete next.columnVisibility;
+        delete next.columnSizing;
+        delete next.version;
+        pendingPayloadRef.current = next;
+      }
+      return;
+    }
 
-    const payload: UserListColumnConfigPayload = {
+    pendingPayloadRef.current = {
+      ...pendingPayloadRef.current,
       version: 1,
       columnOrder: filteredOrder,
       columnVisibility: filteredVisibility,
       columnSizing: filteredSizing,
     };
-    debouncedSaveRef.current(payload);
+    debouncedFlushRef.current();
   }, [key, orderFingerprint, visibilityFingerprint, sizingFingerprint, isFetching, table, suppressPersist]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pageSizeState = table.getState().pagination?.pageSize;
 
-  // Rows-per-page, saved as its own `{ pageSize }` body through its OWN debounce
-  // instance (B1 above) - the endpoint's partial merge (`exclude_unset`) leaves the
-  // column keys untouched either way, so there is no reason to resend them here.
+  // Rows-per-page, merged into the SAME pending payload as the column keys above
+  // (SF1) - the endpoint's partial merge (`exclude_unset`) leaves whichever keys a
+  // given save omits untouched either way, so a page-size-only save still reaches the
+  // server as `{ pageSize }` alone when no column key is pending alongside it.
   useEffect(() => {
     if (!key) return;
     if (isFetching) return;
@@ -437,10 +486,21 @@ export function useListingColumnPreferences<TData extends object>({
     if (!isValidPageSize(pageSizeState)) return;
 
     // Never write back what the server already holds (or what this hook just applied).
-    if (persistedPageSizeRef.current === pageSizeState) return;
-    persistedPageSizeRef.current = pageSizeState;
+    if (persistedPageSizeRef.current === pageSizeState) {
+      // Same revert-inside-the-window case as the column effect above.
+      if (pendingPayloadRef.current.pageSize !== undefined) {
+        const next = { ...pendingPayloadRef.current };
+        delete next.pageSize;
+        pendingPayloadRef.current = next;
+      }
+      return;
+    }
 
-    debouncedSavePageSizeRef.current({ pageSize: pageSizeState } as UserListColumnConfigPayload);
+    pendingPayloadRef.current = {
+      ...pendingPayloadRef.current,
+      pageSize: pageSizeState,
+    };
+    debouncedFlushRef.current();
   }, [key, pageSizeState, isFetching, suppressPersist]);
 
   const resetMutation = useMutation({
@@ -462,6 +522,11 @@ export function useListingColumnPreferences<TData extends object>({
     // - the row is about to be DELETED, so re-creating it with the defaults would undo it.
     skipSaveOnceRef.current = true;
     skipPageSizeSaveOnceRef.current = true;
+    // A change from just before the reset can still be sitting in the shared pending
+    // payload with its debounce timer armed. Clearing it here (rather than relying on
+    // a cancel the `debounce` helper does not expose) means that timer's eventual
+    // flush finds nothing to send.
+    pendingPayloadRef.current = {};
     persistedRef.current = columnStateFingerprint({
       columnOrder: mergeColumnOrderWithLeafColumns(
         defaultOrder,

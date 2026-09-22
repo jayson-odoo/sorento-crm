@@ -51,3 +51,14 @@ fixed list 422s every one of them on open, which fails R1.
 - AC-14 `PanelDataGrid`'s keep-page behaviour across a save (PLAN-panel-datagrid-keep-page)
   still holds: a draft save on page 3 at 50 rows stays on page 3.
 - AC-15 Page index is not remembered: a reopen starts on page 1.
+
+## Concurrency and edges (review round 2)
+
+- AC-16 A column change and a rows-per-page change landing in the same debounce window
+  produce exactly ONE PUT carrying BOTH the changed column key(s) and `pageSize` - never
+  two concurrent writes to the same row, and never one clobbering the other.
+- AC-17 Opening a listing that has no saved row yet writes nothing on its own, before any
+  user action - neither the column keys nor `pageSize`.
+- AC-18 A size change made once the saved-config GET has settled with no data (network
+  error, not merely still in flight) still writes nothing - same as AC-8, but for a config
+  fetch that failed rather than one that is pending.

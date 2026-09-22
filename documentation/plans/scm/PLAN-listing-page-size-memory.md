@@ -1,6 +1,6 @@
 # PLAN: rows-per-page is remembered per user per listing, like column order
 
-Status: implemented, review round 1 addressed (23 Sep 2026). Track: small fix.
+Status: implemented, review rounds 1-2 addressed (23 Sep 2026). Track: small fix.
 UAC: `listing-page-size-memory-acceptance-criteria.md`
 Domain: scm (owner report on the fulfilment planning board list view), seam is the shared DataGrid column-config store
 
@@ -62,22 +62,53 @@ sees every grid, client-paginated (`PanelDataGrid`) and server-paginated alike.
    TOP ROW visible (`old.pageSize * old.pageIndex / newPageSize`) - so `setPagination`
    is what actually lands on page 1 of the new size, which is right: a different size
    means a different page boundary.
-3. Save: the hook watches `table.getState().pagination.pageSize`; a change after the
-   config has loaded goes through its OWN debounced PUT (a separate `debounce` instance
-   from the column keys' - review round 1 B1: sharing one meant a change inside the same
-   window as a column change silently dropped whichever call came first, since `debounce`
-   only remembers its latest call) as `{ pageSize }` (partial merge, so the other keys are
-   untouched).
+3. Save (review round 2, SF1 - blocker, supersedes round 1's design): ONE writer, ONE
+   debounce, ONE merged payload. The column-save effect and the page-size-save effect
+   each merge their own keys into a single `pendingPayloadRef` (`{ ...pending,
+   ...theirKeys }`) and call one shared debounced flush, which PUTs whatever is in
+   `pendingPayloadRef` and clears it. Round 1 gave each effect its OWN debounce instance
+   specifically to stop one from silently dropping the other's payload (`debounce` only
+   remembers its latest call) - but two independent instances meant two CONCURRENT PUTs
+   to the same row instead, and the endpoint's read-modify-write
+   (`app/api/v1/list_query.py:296-313`) is not concurrency-safe against itself: whichever
+   request's SELECT-then-COMMIT finished last would win, silently losing the other's key,
+   or a first-ever save on a listing (no row yet) could 500 on the row's unique
+   constraint. `persistedRef`/`persistedPageSizeRef` (the "what the server already holds"
+   refs the save effects gate on) advance only from the payload actually flushed, not
+   eagerly when an effect merges a key in - a value that changes and changes back inside
+   the same window before the flush fires is pruned back out of the pending payload
+   rather than sent.
 4. `resetToDefaults` (the column menu's "Reset to defaults") DELETEs the row, which
-   already clears `pageSize` with it; the hook then puts the grid back to the caller's
-   own default size via the same `setPagination({ pageIndex: 0, pageSize })` call - read
-   once at mount, the same way `defaultOrder` is.
+   already clears `pageSize` with it, and clears `pendingPayloadRef` too (a change from
+   just before the reset can still have an armed flush timer); the hook then puts the
+   grid back to the caller's own default size via the same `setPagination({ pageIndex: 0,
+   pageSize })` call - read once at mount, the same way `defaultOrder` is.
 5. `suppressPersist` (saved-view apply) suppresses this key too, same guard, same reason.
-6. The "no saved row yet" branch (payload `null`) seeds BOTH `persistedPageSizeRef` and
-   the column fingerprint ref to the table's own mount-time defaults (review round 1 B2):
-   leaving either at its initial `null` reads as "the server holds something different
-   from what's on screen" and writes a row on the listing's very first open, before any
-   user action.
+6. The apply effect runs `saved.config ?? {}` through ONE path, not a separate "no saved
+   row yet" branch (review round 2, N3 - the round 1 branch fingerprinted from the
+   mount-time column defaults, while the normal path fingerprints from the LIVE column
+   model, so the two could disagree for a grid whose columns arrive after mount; treating
+   an absent config exactly like an empty one removes the disagreement, since every
+   `if (Array.isArray(payload.columnOrder) ...)` guard already no-ops correctly on a
+   missing key). This is also where `persistedPageSizeRef`/`persistedRef` are seeded on a
+   first-ever open (round 1 B2): leaving either at its initial `null` reads as "the server
+   holds something different from what's on screen" and writes a row before any user
+   action.
+7. `isLoading` still reads the `applied` `useState` twin of `appliedRef` (round 1), NOT
+   the ref directly. Review round 2 (SF2) asked for the twin to be dropped, on the
+   premise that no case exists where it changes the outcome. Tried it and re-ran the
+   suite: it breaks two tests that predate this round - Red 2 (a saved `pageSize`
+   OUTSIDE the bound: no column keys and an invalid size apply to nothing, so no
+   `table.set*` call fires to trigger the render the ref update needs) and B2 (no saved
+   row at all, `config: null`, review round 1 - the single most common real case there
+   is, since it is every listing for a user who has never customized it; same reason,
+   nothing to apply). `DataGridProvider` defaults `loadingMode` to `'skeleton'`
+   (`components/ui/data-grid.tsx:276`, every grid unless a call site opts out), and its
+   skeleton gate does not care about `hasRows` while `isColumnPreferencesLoading` is
+   true - so a `false` `appliedRef` a ref-only `isLoading` cannot surface until some
+   UNRELATED re-render happens to occur is, in the worst case, a grid stuck on its
+   loading skeleton forever, on the single most common case there is. Kept the twin;
+   flagged to the captain with this evidence rather than silently applied.
 
 No change to `PanelDataGrid`, `FulfilmentBoardListView`, `DataGridPagination` or any
 listing page. A server-paginated list's own `pageSize` (its `useState<PaginationState>`,
@@ -91,6 +122,15 @@ query is in flight. Accepted; the config query is cached per key after that.
 - Sort persistence on the board list (R2).
 - Persisting `pageIndex` (which page): a reopen starts on page 1, as today.
 - `listingKey={null}` grids (the stock-debt calendar) stay unpersisted, page size included.
+- `useListingViewPreferences` (`lib/listing-column-preferences/useListingViewPreferences.ts`)
+  is a SECOND writer to the same `user_list_column_configs` row (`sorting`/`filters`/
+  `defaultSavedViewId`), with its own, separate debounce instance from the one this hook
+  now uses (review round 2, SF1). The same concurrent-PUT race SF1 fixed WITHIN this hook
+  still exists BETWEEN this hook and that one - a column/page-size change and a sort/filter
+  change landing in the same ~800ms window are still two concurrent PUTs to one row. Left
+  alone here: fixing it means merging two hooks that currently know nothing of each other,
+  which is a bigger seam than this plan's. Trigger to actually fix it: a reported lost key
+  from that pairing specifically (not a hypothetical).
 
 ## Tests
 
@@ -111,13 +151,21 @@ vitest, `lib/listing-column-preferences/useListingColumnPreferences.test.tsx` (e
 - B2 (review round 1, blocker): opening a listing with no saved row (`config: null`)
   writes nothing on its own - covers BOTH writers this hook owns (`persistedPageSizeRef`
   and the column fingerprint ref), not just the page-size one.
-- S2 (review round 1): a saved row carrying ONLY a valid `pageSize` (no column keys)
-  still flips `isLoading` false - the `applied` state twin this round's own Red 2 (round
-  1) exposed a gap in.
-- B1 (review round 1, blocker): a column change and a page-size change inside the same
-  debounce window both write, neither losing the other's payload key.
-- Red 5: `resetToDefaults` -> DELETE, then table back at the mount-time default size
-  (page 0), and nothing further is written.
+- "a saved row carrying ONLY a valid pageSize still reaches ready" (round 1 S2, renamed
+  round 2): SF2 asked to drop this alongside the `applied` twin, on the premise no case
+  exists where the twin changes the outcome. Verified it does (see Design step 7) - kept
+  both the twin and this test, renamed since it is a plain regression guard regardless
+  of the internal mechanism.
+- B1 (review round 2, blocker SF1, supersedes round 1's version): a column change and a
+  page-size change inside the same debounce window produce exactly ONE PUT carrying BOTH
+  the changed column key and `pageSize` - round 1's version asserted "at least 2 PUTs,
+  neither losing a key", which round 2's single-writer redesign makes the wrong shape to
+  assert (SF1: two concurrent PUTs to the same row is the new bug, not the fix).
+- N1 (review round 2): a caller-driven `pageSize` past `MAX_LIST_PAGE_SIZE` (250) is
+  never saved - the WRITE-side counterpart to Red 2's read-side bound.
+- Red 5: `resetToDefaults` -> DELETE, then table back at the mount-time default size and
+  `pageIndex` 0 (N2, review round 2: starts from `initialPageIndex={2}`), and nothing
+  further is written.
 - Red 6: `suppressPersist: true` -> a size change writes nothing.
 
 pytest, `tests/test_list_column_preferences.py` (extended the file that already covers

@@ -116,6 +116,16 @@ function TestHarness({
       </button>
       <button
         onClick={() => {
+          // A driver setting pagination straight past what the Rows-per-page menu
+          // ever offers - the WRITE-side counterpart to Red 2's out-of-bound READ.
+          table.setPageSize(250);
+          setForceRerender((x) => x + 1);
+        }}
+      >
+        set-page-size-250
+      </button>
+      <button
+        onClick={() => {
           void resetToDefaults();
           setForceRerender((x) => x + 1);
         }}
@@ -457,9 +467,11 @@ describe('useListingColumnPreferences', () => {
     expect(service.upsertUserListColumnConfig).not.toHaveBeenCalled();
   });
 
-  it('S2 (review round 1): a saved row carrying ONLY a valid pageSize still flips isLoading to false', async () => {
-    // No columnOrder/columnVisibility/columnSizing in this payload, so none of the
-    // TanStack column setters that used to be what triggered the "loaded" render fire.
+  it('a saved row carrying ONLY a valid pageSize (no column keys) still reaches ready', async () => {
+    // Plain regression guard, renamed round 2 (SF2 asked to drop the `applied` state
+    // twin this covers - kept it instead, see the hook's own comment: Red 2 and B2
+    // both stay stuck on 'loading' forever without it, since neither one calls any
+    // `table.set*` that would otherwise trigger the re-render `isLoading` needs).
     vi.mocked(service.getUserListColumnConfig).mockResolvedValue({
       listing_key: 'k',
       config: { version: 1, pageSize: 50 },
@@ -484,11 +496,14 @@ describe('useListingColumnPreferences', () => {
     expect(screen.getByTestId('page-size').textContent).toBe('50');
   });
 
-  it('B1 (review round 1, blocker): a column change and a page-size change inside the same debounce window both write, neither losing the other', async () => {
-    // The two effects used to share ONE debounce instance: a call from the second
-    // effect inside the window replaced the first call's payload entirely (the
-    // `debounce` helper only remembers its LATEST args), and both `persisted*Ref`s
-    // had already advanced - so the dropped write was never retried.
+  it('B1 (review round 2, blocker SF1): a column change and a page-size change inside the same debounce window produce exactly ONE PUT carrying both', async () => {
+    // Round 1's fix (two SEPARATE debounce instances, one per effect) traded one bug
+    // for another: two concurrent PUTs to the SAME row, against a read-modify-write
+    // route that is not concurrency-safe against itself
+    // (`app/api/v1/list_query.py:296-313`) - a key could still be lost (whichever
+    // request's SELECT-then-COMMIT finished last wins), or a first-ever save on a
+    // listing could 500 on the row's unique constraint. Round 2: ONE shared pending
+    // payload, ONE debounce, so both changes are always one write.
     vi.mocked(service.getUserListColumnConfig).mockResolvedValue({
       listing_key: 'k',
       config: { version: 1, columnVisibility: { b: false }, columnOrder: null },
@@ -519,18 +534,58 @@ describe('useListingColumnPreferences', () => {
     });
 
     await waitFor(() => {
-      expect(vi.mocked(service.upsertUserListColumnConfig).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(service.upsertUserListColumnConfig).toHaveBeenCalled();
     });
+    // Give a would-be second PUT a chance to land before asserting there is only one.
+    await new Promise((r) => setTimeout(r, 60));
 
     const calls = vi.mocked(service.upsertUserListColumnConfig).mock.calls;
-    const payloads = calls.map((c) => c[1] as UserListColumnConfigPayload);
-    const columnCall = payloads.find((p) => p.columnVisibility !== undefined);
-    const pageSizeCall = payloads.find((p) => p.pageSize !== undefined);
-    expect(columnCall?.columnVisibility?.b).toBe(true);
-    expect(pageSizeCall?.pageSize).toBe(100);
+    expect(calls.length).toBe(1);
+    const payload = calls[0]?.[1] as UserListColumnConfigPayload | undefined;
+    expect(payload?.columnVisibility?.b).toBe(true);
+    expect(payload?.pageSize).toBe(100);
   });
 
-  it('PLAN-listing-page-size-memory Red 5: reset to defaults restores the mount-time page size', async () => {
+  it('N1 (review round 2): a caller-driven pageSize past the bound is never saved', async () => {
+    // Red 2 is the READ side of the bound (a saved out-of-bound value is ignored on
+    // apply); this is the WRITE side - a pagination change this hook did not
+    // originate (or a bug in a caller) driving `pageSize` past `MAX_LIST_PAGE_SIZE`
+    // must not reach the server either.
+    vi.mocked(service.getUserListColumnConfig).mockResolvedValue({
+      listing_key: 'k',
+      config: { version: 1, columnVisibility: { b: false }, columnOrder: null },
+    });
+    vi.mocked(service.upsertUserListColumnConfig).mockResolvedValue({
+      listing_key: 'k',
+      config: { version: 1, columnVisibility: { b: false }, columnOrder: null },
+    });
+    vi.mocked(service.resetUserListColumnConfig).mockResolvedValue(undefined);
+
+    const qc = new QueryClient();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TestHarness listingKey="k" debounceMs={20} initialPageSize={25} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ready-state').textContent).toBe('ready');
+    });
+
+    act(() => {
+      screen.getByText('set-page-size-250').click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('page-size').textContent).toBe('250');
+    });
+
+    await new Promise((r) => setTimeout(r, 60)); // past the 20ms debounce
+    expect(service.upsertUserListColumnConfig).not.toHaveBeenCalled();
+  });
+
+  it('PLAN-listing-page-size-memory Red 5: reset to defaults restores the mount-time page size and page 0', async () => {
     vi.mocked(service.getUserListColumnConfig).mockResolvedValue({
       listing_key: 'k',
       config: { version: 1, pageSize: 100 },
@@ -545,7 +600,15 @@ describe('useListingColumnPreferences', () => {
 
     render(
       <QueryClientProvider client={qc}>
-        <TestHarness listingKey="k" debounceMs={20} initialPageSize={25} />
+        <TestHarness
+          listingKey="k"
+          debounceMs={20}
+          initialPageSize={25}
+          // N2 (review round 2): start away from page 0, same reasoning as Red 1 - a
+          // reset landing on page 0 only because it started there is not a real
+          // assertion of `resetToDefaults`'s own `setPagination({ pageIndex: 0 })`.
+          initialPageIndex={2}
+        />
       </QueryClientProvider>,
     );
 
@@ -560,6 +623,7 @@ describe('useListingColumnPreferences', () => {
     await waitFor(() => {
       expect(screen.getByTestId('page-size').textContent).toBe('25');
     });
+    expect(screen.getByTestId('page-index').textContent).toBe('0');
 
     // N2 (review round 1): flush past the debounce before the test ends, so a
     // wrongly-armed timer fires here (and is asserted on) instead of bleeding,
