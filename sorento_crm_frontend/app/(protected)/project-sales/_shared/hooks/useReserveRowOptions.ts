@@ -54,22 +54,22 @@ const EMPTY_RESULT: ReserveRowOptionsResult = {
 };
 
 /**
- * The owner-configured default pool (F1). Read through the FULL settings blob - there
- * is no narrow projection for it (`AppConfigResponse` stays at its own pinned "exactly
- * seven fields", out of this change's scope) - so a caller without `user_management.
- * settings.view` (CS/purchasing, typically) gets a 403 here, treated exactly like "no
- * default configured": F1's own fallback (the row's own site pool) is what renders
- * either way, so a denied read changes nothing on screen.
+ * The owner-configured default pool (F1). Read through the narrow `/settings/
+ * app-config` projection (`AppConfigResponse`), NOT the full settings blob - the
+ * blob is gated on `user_management.settings.view`, which Eling (CS, the one
+ * `projects.order_inquiries.reserve` holder this default exists for) does not hold,
+ * so reading it there meant the configured default never reached her at all. The
+ * same reasoning `useCurrencyFormat.ts` already carries for `currency_format`.
  */
 function useConfiguredDefaultPoolId(): string | null {
   const { data } = useQuery({
     queryKey: ['oi-reserve-default-pool-setting'],
     queryFn: async (): Promise<string | null> => {
-      const response = await apiFetch('/api/user-management/settings');
+      const response = await apiFetch('/api/user-management/settings/app-config');
       if (!response.ok) return null;
       try {
         const body = await response.json();
-        const id = body?.settings?.oi_reserve_default_pool_warehouse_id;
+        const id = body?.oi_reserve_default_pool_warehouse_id;
         return typeof id === 'string' && id ? id : null;
       } catch {
         return null;

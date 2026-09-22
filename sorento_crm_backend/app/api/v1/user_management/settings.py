@@ -226,6 +226,12 @@ class AppConfigResponse(BaseModel):
     sponsorship_form_default_approver_email: Optional[str] = None
     #: r9 D10. A number of days, read by the price tag detail card.
     price_tag_auto_collect_days: Optional[int] = None
+    #: PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    #: Location must reach every `projects.order_inquiries.reserve` holder (Eling, CS),
+    #: who does not hold `user_management.settings.view` - the same reason
+    #: `price_tag_auto_collect_days` is here. A warehouse id, never rendered as text -
+    #: only matched against the dialog's own resolved pool options.
+    oi_reserve_default_pool_warehouse_id: Optional[str] = None
 
 
 @router.get("/")
@@ -481,6 +487,14 @@ async def get_app_config(
             # number of days is not sensitive.
             price_tag_auto_collect_days=(
                 getattr(settings, "price_tag_auto_collect_days", 7) if settings else 7
+            ),
+            # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own
+            # default pool must reach every `projects.order_inquiries.reserve` holder,
+            # who does not hold `user_management.settings.view`.
+            oi_reserve_default_pool_warehouse_id=(
+                getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
+                if settings
+                else None
             ),
         )
     except Exception as e:
