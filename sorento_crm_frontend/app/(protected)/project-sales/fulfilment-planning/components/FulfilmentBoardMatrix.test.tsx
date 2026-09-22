@@ -111,6 +111,44 @@ describe('FulfilmentBoardMatrix fills its container', () => {
 });
 
 /**
+ * S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-2/AC-B1-7): the `date` granularity's own
+ * header format is `DD/MM/YYYY` (built server-side, Phase 2; the matrix itself only ever
+ * renders whatever `label` a bucket carries, so this pins that it renders it VERBATIM, with
+ * `data-bucket` still keyed off the exact required date).
+ */
+describe('FulfilmentBoardMatrix: the date granularity header (AC-B1-2/AC-B1-7)', () => {
+  it('renders a DD/MM/YYYY-labelled date bucket verbatim, keyed by the exact date', () => {
+    const dateBuckets: BoardDateBucket[] = [
+      { key: '2026-11-01', kind: 'dated', label: '01/11/2026', start: '2026-11-01', is_past: false },
+      { key: '2027-02-01', kind: 'dated', label: '01/02/2027', start: '2027-02-01', is_past: false },
+    ];
+
+    render(
+      <FulfilmentBoardMatrix
+        dateBuckets={dateBuckets}
+        rows={rows}
+        rowHeader="Product"
+        cells={[]}
+        draft={{}}
+        onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole('columnheader', { name: '01/11/2026' }),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-bucket="2026-11-01"]')?.textContent,
+    ).toBe('01/11/2026');
+    expect(
+      screen.getByRole('columnheader', { name: '01/02/2027' }),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
  * "Already settled", at a glance.
  *
  * The `n/m decided` badge counts the DRAFT - verdicts the planner has ticked but not

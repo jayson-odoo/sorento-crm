@@ -15,7 +15,10 @@ import { fireEvent, render, renderHook, screen, within } from '@testing-library/
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
 import { describe, expect, it, vi } from 'vitest';
-import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+import {
+  orderInquiryTakenRemainingColumns,
+  useOrderInquiryWorklistColumns,
+} from './orderInquiryWorklistColumns';
 
 // AC-D6: Radix Tooltip only mounts TooltipContent's portal on hover, which a plain
 // render+query cannot see - mocked to render its children inline instead, the same
@@ -108,6 +111,10 @@ function renderRows(rows: OrderInquiryWorklistRow[], columnId = 'po_number') {
 
 function renderQtyCell(rows: OrderInquiryWorklistRow[]) {
   return renderRows(rows, 'qty');
+}
+
+function renderDeliveryDateCell(rows: OrderInquiryWorklistRow[]) {
+  return renderRows(rows, 'delivery_date');
 }
 
 describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slice A, 8 Sep 2026)', () => {
@@ -610,6 +617,163 @@ describe('the qty cell: one line, an info icon only when there is something to s
     expect(
       within(row).queryByTestId('qty-annotation-trigger-row-untouched'),
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * AC-B2-0 (`PLAN-board-oi-mechanical-22sep.md`, S2 round): a settle-in-place restates the
+ * SAME buy row with a new date, drops its ack back to `changed`, and purchasing needs to
+ * see that on the Lines tab - a `Changed` tag beside the delivery date, no separate Ack
+ * column anywhere (there is none in `useOrderInquiryWorklistColumns()` today - grepped
+ * before writing this). `DeliveryDateCell` is the shared cell the Lines tab and this
+ * worklist both render (`orderInquiryHeaderLinesColumns.tsx` imports it unchanged), so
+ * pinning it here covers both screens. RED: `DeliveryDateCell` reads only `row.delivery_date`
+ * today, never `ack_state` - no such tag renders under any fixture.
+ */
+describe('AC-B2-0: a Changed tag sits beside the delivery date when ack_state is changed', () => {
+  it('shows a Changed tag beside the date on a row settled back to ack_state "changed"', () => {
+    renderDeliveryDateCell([
+      worklistRow({
+        id: 'row-changed',
+        delivery_date: '2026-11-01',
+        ack_state: 'changed',
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-changed');
+    expect(within(row).getByText('01/11/2026')).toBeInTheDocument();
+    expect(within(row).getByText('Changed')).toBeInTheDocument();
+  });
+
+  it('shows no Changed tag on an acknowledged row', () => {
+    renderDeliveryDateCell([
+      worklistRow({
+        id: 'row-acknowledged',
+        delivery_date: '2026-11-01',
+        ack_state: 'acknowledged',
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-acknowledged');
+    expect(within(row).queryByText('Changed')).not.toBeInTheDocument();
+  });
+
+  it('shows no Changed tag on an awaiting row (born acknowledged; kept honest rather than assumed)', () => {
+    renderDeliveryDateCell([
+      worklistRow({
+        id: 'row-awaiting',
+        delivery_date: '2026-11-01',
+        ack_state: 'awaiting',
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-awaiting');
+    expect(within(row).queryByText('Changed')).not.toBeInTheDocument();
+  });
+});
+
+/** The Taken/Remaining pair together with their FOOTER, which `OneColumnOnly` above never
+ * renders - built fresh here since AC-B3-5/AC-B3-6 are about the footer sums, not just the
+ * per-row cell. */
+function TakenRemainingTable({
+  rows,
+  pageScoped,
+}: {
+  rows: OrderInquiryWorklistRow[];
+  pageScoped: boolean;
+}) {
+  const columns = orderInquiryTakenRemainingColumns({ pageScoped });
+  const table = useReactTable({
+    data: rows,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+  return (
+    <table>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id} data-testid={`row-${row.original.id}`}>
+            {row.getVisibleCells().map((cell) => (
+              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          {table.getFooterGroups().flatMap((group) =>
+            group.headers.map((header) => (
+              <td key={header.id} data-testid={`footer-${header.column.id}`}>
+                {header.column.columnDef.footer
+                  ? flexRender(header.column.columnDef.footer, header.getContext())
+                  : null}
+              </td>
+            )),
+          )}
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+/**
+ * S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-6): the worklist carries the SAME Taken /
+ * Remaining pair the Lines tab does, with a footer labelled for the current page - the
+ * worklist paginates server-side (`manualPagination`), so its footer sums only what is
+ * loaded and says so.
+ */
+describe('AC-B3-6: the worklist carries Taken / Remaining too, footer labelled for the current page', () => {
+  it("the worklist's own column set includes Taken and Remaining (not the retired taken_from_po/remaining_open pair)", () => {
+    renderRows(
+      [worklistRow({ id: 'row-1', verb: 'ORDER', qty: '20', linked_qty: '5', bundled_qty: '0' })],
+      'taken',
+    );
+    expect(screen.getByTestId('row-row-1').textContent).toBe('5');
+  });
+
+  it('renders Taken/Remaining per row, the same rule the Lines tab reads', () => {
+    render(
+      <TakenRemainingTable
+        pageScoped={false}
+        rows={[
+          worklistRow({ id: 'row-1', verb: 'ORDER', qty: '300', linked_qty: '164', bundled_qty: '0' }),
+        ]}
+      />,
+    );
+
+    const row = screen.getByTestId('row-row-1');
+    expect(within(row).getByText('164')).toBeInTheDocument();
+    expect(within(row).getByText('136')).toBeInTheDocument();
+  });
+
+  it('AC-B3-6: labels the footer "(page)" when the grid paginates server-side - the worklist\'s own usage', () => {
+    render(
+      <TakenRemainingTable
+        pageScoped
+        rows={[
+          worklistRow({ id: 'row-1', verb: 'ORDER', qty: '10', linked_qty: '4', bundled_qty: '0' }),
+          worklistRow({ id: 'row-2', verb: 'ADVANCE', qty: '999', linked_qty: '0' }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('footer-taken')).toHaveTextContent('4');
+    expect(screen.getByTestId('footer-taken')).toHaveTextContent('(page)');
+    expect(screen.getByTestId('footer-remaining')).toHaveTextContent('6');
+    expect(screen.getByTestId('footer-remaining')).toHaveTextContent('(page)');
+  });
+
+  it('carries no "(page)" label when the caller is not page-scoped, the Lines tab\'s own usage', () => {
+    render(
+      <TakenRemainingTable
+        pageScoped={false}
+        rows={[
+          worklistRow({ id: 'row-1', verb: 'ORDER', qty: '10', linked_qty: '4', bundled_qty: '0' }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('footer-taken')).not.toHaveTextContent('(page)');
   });
 });
 
@@ -1153,6 +1317,53 @@ describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5, 17 Sep rulings): the 
     fireEvent.click(mark);
     const dialog = screen.getByTestId('qty-annotation-row-moved');
     expect(within(dialog).getByText('AutoCount moved 202607-S0077 to SO314595')).toBeInTheDocument();
+  });
+});
+
+/**
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the worklist's own "SO line" column -
+ * `SO402757 · L5`, linking to that exact sales-order line; plain text (no id printed, per
+ * the no-UUID rule) once either id the link needs is missing.
+ */
+describe('AC-B6-1: the SO line column prints "SO<n> · L<n>" and links to the exact line', () => {
+  it('renders the label as a link once both ids are on the row', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-1',
+          so_number: 'SO402757',
+          line_no: 5,
+          core_sales_order_id: 'core-so-1',
+          core_line_id: 'core-line-5',
+        }),
+      ],
+      'so_line',
+    );
+
+    const row = screen.getByTestId('row-row-1');
+    const link = within(row).getByText('SO402757 · L5').closest('a');
+    expect(link).not.toBeNull();
+    expect(link).toHaveAttribute('href', '/scm/sales-orders/core-so-1?tab=lines&line=core-line-5');
+  });
+
+  it('falls back to plain text - the SO number alone - once the line id is not on the row yet', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-2',
+          so_number: 'SO402757',
+          line_no: null,
+          core_sales_order_id: 'core-so-1',
+          core_line_id: null,
+        }),
+      ],
+      'so_line',
+    );
+
+    const row = screen.getByTestId('row-row-2');
+    expect(within(row).getByText('SO402757')).toBeInTheDocument();
+    expect(within(row).queryByText(/· L/)).not.toBeInTheDocument();
+    expect(row.querySelector('a')).toBeNull();
   });
 });
 

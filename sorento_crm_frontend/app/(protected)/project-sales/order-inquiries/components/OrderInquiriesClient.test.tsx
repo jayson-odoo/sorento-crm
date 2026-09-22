@@ -1219,13 +1219,16 @@ describe('AC-OH-61: a State filter in the Filters popover (`oi-worklist-one-head
     const optionTexts = Array.from(select.options).map(
       (option) => option.textContent,
     );
+    // S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's pick, 22 Sep 2026): the
+    // filter's own labels read off the SAME `STATE_LABEL` map the pill does, which now
+    // spells the words differently - same counts, new words.
     expect(optionTexts).toEqual(
       expect.arrayContaining([
-        'Raised (2)',
-        'Partly linked (2)',
-        'Actioned (1)',
+        'To buy (2)',
+        'Partly on PO/SPO (2)',
+        'Done (1)',
         'Cancelled (1)',
-        'Linked (1)',
+        'On PO/SPO (1)',
       ]),
     );
     // `total` is a count, not a state a row can be filtered to.

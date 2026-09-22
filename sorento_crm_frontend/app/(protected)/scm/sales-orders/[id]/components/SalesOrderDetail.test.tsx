@@ -1503,10 +1503,50 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The same pill wording the order-inquiry worklist uses, so "Linked" cannot mean two
-    // things on two screens.
-    expect(within(row).getByText('Linked')).toBeInTheDocument();
+    // The same pill wording the order-inquiry worklist uses, so the state word cannot mean
+    // two things on two screens. S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's
+    // pick, 22 Sep 2026): `placed` now reads "On PO/SPO", not "Linked".
+    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
+  });
+
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2): the Order inquiry cell becomes a
+   * link to that exact row once the backend sends `inquiry_id`/`row_id` beside `inquiry_no`.
+   */
+  it('AC-B6-2: links the Order inquiry cell to the exact row once inquiry_id/row_id are on the line', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        order_inquiry: {
+          inquiry_no: 'OI-000123',
+          state: 'placed',
+          inquiry_id: 'oi-header-1',
+          row_id: 'oi-row-9',
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    const link = within(row).getByText('OI-000123').closest('a');
+    expect(link).not.toBeNull();
+    expect(link).toHaveAttribute(
+      'href',
+      '/project-sales/order-inquiries/oi-header-1?row=oi-row-9',
+    );
+  });
+
+  it('AC-B6-2: stays plain text - no link - while inquiry_id/row_id are not yet on the line', () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    const reference = within(row).getByText('OI-000123');
+    expect(reference.closest('a')).toBeNull();
   });
 
   it('sits Linked to immediately after Outstanding qty in the default column order (R4, AC-K1)', () => {

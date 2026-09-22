@@ -2997,8 +2997,10 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
 
     const row = table.querySelectorAll('tbody tr')[0] as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The worklist's own wording, so "Placed" cannot mean two things on two screens.
-    expect(within(row).getByText('Linked')).toBeInTheDocument();
+    // The worklist's own wording, so the state word cannot mean two things on two screens.
+    // S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's pick, 22 Sep 2026): `placed`
+    // now reads "On PO/SPO", not "Linked".
+    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
   });
 
   it('prints a dash for a line nobody has been told anything about', () => {
