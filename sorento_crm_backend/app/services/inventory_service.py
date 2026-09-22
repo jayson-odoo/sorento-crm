@@ -1014,6 +1014,9 @@ class StockService:
                 requested_qty=requested_qty,
                 requested_quantities=requested_quantities,
                 requested_product_ids=resolved_input_product_ids,
+                # Review round 6 (finding B): the caller's own list, in order - the set
+                # above is for membership tests and cannot carry one.
+                product_id_order=[str(pid) for pid in (product_ids or []) if pid],
                 page=page,
                 limit=limit,
                 # SEC-S1: the SAME location narrowing the on-hand query above ran
@@ -1210,6 +1213,7 @@ class StockService:
         limit: int,
         requested_quantities: Optional[dict] = None,
         warehouse_ids: Optional[list[str]] = None,
+        product_id_order: Optional[list[str]] = None,
     ) -> None:
         """Attach the visibility block(s) and, for the two summary modes, empty `data`.
 
@@ -1367,6 +1371,26 @@ class StockService:
                 for pid in ordered_ids
             ]
             return
+
+        # Review round 6, finding B: when the CALLER named the products, that list is
+        # the order the answer is read out in - the dealer hears their own question
+        # back. `ordered_ids` above is `product_code` asc, which is the right order for
+        # the catalogue case ("what stock do you have?", nothing named) and the wrong
+        # one here: the reply noted "MHS1028 x 60, MWT5727SS-CR x 5" for a dealer who
+        # had asked the other way round. Anything the caller did not name (a product
+        # with stock that the page picked up) keeps its page position, after the named
+        # ones.
+        asked_order = [str(pid) for pid in (product_id_order or []) if pid]
+        if asked_order:
+            rank = {pid: index for index, pid in enumerate(asked_order)}
+            unranked = len(rank)
+            ordered_ids = [
+                pid
+                for _, pid in sorted(
+                    ((rank.get(pid, unranked), pid) for pid in ordered_ids),
+                    key=lambda pair: pair[0],
+                )
+            ]
 
         # availability: a verdict judged against the allowed locations only. No
         # quantity of OURS reaches the block - not the total, not the per-location

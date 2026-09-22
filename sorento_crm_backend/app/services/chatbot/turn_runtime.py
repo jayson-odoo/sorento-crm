@@ -1251,7 +1251,45 @@ def _spec_quantities(
             if isinstance(code, str) and code.strip():
                 by_code[code.strip().casefold()] = quantity
     if not by_code:
-        return out
+        # D13 (review round 6, finding D): the same sentence shape parses two ways -
+        # "stock for CWC8315-NEW 935?" filled `entities[].quantity`, and the very next
+        # turn's "stock for CWC8315-NEW 75?" put the number on the top-level
+        # `demand_qty` instead. With exactly ONE product code named, the number can
+        # only be that product's, so the fetch carries it and the dealer is answered
+        # rather than asked for a quantity they just gave. Two codes and it belongs to
+        # neither - the same boundary the task's own bare-number fallback keeps
+        # (`turn/task.py::StockQtyTask.fill`). Read here, at the one seam where both
+        # halves of "who asked for how many" already meet, never in the parser.
+        bare = _int(out.get("demand_qty"))
+        if bare is None:
+            return out
+        named: set[str] = set()
+        for e in jsc.array(out.get("entities")):
+            if not isinstance(e, dict):
+                continue
+            for name in ("canonical_code", "raw"):
+                code = e.get(name)
+                if isinstance(code, str) and code.strip():
+                    named.add(code.strip().casefold())
+        matched: dict[str, list[str]] = {}
+        for e in entities:
+            uuid = e.get("uuid") if isinstance(e, dict) else None
+            if not isinstance(uuid, str) or not uuid:
+                continue
+            for name in ("code", "canonical_code", "raw"):
+                code = e.get(name)
+                if not isinstance(code, str) or not code.strip():
+                    continue
+                folded = code.strip().casefold()
+                if folded in named:
+                    matched.setdefault(folded, []).append(uuid)
+                    break
+        if len(matched) != 1:
+            return out
+        # One code, but possibly two company rows behind it - one product as far as the
+        # dealer is concerned, the same reading the backend's own per-code merge takes.
+        only = next(iter(matched.values()))
+        return {**out, "requested_quantities": {uuid: bare for uuid in only}}
     quantities: dict[str, int] = {}
     for e in entities:
         uuid = e.get("uuid") if isinstance(e, dict) else None

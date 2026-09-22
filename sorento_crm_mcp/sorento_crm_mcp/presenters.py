@@ -128,6 +128,15 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Dealer stock verdict (D25), review round 6: the per-product `needs_quantity` /
+    # verdict block. The PRESENTER reads it to build the dealer's sentence, and the
+    # ENGINE reads it again to open, update and close the stock task
+    # (`turn/task.py::tasks_after_reply`) - so dropping it from the render envelope
+    # meant no task ever survived a turn in production, while the reply itself still
+    # looked right. Measured on `chatbot.turns` (turn `d18b2e6f`): the engine's
+    # envelope carried `stock_availability: []` on a turn whose own reply had just
+    # asked for two quantities.
+    "stock_availability",
     # Every company the backend actually searched, present only when the lookup
     # spanned more than one (see `stamp_lookup_companies` backend-side). A
     # single-company reply never carries it, so it stays byte-identical.

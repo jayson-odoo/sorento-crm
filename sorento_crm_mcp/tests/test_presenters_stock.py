@@ -391,8 +391,31 @@ def test_render_availability_ask_wins_over_a_mixed_answer():
 
 def test_render_availability_carries_no_quantity_anywhere():
     """D4. The point of the mode: walk the whole envelope and prove no number
-    from the stock table can be read out of it."""
+    from the stock table can be read out of it.
+
+    Review round 6: `stock_availability` now rides through the envelope as a
+    passthrough key, because it is what the ENGINE opens the dealer's stock task
+    from (D25) - it was being dropped here and no task ever survived a turn in
+    production. It is lifted out before the sweep and checked on its own terms:
+    the only number in it is the dealer's OWN asked quantity, which they typed,
+    beside booleans and the verdict word. None of OUR figures - on hand, open SO,
+    incoming, purchase - appears in it or anywhere else."""
     out = env(_availability_payload([_entry("SRTBF11201-NEW", available=True)]))
+
+    block = out.pop("stock_availability")
+    assert [row.get("requested_qty") for row in block] == [50], "the dealer's own number"
+    for row in block:
+        assert set(row) <= {
+            "product_id",
+            "product_code",
+            "product_name",
+            "needs_quantity",
+            "requested_qty",
+            "available",
+            "verdict",
+            "running_low",
+            "disclaimer",
+        }
 
     dumped = json.dumps(out)
     for item in out["items"]:

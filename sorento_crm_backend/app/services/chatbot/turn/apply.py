@@ -1457,6 +1457,15 @@ def apply(
     # `RESET_KEEPS` alone, and the tasks it KEEPS (the ones aimed elsewhere, parked by
     # D23) are what the task step above already decided. One writer, one answer.
     focus.tasks = task_outcome.tasks
+    if "stock_qty" in task_outcome.closed_kinds:
+        # D23, review round 6 (case F turn 3): "never mind the stock check" ends the
+        # task, and what the task was ABOUT ends with it. The reset already empties the
+        # focus, but the rules below it refill `products` from THIS message's entities -
+        # and the parser hands back the products it has been discussing, so the closed
+        # question's own products came straight back and the bare "60" typed next
+        # re-asked it.
+        _set_kind_field(focus, "product", [])
+        trace.rules_fired.append("task_close_clears_products")
 
     # A task that just took a value re-runs its own domain's fetch. The domain is the
     # TASK's, locked the same way a pick locks a turn (contract 121) - a detour left

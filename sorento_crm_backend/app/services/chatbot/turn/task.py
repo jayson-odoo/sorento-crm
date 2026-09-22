@@ -108,6 +108,37 @@ def _entity_codes(entity: dict[str, Any]) -> set[str]:
     return codes
 
 
+def _only_task_slots(
+    task: "Task", verdict: dict[str, Any], *, allow_quantities: bool = False
+) -> bool:
+    """Does this message name anything the task is not already collecting for?
+
+    Review round 6. Empty entities name nothing new (the original rule); so do entities
+    that are all products this task already holds. `allow_quantities` is the difference
+    between the two readings that need this question answered:
+
+    * the RESUME arm (finding F) says no - a quantity is a fill, not a resume;
+    * the FILL arm (finding A) says yes - a quantity for a product the task already
+      holds is exactly what a fill IS, and it must not be mistaken for a fresh ask.
+    """
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    if not entities:
+        return True
+    known: set[str] = set()
+    for slot in task.slots:
+        for value in (slot.key, slot.label):
+            if isinstance(value, str) and value.strip():
+                known.add(value.strip().casefold())
+    if not known:
+        return False
+    for entity in entities:
+        if not allow_quantities and _number(entity.get("quantity")) is not None:
+            return False
+        if not (_entity_codes(entity) & known):
+            return False
+    return True
+
+
 #: SEC-S2 (security review, round 1): how many slots one stock task may carry, and how
 #: many of them a sentence enumerates before it counts the rest. An ask that names no
 #: product at all used to open a task with one slot per CATALOGUE row (the tool's own
@@ -597,7 +628,16 @@ def run(
                 impl.fill(task, verdict), status=OPEN, touched_at_turn=turn_no
             )
             moved = filled.slots != task.slots
-            spec = impl.to_fetch(filled) if moved else None
+            # Review round 6, finding A (D16): the fill MERGES into the slots the task
+            # already has, so a quantity for one product leaves the others exactly as
+            # they were - and while any of them is still owed there is nothing to
+            # answer yet (D14). "make MHS1028 80" answered MHS1028 alone and closed the
+            # task, leaving MSK11A-QT - which the previous turn had explicitly asked
+            # for - unanswered and never asked about again. A fetch happens when NO
+            # slot is missing, or on a `proceed_anyway`, which drops the missing ones
+            # (D15) and so leaves none behind either.
+            still_missing = impl.missing(filled) if hasattr(impl, "missing") else ()
+            spec = impl.to_fetch(filled) if (moved and not still_missing) else None
             if spec is None and moved and not filled.slots:
                 # R-S3: the fill emptied the task (a "just proceed" with nothing
                 # noted). It is finished - it does not ride on as an empty task - and
@@ -612,13 +652,32 @@ def run(
             if spec is not None:
                 fetch = spec
                 fetch_domain = filled.domain
-            elif not moved and decision_kind != "new_ask" and question is None:
+            elif question is None and (
+                (still_missing and _only_task_slots(task, verdict, allow_quantities=True))
+                or (not moved and decision_kind != "new_ask")
+            ):
+                # A turn that gave or RESTATED a quantity for this task's own products
+                # always speaks, whatever `decide()` made of the sentence (a quantity
+                # beside a product code reads as a new ask): the dealer just answered
+                # part of this question, so the reply is what is noted and what is still
+                # owed - even when the restated number changed nothing. A message that
+                # names a product the task does NOT hold is a fresh stock question of
+                # its own and rebuilds the task (D23), so it falls through to the
+                # ordinary plan.
                 question = impl.question(filled)
                 question_domain = filled.domain
             continue
-        if task.domain and task.domain == named_domain and not verdict.get("entities"):
+        if task.domain and task.domain == named_domain and _only_task_slots(task, verdict):
             # (5) resume (D22): the task's own topic, named again with nothing new.
             # Only what is still missing is asked; nothing is asked twice.
+            #
+            # Review round 6, finding F: "back to the stock check" is parsed against the
+            # whole conversation, so the parser hands back the task's OWN products as
+            # this turn's entities. Testing for no entities at all read that as a fresh
+            # question and made a real tool call, losing the `Noted: ...` recap and
+            # re-asking what was already known. Entities that are all slots this task
+            # already holds, carrying no quantity, say nothing new - which is what a
+            # resume is.
             resumed = replace(task, status=OPEN, touched_at_turn=turn_no)
             out.append(resumed)
             rules.append(f"task_resumed_{task.kind}")
@@ -711,12 +770,30 @@ def opened_for_domains(
 # --------------------------------------------------------------------------- #
 
 
+def message_codes(verdict: dict[str, Any]) -> tuple[str, ...]:
+    """The product codes this MESSAGE actually named (D29, review round 6).
+
+    Read off the parser's own entities, never off the resolved focus: the resolver
+    expands a family-grouped code into its siblings, and the dealer typed one of them.
+    """
+    out: list[str] = []
+    for entity in verdict.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        for name in ("canonical_code", "code", "raw"):
+            value = entity.get(name)
+            if isinstance(value, str) and value.strip():
+                out.append(value.strip())
+    return tuple(out)
+
+
 def tasks_after_reply(
     tasks: tuple[Task, ...],
     envelopes: list[dict[str, Any]],
     *,
     turn_no: int = 0,
     named_products: bool = True,
+    named_codes: tuple[str, ...] = (),
 ) -> tuple[Task, ...]:
     """The stock task, rebuilt from the stock tool's own `stock_availability` block.
 
@@ -741,6 +818,32 @@ def tasks_after_reply(
             block = [row for row in rows if isinstance(row, dict)]
     if block is None:
         return tasks
+
+    # D29 (review round 6, finding C): a code the dealer typed EXACTLY opens a slot for
+    # that product only. "stock for CB313 1200?" is one literal product code; the
+    # resolver expands it to the whole family, so the reply answered for CB313,
+    # CB313A-NL, CB313-NL and CB313-L and the task then asked for three quantities the
+    # dealer had never mentioned. A sibling the resolver added is dropped from the task
+    # silently - it is not what the question was about. The task's OWN slots count as
+    # named (a fill turn names one product and must not drop the rest of the task). If
+    # NOTHING in the reply matches a typed code exactly - the dealer typed a family
+    # prefix that is not a product of its own - there is nothing to narrow to and the
+    # whole block stands, which is today's behaviour.
+    wanted = {code.strip().casefold() for code in named_codes if isinstance(code, str) and code.strip()}
+    for task in tasks:
+        if task.kind != "stock_qty":
+            continue
+        for slot in task.slots:
+            if isinstance(slot.label, str) and slot.label.strip():
+                wanted.add(slot.label.strip().casefold())
+    if wanted:
+        exact = [
+            row
+            for row in block
+            if str(row.get("product_code") or "").strip().casefold() in wanted
+        ]
+        if exact:
+            block = exact
 
     others = tuple(task for task in tasks if task.kind != "stock_qty")
     if not any(row.get("needs_quantity") is True for row in block):

@@ -418,12 +418,7 @@
         "action_kinds": [],
         "branch_kind": "business_query",
         "canned": [],
-        "entity_ids": [
-          "00000000-0000-0000-0000-0000000000a1",
-          "00000000-0000-0000-0000-0000000000a2",
-          "00000000-0000-0000-0000-0000000000a3",
-          "00000000-0000-0000-0000-0000000000a4"
-        ],
+        "entity_ids": [],
         "pending": null,
         "tools": []
       },
@@ -448,144 +443,12 @@
       },
       "source": {
         "db": "dsv-tester-handwritten",
-        "expected_from": "hand_authored_red_fixture",
+        "expected_from": "hand_authored_red_fixture (step 2 updated, review round 6 finding A)",
         "prompt_version": null,
         "recorded_at": "2026-09-22T00:00:00+00:00",
         "turn_id": "zzt-dsv-900000004"
       },
-      "tool_results": [
-        {
-          "tool": "crm_inventory_stock_balance_list",
-          "args": {
-            "_diagnostics": null,
-            "access_levels": null,
-            "contact_id": null,
-            "date_mode": null,
-            "include_sellable": null,
-            "is_active": null,
-            "product_ids": null,
-            "space_id": null,
-            "view": null,
-            "requested_quantities": null
-          },
-          "envelope": {
-            "has_result": true,
-            "intro": "Stock availability.",
-            "items": [
-              {
-                "title": "MWT5727SS-CR",
-                "fields": [
-                  {
-                    "key": "product_code",
-                    "label": "Product Code",
-                    "value": "MWT5727SS-CR"
-                  },
-                  {
-                    "key": "status_line",
-                    "label": "Status",
-                    "value": "Yes, available."
-                  }
-                ],
-                "flags": {}
-              },
-              {
-                "title": "MHS1028",
-                "fields": [
-                  {
-                    "key": "product_code",
-                    "label": "Product Code",
-                    "value": "MHS1028"
-                  },
-                  {
-                    "key": "status_line",
-                    "label": "Status",
-                    "value": "Yes, available."
-                  }
-                ],
-                "flags": {}
-              },
-              {
-                "title": "MSK11A-QT",
-                "fields": [
-                  {
-                    "key": "product_code",
-                    "label": "Product Code",
-                    "value": "MSK11A-QT"
-                  },
-                  {
-                    "key": "status_line",
-                    "label": "Status",
-                    "value": "How many units do you need?"
-                  }
-                ],
-                "flags": {}
-              },
-              {
-                "title": "ABC123",
-                "fields": [
-                  {
-                    "key": "product_code",
-                    "label": "Product Code",
-                    "value": "ABC123"
-                  },
-                  {
-                    "key": "status_line",
-                    "label": "Status",
-                    "value": "How many units do you need?"
-                  }
-                ],
-                "flags": {}
-              }
-            ],
-            "stock_availability": [
-              {
-                "product_id": "00000000-0000-0000-0000-0000000000a1",
-                "product_code": "MWT5727SS-CR",
-                "product_name": "MWT5727SS-CR",
-                "needs_quantity": false,
-                "requested_qty": 5,
-                "available": true,
-                "verdict": "not_available",
-                "running_low": false,
-                "disclaimer": null
-              },
-              {
-                "product_id": "00000000-0000-0000-0000-0000000000a2",
-                "product_code": "MHS1028",
-                "product_name": "MHS1028",
-                "needs_quantity": false,
-                "requested_qty": 80,
-                "available": true,
-                "verdict": "not_available",
-                "running_low": false,
-                "disclaimer": null
-              },
-              {
-                "product_id": "00000000-0000-0000-0000-0000000000a3",
-                "product_code": "MSK11A-QT",
-                "product_name": "MSK11A-QT",
-                "needs_quantity": true,
-                "requested_qty": null,
-                "available": null,
-                "verdict": null,
-                "running_low": null,
-                "disclaimer": null
-              },
-              {
-                "product_id": "00000000-0000-0000-0000-0000000000a4",
-                "product_code": "ABC123",
-                "product_name": "ABC123",
-                "needs_quantity": true,
-                "requested_qty": null,
-                "available": null,
-                "verdict": null,
-                "running_low": null,
-                "disclaimer": null
-              }
-            ]
-          }
-        }
-      ],
+      "tool_results": [],
       "verdict": {
         "access_levels": [],
         "broaden_axis": null,

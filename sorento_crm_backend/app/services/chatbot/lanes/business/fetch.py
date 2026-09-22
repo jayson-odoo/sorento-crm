@@ -838,10 +838,15 @@ def entity_ids_transformer(
         # with 5 errors and the tool call never reaches the backend at all.
         # `_normalize_query_value` passes a string through untouched, so a compact
         # JSON string is the only shape that survives the round trip.
+        #
+        # Review round 6, finding B: NOT key-sorted. The map is built in the order the
+        # dealer named the products (`turn_runtime._spec_quantities`, over the spec's
+        # own entities), and sorting the keys here threw that order away - the reply
+        # then noted the products back in an order the dealer had not used.
         quantities = jsc.get(semantic_input, "requested_quantities")
         if isinstance(quantities, dict) and quantities:
             out["requested_quantities"] = json.dumps(
-                dict(quantities), separators=(",", ":"), sort_keys=True
+                dict(quantities), separators=(",", ":")
             )
 
     # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across

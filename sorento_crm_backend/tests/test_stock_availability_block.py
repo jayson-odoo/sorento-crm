@@ -896,8 +896,9 @@ def test_same_product_code_in_two_companies_is_one_entry_judged_on_the_sum(db):
     Merged, the dealer is judged on 12 and the answer is yes. Unmerged, each company's own
     6 is short of 10 and BOTH entries answer no - which is the defect, twice over: two
     lines for one code, and both of them wrong. `product_id` is the first id in page order
-    (`product_code` asc, then `id` asc - identical codes here, so the lower uuid), which is
-    the id the task's slot then carries and the next fetch sends a quantity back for."""
+    (review round 6: the CALLER's `product_ids` order, so the first of the two named
+    here), which is the id the task's slot then carries and the next fetch sends a
+    quantity back for."""
     seed_mocha(db)
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     sorento_wh = _wh(db, unique_code("ZZTSRW")[:50])
@@ -940,7 +941,7 @@ def test_same_product_code_in_two_companies_is_one_entry_judged_on_the_sum(db):
 
     assert len(result["stock_availability"]) == 1, result["stock_availability"]
     assert result["stock_availability"][0] == {
-        "product_id": min(sorento_p.id, mocha_p.id),
+        "product_id": sorento_p.id,
         "product_code": code,
         "product_name": code,
         "needs_quantity": False,
@@ -1035,3 +1036,68 @@ def test_merged_entry_sums_supply_takes_the_earliest_eta_and_matches_code_case_b
         "purchase_eta_days": 90,
     }
     _assert_no_quantity_anywhere(result, {3, 4, 5, 7, 9, 16})
+
+
+# ================================ review round 6, the asked order (finding B)
+#
+# Live evidence Run 3, finding B: asked "stock for MWT5727SS-CR 5, MHS1028 60, ...",
+# answered "Noted: MHS1028 x 60, MWT5727SS-CR x 5." - the reply reordered the dealer's
+# own products. `ordered_ids` above pages the candidates by `product_code` asc, which is
+# the right order for the catalogue case ("what stock do you have?") and the wrong one
+# whenever the caller named the products: then the list IS the order, and the task's
+# slots and every later reply follow the block.
+
+
+def test_availability_entries_follow_the_callers_product_ids_order(db):
+    """The caller's order wins over product_code order. Both products here are named,
+    and they are named in the order that is NOT alphabetical, so a page-ordered answer
+    and an ask-ordered one cannot be confused."""
+    brw = _wh(db, unique_code("ZZTORD")[:50])
+    first = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZZTZED")[:50])
+    second = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZZTALP")[:50])
+    for p in (first, second):
+        stock(
+            db,
+            company_id=DEFAULT_COMPANY_ID,
+            product_id=p.id,
+            warehouse_id=brw.id,
+            on_hand=100,
+        )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[first.id, second.id],
+        contact_id=contact.id,
+        requested_quantities={first.id: 5, second.id: 60},
+    )
+
+    assert [e["product_code"] for e in result["stock_availability"]] == [
+        first.product_code,
+        second.product_code,
+    ]
+
+
+def test_availability_with_no_products_named_stays_in_page_order(db):
+    """The catalogue case is untouched: nothing was named, so there is no asked order
+    to keep and the page's own `product_code` order is the answer's."""
+    brw = _wh(db, unique_code("ZZTORD")[:50])
+    zed = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZZTZED")[:50])
+    alpha = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZZTALP")[:50])
+    for p in (zed, alpha):
+        stock(
+            db,
+            company_id=DEFAULT_COMPANY_ID,
+            product_id=p.id,
+            warehouse_id=brw.id,
+            on_hand=100,
+        )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(contact_id=contact.id, requested_qty=5)
+
+    codes = [e["product_code"] for e in result["stock_availability"]]
+    assert codes == sorted(codes)
