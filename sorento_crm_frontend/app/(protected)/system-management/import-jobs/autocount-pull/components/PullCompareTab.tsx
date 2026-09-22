@@ -18,11 +18,8 @@ import { toast } from '@/lib/toast';
 import { generateExcelFile, parseExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useComparePull } from '../hooks/useAutocountPull';
 import { isCompareFullMatch } from '../types/compareMatch';
-import type {
-  AutocountCompareDifference,
-  AutocountComparePullResult,
-  AutocountPullEntity,
-} from '../types/autocountPull.types';
+import { buildCompareRows, type CompareRow } from './compareRows';
+import type { AutocountComparePullResult, AutocountPullEntity } from '../types/autocountPull.types';
 
 export interface PullCompareTabProps {
   jobId: string;
@@ -38,7 +35,7 @@ const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
 };
 
 function summaryHeadline(result: AutocountComparePullResult): { title: string; body: string; ok: boolean } {
-  const { summary } = result;
+  const { summary, differences } = result;
   const ok = isCompareFullMatch(summary);
   if (ok) {
     return {
@@ -47,7 +44,17 @@ function summaryHeadline(result: AutocountComparePullResult): { title: string; b
       ok: true,
     };
   }
-  const parts = [`${summary.different} differ`];
+  // CT-2: `summary.different` counts ITEMS with at least one differing field; `differences`
+  // holds one entry PER FIELD, so an item that differs on two fields makes the two numbers
+  // diverge. Name both when they do; a bare "N differ" would be ambiguous about which count
+  // it is.
+  const itemsDiffer = summary.different;
+  const fieldDifferences = differences.length;
+  const parts = [
+    itemsDiffer === fieldDifferences
+      ? `${itemsDiffer} items differ`
+      : `${itemsDiffer} items differ (${fieldDifferences} differences)`,
+  ];
   if (summary.only_in_excel) parts.push(`${summary.only_in_excel} only in your Excel`);
   if (summary.only_in_pull) parts.push(`${summary.only_in_pull} only in AutoCount`);
   return {
@@ -86,8 +93,8 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
     }
   };
 
-  const columns = useMemo<ColumnDef<AutocountCompareDifference>[]>(() => {
-    const base: ColumnDef<AutocountCompareDifference>[] = [
+  const columns = useMemo<ColumnDef<CompareRow>[]>(() => {
+    const base: ColumnDef<CompareRow>[] = [
       {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
@@ -134,15 +141,19 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
     return base;
   }, [entity]);
 
+  // Differences + only_in_excel + only_in_pull, formatted and labelled - the SAME array the
+  // grid's recordCount and the download both use (CT-4).
+  const rows = useMemo<CompareRow[]>(() => (result ? buildCompareRows(result) : []), [result]);
+
   const table = useReactTable({
     columns,
-    data: result?.differences ?? [],
+    data: rows,
     getRowId: (row, index) => `${row.item_code}-${row.location ?? ''}-${row.field}-${index}`,
     getCoreRowModel: getCoreRowModel(),
   });
 
   const handleDownloadDifferences = async () => {
-    if (!result || result.differences.length === 0) return;
+    if (rows.length === 0) return;
     const cols: ColumnOption[] = [
       { key: 'item_code', label: 'Item Code', selected: true },
       ...(entity === 'stock_balances'
@@ -153,7 +164,7 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
       { key: 'pull', label: 'AutoCount pull', selected: true },
     ];
     // No UUID in the filename the user sees (cursor rule) - the entity, not the job id.
-    await generateExcelFile(result.differences, cols, `autocount-${entity}-differences.xlsx`);
+    await generateExcelFile(rows, cols, `autocount-${entity}-differences.xlsx`);
   };
 
   const headline = result ? summaryHeadline(result) : null;
@@ -191,10 +202,10 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
         </div>
       </div>
 
-      {result && result.differences.length > 0 && (
+      {rows.length > 0 && (
         <DataGrid
           table={table}
-          recordCount={result.differences.length}
+          recordCount={rows.length}
           isLoading={false}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
           listingKey={COMPARE_LISTING_KEY[entity]}
