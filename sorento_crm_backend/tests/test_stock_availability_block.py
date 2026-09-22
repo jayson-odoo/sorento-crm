@@ -1101,3 +1101,139 @@ def test_availability_with_no_products_named_stays_in_page_order(db):
 
     codes = [e["product_code"] for e in result["stock_availability"]]
     assert codes == sorted(codes)
+
+
+# ============ review round 8, a named id stands for its code (finding 2, D27)
+#
+# Live evidence Run 4, finding 2 (turn 38d74c62): MWT5727SS-CR came back
+# `disclaimer: null` in a three-product batch while MSK11A-QT in the same call carried
+# its incoming disclaimer. Measured against the live database: the code exists in two
+# companies, the 177 open PO lines sit on the SORENTO row, and the fetch carried only
+# the MOCHA id - because the per-code merge (D27) answers with ONE entry whose
+# `product_id` is the first of the merged ids, the task's slot then carries that one id,
+# and the next fetch sends it back alone. The second company's supply was invisible from
+# that turn on. Re-running the same call with BOTH ids produced the purchase disclaimer
+# correctly, which is what isolates the round trip rather than the disclaimer logic.
+#
+# The dealer mode already says a code is ONE product (D27), so a named id stands for its
+# code: every row of that code the caller's scope allows is answered together.
+
+
+def test_a_named_id_answers_for_every_company_row_of_that_code(db):
+    """The round trip the merge created. The dealer asks about one code; the reply
+    merges the two companies into one entry keyed on the first id; the task sends THAT
+    id back. The answer has to be the same both times - so the purchase sitting on the
+    company row that was NOT named still reaches the verdict."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    sorento_wh = _wh(db, unique_code("ZZTR8S")[:50])
+    mocha_wh = warehouse(db, company_id=MOCHA_ID, code=unique_code("ZZTR8M")[:50])
+    shared = unique_code("ZZTSHR")[:50]
+    mocha_p = product(db, company_id=MOCHA_ID, code=shared)
+    sorento_p = product(db, company_id=DEFAULT_COMPANY_ID, code=shared)
+    # Nothing on hand anywhere, and the open PO is on the company the dealer did NOT
+    # name - the live shape exactly.
+    stock(
+        db, company_id=MOCHA_ID, product_id=mocha_p.id, warehouse_id=mocha_wh.id, on_hand=0
+    )
+    stock(
+        db,
+        company_id=DEFAULT_COMPANY_ID,
+        product_id=sorento_p.id,
+        warehouse_id=sorento_wh.id,
+        on_hand=0,
+    )
+    _po_line(db, product_id=sorento_p.id, warehouse_id=sorento_wh.id, ordered=177)
+    # A second product in the same batch, purchase-only and single-company, so the
+    # scenario is the multi-product call the defect was seen in.
+    other = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZZTOTH")[:50])
+    stock(
+        db,
+        company_id=DEFAULT_COMPANY_ID,
+        product_id=other.id,
+        warehouse_id=sorento_wh.id,
+        on_hand=0,
+    )
+    _po_line(db, product_id=other.id, warehouse_id=sorento_wh.id, ordered=50)
+    contact = _contact(db)
+    _policy_row(
+        db,
+        mode="availability",
+        warehouse_ids=[sorento_wh.id, mocha_wh.id],
+        contact=contact,
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[mocha_p.id, other.id],
+        contact_id=contact.id,
+        requested_quantities={mocha_p.id: 5, other.id: 5},
+    )
+
+    entries = {e["product_code"]: e for e in result["stock_availability"]}
+    assert set(entries) == {shared, other.product_code}
+    assert entries[shared]["disclaimer"] == {
+        "sources": ["purchase"],
+        "limited": False,
+        "incoming_eta": None,
+        "purchase_eta_days": 90,
+    }, "the purchase on the company row the dealer did not name still answers for the code"
+    assert entries[other.product_code]["disclaimer"]["sources"] == ["purchase"]
+
+
+def test_the_expansion_keeps_the_asked_order_and_the_named_id(db):
+    """The expansion must not disturb what round 6 and round 5 pinned: the caller's own
+    order, and the merged entry keyed on the id the caller named (the id the task's slot
+    carries back)."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    wh = _wh(db, unique_code("ZZTR8O")[:50])
+    shared = unique_code("ZZTZED")[:50]
+    mocha_p = product(db, company_id=MOCHA_ID, code=shared)
+    product(db, company_id=DEFAULT_COMPANY_ID, code=shared)
+    alpha = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("ZZTALP")[:50])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=alpha.id, warehouse_id=wh.id, on_hand=100)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[wh.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[mocha_p.id, alpha.id],
+        contact_id=contact.id,
+        requested_quantities={mocha_p.id: 5, alpha.id: 5},
+    )
+
+    assert [e["product_code"] for e in result["stock_availability"]] == [
+        shared,
+        alpha.product_code,
+    ]
+    assert result["stock_availability"][0]["product_id"] == mocha_p.id
+
+
+def test_compact_mode_is_not_expanded_by_code(db):
+    """The expansion is the dealer mode's own rule (D27 merges by code there and only
+    there). `compact` names locations per product row and is untouched."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    sorento_wh = _wh(db, unique_code("ZZTR8C")[:50])
+    mocha_wh = warehouse(db, company_id=MOCHA_ID, code=unique_code("ZZTR8D")[:50])
+    shared = unique_code("ZZTCMP")[:50]
+    mocha_p = product(db, company_id=MOCHA_ID, code=shared)
+    sorento_p = product(db, company_id=DEFAULT_COMPANY_ID, code=shared)
+    stock(db, company_id=MOCHA_ID, product_id=mocha_p.id, warehouse_id=mocha_wh.id, on_hand=4)
+    stock(
+        db,
+        company_id=DEFAULT_COMPANY_ID,
+        product_id=sorento_p.id,
+        warehouse_id=sorento_wh.id,
+        on_hand=7,
+    )
+    contact = _contact(db)
+    _policy_row(
+        db, mode="compact", warehouse_ids=[sorento_wh.id, mocha_wh.id], contact=contact
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[mocha_p.id], contact_id=contact.id)
+
+    assert [row["product_id"] for row in result["stock_summary"]] == [mocha_p.id]

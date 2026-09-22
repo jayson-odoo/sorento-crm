@@ -709,6 +709,49 @@ class StockService:
             resolve_entities_to_filters,
         )
 
+        # D27, review round 8: in the DEALER mode a named product id stands for its
+        # CODE. The availability block answers one entry per code across the contact's
+        # companies, keyed on the first of the merged ids - so the task's slot carries
+        # that one id and the next turn's fetch names it alone. Measured on the live
+        # database (turn 38d74c62): MWT5727SS-CR's 177 open PO lines sit on the SORENTO
+        # row, the fetch carried only the MOCHA id, and the dealer was told "Not
+        # available" with no purchase disclaimer at all - the same call with both ids
+        # answered correctly. A code is one product to this reader, so it is one product
+        # to every read behind the answer too.
+        #
+        # `availability` only: `compact` and `detailed` name locations and quantities per
+        # product ROW, and the staff grid / n8n callers of those modes ask for the id
+        # they mean.
+        if policy is not None and policy.mode == "availability" and product_ids:
+            named_ids = [str(pid) for pid in product_ids if pid]
+            code_rows = (
+                self.db.query(Product.id, Product.product_code)
+                .filter(
+                    func.lower(Product.product_code).in_(
+                        self.db.query(func.lower(Product.product_code)).filter(
+                            Product.id.in_(named_ids)
+                        )
+                    )
+                )
+                .all()
+            )
+            siblings: dict[str, list[str]] = {}
+            code_by_id: dict[str, str] = {}
+            for row_id, row_code in code_rows:
+                key = (row_code or "").strip().lower()
+                siblings.setdefault(key, []).append(str(row_id))
+                code_by_id[str(row_id)] = key
+            expanded: list[str] = []
+            seen: set[str] = set()
+            for pid in named_ids:
+                # The named id first, so the asked order (review round 6) and the merged
+                # entry's own `product_id` (review round 5) are both unchanged.
+                for candidate in [pid] + siblings.get(code_by_id.get(pid, ""), []):
+                    if candidate not in seen:
+                        seen.add(candidate)
+                        expanded.append(candidate)
+            product_ids = expanded
+
         # Resolved input product id(s) - used on the data-miss (empty) path to find
         # data-bearing variant/neighbour alternatives (section 3.3), and by the
         # per-company labelling on EVERY exit, including the early returns below,

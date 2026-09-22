@@ -142,15 +142,20 @@ def test_proceed_anyway_still_fetches_with_a_slot_unanswered():
 # --------------------------------------------------------------------------- #
 
 
-def _family(token="CB313"):
+def _family():
     """What the resolver hands `apply()` for ONE typed family-grouped code: the code
-    itself plus its siblings, every row carrying the same typed `raw` (the live shape,
-    trace e6459937 - `state_diff.products.after` listed all four)."""
+    itself plus its siblings (live trace e6459937 / 05ae3025 listed all four).
+
+    Review round 8 - the ROW SHAPE matters and round 7's fixture had it wrong: a
+    candidate row carries its OWN code under every name, never the token the customer
+    typed (`turn_runtime.candidates_by_kind` builds `{"raw": code, "canonical_code":
+    code, ...}`). With `raw` set to the typed token instead, round 7's rule passed its
+    unit test and did nothing in production."""
     codes = ["CB313", "CB313A-NL", "CB313-NL", "CB313-L"]
     return {
         "product": [
             {
-                "raw": token,
+                "raw": code,
                 "hint": "product",
                 "canonical_code": code,
                 "uuid": f"uuid-{code}",
@@ -234,7 +239,7 @@ def test_a_family_prefix_with_no_exact_match_keeps_the_whole_family():
     )
 
     _state2, plan = apply(
-        _state(Focus(), turn_no=1), v, build_policy(), candidates=_family(token="CB31")
+        _state(Focus(), turn_no=1), v, build_policy(), candidates=_family()
     )
 
     assert len(plan.fetch[0].entities) == 4
@@ -556,3 +561,89 @@ def test_the_quantity_map_crosses_the_mcp_in_the_order_the_dealer_asked():
 
     assert out["product_ids"] == [first, second]
     assert out["requested_quantities"] == f'{{"{first}":5,"{second}":60}}'
+
+
+# --------------------------------------------------------------------------- #
+# Review round 8, finding 3 (D23): "never mind" closes the task beside an offer
+# --------------------------------------------------------------------------- #
+
+
+def test_never_mind_closes_the_task_even_when_an_escalation_offer_is_open():
+    """Live evidence Run 4, case F turn 2 (trace 15126963). The reply before it ended
+    with "Would you like me to escalate to purchasing team?", so BOTH an escalation
+    offer and the stock task were live. "never mind the stock check" parsed exactly as
+    the close rule needs it - `topic_reset: true`, `domain_hint: "inventory"`,
+    `is_affirmative: false`, no entities (verdict read from the trace) - but the turn
+    routed `escalation_declined` and the task came out of it still `open` with both
+    slots empty, so the bare "60" typed next re-opened the closed question.
+
+    The decline owns the REPLY; it does not own the task. The task step has already run
+    by the time the offer is answered, and its answer must not be thrown away with the
+    rest of the turn."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.pending import ask as pending_ask
+    from app.services.chatbot.turn.state import Focus
+
+    offer = pending_ask(
+        "team_pick",
+        [
+            {
+                "position": 1,
+                "label": "purchasing",
+                "entity_type": "team",
+                "payload": {"team": "purchasing"},
+            }
+        ],
+        asked_at_turn=1,
+    )
+    task = _stock_task(
+        slots=[("uuid-mhs", "MHS1028", None), ("uuid-msk", "MSK11A-QT", None)]
+    )
+    focus = Focus(
+        tasks=(task,),
+        domains=["inventory"],
+        products=[entity("MHS1028", hint="product", uuid="uuid-mhs")],
+    )
+    v = verdict(
+        topic_reset=True,
+        domain_hint="inventory",
+        is_affirmative=False,
+        entities=[],
+        user_goal="trying to cancel the stock check",
+    )
+
+    state2, plan = apply(_state(focus, pending=offer, turn_no=2), v, build_policy())
+
+    assert plan.trace.lane == "escalation_declined", "the decline still owns the reply"
+    assert state2.focus.tasks == (), "and the stock check is over"
+    assert state2.focus.products == [], "what it was about goes with it (D23)"
+
+
+def test_a_plain_decline_with_no_topic_reset_leaves_the_task_alone():
+    """The boundary: "no thanks" answers the OFFER and says nothing about the stock
+    check, so the task rides on exactly as it was."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.pending import ask as pending_ask
+    from app.services.chatbot.turn.state import Focus
+
+    offer = pending_ask(
+        "team_pick",
+        [
+            {
+                "position": 1,
+                "label": "purchasing",
+                "entity_type": "team",
+                "payload": {"team": "purchasing"},
+            }
+        ],
+        asked_at_turn=1,
+    )
+    task = _stock_task(slots=[("uuid-mhs", "MHS1028", 60), ("uuid-msk", "MSK11A-QT", None)])
+    focus = Focus(tasks=(task,), domains=["inventory"])
+    v = verdict(is_affirmative=False, entities=[])
+
+    state2, plan = apply(_state(focus, pending=offer, turn_no=2), v, build_policy())
+
+    assert plan.trace.lane == "escalation_declined"
+    stock = _task_of_kind(state2.focus, "stock_qty")
+    assert _slot_values(stock) == {"MHS1028": 60, "MSK11A-QT": None}

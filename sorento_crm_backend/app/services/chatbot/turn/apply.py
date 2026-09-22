@@ -1175,6 +1175,14 @@ def _row_code(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _in_family_of(row: dict[str, Any], code: str) -> bool:
+    """Is this resolved row the typed code itself, or one of the family the resolver
+    expanded it into? Prefix on the row's own code, case-blind (see D29 below)."""
+    return any(
+        value == code or value.startswith(code) for value in _row_codes(row) if value
+    )
+
+
 def _exact_code_when_a_quantity_is_named(plan: Plan, verdict: dict[str, Any], trace: Trace) -> None:
     """D29 (review round 6 finding C, re-ruled in round 7): an inventory entity that
     CARRIES A QUANTITY fetches its exact code and nothing else.
@@ -1194,6 +1202,15 @@ def _exact_code_when_a_quantity_is_named(plan: Plan, verdict: dict[str, Any], tr
     still lists the family, and the stock task then collects a quantity per product).
     When the typed token matches no exact code at all - a family PREFIX that is not a
     product of its own - there is nothing to narrow to and the family stands.
+
+    Review round 8: a candidate row does NOT carry the token the customer typed.
+    `turn_runtime.candidates_by_kind` builds every row as `{"raw": code,
+    "canonical_code": code, ...}` off the resolver's own match, so the family is
+    recognised by the only link the rows still have to each other - the typed code is a
+    PREFIX of its siblings (CB313 -> CB313A-NL / CB313-NL / CB313-L; SRT392-24 ->
+    SRT392-24-NL). Round 7 grouped on "rows that mention the typed code", which under the
+    real row shape matched the exact row alone, so the rule never fired in production
+    (live trace 05ae3025: `product_ids` still carried all four).
     """
     wanted: set[str] = set()
     for e in verdict.get("entities") or []:
@@ -1210,7 +1227,7 @@ def _exact_code_when_a_quantity_is_named(plan: Plan, verdict: dict[str, Any], tr
             continue
         keep = list(spec.entities)
         for code in wanted:
-            group = [row for row in keep if _row_codes(row) & {code}]
+            group = [row for row in keep if _in_family_of(row, code)]
             exact = [row for row in group if _row_code(row) == code]
             if not exact or len(exact) == len(group):
                 continue
@@ -1514,7 +1531,21 @@ def apply(
         state, decision, trace
     )
     if pending_short_circuit is not None:
-        unchanged = replace(state, pending=pending_after)
+        # D23, review round 8 (finding 3, live turn 15126963): "never mind the stock
+        # check" typed under an open escalation offer is BOTH a decline of the offer and
+        # a topic reset aimed at the task ("topic_reset": true, "domain_hint":
+        # "inventory", "is_affirmative": false - the verdict read off the trace). The
+        # decline owns the REPLY and returns here before the focus rules ever run, which
+        # threw the task step's own answer away with the rest of the turn: the task came
+        # out still open with both slots empty, and the bare "60" typed next re-opened
+        # the question the dealer had just closed. The task step has already decided;
+        # this carries that decision, and nothing else about the turn.
+        closed_focus = state.focus
+        if task_outcome.tasks != tuple(state.focus.tasks or ()):
+            closed_focus = replace(state.focus, tasks=task_outcome.tasks)
+            if "stock_qty" in task_outcome.closed_kinds:
+                _set_kind_field(closed_focus, "product", [])
+        unchanged = replace(state, focus=closed_focus, pending=pending_after)
         return unchanged, pending_short_circuit
 
     focus = _focus_rules(
