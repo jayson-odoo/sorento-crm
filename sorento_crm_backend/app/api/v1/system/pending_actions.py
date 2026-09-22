@@ -105,6 +105,9 @@ def _record_action(action_key: str):
 # to give the click anything to show the refusal on.
 _REQUIRED_PAYLOAD_KEYS: dict = {
     "project_sales_order.undo_confirm": ("decision_id",),
+    # S2 (review round 2, `PLAN-oi-request-cs-reserve.md`): `unreserve_row` needs the
+    # request id beside the row - `entity_id` carries only the row.
+    "order_inquiry_reserve_row.unreserve": ("request_id", "qty"),
 }
 
 # A record action whose PARK gate accepts more than one grant (SF-4,

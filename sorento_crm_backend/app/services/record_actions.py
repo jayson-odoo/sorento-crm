@@ -349,6 +349,42 @@ register(
 )
 
 
+def _unreserve_order_inquiry_reserve_row(db: Session, payload: dict):
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    return OrderInquiryReserveService(db).unreserve_row(
+        request_id=str(payload.get("request_id")),
+        row_id=_entity_id(payload),
+        qty=payload.get("qty"),
+        note=payload.get("note"),
+        actor_user_id=payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_reserve_row.unreserve",
+        # A distinct entity type from `order_inquiry_row` (S2, review round 2,
+        # ADR-PRODUCT-STANDARDS D7) even though `entity_id` is the SAME
+        # `OrderInquiryRow.id` `order_inquiry_row.unlink` already keys by - the two are
+        # different pending actions on the same row, and sharing a type would let one
+        # block the other under `uq_sla_form_actions_one_pending`. `request_id` is a
+        # REQUIRED payload key (`_REQUIRED_PAYLOAD_KEYS` in `pending_actions.py`):
+        # `unreserve_row` needs it beside `row_id`, and there is no way to derive it
+        # from the row alone (a row can carry more than one answered request over its
+        # life).
+        entity_types=("order_inquiry_reserve_row",),
+        execute=_unreserve_order_inquiry_reserve_row,
+        # Reversible: giving back part of a reserve touches no document the row might
+        # also carry, and Cancel restores exactly what was there (the SAME link, its
+        # qty untouched) - never a destructive window.
+        window=WINDOW_REVERSIBLE,
+        permission="projects.order_inquiries.reserve",
+        label="Unreserve",
+    )
+)
+
+
 def _actor(db: Session, payload: dict) -> dict:
     """The click's actor, in the shape a service expects `current_user` to be.
 

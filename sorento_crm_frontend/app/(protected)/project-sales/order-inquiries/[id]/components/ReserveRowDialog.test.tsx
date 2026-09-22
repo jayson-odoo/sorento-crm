@@ -2,38 +2,14 @@
  * `PLAN-oi-request-cs-reserve.md` section 6c F2/F3/F4/F5, `oi-request-cs-reserve-
  * acceptance-criteria.md` AC-RS-55, AC-RS-61 (tabs half), AC-RS-63 (round 2).
  *
- * TEST-FIRST (Phase 2): `ReserveRowDialog.tsx` does not exist yet - round 2 deletes
- * `ReserveRequestsCard` (F2) and replaces it with ONE dialog opened per Lines-grid row,
- * carrying a Reserve tab (the act-mode form round 1's card used to render) and a History
- * tab (F3, new). A red here is a missing module, never an import typo.
- *
- * NAMED ASSUMPTIONS (per the tester's brief - neither the plan nor the UAC pins the
- * exact prop contract, only the on-screen behaviour):
- *
- * 1. Props: `{ open, onOpenChange, rowId, itemCode, openRequest, history,
- *    locationOptions, defaultLocationId, availableQtyByLocation, netReservedQty,
- *    canAct, onConfirmed?, onUnreserved? }`. `openRequest` is the OI row's own OPEN
- *    request row (Location/Reserved/Reason inputs render only while it is non-null);
- *    `history` is already resolved (newest first) for the History tab; `locationOptions`
- *    is F1's "every active pool" read, already resolved by the caller (mirrors how
- *    `ReserveRequestDialog` is handed `locationOptions` pre-resolved, `ReserveRequestDialog
- *    .tsx`'s own docstring assumption 1).
- * 2. Two feature-service calls, both added to the existing sibling
- *    `_shared/services/orderInquiryReserveService.ts` (never a hand-rolled fetch):
- *    `reserveOrderInquiryRow(requestId, rowId, { warehouse_id, qty_reserved, reason })`
- *    and `unreserveOrderInquiryRow(requestId, rowId, { qty, note })` - mirroring
- *    `reserveOrderInquiryRequest`'s own existing naming and two-argument shape.
- * 3. Dates render through `formatDateTime` from `@/lib/helpers` (AC-RS-63), the same
- *    helper `OrderInquiryDetail.tsx` already imports (`formatDateTimeInMalaysia` sits
- *    beside it in the same file) - never a raw ISO string.
- * 4. Tabs are the existing shadcn primitives (`@/components/ui/tabs`), the same ones
- *    `OrderInquiryDetail.tsx` already uses for Lines/General/Related PO/Related SPO, so
- *    `getByRole('tab', { name: ... })` resolves the same way `WarehouseForm.test.tsx`'s
- *    own tab assertions already do in this codebase.
- *
- * If the coder's real contract differs, the shape of THIS mock needs updating to match -
- * the BEHAVIOUR asserted (defaults, the recompute, the input surviving a same-values
- * re-render, no UUID text, the date format, the tabs) is the part that must not move.
+ * S2/S5 (reviewer round 2): `onReserve` is the caller's own `useReserveOrderInquiryRow`
+ * mutate function (`_shared/hooks/useOrderInquiry.ts`) - Confirm reserved calls it
+ * directly, never the feature service. Unreserve is a server-deferred pending action
+ * (ADR-PRODUCT-STANDARDS D7): `unreserveControl` mirrors `cancelControl`'s own shape
+ * (`isPending`, `isBlocked`, `countdown`, `start`), built by the caller from
+ * `useDeferredAction` against `order_inquiry_reserve_row.unreserve` - `start({ qty,
+ * note })` parks it, and `countdown` (once non-null) replaces the qty/note form the
+ * same way `cancelControl.countdown` replaces the header's own button.
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -43,14 +19,13 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const reserveRowSpy = vi.fn(async (..._args: unknown[]) => ({ id: 'rr-1', state: 'reserved' }));
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const unreserveRowSpy = vi.fn(async (..._args: unknown[]) => ({ id: 'rr-1', state: 'reserved' }));
-vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
-  reserveOrderInquiryRow: (...args: unknown[]) => reserveRowSpy(...args),
-  unreserveOrderInquiryRow: (...args: unknown[]) => unreserveRowSpy(...args),
-}));
+// S5: `onReserve` is a PROP now (the caller's own mutation), never a service import.
+const onReserveSpy = vi.fn(async () => ({ id: 'rr-1', state: 'reserved' }));
+
+// S2: Unreserve parks a deferred action through `unreserveControl.start`, never a
+// direct service call - `unreserveStartSpy` stands in for the caller's own
+// `useDeferredAction(...).start`.
+const unreserveStartSpy = vi.fn();
 
 // AC-RS-63: `formatDateTime` mocked so its OWN call can be asserted, and so the test does
 // not depend on the real implementation's exact string - only that it is what renders.
@@ -58,7 +33,10 @@ vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
 // the "no raw ISO in the document" assertion below tests the COMPONENT (does it render
 // through `formatDateTime` rather than the raw string it was handed), not the mock's own
 // echo of its input.
-const formatDateTimeSpy = vi.fn((_input: unknown) => '22/09/2026 09:00');
+const formatDateTimeSpy = vi.fn((input: unknown) => {
+  void input;
+  return '22/09/2026 09:00';
+});
 vi.mock('@/lib/helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/helpers')>();
   return { ...actual, formatDateTime: (input: unknown) => formatDateTimeSpy(input) };
@@ -110,6 +88,16 @@ function historyFixture() {
   ];
 }
 
+/** Not pending, not blocked, no countdown yet - the qty/note form renders (S2). */
+function idleUnreserveControl() {
+  return {
+    isPending: false,
+    isBlocked: false,
+    countdown: null,
+    start: (payload: { qty: string; note: string | null }) => unreserveStartSpy(payload),
+  };
+}
+
 function renderDialog(overrides: Partial<React.ComponentProps<typeof ReserveRowDialog>> = {}) {
   return render(
     <ReserveRowDialog
@@ -128,8 +116,9 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof ReserveRowD
       availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
       netReservedQty="0"
       canAct
+      onReserve={onReserveSpy as never}
       onConfirmed={vi.fn()}
-      onUnreserved={vi.fn()}
+      unreserveControl={idleUnreserveControl()}
       {...(overrides as never)}
     />,
   );
@@ -281,23 +270,41 @@ describe('AC-RS-63: every date-time renders through formatDateTime', () => {
 });
 
 describe('F5: Unreserve is its own action, offered only once nothing is left open', () => {
-  it('a row with net reserved and NO open request offers Unreserve, and posts { qty, note }', async () => {
+  it('a row with net reserved and NO open request offers Unreserve, and starts the deferred action with { qty, note }', async () => {
     renderDialog({ openRequest: null, netReservedQty: '50' });
 
     const unreserveButton = await screen.findByRole('button', { name: /unreserve/i });
     fireEvent.click(unreserveButton);
     fireEvent.change(await screen.findByLabelText(/qty/i), { target: { value: '20' } });
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
+    fireEvent.click(screen.getByRole('button', { name: /unreserve/i }));
 
-    await waitFor(() => expect(unreserveRowSpy).toHaveBeenCalledTimes(1));
-    const [, , payload] = unreserveRowSpy.mock.calls[0] as [string, string, { qty: unknown }];
-    expect(String(payload.qty)).toBe('20');
+    await waitFor(() => expect(unreserveStartSpy).toHaveBeenCalledTimes(1));
+    expect(unreserveStartSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ qty: '20' }),
+    );
   });
 
   it('no Unreserve control while a request is still open', () => {
     renderDialog();
 
     expect(screen.queryByRole('button', { name: /unreserve/i })).not.toBeInTheDocument();
+  });
+
+  it('S2: once the deferred action is pending, the countdown replaces the qty/note form - no confirm step', async () => {
+    renderDialog({
+      openRequest: null,
+      netReservedQty: '50',
+      unreserveControl: {
+        isPending: true,
+        isBlocked: false,
+        countdown: <div data-testid="unreserve-countdown">Unreserving in 5s</div>,
+        start: unreserveStartSpy,
+      },
+    });
+
+    expect(await screen.findByTestId('unreserve-countdown')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/qty/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^unreserve$/i })).not.toBeInTheDocument();
   });
 });
 

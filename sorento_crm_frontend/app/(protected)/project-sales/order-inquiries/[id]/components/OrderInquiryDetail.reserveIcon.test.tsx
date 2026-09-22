@@ -37,6 +37,11 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
 }));
 
+// S1 (reviewer round): `OrderInquiryDetail` reads `useSession` directly now.
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { id: 'test-current-user' } }, status: 'authenticated' }),
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));

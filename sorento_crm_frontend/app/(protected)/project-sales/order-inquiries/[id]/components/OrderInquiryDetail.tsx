@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import {
   Ban,
   Bookmark,
@@ -40,12 +41,14 @@ import {
   ORDER_INQUIRY_RESERVE_REQUESTS_KEY,
   orderInquiryHeadersPagerQuery,
   useAutoPlaceOrderInquiryRows,
+  useCreateOrderInquiryReserveRequest,
   useOrderInquiryHandshake,
   useOrderInquiryHeaderDetail,
   useOrderInquiryHeaderLines,
   useOrderInquiryHeaderRelatedDocuments,
   useOrderInquiryReserveRequests,
   useOrderInquiryRowHistory,
+  useReserveOrderInquiryRow,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useReserveRowOptions } from '../../../_shared/hooks/useReserveRowOptions';
 import { ackStateOf } from '../../../_shared/lib/orderInquiryAck';
@@ -53,6 +56,7 @@ import {
   orderInquiryHeaderStatusLabel,
   orderInquiryHeaderStatusVariant,
 } from '../../../_shared/lib/orderInquiryHeaderStatus';
+import { canCancelReserveRequest } from '../../../_shared/lib/orderInquiryReserve';
 import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryWorklistXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
@@ -126,11 +130,18 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id ?? null;
 
   const headerQuery = useOrderInquiryHeaderDetail(id);
   const linesQuery = useOrderInquiryHeaderLines(id);
   const relatedQuery = useOrderInquiryHeaderRelatedDocuments(id);
   const reserveRequestsQuery = useOrderInquiryReserveRequests(id);
+  // S5 (reviewer round): the two reserve writes go through the hooks layer like every
+  // other write on this page - `ReserveRequestDialog`/`ReserveRowDialog` receive the
+  // mutate functions as props rather than importing the feature service themselves.
+  const createReserveRequestMutation = useCreateOrderInquiryReserveRequest(id);
+  const reserveRowMutation = useReserveOrderInquiryRow(id);
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
 
@@ -294,6 +305,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       requestId: request.id,
       ordinal: request.ordinal,
       qtyRequested: row.qty_requested,
+      requestedBy: request.requested_by,
       requestedByName: request.requested_by_name,
       requestedAt: request.requested_at,
     };
@@ -361,6 +373,29 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       [ORDER_INQUIRY_HEADER_LINES_KEY, id],
       [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, id],
     ],
+  });
+
+  // S2 (reviewer round, ADR-PRODUCT-STANDARDS D7): Unreserve is a server-deferred
+  // pending action too, the same shape as the request's own Cancel above - a
+  // countdown with Cancel, no confirm step, the server commits `unreserve_row` even
+  // if this dialog (or the tab) closes mid-window. `entity_type` is deliberately its
+  // own (`order_inquiry_reserve_row`), distinct from `order_inquiry_row.unlink`'s -
+  // two different pending actions on the same row must not block each other under
+  // the one-pending-action-per-record constraint.
+  const reserveRowUnreserveAction = useDeferredAction({
+    actionKey: 'order_inquiry_reserve_row.unreserve',
+    entityType: 'order_inquiry_reserve_row',
+    entityId: reserveRowDialogId,
+    verb: 'Unreserving',
+    subject: reserveRowDialogRow?.item_code ?? '',
+    surface: 'inline',
+    watchFromMount: Boolean(reserveRowDialogId),
+    successMessage: 'Unreserved',
+    invalidateKeys: [
+      [ORDER_INQUIRY_HEADER_LINES_KEY, id],
+      [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, id],
+    ],
+    onCommitted: () => reserveRowHistoryQuery.refetch(),
   });
 
   const openReserveRowDialog = useCallback((row: OrderInquiryWorklistRow) => {
@@ -730,8 +765,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         <ReserveRequestDialog
           open={reserveDialogOpen}
           onOpenChange={setReserveDialogOpen}
-          inquiryId={id}
           rows={reserveDialogRows}
+          onSend={(payload) => createReserveRequestMutation.mutateAsync(payload)}
           onSent={() => {
             setRowSelection({});
             invalidateReserveQueries();
@@ -754,9 +789,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           availableQtyByLocation={reserveRowOptions?.availableQtyByWarehouseId ?? {}}
           netReservedQty={reserveRowDialogRow.reserved_qty ?? '0'}
           canAct={canReserve}
-          lastRequestId={reserveRowLastRequestId}
+          onReserve={(requestId, rowId, payload) =>
+            reserveRowMutation.mutateAsync({ requestId, rowId, payload })
+          }
           cancelControl={
-            canAcknowledge || canReserve
+            canCancelReserveRequest(currentUserId, reserveRowOpenRequest?.requestedBy, canReserve)
               ? {
                   isPending: reserveRowCancelAction.isPending,
                   isBlocked: reserveRowCancelAction.isBlocked,
@@ -765,11 +802,22 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 }
               : null
           }
+          unreserveControl={
+            canReserve
+              ? {
+                  isPending: reserveRowUnreserveAction.isPending,
+                  isBlocked: reserveRowUnreserveAction.isBlocked,
+                  countdown: reserveRowUnreserveAction.countdown,
+                  start: ({ qty, note }) =>
+                    reserveRowUnreserveAction.start({
+                      request_id: reserveRowEffectiveRequestId,
+                      qty,
+                      note,
+                    }),
+                }
+              : null
+          }
           onConfirmed={() => {
-            invalidateReserveQueries();
-            reserveRowHistoryQuery.refetch();
-          }}
-          onUnreserved={() => {
             invalidateReserveQueries();
             reserveRowHistoryQuery.refetch();
           }}

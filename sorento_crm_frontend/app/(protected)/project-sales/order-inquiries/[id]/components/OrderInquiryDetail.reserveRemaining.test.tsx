@@ -32,6 +32,11 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
 }));
 
+// S1 (reviewer round): `OrderInquiryDetail` reads `useSession` directly now.
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { id: 'test-current-user' } }, status: 'authenticated' }),
+}));
+
 // Under jsdom nothing answers the column-preferences fetch `DataGrid` starts, so the
 // Lines tab grid renders skeletons forever and no row is assertable
 // (project_datagrid_jsdom_rows_mockable.md).

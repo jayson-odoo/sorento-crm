@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,9 +14,9 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { formatDateTime } from '@/lib/helpers';
-import {
-  reserveOrderInquiryRow,
-  unreserveOrderInquiryRow,
+import type {
+  OrderInquiryReserveRequestRow,
+  ReserveRowPayload,
 } from '../../../_shared/services/orderInquiryReserveService';
 
 /**
@@ -30,8 +29,12 @@ import {
  * Kept free of `QueryClientProvider`/react-query entirely on purpose, the same reason
  * `ReserveRequestsCard` was: its own vitest suite renders it with no providers at all.
  * Every read this dialog needs (`openRequest`, `history`, the pool options) is resolved
- * by the CALLER and handed down as props; the two writes go straight to the feature
- * service, exactly as `ReserveRequestDialog` (the CREATE dialog next door) does.
+ * by the CALLER and handed down as props. S5 (reviewer round): the two writes no
+ * longer call the feature service directly either - `onReserve` is the caller's own
+ * `useReserveOrderInquiryRow` mutation (`_shared/hooks/useOrderInquiry.ts`), and
+ * `unreserveControl` (S2) is a server-deferred pending action
+ * (`useDeferredAction`/`order_inquiry_reserve_row.unreserve`) the caller builds and
+ * hands down the same way `cancelControl` already works.
  */
 
 export interface ReserveRowDialogOpenRequest {
@@ -58,6 +61,20 @@ export interface ReserveRowDialogCancelControl {
   start: () => void;
 }
 
+/**
+ * S2 (ADR-PRODUCT-STANDARDS D7): Unreserve is a server-deferred pending action, not an
+ * immediate write - `start` parks it and `countdown` (once non-null) replaces the
+ * qty/note form with the SAME countdown + Cancel shape `cancelControl` already renders
+ * in the header. There is no separate "confirm" step and no Escape handler here:
+ * `DeferredCountdown` (`components/common/DeferredActionButton.tsx`) owns both already.
+ */
+export interface ReserveRowDialogUnreserveControl {
+  isPending: boolean;
+  isBlocked: boolean;
+  countdown: React.ReactNode;
+  start: (payload: { qty: string; note: string | null }) => void;
+}
+
 const HISTORY_KIND_LABEL: Record<string, string> = {
   requested: 'Requested',
   reserved: 'Reserved',
@@ -77,9 +94,9 @@ export function ReserveRowDialog({
   availableQtyByLocation,
   netReservedQty,
   canAct,
+  onReserve,
   onConfirmed,
-  onUnreserved,
-  lastRequestId,
+  unreserveControl,
   cancelControl,
 }: {
   open: boolean;
@@ -99,18 +116,20 @@ export function ReserveRowDialog({
    * the worklist row (`reserved_qty`), never recomputed here. */
   netReservedQty: string;
   canAct: boolean;
+  /** S5: the caller's own `useReserveOrderInquiryRow` mutation. */
+  onReserve: (
+    requestId: string,
+    rowId: string,
+    payload: ReserveRowPayload,
+  ) => Promise<OrderInquiryReserveRequestRow>;
   onConfirmed?: () => void;
-  onUnreserved?: () => void;
-  /** The request `openRequest` belongs to when it is open; the request that last
-   * reserved this row when it is not (needed for Unreserve / History either way -
-   * `openRequest` alone is null exactly when this dialog most needs it). */
-  lastRequestId?: string | null;
+  /** S2: null while nothing offers Unreserve yet (canAct false, or nothing reserved). */
+  unreserveControl?: ReserveRowDialogUnreserveControl | null;
   /** F2 header "Cancel request" - optional, absent renders nothing (plan 6c). */
   cancelControl?: ReserveRowDialogCancelControl | null;
 }) {
   const requestedQty = openRequest ? Number(openRequest.qtyRequested || '0') : 0;
   const netReserved = Number(netReservedQty || '0');
-  const effectiveRequestId = openRequest?.requestId ?? lastRequestId ?? '';
 
   const [location, setLocation] = React.useState('');
   const [reserved, setReserved] = React.useState(0);
@@ -121,7 +140,6 @@ export function ReserveRowDialog({
   const [unreserveOpen, setUnreserveOpen] = React.useState(false);
   const [unreserveQty, setUnreserveQty] = React.useState('');
   const [unreserveNote, setUnreserveNote] = React.useState('');
-  const [unreserving, setUnreserving] = React.useState(false);
 
   // AC-RS-28 (ported): reset only when the CALLER'S OWN resolved defaults actually
   // change - a value-identical re-render (a refetch landing the same server data)
@@ -164,37 +182,26 @@ export function ReserveRowDialog({
     if (!openRequest) return;
     setConfirming(true);
     try {
-      await reserveOrderInquiryRow(openRequest.requestId, rowId, {
+      await onReserve(openRequest.requestId, rowId, {
         warehouse_id: location,
         qty_reserved: reserved,
         reason: reason.trim() ? reason.trim() : null,
       });
-      toast.success('Reserved');
       onConfirmed?.();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to confirm the reserve');
+    } catch {
+      // The caller's own mutation hook already toasted the error (S5).
     } finally {
       setConfirming(false);
     }
   }
 
-  async function handleUnreserveConfirm() {
-    setUnreserving(true);
-    try {
-      await unreserveOrderInquiryRow(effectiveRequestId, rowId, {
-        qty: unreserveQty,
-        note: unreserveNote.trim() ? unreserveNote.trim() : null,
-      });
-      toast.success('Unreserved');
-      setUnreserveOpen(false);
-      setUnreserveQty('');
-      setUnreserveNote('');
-      onUnreserved?.();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to unreserve');
-    } finally {
-      setUnreserving(false);
-    }
+  // S2: starts the deferred action - no confirm step here, the button BECOMES the
+  // countdown (rendered below, replacing this form) the instant `start` parks it.
+  function handleUnreserveStart() {
+    unreserveControl?.start({
+      qty: unreserveQty,
+      note: unreserveNote.trim() ? unreserveNote.trim() : null,
+    });
   }
 
   // N-3 (ported, no UUID in the frontend UI): once a row is reserved with no open
@@ -287,7 +294,13 @@ export function ReserveRowDialog({
                     Reserved {netReservedQty}
                     {lastReservedEntry?.location ? ` @ ${lastReservedEntry.location}` : ''}
                   </div>
-                  {showUnreserveOffer ? (
+                  {showUnreserveOffer && unreserveControl?.countdown ? (
+                    // S2: the SAME countdown shape `cancelControl` renders in the
+                    // header - no confirm step, Escape does not cancel it
+                    // (`DeferredCountdown` owns both already), and the server
+                    // commits even if this dialog closes mid-window.
+                    unreserveControl.countdown
+                  ) : showUnreserveOffer ? (
                     unreserveOpen ? (
                       <div className="space-y-2 rounded-lg border border-border p-3">
                         <div className="space-y-1">
@@ -314,10 +327,15 @@ export function ReserveRowDialog({
                             Cancel
                           </Button>
                           <Button
-                            onClick={handleUnreserveConfirm}
-                            disabled={unreserving || !unreserveQty}
+                            onClick={handleUnreserveStart}
+                            disabled={
+                              !unreserveControl ||
+                              unreserveControl.isPending ||
+                              unreserveControl.isBlocked ||
+                              !unreserveQty
+                            }
                           >
-                            Confirm
+                            Unreserve
                           </Button>
                         </div>
                       </div>

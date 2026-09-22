@@ -60,6 +60,12 @@ const EMPTY_RESULT: ReserveRowOptionsResult = {
  * `projects.order_inquiries.reserve` holder this default exists for) does not hold,
  * so reading it there meant the configured default never reached her at all. The
  * same reasoning `useCurrencyFormat.ts` already carries for `currency_format`.
+ *
+ * S3 (reviewer round): `apiFetch` rewrites this whole `/api/user-management/*` prefix
+ * straight to FastAPI's `/api/v1/user-management/...` (`lib/api.ts`'s own
+ * `businessApiRoutes` table) - it never reaches a Next.js `app/api/...` route at all,
+ * so there was never a missing proxy route to add. `app/api/user-management/settings/
+ * app-config/route.ts` (which claimed to be that fix) is deleted; it never once ran.
  */
 function useConfiguredDefaultPoolId(): string | null {
   const { data } = useQuery({

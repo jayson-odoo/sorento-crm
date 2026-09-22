@@ -1024,3 +1024,149 @@ def test_history_for_row_404_on_a_foreign_company_request_or_row(reserve_api):
 
     wrong_row = client.get(ROW_HISTORY_URL(own_request_id, foreign_row_id))
     assert wrong_row.status_code == 404, wrong_row.text
+
+
+# --------------------------------------------------------------------------------- #
+# S2 (reviewer round): unreserve is a server-deferred pending action                #
+# (ADR-PRODUCT-STANDARDS D7) - registered beside order_inquiry_reserve_request.     #
+# cancel, committed by unreserve_row at lapse, cancellable before it.               #
+# --------------------------------------------------------------------------------- #
+
+PENDING_ACTIONS_BASE = "/api/v1/pending-actions"
+UNRESERVE_ACTION_KEY = "order_inquiry_reserve_row.unreserve"
+UNRESERVE_ENTITY_TYPE = "order_inquiry_reserve_row"
+
+
+def _park_unreserve(client, *, row_id, request_id, qty, note=None):
+    return client.post(
+        PENDING_ACTIONS_BASE,
+        json={
+            "action_key": UNRESERVE_ACTION_KEY,
+            "entity_type": UNRESERVE_ENTITY_TYPE,
+            "entity_id": str(row_id),
+            "payload": {"request_id": request_id, "qty": qty, "note": note},
+        },
+    )
+
+
+def _lapse_pending(db, *, row_id) -> None:
+    from datetime import datetime, timedelta
+
+    from app.models.sla import SlaFormAction
+
+    db.query(SlaFormAction).filter(
+        SlaFormAction.source_entity_type == UNRESERVE_ENTITY_TYPE,
+        SlaFormAction.source_entity_id == str(row_id),
+        SlaFormAction.status == "pending",
+    ).update({"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False)
+    db.commit()
+
+
+def _poll_current(client, *, row_id):
+    return client.get(
+        f"{PENDING_ACTIONS_BASE}/current",
+        params={"entity_type": UNRESERVE_ENTITY_TYPE, "entity_id": str(row_id)},
+    )
+
+
+def _reserve_a_row(client, world, *, qty="50"):
+    row = _open_row(world, qty=qty)
+    created = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": qty}]}
+    )
+    assert created.status_code == 201, created.text
+    world.db.commit()
+    request_id = created.json()["id"]
+
+    reserved = client.post(
+        ROW_RESERVE_URL(request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": qty},
+    )
+    assert reserved.status_code == 200, reserved.text
+    world.db.commit()
+    return row, request_id
+
+
+def _reserved_link(world, *, request_id, row_id):
+    request_row = (
+        world.db.query(OrderInquiryReserveRequestRow)
+        .filter(
+            OrderInquiryReserveRequestRow.request_id == request_id,
+            OrderInquiryReserveRequestRow.row_id == row_id,
+        )
+        .one()
+    )
+    return (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == request_row.id)
+        .one()
+    )
+
+
+def test_unreserve_row_is_registered_as_a_deferred_pending_action(reserve_api):
+    """Parking must not apply anything - the whole point of the countdown."""
+    client, world = reserve_api
+    row, request_id = _reserve_a_row(client, world, qty="50")
+
+    parked = _park_unreserve(client, row_id=row.id, request_id=request_id, qty="20")
+    assert parked.status_code == 202, parked.text
+    world.db.commit()
+
+    link = _reserved_link(world, request_id=request_id, row_id=row.id)
+    assert link.qty == Decimal("50"), "unreserve must not apply until the window lapses"
+
+
+def test_unreserve_row_commits_at_lapse_via_unreserve_row(reserve_api):
+    """The window lapsing calls the SAME `unreserve_row` the direct route calls - the
+    commit path is the service, not a second copy of its arithmetic."""
+    client, world = reserve_api
+    row, request_id = _reserve_a_row(client, world, qty="50")
+
+    parked = _park_unreserve(client, row_id=row.id, request_id=request_id, qty="20", note="transfer back")
+    assert parked.status_code == 202, parked.text
+    world.db.commit()
+
+    _lapse_pending(world.db, row_id=row.id)
+    body = _poll_current(client, row_id=row.id).json()
+    assert body["last_outcome"]["status"] == "committed", body["last_outcome"]
+
+    world.db.expire_all()
+    link = _reserved_link(world, request_id=request_id, row_id=row.id)
+    assert link.qty == Decimal("30"), link.qty
+
+    events = world.db.execute(
+        sa.text(
+            "SELECT count(*) FROM order_inquiry_reserve_events "
+            "WHERE reserve_request_row_id = :rr AND kind = 'unreserved' AND note = :note"
+        ),
+        {"rr": link.reserve_request_row_id, "note": "transfer back"},
+    ).scalar()
+    assert events == 1, "the parked note must reach unreserve_row, not be dropped"
+
+
+def test_unreserve_row_action_cancel_leaves_it_untouched(reserve_api):
+    client, world = reserve_api
+    row, request_id = _reserve_a_row(client, world, qty="50")
+
+    parked = _park_unreserve(client, row_id=row.id, request_id=request_id, qty="20")
+    assert parked.status_code == 202, parked.text
+    world.db.commit()
+
+    cancelled = client.post(f"{PENDING_ACTIONS_BASE}/{parked.json()['id']}/cancel")
+    assert cancelled.status_code == 200, cancelled.text
+    world.db.commit()
+
+    link = _reserved_link(world, request_id=request_id, row_id=row.id)
+    assert link.qty == Decimal("50"), "Cancel must leave the reservation exactly where it was"
+
+
+def test_unreserve_row_action_requires_acknowledge_only_holder_refused(reserve_api):
+    """S2/permission: `projects.order_inquiries.reserve` gates the park - an
+    ACKNOWLEDGE-only requester may not start this countdown at all (unlike the
+    request's own Cancel, which the requester may also start)."""
+    client, world = reserve_api
+    row, request_id = _reserve_a_row(client, world, qty="50")
+
+    with _as(world.db, world.requester, REQUESTER_PERMISSIONS) as stranger:
+        parked = _park_unreserve(stranger, row_id=row.id, request_id=request_id, qty="20")
+    assert parked.status_code == 403, parked.text

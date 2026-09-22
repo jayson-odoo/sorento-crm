@@ -2,53 +2,17 @@
  * `PLAN-oi-request-cs-reserve.md` section 3.7, `oi-request-cs-reserve-acceptance-
  * criteria.md` AC-RS-22/AC-RS-23 (Slice 2).
  *
- * TEST-FIRST (Phase 2): `ReserveRequestDialog.tsx` does not exist yet - a red here is a
- * missing module, never an import typo.
- *
- * ASSUMPTIONS named for the captain/coder (neither the plan nor the UAC pins the exact
- * prop contract for this new dialog - only its ON-SCREEN behaviour, which is what this
- * test asserts):
- *
- * 1. Props: `{ open, onOpenChange, inquiryId, rows, onSent? }`, where `rows` is the
- *    caller's own selected-row shape (already resolved: item code, delivery date,
- *    remaining, the row's pool default location and the stock-grid's location options) -
- *    the OI detail page is what already holds the worklist rows this dialog only lays
- *    out, matching the plan's own "one line per selected row" framing (3.7).
- * 2. The dialog calls a new feature service, `createOrderInquiryReserveRequest` from a
- *    sibling `_shared/services/orderInquiryReserveService.ts` (mirroring every other
- *    write in this domain, `orderInquiryService.ts`'s own naming), never a hand-rolled
- *    fetch - mocked here at the service boundary per the layering rule (UI -> hook ->
- *    feature service -> api-client).
- * 3. Toast goes through `@/lib/toast`, matching `OrderInquiriesClient.confirm.test.tsx`.
- *
- * If the coder's real contract differs (a mutation hook instead of a bare service call,
- * a different prop shape), the shape of THIS mock needs updating to match - the BEHAVIOUR
- * asserted (defaults, the cap, the payload, the toast) is the part of the contract that
- * must not move.
+ * S5 (reviewer round 2): `rows` is the caller's own selected-row shape (already
+ * resolved: item code, delivery date, remaining, the row's pool default location and
+ * the stock-grid's location options); the actual write is `onSend`, a mutate function
+ * the caller builds from `useCreateOrderInquiryReserveRequest`
+ * (`_shared/hooks/useOrderInquiry.ts`) - this dialog no longer imports the feature
+ * service directly (UI -> hook -> feature service -> api-client), and the success
+ * toast ("Request #N sent to ...") is that hook's own job, not asserted here.
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
-}));
-
-// Reviewer fix round: typed `(..._args: unknown[])`, not `()` - the REAL
-// `createOrderInquiryReserveRequest(inquiryId, payload)` takes two arguments, and a
-// zero-arg inferred mock signature made the spread call below (and the tuple cast at
-// its own read-back further down) a tsc error, never an assertion this suite owns.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const createReserveRequestSpy = vi.fn(async (..._args: unknown[]) => ({
-  id: 'rr-1',
-  ordinal: 1,
-  first_to_name: 'Eling',
-}));
-vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
-  createOrderInquiryReserveRequest: (...args: unknown[]) => createReserveRequestSpy(...args),
-}));
-
-import { toast } from '@/lib/toast';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
 
 const ROWS = [
@@ -73,13 +37,24 @@ const ROWS = [
   },
 ];
 
+// S5 (reviewer round): the dialog no longer calls the feature service itself - it
+// calls `onSend`, the mutate function the caller's own `useCreateOrderInquiryReserve
+// Request` hook builds (`_shared/hooks/useOrderInquiry.ts`). Mocked here at the PROP
+// boundary, not the service module, matching "dialogs receive the mutate functions as
+// props" (UI -> hook -> feature service -> api-client).
+const onSendSpy = vi.fn(async () => ({
+  id: 'rr-1',
+  ordinal: 1,
+  first_to_name: 'Eling',
+}));
+
 function renderDialog(overrides: Partial<React.ComponentProps<typeof ReserveRequestDialog>> = {}) {
   return render(
     <ReserveRequestDialog
       open
       onOpenChange={vi.fn()}
-      inquiryId="oi-1"
       rows={ROWS as never}
+      onSend={onSendSpy as never}
       {...overrides}
     />,
   );
@@ -115,26 +90,25 @@ describe('AC-RS-22: one line per selected row, Requested = remaining, Location =
     expect(screen.getByText('MWH')).toBeInTheDocument();
   });
 
-  it('Send posts { rows: [{row_id, qty_requested, warehouse_id}], note } and toasts the first recipient', async () => {
-    renderDialog();
+  it('Send calls onSend with { rows: [{row_id, qty_requested, warehouse_id}], note } and closes on success', async () => {
+    const onOpenChange = vi.fn();
+    renderDialog({ onOpenChange });
 
     fireEvent.click(await screen.findByRole('button', { name: /send request/i }));
 
-    await waitFor(() => expect(createReserveRequestSpy).toHaveBeenCalledTimes(1));
-    const [inquiryId, payload] = createReserveRequestSpy.mock.calls[0] as [string, {
+    await waitFor(() => expect(onSendSpy).toHaveBeenCalledTimes(1));
+    const [payload] = onSendSpy.mock.calls[0] as [{
       rows: Array<{ row_id: string; qty_requested: string | number; warehouse_id: string }>;
       note?: string | null;
     }];
-    expect(inquiryId).toBe('oi-1');
     expect(payload.rows).toEqual([
       { row_id: 'row-1', qty_requested: 90, warehouse_id: 'BRW' },
       { row_id: 'row-2', qty_requested: 30, warehouse_id: 'MWH' },
     ]);
 
-    await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('Eling')),
-    );
-    expect((toast.success as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/Request #1/);
+    // S5: toasting "Request #1 sent to Eling" is the CALLER's own mutation hook's job
+    // now (`useCreateOrderInquiryReserveRequest`) - this dialog only closes on success.
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 });
 

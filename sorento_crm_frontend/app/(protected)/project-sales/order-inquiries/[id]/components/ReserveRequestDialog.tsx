@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,7 +15,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { createOrderInquiryReserveRequest } from '../../../_shared/services/orderInquiryReserveService';
+import type {
+  CreateReserveRequestPayload,
+  OrderInquiryReserveRequest,
+} from '../../../_shared/services/orderInquiryReserveService';
 
 /**
  * `PLAN-oi-request-cs-reserve.md` 3.7 (AC-RS-22/AC-RS-23): one line per selected row,
@@ -24,6 +26,11 @@ import { createOrderInquiryReserveRequest } from '../../../_shared/services/orde
  * pool - the caller (the Lines tab's own Actions menu) already resolves every row's own
  * remaining / pool / stock-grid locations, since that resolution needs the same board
  * stock-detail read `OrderInquiryStockGrid` already makes.
+ *
+ * S5 (reviewer round): the write goes through `onSend`, a mutate function the caller
+ * builds from `useCreateOrderInquiryReserveRequest` (`_shared/hooks/useOrderInquiry.ts`)
+ * - this dialog no longer imports the feature service directly (UI -> hook -> service ->
+ * api-client), and stays free of `QueryClientProvider` for its own vitest suite.
  */
 export interface ReserveRequestDialogRow {
   id: string;
@@ -39,14 +46,15 @@ export interface ReserveRequestDialogRow {
 export function ReserveRequestDialog({
   open,
   onOpenChange,
-  inquiryId,
   rows,
+  onSend,
   onSent,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  inquiryId: string;
   rows: ReserveRequestDialogRow[];
+  /** S5: the caller's own mutation, already wired to toast + invalidate on success. */
+  onSend: (payload: CreateReserveRequestPayload) => Promise<OrderInquiryReserveRequest>;
   onSent?: () => void;
 }) {
   const [requested, setRequested] = React.useState<Record<string, number>>({});
@@ -54,6 +62,15 @@ export function ReserveRequestDialog({
   const [note, setNote] = React.useState('');
   const [sending, setSending] = React.useState(false);
 
+  // S4 (reviewer round): keyed on a SIGNATURE, not the `rows` array itself - the
+  // caller's own `useReserveRowOptions` (`_shared/hooks/useReserveRowOptions.ts`)
+  // returns a freshly-built object every render, so `rows` (built off it) got a new
+  // identity on every parent re-render and this effect wiped a still-being-typed
+  // Requested/Location/Note on every unrelated state change elsewhere on the page.
+  // Same fix `ReserveRowDialog.tsx` already carries for its own reset effect.
+  const rowsSignature = rows
+    .map((row) => `${row.id}:${row.remaining}:${row.defaultLocation}`)
+    .join('|');
   React.useEffect(() => {
     if (!open) return;
     setRequested(
@@ -61,12 +78,13 @@ export function ReserveRequestDialog({
     );
     setLocation(Object.fromEntries(rows.map((row) => [row.id, row.defaultLocation])));
     setNote('');
-  }, [open, rows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, rowsSignature]);
 
   async function handleSend() {
     setSending(true);
     try {
-      const response = await createOrderInquiryReserveRequest(inquiryId, {
+      await onSend({
         rows: rows.map((row) => ({
           row_id: row.id,
           qty_requested: requested[row.id] ?? Number(row.remaining || '0'),
@@ -74,15 +92,11 @@ export function ReserveRequestDialog({
         })),
         note: note.trim() ? note.trim() : null,
       });
-      toast.success(
-        `Request #${response.ordinal} sent to ${response.first_to_name ?? 'CS'}`,
-      );
       onOpenChange(false);
       onSent?.();
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : 'Failed to send that reserve request',
-      );
+    } catch {
+      // The caller's own mutation hook already toasted the error (S5) - nothing left
+      // to do here except leave the dialog open so the reader can retry.
     } finally {
       setSending(false);
     }
