@@ -244,7 +244,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     await renderModal();
     // The title and the submit button both read "Start Plan" - that is the point.
     expect(screen.getAllByText('Start Plan').length).toBeGreaterThan(0);
-    expect(screen.getByText('Sales orders needed')).toBeInTheDocument();
+    // Renamed by Lane D (AC-D1b, `PLAN-order-sheet-oi-reports-22sep.md`) - see the
+    // "Lane D" describe block below for the section's new label.
+    expect(screen.getByText('Project delivery range')).toBeInTheDocument();
     expect(screen.getByText('Warehouses')).toBeInTheDocument();
     expect(screen.getByLabelText('All warehouses')).toBeInTheDocument();
     expect(screen.getByText('Products')).toBeInTheDocument();
@@ -256,15 +258,16 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(screen.queryByText(/buy scope/i)).not.toBeInTheDocument();
   });
 
-  it('B1: fields read top to bottom Sales orders needed, Warehouses, Products', async () => {
+  it('B1: fields read top to bottom Project delivery range, Warehouses, Products', async () => {
     await renderModal();
     // The dialog renders through a portal, so the labels are on `document.body`.
+    // Renamed by Lane D (AC-D1b) - see below.
     const labels = Array.from(document.body.querySelectorAll('label, [data-slot="label"]'))
       .map((el) => el.textContent?.trim())
       .filter((t): t is string =>
-        t === 'Sales orders needed' || t === 'Warehouses' || t === 'Products',
+        t === 'Project delivery range' || t === 'Warehouses' || t === 'Products',
       );
-    expect(labels).toEqual(['Sales orders needed', 'Warehouses', 'Products']);
+    expect(labels).toEqual(['Project delivery range', 'Warehouses', 'Products']);
   });
 
   it('B1: has no Select all - empty already means every warehouse', async () => {
@@ -438,9 +441,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   // ===========================================================================
 
   describe('Sales orders needed - From/To window (AC-S4.4)', () => {
-    it('shows the section under "Sales orders needed" with separate From and To date inputs', async () => {
+    it('shows the section (relabelled "Project delivery range" by Lane D/AC-D1b) with separate From and To date inputs', async () => {
       await renderModal();
-      expect(screen.getByText('Sales orders needed')).toBeInTheDocument();
+      expect(screen.getByText('Project delivery range')).toBeInTheDocument();
       expect(screen.getByLabelText('From')).toBeInTheDocument();
       expect(screen.getByLabelText('To')).toBeInTheDocument();
     });
@@ -489,9 +492,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   // ===========================================================================
 
   describe('Demand scope - Project / Dealer / All (V1-V4)', () => {
-    it('V1: Demand defaults to All; Orders is absent for All and Dealer, present for Project', async () => {
+    it('V1: Demand defaults to All; Orders is present for All and Project, absent for Dealer (Lane D, AC-D1/AC-D6)', async () => {
       await renderModal();
-      expect(screen.queryByText('Orders')).not.toBeInTheDocument();
+      expect(await screen.findByText('Orders')).toBeInTheDocument();
 
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
       expect(await screen.findByText('Orders')).toBeInTheDocument();
@@ -501,7 +504,12 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     });
 
     it('V2: Project options come from getCandidateOrders({from,to}); rows_in_range>0 is pre-selected; label + description', async () => {
-      getCandidateOrders.mockResolvedValueOnce([
+      // `mockResolvedValue` (persistent), not `...Once`: Lane D (AC-D1) now fetches
+      // candidates as soon as the modal opens (Demand = All, the default), so this
+      // scenario's From/To edits each trigger their OWN intervening fetch before the
+      // one this test cares about - a `...Once` queued for exactly one call would land
+      // on the wrong one.
+      getCandidateOrders.mockResolvedValue([
         {
           so_number: 'SO419517',
           project_label: 'OTM GROUP / TAT LIAN',
@@ -564,7 +572,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       );
     });
 
-    it('V3: submit sends demand_class + so_numbers for Project (final selection), demand_class only for Dealer, neither for All', async () => {
+    it('V3: submit sends demand_class + so_numbers for Project (final selection), demand_class only for Dealer, so_numbers with no demand_class for All (Lane D, AC-D2)', async () => {
       getCandidateOrders.mockResolvedValue([
         {
           so_number: 'SO1',
@@ -580,10 +588,12 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       ]);
       const { onSubmit } = await renderModal();
 
-      // All (default): neither key present.
+      // All (default): so_numbers present (Lane D keeps the Orders picker open under
+      // All too), no demand_class.
+      await screen.findByText('Orders');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('demand_class');
-      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('so_numbers');
+      expect(onSubmit.mock.calls[0][0].so_numbers).toEqual(['SO1']);
       onSubmit.mockClear();
 
       // Dealer: demand_class='retail', no so_numbers - there is no Orders field to pick from.
@@ -603,38 +613,45 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     });
 
     it('V4: changing the range re-derives the pre-selection until the user edits the list, then the edit is kept', async () => {
-      getCandidateOrders
-        .mockResolvedValueOnce([
-          {
-            so_number: 'SO1',
-            project_label: 'P1',
-            customer_name: 'C1',
-            rows_total: 2,
-            rows_raised_in_window: 2,
-            rows_in_range: 2,
-            rows_awaiting: 0,
-            first_delivery: '2026-08-01',
-            last_delivery: '2026-08-05',
-          },
-        ])
-        .mockResolvedValueOnce([
-          {
-            so_number: 'SO2',
-            project_label: 'P2',
-            customer_name: 'C2',
-            rows_total: 1,
-            rows_raised_in_window: 1,
-            rows_in_range: 1,
-            rows_awaiting: 0,
-            first_delivery: '2026-09-01',
-            last_delivery: '2026-09-05',
-          },
-        ]);
+      // Keyed on `to` rather than call order: Lane D (AC-D1) fetches candidates as soon
+      // as the modal opens (Demand = All, the default) and again on every From/To
+      // keystroke even before Demand switches to Project, so a `mockResolvedValueOnce`
+      // pair queued by call order would land on the wrong intervening fetch.
+      getCandidateOrders.mockImplementation(async (range: CandidateOrdersRange) => {
+        if (range.to === '2026-08-31') {
+          return [
+            {
+              so_number: 'SO1',
+              project_label: 'P1',
+              customer_name: 'C1',
+              rows_total: 2,
+              rows_raised_in_window: 2,
+              rows_in_range: 2,
+              rows_awaiting: 0,
+              first_delivery: '2026-08-01',
+              last_delivery: '2026-08-05',
+            },
+          ];
+        }
+        if (range.to === '2026-09-30') {
+          return [
+            {
+              so_number: 'SO2',
+              project_label: 'P2',
+              customer_name: 'C2',
+              rows_total: 1,
+              rows_raised_in_window: 1,
+              rows_in_range: 1,
+              rows_awaiting: 0,
+              first_delivery: '2026-09-01',
+              last_delivery: '2026-09-05',
+            },
+          ];
+        }
+        return [];
+      });
       const { onSubmit } = await renderModal();
-      // From/To are set BEFORE Demand switches to Project (mirrors V2): the fetch is
-      // `enabled: demand === 'project'`, so setting the range first means exactly ONE
-      // fetch happens for the full range, rather than one per keystroke against an
-      // empty range that a Demand-first order would trigger.
+      // From/To are set BEFORE Demand switches to Project (mirrors V2).
       fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
       fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-08-31' } });
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });

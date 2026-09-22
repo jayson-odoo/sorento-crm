@@ -469,18 +469,31 @@ def test_t1_create_run_stores_and_returns_demand_class_and_so_numbers(scm_app):
         assert body["so_numbers"] == ["SO1"]
 
 
-def test_t2_so_numbers_without_project_demand_class_is_refused(scm_app):
+def test_t2_so_numbers_without_demand_class_is_accepted_as_an_all_run(scm_app):
+    """Split from the original `test_t2_so_numbers_without_project_demand_class_is_
+    refused` (Lane D, `PLAN-order-sheet-oi-reports-22sep.md`, AC-D2): an omitted
+    `demand_class` alongside `so_numbers` used to be refused the same as `retail` - Lane D
+    changes the contract so an All run (no `demand_class`) accepts a picked `so_numbers`
+    list to narrow its own project legs. The `retail` half of the original assertion is
+    unchanged (below, renamed `..._is_refused_for_retail`)."""
     app, _db = _client(scm_app, "purchasing")
 
     with TestClient(app) as c:
         omitted = c.post("/api/v1/scm/reorder-runs", json={
             "warehouse_codes": [], "so_numbers": ["SO1"],
         })
+
+    assert omitted.status_code == 202, omitted.text
+
+
+def test_t2_so_numbers_without_project_demand_class_is_refused_for_retail(scm_app):
+    app, _db = _client(scm_app, "purchasing")
+
+    with TestClient(app) as c:
         retail = c.post("/api/v1/scm/reorder-runs", json={
             "warehouse_codes": [], "demand_class": "retail", "so_numbers": ["SO1"],
         })
 
-    assert omitted.status_code == 422, omitted.text
     assert retail.status_code == 422, retail.text
 
 

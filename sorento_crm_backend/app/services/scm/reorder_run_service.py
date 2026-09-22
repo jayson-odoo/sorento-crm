@@ -915,7 +915,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # turns on only when there is something to bind - a Project run with no SO named still
     # nets every project order in range, the same as an unscoped call.
     so_scoped = bool(so_numbers)
-    cv_with = f"""WITH cv_all AS ({demand.horizon_committed_select_sql(demand_class=demand_class, so_scoped=so_scoped)}),
+    # AC-D1b: on an unscoped (All) run only, the book leg plans every open retail line
+    # regardless of "Plan until" - the range narrows the two project legs alone. A Dealer
+    # or Project run keeps windowing the retail leg exactly as before (retail_windowed's
+    # default).
+    retail_windowed = demand_class is not None
+    cv_with = f"""WITH cv_all AS ({demand.horizon_committed_select_sql(demand_class=demand_class, so_scoped=so_scoped, retail_windowed=retail_windowed)}),
     keys AS (
         SELECT product_id, warehouse_id FROM scm.net_position_v
         UNION
@@ -1328,11 +1333,13 @@ def _apply_project_supply_reduction(db: Session, rows: list[dict],
     so every path that computes a cell sees it without a new parameter on four signatures.
 
     ``so_numbers`` narrows the claim the same way it narrows `_planning_rows`' own
-    `committed` figure, but only when the run is ACTUALLY scoped to Project - a retail-only
-    or unscoped run's supply reduction is untouched, because the stock a confirmed Project
-    decision has claimed is real regardless of which leg of demand this run is examining.
+    `committed` figure, on a Project run and an unscoped (All) run alike (Lane D, plan D2:
+    "`_apply_project_supply_reduction` ... read `so_numbers` whenever set, not only under
+    Project") - a retail run's supply reduction stays untouched, because the stock a
+    confirmed Project decision has claimed is real regardless of which leg of demand a
+    retail run is examining.
     """
-    scoped_so_numbers = so_numbers if (so_numbers and demand_class == "project") else None
+    scoped_so_numbers = so_numbers if (so_numbers and demand_class != "retail") else None
     claims = _project_supply_reduction_map(db, rows, horizon=horizon,
                                            horizon_start=horizon_start,
                                            so_numbers=scoped_so_numbers)

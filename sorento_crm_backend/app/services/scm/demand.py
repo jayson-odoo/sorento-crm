@@ -650,7 +650,8 @@ GROUP BY product_id, warehouse_id;
 
 
 def horizon_committed_select_sql(
-    demand_class: Optional[str] = None, so_scoped: bool = False
+    demand_class: Optional[str] = None, so_scoped: bool = False,
+    retail_windowed: bool = True,
 ) -> str:
     """THE PLAN'S committed figure: `COMMITTED_V_SQL`'s body as a bare SELECT (no
     `CREATE VIEW`), with a `:horizon` bind narrowing both legs to demand due at or before
@@ -696,8 +697,27 @@ def horizon_committed_select_sql(
     unacknowledged is still excluded even when its SO is named). False (the default) adds
     no join and binds no `:so_numbers`, so a caller that never asks for this - every OTHER
     caller of this function today - keeps compiling/binding exactly as it always has.
+
+    ``retail_windowed`` (Lane D, AC-D1b, owner ruling: "this order range only is for
+    project") gates the SO-book leg's own `:horizon`/`:horizon_start` predicates. True (the
+    default, and every caller before this lane) keeps them, so the book leg is windowed
+    exactly like the two project legs always have been. False drops both predicates from
+    THIS leg only - the project legs stay windowed either way - so an unscoped (All) run's
+    retail side plans every open book line regardless of "Plan until", the same reading an
+    unhorizoned run has always given it. `_planning_rows` is the only caller that ever
+    passes False, and only when `demand_class is None`.
     """
     so_join = _SO_SCOPE_JOIN_SQL if so_scoped else ""
+    retail_horizon_sql = f"""
+      -- Planning horizon, book leg: a stated required_date past the cutoff is excluded;
+      -- no date at all is always in.
+      AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+           OR sol.required_date <= CAST(:horizon AS date))
+      -- Planning window START (S4, 9 Sep): the same rule, other side. G2 ruling - a
+      -- required_date before the start is excluded; no date at all is always in, the same
+      -- reading the end date already gives it.
+      AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+           OR sol.required_date >= CAST(:horizon_start AS date))""" if retail_windowed else ""
 
     retail_leg = f"""
     SELECT sol.product_id,
@@ -714,16 +734,7 @@ def horizon_committed_select_sql(
       AND sol.purchasing_status <> 'covered'
       AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                  - COALESCE(sol.qty_delivered, 0), 0) > 0
-      AND so.demand_class IS DISTINCT FROM 'project'
-      -- Planning horizon, book leg: a stated required_date past the cutoff is excluded;
-      -- no date at all is always in.
-      AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
-           OR sol.required_date <= CAST(:horizon AS date))
-      -- Planning window START (S4, 9 Sep): the same rule, other side. G2 ruling - a
-      -- required_date before the start is excluded; no date at all is always in, the same
-      -- reading the end date already gives it.
-      AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
-           OR sol.required_date >= CAST(:horizon_start AS date))"""
+      AND so.demand_class IS DISTINCT FROM 'project'{retail_horizon_sql}"""
 
     confirmed_leg = f"""
     SELECT sol.product_id,
