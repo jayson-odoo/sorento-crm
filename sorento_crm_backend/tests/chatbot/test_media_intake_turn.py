@@ -54,6 +54,46 @@ from tests.chatbot.test_engine import (
 
 
 # --------------------------------------------------------------------------- #
+# Per-test contact ids.
+#
+# Coordinator fix round, 23 Sep 2026: every test in this module used to share
+# `test_engine.CONTACT_ID` (437264483). The media gate's burst check
+# (`media_access_service.decide_and_record` step 5) hits REAL Redis keyed by
+# `respond_io_id` with a real TTL bucket - NOT rolled back with the blank-schema
+# Postgres transaction each test rolls back - so running every test that reaches the
+# gate in ONE pytest invocation (CI's own shape) shares one bucket. `media_burst_limit`
+# defaults to 5/60s (`app/models/user.py:524`), so the 6th "accepted" decision anywhere
+# in the run is `denied_burst` regardless of what that particular test is checking -
+# measured, not guessed (`test_media_storage_link.py`'s storage-upload-failure test
+# came back `decision: denied_burst` before this fix, with a completely unrelated
+# assertion). Every test that seeds a `ContactMediaLimit` row (i.e. reaches the gate)
+# now gets its OWN contact id via `_fresh_contact_id()`; `_seed_settings` also defaults
+# `media_burst_limit` high as a second, redundant safety net. Mirrors
+# `test_console_media_turn.py::_seeded_contact_and_media_limit`'s own docstring, which
+# independently hit and named the same Redis-bucket hazard for the SAME reason.
+# --------------------------------------------------------------------------- #
+
+
+def _fresh_contact_id() -> int:
+    """A `contact.id` no other test in this run has used - an int, the shape Respond.io
+    actually sends (`test_engine.py`'s own `CONTACT_ID` doc-comment)."""
+    return 800_000_000 + (uuid.uuid4().int % 99_999_999)
+
+
+def _seed_media_contact(session_factory, contact_id: int) -> None:
+    db = session_factory()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb)) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"cid": str(contact_id), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+    )
+    db.commit()
+
+
+# --------------------------------------------------------------------------- #
 # Envelope builders - the Respond.io shapes named in the plan/UAC verbatim.
 # --------------------------------------------------------------------------- #
 
@@ -66,8 +106,13 @@ def _attachment_envelope(
     description: str | None = None,
     size: int = 98641,
     duration_ms: int | None = None,
+    contact_id: int = CONTACT_ID,
 ) -> Any:
     envelope = _envelope()
+    if contact_id != CONTACT_ID:
+        envelope.contact["id"] = contact_id
+        envelope.message["contact"]["id"] = contact_id
+        envelope.message["message"]["contactId"] = contact_id
     attachment: dict[str, Any] = {"type": kind, "url": url, "mimeType": mime_type, "size": size}
     if description is not None:
         attachment["description"] = description
@@ -77,28 +122,36 @@ def _attachment_envelope(
     return envelope
 
 
-def _image_envelope(caption: str | None = None) -> Any:
-    return _attachment_envelope(kind="image", description=caption)
+def _image_envelope(caption: str | None = None, *, contact_id: int = CONTACT_ID) -> Any:
+    return _attachment_envelope(kind="image", description=caption, contact_id=contact_id)
 
 
-def _voice_envelope() -> Any:
+def _voice_envelope(*, contact_id: int = CONTACT_ID) -> Any:
     return _attachment_envelope(
-        kind="audio", mime_type="audio/ogg", url="https://cdn.example/v.ogg", duration_ms=4500
+        kind="audio",
+        mime_type="audio/ogg",
+        url="https://cdn.example/v.ogg",
+        duration_ms=4500,
+        contact_id=contact_id,
     )
 
 
-def _document_envelope() -> Any:
+def _document_envelope(*, contact_id: int = CONTACT_ID) -> Any:
     return _attachment_envelope(
-        kind="document", url="https://cdn.example/doc.pdf", mime_type="application/pdf"
+        kind="document", url="https://cdn.example/doc.pdf", mime_type="application/pdf", contact_id=contact_id
     )
 
 
-def _already_patched_envelope(rendered_text: str = "please check stock for A") -> Any:
+def _already_patched_envelope(rendered_text: str = "please check stock for A", *, contact_id: int = CONTACT_ID) -> Any:
     """n8n's transition-window shape: `type:"text"` plus a `_media` marker the old
     sub-media-intake used to stamp on. Exact key TBD by the coder; `_media` is the
     plan's own name for it (module docstring, "already carries n8n's patched
     `type:"text"` + `_media`")."""
     envelope = _envelope()
+    if contact_id != CONTACT_ID:
+        envelope.contact["id"] = contact_id
+        envelope.message["contact"]["id"] = contact_id
+        envelope.message["message"]["contactId"] = contact_id
     envelope.message["message"]["message"] = {
         "type": "text",
         "text": rendered_text,
@@ -112,17 +165,21 @@ def _already_patched_envelope(rendered_text: str = "please check stock for A") -
 # --------------------------------------------------------------------------- #
 
 
-def _contact_uuid(session_factory) -> str:
+def _contact_uuid(session_factory, contact_id: int = CONTACT_ID) -> str:
     db = session_factory()
     return db.execute(
-        text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}
+        text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(contact_id)}
     ).scalar()
 
 
-def _seed_media_limit(session_factory, *, modality: str = "image", allowed: bool = True) -> None:
+def _seed_media_limit(
+    session_factory, *, contact_id: int = CONTACT_ID, modality: str = "image", allowed: bool = True
+) -> None:
     db = session_factory()
     db.add(
-        ContactMediaLimit(contact_id=_contact_uuid(session_factory), modality=modality, is_allowed=allowed)
+        ContactMediaLimit(
+            contact_id=_contact_uuid(session_factory, contact_id), modality=modality, is_allowed=allowed
+        )
     )
     db.commit()
 
@@ -133,6 +190,11 @@ def _seed_settings(session_factory, **overrides: Any) -> None:
     if row is None:
         row = SystemSetting()
         db.add(row)
+    # Redundant safety net beside the per-test fresh contact id (see module docstring
+    # above): a test that forgets to ask for a fresh id still does not spuriously trip
+    # the burst gate, because the window this run's tests could plausibly fit in never
+    # reaches four figures of accepted media messages for one contact.
+    overrides.setdefault("media_burst_limit", 1000)
     for key, value in overrides.items():
         setattr(row, key, value)
     db.commit()
@@ -192,11 +254,11 @@ def _media_intake_stage(trace: list[dict[str, Any]]) -> dict[str, Any] | None:
     return next((r for r in trace if r.get("stage") == "media_intake"), None)
 
 
-def _usage_rows(session_factory) -> list[ContactMediaUsage]:
+def _usage_rows(session_factory, contact_id: int = CONTACT_ID) -> list[ContactMediaUsage]:
     return (
         session_factory()
         .query(ContactMediaUsage)
-        .filter(ContactMediaUsage.respond_io_id == str(CONTACT_ID))
+        .filter(ContactMediaUsage.respond_io_id == str(contact_id))
         .all()
     )
 
@@ -216,15 +278,19 @@ class TestImageIntakeStage:
     """AC-1800."""
 
     def test_image_envelope_records_media_intake_stage(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline
+        self, session_factory, stub_parser, stub_access, media_pipeline
     ):
-        _seed_media_limit(session_factory, modality="image")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(IMAGE_RESULT)
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=session_factory)
+        result = engine_mod.run_turn(
+            _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+        )
 
         trace = _trace_of(session_factory, result.turn_id)
         stage = _media_intake_stage(trace)
@@ -244,15 +310,17 @@ class TestVoiceIntakeStage:
     """AC-1801: modality voice, duration_ms forwarded."""
 
     def test_voice_envelope_records_media_intake_stage(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline
+        self, session_factory, stub_parser, stub_access, media_pipeline
     ):
-        _seed_media_limit(session_factory, modality="voice")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="voice")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result({"transcript": "stock for SRTWB1455", "confirmation_message": "ok"})
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_voice_envelope(), session_factory=session_factory)
+        result = engine_mod.run_turn(_voice_envelope(contact_id=contact_id), session_factory=session_factory)
 
         trace = _trace_of(session_factory, result.turn_id)
         stage = _media_intake_stage(trace)
@@ -270,22 +338,26 @@ class TestTurnIdAndContext:
     "chat-turn"`; `contact_media_usage.turn_id` carries the same id."""
 
     def test_turn_id_and_context_source(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline
+        self, session_factory, stub_parser, stub_access, media_pipeline
     ):
-        _seed_media_limit(session_factory, modality="image")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(IMAGE_RESULT)
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=session_factory)
+        result = engine_mod.run_turn(
+            _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+        )
 
         assert media_pipeline.calls, "media_intake never built a MediaProcessRequest"
         request = media_pipeline.calls[0]
         assert str(request.turn_id) == str(result.turn_id)
         assert (request.context or {}).get("source") == "chat-turn"
 
-        usage_rows = _usage_rows(session_factory)
+        usage_rows = _usage_rows(session_factory, contact_id)
         assert len(usage_rows) == 1
         assert usage_rows[0].turn_id == str(result.turn_id)
 
@@ -294,51 +366,81 @@ class TestNoSessionHeldAcrossTheWait:
     """AC-1803: no DB session is open while the intake call is in flight; the wait is
     bounded by `media_sync_wait_seconds`.
 
-    Mirrors `test_engine.py::TestSessionDiscipline` exactly - the extraction callable
-    stands in for "the wait" the same way the parser stub stands in for the LLM call in
-    that file: both are the one seam a real network/worker round trip happens behind.
+    Observes the REAL poll loop (`app.services.chatbot.media_intake._poll`), rather
+    than running the "worker" inline during `enqueue_job` (the `media_pipeline`
+    fixture's own technique, used by every other test in this file): running the job
+    inline finishes it before the loop's own wait ever starts, so the count taken at
+    that point is dominated by whichever session happens to still be open around the
+    enqueue call - a test-harness artifact, not the property AC-1803 is actually about.
+    Here the job is left QUEUED and `time.sleep` (the loop's own between-reads pause,
+    `media_intake.py::_poll`) is the seam counted at, then used to flip the job
+    terminal so the loop's next read picks it up - the same "count during the real
+    wait, then let it resolve" shape `test_engine.py::TestSessionDiscipline` uses for
+    the parser call.
     """
 
     def test_no_session_open_while_the_extraction_runs(
-        self, counting_session_factory, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, counting_session_factory, session_factory, stub_parser, stub_access, monkeypatch
     ):
-        _seed_media_limit(session_factory, modality="image")
+        import time as real_time
+
+        from app.models.media import MediaExtractionJob
+        from app.services.chatbot import media_intake as media_intake_mod
+
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         stub_parser()
         stub_access()
 
+        # The job is created for real (through the real gate) but never actually
+        # runs - `enqueue_job` becomes a no-op, exactly `media_pipeline.never_runs()`'s
+        # own technique.
         import app.api.v1.external.media as media_route
-        import app.tasks.media_tasks as media_tasks_mod
-        from app.services.media_access_service import decide_and_record as real_decide_and_record
 
-        def _spy(db, request, **kwargs):
-            return real_decide_and_record(db, request, **kwargs)
-
-        monkeypatch.setattr(media_route, "decide_and_record", _spy)
-
-        def _inline_enqueue(func, *args, **kwargs):
-            func(*args)
-            return type("FakeJob", (), {"id": "fake-rq-job"})()
-
-        monkeypatch.setattr(media_route, "enqueue_job", _inline_enqueue)
-        monkeypatch.setattr(media_tasks_mod, "SessionLocal", counting_session_factory)
+        monkeypatch.setattr(
+            media_route, "enqueue_job", lambda *a, **k: type("FakeJob", (), {"id": "never"})()
+        )
 
         observed: list[int] = []
 
-        def _run(job):
-            observed.append(counting_session_factory.state["open"])
-            return IMAGE_RESULT
+        class _FakeTime:
+            """Forwards everything but `sleep`, which is `_poll`'s own between-reads
+            pause - the actual "wait" AC-1803 is about."""
 
-        monkeypatch.setattr(media_tasks_mod, "run_media_extraction", _run)
+            def monotonic(self) -> float:
+                return real_time.monotonic()
 
-        engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=counting_session_factory)
+            def perf_counter(self) -> float:
+                return real_time.perf_counter()
+
+            def sleep(self, seconds: float) -> None:
+                observed.append(counting_session_factory.state["open"])
+                if len(observed) == 1:
+                    # Resolve the job now, using a session OF ITS OWN (never the
+                    # counted factory - a test helper writing the canned result is
+                    # not part of what this test measures), so `_poll`'s next read
+                    # returns terminal instead of looping until the real timeout.
+                    db = session_factory()
+                    job = db.query(MediaExtractionJob).order_by(MediaExtractionJob.created_at.desc()).first()
+                    assert job is not None, "no MediaExtractionJob row was created by the gate"
+                    job.status = "completed"
+                    job.result = IMAGE_RESULT
+                    db.commit()
+
+        monkeypatch.setattr(media_intake_mod, "time", _FakeTime())
+
+        engine_mod.run_turn(
+            _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=counting_session_factory
+        )
 
         assert observed, (
-            "run_media_extraction was never called - media intake is not wired into "
-            "run_turn yet"
+            "the poll loop never slept once - media intake is not wired into "
+            "run_turn yet (S2 not implemented), so there was no wait to observe"
         )
         assert observed == [0], (
-            "a DB session was held open across the media extraction wait"
+            f"a DB session was held open across the media extraction wait: {observed}"
         )
 
 
@@ -372,18 +474,20 @@ class TestAlreadyPatchedEnvelopeNotIntakedTwice:
     """AC-1805."""
 
     def test_one_usage_row_per_message(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline
+        self, session_factory, stub_parser, stub_access, media_pipeline
     ):
-        _seed_media_limit(session_factory, modality="image")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(IMAGE_RESULT)
         stub_parser()
         stub_access()
 
-        envelope = _already_patched_envelope()
+        envelope = _already_patched_envelope(contact_id=contact_id)
         engine_mod.run_turn(envelope, session_factory=session_factory)
 
-        rows = _usage_rows(session_factory)
+        rows = _usage_rows(session_factory, contact_id)
         assert len(rows) == 1, (
             f"expected exactly one contact_media_usage row for an already-patched "
             f"envelope, found {len(rows)}"
@@ -392,18 +496,20 @@ class TestAlreadyPatchedEnvelopeNotIntakedTwice:
 
 class TestAudioDeadEndRemoved:
     """AC-1806: `AUDIO_NOT_PATCHED_ERROR` is gone - a raw voice envelope never fails
-    with the old "media intake did not transcribe" wording."""
+    with the old "media intake did not transcribe this voice note" wording."""
 
     def test_voice_envelope_never_hits_the_retired_error(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline
+        self, session_factory, stub_parser, stub_access, media_pipeline
     ):
-        _seed_media_limit(session_factory, modality="voice")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="voice")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result({"transcript": "stock for SRTWB1455"})
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_voice_envelope(), session_factory=session_factory)
+        result = engine_mod.run_turn(_voice_envelope(contact_id=contact_id), session_factory=session_factory)
 
         assert result.reply is None or "did not transcribe" not in (result.reply or {}).get("text", "")
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
@@ -413,7 +519,7 @@ class TestAudioDeadEndRemoved:
 class TestParserInputShapes:
     """AC-1807/AC-1808/AC-1809: what the parser is actually handed."""
 
-    def test_caption_and_raws_joined(self, session_factory, seeded, stub_access, media_pipeline):
+    def test_caption_and_raws_joined(self, session_factory, stub_access, media_pipeline):
         blocks: list[str] = []
 
         def _fake_parse(config, user_block):
@@ -427,26 +533,29 @@ class TestParserInputShapes:
                 system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
             )
 
-        import pytest as _pytest  # local import avoids a module-level dependency loop
-        _ = _pytest
-
         from unittest.mock import patch as _patch
 
+        contact_id = _fresh_contact_id()
         with _patch.object(parser_mod, "resolve_config", fake_resolve_config), _patch.object(
             parser_mod, "parse", _fake_parse
         ):
-            _seed_media_limit(session_factory, modality="image")
+            _seed_media_contact(session_factory, contact_id)
+            _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
             _seed_settings(session_factory, media_sync_wait_seconds=5)
             media_pipeline.set_result(IMAGE_RESULT)
             stub_access()
 
-            engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=session_factory)
+            engine_mod.run_turn(
+                _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+            )
 
         assert blocks, "the parser was never called"
         assert "Check stock: A, B" in blocks[0], blocks[0]
 
-    def test_no_caption_still_renders_the_raws(self, session_factory, seeded, stub_parser, stub_access, media_pipeline):
-        _seed_media_limit(session_factory, modality="image")
+    def test_no_caption_still_renders_the_raws(self, session_factory, stub_parser, stub_access, media_pipeline):
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(
             {
@@ -460,13 +569,13 @@ class TestParserInputShapes:
         stub_parser(on_call=blocks.append)
         stub_access()
 
-        engine_mod.run_turn(_image_envelope(caption=None), session_factory=session_factory)
+        engine_mod.run_turn(_image_envelope(caption=None, contact_id=contact_id), session_factory=session_factory)
 
         assert blocks, "no-caption image never reached the parser"
         assert "A, B" in blocks[0], blocks[0]
 
     def test_voice_transcript_reaches_the_parser_verbatim(
-        self, session_factory, seeded, stub_access, media_pipeline
+        self, session_factory, stub_access, media_pipeline
     ):
         blocks: list[str] = []
         import app.services.chatbot.head.parser as parser_mod
@@ -477,15 +586,17 @@ class TestParserInputShapes:
                 system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
             )
 
+        contact_id = _fresh_contact_id()
         with _patch.object(parser_mod, "resolve_config", fake_resolve_config), _patch.object(
             parser_mod, "parse", lambda config, user_block: blocks.append(user_block) or _parser_output()
         ):
-            _seed_media_limit(session_factory, modality="voice")
+            _seed_media_contact(session_factory, contact_id)
+            _seed_media_limit(session_factory, contact_id=contact_id, modality="voice")
             _seed_settings(session_factory, media_sync_wait_seconds=5)
             media_pipeline.set_result({"transcript": "stock for SRTWB1455"})
             stub_access()
 
-            engine_mod.run_turn(_voice_envelope(), session_factory=session_factory)
+            engine_mod.run_turn(_voice_envelope(contact_id=contact_id), session_factory=session_factory)
 
         assert blocks
         assert "stock for SRTWB1455" in blocks[0], blocks[0]
@@ -499,7 +610,9 @@ class TestDenialArms:
     def test_denied_gate_replies_with_not_enabled_wording_and_no_parser_call(
         self, session_factory, seeded, stub_access, monkeypatch
     ):
-        # No ContactMediaLimit row at all == denied_gate (absence is denial).
+        # No ContactMediaLimit row at all == denied_gate (absence is denial); this
+        # returns at step 3 of `decide_and_record`, before the burst check, so the
+        # shared `CONTACT_ID`/`seeded` fixture is safe here (never touches Redis).
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         parser_calls: list[str] = []
         import app.services.chatbot.head.parser as parser_mod
@@ -523,28 +636,46 @@ class TestDenialArms:
         assert row.status == "done"
 
     def test_denied_burst_already_shown_answers_empty_with_no_actions(
-        self, session_factory, seeded, stub_access, media_pipeline
+        self, session_factory, stub_access, media_pipeline
     ):
-        """AC-1812. The gate's own burst-notice-once-per-window rule means the SECOND
-        media message inside the same window is the one under test here."""
+        """AC-1812. `media_access_service.decide_and_record` step 5 shows the burst
+        notice on the FIRST denial in a window (`first_in_window`) and stays silent on
+        every one after - so the sequence needed to reach the "already shown" arm is
+        accept, deny-with-notice, THEN deny-silently: three calls, not two (a bug in
+        this test's own original sequencing, caught in the fix round once the shared-
+        contact-id burst pollution stopped masking it - measured against the real
+        `decide_and_record`, never assumed). Own dedicated contact id, separate from
+        every other test in this module, and a LOW explicit `media_burst_limit`
+        (overriding `_seed_settings`'s high default) - this is the one test in the file
+        meant to actually trip the burst gate."""
         import app.services.chatbot.head.parser as parser_mod
         from unittest.mock import patch as _patch
 
-        _seed_media_limit(session_factory, modality="image")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5, media_burst_limit=1)
         media_pipeline.set_result(IMAGE_RESULT)
         stub_access()
 
         with _patch.object(parser_mod, "parse", lambda *a, **k: {}):
             # First image: consumes the burst allowance (accepted).
-            first_envelope = _image_envelope(caption="Check stock")
+            first_envelope = _image_envelope(caption="Check stock", contact_id=contact_id)
             first_envelope.message["message"]["messageId"] = "ZZT-media-burst-1"
             engine_mod.run_turn(first_envelope, session_factory=session_factory)
 
-            # Second image, same window: denied_burst, notice already shown.
-            second_envelope = _image_envelope(caption="Check stock")
+            # Second image, same window: denied_burst, notice SHOWN (first denial).
+            second_envelope = _image_envelope(caption="Check stock", contact_id=contact_id)
             second_envelope.message["message"]["messageId"] = "ZZT-media-burst-2"
-            result = engine_mod.run_turn(second_envelope, session_factory=session_factory)
+            second_result = engine_mod.run_turn(second_envelope, session_factory=session_factory)
+
+            # Third image, same window: denied_burst, notice ALREADY shown - silent.
+            third_envelope = _image_envelope(caption="Check stock", contact_id=contact_id)
+            third_envelope.message["message"]["messageId"] = "ZZT-media-burst-3"
+            result = engine_mod.run_turn(third_envelope, session_factory=session_factory)
+
+        assert second_result.branch_kind == "media_denied"
+        assert (second_result.reply or {}).get("text"), "the FIRST denial must carry the burst notice"
 
         assert result.branch_kind == "media_denied"
         assert (result.reply or {}).get("text") == ""
@@ -555,37 +686,45 @@ class TestFailedAndPendingArms:
     """AC-1813/AC-1814."""
 
     def test_failed_extraction_replies_nothing_read(
-        self, session_factory, seeded, stub_access, media_pipeline
+        self, session_factory, stub_access, media_pipeline
     ):
         from app.services.media_extract import wording
         import app.services.chatbot.head.parser as parser_mod
         from unittest.mock import patch as _patch
 
-        _seed_media_limit(session_factory, modality="image")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(error=RuntimeError("provider timed out"))
         stub_access()
 
         with _patch.object(parser_mod, "parse", lambda *a, **k: {}):
-            result = engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=session_factory)
+            result = engine_mod.run_turn(
+                _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+            )
 
         assert (result.reply or {}).get("text") == wording.nothing_read()
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
         assert row.status == "failed"
 
     def test_pending_after_the_wait_replies_the_timeout_sentence(
-        self, session_factory, seeded, stub_access, media_pipeline
+        self, session_factory, stub_access, media_pipeline
     ):
         import app.services.chatbot.head.parser as parser_mod
         from unittest.mock import patch as _patch
 
-        _seed_media_limit(session_factory, modality="image")
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)  # floored to 5s
         media_pipeline.never_runs()
         stub_access()
 
         with _patch.object(parser_mod, "parse", lambda *a, **k: {}):
-            result = engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=session_factory)
+            result = engine_mod.run_turn(
+                _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+            )
 
         assert (result.reply or {}).get("text") == (
             "I could not read that photo in time. Please send it again or type the codes."
@@ -597,8 +736,10 @@ class TestFailedAndPendingArms:
 class TestQuotaWarnNoticeAppended:
     """AC-1815."""
 
-    def test_warn_notice_appended_once(self, session_factory, seeded, stub_parser, stub_access, media_pipeline):
-        _seed_media_limit(session_factory, modality="image")
+    def test_warn_notice_appended_once(self, session_factory, stub_parser, stub_access, media_pipeline):
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         # limit=1, warn threshold low enough that the FIRST accepted item already warns.
         _seed_settings(
             session_factory,
@@ -610,11 +751,13 @@ class TestQuotaWarnNoticeAppended:
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_image_envelope(caption="Check stock"), session_factory=session_factory)
+        result = engine_mod.run_turn(
+            _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+        )
 
         text_reply = (result.reply or {}).get("text") or ""
         assert text_reply.count("resets") <= 1  # sanity: not appended twice
-        usage = _usage_rows(session_factory)
+        usage = _usage_rows(session_factory, contact_id)
         assert usage and usage[0].notices, "expected a warn_80 notice recorded on the ledger row"
         assert any(n.get("kind") == "warn_80" for n in usage[0].notices)
         assert any(n.get("text") in text_reply for n in usage[0].notices if n.get("kind") == "warn_80")
@@ -645,6 +788,13 @@ class TestConsoleBuildsTheSameEnvelope:
             raise NotImplementedError("stop here - only the call shape is under test")
 
         monkeypatch.setattr(console_service, "run_turn", _fake_run_turn, raising=False)
+        # `_run_console_media_turn` uploads the console's bytes BEFORE building the
+        # envelope (`_upload_console_media`, real S3/R2 storage) - mocked here so the
+        # test reaches the call under test rather than dying on a real network attempt,
+        # never asserted on itself (S4's own storage tests own that).
+        monkeypatch.setattr(
+            console_service, "_upload_console_media", lambda **kwargs: "https://fake.example/media.jpg"
+        )
 
         with pytest.raises(Exception):
             console_service._run_console_media_turn(

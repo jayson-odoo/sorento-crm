@@ -35,6 +35,26 @@ from tests.chatbot.test_media_intake_turn import (
 )
 
 
+def _seed_chatbot_media_attachment_type(session_factory) -> None:
+    """The blank schema (`Base.metadata.create_all`) carries no migration DATA, only
+    the tables - migration 526's `chatbot_media` seed row lives only on a REAL,
+    migrated database (see `TestAttachmentTypeSeed` below, which reads that one
+    directly). `EntityAttachmentService.create_attachment_and_link` 404s without a row
+    to resolve the code against, so every test here that expects a real attachment
+    row seeds one by hand first."""
+    db = session_factory()
+    if db.query(AttachmentType).filter(AttachmentType.code == "chatbot_media").first() is None:
+        db.add(
+            AttachmentType(
+                code="chatbot_media",
+                type_name="Chatbot media (test seed)",
+                allowed_extensions="jpg,jpeg,png,ogg,mp3",
+                max_file_size_mb=25,
+            )
+        )
+        db.commit()
+
+
 class _FakeBackend:
     def __init__(self, *, raise_on_upload: bool = False) -> None:
         self.raise_on_upload = raise_on_upload
@@ -84,11 +104,20 @@ class TestImageAttachmentRowCreated:
     """AC-1833/AC-1834."""
 
     def test_completed_image_job_creates_an_attachment_and_a_link(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline, fake_storage
+        self, session_factory, seeded, stub_parser, stub_access, media_pipeline, fake_storage, monkeypatch
     ):
         _seed_media_limit(session_factory, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
+        _seed_chatbot_media_attachment_type(session_factory)
         media_pipeline.set_result(IMAGE_RESULT)
+        # `_store_media_bytes` (S4, `app/tasks/media_tasks.py`) fetches the media bytes
+        # for real before uploading - mocked the same way
+        # `tests/test_media_extract_service.py` mocks it, so this test only asserts on
+        # the storage/attachment wiring, never on a real network fetch.
+        monkeypatch.setattr(
+            "app.services.media_extract.service.fetch_media_bytes",
+            lambda url: (b"fake-image-bytes", "image/jpeg"),
+        )
         stub_parser()
         stub_access()
 
@@ -113,11 +142,16 @@ class TestVoiceAttachmentRowCreated:
     """AC-1835."""
 
     def test_completed_voice_job_creates_an_attachment_with_the_audio_mime(
-        self, session_factory, seeded, stub_parser, stub_access, media_pipeline, fake_storage
+        self, session_factory, seeded, stub_parser, stub_access, media_pipeline, fake_storage, monkeypatch
     ):
         _seed_media_limit(session_factory, modality="voice")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
+        _seed_chatbot_media_attachment_type(session_factory)
         media_pipeline.set_result({"transcript": "stock for SRTWB1455"})
+        monkeypatch.setattr(
+            "app.services.media_extract.service.fetch_media_bytes",
+            lambda url: (b"fake-voice-bytes", "audio/ogg"),
+        )
         stub_parser()
         stub_access()
 
@@ -137,7 +171,12 @@ class TestStorageFailureDoesNotFailTheExtraction:
     ):
         _seed_media_limit(session_factory, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
+        _seed_chatbot_media_attachment_type(session_factory)
         media_pipeline.set_result(IMAGE_RESULT)
+        monkeypatch.setattr(
+            "app.services.media_extract.service.fetch_media_bytes",
+            lambda url: (b"fake-image-bytes", "image/jpeg"),
+        )
         stub_parser()
         stub_access()
 

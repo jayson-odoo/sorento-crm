@@ -5,12 +5,10 @@
  *
  * AC-1842, AC-1843, AC-1844, AC-1845, AC-1846, AC-1849 (UAC section E).
  *
- * Written FIRST: `ChatTranscript.tsx` has NO media rendering at all today (verified -
- * no `thumbnail`/`audio`/`media` reference in the component), so every assertion below
- * is expected to fail on a missing element, never an import error. `turn.media` is not
- * yet a declared field on `ChatbotTurn` (`types/chatbotTurn.types.ts`) - added here only
- * to the test's own fixture via a cast, per the tester brief; the coder adds the real
- * field.
+ * `ChatbotTurn.media` (`types/chatbotTurn.types.ts::ChatbotTurnMedia`) now ships for
+ * real (coder, S1/S4) - fixtures below use the real type directly rather than the
+ * tester's original intersection cast, which clashed with it (`entities` is
+ * `Array<{raw, hint?, confident?}>`, not `string[]`; fix round, 23 Sep 2026).
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
@@ -25,23 +23,6 @@ vi.mock('./TurnPanel', () => ({
 vi.mock('./StateTracePanel', () => ({ StateTracePanel: () => null }));
 
 afterEach(() => cleanup());
-
-/** The `turn.media` shape the plan's contract section names (S4). Cast onto the fixture
- * rather than widening the real type - the coder owns that change. */
-type TurnWithMedia = ChatbotTurn & {
-  media: {
-    modality: 'image' | 'voice';
-    mime_type: string;
-    attachment_id: string;
-    url: string;
-    transcript_or_rendered_text: string | null;
-    entities: string[];
-    attributes: string[];
-    notes: string | null;
-    truncated: boolean;
-    decision: string;
-  } | null;
-};
 
 function message(over: Partial<ChatMessageRow>): ChatMessageRow {
   return {
@@ -59,7 +40,7 @@ function message(over: Partial<ChatMessageRow>): ChatMessageRow {
   } as ChatMessageRow;
 }
 
-function turn(over: Partial<TurnWithMedia>): TurnWithMedia {
+function turn(over: Partial<ChatbotTurn>): ChatbotTurn {
   return {
     id: 'ZZT-turn',
     contact_respond_id: 'ZZT-contact',
@@ -75,7 +56,7 @@ function turn(over: Partial<TurnWithMedia>): TurnWithMedia {
     response: { reply: { text: 'I read A and B from that photo.' } },
     media: null,
     ...over,
-  } as TurnWithMedia;
+  };
 }
 
 const IMAGE_URL = 'https://cdn.example/chatbot-media/photo.jpg?sig=zzt';
@@ -96,13 +77,13 @@ describe('ChatTranscript media block (S1/S4)', () => {
             attachment_id: 'att-1',
             url: IMAGE_URL,
             transcript_or_rendered_text: 'Check stock: A, B',
-            entities: ['A', 'B'],
+            entities: [{ raw: 'A' }, { raw: 'B' }],
             attributes: [],
             notes: null,
             truncated: false,
             decision: 'accepted',
           },
-        }) as unknown as ChatbotTurn,
+        }),
       ],
     ]);
 
@@ -132,7 +113,7 @@ describe('ChatTranscript media block (S1/S4)', () => {
             truncated: false,
             decision: 'accepted',
           },
-        }) as unknown as ChatbotTurn,
+        }),
       ],
     ]);
 
@@ -161,13 +142,13 @@ describe('ChatTranscript media block (S1/S4)', () => {
             attachment_id: 'att-3',
             url: AUDIO_URL,
             transcript_or_rendered_text: 'stock for SRTWB1455',
-            entities: ['SRTWB1455'],
+            entities: [{ raw: 'SRTWB1455' }],
             attributes: [],
             notes: null,
             truncated: false,
             decision: 'accepted',
           },
-        }) as unknown as ChatbotTurn,
+        }),
       ],
     ]);
 
@@ -194,13 +175,13 @@ describe('ChatTranscript media block (S1/S4)', () => {
             attachment_id: 'att-4',
             url: IMAGE_URL,
             transcript_or_rendered_text: 'A, B, C',
-            entities: ['A', 'B', 'C'],
+            entities: [{ raw: 'A' }, { raw: 'B' }, { raw: 'C' }],
             attributes: [],
             notes: null,
             truncated: true,
             decision: 'accepted',
           },
-        }) as unknown as ChatbotTurn,
+        }),
       ],
     ]);
 
@@ -221,7 +202,7 @@ describe('ChatTranscript media block (S1/S4)', () => {
           branch_kind: 'business_query',
           response: { reply: { text: 'Photos are not enabled for this number yet.' } },
           media: null,
-        }) as unknown as ChatbotTurn,
+        }),
       ],
     ]);
 
@@ -244,13 +225,13 @@ describe('ChatTranscript media block (S1/S4)', () => {
             attachment_id: 'att-5',
             url: IMAGE_URL,
             transcript_or_rendered_text: 'A',
-            entities: ['A'],
+            entities: [{ raw: 'A' }],
             attributes: [],
             notes: null,
             truncated: false,
             decision: 'accepted',
           },
-        }) as unknown as ChatbotTurn,
+        }),
       ],
     ]);
 
