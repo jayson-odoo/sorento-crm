@@ -654,7 +654,8 @@ export function FulfilmentBoardPanel({
   /**
    * Save decision / Undo (S4, R-F): local first, then the server write, so the pill answers
    * the click before any network round-trip - and reverted, with the mutation's own error
-   * toast, if the write fails.
+   * toast, if the write fails. A rejection is a decision too (owner, 22 Sep 2026): it gets
+   * the same per-line toast a Save does, worded for what it is rather than skipped outright.
    *
    * THE UPDATER FORM, both ways (B1, code review round 3): a plain `setDraft(next)` computed
    * `next` off the `draft` CLOSURE, so several `decide()` calls fired together (Undo all used
@@ -724,10 +725,12 @@ export function FulfilmentBoardPanel({
         });
         return false;
       }
-      if (!options?.quiet && decision && decision.verdict !== 'rejected') {
-        const { toConfirm } = confirmSummaryFor(allContributions, appliedNext);
+      if (!options?.quiet && decision) {
+        const { toConfirm, rejected } = confirmSummaryFor(allContributions, appliedNext);
         toast.success(
-          `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
+          decision.verdict === 'rejected'
+            ? `Line ${contribution?.line_no ?? ''} rejected · ${toConfirm} to confirm · ${rejected} rejected`
+            : `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
         );
       }
       return true;
