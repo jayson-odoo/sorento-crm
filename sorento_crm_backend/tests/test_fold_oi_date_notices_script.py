@@ -26,7 +26,9 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
     ACK_AWAITING,
+    ACK_CHANGED,
     INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     IV_ADVANCE,
@@ -42,7 +44,13 @@ __all__ = ["api", "world"]  # re-exported fixture; keeps linters from calling it
 
 
 def _notice_and_buy_row(
-    api, *, qty="10", verb=IV_ADVANCE, note="Was 2026-08-25", notice_date=NOW
+    api,
+    *,
+    qty="10",
+    verb=IV_ADVANCE,
+    note="Was 2026-08-25",
+    notice_date=NOW,
+    buy_ack=ACK_ACKNOWLEDGED,
 ):
     """A live buy row plus a live ADVANCE/DELAY notice row on the SAME so_line_id - the
     duplicate the script folds.
@@ -51,11 +59,21 @@ def _notice_and_buy_row(
     the OLD one, which is the whole shape on prod - the notice is the ONLY row that ever
     said the date had moved, so a fold that cancels it without moving the buy row loses
     the move entirely. `notice_date=None` seeds the one shape the script must refuse:
-    a notice with no date of its own to hand over."""
+    a notice with no date of its own to hand over.
+
+    `buy_ack` is the buy row's own handshake (owner ruling, 22 Sep). It defaults to
+    ACKNOWLEDGED - the duplicate this script folds is, on prod, overwhelmingly a row
+    purchasing had already taken on - and `ACK_AWAITING` seeds the other half of the
+    gate: a row nobody has read keeps its handshake and its NULL `changed_at`."""
     _client, world = api
     fixture = _raise_one_row(api, qty=qty)
     buy_row = fixture["row"]
     assert buy_row.delivery_date == WAS, buy_row.delivery_date
+    assert buy_row.ack_state == ACK_AWAITING, "the confirm raises it awaiting"
+    if buy_ack != ACK_AWAITING:
+        buy_row.ack_state = buy_ack
+        buy_row.acknowledged_by = world.buyer
+        buy_row.acknowledged_at = datetime.utcnow()
     notice = OrderInquiryRow(
         id=_uid(), company_id=world.company_id, order_inquiry_id=buy_row.order_inquiry_id,
         so_line_id=buy_row.so_line_id, item_code=buy_row.item_code, qty=Decimal(qty),
@@ -105,8 +123,15 @@ def test_fold_script_dry_run_lists_pairs_and_changes_nothing(api):
 # ---------------------------------------------------------------------------
 
 
-def test_fold_script_apply_cancels_notice_and_stamps_buy_row(api):
-    seeded = _notice_and_buy_row(api, qty="10", verb=IV_ADVANCE, note="Was 2026-08-25")
+def test_fold_script_apply_cancels_notice_and_stamps_an_acknowledged_buy_row(api):
+    """AC-B2-12 on a row purchasing had already taken on: the fold restates an
+    instruction they are holding, so it goes BACK to To confirm and stamps when it was
+    amended under them - the same handshake gate `_stamp_date_move` reads (owner ruling,
+    22 Sep)."""
+    seeded = _notice_and_buy_row(
+        api, qty="10", verb=IV_ADVANCE, note="Was 2026-08-25",
+        buy_ack=ACK_ACKNOWLEDGED,
+    )
     world = seeded["world"]
 
     report = fold_script.run(world.db, apply=True)
@@ -122,8 +147,35 @@ def test_fold_script_apply_cancels_notice_and_stamps_buy_row(api):
     # fold has to hand it over - a buy row left on the old date with the notice cancelled
     # would have lost the date move the notice existed to announce.
     assert seeded["buy_row"].delivery_date == NOW, "the buy row ends on the notice's date"
+    assert seeded["buy_row"].ack_state == ACK_CHANGED, "back to To confirm"
     assert seeded["buy_row"].changed_at is not None
     assert seeded["buy_row"].note and "Was" in seeded["buy_row"].note
+    assert report["folded"] == 1, report
+
+
+def test_fold_script_apply_leaves_an_awaiting_buy_rows_handshake_alone(api):
+    """AC-B2-12's handshake gate, the other half (owner ruling, 22 Sep). A row nobody has
+    read yet is still folded - the date, the Was columns and the note all land, because
+    they are what the Was / Now table prints - but its handshake is not touched and
+    `changed_at` stays NULL: the column answers "when CS last amended a row purchasing had
+    already acknowledged", and there is no acknowledgement here to have amended under."""
+    seeded = _notice_and_buy_row(
+        api, qty="10", verb=IV_DELAY, note="Was 2026-08-25", buy_ack=ACK_AWAITING,
+    )
+    world = seeded["world"]
+
+    report = fold_script.run(world.db, apply=True)
+    world.db.commit()
+
+    world.db.expire_all()
+    world.db.refresh(seeded["notice"])
+    world.db.refresh(seeded["buy_row"])
+    assert seeded["notice"].state == INQUIRY_CANCELLED, "the duplicate is still folded"
+    assert seeded["buy_row"].delivery_date == NOW, "the date still moves"
+    assert seeded["buy_row"].previous_delivery_date == WAS
+    assert seeded["buy_row"].note and "Was" in seeded["buy_row"].note
+    assert seeded["buy_row"].ack_state == ACK_AWAITING, "handshake untouched"
+    assert seeded["buy_row"].changed_at is None, "nobody had read it, so nothing to stamp"
     assert report["folded"] == 1, report
 
 
@@ -186,7 +238,10 @@ def test_fold_script_apply_is_idempotent(api):
     world.db.refresh(seeded["buy_row"])
     stamped_note = seeded["buy_row"].note
     stamped_previous_date = seeded["buy_row"].previous_delivery_date
+    # The seed is ACKNOWLEDGED by default, so this is a REAL stamp rather than a NULL
+    # compared against itself - the idempotency claim is worth nothing otherwise.
     stamped_changed_at = seeded["buy_row"].changed_at
+    assert stamped_changed_at is not None
 
     second = fold_script.run(world.db, apply=True)
     world.db.commit()

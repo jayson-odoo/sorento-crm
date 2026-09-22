@@ -177,10 +177,16 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
   new date, so a fold that left the buy row where it was would delete the move rather than
   fold it - review round, 22 Sep; a notice with no date of its own is skipped and reported),
   `previous_delivery_date` = the notice's own "Was" date parsed from its note (skipped and
-  reported when absent), `changed_at=now()`, note `; Was <qty> on <date>`; commits once;
-  prints counts.
+  reported when absent) and note `; Was <qty> on <date>`; commits once; prints counts.
+  The HANDSHAKE follows the same gate as AC-B2-2 (owner ruling, 22 Sep): on a buy row
+  purchasing had already `acknowledged` (or that already reads `changed`), `changed_at` is
+  stamped and `ack_state` drops to `changed`; on a row still `awaiting`, the handshake is
+  untouched and `changed_at` stays NULL. The date and the two `previous_*` columns land
+  either way, so the Was / Now table reads a folded row the same on both sides of the gate.
 - **AC-B2-13 [T]** pytest on the private CI DB: seed one pair, run dry-run (no change),
   run apply (notice cancelled, buy row stamped), run apply again (no-op, idempotent).
+  Both sides of the handshake gate are seeded: an acknowledged buy row asserting
+  `ack_state = changed` with `changed_at` set, and an awaiting one asserting both untouched.
 
 ### B6 deep-link ids
 - **AC-B6-7 [BE]** Given an OI row, when `list_rows` / the worklist serialise it, then the

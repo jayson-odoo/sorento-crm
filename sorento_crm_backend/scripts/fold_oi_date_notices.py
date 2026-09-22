@@ -20,9 +20,12 @@ LIVE (non-cancelled) `ORDER`/`ORDER_BACK` row - the shape the fix now prevents. 
   no parseable date is left alone and counted separately, never guessed at;
 * `--apply` cancels the notice, appends "Folded into the buy row by script, <today>" to
   its own note, and stamps the buy row with `delivery_date` (the NOTICE's own date),
-  `previous_delivery_date` (the parsed date), `changed_at` (now) and a "Was <qty> on
-  <date>" note - the same shape `_stamp_date_move` writes for a fresh date move, so the
-  Lines tab's Was/Now table reads either one alike.
+  `previous_delivery_date` (the parsed date) and a "Was <qty> on <date>" note - the same
+  shape `_stamp_date_move` writes for a fresh date move, so the Lines tab's Was/Now table
+  reads either one alike. The HANDSHAKE follows the same gate that method reads (owner
+  ruling, 22 Sep): `changed_at` is stamped and `ack_state` drops to `changed` only on a
+  row purchasing had already acknowledged; a row still `awaiting` keeps its handshake and
+  a NULL `changed_at`.
 
   The `delivery_date` hand-over is the point of the whole fold (review round, 22 Sep):
   the NOTICE is the only row that ever carried the new date, so cancelling it without
@@ -57,6 +60,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.orm import Session
 
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
+    ACK_CHANGED,
     INQUIRY_CANCELLED,
     IV_ADVANCE,
     IV_DELAY,
@@ -143,9 +148,19 @@ def _fold(db: Session, notice: OrderInquiryRow, buy_row: OrderInquiryRow, was_da
     if notice.delivery_date and buy_row.delivery_date != notice.delivery_date:
         buy_row.delivery_date = notice.delivery_date
     buy_row.previous_delivery_date = was_date
-    buy_row.changed_at = datetime.utcnow()
     stamp = f"Was {_qty_str(_dec(buy_row.qty))} on {was_date.isoformat()}"
     buy_row.note = f"{buy_row.note}; {stamp}" if buy_row.note else stamp
+    # The SAME handshake gate `_stamp_date_move` reads (owner ruling, 22 Sep): a row
+    # purchasing had already taken on has just been restated under them, so it goes back
+    # to To confirm and stamps WHEN - `changed_at` answers "when CS last amended a row
+    # purchasing had already acknowledged" (`OrderInquiryRow.changed_at`). A row still
+    # AWAITING keeps its handshake and its NULL `changed_at`: there is no acknowledgement
+    # to have amended under, and asking purchasing to re-read something they never read is
+    # not a fold. The date and the two `previous_*` columns land either way, so the
+    # Was / Now table reads the folded row the same whichever side of the gate it is on.
+    if buy_row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+        buy_row.changed_at = datetime.utcnow()
+        buy_row.ack_state = ACK_CHANGED
     db.flush()
 
 
