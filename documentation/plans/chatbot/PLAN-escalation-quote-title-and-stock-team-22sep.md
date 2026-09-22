@@ -1,8 +1,8 @@
 # PLAN: escalation quote fallback, SLA comment timestamps, stock question always routes to warehouse
 
-Status: small fix track, fix round 4 done, R9 (open-offer precedence for a fresh question) pending owner ruling, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
+Status: small fix track, fix round 5 (R9) done, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
 UAC: `escalation-quote-title-and-stock-team-22sep-acceptance-criteria.md`
-Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team, but an OPEN offer's own carried team still outranks both; R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off; R9 (open, do not implement) whether a FRESH question over a still-open offer should re-derive its team from its own domain instead of inheriting the offer's team unconditionally.
+Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team, but an OPEN offer's own carried team still outranks both; R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off; R9 (owner ruled 23 Sep 2026) = option (i): an open offer's own carried team wins only when THIS turn is answering the offer (yes / escalation confirmation / a pick landing on it) - a fresh question in another domain gets its own domain team instead.
 
 ## Journey
 
@@ -119,6 +119,51 @@ as red-when-fixed: open `team_pick` pending team=warehouse from a stock offer,
 current turn `domain_hint = incoming`, routing null, not an acceptance -> expects
 `purchasing`, currently renders `warehouse`. The `pending.team` arm in
 `lane_parse_output` stays untouched until R9 lands.
+
+## Fix round 5 (owner ruling R9 = option (i), 23 Sep 2026)
+
+`lane_parse_output`'s `OFFER_KINDS` pending arm (`pending.team`) is now gated on a
+new `_pending_offer_answered(pending, verdict)` helper - the SAME accept signal
+`_accepted_pending_field`'s own `escalate_offered_roster` branch already reads
+(SRTSC07 review round 2, `turn_runtime.py:473-487`): a bare "yes"
+(`is_affirmative is True`), an escalation confirmation
+(`escalation.is_escalation_confirmation is True`), or a numbered pick landing on
+one of the pending's own options - vetoed by a decline or a negation. When the
+turn is NOT an acceptance, the pending arm is skipped and the chain falls through
+to THIS turn's domain team (R7) > prior carry > the hard default. The
+`accepted_team` arm and the verdict-named-team arm are untouched. Docstring chain
+rewritten: accepted > named > pending-if-answering (R9) > domain (R6/R7) > prior >
+literal.
+
+AC-EQ-20 flipped from `xfail(strict=True)` to a normal green test. AC-EQ-18
+REWRITTEN (it was written under option (ii) in fix round 3/4, where the open offer
+won unconditionally regardless of acceptance) - same setup, but the verdict names
+no acceptance signal, so under R9 it now expects `warehouse` (this turn's own
+domain), not `purchasing`. AC-EQ-21/22 added: a real acceptance (bare "yes",
+escalation confirmation, or a landing pick) still routes to the open offer
+regardless of this turn's own domain.
+
+One further test needed the same correction once found by the full battery:
+`tests/chatbot/test_escalation_agent_carry.py:1051`
+(`TestAC1795TeamChainInLaneParseOutputUnchanged.
+test_ac_1795_team_precedence_chain_is_unaffected_by_the_agent_carry`, assertion at
+line 1088) - its `verdict_in` carries no acceptance signal either, so its own
+`suggested_team` assertion flipped from `"purchasing"` (the open offer, old
+unconditional inheritance) to `"warehouse"` (the prior session's own carry, since
+`policy` is not passed to this call and the domain rung cannot resolve). The
+test's actual purpose - the AGENT field rides independent of the team chain - is
+untouched, only the incidental TEAM value the old chain happened to produce.
+`test_rearch_r12_handpass12_d.py` and `test_foundre_rung_end_to_end.py` were
+re-checked and need no flip: neither seeds an `OFFER_KINDS` pending
+(`team_pick`/`company_pick`/`member_offer`) - their own open questions are
+`product_pick`/`customer_pick`, both `ROSTER_KINDS`, which the pending-team arm
+(gated or not) never reads at all.
+
+`replay_turns/console/case-025-d7-...` re-measured directly (a temporary debug
+print in `test_turn_replay.py`, added and reverted, never committed): turn 1 now
+renders `escalate to purchasing team?`, exactly the recorded value - no longer
+stale. Turn 0 stays stale (R6/R7, unaffected by R9).
+`PENDING-LIVE-RERUN.md` updated accordingly.
 
 ## Out of scope
 

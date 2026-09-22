@@ -66,47 +66,52 @@ escalation_team_code` for every row already:
 
 R7 = option (a): THIS turn's own domain team (the AC-EQ-15 table above) now
 outranks a PREVIOUS turn's carried team (`_prior_suggested_team`) - a turn that named
-a real domain is a fresher fact than a stale carried session. An OPEN offer's own
-carried team (`pending.team`) still outranks both, unchanged: a "yes" over an offer
-goes where it was offered, never re-pointed by this turn's own domain. Full chain:
-accepted team > open-offer team > THIS turn's domain team > prior-turn carried team >
-the hard default (`customer_service`).
+a real domain is a fresher fact than a stale carried session.
 
 - AC-EQ-16 Prior turn carried `purchasing` (e.g. an incoming ask); current turn
   `domain_hint = inventory`, `routing.suggested_team = None`, no pending offer →
   `warehouse` (the domain wins over the stale carry).
 - AC-EQ-17 Prior `warehouse`, current `domain_hint = incoming`, routing null, no
   open offer → `purchasing` (the mirror of AC-EQ-16). A direct unit shape only - NOT
-  `replay_turns/console/case-025-d7-...`'s own recorded shape (fix round 4,
-  reviewer measurement): that case's `prior_session` is `None` throughout (R7 never
-  engages there at all), and its turn 1 has an OPEN `team_pick` pending left by
-  turn 0's stock offer - the AC-EQ-18 arm, not this one. See
-  `PENDING-LIVE-RERUN.md`'s own note on case-025 for what IS stale there.
-- AC-EQ-18 A `purchasing` team_pick offer is OPEN; current turn `domain_hint =
-  inventory`, routing null → stays `purchasing` (the offer wins - a "yes" must still
-  go where it was offered, regardless of this turn's own domain). This IS
-  case-025's own turn 1 shape (open `warehouse` team_pick from turn 0's stock
-  offer, turn 1 an incoming ask) - measured on HEAD: turn 1 renders `warehouse`,
-  which is correct under the CURRENT (pending-always-wins) precedence, not a
-  defect - see AC-EQ-20 for the open ruling on whether a FRESH question (not an
-  acceptance) should instead re-derive from its own domain.
+  `replay_turns/console/case-025-d7-...`'s own recorded shape: that case's
+  `prior_session` is `None` throughout (R7 never engages there at all); its turn 1
+  is an OPEN-OFFER shape, AC-EQ-20's, not this one.
 - AC-EQ-19 Prior `purchasing`, current turn `domain_hint = None`/unknown, routing
   null → `purchasing` (the carry still applies when this turn names no resolvable
   domain at all).
 
-## Open-offer precedence for a FRESH question (owner ruling R9 PENDING)
+## Open-offer precedence for a FRESH question (owner ruling 23 Sep 2026, R9)
 
-Reviewer measurement, fix round 4: case-025 turn 1 is an incoming ask that is NOT an
-acceptance of turn 0's stock offer (a fresh question, D7's own climb) - it still
-inherits `warehouse` from the OPEN `team_pick` pending because `lane_parse_output`'s
-`pending.team` arm supplies unconditionally, with no read of whether this turn is
-answering that offer or asking something new. Whether a fresh question like this
-should instead re-derive its team from ITS OWN domain (making case-025 turn 1
-`purchasing`) rather than inherit the stale open offer's team is an open ruling, not
-decided here - do not change the `pending.team` arm until it lands.
+R9 = option (i): an OPEN offer's own carried team (`pending.team`) wins ONLY when
+THIS turn is actually ANSWERING it - a bare "yes" (`is_affirmative`), an explicit
+escalation confirmation (`escalation.is_escalation_confirmation`), or a numbered
+pick landing on one of the offer's own options (`_pending_offer_answered`,
+`turn_runtime.py`, the same accept signal `_accepted_pending_field`'s own
+`escalate_offered_roster` branch already reads, SRTSC07 review round 2). A FRESH
+question in another domain - not an acceptance - gets its OWN domain team instead,
+never a silent inheritance of whatever was last offered. Full chain: accepted team >
+named team (this turn's own) > open-offer team WHEN ANSWERING IT > THIS turn's
+domain team > prior-turn carried team > the hard default (`customer_service`).
 
-- AC-EQ-20 (xfail, awaiting R9) Open `team_pick` pending, team `warehouse`, from a
-  stock offer; current turn `domain_hint = incoming`, routing null, NOT an
-  acceptance of that offer (a fresh question) → expected `purchasing`. Currently
-  renders `warehouse` (the pending arm wins unconditionally) - this is the test the
-  ruling will flip green.
+`replay_turns/console/case-025-d7-...` turn 1 (D7's own climb, an incoming ask
+following turn 0's stock offer) is the recorded example of the NEGATIVE case: it is
+NOT an acceptance of turn 0's offer, so under R9 it renders `escalate to purchasing
+team?` - the domain fill, and exactly the recorded value. Turn 0 itself stays stale
+(warehouse, per R6/R7) - see `PENDING-LIVE-RERUN.md`'s own note.
+
+- AC-EQ-18 A `purchasing` team_pick offer is OPEN; current turn `domain_hint =
+  inventory`, routing null, and does NOT answer the offer (no `is_affirmative`, no
+  escalation confirmation, no pick landing on it) → `warehouse` - THIS turn's own
+  domain, not the stale open offer. (Rewritten under R9, fix round 5 - written
+  under option (ii) in fix round 3/4, where the offer won unconditionally.)
+- AC-EQ-20 Open `team_pick` pending, team `warehouse`, from a stock offer; current
+  turn `domain_hint = incoming`, routing null, NOT an acceptance of that offer (a
+  fresh question, case-025 turn 1's own shape) → `purchasing`. (Flipped from
+  `xfail(strict=True)` to a normal green test now R9 has landed.)
+- AC-EQ-21 Open `team_pick` pending, team `warehouse`; current turn IS an
+  acceptance (`is_affirmative = True`, OR an explicit escalation confirmation),
+  `domain_hint` `incoming` or `None` → stays `warehouse` - a real acceptance still
+  routes to the offer regardless of this turn's own domain.
+- AC-EQ-22 Open `team_pick` pending (`expects` not `yes_no`, so a position is
+  readable at all), team `purchasing`; current turn is a NUMBERED pick landing on
+  one of the offer's own options → `purchasing` - a pick is also an acceptance.

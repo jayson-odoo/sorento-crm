@@ -1049,13 +1049,23 @@ class TestAC1794SlaBodyCarriesTheSameAgentCodeAsNextAssignee:
 
 class TestAC1795TeamChainInLaneParseOutputUnchanged:
     def test_ac_1795_team_precedence_chain_is_unaffected_by_the_agent_carry(self) -> None:
-        """A pin, not a new behaviour: `lane_parse_output`'s own team chain (accepted
-        team, then the pending's team, then the prior session, then the hard default)
-        must read exactly as it does today regardless of what `suggested_agent` the
-        SAME call carries - the two axes are independent fields on one dict. The real
-        regression gate is `tests/chatbot/test_s5_escalation_lane.py` and
-        `tests/chatbot/test_turn_replay.py`, run in full alongside this file (both stay
-        green, per the plan)."""
+        """A pin, not a new behaviour: whatever `lane_parse_output`'s own team chain
+        computes, it must read exactly as it does today regardless of what
+        `suggested_agent` the SAME call carries - the two axes are independent
+        fields on one dict. The real regression gate is
+        `tests/chatbot/test_s5_escalation_lane.py` and
+        `tests/chatbot/test_turn_replay.py`, run in full alongside this file (both
+        stay green, per the plan).
+
+        Owner ruling 23 Sep 2026, R9 (fix round 5): flipped the TEAM assertion below
+        from "purchasing" to "warehouse" - `verdict_in` names no `is_affirmative`, no
+        escalation confirmation and no `reference_positions` landing on the open
+        offer's own option, so this is a FRESH-question shape (no `policy` is passed
+        either, so the domain rung cannot resolve one), and `pending.team` no longer
+        supplies unconditionally for that shape (`_pending_offer_answered`) - it
+        falls through to the prior session's carried "warehouse" instead. The
+        AGENT assertion, this test's own actual purpose, is untouched by R9 - the
+        agent chain does not read `pending`/acceptance at all."""
         verdict_in = {
             "routing": {"suggested_team": None, "suggested_agent": "incoming_stock_enquiries"},
             "entities": [],
@@ -1073,9 +1083,9 @@ class TestAC1795TeamChainInLaneParseOutputUnchanged:
             prior_session=prior_session,
         )
 
-        # The pending's own team outranks the prior session's, exactly as documented at
-        # `turn_runtime.py::lane_parse_output`'s own docstring - unchanged by this slice.
-        assert out["routing"]["suggested_team"] == "purchasing", out["routing"]
+        # R9: this verdict does not ACCEPT the open offer, so the prior session's own
+        # carried team is what answers instead - see the docstring above.
+        assert out["routing"]["suggested_team"] == "warehouse", out["routing"]
         # And the agent this call was given rides straight through, untouched by the
         # team chain above it.
         assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out["routing"]

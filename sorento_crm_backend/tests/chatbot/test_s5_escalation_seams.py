@@ -345,13 +345,14 @@ class TestACEQ15aNonInventoryDomainNullRoutingFallsBack:
 
 
 class TestACEQ16To19PrecedenceR7:
-    """Owner ruling 23 Sep 2026, R7 (AC-EQ-16..19), supersedes R6's own ordering: THIS
-    turn's own domain team now outranks a PREVIOUS turn's carried team; an OPEN
-    offer's own carried team still outranks both (a "yes" goes where it was offered);
-    the prior-turn carry still applies when this turn names no resolvable domain at
-    all. AC-EQ-20 (xfail, fix round 4) lives here too - the open R9 ruling on whether
-    a FRESH question (not an acceptance) over a still-open offer should re-derive
-    from its own domain instead of inheriting the offer's team."""
+    """Owner rulings 23 Sep 2026. R7 (AC-EQ-16/17/19): THIS turn's own domain team
+    outranks a PREVIOUS turn's carried team; the prior-turn carry still applies when
+    this turn names no resolvable domain at all. R9 (AC-EQ-18/20/21/22, fix round 5,
+    supersedes fix round 4's xfail): an OPEN offer's own carried team wins ONLY when
+    THIS turn is actually ANSWERING it (a "yes", an escalation confirmation, or a
+    pick landing on one of its options) - a FRESH question in another domain, not an
+    acceptance, gets its OWN domain team instead of silently inheriting whatever was
+    last offered."""
 
     @staticmethod
     def _verdict(*, domain_hint: Any) -> dict[str, Any]:
@@ -401,10 +402,15 @@ class TestACEQ16To19PrecedenceR7:
         )
         assert out["routing"]["suggested_team"] == "purchasing"
 
-    def test_ac_eq_18_an_open_offers_own_team_still_wins_over_the_domain(self) -> None:
-        """A "purchasing" team_pick is still open; this turn is a plain stock
-        question (routing null) answering it - the offer's own team wins, never
-        re-pointed to warehouse just because this turn's domain is inventory."""
+    def test_ac_eq_18_a_fresh_question_over_an_open_offer_uses_its_own_domain(self) -> None:
+        """Owner ruling 23 Sep 2026, R9 (fix round 5) - REWRITTEN from fix round 4's
+        pre-R9 expectation (which had the open offer win unconditionally, option
+        (ii)). A "purchasing" team_pick is still open; this turn is a plain stock
+        question (routing null) that does NOT answer it - no `is_affirmative`, no
+        escalation confirmation, no pick landing on the offer's own options (this
+        `_verdict()` fixture sets none of those). Under R9 this is a FRESH question,
+        so it gets its OWN domain team (warehouse for inventory), not the stale open
+        offer's `purchasing`."""
         from app.services.chatbot import turn_runtime
         from app.services.chatbot.turn.pending import Pending
         from app.services.chatbot.turn.policy import default_policy
@@ -424,7 +430,7 @@ class TestACEQ16To19PrecedenceR7:
             prior_session=None,
             policy=default_policy(),
         )
-        assert out["routing"]["suggested_team"] == "purchasing"
+        assert out["routing"]["suggested_team"] == "warehouse"
 
     def test_ac_eq_19_the_prior_carry_still_applies_with_no_resolvable_domain(self) -> None:
         """This turn names no domain at all (`domain_hint = None`, e.g. a casual
@@ -442,20 +448,18 @@ class TestACEQ16To19PrecedenceR7:
         )
         assert out["routing"]["suggested_team"] == "purchasing"
 
-    @pytest.mark.xfail(strict=True, reason="awaiting owner ruling R9")
-    def test_ac_eq_20_a_fresh_question_over_an_open_offer_should_use_its_own_domain(
+    def test_ac_eq_20_a_fresh_question_over_an_open_offer_uses_its_own_domain(
         self,
     ) -> None:
-        """Reviewer measurement, fix round 4: `replay_turns/console/case-025-d7-...`
-        turn 1 is exactly this shape - an incoming ask that is NOT an acceptance of
-        turn 0's stock offer (D7's own climb, a fresh question), yet it still
-        inherits `warehouse` from the still-open `team_pick` because `pending.team`
-        supplies unconditionally, with no read of whether THIS turn is answering
-        that offer or asking something new. Whether a fresh question should instead
-        re-derive its team from its own domain is an open ruling (R9) - do NOT
-        change the `pending.team` arm to make this pass until it lands; this test
-        stays `xfail(strict=True)` so it turns red the moment the code changes,
-        which is the signal the ruling landed."""
+        """Owner ruling R9 landed (fix round 5) - flipped from fix round 4's
+        `xfail(strict=True)` to a normal, green test. `replay_turns/console/
+        case-025-d7-...` turn 1 is exactly this shape - an incoming ask that is NOT
+        an acceptance of turn 0's stock offer (D7's own climb, a fresh question):
+        the still-open `team_pick` (team=warehouse) no longer supplies it
+        unconditionally, because `_pending_offer_answered` reads whether THIS turn
+        is answering that offer, and this verdict names neither `is_affirmative`,
+        an escalation confirmation, nor a pick landing on the offer's own options.
+        The domain wins instead - `purchasing`, incoming's own team."""
         from app.services.chatbot import turn_runtime
         from app.services.chatbot.turn.pending import Pending
         from app.services.chatbot.turn.policy import default_policy
@@ -474,6 +478,75 @@ class TestACEQ16To19PrecedenceR7:
             pending=offer,
             prior_session=None,
             policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    def test_ac_eq_21_an_acceptance_still_routes_to_the_open_offer(self) -> None:
+        """The positive case R9 exists to protect: a real ACCEPTANCE of the open
+        offer still goes where it was offered, whatever this turn's own domain is -
+        checked both via a bare "yes" (`is_affirmative`) and via an explicit
+        escalation confirmation, against `domain_hint = "incoming"` and `None`."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.pending import Pending
+        from app.services.chatbot.turn.policy import default_policy
+
+        offer = Pending(
+            kind="team_pick",
+            expects="yes_no",
+            options=[],
+            team="warehouse",
+            payload={},
+            asked_at_turn=1,
+        )
+        policy = default_policy()
+
+        verdict_yes = {
+            **self._verdict(domain_hint="incoming"),
+            "is_affirmative": True,
+            "escalation": {"is_escalation_confirmation": False, "escalation_declined": False},
+        }
+        out = turn_runtime.lane_parse_output(
+            verdict_yes, focus=None, pending=offer, prior_session=None, policy=policy
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+        verdict_confirmation = {
+            **self._verdict(domain_hint=None),
+            "is_affirmative": None,
+            "escalation": {"is_escalation_confirmation": True, "escalation_declined": False},
+        }
+        out = turn_runtime.lane_parse_output(
+            verdict_confirmation, focus=None, pending=offer, prior_session=None, policy=policy
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+    def test_ac_eq_22_a_pick_landing_on_the_offer_routes_to_it(self) -> None:
+        """A NUMBERED pick landing on one of the open offer's own options is also an
+        acceptance (`picked_positions`/`_pending_offer_answered`'s
+        `landed_on_an_option` arm) - a multi-team `team_pick` (`expects` not
+        `yes_no`, so `picked_positions` reads a position at all) with the customer's
+        message naming position 1, which the offer's own option list carries."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.pending import Pending
+        from app.services.chatbot.turn.policy import default_policy
+
+        offer = Pending(
+            kind="team_pick",
+            expects="pick",
+            options=[
+                {"position": 1, "label": "Purchasing", "entity_type": "team", "payload": {}},
+                {"position": 2, "label": "Warehouse", "entity_type": "team", "payload": {}},
+            ],
+            team="purchasing",
+            payload={},
+            asked_at_turn=1,
+        )
+        verdict = {
+            **self._verdict(domain_hint="inventory"),
+            "reference_positions": [1],
+        }
+        out = turn_runtime.lane_parse_output(
+            verdict, focus=None, pending=offer, prior_session=None, policy=default_policy()
         )
         assert out["routing"]["suggested_team"] == "purchasing"
 
