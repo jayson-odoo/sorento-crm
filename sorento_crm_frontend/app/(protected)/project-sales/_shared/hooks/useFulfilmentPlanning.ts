@@ -375,25 +375,37 @@ export function usePlans(params: PlanListParams = {}) {
  * line out of its confirmation changes the same surfaces a Confirm does, just smaller (the
  * decision's own revision, that line's OI row, the worklist, the plans list, the SO
  * detail).
+ *
+ * A FUNCTION, not a module-level const (hotfix, `PLAN-board-reject-on-confirmed-line.md`):
+ * this module and `useOrderInquiry.ts` import from each other (`ORDER_INQUIRY_*_KEY` here,
+ * `PLANNING_BOARD_KEY` there), so on the order-inquiries page's own import order one of the
+ * two modules is still mid-evaluation when the other runs. A const built at module scope
+ * read one of the `ORDER_INQUIRY_*_KEY` bindings before its `const` finished initializing -
+ * "Cannot access before initialization" - where the array used inline, function-body-lazy
+ * behaviour it had before S3's lift never had that problem. Not a fix for the cycle itself
+ * (out of scope for this lane): only for evaluating this array after both modules have
+ * finished loading, which every call site already does.
  */
-const CONFIRMATION_INVALIDATION_KEYS = [
-  FULFILMENT_PLANNING_KEY,
-  PLANNING_BOARD_KEY,
-  PLANS_KEY,
-  RECONCILIATION_KEY,
-  SUPPLY_KEY,
-  SALES_ORDERS_KEY,
-  SALES_ORDER_KEY,
-  ORDER_INQUIRY_ROWS_KEY,
-  ORDER_INQUIRY_SUMMARY_KEY,
-  ORDER_INQUIRY_WORKLIST_KEY,
-  ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
-  PILE_QUEUE_KEY,
-  STOCK_DETAIL_KEY,
-  STOCK_TRANSFERS_KEY,
-  BOARD_TRANSFERS_KEY,
-  PLANNING_CHANGE_BATCH_KEY,
-];
+function confirmationInvalidationKeys(): readonly unknown[] {
+  return [
+    FULFILMENT_PLANNING_KEY,
+    PLANNING_BOARD_KEY,
+    PLANS_KEY,
+    RECONCILIATION_KEY,
+    SUPPLY_KEY,
+    SALES_ORDERS_KEY,
+    SALES_ORDER_KEY,
+    ORDER_INQUIRY_ROWS_KEY,
+    ORDER_INQUIRY_SUMMARY_KEY,
+    ORDER_INQUIRY_WORKLIST_KEY,
+    ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+    PILE_QUEUE_KEY,
+    STOCK_DETAIL_KEY,
+    STOCK_TRANSFERS_KEY,
+    BOARD_TRANSFERS_KEY,
+    PLANNING_CHANGE_BATCH_KEY,
+  ];
+}
 
 /**
  * The board's ONE Confirm (R11/D2): one call, several orders, one result per order.
@@ -410,7 +422,7 @@ export function useConfirmManyMutation() {
   return useMutation({
     mutationFn: (body: ConfirmManyBody) => confirmMany(body),
     onSuccess: (result) => {
-      for (const key of CONFIRMATION_INVALIDATION_KEYS) {
+      for (const key of confirmationInvalidationKeys()) {
         queryClient.invalidateQueries({ queryKey: [key] });
       }
       // NO SUCCESS TOAST HERE (D6). The board says what the press produced in the three
@@ -486,7 +498,7 @@ export function patchContributionDraft<
  * save on a line that WAS covered reaches `uncover_lines` on the server - it is not an
  * ordinary draft write, it takes the line out of an active confirmation, the same shape of
  * change a Confirm is, just smaller. The patch below still runs (the pill has to read
- * `Rejected` the instant this resolves), but `CONFIRMATION_INVALIDATION_KEYS` is invalidated
+ * `Rejected` the instant this resolves), but `confirmationInvalidationKeys()` is invalidated
  * alongside it - otherwise the breakdown dialog's `contribution.covered`, the OI chips, the
  * SO list's Planned pill and the OI worklist all keep reading the frozen composition the
  * patch never touches.
@@ -523,7 +535,7 @@ export function useLineDraftMutation() {
         current ? patchContributionDraft(current, key, saved) : current,
       );
       if (saved.decision.verdict === 'rejected' && wasCovered) {
-        for (const invalidateKey of CONFIRMATION_INVALIDATION_KEYS) {
+        for (const invalidateKey of confirmationInvalidationKeys()) {
           queryClient.invalidateQueries({ queryKey: [invalidateKey] });
         }
       }
