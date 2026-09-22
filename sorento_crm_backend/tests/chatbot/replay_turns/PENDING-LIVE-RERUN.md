@@ -269,19 +269,16 @@ re-record owed, not urgent.
 
 `console/case-025-d7-an-incoming-ask-on-a-zero-stock-code-climbs-to-the-po-rung.json`
 (2 turns; added to this note in fix round 3, corrected in fix round 4, resolved in
-fix round 5 once owner ruling R9 landed): **turn 0** (`domain_hint: inventory`, a
-plain stock ask) recorded `escalate to purchasing team?` - under R6/R7 this turn
-says `escalate to warehouse team?`, stale the same way case-038/039 are; still
-stale, R9 does not touch turn 0 (no open offer precedes it). **Turn 1**
-(`domain_hint: incoming`, D7's own climb, NOT an acceptance of turn 0's offer) is
-now UNCHANGED, not stale: measured directly on HEAD (fix round 5) with R9's
-acceptance gate in place, turn 1 renders `escalate to purchasing team?`, exactly the
-recorded value - `_pending_offer_answered` correctly reads turn 1 as a fresh
-question (no `is_affirmative`, no escalation confirmation, no pick landing on turn
-0's open offer), so `pending.team` (`warehouse`, from turn 0's stock offer) is
-skipped and the domain fill (`incoming` -> `purchasing`) answers instead, the same
-shape AC-EQ-20/22-acceptance-criteria's AC-EQ-20 now pins directly. Fix round 4's
-finding that turn 1 rendered `warehouse` was correct FOR THAT COMMIT (before R9's
-gate existed) and is superseded here. Neither turn is a live `pytest` failure today
-(`_pin_text` absent on both, measured); re-record owed for turn 0's own text only,
-not urgent.
+fix round 5 once owner ruling R9 landed, re-measured against S10 in fix round 6):
+**turn 0** (`domain_hint: inventory`, a plain stock ask) recorded `escalate to
+purchasing team?` - under R6/R7 this turn says `escalate to warehouse team?`, stale
+the same way case-038/039 are; still stale, R9/S10 do not touch turn 0 (no open
+offer precedes it). **Turn 1** (`domain_hint: incoming`, D7's own climb, NOT an
+acceptance of turn 0's offer) is UNCHANGED, not stale: measured directly on HEAD,
+turn 1 renders `escalate to purchasing team?`, exactly the recorded value - turn 1
+is a fresh question (no `is_affirmative`, no escalation confirmation, no pick
+landing on turn 0's open offer), so `apply()` never calls it an acceptance and
+`engine.py` passes `accepted_team=None` into `lane_parse_output`, which falls
+through to the domain fill (`incoming` -> `purchasing`) - the same shape the UAC's
+AC-EQ-20 pins directly. Neither turn is a live `pytest` failure today (`_pin_text`
+absent on both, measured); re-record owed for turn 0's own text only, not urgent.

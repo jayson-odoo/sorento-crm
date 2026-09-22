@@ -1,8 +1,8 @@
 # PLAN: escalation quote fallback, SLA comment timestamps, stock question always routes to warehouse
 
-Status: small fix track, fix round 5 (R9) done, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
+Status: small fix track, review READY, awaiting PR (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
 UAC: `escalation-quote-title-and-stock-team-22sep-acceptance-criteria.md`
-Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team, but an OPEN offer's own carried team still outranks both; R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off; R9 (owner ruled 23 Sep 2026) = option (i): an open offer's own carried team wins only when THIS turn is answering the offer (yes / escalation confirmation / a pick landing on it) - a fresh question in another domain gets its own domain team instead.
+Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team - its own clause "an OPEN offer's own carried team still outranks both" is SUPERSEDED BY R9 for open offers (an open offer wins only on an actual acceptance, never unconditionally); R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off; R9 (owner ruled 23 Sep 2026) = option (i): an open offer's own carried team wins only when THIS turn is answering the offer (yes / escalation confirmation / a pick landing on it) - a fresh question in another domain gets its own domain team instead.
 
 ## Journey
 
@@ -164,6 +164,47 @@ print in `test_turn_replay.py`, added and reverted, never committed): turn 1 now
 renders `escalate to purchasing team?`, exactly the recorded value - no longer
 stale. Turn 0 stays stale (R6/R7, unaffected by R9).
 `PENDING-LIVE-RERUN.md` updated accordingly.
+
+## Fix round 6 (S10, "simplest thing that works" - lane final round)
+
+Reviewer kill test: deleting the ENTIRE `OFFER_KINDS` pending arm in
+`lane_parse_output` (fix round 5's `pending.team` read, gated by
+`_pending_offer_answered`) plus the helper itself leaves the full suite green
+except AC-EQ-21/22, because whenever a turn genuinely accepts an offer
+`turn/apply.py::_answer_pending` (:285, :675) already computes that exact
+judgement and stamps it onto `trace.team`, which `engine.py:1461` passes straight
+in as `accepted_team` - the chain's own FIRST read, above where the deleted arm
+sat. Two copies of one judgement. Deleted the arm and `_pending_offer_answered`
+entirely; chain is now accepted > named > this turn's domain (R7) > prior carry >
+the hard default. Rewrote the docstring and the inline comment to state the chain
+and cite R9 as satisfied by `accepted_team` alone, not a second gate.
+
+AC-EQ-20 kept (it already reaches this outcome via the domain rung - `pending`
+alone, with no `accepted_team`, is now simply inert). AC-EQ-21/22 re-pointed to
+the PRODUCTION shape: they now pass `accepted_team` directly (what `engine.py`
+actually hands this function on a real acceptance) instead of a bare `pending=`
+with no acceptance signal, a call shape `engine.run_turn` never produces.
+AC-EQ-18 duplicated AC-EQ-20 once the arm was gone (byte-identical) - retired,
+folded into AC-EQ-20, noted in the UAC. Ran the kill myself: temporarily
+short-circuited the `accepted_team` read (`if False and accepted_team:`), AC-EQ-21
+and AC-EQ-22 both went red (AC-EQ-22's first draft accidentally used a
+domain/team pair where the domain fallback ALSO produced "warehouse", masking the
+kill - fixed by picking a domain whose own team differs from the accepted team
+under test); AC-EQ-16/17/19/20 stayed green, as expected since none of them touch
+the deleted arm. Restored, all six green again.
+
+`replay_turns/console/case-025-d7-...` turn 1 re-confirmed unaffected by this
+round (still `purchasing`, not stale) - the deleted arm and `accepted_team` reach
+the identical outcome for a fresh question (neither supplies a team), so nothing
+here changes what that case renders.
+
+Nits: renamed `TestAC1795TeamChainInLaneParseOutputUnchanged` (in
+`test_escalation_agent_carry.py`) to `TestAC1795TeamChainFallsToThePriorCarryUnaffectedByTheAgentCarry`,
+naming the value it actually pins ("warehouse", the prior carry) rather than the
+retired "pending wins" behaviour its old name described. Fixed a garbled sentence
+fragment at `PENDING-LIVE-RERUN.md`'s case-025 note (a stray concatenation of the
+UAC filename into running prose). R7's "open offer still outranks both" clause
+marked superseded by R9 in this plan's own rulings line.
 
 ## Out of scope
 

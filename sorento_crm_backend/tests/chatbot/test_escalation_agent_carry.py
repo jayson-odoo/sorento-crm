@@ -1047,7 +1047,7 @@ class TestAC1794SlaBodyCarriesTheSameAgentCodeAsNextAssignee:
 # --------------------------------------------------------------------------- #
 
 
-class TestAC1795TeamChainInLaneParseOutputUnchanged:
+class TestAC1795TeamChainFallsToThePriorCarryUnaffectedByTheAgentCarry:
     def test_ac_1795_team_precedence_chain_is_unaffected_by_the_agent_carry(self) -> None:
         """A pin, not a new behaviour: whatever `lane_parse_output`'s own team chain
         computes, it must read exactly as it does today regardless of what
@@ -1060,12 +1060,19 @@ class TestAC1795TeamChainInLaneParseOutputUnchanged:
         Owner ruling 23 Sep 2026, R9 (fix round 5): flipped the TEAM assertion below
         from "purchasing" to "warehouse" - `verdict_in` names no `is_affirmative`, no
         escalation confirmation and no `reference_positions` landing on the open
-        offer's own option, so this is a FRESH-question shape (no `policy` is passed
-        either, so the domain rung cannot resolve one), and `pending.team` no longer
-        supplies unconditionally for that shape (`_pending_offer_answered`) - it
-        falls through to the prior session's carried "warehouse" instead. The
-        AGENT assertion, this test's own actual purpose, is untouched by R9 - the
-        agent chain does not read `pending`/acceptance at all."""
+        offer's own option, so this is a FRESH-question shape (no `accepted_team` or
+        `policy` is passed either, so the domain rung cannot resolve one either), and
+        it falls through to the prior session's carried "warehouse" instead.
+
+        S10 (fix round 6): `offer_pending` below is passed but no longer read for
+        its team AT ALL - `lane_parse_output` has no open-offer arm left
+        (`accepted_team`, sourced from `turn/apply.py::_answer_pending`'s own
+        `trace.team`, is the only path an accepted offer's team reaches this
+        function by). The class is renamed to name the value this test actually
+        pins ("warehouse", the prior carry), not the retired "pending wins"
+        behaviour its old name described. The AGENT assertion, this test's own
+        actual purpose, is untouched by either R9 or S10 - the agent chain does not
+        read `pending`/acceptance at all."""
         verdict_in = {
             "routing": {"suggested_team": None, "suggested_agent": "incoming_stock_enquiries"},
             "entities": [],
