@@ -133,3 +133,55 @@ describe('AC-RS-22: one line per selected row, Requested = remaining, Location =
     expect((toast.success as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/Request #1/);
   });
 });
+
+// --------------------------------------------------------------------------------- //
+// Reviewer fix round, same lane                                                     //
+// --------------------------------------------------------------------------------- //
+
+describe('reviewer fix round: delivery date formats via formatDateInMalaysia, not raw ISO', () => {
+  it('a row whose delivery_date is a raw ISO string prints dd/mm/yyyy on screen', async () => {
+    renderDialog({
+      rows: [
+        {
+          id: 'row-1',
+          item_code: 'B2155-NL-BLUE',
+          delivery_date: '2026-10-01',
+          remaining: '90',
+          defaultLocation: 'BRW',
+          locationOptions: [{ value: 'BRW', label: 'BRW' }],
+        },
+      ] as never,
+    });
+
+    await screen.findByText('B2155-NL-BLUE');
+    expect(screen.getByText(/01\/10\/2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/2026-10-01/)).not.toBeInTheDocument();
+  });
+});
+
+describe('reviewer fix round: a typed 0 cannot be sent', () => {
+  it('typing 0 into Requested disables Send, or clamps the value up to 1', async () => {
+    renderDialog({
+      rows: [
+        {
+          id: 'row-1',
+          item_code: 'B2155-NL-BLUE',
+          delivery_date: '2026-10-01',
+          remaining: '90',
+          defaultLocation: 'BRW',
+          locationOptions: [{ value: 'BRW', label: 'BRW' }],
+        },
+      ] as never,
+    });
+
+    const requestedInput = (await screen.findByLabelText(/requested/i)) as HTMLInputElement;
+    fireEvent.change(requestedInput, { target: { value: '0' } });
+
+    const sendButton = screen.getByRole('button', { name: /send request/i });
+    if (requestedInput.value === '0') {
+      expect(sendButton).toBeDisabled();
+    } else {
+      expect(requestedInput.value).toBe('1');
+    }
+  });
+});

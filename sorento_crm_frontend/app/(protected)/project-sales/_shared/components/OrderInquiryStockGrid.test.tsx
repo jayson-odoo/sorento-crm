@@ -105,3 +105,37 @@ describe('OrderInquiryStockGrid - AC-RS-40: renders the shared stock table with 
     expect(props.showGroupSubtotal).toBe(true);
   });
 });
+
+describe('reviewer fix round: pool resolution must not lose the bare code behind its own sub-locations', () => {
+  it('BRW resolves even when the first page of a text search is filled by BRW-AA..BRW-EE', async () => {
+    // Today's call is `{ pageIndex: 0, pageSize: 5, sorting: [], searchQuery: location,
+    // is_active: true }` and the match is `.find(w => w.warehouse_code === location)` -
+    // if the real backend's substring search returns this location's own five
+    // sub-locations before the bare pool code itself, the pool is never found at all.
+    getWarehousesMock.mockResolvedValue({
+      data: [
+        { id: 'wh-aa', warehouse_code: 'BRW-AA', warehouse_name: 'AA' },
+        { id: 'wh-bb', warehouse_code: 'BRW-BB', warehouse_name: 'BB' },
+        { id: 'wh-cc', warehouse_code: 'BRW-CC', warehouse_name: 'CC' },
+        { id: 'wh-dd', warehouse_code: 'BRW-DD', warehouse_name: 'DD' },
+        { id: 'wh-ee', warehouse_code: 'BRW-EE', warehouse_name: 'EE' },
+      ],
+    });
+
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW" />);
+
+    await waitFor(() => expect(getWarehousesMock).toHaveBeenCalled());
+    const call = getWarehousesMock.mock.calls[getWarehousesMock.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+
+    const pageSize = Number(call.pageSize ?? 0);
+    const hasExactCodeParam = Object.keys(call).some((key) =>
+      /warehouse_code|^code$|exact/i.test(key),
+    );
+    // Must ask in a way that CAN still find BRW behind its own five sub-locations: a
+    // bigger page, or a dedicated exact-code param - never the naive 5-row text search.
+    expect(pageSize > 5 || hasExactCodeParam).toBe(true);
+  });
+});
