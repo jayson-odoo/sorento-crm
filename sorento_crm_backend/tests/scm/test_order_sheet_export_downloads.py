@@ -80,14 +80,32 @@ def _savepoint_session():
         connection.close()
 
 
-def _seed_run(db, *, status: str = "completed") -> str:
+def _seed_run(
+    db, *, status: str = "completed",
+    product_ids: "list[str] | None" = None,
+    so_numbers: "list[str] | None" = None,
+    company_id: str = SORENTO_COMPANY_ID,
+) -> str:
     """`scm.reorder_run.company_id` has NO column default (unlike `products` /
     `warehouses`) - it must be stamped explicitly or `assert_run_visible`'s company-scope
-    gate (`shared=False`) reads the row as another company's and answers 404."""
+    gate (`shared=False`) reads the row as another company's and answers 404.
+
+    Lane C fix round 2: `product_ids`/`so_numbers` default to `None` (column stays NULL -
+    "no scope was asked for", today's behaviour for every existing caller) and can also be
+    passed as `[]` EXPLICITLY (a scope that resolved to nothing) - the two are different
+    runs and the OI worksheet's own guard must not confuse them."""
+    import json
+
     return str(db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, include_market, company_id, created_at) "
-        "VALUES (:id, :s, false, :co, now()) RETURNING id"
-    ), {"id": _u(), "s": status, "co": SORENTO_COMPANY_ID}).scalar())
+        "INSERT INTO scm.reorder_run (id, status, include_market, company_id, created_at, "
+        "                             product_ids, so_numbers) "
+        "VALUES (:id, :s, false, :co, now(), CAST(:pids AS jsonb), CAST(:sos AS jsonb)) "
+        "RETURNING id"
+    ), {
+        "id": _u(), "s": status, "co": company_id,
+        "pids": json.dumps(product_ids) if product_ids is not None else None,
+        "sos": json.dumps(so_numbers) if so_numbers is not None else None,
+    }).scalar())
 
 
 # =========================================================================== #

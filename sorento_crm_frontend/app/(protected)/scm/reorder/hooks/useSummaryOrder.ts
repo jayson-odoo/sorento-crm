@@ -5,6 +5,7 @@ import { toast } from '@/lib/toast';
 import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import {
   exportLowStockReport,
+  exportOiWorksheet,
   exportOrderSheet,
   getOrderSummaryDemand,
 } from '../services/summaryOrderService';
@@ -78,5 +79,27 @@ export function useExportLowStockReport(runId: string | null) {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to start the low stock report'),
+  });
+}
+
+/**
+ * The OI worksheet, through the same My Downloads pipeline (Lane C, PLAN-order-sheet-oi-
+ * reports-22sep.md, AC-C1/AC-C2). Its own mutation, the same shape as
+ * `useExportLowStockReport` - so the plan's Actions menu can tell which of the three
+ * exports is in flight and toast the worksheet's own message.
+ */
+export function useExportOiWorksheet(runId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => exportOiWorksheet(runId as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'reorder_run', runId],
+      });
+      toast.success('Preparing the OI worksheet - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the OI worksheet export'),
   });
 }
