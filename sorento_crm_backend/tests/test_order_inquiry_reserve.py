@@ -444,6 +444,7 @@ def test_second_request_after_reserved_allowed(api):
                     "request_row_id": request_row.id,
                     "warehouse_id": world.site.id,
                     "qty_reserved": "50",
+                    "reason": "BRW only has 50 in stock",
                 }
             ]
         },
@@ -491,6 +492,7 @@ def test_reserve_writes_links_and_refreshes_state(api, monkeypatch):
                     "request_row_id": request_row.id,
                     "warehouse_id": world.site.id,
                     "qty_reserved": "50",
+                    "reason": "BRW only has 50 in stock",
                 }
             ]
         },
@@ -830,6 +832,7 @@ def test_taken_remaining_include_reserved(worklist_api):
                 "request_row_id": request_row.id,
                 "warehouse_id": warehouse.id,
                 "qty_reserved": Decimal("50"),
+                "reason": "BRW only has 50 in stock",
             }
         ],
         actor_user_id=reserver_id,
@@ -965,7 +968,16 @@ def test_unlink_reserve_link_restores_remaining(api):
     )
     reserve_resp = client.post(
         RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+        json={
+            "rows": [
+                {
+                    "request_row_id": request_row.id,
+                    "warehouse_id": world.site.id,
+                    "qty_reserved": "50",
+                    "reason": "BRW only has 50 in stock",
+                }
+            ]
+        },
     )
     assert reserve_resp.status_code == 200, reserve_resp.text
     world.db.commit()
@@ -1179,11 +1191,26 @@ def test_seed_migration_idempotent():
         ).scalar()
         assert remaining_automations == 0
 
-        # The widened CHECK is restored on downgrade too.
+        # The widened CHECK is restored on downgrade too. `conname` alone is not enough
+        # to identify the right constraint: the REAL `projects.order_inquiry_links` (this
+        # lane's own migrated DB, `oirs_0001_reserve_requests` already applied there)
+        # carries a constraint of the SAME name - constraint names are per-TABLE, not
+        # global - so an unscoped lookup can return the real (still three-target) row
+        # instead of this test's own scratch-schema copy that `downgrade()` just
+        # restored. Scoped to a table named `order_inquiry_links` sitting in one of the
+        # schemas THIS session's own search path actually has open
+        # (`current_schemas(false)`) - the scratch `{name}_projects` translation
+        # `blank_session()` set up, never the literal `projects` schema, which is not on
+        # that path.
         check_def = db.execute(
             sa.text(
-                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = "
-                "'ck_order_inquiry_links_one_target'"
+                "SELECT pg_get_constraintdef(con.oid) "
+                "FROM pg_constraint con "
+                "JOIN pg_class rel ON rel.oid = con.conrelid "
+                "JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace "
+                "WHERE con.conname = 'ck_order_inquiry_links_one_target' "
+                "AND rel.relname = 'order_inquiry_links' "
+                "AND nsp.nspname = ANY (current_schemas(false))"
             )
         ).scalar()
         assert check_def is not None
