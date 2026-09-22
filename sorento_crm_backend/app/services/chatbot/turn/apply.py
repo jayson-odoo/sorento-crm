@@ -1127,6 +1127,17 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
             return "clarification"
         return "casual"
     if message_type == "business_query" and not domains:
+        # S3 (PLAN-chatbot-media-into-turn.md, general fix, Q1): bare entities this
+        # message itself named - typed codes or a photo's raws, no domain word and
+        # no carried focus to route them under - are a business question the
+        # resolver can still answer ("what would you like me to do with it?"),
+        # never idle chat. `casual` reaches the LLM clarifier, which cannot place
+        # a product code at all; `entities_only` resolves the tokens directly.
+        if any(
+            isinstance(e, dict) and e.get("current_message") is True
+            for e in (verdict.get("entities") or [])
+        ):
+            return "entities_only"
         return "casual"
     return None
 

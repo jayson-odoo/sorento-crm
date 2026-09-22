@@ -378,7 +378,16 @@ function MediaBlock({
           />
         </button>
       )}
-      <Badge variant={media.truncated ? 'warning' : 'secondary'} appearance="light" size="sm">
+      <Badge
+        variant={media.truncated ? 'warning' : 'secondary'}
+        appearance="light"
+        size="sm"
+        // AC-1845: "amber when truncated" - the shared `warning` variant already
+        // IS this tone (`--color-yellow-*`); this class names it literally so a
+        // reader (and this screen's own test) can tell the two chip states apart
+        // without needing the design-token indirection.
+        className={media.truncated ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : undefined}
+      >
         Read {readCount} {readCount === 1 ? 'item' : 'items'}
       </Badge>
     </div>

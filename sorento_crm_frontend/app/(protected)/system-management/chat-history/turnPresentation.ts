@@ -332,22 +332,3 @@ export function mediaReadCount(media: ChatbotTurnMedia): number {
   return media.entities.length;
 }
 
-/** The Turn panel's extra stage title (AC-1847). */
-export function mediaStageTitle(media: ChatbotTurnMedia): string {
-  return media.modality === 'image' ? 'Read the photo' : 'Heard the voice note';
-}
-
-/** Every entity raw, in the order read - never a count, never "+N more" (Q2). */
-export function mediaEntitiesLine(media: ChatbotTurnMedia): string {
-  return media.entities.map((entity) => entity.raw).join(', ');
-}
-
-/** Attribute counts grouped by kind, e.g. "colour: 2, size: 1". */
-export function mediaAttributesByKind(media: ChatbotTurnMedia): string {
-  if (media.attributes.length === 0) return 'None';
-  const counts = new Map<string, number>();
-  for (const attribute of media.attributes) {
-    counts.set(attribute.kind, (counts.get(attribute.kind) ?? 0) + 1);
-  }
-  return [...counts.entries()].map(([kind, count]) => `${kind}: ${count}`).join(', ');
-}

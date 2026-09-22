@@ -605,3 +605,46 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)
+
+
+def _join_words_and(items: list[str]) -> str:
+    """"a", "a and b", "a, b and c" - the same shape `media_extract.wording.join_
+    phrase` uses, copied rather than imported (`turn/` reads no module outside its
+    own package and `contracts.py`). NOT `_join_words` above: that one joins on
+    "or" for the rung-fallback list ("Nothing on X or Y either.") - a distinct
+    word for a distinct grammar, not a formatting variant of the same one."""
+    values = [item for item in items if item]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " and " + values[-1]
+
+
+def entities_only_reply(
+    placed: list[str], unplaced: list[str], *, from_photo: bool, media_prefixed: bool = False
+) -> str:
+    """S3 (PLAN-chatbot-media-into-turn.md): the entities-only arm's own deterministic
+    reply (AC-1824/AC-1825) - never an LLM, never a roster. `placed`/`unplaced` are the
+    raw tokens as typed or read, in the order the message named them.
+
+    `media_prefixed`, true on a photo-sourced turn, drops this function's OWN "I read
+    ..." lead: `engine.py`'s reply-prefix wrapper (AC-1817, the SAME sentence shape,
+    the intake's own raws) already supplies it for every media turn, and printing it
+    twice would violate AC-1820 ("the prefix appears exactly once"). A typed turn
+    carries no such wrapper, so it stays self-contained.
+    """
+    parts: list[str] = []
+    if not media_prefixed:
+        lead = (
+            f"I read {_join_words_and(placed)} from that photo."
+            if from_photo
+            else f"I have {_join_words_and(placed)}."
+        )
+        parts.append(lead)
+    if unplaced:
+        parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+    parts.append(
+        "What would you like me to do with it?" if from_photo else "What would you like me to know?"
+    )
+    return " ".join(parts)

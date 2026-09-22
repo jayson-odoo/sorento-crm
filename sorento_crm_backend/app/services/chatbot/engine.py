@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import dispatch, jsc, trace as trace_mod
+from app.services.chatbot import dispatch, jsc, media_intake, trace as trace_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
@@ -102,12 +102,6 @@ _ASK_BRANCH_KINDS: frozenset[str] = frozenset(
 # when the settings singleton does not exist yet.
 _UNSET: Any = object()
 
-# H5 / AC-107: `sub-media-intake` did not patch a transcript onto an audio turn, so the
-# spine's audio branch had no successor and the turn died silently. It is now a FAILED
-# turn with an explicit reason and today's error reply.
-AUDIO_NOT_PATCHED_ERROR = (
-    "media intake did not transcribe this voice note, so there is no text to understand"
-)
 GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 
 # AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
@@ -903,6 +897,7 @@ def run_turn(
                         exc_info=True,
                     )
                 stage[0] = "received"
+            media_box: dict[str, Any] = {}
             result = _run_stages(
                 envelope,
                 session_factory=session_factory,
@@ -914,7 +909,9 @@ def run_turn(
                 actions=actions,
                 stage=stage,
                 switches=switches,
+                media_box=media_box,
             )
+            _apply_media_reply_prefix(result, media_box.get("outcome"))
             # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
             # head returns, whichever arm produced it. Stamped at this ONE exit rather than
             # on each arm's own `TurnResult`, which is exactly how three arms - the canned
@@ -1149,6 +1146,7 @@ def _run_stages(  # noqa: PLR0915
     actions: list[dict[str, Any]],
     stage: list[str],
     switches: _TurnSwitches,
+    media_box: dict[str, Any],
 ) -> TurnResult:
     """received -> understood -> access -> routed. Wrapped by `run_turn`.
 
@@ -1157,7 +1155,14 @@ def _run_stages(  # noqa: PLR0915
     is before this runs. `contact_scope` is the SAME frozenset `run_turn` already resolved
     to build the scoped `session_factory` - threaded through rather than re-queried, for
     the roster-plan re-validation below (security SF-1, hand pass 11 final).
+
+    `media_box` is `stage`'s own trick, one more mutable single-key box: this function
+    stashes the media-intake outcome onto it (chatbot media-into-turn, S2) so `run_turn`
+    can read it back AFTER this returns and prepend the "I read .../I heard ..." prefix
+    in the ONE place every answering arm's reply passes through, rather than at each of
+    this function's own dozen return sites.
     """
+    media_detected = None
     with _session(session_factory) as db:
         # AC-108: today's `set-human-intervened` path. The turn CONTINUES; the caller
         # clears the flag on the contact.
@@ -1170,33 +1175,12 @@ def _run_stages(  # noqa: PLR0915
                 }
             )
 
-        # AC-107 / H5: the attachment is still audio, so media intake did not patch a
-        # transcript in. n8n's audio branch simply had no successor and the turn vanished.
-        if _attachment_type(envelope) == "audio":
-            # Two stage names, on purpose. The ROW says `intake` (AC-107's word, and the
-            # real stopping point - media intake, which runs in n8n, is what failed). The
-            # TRACE row says `received`, because `TurnStage` is the closed set of eight
-            # the timeline renders and `intake` is not one of them. `facts.stage` carries
-            # the precise answer so the screen can show it without widening the timeline.
-            turn_trace.record(
-                "received",
-                status="failed",
-                summary="Could not read the voice note.",
-                why="Media intake returned no transcript, so there is nothing to understand.",
-                facts={"attachment_type": "audio", "stage": "intake"},
-                error=AUDIO_NOT_PATCHED_ERROR,
-                raw={"message": _inner_message(envelope)},
-            )
-            _close_turn(
-                db,
-                turn_id,
-                status="failed",
-                stage="intake",
-                branch_kind=None,
-                error=AUDIO_NOT_PATCHED_ERROR,
-                records=turn_trace.persisted(),
-            )
-            return _failed_result(turn_id, "intake", AUDIO_NOT_PATCHED_ERROR, actions, dry_run)
+        # Chatbot media-into-turn, S2: an image or voice attachment (or n8n's
+        # transition-window "already patched" shape) is intaked INSIDE the turn -
+        # decided below, in the no-DB-session window the parser call already uses.
+        # A document, a video, or a sticker with no url is not this step's concern
+        # (AC-1804): it falls through unchanged, on its caption text.
+        media_detected = media_intake.detect(_inner_message(envelope))
 
         session_block = _read_session_vars(
             db,
@@ -1233,11 +1217,10 @@ def _run_stages(  # noqa: PLR0915
             ingress=envelope.ingress,
             is_test=bool(dry_run),
         )
-        parser_config = parser.resolve_config(
-            db,
-            current_date=_current_date_directive(),
-            override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
-        )
+        # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
+        # parser call" means no parser SETUP either - a media-denied turn (no API
+        # key required to check a gate/quota/burst decision) must not fail because
+        # nothing configured a provider for a parser this turn will never reach.
 
     turn_trace.record(
         "received",
@@ -1255,6 +1238,84 @@ def _run_stages(  # noqa: PLR0915
         },
         raw={"session_vars": session_block},
     )
+
+    # -- MEDIA INTAKE (NO DB SESSION IS OPEN HERE, same window as the parser) --- #
+    if media_detected is not None:
+        modality, attachment = media_detected
+        caption = jsc.js_string(jsc.get(attachment, "description")) or None
+        outcome = media_intake.run(
+            respond_io_id=contact_respond_id,
+            message_id=_message_id(envelope),
+            modality=modality,
+            attachment=attachment,
+            caption=caption,
+            turn_id=turn_id,
+            session_factory=session_factory,
+        )
+        media_box["outcome"] = outcome
+        turn_trace.record(
+            "media_intake",
+            status="failed" if outcome.stops_here else "ok",
+            summary=(
+                "Read the photo." if modality == "image" else "Heard the voice note."
+            ) if not outcome.stops_here else (
+                "Could not read the photo." if modality == "image" else "Could not hear the voice note."
+            ),
+            why="The customer sent media; this is what the intake pipeline decided and read.",
+            facts=_media_intake_facts(outcome),
+            error=outcome.reply_text if outcome.stops_here and outcome.turn_status == "failed" else None,
+            raw={"result": outcome.result},
+        )
+        if outcome.stops_here:
+            close_stage = "sent" if outcome.turn_status == "done" else "media_intake"
+            reply_text = outcome.reply_text or ""
+            lane_actions = list(actions)
+            if reply_text:
+                lane_actions = [
+                    *actions,
+                    {
+                        "kind": "send_message",
+                        "text": reply_text,
+                        "quick_replies": None,
+                        "dry_run": dry_run,
+                    },
+                ]
+            with _session(session_factory) as close_db:
+                _close_turn(
+                    close_db,
+                    turn_id,
+                    status=outcome.turn_status,
+                    stage=close_stage,
+                    branch_kind="media_denied",
+                    error=None if outcome.turn_status == "done" else reply_text,
+                    records=turn_trace.persisted(),
+                    response={"actions": lane_actions, "reply": {"text": reply_text}},
+                )
+            return TurnResult(
+                turn_id=turn_id,
+                is_test=dry_run,
+                branch_kind="media_denied",
+                delegate=None,
+                reply={"text": reply_text, "quick_replies": None},
+                actions=lane_actions,
+                status=outcome.turn_status,
+                stage=close_stage,
+            )
+        # AC-1807/AC-1808/AC-1809: the parser reads the intake's OWN rendered text -
+        # the caption plus entity raws, or the entity raws alone with no caption
+        # (`needs_clarification` no longer nulls it - service.py's own change), or
+        # the transcript verbatim - never the url, never the envelope's own text.
+        latest_user_message = outcome.rendered_text or ""
+
+    # Resolved HERE, not inside the `received` session block above: a media-denied
+    # turn returned before this line and never needed a provider configured for a
+    # parser it will not call (AC-1810's "no parser call" reading extended to setup).
+    with _session(session_factory) as db:
+        parser_config = parser.resolve_config(
+            db,
+            current_date=_current_date_directive(),
+            override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+        )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
     # One call, one schema. What comes back IS the verdict - a plain dict, validated once
@@ -1764,6 +1825,31 @@ def _run_stages(  # noqa: PLR0915
             },
             raw={"item": item},
         )
+
+        # S3 (chatbot media-into-turn): bare entities, no domain, no carried focus -
+        # resolved and answered deterministically here, never through the generic
+        # fetch/ask machinery below (there is nothing for it to fetch: `plan.fetch`
+        # and `plan.ask` are both empty for this lane) and never through the `casual`
+        # lane's LLM clarifier.
+        if plan.trace.lane == "entities_only":
+            return _run_entities_only_arm(
+                db,
+                turn_id=turn_id,
+                ctx=ctx,
+                item=item,
+                verdict=verdict,
+                state=state_out,
+                actions=actions,
+                dry_run=dry_run,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                stage=stage,
+                contact_respond_id=contact_respond_id,
+                space_id=space_id_for_turn,
+                remembered_before=remembered_before,
+                recalled=recalled,
+                from_photo=bool(media_box.get("outcome") and media_box["outcome"].modality == "image"),
+            )
 
         # D9: no engine switch. The re-architected turn IS the engine, so a lane the
         # CODE can complete is completed here - `system_settings.chatbot_completed_lanes`
@@ -2700,6 +2786,111 @@ def _run_answer(
     )
 
 
+def _run_entities_only_arm(
+    db: Session,
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    verdict: dict[str, Any],
+    state: Any,
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    contact_respond_id: str,
+    space_id: str | None,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    from_photo: bool,
+) -> TurnResult:
+    """S3 (PLAN-chatbot-media-into-turn.md): bare entities, no domain, no carried
+    focus (AC-1822 to AC-1832). Resolved directly against the SAME resolver seam
+    the fetch would use (`business_services.production_services(db).resolve_entity`),
+    never through the business lane's fetch/ask machinery - there is no domain for
+    it to fetch against - and never through the `casual` lane's LLM clarifier.
+
+    Placed tokens settle onto `focus.products` WITH a uuid (`focus_settles_product`,
+    AC-1823); `state.focus.products` already carries an entry per token (`apply()`'s
+    own `_focus_rules`, run before this arm), unresolved raw and all, so this only
+    needs to ENRICH the matching rows rather than build the list from nothing.
+    """
+    stage[0] = "looked_up"
+    entities = [
+        e
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("current_message") is True and e.get("raw")
+    ]
+    raws = [e["raw"] for e in entities]
+    placed: list[str] = []
+    unplaced: list[str] = []
+    if raws:
+        from app.api.v1.system.references import ResolveReferenceRequest
+
+        services = business_services.production_services(db, space_id=space_id)
+        body = {"tokens": raws, "allowed_entity_types": ["product"]}
+        ResolveReferenceRequest(**body)  # validated the same way every other caller is
+        result = services.resolve_entity(body)
+        resolutions = {
+            r.get("raw"): r for r in jsc.array(jsc.get(result, "resolutions")) if isinstance(r, dict)
+        }
+        by_raw = {row.get("raw"): row for row in state.focus.products if isinstance(row, dict)}
+        for raw in raws:
+            resolution = resolutions.get(raw)
+            matches = jsc.array(jsc.get(resolution, "matches")) if resolution else []
+            row = by_raw.get(raw)
+            if matches and row is not None:
+                match = matches[0]
+                row["uuid"] = jsc.get(match, "uuid")
+                row["entity_type"] = jsc.get(match, "entity_type")
+                row["canonical_code"] = jsc.get(match, "canonical_code")
+                placed.append(raw)
+            else:
+                unplaced.append(raw)
+
+    turn_trace.record(
+        "looked_up",
+        summary="Read the codes and looked each one up.",
+        why="The entities-only arm resolves bare codes directly; there is no domain to fetch against yet.",
+        facts={"placed": len(placed), "unplaced": len(unplaced)},
+        raw={"placed": placed, "unplaced": unplaced},
+    )
+
+    text = turn_compose.entities_only_reply(
+        placed, unplaced, from_photo=from_photo, media_prefixed=from_photo
+    )
+    answer = turn_compose.Answer(text=text)
+    # `_run_answer` opens and commits its OWN session for the tail (persist, close);
+    # this caller's own `db` (the "access, apply, route" session, still open) must
+    # have nothing pending on it first - every OTHER caller of `_run_answer` reaches
+    # it after a write of its own already committed `db` along the way (the resolver
+    # route call among them); this arm's own `resolve_entity` call is read-only, so
+    # nothing does that here, and leaving `db` mid-transaction across the tail's own
+    # nested session left the tail's commit invisible once THIS session's later
+    # close rolled its own (empty but still savepoint-scoped) transaction back -
+    # measured: `focus.products` persisted correctly inside `_run_answer`, then read
+    # back as the pre-turn seed the moment `_run_stages`'s outer session closed.
+    db.commit()
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="business_query",
+        actions=actions,
+        answer=answer,
+        state=state,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+    )
+
+
 def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
     """What the caller executes: the message, then any files, in that order."""
     built: list[dict[str, Any]] = []
@@ -2734,6 +2925,53 @@ def _pending_option_labels(pending: Any) -> list[str] | None:
     if pending is None or not pending.options:
         return None
     return [str(o.get("label")) for o in pending.options if o.get("label")] or None
+
+
+def _apply_media_reply_prefix(result: TurnResult, outcome: Any) -> None:
+    """AC-1817 to AC-1821: the "I read .../I heard ..." line, prepended exactly
+    once, wherever the answering arm's reply landed.
+
+    One wrapping step over the WHOLE result rather than a change inside each of
+    `_run_stages`'s dozen answering arms (fetch, ask, roster, escalation offer) -
+    every one of them already funnels its text onto `result.reply["text"]` and
+    its own `send_message` action by the time this runs. `outcome` is `None` on
+    a plain text turn (AC-1820) and skipped when the intake itself stopped the
+    turn (AC-1810 to AC-1814 already composed their own reply with no prefix).
+    """
+    if outcome is None or outcome.stops_here:
+        return
+    prefix = media_intake.reply_prefix(outcome)
+    notices = media_intake.notice_texts(outcome)
+    reply = result.reply or {}
+    body = reply.get("text") or ""
+    lines = [prefix, *([body] if body else []), *notices]
+    full_text = "\n".join(lines)
+    result.reply = {**reply, "text": full_text}
+    for action in result.actions or []:
+        if isinstance(action, dict) and action.get("kind") == "send_message" and action.get("text") == body:
+            action["text"] = full_text
+
+
+def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, Any]:
+    """The `media_intake` trace record's facts (AC-1800/AC-1801, AC-1836's own
+    `attachment_error`). `attachment_id`/`attachment_error` are promoted to the top
+    level (S4) - they are what the turn projection's `media` block and the storage
+    tests both read off the trace, not a nested `result` key."""
+    facts: dict[str, Any] = {
+        "modality": outcome.modality,
+        "decision": outcome.decision,
+        "status": outcome.status,
+        "job_id": outcome.job_id,
+        "elapsed_ms": outcome.elapsed_ms,
+        "result": {
+            k: v for k, v in outcome.result.items() if k not in ("attachment_id", "attachment_error")
+        },
+    }
+    if outcome.attachment_id:
+        facts["attachment_id"] = outcome.attachment_id
+    if outcome.attachment_error:
+        facts["attachment_error"] = outcome.attachment_error
+    return facts
 
 
 def _stock_check_denied(db: Session, envelope: Envelope, verdict: dict[str, Any]) -> bool:
