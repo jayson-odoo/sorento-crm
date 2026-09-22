@@ -1,9 +1,10 @@
 'use client';
 
 import { Table } from '@tanstack/react-table';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { debounce } from '@/lib/helpers';
+import { DEFAULT_PAGE_SIZES } from '@/components/ui/data-grid-pagination';
 import {
   getUserListColumnConfig,
   resetUserListColumnConfig,
@@ -103,8 +104,29 @@ export function useListingColumnPreferences<TData extends object>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // capture once at mount
 
+  // The caller's own default rows-per-page (the `pageSize` prop `PanelDataGrid` or
+  // `useListPager` was given), captured once at mount the same way the three column
+  // defaults above are - `resetToDefaults` returns the grid to this, not to a hardcoded
+  // number.
+  const defaultPageSize = useMemo(() => {
+    return table.getState().pagination?.pageSize;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // capture once at mount
+
   const appliedRef = useRef(false);
+  // State twin of `appliedRef`, read-only outside this hook (`isLoading` below). A saved
+  // row that carries ONLY `pageSize` and no column keys calls none of the `table.set*`
+  // column setters that used to be what made the "loaded" render happen - so the ref
+  // flipping alone is not enough here, this needs its own state update to guarantee a
+  // re-render.
+  const [applied, setApplied] = useState(false);
   const skipSaveOnceRef = useRef(false);
+  // Own one-shot guard for the page-size save effect below, distinct from
+  // `skipSaveOnceRef`: the two effects run in the same commit, and a shared flag would
+  // be consumed by whichever runs first, leaving the other free to write back the very
+  // state the apply effect just set.
+  const skipPageSizeSaveOnceRef = useRef(false);
+  const persistedPageSizeRef = useRef<number | null>(null);
   /**
    * The column state the SERVER already holds, as the save effect below would fingerprint
    * it. A payload identical to this one is never written.
@@ -134,6 +156,7 @@ export function useListingColumnPreferences<TData extends object>({
     const payload = saved.config as UserListColumnConfigPayload | null;
     if (!payload) {
       appliedRef.current = true;
+      setApplied(true);
       return;
     }
 
@@ -208,7 +231,23 @@ export function useListingColumnPreferences<TData extends object>({
       columnSizing: appliedSizes,
     });
 
+    // A saved size outside the sizes the rows-per-page menu offers is dropped, never
+    // applied (AC-5) - it can only reach here from a row written before the BE
+    // `Literal` validation existed.
+    const savedPageSize = payload.pageSize;
+    if (typeof savedPageSize === 'number' && (DEFAULT_PAGE_SIZES as number[]).includes(savedPageSize)) {
+      const currentPageSize = table.getState().pagination?.pageSize;
+      if (currentPageSize !== savedPageSize) {
+        skipPageSizeSaveOnceRef.current = true;
+        table.setPageSize(savedPageSize);
+      }
+      persistedPageSizeRef.current = savedPageSize;
+    } else {
+      persistedPageSizeRef.current = table.getState().pagination?.pageSize ?? null;
+    }
+
     appliedRef.current = true;
+    setApplied(true);
   }, [key, saved, table]);
 
   const columnOrderState = (table.getState() as ColumnStateFromTanStack)?.columnOrder;
@@ -330,6 +369,29 @@ export function useListingColumnPreferences<TData extends object>({
     debouncedSaveRef.current(payload);
   }, [key, orderFingerprint, visibilityFingerprint, sizingFingerprint, isFetching, table, suppressPersist]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const pageSizeState = table.getState().pagination?.pageSize;
+
+  // Rows-per-page, saved through the SAME debounced PUT as the column keys but as its
+  // own `{ pageSize }` body - the endpoint's partial merge (`exclude_unset`) leaves the
+  // column keys untouched either way, so there is no reason to resend them here.
+  useEffect(() => {
+    if (!key) return;
+    if (isFetching) return;
+    if (!appliedRef.current) return;
+    if (suppressPersist) return;
+    if (skipPageSizeSaveOnceRef.current) {
+      skipPageSizeSaveOnceRef.current = false;
+      return;
+    }
+    if (typeof pageSizeState !== 'number') return;
+
+    // Never write back what the server already holds (or what this hook just applied).
+    if (persistedPageSizeRef.current === pageSizeState) return;
+    persistedPageSizeRef.current = pageSizeState;
+
+    debouncedSaveRef.current({ pageSize: pageSizeState } as UserListColumnConfigPayload);
+  }, [key, pageSizeState, isFetching, suppressPersist]);
+
   const resetMutation = useMutation({
     mutationFn: () => resetUserListColumnConfig(key),
     // The row is gone, so the seeded cache entry must go with it - otherwise a
@@ -348,6 +410,7 @@ export function useListingColumnPreferences<TData extends object>({
     // Prevent the reset operation from being immediately persisted back as "saved defaults"
     // - the row is about to be DELETED, so re-creating it with the defaults would undo it.
     skipSaveOnceRef.current = true;
+    skipPageSizeSaveOnceRef.current = true;
     persistedRef.current = columnStateFingerprint({
       columnOrder: mergeColumnOrderWithLeafColumns(
         defaultOrder,
@@ -356,14 +419,18 @@ export function useListingColumnPreferences<TData extends object>({
       columnVisibility: defaultVisibility,
       columnSizing: defaultSizing,
     });
+    persistedPageSizeRef.current = defaultPageSize ?? null;
     table.setColumnOrder(defaultOrder);
     table.setColumnVisibility(defaultVisibility);
     table.setColumnSizing(defaultSizing);
+    if (typeof defaultPageSize === 'number') {
+      table.setPageSize(defaultPageSize);
+    }
     await resetMutation.mutateAsync();
   };
 
   return {
-    isLoading: Boolean(key) && !appliedRef.current,
+    isLoading: Boolean(key) && !applied,
     isFetching,
     resetToDefaults,
   };

@@ -184,6 +184,10 @@ class UserListColumnConfigPayload(BaseModel):
     # (`saved_views.is_default`, everyone's). Opaque like `filters` - `SavedViewsMenu`
     # is the only reader/writer, and a listing key with no saved views never touches it.
     defaultSavedViewId: Optional[str] = None
+    # PLAN-listing-page-size-memory: rows-per-page, owned by `useListingColumnPreferences`
+    # like the three column keys above. Restricted to the sizes the rows-per-page menu
+    # actually offers (`DEFAULT_PAGE_SIZES`) so a stray value is never applied on read.
+    pageSize: Optional[Literal[25, 50, 100]] = None
 
 
 class UserListColumnConfigResponse(BaseModel):

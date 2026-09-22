@@ -36,6 +36,12 @@ export type UserListColumnConfigPayload = {
    * (`SavedView.is_default`, everyone's). Owned by `SavedViewsMenu`.
    */
   defaultSavedViewId?: string | null;
+  /**
+   * Rows-per-page. Owned by `useListingColumnPreferences` like the three column keys
+   * above. One of `DEFAULT_PAGE_SIZES` (`components/ui/data-grid-pagination.tsx`) -
+   * anything else is dropped on read by the BE `Literal` field, never applied.
+   */
+  pageSize?: number | null;
 };
 
 export type UserListColumnConfigResponse = {
