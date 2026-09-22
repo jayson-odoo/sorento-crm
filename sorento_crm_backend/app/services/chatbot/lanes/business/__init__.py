@@ -695,6 +695,12 @@ def _fetch_semantic_input(
         # 'all dates'" - `broaden_axis` lives on the full parser output, not this
         # object's other twelve fields, so it has to be named explicitly here too.
         "broaden_axis": parse_output.get("broaden_axis"),
+        # D13/D20 (PLAN-chatbot-dealer-stock-verdict.md): `{product uuid: quantity}`,
+        # built by `turn_runtime._spec_quantities` from the open task's slots or from
+        # this message's own per-entity quantities. Named explicitly for the same
+        # reason `group_by`/`top_n` are: `entity_ids_transformer` reads it off THIS
+        # object, so without a field here the map could never reach the tool.
+        "requested_quantities": parse_output.get("requested_quantities"),
     }
 
 

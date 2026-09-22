@@ -25,6 +25,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import (
     ANSWER,
     DOCUMENT_BY_SCOPE,
@@ -1322,10 +1323,17 @@ def apply(
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    ideation: dict[str, Any] | None = None,
 ):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
-    only: a roster is never built out of a word that matched nothing."""
+    only: a roster is never built out of a word that matched nothing.
+
+    `ideation` is the session's own opaque ideation pointer (AC-1779), handed in beside
+    `resolved` / `candidates` for one reason: `IdeationTask.claims` has to know whether
+    a media menu is open before it claims a bare number off a turn that names nothing
+    else. It is READ, never written and never copied onto the state - the ideate lane
+    stays its single writer (D26) - so `apply()` is as pure with it as without it."""
     trace = Trace()
 
     if state.pending is not None and _fully_answered_roster(state.pending):
@@ -1386,6 +1394,42 @@ def apply(
     decision = decide(verdict, state.focus, state.pending)
     trace.decision = decision.as_trace()
 
+    # The OPEN TASKS, before decide's four outcomes are acted on (D21 to D26). A task
+    # is filled by any turn whose verdict carries a value its kind claims, whatever the
+    # current subject, so this runs ahead of the arms that read the subject - and its
+    # result is written back onto the focus AFTER `_focus_rules`, which empties every
+    # other axis on a topic reset and would take the tasks with it.
+    task_outcome = task_mod.run(
+        tuple(state.focus.tasks or ()),
+        verdict,
+        decision_kind=decision.kind,
+        positions=list(decision.positions) if decision.answers else [],
+        pending=state.pending,
+        turn_no=state.turn_no,
+        ideation=ideation,
+    )
+    trace.rules_fired.extend(task_outcome.rules)
+    if task_outcome.tie_options:
+        # D24(b): neither kind's claim outranks the other and the parser named neither,
+        # so NOTHING moves and the dealer is asked which task the value is for. The
+        # value rides on the question's own payload, which is what the answering turn
+        # then applies - a second copy on the focus could disagree with it.
+        tie = pending_ask(
+            task_mod.TASK_PICK,
+            list(task_outcome.tie_options),
+            asked_at_turn=state.turn_no,
+            expects="pick",
+            payload={"value": task_outcome.tie_value},
+        )
+        asked = replace(state, pending=tie)
+        return asked, Plan(domains=[], fetch=[], ask=tie, denied=[], trace=trace)
+
+    if task_outcome.clears_pending:
+        # The tie is SETTLED, not still open: the pick named the task, the value it
+        # carried has been applied, and the generic roster path must never see it (its
+        # options are tasks, not entities to fetch with).
+        state = replace(state, pending=None)
+
     verdict_entities = list(verdict.get("entities") or [])
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
         verdict_entities, resolved, policy, verdict, trace
@@ -1409,6 +1453,62 @@ def apply(
         domain_override=domain_override,
         trace=trace,
     )
+    # AFTER the focus rules, never before: a topic reset rebuilds the focus from
+    # `RESET_KEEPS` alone, and the tasks it KEEPS (the ones aimed elsewhere, parked by
+    # D23) are what the task step above already decided. One writer, one answer.
+    focus.tasks = task_outcome.tasks
+
+    if task_outcome.fetch is not None:
+        # A task that just took a value re-runs its own domain's fetch over the WHOLE
+        # task - every product it is collecting for, not just the ones this message
+        # named (`apply._set_kind_field` keeps only the latter on `focus.products`, so
+        # the task's own slots are the only honest subject list there is). The domain
+        # is the TASK's, the same lock a pick puts on a turn: a detour left
+        # `focus.domains` pointing somewhere else entirely.
+        domain = task_outcome.fetch_domain or task_outcome.fetch.domain
+        focus.domains = [domain]
+        # The conversation is now about what the task actually ASKED FOR - every
+        # product it still collects for, and only those. A "just proceed" drops the
+        # ones with no quantity (D15), and leaving them on the subject axis had the
+        # cross-domain ladder volunteer an incoming lookup for the very products the
+        # dealer had just said not to check.
+        if task_outcome.fetch.entities:
+            _set_kind_field(focus, "product", list(task_outcome.fetch.entities))
+        answered = State(
+            focus=focus,
+            pending=None if task_outcome.clears_pending else pending_after,
+            profile=state.profile,
+            turn_no=state.turn_no,
+        )
+        return answered, Plan(
+            domains=[domain],
+            fetch=[task_outcome.fetch],
+            ask=None,
+            denied=[],
+            trace=trace,
+        )
+
+    if task_outcome.question:
+        # A task RESUMED, or one a bare number could not be attributed inside: nothing
+        # is fetched and nothing is rostered - only what is still owed is asked, and
+        # nothing is asked twice (D22, AC-1765, AC-1772).
+        trace.task_question = task_outcome.question
+        asked = State(
+            focus=focus,
+            pending=pending_after,
+            profile=state.profile,
+            turn_no=state.turn_no,
+        )
+        domain = task_outcome.question_domain
+        if domain:
+            focus.domains = [domain]
+        return asked, Plan(
+            domains=[domain] if domain else [],
+            fetch=[],
+            ask=None,
+            denied=[],
+            trace=trace,
+        )
 
     asks = verdict.get("asks") or []
     if domain_locked and focus.domains and not asks:
@@ -1512,6 +1612,29 @@ def apply(
     plan = _narrow_and_plan(
         focus, policy, domains, new_state, trace, attributes, candidates, unplaced
     )
+
+    # D26: the ideation task opens on the turn that routes to the ideate lane - the
+    # lane's own state already survives a detour, so the task adds the status and the
+    # parser hint and nothing else.
+    focus.tasks = task_mod.opened_for_domains(
+        focus.tasks,
+        domains,
+        turn_no=state.turn_no,
+        closed_kinds=task_outcome.closed_kinds,
+    )
+    if (
+        task_outcome.parked_kinds
+        and verdict.get("entities")
+        and unplaced
+        and not any(rows for rows in (candidates or {}).values())
+    ):
+        # AC-1773: this turn named a subject and the resolver could place NONE of it,
+        # so the turn is a miss - "I could not find SRTWC8610-SH" - and a miss is not
+        # another answer. Parking exists so the OTHER answer can be given silently
+        # (D22); there is no other answer here, so the task stays exactly as it was.
+        focus.tasks = task_mod.unpark(
+            focus.tasks, task_outcome.parked_kinds, tuple(state.focus.tasks or ())
+        )
 
     if trace.outstanding is not None:
         # Contract 38/39: this fetch is the ANSWERED question's own report re-running.

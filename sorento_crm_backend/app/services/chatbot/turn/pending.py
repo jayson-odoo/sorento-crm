@@ -21,6 +21,11 @@ PENDING_KINDS: tuple[str, ...] = (
     "outstanding_detail",
     "sales_report_detail",
     "kind_pick",
+    # D24(b) (PLAN-chatbot-dealer-stock-verdict.md): which OPEN TASK a value belongs
+    # to, when two kinds could both claim it and the parser named neither. Named here
+    # so `is_roster` reads it as the one-shot offer it is - it is answered once, the
+    # value it carried is applied, and it is gone; nothing about it is sticky.
+    "task_pick",
 )
 
 # Stay alive, tracked by `answered_positions`, after their own pick.

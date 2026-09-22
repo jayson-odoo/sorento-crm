@@ -821,6 +821,15 @@ def entity_ids_transformer(
         attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
         if "inventory.sellable" in attributes:
             out["include_sellable"] = True
+        # D13/D20 (PLAN-chatbot-dealer-stock-verdict.md): the dealer's OWN quantity,
+        # per product, as the `{product uuid: int}` map S1 put on the route and S2
+        # declared on the ToolSpec. Absent, never null, on a turn that states no
+        # quantity at all - the tool's scalar `requested_qty` contract (n8n, direct
+        # callers) is untouched, and an ask with no quantity still comes back
+        # `needs_quantity`, which is what OPENS the task in the first place.
+        quantities = jsc.get(semantic_input, "requested_quantities")
+        if isinstance(quantities, dict) and quantities:
+            out["requested_quantities"] = dict(quantities)
 
     # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
     # every list tool this plan touches. `top_n` aliases to `limit` for the
@@ -2660,6 +2669,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     )
     if len(lookup_cos) > 1:
         out["lookup_companies"] = lookup_cos
+    if isinstance(e.get("stock_availability"), list):
+        # D25: the backend states, per product, whether a quantity is still required -
+        # the one fact the open stock task is built from (`turn/task.py::
+        # tasks_after_reply`). Carried through UNREAD by this lane: the sentence the
+        # dealer sees is the MCP presenter's, as it already is for every other row.
+        out["stock_availability"] = [
+            row for row in e["stock_availability"] if isinstance(row, dict)
+        ]
     if jsc.js_string(ctx.get("tool") or "") == _FORMS_LIST_TOOL:
         # Beside `out["answers"]`, never instead of it: the numbered list still prints
         # through the generic per-row grammar, and `forms_ask` only gives `envelope_of`

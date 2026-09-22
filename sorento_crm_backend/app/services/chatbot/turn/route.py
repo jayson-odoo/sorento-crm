@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.plan import Plan
+from app.services.chatbot.turn.task import TASK_PICK
 
 _LANE_BRANCH: dict[str, str] = {
     "escalation": "out_of_scope",
@@ -60,6 +61,14 @@ def route(plan: Plan) -> str:
         # set `apply` routes their ANSWER by).
         if plan.ask.kind in ESCALATION_OFFER_KINDS:
             return "escalate_offer"
+        if plan.ask.kind == TASK_PICK:
+            # D24(b): "which of these two is that number for?" is a BUSINESS question
+            # about two open collections, and it is asked while neither of them runs.
+            # Read off the ask's own kind rather than the plan's domains, which still
+            # carry whatever the conversation was last about - an `ideate` carry there
+            # would have run the ideation lane on the very turn that says it cannot
+            # tell which task the value belongs to.
+            return "business_query"
         # A NARROWING question belongs to the arm that asked it, not to `clarify_menu`.
         # `clarify_menu` is contract 50's DOMAIN menu - "I see you are trying to X, are
         # you asking about any of these? - Product - Stock ..." - a turn with no domain
@@ -85,6 +94,12 @@ def route(plan: Plan) -> str:
         return "ideate"
 
     if plan.fetch:
+        return _domain_branch(plan.domains)
+
+    if plan.trace.task_question:
+        # A task RESUMED with nothing new fetches nothing and asks no roster - the
+        # task's own question is the whole turn (D22, AC-1772) - but it is still a
+        # question about that task's domain, not a low-signal aside.
         return _domain_branch(plan.domains)
 
     return "low_signal"

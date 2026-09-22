@@ -307,6 +307,12 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # AC-922, "nothing on any rung": the primary domain missed AND every domain on
         # its ladder missed too. Named once, here, rather than as one empty header per
         # rung - the customer asked about a product, not about three domains.
+        # D15: "just proceed" answered the products that had a quantity and dropped the
+        # rest, so the reply names the ones it did not check - a dealer must never have
+        # to work out which of the four they asked about are missing from the answer.
+        not_checked = [n for n in (env.get("not_checked") or []) if isinstance(n, str)]
+        if not_checked:
+            block = block + "\n" + f"Not checked: {', '.join(not_checked)}."
         rungs_tried = [r for r in (env.get("rungs_tried") or []) if isinstance(r, str)]
         if rungs_tried:
             names = [
