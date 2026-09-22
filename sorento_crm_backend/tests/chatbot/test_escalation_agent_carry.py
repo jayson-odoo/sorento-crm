@@ -166,12 +166,26 @@ def _seed_product_with_brand(session_factory, *, code: str, brand_code: str | No
     db.commit()
 
 
-def _seed_packing_list_team(session_factory) -> dict[str, str]:
-    """The Packing List team, seeded fresh (owner ruling, AC-1804..1806's own brief:
-    "seed team_member_brands rows yourself... never read existing data"). Two
-    members: Lucas (tagged ONLY `mocha`) and Jereen (every OTHER brand this test
-    names - `sorento` and `cabana` - never `mocha`), matching the prod tagging the
-    owner described ("Jereen = every brand except mocha, Lucas = mocha")."""
+def _seed_escalation_team(
+    session_factory,
+    *,
+    agent_code: str,
+    team_code: str,
+    team_label: str,
+    members: list[tuple[str, list[str]]],
+) -> dict[str, str]:
+    """A round-robin-ready `(agent, team)` pair, seeded fresh (owner ruling,
+    AC-1804..1806's own brief: "seed team_member_brands rows yourself... never read
+    existing data"). Generic over WHICH agent/team/members, so AC-1804/1805's own
+    Packing List (`incoming_stock_enquiries`/`purchasing`, Lucas=mocha,
+    Jereen=every other brand) and AC-1807/1808's Marketing - Product
+    (`general_enquiries`/`marketing_product`, Kia Yee=mocha, Tay Zhi Yang=every
+    other brand) share ONE seeding shape rather than two copies of the same
+    SLAPolicy/AgentTeam scaffolding.
+
+    `members` is `[(name, brands), ...]`, sort order = list order. Returns
+    `{name.lower(): user_id, "team_id": ..., "agent_id": ...}`.
+    """
     from app.models.access import AccessAgent, AgentTeam, Team, TeamMember, team_member_brands
     from app.models.sla import SLAPolicy, SLAPolicyTier
     from app.models.user import User
@@ -179,13 +193,9 @@ def _seed_packing_list_team(session_factory) -> dict[str, str]:
 
     db = _db(session_factory)
     agent_id = str(uuid.uuid4())
-    db.add(
-        AccessAgent(
-            id=agent_id, code="incoming_stock_enquiries", name="ZZT Incoming Stock Enquiries", is_active=True
-        )
-    )
+    db.add(AccessAgent(id=agent_id, code=agent_code, name=f"ZZT {agent_code}", is_active=True))
     team_id = str(uuid.uuid4())
-    db.add(Team(id=team_id, name="ZZT Packing List", company_id=SORENTO))
+    db.add(Team(id=team_id, name=f"ZZT {team_label}", company_id=SORENTO))
     # `_next_assignee_body` always sends the escalation lane's own literal policy
     # code/tier (`NEXT_ASSIGNEE_POLICY_CODE`/`NEXT_ASSIGNEE_TIER`) - the REAL
     # `/external/next-assignee` handler 404s without a matching row, unlike the
@@ -211,7 +221,8 @@ def _seed_packing_list_team(session_factory) -> dict[str, str]:
 
     def _member(name: str, brands: list[str], sort_order: int) -> str:
         user_id = str(uuid.uuid4())
-        db.add(User(id=user_id, email=f"zzt-{name.lower()}@zzt.test", name=f"ZZT {name}", status="ACTIVE"))
+        slug = name.lower().replace(" ", "-")
+        db.add(User(id=user_id, email=f"zzt-{slug}@zzt.test", name=f"ZZT {name}", status="ACTIVE"))
         db.flush()
         member_id = str(uuid.uuid4())
         db.add(TeamMember(id=member_id, team_id=team_id, user_id=user_id, sort_order=sort_order))
@@ -221,16 +232,31 @@ def _seed_packing_list_team(session_factory) -> dict[str, str]:
         db.flush()
         return user_id
 
-    lucas_id = _member("Lucas", ["mocha"], 1)
-    jereen_id = _member("Jereen", ["sorento", "cabana"], 2)
+    ids: dict[str, str] = {}
+    for sort_order, (name, brands) in enumerate(members, start=1):
+        ids[name.lower()] = _member(name, brands, sort_order)
 
     db.add(
         AgentTeam(
-            id=str(uuid.uuid4()), agent_id=agent_id, code="purchasing", team_id=team_id, tier=1, company_id=SORENTO
+            id=str(uuid.uuid4()), agent_id=agent_id, code=team_code, team_id=team_id, tier=1, company_id=SORENTO
         )
     )
     db.commit()
-    return {"lucas_id": lucas_id, "jereen_id": jereen_id, "team_id": team_id, "agent_id": agent_id}
+    return {**ids, "team_id": team_id, "agent_id": agent_id}
+
+
+def _seed_packing_list_team(session_factory) -> dict[str, str]:
+    """AC-1804/AC-1805's own team: Lucas (tagged ONLY `mocha`) and Jereen (every OTHER
+    brand this test names - `sorento` and `cabana` - never `mocha`), matching the prod
+    tagging the owner described ("Jereen = every brand except mocha, Lucas = mocha")."""
+    result = _seed_escalation_team(
+        session_factory,
+        agent_code="incoming_stock_enquiries",
+        team_code="purchasing",
+        team_label="Packing List",
+        members=[("Lucas", ["mocha"]), ("Jereen", ["sorento", "cabana"])],
+    )
+    return {"lucas_id": result["lucas"], "jereen_id": result["jereen"], **result}
 
 
 def _stub_incoming_probe_empty(monkeypatch) -> None:
@@ -1708,4 +1734,118 @@ class TestAC1804And1805And1806BrandCarriedToNextAssignee:
         assert result["routing_source"] == "picked_member", result
         assert result["brand_code"] == "sorento", (
             f"the picked member's OWN brand must win over the carried one: {result!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# AC-1807/AC-1808 (round 5, evidence: does the brand carry hold for a PHOTO/
+# attachment escalation, not just incoming?). Journey: `product_attachment` domain
+# (photo request) for a product with NO attachment -> the rich miss
+# (`test_rearch_r5_production_decides.py::TestFetchedEmptyIsAMiss::
+# test_attachment_fetch_with_zero_rows_is_the_rich_miss` shows the shape) -> its
+# escalate offer (team `marketing_product` off the domain row, agent
+# `general_enquiries` off the parser's own domain map) -> "yes". Same real-draw
+# pattern as AC-1804/AC-1805 - `_seed_escalation_team`, `_capture_real_next_
+# assignee` - over a Marketing - Product team (prod: Kia Yee = mocha, Tay Zhi Yang
+# = every other brand, Charissa untagged; reproduced here with the same two-member
+# shape AC-1804/1805 use).
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1807And1808PhotoMissEscalationCarriesTheBrand:
+    def _run_photo_miss_then_yes(
+        self,
+        session_factory,
+        monkeypatch,
+        stub_parser,
+        stub_access,
+        *,
+        phone: str,
+        product_code: str,
+        brand_code: str,
+    ) -> list[dict[str, Any]]:
+        from tests.chatbot.test_product_attachment_picker_stamp import _seed_attachment_type
+
+        _seed_contact(session_factory, phone=phone)
+        _seed_product_with_brand(session_factory, code=product_code, brand_code=brand_code)
+        _seed_attachment_type(session_factory, "Product Photos")
+        _seed_escalation_team(
+            session_factory,
+            agent_code="general_enquiries",
+            team_code="marketing_product",
+            team_label="Marketing - Product",
+            members=[("Kia Yee", ["mocha"]), ("Tay Zhi Yang", ["sorento", "cabana"])],
+        )
+        _stub_incoming_probe_empty(monkeypatch)
+        stub_parser(
+            verdict(
+                domain_hint="product_attachment",
+                intent_hint="check_product_attachment",
+                entities=[
+                    entity(product_code, hint="product", confident=True),
+                    entity("product photos", hint="attachment_type", canonical_code="photo", confident=True),
+                ],
+                # The parser's own domain map for `product_attachment` (test_rearch_r5's
+                # own module docstring, quoted in this file's class comment): team off
+                # the domain row, agent `general_enquiries`.
+                routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+            )
+        )
+        stub_access()
+        turn1 = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert turn1.branch_kind == "business_query", turn1.branch_kind
+
+        stub_parser(_yes_verdict())
+        calls = _capture_real_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
+        result = engine_mod.run_turn(_second_turn_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "out_of_scope", result.branch_kind
+        assert len(calls) == 1, calls
+        return calls
+
+    def test_ac_1807_a_mocha_product_photo_miss_escalates_to_the_mocha_tagged_member(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        calls = self._run_photo_miss_then_yes(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            phone="+60000001807",
+            product_code="ZZTPH-MCH",
+            brand_code="mocha",
+        )
+
+        body = calls[0]["body"]
+        response = calls[0]["response"]
+        assert body["brand_code"] == "mocha", body
+        assert body["agent_code"] == "general_enquiries", body
+        assert body["team_code"] == "marketing_product", body
+        assert response.get("assignee_name") == "ZZT Kia Yee", (
+            f"a MOCHA product's photo miss must draw the mocha-tagged member (Kia "
+            f"Yee), not rotate the whole team: {response!r}"
+        )
+
+    def test_ac_1808_a_sorento_product_photo_miss_escalates_to_the_sorento_tagged_member(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        calls = self._run_photo_miss_then_yes(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            phone="+60000001808",
+            product_code="ZZTPH-SRT",
+            brand_code="sorento",
+        )
+
+        body = calls[0]["body"]
+        response = calls[0]["response"]
+        assert body["brand_code"] == "sorento", body
+        assert body["agent_code"] == "general_enquiries", body
+        assert body["team_code"] == "marketing_product", body
+        assert response.get("assignee_name") == "ZZT Tay Zhi Yang", (
+            f"a SORENTO product's photo miss must draw the sorento-tagged member "
+            f"(Tay Zhi Yang), not rotate the whole team: {response!r}"
         )

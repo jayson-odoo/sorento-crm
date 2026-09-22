@@ -143,6 +143,28 @@ drawn assignee is the brand-tagged member" is the actual claim - a mock cannot p
     outranks a `carried_brand` that says something else - the picked-member and
     company-pick arms are untouched by round 4, on purpose.
 
+## Round 5 (evidence, 22 Sep 2026): does the brand carry hold for a PHOTO escalation too?
+
+Owner asked whether round 4's carry also holds for a `product_attachment` (photo/
+drawing request) escalation, not just `incoming`. Journey: a photo request for a
+product with NO attachment on file -> the rich miss (`test_rearch_r5_production_
+decides.py::TestFetchedEmptyIsAMiss::test_attachment_fetch_with_zero_rows_is_the_rich_
+miss` shows the shape) -> its escalate offer (team `marketing_product` off the domain
+row, agent `general_enquiries` off the parser's own domain map) -> "yes". Confirmed
+green on the FIRST run - the attachment miss takes the SAME mint site round 1 already
+found and stamped for the incoming miss (`answer_bridge.py::_miss_question`'s
+escalate-catalog bare-"Yes" arm, single team/company) - no code fix needed, evidence
+only. Confirmed load-bearing by temporarily reverting that ONE site's `brand_code`
+stamp and re-running: both went red with `brand_code: None` on the wire, then green
+again once restored.
+
+- **AC-1807** A MOCHA-branded product's photo miss, then "yes": the wire body has
+  `brand_code == "mocha"`, `agent_code == "general_enquiries"`,
+  `team_code == "marketing_product"`, and the REAL round-robin draw over a seeded
+  Marketing - Product team (Kia Yee tagged `mocha`, Tay Zhi Yang tagged
+  `sorento`+`cabana`) returns Kia Yee.
+- **AC-1808** Same journey, a SORENTO-branded product: the draw returns Tay Zhi Yang.
+
 ## Regression
 
 - **AC-1794** `SLA` body (`_sla_body`) on the acceptance turn carries the same

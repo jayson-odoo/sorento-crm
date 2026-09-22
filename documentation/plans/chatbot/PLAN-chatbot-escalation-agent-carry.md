@@ -170,6 +170,29 @@ Two changes, mirroring the agent carry exactly:
    `stated_brand` - the picked-member and company-pick arms are UNTOUCHED, because a
    SPECIFIC row's own brand must keep outranking a generic carry (AC-1806(d) pins this).
 
+## Round 5 (evidence, 22 Sep 2026): does the brand carry hold for a photo escalation?
+
+Owner asked whether round 4's carry also holds for a `product_attachment` (photo/
+drawing request) escalation, not just `incoming` - a different DOMAIN, a different
+team (`marketing_product`, not `purchasing`), a different agent
+(`general_enquiries`, not `incoming_stock_enquiries`), fetched through a different
+tool (`crm_master_product_attachments_list`, not the incoming-stock probe). Two new
+engine-replay tests, AC-1807/AC-1808, over a freshly seeded `Marketing - Product`
+team (Kia Yee = mocha, Tay Zhi Yang = every other brand - prod's own tagging, Charissa
+untagged and not reproduced here since two members already prove the narrowing).
+
+Both went GREEN on the first run - **no fix needed**. The attachment miss takes the
+SAME mint site round 1 already found and stamped for the incoming miss:
+`answer_bridge.py::_miss_question`'s escalate-catalog arm (the bare-"Yes" branch,
+since this journey names one team and one company). Confirmed load-bearing by
+temporarily reverting that ONE site's `brand_code` stamp and re-running both tests -
+both went red with `brand_code: None` on the wire body, exactly the pre-round-4
+symptom, then green again once restored. This is evidence, not a new mint site: the
+gate/mint-site coverage round 4 already built covers `product_attachment` for free,
+because `gate.py::run_gate`'s own `routing_brand` derivation and `_miss_question`'s
+escalate-catalog arm are BOTH domain-agnostic - neither reads `domain_hint` to decide
+whether to run.
+
 ## Non-goals
 
 - No change to `ESCALATION_TEAMS` / `SUGGESTED_TEAM_OPTIONS` (the dropdown holds
