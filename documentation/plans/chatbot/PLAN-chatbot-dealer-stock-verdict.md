@@ -341,6 +341,28 @@ the Phase 1 contract for S1 to S3 and is fixed before any backend code.
    `cabana_dealer`, `mocha_dealer`; mode `availability`; warehouses BRW + MWH (D12).
 3. Deploy with go; run the console YAML on prod per `chatbot-verification.md`.
 
+## Found by the live pass (22 Sep, three runs)
+
+Every unit, replay, presenter and CI gate was green and two reviews said READY before the one
+live pass ran; it failed 23 of 28 turns from causes no stub could see:
+
+1. `requested_quantities` never reached the backend: FastMCP pre-parses a JSON-looking string
+   argument into a dict before validation and the compiled tool's scalar-only union rejected it
+   (D28; fixed MCP-side in review round 4, `TOOL_OBJECT_QUERY_PARAMS`).
+2. The verdict sentence lived only in the presenter item `title`, which the shared composer never
+   printed (review round 3: `_item_line` falls back to the title; the numbered list is
+   suppressed while any product still needs a quantity).
+3. The same product code in two of the dealer's companies produced two entries and a doubled
+   question (D27; review round 5).
+4. The block never reached the engine: the presenter built the sentence from `stock_availability`
+   and dropped it from the render envelope, so no task survived a turn while every reply looked
+   right (D30; review round 6, `_PASSTHROUGH_KEYS`). Six task-seam rules were then pinned from
+   the real traces (fill never drops open slots, ask order kept, exact code for a quantity-bearing
+   entity D29, `demand_qty` on open, resume makes no call, close clears the products axis).
+
+The lesson is recorded in `LESSONS-LEARNT.md`: a new MCP tool parameter needs a test through the
+COMPILED tool with the real value shape, and a chatbot lane keeps its one live pass at the end.
+
 ## Risks
 
 - Until the prompt is published, only single-product asks capture a quantity (the D13 fallback).
