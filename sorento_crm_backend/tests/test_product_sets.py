@@ -146,10 +146,16 @@ def test_ac_c1_migration_creates_both_tables_explicitly():
     """
     from pathlib import Path
 
+    # CI (fix round, security review): a bare glob has no defined order, and three
+    # files match `*product_sets*.py` (this one plus two later merge revisions that
+    # only mention the name) - `migrations[0]` picked whichever the directory listing
+    # happened to return first, which changed with directory order on CI shard 3 and
+    # went red on a file that creates no table at all. `411_product_sets.py` is the
+    # ONE migration that actually issues the DDL this test is about, named explicitly.
     versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    migrations = list(versions.glob("*product_sets*.py"))
-    assert migrations, "no product-sets migration found in alembic/versions"
-    source = migrations[0].read_text()
+    migration = versions / "411_product_sets.py"
+    assert migration.exists(), f"expected migration missing: {migration}"
+    source = migration.read_text()
     assert 'op.create_table(\n        "product_sets"' in source or \
            "op.create_table(\n        'product_sets'" in source, "product_sets not created explicitly"
     assert "product_set_members" in source
