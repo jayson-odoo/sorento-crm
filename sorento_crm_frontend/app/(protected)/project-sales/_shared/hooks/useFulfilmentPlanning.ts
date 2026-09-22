@@ -511,8 +511,9 @@ export function useLineDraftMutation() {
       proposed?: BoardSource[];
     }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
     onSuccess: (saved, { key }) => {
-      // Read BEFORE the patch below: that write is what clears `covered` on this very row,
-      // so a read taken after it would never see the line as having BEEN covered.
+      // Read BEFORE the patch below: this read `covered` from the cache; it still shows the
+      // pre-reject value until the invalidation refetch lands, so a read taken after the
+      // patch would never see the line as having BEEN covered.
       const wasCovered = queryClient
         .getQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] })
         .some(([, board]) =>

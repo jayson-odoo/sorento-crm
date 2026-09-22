@@ -1165,7 +1165,9 @@ def test_a_rejection_with_the_reason_key_entirely_missing_is_also_refused(api):
     )
 
 
-def test_a_reason_given_reject_that_uncovers_nothing_is_refused_not_silently_written(api):
+def test_a_reason_given_reject_that_uncovers_nothing_is_refused_not_silently_written(
+    api, monkeypatch
+):
     """S1 (fix round 3, review): `save_draft` used to ignore `uncover_lines`' own return
     value. It answers `False` rather than raise when there is nothing left for it to do -
     which `_active_coverage` just said was NOT the case for this line - so a `False` here
@@ -1181,15 +1183,14 @@ def test_a_reason_given_reject_that_uncovers_nothing_is_refused_not_silently_wri
     db = world.db
     key = _contribution(_board(client, core_so), core_so.so_number)["key"]
     _confirm_full_qty(client, world, order, line)
-    original = ProjectSupplyService.uncover_lines
-    ProjectSupplyService.uncover_lines = lambda self, *args, **kwargs: False
-    try:
-        response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
-    finally:
-        ProjectSupplyService.uncover_lines = original
+    monkeypatch.setattr(
+        ProjectSupplyService, "uncover_lines", lambda self, *args, **kwargs: False
+    )
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
 
     assert response.status_code == 409, response.text
-    assert response.json()["code"] == "board_line_already_confirmed"
+    assert response.json()["code"] == "board_line_confirmation_moved"
     assert (
         db.query(SOSupplyDecisionDraft)
         .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
@@ -1500,9 +1501,10 @@ def test_rejecting_the_only_covered_line_leaves_a_sibling_lines_live_row_alone(a
     """B2 (fix round 3, review): a kill-test gap - every test above this one is a
     one-line-one-row order, so nothing ever pinned `so_line_id.in_(only_line_ids)` itself
     with a SECOND line's row in play. Two-line order, only line 1 confirmed as Buy (the
-    ONLY covered line - `uncover_lines`' whole-revision branch), line 2 carries its own
-    live raised row from a source that never covered it (a book-change reaction, the same
-    shape B1 guards). Rejecting line 1 must retire only line 1's own row."""
+    ONLY covered line - `uncover_lines`' whole-revision branch); line 2 carries its own
+    live raised row stamped with the SAME decision id as line 1's, so `supply_decision_id
+    == decision.id` alone would not exclude it - only the `so_line_id.in_(only_line_ids)`
+    filter does. Rejecting line 1 must retire only line 1's own row."""
     from app.models.project_so import IV_ORDER, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiryRow
 
     client, world = api
@@ -1531,7 +1533,7 @@ def test_rejecting_the_only_covered_line_leaves_a_sibling_lines_live_row_alone(a
         qty=Decimal("3"),
         verb=IV_ORDER,
         state=INQUIRY_RAISED,
-        supply_decision_id=None,
+        supply_decision_id=line_1_row.supply_decision_id,
         note="Was 2, now 5",
     )
     db.add(line_2_row)

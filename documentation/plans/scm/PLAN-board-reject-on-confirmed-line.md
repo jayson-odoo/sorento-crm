@@ -153,11 +153,15 @@ vitest, `BoardLineDecisionPanel.test.tsx` (flip AC-F1, add):
   alongside the decision's own row -
   `test_rejecting_a_covered_line_does_not_retire_a_book_change_row_on_the_same_line`.
 - B2 (kill-test gap): every test up to this round was a one-line-one-row order, so nothing
-  pinned `so_line_id.in_(only_line_ids)` itself with a second line's row in play -
+  pinned `so_line_id.in_(only_line_ids)` itself with a second line's row in play - line 2's
+  row carries the SAME decision id as line 1's, so only the line filter (not the decision-id
+  predicate) excludes it -
   `test_rejecting_the_only_covered_line_leaves_a_sibling_lines_live_row_alone`.
 - S1: `save_draft` ignored `uncover_lines`' own return value; `False` (nothing left to
-  uncover) now raises the same 409 `board_line_already_confirmed` rather than falling
-  through to a 200 that wrote a `rejected` draft over a still-covered line -
+  uncover) now raises a 409 `board_line_confirmation_moved` (nit, review: its own code and
+  sentence, not `board_line_already_confirmed`'s "...reject it with a reason..." - the
+  caller just did) rather than falling through to a 200 that wrote a `rejected` draft over
+  a still-covered line -
   `test_a_reason_given_reject_that_uncovers_nothing_is_refused_not_silently_written`.
 - S2: `save_line_draft` now runs `_assert_can_act_on` (Confirm's own per-project check)
   when the verdict is `rejected` AND the line is covered - the branch that reaches

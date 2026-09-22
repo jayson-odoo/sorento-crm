@@ -63,6 +63,17 @@ CONFIRMED_LINE_MESSAGE = (
     "reject it with a reason, or undo the confirmation."
 )
 
+#: S1's own 409 (fix round 3, review, nit): `CONFIRMED_LINE_MESSAGE` reads "...reject it
+#: with a reason..." which is wrong here - the caller JUST rejected it with a reason, and
+#: `uncover_lines` still answered `False`. Its own code and sentence instead, naming the
+#: race (a reconfirm elsewhere ran between `_active_coverage`'s read and this write) rather
+#: than steering the planner back into the reject they already tried.
+BOARD_LINE_CONFIRMATION_MOVED_CODE = "board_line_confirmation_moved"
+BOARD_LINE_CONFIRMATION_MOVED_MESSAGE = (
+    "This line's confirmation moved while you were deciding. Reload the board and try "
+    "again."
+)
+
 #: The CORE sales order line a draft belongs to (C2, code review round 4). None of the
 #: contribution key's own four parts is durable - `line_no` is positional whenever the
 #: order's lines are not all mirrored, and `bucket_key` moves with the board's granularity
@@ -306,12 +317,13 @@ def save_draft(
                 # elsewhere). `_active_coverage` just said this line WAS covered, so a
                 # `False` here means the two disagree - falling through would write a
                 # `rejected` draft over a line the board still reads as Confirmed, and the
-                # route would answer 200 for a reject that changed nothing. The same 409 a
-                # plain non-`rejected` verdict gets on a covered line.
+                # route would answer 200 for a reject that changed nothing. Its own code and
+                # message (nit, fix round 3, review): `CONFIRMED_LINE_MESSAGE` reads "...
+                # reject it with a reason..." which is wrong here - the caller just did.
                 raise AppException(
                     status_code=409,
-                    message=CONFIRMED_LINE_MESSAGE,
-                    code="board_line_already_confirmed",
+                    message=BOARD_LINE_CONFIRMATION_MOVED_MESSAGE,
+                    code=BOARD_LINE_CONFIRMATION_MOVED_CODE,
                 )
             # The line is uncovered now - falls through to the ordinary draft upsert below,
             # exactly as an uncovered line's rejection already saves.
