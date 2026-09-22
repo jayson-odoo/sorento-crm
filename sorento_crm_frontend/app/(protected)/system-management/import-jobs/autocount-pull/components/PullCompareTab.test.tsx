@@ -199,3 +199,177 @@ describe('PullCompareTab - differences export (captain ruling, Phase 3 fix round
     expect((rows as Array<Record<string, unknown>>)[0].pull).toBe('12.00');
   });
 });
+
+describe('PullCompareTab - booleans and human field labels (CT-1, CT-5)', () => {
+  it('an is_active difference shows Active / Inactive in both cells and their titles, never true/false', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'active.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 1, matched: 0, different: 1, only_in_excel: 0, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'is_active', excel: true, pull: false },
+        ],
+        only_in_excel: [], only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    // "Active" renders twice - the Difference column's field label AND the excel cell's value.
+    expect(await screen.findAllByText('Active')).toHaveLength(2);
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    expect(screen.getByTitle('Active')).toBeInTheDocument();
+    expect(screen.getByTitle('Inactive')).toBeInTheDocument();
+    expect(screen.queryByText('true')).not.toBeInTheDocument();
+    expect(screen.queryByText('false')).not.toBeInTheDocument();
+  });
+
+  it('the Difference column shows human labels for every known field', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'fields.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 1, matched: 0, different: 1, only_in_excel: 0, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'item_group', excel: 'A', pull: 'B' },
+        ],
+        only_in_excel: [], only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    expect(await screen.findByText('Item Group')).toBeInTheDocument();
+    expect(screen.queryByText('item_group')).not.toBeInTheDocument();
+  });
+});
+
+describe('PullCompareTab - headline names both counts (CT-2)', () => {
+  it('N items differ (M differences) when an item differs on more than one field', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'multi.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 2, matched: 0, different: 2, only_in_excel: 0, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'price', excel: '1', pull: '2' },
+          { item_code: 'SRT-1', field: 'item_group', excel: 'A', pull: 'B' },
+          { item_code: 'SRT-2', field: 'price', excel: '3', pull: '4' },
+        ],
+        only_in_excel: [], only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    expect(await screen.findByText(/2 items differ \(3 differences\)/)).toBeInTheDocument();
+  });
+
+  it('just "N items differ" when every differing item differs on exactly one field', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'single.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 1, matched: 0, different: 1, only_in_excel: 0, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'price', excel: '1', pull: '2' },
+        ],
+        only_in_excel: [], only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    expect(await screen.findByText(/^1 items differ\.?$/)).toBeInTheDocument();
+    expect(screen.queryByText(/differences\)/)).not.toBeInTheDocument();
+  });
+});
+
+describe('PullCompareTab - only-in rows in the grid (CT-3, CT-4)', () => {
+  it('lists only_in_excel and only_in_pull codes as grid rows with the right labels, and recordCount covers all of them', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'onlyin.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 1, matched: 0, different: 1, only_in_excel: 1, only_in_pull: 1,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'price', excel: '1', pull: '2' },
+        ],
+        only_in_excel: ['SRT-2'],
+        only_in_pull: ['SRT-3'],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    expect(await screen.findByText('SRT-2')).toBeInTheDocument();
+    expect(screen.getByText('Only in your Excel')).toBeInTheDocument();
+    expect(screen.getByText('SRT-3')).toBeInTheDocument();
+    expect(screen.getByText('Only in AutoCount')).toBeInTheDocument();
+    // Present/Missing appear twice each (once per only-in row's excel/pull cell).
+    expect(screen.getAllByText('Present')).toHaveLength(2);
+    expect(screen.getAllByText('Missing')).toHaveLength(2);
+  });
+
+  it('splits a stock code|location only-in label into Item Code and Location columns', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'stock-onlyin.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 0, matched: 0, different: 0, only_in_excel: 1, only_in_pull: 0,
+        },
+        differences: [],
+        only_in_excel: ['SRT-9|MAIN-WH'],
+        only_in_pull: [],
+      }),
+    );
+
+    renderTab('stock_balances');
+    await dropFile();
+
+    expect(await screen.findByText('SRT-9')).toBeInTheDocument();
+    expect(screen.getByText('MAIN-WH')).toBeInTheDocument();
+  });
+
+  it('the download carries the same combined + formatted rows the grid shows', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'download.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 1, matched: 0, different: 1, only_in_excel: 1, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'is_active', excel: true, pull: false },
+        ],
+        only_in_excel: ['SRT-2'],
+        only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+    await screen.findByText('SRT-2');
+
+    fireEvent.click(screen.getByRole('button', { name: /Download differences/i }));
+
+    expect(generateExcelFile).toHaveBeenCalledTimes(1);
+    const [rows] = generateExcelFile.mock.calls[0];
+    const typedRows = rows as Array<Record<string, unknown>>;
+    expect(typedRows).toHaveLength(2);
+    expect(typedRows[0]).toMatchObject({ item_code: 'SRT-1', field: 'Active', excel: 'Active', pull: 'Inactive' });
+    expect(typedRows[1]).toMatchObject({
+      item_code: 'SRT-2', field: 'Only in your Excel', excel: 'Present', pull: 'Missing',
+    });
+  });
+});
