@@ -255,10 +255,26 @@ export function FulfilmentBoardListView({
                 : undefined,
         rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
+      // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13): the leftmost column, split out
+      // of the "Sales order" cell's own `(Line N)` suffix below - AutoCount's own line
+      // number, sortable on its own. The rows already ARRIVE in this order (`orderListRows`,
+      // `FulfilmentBoardPanel`'s own `listContributions`), so no `sorting` state is seeded
+      // here - the caller's own order IS the default (`PanelDataGrid`'s own contract).
+      {
+        id: 'line',
+        accessorFn: (row) => row.line_no,
+        header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
+        cell: ({ row }) => (
+          <span className="block tabular-nums">{row.original.line_no}</span>
+        ),
+        size: 70,
+        minSize: 60,
+        enableSorting: true,
+      },
       {
         id: 'so_number',
         accessorFn: (row) => row.so_number,
-        header: 'Sales order',
+        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           const body = (
@@ -276,20 +292,14 @@ export function FulfilmentBoardListView({
                     aria-hidden
                   />
                 )}
-                {/* ONE line, the line number folded in beside the sales order number
-                    (AC-C13, owner feedback 13 September 2026: "SOxxx (Line 1), so each row
-                    is thinner"). Two STACKED lines made every row two text lines tall for a
-                    fact that fits beside the first. Two spans rather than one string: the
-                    order number is what a reader scans for and what a search matches, and
-                    the line is a quieter qualifier of it. */}
+                {/* S6 (AC-B6-13/AC-B6-14): the number ONLY now - the line it carried
+                    (AC-C13) moved into its own leftmost column above, so repeating it here
+                    would say it twice on the same row. */}
                 <span
                   className="truncate text-sm font-medium tabular-nums"
-                  title={`${contribution.so_number} (Line ${contribution.line_no})`}
+                  title={contribution.so_number}
                 >
                   {contribution.so_number}
-                </span>{' '}
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {`(Line ${contribution.line_no})`}
                 </span>
                 {/* The same tick the grid puts on a fully-decided cell, here per row: one
                     row IS one contribution, so it is decided or it is not. */}
@@ -299,9 +309,17 @@ export function FulfilmentBoardListView({
               </div>
             </div>
           );
-          return contribution.sales_order_id ? (
+          // S6 (AC-B6-3/AC-B6-14): lands on this exact line of the sales order's own Lines
+          // tab. `line_id` is already the CORE sales-order line id (its own doc comment,
+          // `fulfilmentPlanning.types.ts`) - no backend change needed for this one.
+          const href = contribution.sales_order_id
+            ? `/scm/sales-orders/${contribution.sales_order_id}${
+                contribution.line_id ? `?tab=lines&line=${contribution.line_id}` : ''
+              }`
+            : null;
+          return href ? (
             <Link
-              href={`/scm/sales-orders/${contribution.sales_order_id}`}
+              href={href}
               onClick={(event) => event.stopPropagation()}
               className="block min-w-0 hover:underline"
             >
@@ -313,9 +331,10 @@ export function FulfilmentBoardListView({
         },
         size: 150,
         minSize: 120,
-        // `sortable` turns on to give the Verdict column below its own sort (AC-7); every
-        // OTHER column opts back out so the reading order nobody asked to change stays put.
-        enableSorting: false,
+        // S6 (AC-B6-13): sortable now, so it can carry the default sort alongside Line -
+        // every OTHER column stays `enableSorting: false` so the reading order nobody
+        // asked to change stays put.
+        enableSorting: true,
         meta: {
           // The SAME editor the cell breakdown expands, so a decision reads and is taken
           // identically whichever way the planner came at the line - the per-location
@@ -405,6 +424,44 @@ export function FulfilmentBoardListView({
         },
         size: 140,
         minSize: 110,
+        enableSorting: false,
+      },
+      // S6 (AC-B6-15): the live OI row this line raised, linking straight to it. A line
+      // with no live row - nothing raised, or the row it raised has since settled/gone -
+      // reads a plain dash, never a guess.
+      {
+        id: 'order_inquiry',
+        accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
+        header: 'OI',
+        cell: ({ row }) => {
+          const inquiry = row.original.order_inquiry;
+          if (!inquiry?.inquiry_no) return <span className="text-muted-foreground">-</span>;
+          // `inquiry_id`/`row_id` are the fields the backend has not sent yet (S6 BE half,
+          // not yet built, documented on `BoardLineOrderInquiry`) - plain text until then.
+          const href =
+            inquiry.inquiry_id && inquiry.row_id
+              ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`
+              : null;
+          if (!href) {
+            return (
+              <span className="block truncate tabular-nums" title={inquiry.inquiry_no}>
+                {inquiry.inquiry_no}
+              </span>
+            );
+          }
+          return (
+            <Link
+              href={href}
+              onClick={(event) => event.stopPropagation()}
+              className="block truncate tabular-nums text-primary hover:underline"
+              title={inquiry.inquiry_no}
+            >
+              {inquiry.inquiry_no}
+            </Link>
+          );
+        },
+        size: 120,
+        minSize: 100,
         enableSorting: false,
       },
       {

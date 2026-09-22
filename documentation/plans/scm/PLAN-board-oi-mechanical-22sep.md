@@ -1,7 +1,8 @@
 # PLAN - Board + OI mechanical fixes (lane B)
 
-Status: planned, round 2 after owner markup (22 Sep 2026); S5 wording choice pending. Track:
-normal lane (BE + FE, tests, one PR). UAC: `board-oi-mechanical-22sep-acceptance-criteria.md`.
+Status: in progress, owner go 22 Sep 2026 after three lavish rounds. Branch
+`feat/board-oi-mechanical`, worktree `sorento_crm-board-oi-mech`. Track: normal lane (BE + FE,
+tests, one PR). UAC: `board-oi-mechanical-22sep-acceptance-criteria.md`.
 
 Owner rulings, 22 Sep 2026 (chat + lavish round 1): grid shows exact delivery date, many
 columns fine, "By day" stays as a fourth option; a date move never makes a second row, settle

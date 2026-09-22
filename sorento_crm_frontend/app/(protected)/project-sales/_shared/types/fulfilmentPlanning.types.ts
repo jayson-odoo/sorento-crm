@@ -682,11 +682,13 @@ export interface FulfilmentPlanningListEnvelope {
 // ---------------------------------------------------------------------------
 
 /**
- * How the date axis is cut, as a calendar control: day, week or month (13.3, captain's
- * decision). Week is the default. Day renders a scrolling 30-day window rather than a column
- * per distinct date, because the book carries 349 of them.
+ * How the date axis is cut, as a calendar control: date, day, week or month (13.3, captain's
+ * decision; `date` added S1, PLAN-board-oi-mechanical-22sep.md, owner ruling 22 Sep 2026).
+ * `date` is the default: one column per distinct required date actually present, no calendar
+ * fill. `day` renders a scrolling 30-day window rather than a column per distinct date, because
+ * the book carries 349 of them - it stays available as its own option.
  */
-export type BoardGranularity = 'day' | 'week' | 'month';
+export type BoardGranularity = 'date' | 'day' | 'week' | 'month';
 
 /**
  * A column of the board. Every dated column is a real date, however far past (the captain,
@@ -1379,6 +1381,15 @@ export interface BoardLineOrderInquiry {
   inquiry_no?: string | null;
   /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
   state: string;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15, backend half not yet built): the
+   * inquiry HEADER's own id and this row's own OI row id, addressing the List view's
+   * "OI" column link (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`) -
+   * resolved server-side from the same `_row_id` the plan names. Both optional here until
+   * Phase 2 lands them; absent means the cell reads as plain text.
+   */
+  inquiry_id?: string | null;
+  row_id?: string | null;
   /**
    * The handshake (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
    * `rejected`. A different question from `state`, which says where the quantity sits.
