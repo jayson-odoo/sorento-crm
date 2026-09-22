@@ -625,7 +625,13 @@ def _run_console_media_turn(
         job_result = intake_facts.get("result") or {}
         media_text = job_result.get("rendered_text") or job_result.get("transcript") or None
         if media_status == "failed":
-            media_error = "This contact's media could not be read."
+            # `extraction_error` is the job's own raw error string, when the intake
+            # got as far as running an extraction that then failed - never shown to
+            # a real customer (whose reply stays the friendly `wording.nothing_read`/
+            # `voice_unclear` text), but this IS the console's own diagnostic surface,
+            # so the plain generic sentence is only the fallback for a denial that
+            # never ran an extraction at all (gate/quota/burst/no-url).
+            media_error = intake_facts.get("extraction_error") or "This contact's media could not be read."
             media_text = None
 
     return ConsoleTurnResult(

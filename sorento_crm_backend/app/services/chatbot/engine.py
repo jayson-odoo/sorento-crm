@@ -1242,16 +1242,24 @@ def _run_stages(  # noqa: PLR0915
     # -- MEDIA INTAKE (NO DB SESSION IS OPEN HERE, same window as the parser) --- #
     if media_detected is not None:
         modality, attachment = media_detected
-        caption = jsc.js_string(jsc.get(attachment, "description")) or None
-        outcome = media_intake.run(
-            respond_io_id=contact_respond_id,
-            message_id=_message_id(envelope),
-            modality=modality,
-            attachment=attachment,
-            caption=caption,
-            turn_id=turn_id,
-            session_factory=session_factory,
-        )
+        if attachment and not jsc.truthy(jsc.get(attachment, "url")):
+            # AC-107/H5, restated (captain ruling 23 Sep 2026): a REAL attachment
+            # (non-empty - the transition-window marker case below always hands
+            # detect() an empty `{}`) whose own `url` is falsy is unreadable, not
+            # a plain-text fallthrough. Never reaches `run()`'s decide/meter/
+            # enqueue pipeline - nothing to fetch, so no ledger row, no job.
+            outcome = media_intake.no_url_outcome(modality)
+        else:
+            caption = jsc.js_string(jsc.get(attachment, "description")) or None
+            outcome = media_intake.run(
+                respond_io_id=contact_respond_id,
+                message_id=_message_id(envelope),
+                modality=modality,
+                attachment=attachment,
+                caption=caption,
+                turn_id=turn_id,
+                session_factory=session_factory,
+            )
         media_box["outcome"] = outcome
         turn_trace.record(
             "media_intake",
@@ -1280,6 +1288,29 @@ def _run_stages(  # noqa: PLR0915
                         "dry_run": dry_run,
                     },
                 ]
+            # A media-denied turn never reaches `_run_answer`/`_record_memory_trace`
+            # (there is no `Answer` object - it closed before APPLY even ran), so those
+            # two stage records are written directly here, in the same minimal shape,
+            # so the trace still reads received -> media_intake -> replied -> remembered
+            # like every other declared branch kind (AC-007, captain ruling 23 Sep 2026).
+            turn_trace.record(
+                "replied",
+                summary=f"Replied: {reply_text}" if reply_text else "Sent no reply; the burst repeat stayed silent.",
+                why="The reply is the media intake's own denial text, never the customer's words.",
+                facts={"lane": "media_denied", "sections": 0, "asking": None, "files": 0},
+                raw={"reply": {"text": reply_text}},
+            )
+            turn_trace.record(
+                "remembered",
+                summary=(
+                    "Nothing was written: this is a test turn (D14)."
+                    if dry_run
+                    else "Nothing changed in what the bot remembered."
+                ),
+                why="A media-denied turn never reached APPLY, so there is no state to write.",
+                facts={"written": False, "dry_run": dry_run},
+                raw=None,
+            )
             with _session(session_factory) as close_db:
                 _close_turn(
                     close_db,
@@ -2971,6 +3002,8 @@ def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, A
         facts["attachment_id"] = outcome.attachment_id
     if outcome.attachment_error:
         facts["attachment_error"] = outcome.attachment_error
+    if outcome.extraction_error:
+        facts["extraction_error"] = outcome.extraction_error
     return facts
 
 

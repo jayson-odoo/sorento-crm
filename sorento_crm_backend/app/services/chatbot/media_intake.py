@@ -74,6 +74,11 @@ class MediaIntakeOutcome:
     attachment_id: str | None = None
     attachment_error: str | None = None
     max_entities: int = 10
+    # The extraction job's OWN error string (`MediaExtractionJob.error`), never shown
+    # to the customer - `reply_text` is the friendly wording for that. Read by the
+    # console's diagnostic `media_error` field only (`console_service.py`); a real
+    # WhatsApp turn has no equivalent surface and never reads this.
+    extraction_error: str | None = None
 
 
 def detect(inner_message: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
@@ -82,14 +87,22 @@ def detect(inner_message: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
 
     Returns `(modality, attachment)` - `modality` is `"image"` or `"voice"`,
     `attachment` is the raw attachment dict (`{}` for the transition-window
-    shape below, which carries no attachment at all). `None` when nothing here
-    is this step's concern - a document, a video, a sticker with no url, or a
-    plain text message.
+    shape below, which carries no attachment at all; NON-empty, with no `url`
+    key, for the no-url case below). `None` when nothing here is this step's
+    concern at all - a document, a video, a sticker, or a plain text message.
+
+    An image/audio attachment with NO url is still detected here, deliberately
+    (AC-107/H5, restated for this pipeline, captain ruling 23 Sep 2026): it is
+    UNREADABLE, not a plain-text turn - `engine.py` tells this apart from the
+    two cases above by whether the returned `attachment` is non-empty AND its
+    own `url` is falsy, and answers with `no_url_outcome()` below instead of
+    ever calling `run()` - no ledger row, no job, no worker call, since there
+    is nothing to fetch.
     """
     attachment = jsc.get(inner_message, "attachment") or {}
     attachment_type = jsc.get(attachment, "type")
     modality = _ATTACHMENT_KIND_TO_MODALITY.get(attachment_type)
-    if modality and jsc.truthy(jsc.get(attachment, "url")):
+    if modality:
         return modality, attachment
 
     # AC-1805: n8n's transition-window shape - already patched to `type: "text"`
@@ -107,6 +120,23 @@ def detect(inner_message: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
         if modality:
             return modality, {}
     return None
+
+
+def no_url_outcome(modality: str) -> MediaIntakeOutcome:
+    """AC-107/H5, restated for this pipeline (captain ruling 23 Sep 2026): an
+    image/audio attachment that DECLARES its type but carries no url never
+    reaches decide/meter/enqueue - there is nothing to fetch, so no ledger row,
+    no job, no worker call. Same terminal shape as a completed job that failed
+    the extraction (AC-1813): `media_denied`, turn failed, Retry.
+    """
+    return MediaIntakeOutcome(
+        modality=modality,
+        decision="no_url",
+        status="failed",
+        stops_here=True,
+        turn_status="failed",
+        reply_text=wording.nothing_read() if modality == "image" else wording.voice_unclear(),
+    )
 
 
 def _build_request(
@@ -258,6 +288,7 @@ def run(
             reply_text=reply_text,
             job_id=fast.job_id,
             elapsed_ms=elapsed_ms,
+            extraction_error=snapshot.get("error"),
         )
 
     result = snapshot.get("result") or {}
