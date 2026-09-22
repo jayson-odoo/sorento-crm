@@ -616,9 +616,12 @@ export default function RespondChatList({
   // The enquiry bubble is scrolled to ONCE per highlighted message, not on every
   // render that changes the item count: the drawer always passes a highlight id,
   // so re-running this on each prepended page (or each live poll) dragged the
-  // reader back to the enquiry every time they scrolled up. The item count stays
-  // in the deps because the target bubble mounts asynchronously - the ref, not
-  // the dependency list, is what makes it fire once.
+  // reader back to the enquiry every time they scrolled up. `sortedItems` (the
+  // array itself, not just its length) stays in the deps because the target
+  // bubble mounts asynchronously - the ref, not the dependency list, is what
+  // makes it fire once. B1: `.length` alone missed a same-size window swap (an
+  // `around` page replacing the old one) - the array reference always changes
+  // when the window's contents do, even when the count does not.
   const didHighlight = useRef<string | null>(null);
   useEffect(() => {
     if (activeMatchId || !normalizedHighlightId) return;
@@ -627,7 +630,7 @@ export default function RespondChatList({
     if (!node) return;
     didHighlight.current = normalizedHighlightId;
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
-  }, [sortedItems.length, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
+  }, [sortedItems, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
 
   // Whether this thread has been landed on its tail yet. The slack check below
   // exists so a reader who scrolled up to read history is not yanked back on
@@ -691,7 +694,8 @@ export default function RespondChatList({
       behavior: 'smooth',
       block: 'center',
     });
-  }, [activeMatchId, sortedItems.length, scrollBubbleIntoView]);
+    // B1: `sortedItems` itself, not `.length` - see the highlight effect above.
+  }, [activeMatchId, sortedItems, scrollBubbleIntoView]);
 
   // In-flight latch for the older lane. A ref, not the `isLoadingOlder` prop:
   // scroll fires many times per frame and the prop only arrives a render later,
@@ -776,10 +780,14 @@ export default function RespondChatList({
     [scrollBubbleIntoView],
   );
 
-  // AC-N6: an external jump (the drawer's quoted enquiry). The nonce is the
-  // trigger, and it is only marked handled once the bubble EXISTS - after an
-  // around-page load the target mounts a render or two later, so the effect
-  // re-runs on the item count until it can actually scroll.
+  // AC-N6 / R4: an external jump (the drawer's quoted enquiry, or a reply-to
+  // quote whose target was outside the window). The nonce is the trigger, and
+  // it is only marked handled once the bubble EXISTS - after an around-page
+  // load the target mounts a render or two later, so the effect re-runs on
+  // `sortedItems` (not just its length: B1) until it can actually scroll.
+  // `focusNonce` is set ONCE, synchronously, before the fetch resolves; the
+  // page that lands afterwards is a separate prop update that does NOT bump it
+  // again, so `sortedItems.length` alone missed a same-size window swap.
   const handledFocusNonce = useRef(0);
   useEffect(() => {
     if (!focusNonce || focusNonce === handledFocusNonce.current) return;
@@ -789,7 +797,7 @@ export default function RespondChatList({
     handledFocusNonce.current = focusNonce;
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
     setFlashMessageId(focusMessageId);
-  }, [focusNonce, focusMessageId, sortedItems.length, scrollBubbleIntoView]);
+  }, [focusNonce, focusMessageId, sortedItems, scrollBubbleIntoView]);
 
   // Clear the flash ring after it has been seen. Reset on every new target so a
   // second jump re-flashes instead of inheriting the first one's timer.

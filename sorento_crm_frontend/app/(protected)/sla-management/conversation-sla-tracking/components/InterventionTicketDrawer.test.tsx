@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import InterventionTicketDrawer from './InterventionTicketDrawer';
@@ -792,44 +792,84 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
   // R2: the enquiry quote is one truncated line by default, with a Show
   // more/less toggle that never shrinks the thread panel's flex share.
   describe('enquiry quote clamp (AC-CP-1..4)', () => {
-    it('AC-CP-1: a short quote renders on one line, with no toggle', async () => {
+    // S1: jsdom never computes real layout (scrollWidth/clientWidth are both
+    // 0), so "does this line actually overflow" is stubbed per test instead
+    // of guessed from string length - the same substitution RespondChatList's
+    // own scroll-back suite uses for scrollHeight. Restored after every test.
+    let restoreQuoteOverflow: (() => void) | null = null;
+    afterEach(() => {
+      restoreQuoteOverflow?.();
+      restoreQuoteOverflow = null;
+    });
+    function stubQuoteOverflow(clamped: boolean) {
+      const scrollWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+      const clientWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        configurable: true,
+        get: () => (clamped ? 200 : 100),
+      });
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get: () => 100,
+      });
+      restoreQuoteOverflow = () => {
+        if (scrollWidthDesc) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidthDesc);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+        if (clientWidthDesc) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidthDesc);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+      };
+    }
+
+    it('AC-CP-1: an unclamped quote renders on one line, with no toggle', async () => {
+      stubQuoteOverflow(false);
       const shortText = 'A'.repeat(40);
       useInterventionTicket.mockReturnValue(
         mockQuery(makeTicket({ source_message_text: shortText })),
       );
       renderDrawer();
 
-      const quote = await screen.findByTestId('enquiry-quote-jump');
+      const quote = await screen.findByTestId('enquiry-quote-text');
       expect(quote).toHaveTextContent(shortText);
       expect(quote.className).toContain('truncate');
       expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
+      // The jump button is a SIBLING of the text, never a wrapper around it
+      // (S1 nit) - it still exists and still carries no text of its own.
+      expect(screen.getByTestId('enquiry-quote-jump')).not.toHaveTextContent(shortText);
     });
 
-    it('AC-CP-2: a long quote truncates to one line with the full text as its title, and the toggle expands/collapses it', async () => {
+    it('AC-CP-2: a clamped quote truncates to one line with the full text as its title, and the toggle expands/collapses it', async () => {
+      stubQuoteOverflow(true);
       const longText = 'B'.repeat(1500);
       useInterventionTicket.mockReturnValue(
         mockQuery(makeTicket({ source_message_text: longText })),
       );
       renderDrawer();
 
-      const quote = await screen.findByTestId('enquiry-quote-jump');
+      const quote = await screen.findByTestId('enquiry-quote-text');
       expect(quote).toHaveAttribute('title', longText);
       expect(quote.className).toContain('truncate');
 
       const toggle = screen.getByTestId('enquiry-quote-toggle');
       expect(toggle).toHaveTextContent('Show more');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
       fireEvent.click(toggle);
       expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show less');
-      expect(screen.getByTestId('enquiry-quote-jump').className).toContain('max-h-40');
-      expect(screen.getByTestId('enquiry-quote-jump').className).toContain('overflow-y-auto');
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByTestId('enquiry-quote-text').className).toContain('max-h-40');
+      expect(screen.getByTestId('enquiry-quote-text').className).toContain('overflow-y-auto');
+      // S1 nit: no `title` once expanded - the full text is already on screen.
+      expect(screen.getByTestId('enquiry-quote-text')).not.toHaveAttribute('title');
 
       fireEvent.click(screen.getByTestId('enquiry-quote-toggle'));
       expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show more');
-      expect(screen.getByTestId('enquiry-quote-jump').className).toContain('truncate');
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByTestId('enquiry-quote-text').className).toContain('truncate');
+      expect(screen.getByTestId('enquiry-quote-text')).toHaveAttribute('title', longText);
     });
 
     it('AC-CP-3: expanding the quote does not change the thread panel props', async () => {
+      stubQuoteOverflow(true);
       const longText = 'C'.repeat(1500);
       useInterventionTicket.mockReturnValue(
         mockQuery(makeTicket({ source_message_text: longText })),
@@ -845,6 +885,7 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
     });
 
     it('AC-CP-4: an empty quote falls back to the neutral label, with no toggle', async () => {
+      stubQuoteOverflow(false);
       useInterventionTicket.mockReturnValue(mockQuery(makeTicket({ source_message_text: '  ' })));
       renderDrawer();
 
@@ -852,6 +893,20 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
         expect(screen.getByText('No enquiry text captured.')).toBeInTheDocument(),
       );
       expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
+    });
+
+    it('S1: a mid-length quote that DOES overflow at the current width still offers the toggle, even under the old 120-char guess', async () => {
+      // The 45-120 char band the old length threshold hid a toggle for
+      // (narrow viewport, or just a wide font) - the measured check catches it
+      // regardless of character count.
+      stubQuoteOverflow(true);
+      const midText = 'D'.repeat(80);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: midText })),
+      );
+      renderDrawer();
+
+      expect(await screen.findByTestId('enquiry-quote-toggle')).toBeInTheDocument();
     });
   });
 

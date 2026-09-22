@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
@@ -55,14 +55,6 @@ import ExtendDueDialog from './ExtendDueDialog';
 import ReassignDialog from './ReassignDialog';
 import TicketConversationPanel, { type TicketJumpRequest } from './TicketConversationPanel';
 import TicketSlaChips from './TicketSlaChips';
-
-/**
- * R2: the enquiry quote is one truncated line by default - above this many
- * characters it needs a "Show more" toggle to be read in full. A length
- * threshold rather than a measured overflow: jsdom (and a resize) cannot
- * measure real layout, and this keeps the rule simple and deterministic.
- */
-const ENQUIRY_QUOTE_CLAMP_CHARS = 120;
 
 interface InterventionTicketDrawerProps {
   ticketId: string | null;
@@ -130,6 +122,24 @@ export default function InterventionTicketDrawer({
     setEnquiryExpanded(false);
   }, [ticketId]);
 
+  // S1: whether the collapsed quote actually overflows its line - MEASURED,
+  // not a length guess, so a short-but-wide string (no spaces, a long link) or
+  // a font/zoom/column-width difference is not silently left with no way to
+  // read it in full. Only meaningful while collapsed: expanded text wraps
+  // instead of overflowing, so there is nothing to measure against.
+  //
+  // The node lives in `useState`, set by a CALLBACK ref, not a plain
+  // `useRef` read from a `useLayoutEffect` keyed on unrelated deps: the quote
+  // renders inside the Sheet's Radix portal, which mounts its children on a
+  // SEPARATE commit (its own internal "mounted" flag, flipped from ITS OWN
+  // effect) that never re-renders this component - a `useRef` would stay
+  // null through that commit and never get another chance to measure. A
+  // callback ref fires exactly when React attaches the node, on whichever
+  // commit that turns out to be, and setting state from it is what gives the
+  // measurement effect below a fresh dependency to re-run against.
+  const [isQuoteClamped, setIsQuoteClamped] = useState(false);
+  const [quoteTextNode, setQuoteTextNode] = useState<HTMLElement | null>(null);
+
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
   const ticket = ticketQuery.data;
 
@@ -179,10 +189,23 @@ export default function InterventionTicketDrawer({
 
   // R2: the enquiry quote text, clamped to one line unless expanded.
   const enquiryText = ticket?.source_message_text?.trim() || 'No enquiry text captured.';
-  const needsQuoteToggle = enquiryText.length > ENQUIRY_QUOTE_CLAMP_CHARS;
   const quoteClampClass = enquiryExpanded
     ? 'max-h-40 overflow-y-auto whitespace-pre-wrap break-words'
     : 'truncate';
+
+  // S1: measure the collapsed line for real overflow, once the node exists,
+  // whenever the ticket or its text changes, and on a resize - a length guess
+  // missed the 45-120 char band that renders on one CSS line at 1280px but
+  // wraps to (invisibly) more than one at 375px. Skipped while expanded: a
+  // wrapped, multi-line box has nothing to measure against, and re-armed once
+  // the reader collapses it again.
+  useLayoutEffect(() => {
+    if (enquiryExpanded || !quoteTextNode) return;
+    const measure = () => setIsQuoteClamped(quoteTextNode.scrollWidth > quoteTextNode.clientWidth);
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [quoteTextNode, ticketId, enquiryText, enquiryExpanded]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -334,45 +357,52 @@ export default function InterventionTicketDrawer({
             </div>
           ) : ticket ? (
             <div className="rounded-md border bg-muted/30 p-3">
-              {/* AC-N6 / R2: the quote is the way INTO the thread. Clicking the
-                  text scrolls to the message that started this ticket,
-                  fetching the surrounding page first when the reader has
-                  scrolled past it. Only a button when there is a message to
+              {/* AC-N6 / R2: the quote is the way INTO the thread - the leading
+                  icon is the jump control, clicking it scrolls to the message
+                  that started this ticket, fetching the surrounding page
+                  first when the reader has scrolled past it. It is a SIBLING
+                  of the quote text, never a wrapper around it: nesting the
+                  height-capped, scrollable expanded box inside a `<button>`
+                  meant a text-select drag inside it could still fire the
+                  jump on mouseup. Only a button when there is a message to
                   reach. Clamped to one line by default (AC-CP-1/2) so a long
                   enquiry cannot push the thread below its floor (AC-CP-3) - a
-                  separate "Show more" toggle expands it, height-capped and
-                  scrollable rather than pushing the panel further. */}
+                  separate "Show more" toggle expands it instead. */}
               <div className="flex items-start gap-2">
-                <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                {ticket.source_message_id ? (
+                  <button
+                    type="button"
+                    data-testid="enquiry-quote-jump"
+                    aria-label="Show this message in the conversation"
+                    onClick={() =>
+                      setJumpRequest((prev) => ({
+                        messageId: ticket.source_message_id,
+                        nonce: (prev?.nonce ?? 0) + 1,
+                      }))
+                    }
+                    className="mt-0.5 shrink-0 rounded text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <MessageSquareQuote className="size-4" />
+                  </button>
+                ) : (
+                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                )}
                 <div className="min-w-0 flex-1">
-                  {ticket.source_message_id ? (
-                    <button
-                      type="button"
-                      data-testid="enquiry-quote-jump"
-                      aria-label="Show this message in the conversation"
-                      title={enquiryText}
-                      onClick={() =>
-                        setJumpRequest((prev) => ({
-                          messageId: ticket.source_message_id,
-                          nonce: (prev?.nonce ?? 0) + 1,
-                        }))
-                      }
-                      className={cn(
-                        'block w-full rounded text-start text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/10',
-                        quoteClampClass,
-                      )}
-                    >
-                      {enquiryText}
-                    </button>
-                  ) : (
-                    <p title={enquiryText} className={cn('text-sm', quoteClampClass)}>
-                      {enquiryText}
-                    </p>
-                  )}
-                  {needsQuoteToggle && (
+                  <p
+                    ref={setQuoteTextNode}
+                    data-testid="enquiry-quote-text"
+                    // S1 nit: only useful while collapsed - a `title` on an
+                    // already-expanded, fully-readable box is dead weight.
+                    title={enquiryExpanded ? undefined : enquiryText}
+                    className={cn('text-sm', quoteClampClass)}
+                  >
+                    {enquiryText}
+                  </p>
+                  {(isQuoteClamped || enquiryExpanded) && (
                     <button
                       type="button"
                       data-testid="enquiry-quote-toggle"
+                      aria-expanded={enquiryExpanded}
                       className="mt-1 text-xs font-medium text-primary hover:underline"
                       onClick={() => setEnquiryExpanded((v) => !v)}
                     >

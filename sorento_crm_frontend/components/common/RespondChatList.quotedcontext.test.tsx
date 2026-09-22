@@ -196,6 +196,38 @@ describe('RespondChatList reply-to jump beyond the loaded window (AC-CP-8/9/10)'
     expect(onJumpToMessage).toHaveBeenCalledWith(targetId);
   });
 
+  it('AC-CP-9: once the fetch-back page lands, the target bubble is scrolled to even when the window is replaced by another SAME-SIZE page (B1)', () => {
+    // The caller's `useConversationThread.jumpToMessage` sets `focusNonce` ONCE,
+    // synchronously, before the around-page fetch resolves - the target is not
+    // in `items` yet on that render. The page then lands as a SEPARATE prop
+    // update (a same-size window replacing the old one, not appended to it),
+    // with focusNonce and focusMessageId both UNCHANGED. If the focus effect's
+    // dependency were `sortedItems.length` (50 in, 50 out), that second render
+    // would never re-fire it, and the bubble would never be reached.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    const targetMessageId = BASE_US - 999_000_000;
+    const targetId = String(targetMessageId);
+    const initialItems = Array.from({ length: 50 }, (_, i) => msg(i + 1));
+    // Same length (50), now containing the target in place of the first item -
+    // exactly the shape of an `around` page replacing the old window.
+    const pageItems = [msg(0, { messageId: targetMessageId }), ...initialItems.slice(1)];
+    expect(pageItems).toHaveLength(initialItems.length);
+
+    const { rerender } = render(
+      <RespondChatList items={initialItems} focusMessageId={targetId} focusNonce={1} />,
+    );
+    scrollIntoView.mockClear();
+
+    rerender(<RespondChatList items={pageItems} focusMessageId={targetId} focusNonce={1} />);
+
+    // The specific call shape the focus effect makes (`block: 'center'`)
+    // distinguishes it from the unrelated pin-to-bottom scroll, which never
+    // passes a `block` option.
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+  });
+
   it('AC-CP-9: without a fetch-back loader supplied, an out-of-window quote stays plain text (no dead button)', () => {
     const reply = msg(2, {
       message: { type: 'text', text: 'Still waiting on this' },
