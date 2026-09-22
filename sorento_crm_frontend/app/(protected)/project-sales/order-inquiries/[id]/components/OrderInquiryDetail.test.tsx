@@ -43,6 +43,39 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const acknowledgeFilterSpy = vi.fn(async () => ({ acknowledged: 0, results: [] }));
 const acknowledgeRowsSpy = vi.fn(async () => ({ acknowledged: 0, results: [] }));
 const autoPlaceSpy = vi.fn(async () => ({ linked: 0, results: [] }));
+// Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B1/AC-B5): Export Excel goes
+// async (My Downloads), never a blob save - and the gear gets a "Download history" item.
+const exportOrderInquiryXlsxSpy = vi.hoisted(() => vi.fn(async () => ({
+  id: 'dl-1', kind: 'order_inquiry_xlsx', status: 'pending', filename: 'OI-2609-0001.xlsx',
+})));
+
+const toastSpy = vi.hoisted(() => ({
+  success: vi.fn(), error: vi.fn(), warning: vi.fn(), dismiss: vi.fn(),
+}));
+vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
+
+const saveBlobAsSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../../_shared/services/fileDownload', () => ({
+  saveBlobAs: (...args: unknown[]) => saveBlobAsSpy(...args),
+  filenameFromContentDisposition: vi.fn(),
+}));
+
+const entityDownloadsButtonSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/components/my-downloads/EntityDownloadsButton', () => ({
+  EntityDownloadsButton: (props: {
+    entityType: string;
+    entityId: string;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
+    entityDownloadsButtonSpy(props);
+    return props.open ? (
+      <div data-testid="entity-downloads-dialog">
+        Downloads for {props.entityType}:{props.entityId}
+      </div>
+    ) : null;
+  },
+}));
 
 const HEADER: OrderInquiryHeaderDetail = {
   id: 'oi-1',
@@ -95,6 +128,8 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
       spos: [],
     })),
     listOrderInquiryHeaders: vi.fn(async () => ({ data: [], total: 0, page: 1, limit: 25 })),
+    exportOrderInquiryXlsx: (...args: unknown[]) =>
+      exportOrderInquiryXlsxSpy(...(args as [string])),
     acknowledgeOrderInquiryRowsByFilter: (...args: unknown[]) =>
       acknowledgeFilterSpy(...(args as [unknown])),
     acknowledgeOrderInquiryRows: (...args: unknown[]) =>
@@ -145,6 +180,11 @@ beforeEach(() => {
   autoPlaceSpy.mockClear();
   createPendingActionSpy.mockClear();
   cancelPendingActionSpy.mockClear();
+  exportOrderInquiryXlsxSpy.mockClear();
+  saveBlobAsSpy.mockClear();
+  entityDownloadsButtonSpy.mockClear();
+  toastSpy.success.mockClear();
+  toastSpy.error.mockClear();
   mockGetOrderInquiryHeader.mockReset();
   mockGetOrderInquiryHeader.mockResolvedValue(HEADER);
 });
@@ -252,5 +292,75 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
     await waitFor(() => expect(cancelPendingActionSpy).toHaveBeenCalledTimes(1));
     // The selection is untouched by Cancel - only a commit clears it.
     expect(checkbox).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Export Excel goes async, tied to this OI (Lane B, AC-B1/AC-B5)', () => {
+  function openGear() {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), {
+      button: 0,
+    });
+  }
+
+  it('Export Excel calls exportOrderInquiryXlsx(id) and toasts My Downloads, never saveBlobAs', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    openGear();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
+
+    await waitFor(() => expect(exportOrderInquiryXlsxSpy).toHaveBeenCalledWith('oi-1'));
+    await waitFor(() => expect(toastSpy.success).toHaveBeenCalled());
+    expect(toastSpy.success.mock.calls[0][0]).toMatch(/my downloads/i);
+    expect(saveBlobAsSpy).not.toHaveBeenCalled();
+  });
+
+  it('disables Export Excel while the export is pending', async () => {
+    let resolveExport: (v: unknown) => void = () => {};
+    exportOrderInquiryXlsxSpy.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveExport = resolve; }),
+    );
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    openGear();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
+
+    await waitFor(() => expect(exportOrderInquiryXlsxSpy).toHaveBeenCalled());
+    openGear();
+    const item = await screen.findByRole('menuitem', { name: /export excel/i });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+
+    resolveExport({
+      id: 'dl-1', kind: 'order_inquiry_xlsx', status: 'pending', filename: 'x.xlsx',
+    });
+    await waitFor(() => expect(toastSpy.success).toHaveBeenCalled());
+  });
+
+  it('shows an error toast when the export fails to start', async () => {
+    exportOrderInquiryXlsxSpy.mockRejectedValueOnce(new Error('An export is already queued'));
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    openGear();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
+
+    await waitFor(() => expect(toastSpy.error).toHaveBeenCalled());
+    expect(toastSpy.error.mock.calls[0][0]).toMatch(/already queued/i);
+  });
+
+  it('the gear offers "Download history", opening EntityDownloadsButton for this OI', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    openGear();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /download history/i }));
+
+    await waitFor(() =>
+      expect(entityDownloadsButtonSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'order_inquiry', entityId: 'oi-1', open: true }),
+      ),
+    );
+    expect(await screen.findByTestId('entity-downloads-dialog')).toBeInTheDocument();
   });
 });
