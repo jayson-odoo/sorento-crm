@@ -197,6 +197,7 @@ describe('SalesOrdersGrid: Plan selected is the primary CTA, Actions membership 
 
     await openActions();
     const items = screen.getAllByRole('menuitem').map((item) => item.textContent ?? '');
+    expect(items).toHaveLength(4);
     expect(items[0]).toContain('Upload sales orders');
     expect(items[1]).toContain('Add sales order');
     expect(items[2]).toContain('Reset planning');
