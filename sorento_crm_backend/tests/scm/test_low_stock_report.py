@@ -347,10 +347,13 @@ def test_workbook_has_two_sheets_in_order_with_16_columns(db):
         assert ws.freeze_panes == "A2", f"{name} is not frozen at A2"
         assert ws["A1"].fill.fgColor.rgb == "FF404040", f"{name} header is not styled"
 
+    # AC-A2 (PLAN-order-sheet-oi-reports-22sep.md, Lane A): the SPO number itself is
+    # dropped from this cell now - the container and the quantity are what a buyer acts
+    # on. `_last_in_text` prints "<container> - <qty>", never "<SPO> - <container> - <qty>".
     last_in_index = _EXPECTED_COLUMNS.index("Last in qty")
     all_rows = {r[0]: r for r in _rows_of(wb["All"])}
     assert all_rows[receipt_product.product_code][last_in_index] == (
-        "202608-S0084 - TLLU8306312 - 180"
+        "TLLU8306312 - 180"
     ), all_rows[receipt_product.product_code]
 
 

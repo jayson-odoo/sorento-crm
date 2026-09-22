@@ -415,11 +415,13 @@ def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
     ws = wb.active
 
     header = tuple(c.value for c in ws[1])
+    # AC-A7: "Last cost" sits immediately right of Supplier now (Lane A), so the 16
+    # columns this test used to pin are 17.
     assert header == (
         "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
         "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
-        "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
-        "Remarks",
+        "Supplier", "Last cost", "BRW PO qty", "BRW incoming qty", "Last in qty",
+        "Last in date", "Remarks",
     )
 
     rows_by_code = {r[0]: r for r in ws.iter_rows(min_row=2, values_only=True)}
@@ -443,11 +445,12 @@ def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
     )
 
 
-def test_export_pdf_html_header_cells_are_the_16_columns_in_order():
-    """Plan Slice 2 test 8: the PDF's own header row carries the same 16 columns, Suggested
-    qty and Suggestion immediately left of Order qty, nothing else moved. Reads
-    `_export_pdf_html` directly (as the existing S14 PDF tests do) - it only builds a
-    string, so this needs no Chromium round trip and nothing to skip."""
+def test_export_pdf_html_header_cells_are_the_17_columns_in_order():
+    """Plan Slice 2 test 8, extended by AC-A7 (Lane A): the PDF's own header row carries
+    the same columns, Suggested qty and Suggestion immediately left of Order qty, "Last
+    cost" immediately right of Supplier, nothing else moved. Reads `_export_pdf_html`
+    directly (as the existing S14 PDF tests do) - it only builds a string, so this needs
+    no Chromium round trip and nothing to skip."""
     import re
 
     html = svc._export_pdf_html([], "2026-09-10")
@@ -455,8 +458,8 @@ def test_export_pdf_html_header_cells_are_the_16_columns_in_order():
     assert tuple(headers) == (
         "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
         "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
-        "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
-        "Remarks",
+        "Supplier", "Last cost", "BRW PO qty", "BRW incoming qty", "Last in qty",
+        "Last in date", "Remarks",
     )
 
 
@@ -642,7 +645,12 @@ def test_s14_undated_order_inquiry_row_lands_under_the_null_month_last(db, chain
     assert months[0]["month"] == "2026-06"
 
 
-def test_s14_a_superseded_decision_contributes_nothing_to_the_sheet(db, chain):
+def test_a3_a_superseded_decision_now_contributes_to_the_sheet(db, chain):
+    """A3 (owner ruling 22 Sep - "read from OI, don't care about supply decision"):
+    inverts and retires `test_s14_a_superseded_decision_contributes_nothing_to_the_sheet`
+    - the `so_supply_decisions` join is gone, so a Buy row pointing at a SUPERSEDED
+    decision is counted exactly like any other raised/placed row now. The decision's own
+    state plays no part in the sheet any more."""
     f = chain
     _stock(db, f["product"], f["bin"], 0)
     leg = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
@@ -652,21 +660,316 @@ def test_s14_a_superseded_decision_contributes_nothing_to_the_sheet(db, chain):
 
     assert svc.write_rows(db, f["run"].id) == 1
     row = svc.report(db, run_id=f["run"].id)["rows"][0]
-    assert row["delivery_by_month"] == []
-    assert row["project_customers"] == []
+    assert row["delivery_by_month"] == [{"month": "2026-09", "qty": 9}], row["delivery_by_month"]
+    assert len(row["project_customers"]) == 1
+    assert row["project_customers"][0]["qty"] == 9
+
+
+# =====================================================================================
+# A3/A5 (PLAN-order-sheet-oi-reports-22sep.md, AC-A4/AC-A5): `_project_inquiry_map` reads
+# the OI book directly, scoped to the RUN'S OWN Start Plan scope - `so_supply_decisions`
+# plays no part. New signature:
+# `_project_inquiry_map(db, product_ids, *, so_numbers=None, horizon_start=None, horizon=None)`.
+# Predicate: verb IN ('ORDER','ORDER_BACK'), state <> cancelled, ack_state <> rejected,
+# qty > 0, SO in `so_numbers` when the list is non-empty, `delivery_date` inside
+# `[horizon_start, horizon]` when given (a NULL delivery date is always included).
+# =====================================================================================
+
+def _scope_row(db, *, product, qty, delivery=None, verb=None, state=None, ack_state=None,
+               so_number=None, customer_name="Scope customer", project_label=None,
+               project_title=None):
+    """The A3/A5 "form leg" shape: a project SO line (`projects.sales_order_lines`) with
+    a Buy-verb Order Inquiry row pointing at it and NO `supply_decision_id` at all - the
+    exact SRTWB248 case the plan's own "Measured" section names (a raised row nobody on
+    the fulfilment board has confirmed yet, which the OLD `so_supply_decisions` INNER JOIN
+    dropped). Deliberately skips `register_project`/`SOSupplyDecision` entirely - the new
+    contract does not read either - so this is a smaller chain than
+    `test_channel_read_model._confirmed_leg`, not a copy of it."""
+    from app.models.project_so import (  # noqa: PLC0415
+        ACK_ACKNOWLEDGED,
+        INQUIRY_RAISED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryRow,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+    )
+    from app.models.projects import Project  # noqa: PLC0415
+
+    cust = Customer(id=_u(), customer_code=f"{MARKER}-{_u()[:8]}", customer_name=customer_name)
+    db.add(cust)
+    db.flush()
+    so = SalesOrder(
+        id=_u(), so_number=so_number or f"{MARKER}-SO-{_u()[:8]}", customer_id=cust.id,
+        status="open", project_label=project_label,
+    )
+    db.add(so)
+    db.flush()
+
+    project_id = None
+    if project_title:
+        pid = _u()
+        project = Project(
+            id=pid, project_code=f"{MARKER}-{pid[:8]}", title=project_title,
+            normalised_title=project_title.casefold(),
+        )
+        db.add(project)
+        db.flush()
+        project_id = project.id
+
+    pso = ProjectSalesOrder(
+        id=_u(), project_id=project_id, provisional_ref=f"{MARKER}-{_u()[:8]}", so_id=so.id,
+    )
+    db.add(pso)
+    db.flush()
+    psl = ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=pso.id, line_no=1, product_id=product.id, qty=qty,
+    )
+    db.add(psl)
+    db.flush()
+    inquiry = OrderInquiry(id=_u(), project_sales_order_id=pso.id)
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(), order_inquiry_id=inquiry.id, so_line_id=psl.id, qty=qty,
+        verb=verb or IV_ORDER, state=state or INQUIRY_RAISED,
+        ack_state=ack_state or ACK_ACKNOWLEDGED, delivery_date=delivery,
+        supply_decision_id=None,
+    )
+    db.add(row)
+    db.flush()
+    return {"so": so, "row": row, "psl": psl, "pso": pso, "customer": cust}
+
+
+def test_a3_form_leg_row_with_no_supply_decision_counts_in_project_qty(db, chain):
+    """AC-A5: a raised row with `supply_decision_id IS NULL` (the CS form leg, never
+    confirmed on the fulfilment board) reaches Project qty / Delivery / Project-customer
+    under the new run-scope read - the SRTWB248 case the plan's own "Measured" section
+    names (SO418869, 67 units, delivery 01/10, OI row raised, no decision - engine bought
+    67, the OLD sheet showed Project qty 0)."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=67, delivery=date(2026, 10, 1))
+
+    out = svc._project_inquiry_map(db, [f["product"].id])
+
+    bucket = out.get(str(f["product"].id))
+    assert bucket is not None, "a form-leg row with no supply decision must reach the map"
+    assert bucket["months"].get("2026-10") == 67.0, bucket
+
+
+def test_a3_row_on_an_unpicked_so_is_absent_when_so_numbers_is_set(db, chain):
+    """AC-A5: 'SO in the run's picked orders when set' - a row on an SO NOT in the run's
+    `so_numbers` is out, even though it is otherwise in scope."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=10, delivery=date(2026, 10, 1),
+              so_number=f"{MARKER}-SO-PICKED")
+
+    out = svc._project_inquiry_map(
+        db, [f["product"].id], so_numbers=[f"{MARKER}-SO-OTHER"],
+    )
+
+    assert str(f["product"].id) not in out or out[str(f["product"].id)]["months"] == {}
+
+
+def test_a3_row_dated_after_the_horizon_is_absent(db, chain):
+    """AC-A5: 'delivery inside the run's window' - a row due after `plan_horizon_date` is
+    out of scope."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=10, delivery=date(2027, 3, 1))
+
+    out = svc._project_inquiry_map(
+        db, [f["product"].id], horizon_start=date(2026, 1, 1), horizon=date(2026, 12, 31),
+    )
+
+    assert str(f["product"].id) not in out or out[str(f["product"].id)]["months"] == {}
+
+
+def test_a3_undated_row_lands_under_the_null_month_even_inside_a_horizon(db, chain):
+    """AC-A5: 'undated included' - a row with no delivery date is always in scope,
+    whatever the run's own window, and lands under the null month exactly like today."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=8, delivery=None)
+
+    out = svc._project_inquiry_map(
+        db, [f["product"].id], horizon_start=date(2026, 1, 1), horizon=date(2026, 12, 31),
+    )
+
+    bucket = out[str(f["product"].id)]
+    assert bucket["months"].get(None) == 8.0, bucket
+
+
+def test_a3_cancelled_row_and_rejected_ack_row_are_absent(db, chain):
+    """AC-A5: `state <> cancelled` and `ack_state <> rejected` both still gate the row,
+    even though the retired `so_supply_decisions` join no longer does the gating for
+    free. Both rows below carry an ACTIVE decision (`_confirmed_leg`, which the OLD
+    `so_supply_decisions` INNER JOIN would happily reach) so this proves the state/ack
+    predicates are enforced by `_project_inquiry_map` itself - in particular, the OLD
+    query has NO `ack_state` predicate at all, so the rejected-ack row is red today for
+    the right reason: it currently reaches the map."""
+    from app.models.project_so import ACK_REJECTED, INQUIRY_CANCELLED  # noqa: PLC0415
+
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+    cancelled_leg = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
+                                   buy_qty=5, inquiry_state=INQUIRY_CANCELLED)
+    cancelled_leg["inquiry_row"].delivery_date = date(2026, 10, 1)
+    rejected_leg = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
+                                  buy_qty=6, ack_state=ACK_REJECTED)
+    rejected_leg["inquiry_row"].delivery_date = date(2026, 10, 1)
+    db.flush()
+
+    out = svc._project_inquiry_map(db, [f["product"].id])
+
+    assert str(f["product"].id) not in out or out[str(f["product"].id)]["months"] == {}
+
+
+def test_a3_customer_label_uses_the_so_project_label_when_no_project_title(db, chain):
+    """AC-A4: `project_customer_label(customer, coalesce(project title, SO project
+    label))` - an adopted AutoCount SO with a project label but no `projects.projects`
+    row prints `CUSTOMER / LABEL`, never the customer alone."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=4, delivery=date(2026, 10, 1),
+              customer_name="APEX CONNECTION", project_label="DNC / TITAN RITZ")
+
+    out = svc._project_inquiry_map(db, [f["product"].id])
+
+    labels = set(out[str(f["product"].id)]["customers"])
+    assert labels == {"APEX CONNECTION / DNC / TITAN RITZ"}, labels
+
+
+def test_a3_customer_label_prefers_the_registered_project_title_over_the_so_label(db, chain):
+    """AC-A4: with a registered project title, the title wins over the SO's own label."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=4, delivery=date(2026, 10, 1),
+              customer_name="APEX CONNECTION", project_label="DNC / TITAN RITZ",
+              project_title="Titan Ritz Tower")
+
+    out = svc._project_inquiry_map(db, [f["product"].id])
+
+    labels = set(out[str(f["product"].id)]["customers"])
+    assert labels == {"APEX CONNECTION / Titan Ritz Tower"}, labels
+
+
+# =====================================================================================
+# AC-A9 regression pin: adding the Last cost lookup (A4) beside the Supplier column must
+# not disturb it - Supplier still names the newest non-cancelled PO's supplier.
+# =====================================================================================
+
+def test_a9_supplier_still_names_the_last_purchase_supplier(db, chain):
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+    old_sup = _supplier(db, f"{MARKER} old supplier")
+    new_sup = _supplier(db, f"{MARKER} new supplier")
+    _po(db, f["product"], f["bin"], 10, supplier=old_sup, issued_days_ago=60)
+    _po(db, f["product"], f["bin"], 5, supplier=new_sup, issued_days_ago=5)
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+    assert row["supplier_name"] == f"{MARKER} new supplier"
+
+
+# =====================================================================================
+# AC-A7/AC-A8: `_last_cost_map` - the newest non-cancelled PO line's unit cost, with the
+# LINE's own currency when set, else the PO HEADER's - never a literal default.
+#
+# Cost figures below are deliberately picked to be unambiguous under `_qty_text`-style
+# trimming: a whole number (15 -> "15", no trailing ".00") and a fraction with no
+# trailing zero (8.25 -> "8.25") - "12.50" is avoided here because `_qty_text`'s own
+# trimming would print it as "12.5", which a plain money example cannot disambiguate.
+# =====================================================================================
+
+def test_last_cost_map_reads_the_newest_non_cancelled_po_lines_cost_and_currency(db, chain):
+    f = chain
+    sup = _supplier(db, f"{MARKER} cost supplier")
+    _po(db, f["product"], f["bin"], 10, supplier=sup, cost=99, currency="USD",
+       issued_days_ago=60)
+    _po(db, f["product"], f["bin"], 5, supplier=sup, cost=8.25, currency="CNY",
+       issued_days_ago=5)
+
+    out = svc._last_cost_map(db, [f["product"].product_code])
+
+    assert out[f["product"].product_code] == "8.25 CNY", out
+
+
+def test_last_cost_map_excludes_a_cancelled_po_even_when_it_is_the_newest(db, chain):
+    f = chain
+    sup = _supplier(db, f"{MARKER} cancel supplier")
+    _po(db, f["product"], f["bin"], 10, supplier=sup, cost=15, currency="MYR",
+       issued_days_ago=60)
+    cancelled = _po(db, f["product"], f["bin"], 5, supplier=sup, cost=999, currency="USD",
+                    issued_days_ago=1)
+    db.execute(text("UPDATE purchase_orders SET status = 'cancelled' WHERE id = :id"),
+              {"id": cancelled.id})
+    db.flush()
+
+    out = svc._last_cost_map(db, [f["product"].product_code])
+
+    assert out[f["product"].product_code] == "15 MYR", out
+
+
+def test_last_cost_map_falls_back_to_the_po_headers_currency_when_the_line_carries_none(db, chain):
+    """AC-A8's own pin: 'a line with NULL currency on a MYR header prints x.xx MYR' -
+    never a literal default currency."""
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    f = chain
+    sup = _supplier(db, f"{MARKER} header currency supplier")
+    po = PurchaseOrder(
+        id=_u(), po_number=f"{MARKER}-PO-{_u()[:8]}"[:50], supplier_id=sup.id,
+        status="active", issue_date=date.today(), currency="MYR",
+    )
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=f["product"].id,
+        warehouse_id=f["bin"].id, qty_ordered=5, qty_received=0, unit_cost=15,
+        currency=None, line_status="open",
+    ))
+    db.flush()
+
+    out = svc._last_cost_map(db, [f["product"].product_code])
+
+    assert out[f["product"].product_code] == "15 MYR", out
+
+
+def test_last_cost_map_omits_a_product_with_no_po_line_carrying_a_cost(db, chain):
+    """AC-A8: blank when the product has no PO line with a cost - never a false 0."""
+    f = chain
+
+    out = svc._last_cost_map(db, [f["product"].product_code])
+
+    assert f["product"].product_code not in out
 
 
 # --- AC-S14.4: export columns, in the paper sheet's order ---------------------------
 
 def test_s14_export_columns_match_the_paper_sheet_order():
     # issue #795 (Slice 2 test 10): Suggested qty + Suggestion now sit between Dealer o/s
-    # and Order qty; every other column keeps its old order (AC-7).
+    # and Order qty; every other column keeps its old order (AC-7). AC-A7 (Lane A): "Last
+    # cost" now sits immediately right of Supplier, 17 columns total.
     assert svc._EXPORT_COLUMNS == (
         "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
         "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
-        "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
-        "Remarks",
+        "Supplier", "Last cost", "BRW PO qty", "BRW incoming qty", "Last in qty",
+        "Last in date", "Remarks",
     )
+
+
+def test_a4_pdf_list_and_num_columns_shift_by_one_for_last_cost():
+    """AC-A7: every column after Supplier moves one to the right on the PDF's own class
+    maps - Delivery/Project-customer (8, 9), then BRW PO qty/BRW incoming qty/Last in qty
+    (12, 13, 14) in the list class; the numeric set (1..5, 7) is untouched, since Last
+    cost (11) is a text cell, never right-aligned as a number."""
+    assert svc._PDF_LIST_COLUMNS == (8, 9, 12, 13, 14)
+    assert svc._PDF_NUM_COLUMNS == (1, 2, 3, 4, 5, 7)
+    assert 11 not in svc._PDF_LIST_COLUMNS and 11 not in svc._PDF_NUM_COLUMNS, (
+        "Last cost is neither a wrapped list cell nor a right-aligned number"
+    )
+
+
+def test_a4_xlsx_column_widths_has_seventeen_keys():
+    """AC-A7: the widths map grows one more key (Q) for the new column, A..Q."""
+    assert set(svc._XLSX_COLUMN_WIDTHS) == set("ABCDEFGHIJKLMNOPQ")
 
 
 _FULL_ROW = {
@@ -722,54 +1025,128 @@ _BLANK_ROW = {
 
 
 def test_s14_export_rows_project_qty_is_the_customers_sum_not_project_demand():
-    (row,) = svc._export_rows([_FULL_ROW])
+    # AC-A7/AC-A8: `_export_rows` now takes a second `last_cost` argument, keyed by
+    # product code, so the row builder never re-derives the cost itself. AC-A2: "Last in
+    # qty" drops the SPO number - the container and quantity are what survives.
+    (row,) = svc._export_rows([_FULL_ROW], {"ZZTS14-SKU": "12.50 CNY"})
     assert row == (
         "ZZTS14-SKU", "100", "250", "8", "12", "12", "below level: net 5 <= ROP 10", "20",
         "Jul - 5\nAug - 3", "Acme Co / Tower A - 5\nBeta Co - 3",
-        "Acme Supplier", "40", "15", "202608-S0084 - TLLU8306312 - 300", "21/07/2026",
+        "Acme Supplier", "12.50 CNY", "40", "15", "TLLU8306312 - 300", "21/07/2026",
         "MOQ 1000",
     )
 
 
 def test_s14_export_rows_blank_cells_when_the_row_has_nothing_to_show():
-    (row,) = svc._export_rows([_BLANK_ROW])
+    (row,) = svc._export_rows([_BLANK_ROW], {})
     assert row == (
         "ZZTS14-BLANK", "0", "", "0", "0", "0", "", "",
-        "", "", "", "0", "0", "", "", "",
+        "", "", "", "", "0", "0", "", "", "",
     )
 
 
 def test_s14_export_xlsx_rows_keep_quantities_as_numbers_and_blanks_as_empty_string():
-    (full, blank) = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW])
-    # Item code / Suggestion / Delivery / Project-customer / Supplier / Remarks are text;
-    # every other column is a NUMBER (H1) so summing a column in Excel keeps working.
-    # issue #795: Suggested qty (5) joins the numeric set; Order qty moves to 7.
-    # AC-55 (owner ruling, 15 Sep): "Last in qty" (13) is the ONE exception among the
+    (full, blank) = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW], {"ZZTS14-SKU": "12.50 CNY"})
+    # Item code / Suggestion / Delivery / Project-customer / Supplier / Last cost / Remarks
+    # are text; every other column is a NUMBER (H1) so summing a column in Excel keeps
+    # working. issue #795: Suggested qty (5) joins the numeric set; Order qty moves to 7.
+    # AC-A7 (Lane A): Last cost (11, new) shifts BRW PO qty/BRW incoming qty to 12/13.
+    # AC-55 (owner ruling, 15 Sep): "Last in qty" (14) is the ONE exception among the
     # quantity columns - it is now a document-shaped TEXT cell, like the PO/incoming
     # cells beside it, never a bare number.
-    for idx in (1, 2, 3, 4, 5, 7, 11, 12):
+    for idx in (1, 2, 3, 4, 5, 7, 12, 13):
         assert isinstance(full[idx], float), f"column {idx} must be numeric, got {full[idx]!r}"
-    assert full[13] == "202608-S0084 - TLLU8306312 - 300", full[13]
+    assert full[11] == "12.50 CNY", full[11]
+    assert full[14] == "TLLU8306312 - 300", full[14]
     assert blank[2] == "", "a NULL reorder level must be a blank cell, not 0"
     assert blank[5] == 0.0, "Suggested qty prints 0, not blank, even on an empty row"
     assert blank[7] == "", "no chosen qty must be a blank cell, not 0"
-    assert blank[13] == "", "no last-in receipt must be a blank Last in qty cell"
-    assert blank[14] == "", "no last-in date must be a blank cell"
+    assert blank[11] == "", "no PO cost line must be a blank Last cost cell"
+    assert blank[14] == "", "no last-in receipt must be a blank Last in qty cell"
+    assert blank[15] == "", "no last-in date must be a blank cell"
 
 
-# --- AC-55/AC-57: "Last in qty" is a document-shaped TEXT cell (owner ruling, second
-# round, 15 Sep - "same like our PO qty") -------------------------------------------
+# --- AC-A1: BRW incoming qty drops the SPO number; BRW PO qty (AC-A3) is unchanged ----
+
+def test_incoming_text_total_then_container_qty_lines_never_the_spo_number():
+    """AC-A1: `_incoming_text` (the new sibling `_docs_text` keeps for BRW PO qty) prints
+    the total, then one `<container> - <qty>` line per open SPO line, `<qty>` bare when
+    the line names no container - the SPO number itself never appears in the cell."""
+    text = svc._incoming_text(50, [
+        {"number": "202608-S0084", "container": "TLLU8306312", "qty": 30},
+        {"number": "202608-S0099", "container": None, "qty": 20},
+    ])
+    assert text == "50\nTLLU8306312 - 30\n20"
+    assert "202608-S0084" not in text
+    assert "202608-S0099" not in text
+
+
+def test_incoming_text_bare_total_when_no_open_documents():
+    assert svc._incoming_text(50, []) == "50"
+
+
+def test_export_xlsx_and_pdf_rows_incoming_cell_drops_the_spo_number_po_cell_keeps_it():
+    """AC-A1/AC-A3, on the real row builders: BRW PO qty (index 12 on the A4 17-column
+    layout) keeps its PO-number lines, BRW incoming qty (index 13) never shows the SPO
+    number beside it - same total, two different cell shapes."""
+    row = {
+        **_BLANK_ROW,
+        "product_code": "ZZTS14-DOC",
+        "po_open_qty": 5,
+        "po_open_docs": [{"number": "PO-A", "qty": 5}],
+        "incoming_spo_qty": 30,
+        "incoming_spo_docs": [
+            {"number": "202608-S0084", "container": "TLLU8306312", "qty": 30},
+        ],
+    }
+    (xlsx_row,) = svc._export_xlsx_rows([row], {})
+    assert xlsx_row[12] == "5\nPO-A - 5"
+    assert xlsx_row[13] == "30\nTLLU8306312 - 30"
+    assert "202608-S0084" not in xlsx_row[13]
+
+    (pdf_row,) = svc._export_rows([row], {})
+    assert pdf_row[12] == "5\nPO-A - 5"
+    assert pdf_row[13] == "30\nTLLU8306312 - 30"
+    assert "202608-S0084" not in pdf_row[13]
+
+
+def test_low_stock_sheet_incoming_cell_drops_the_spo_number():
+    """AC-A1: the low stock report shares the order sheet's cell builders - its own BRW
+    incoming qty cell (index 12 of `LOW_STOCK_COLUMNS`, unaffected by AC-A7 since the low
+    stock sheet does not get the new Last cost column) must drop the SPO number too."""
+    from app.services.scm.low_stock_report_service import _sheet_row
+
+    row = {
+        "product_code": "X",
+        "po_open_qty": 5, "po_open_docs": [{"number": "PO-A", "qty": 5}],
+        "incoming_spo_qty": 30,
+        "incoming_spo_docs": [
+            {"number": "202608-S0084", "container": "TLLU8306312", "qty": 30},
+        ],
+    }
+    cells = _sheet_row(row, {}, include_supplier=True)
+    assert cells[11] == "5\nPO-A - 5"
+    assert cells[12] == "30\nTLLU8306312 - 30"
+    assert "202608-S0084" not in cells[12]
+
+
+# --- AC-A2/AC-55/AC-57: "Last in qty" is a document-shaped TEXT cell (owner ruling,
+# second round, 15 Sep - "same like our PO qty"), and (Lane A, AC-A2) drops the SPO
+# number the way BRW incoming qty does - the container and quantity are what a buyer
+# acts on. --------------------------------------------------------------------------
 
 def test_last_in_text_full_receipt_with_container():
     assert svc._last_in_text({
         "spo_number": "202608-S0084", "container": "TLLU8306312", "qty": 300,
-    }) == "202608-S0084 - TLLU8306312 - 300"
+    }) == "TLLU8306312 - 300"
 
 
 def test_last_in_text_no_container():
+    """AC-A2: no container named, and the SPO number is dropped too - the bare quantity,
+    the same shape the pre-518 fallback below already prints."""
     assert svc._last_in_text({
         "spo_number": "202608-S0084", "container": None, "qty": 300,
-    }) == "202608-S0084 - 300"
+    }) == "300"
 
 
 def test_last_in_text_pre_518_row_prints_the_bare_quantity():
@@ -795,12 +1172,13 @@ def test_last_in_text_blank_when_no_receipt():
 
 
 def test_last_in_qty_pdf_cell_is_list_class_not_num():
-    """AC-56: the PDF's "Last in qty" cell (index 13) takes the list/left-aligned class
-    like the PO/incoming document cells beside it, never the right-aligned num class."""
-    assert 13 not in svc._PDF_NUM_COLUMNS, (
+    """AC-56: the PDF's "Last in qty" cell (index 14 on the AC-A7 17-column layout) takes
+    the list/left-aligned class like the PO/incoming document cells beside it, never the
+    right-aligned num class."""
+    assert 14 not in svc._PDF_NUM_COLUMNS, (
         "Last in qty is a document-shaped TEXT cell now, not a right-aligned number"
     )
-    assert 13 in svc._PDF_LIST_COLUMNS
+    assert 14 in svc._PDF_LIST_COLUMNS
 
 
 def test_s14_null_pool_on_hand_exports_blank_not_zero():
@@ -809,10 +1187,10 @@ def test_s14_null_pool_on_hand_exports_blank_not_zero():
     PDF's text shape and the workbook's numeric shape (reviewer fix round, 10 Sep)."""
     null_pool_row = {**_BLANK_ROW, "product_code": "ZZTS14-NULLPOOL", "pool_on_hand": None}
 
-    (row,) = svc._export_rows([null_pool_row])
+    (row,) = svc._export_rows([null_pool_row], {})
     assert row[1] == "", "a NULL pool_on_hand must be a blank PDF cell, not '0'"
 
-    (xlsx_row,) = svc._export_xlsx_rows([null_pool_row])
+    (xlsx_row,) = svc._export_xlsx_rows([null_pool_row], {})
     assert xlsx_row[1] == "", "a NULL pool_on_hand must be a blank workbook cell, not 0"
 
 
@@ -844,7 +1222,7 @@ def test_s14_render_export_xlsx_styles_header_borders_wrap_and_freeze():
 
     from openpyxl import load_workbook
 
-    rows = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW])
+    rows = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW], {})
     payload = svc._render_export_xlsx(rows)
     wb = load_workbook(BytesIO(payload))
     ws = wb.active
@@ -879,7 +1257,7 @@ def test_s14_render_export_xlsx_styles_header_borders_wrap_and_freeze():
 # --- AC-S14.7: PDF html - styled header, borders, pre-line, repeating thead ---------
 
 def test_s14_export_pdf_html_has_styled_header_borders_and_prewrap():
-    rows = svc._export_rows([_FULL_ROW])
+    rows = svc._export_rows([_FULL_ROW], {})
     html = svc._export_pdf_html(rows, "2026-09-10")
 
     for header in svc._EXPORT_COLUMNS:
@@ -894,7 +1272,7 @@ def test_s14_export_pdf_html_has_styled_header_borders_and_prewrap():
 
 
 def test_s14_export_pdf_html_renders_a_two_month_delivery_cell_with_a_line_break():
-    rows = svc._export_rows([_FULL_ROW])
+    rows = svc._export_rows([_FULL_ROW], {})
     html = svc._export_pdf_html(rows, "2026-09-10")
     assert "Jul - 5\nAug - 3" in html or "Jul - 5<br>Aug - 3" in html
 
@@ -986,20 +1364,36 @@ def test_suggestion_parts_are_display_of_the_net():
                 id=str(uuid.uuid4()), run_id=run.id, rec_type="buy", product_id=two.id,
                 warehouse_id=wh.id, rounded_qty=rounded, inputs=inp, status="proposed",
             ))
+        # Case 5 (AC-A6b): a large on-hand figure, so the Stock part must still keep
+        # `_fmt_int`'s own thousand-grouping ("12,345") once the parts move onto their
+        # own lines with a colon - the owner: "the + + should be separated into lines so
+        # it is easier to see".
+        five = _pgs_product(db, stem="FIVE")
+        wh6 = _pgs_warehouse(db, stem="W6")
+        db.add(Stock(id=str(uuid.uuid4()), product_id=five.id, warehouse_id=wh6.id,
+                     quantity_on_hand=12345))
+        c5_inputs = {"project_need": 12400.0, "retail_need": 0.0,
+                    "on_hand": 12345.0, "po_ordered": 0.0, "reorder_level": None}
+        c5_inputs["plan_basis"] = single_location_plan_basis(c5_inputs, wh6, rounded=55.0)
+        db.add(ReorderRecommendation(
+            id=str(uuid.uuid4()), run_id=run.id, rec_type="buy", product_id=five.id,
+            warehouse_id=wh6.id, rounded_qty=55, inputs=c5_inputs, status="proposed",
+        ))
         db.flush()
 
         written = svc.write_rows(db, run.id)
-        assert written == 4
+        assert written == 5
 
         row1 = _pgs_row(db, run, b2155)
         assert float(row1.suggested_qty) == 196.0, (
             f"expected the rounded buy (196), got {row1.suggested_qty}"
         )
-        assert row1.suggestion == "Stock 128 + PO 339 + Buy 196", row1.suggestion
+        # AC-A6b: one part per line, "Label: qty" (colon), not "Label qty" joined by " + ".
+        assert row1.suggestion == "Stock: 128\nPO: 339\nBuy: 196", row1.suggestion
 
         row2 = _pgs_row(db, run, csk)
         assert float(row2.suggested_qty) == 914.0
-        assert row2.suggestion == "Buy 914", row2.suggestion
+        assert row2.suggestion == "Buy: 914", row2.suggestion
 
         row3 = _pgs_row(db, run, cov)
         assert float(row3.suggested_qty) == 0.0
@@ -1011,9 +1405,15 @@ def test_suggestion_parts_are_display_of_the_net():
         assert float(row4.suggested_qty) == 95.0, (
             f"two groups of 40 + 55 sum to 95, got {row4.suggested_qty}"
         )
-        assert row4.suggestion == "Buy 95", (
+        assert row4.suggestion == "Buy: 95", (
             f"the Suggestion's Buy part must equal the Suggested qty beside it, got "
             f"{row4.suggestion!r} against {row4.suggested_qty}"
+        )
+
+        row5 = _pgs_row(db, run, five)
+        assert row5.suggestion == "Stock: 12,345\nBuy: 55", (
+            f"the grouped Stock figure must survive the move to one-part-per-line: "
+            f"{row5.suggestion!r}"
         )
 
 
