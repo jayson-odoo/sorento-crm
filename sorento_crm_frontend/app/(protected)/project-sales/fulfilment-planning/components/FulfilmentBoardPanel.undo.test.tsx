@@ -15,7 +15,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -66,17 +66,13 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
 }));
 
 vi.mock('@/lib/toast', () => ({
-  // `dismiss` and `custom` belong here as much as `success` does (round 4): with
-  // `getCurrentPendingAction` answering in its real shape, `settleFromServer` walks on to
-  // `releaseKey` -> `dismissToastFor` (`lib/pending-entity-store.ts`), and a mock missing
-  // `dismiss` threw "toast.dismiss is not a function" as an unhandled rejection - the same
-  // class of silent exit-1 risk DELTA-1 fixed one link earlier in the same chain.
   toast: {
     success: vi.fn(),
     warning: vi.fn(),
     error: vi.fn(),
-    info: vi.fn(),
-    custom: vi.fn(),
+    // The pending-entity store takes its own countdown toast down once the
+    // parked undo settles - without this the store's follow-through timer
+    // throws an unhandled rejection if it fires after the test ends.
     dismiss: vi.fn(),
   },
 }));
@@ -153,6 +149,7 @@ import { toast } from '@/lib/toast';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 
 const TODAY = '2026-09-17';
 
@@ -225,6 +222,15 @@ async function openBoardActions() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  // AC-R2-F04 starts an undo whose fixture `commit_at` is already in the
+  // past, so the store's own follow-through timer is armed for real; putting
+  // it down here (rather than waiting for it to fire on its own after the
+  // test ends) is what keeps a later suite from seeing an unhandled
+  // rejection from a timer this test left running.
+  pendingEntityStore.clear('project_sales_order', 'pso-1');
 });
 
 describe('AC-UC-02: one gear entry per undoable order, of three', () => {

@@ -4,9 +4,9 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 
 ## A. Sales orders list
 
-- A1 The toolbar shows a primary **Start** button; opening it lists **Upload sales orders** and **Plan selected (N)** and nothing else (no "Start" heading inside the menu). With nothing selected, Plan selected is disabled; with 3 rows selected it reads "Plan selected (3)" and opens `/project-sales/fulfilment-planning?orders=<the 3 numbers>`.
+- A1 The toolbar shows a primary **Start** button; opening it lists **Upload sales orders** and **Plan selected (N)** and nothing else (no "Start" heading inside the menu). With nothing selected, Plan selected is disabled; with 3 rows selected it reads "Plan selected (3)" and opens `/project-sales/fulfilment-planning?orders=<the 3 numbers>`. Superseded 22 Sep 2026 by the owner's ruling, see PLAN-so-plan-selected-cta.md.
 - A2 The **Actions** dropdown lists Add sales order, Reset planning (N), Refresh, in that order. Add sales order opens the same form modal as before. No standalone Add button remains.
-- A3 When the list is pinned to an agent, Add sales order and Upload sales orders are absent, Start still shows Plan selected.
+- A3 When the list is pinned to an agent, Add sales order and Upload sales orders are absent, Start still shows Plan selected. Superseded 22 Sep 2026 by the owner's ruling, see PLAN-so-plan-selected-cta.md.
 - A4 The Source column and the Source filter both read **Upload** for uploaded orders; the detail page's Source field reads Upload too.
 - A5 The Customer cell shows the customer name only; no Retail / Project sub-line anywhere in the column.
 - A6 A **Document date** column sits immediately after Sales order, shows `dd/mm/yyyy`, sorts ascending and descending (server-side), and the SO number cell no longer shows a date.

@@ -11,6 +11,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -861,7 +862,11 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'This line is being replaced.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
 
     await waitFor(() =>
@@ -891,7 +896,11 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'This line is being replaced.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -2647,7 +2656,11 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The tower plan changed.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -2893,7 +2906,11 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'Cancelled by the customer.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
 
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
@@ -3473,6 +3490,33 @@ describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)'
     for (const pill of screen.getAllByTestId(/^decision-pill-/)) {
       expect(pill).toHaveTextContent('Suggested');
     }
+  });
+});
+
+/**
+ * A rejection used to skip `decide()`'s own per-line toast outright (`decision.verdict !==
+ * 'rejected'`), for no documented reason beyond the wording not fitting - so a planner who
+ * pressed Reject got no system feedback at all, unlike Save's toast beside its own button
+ * state. A rejection is a decision too now, and gets the same toast, worded for what it is.
+ */
+describe('FulfilmentBoardPanel: a rejection toasts too (owner, 22 Sep 2026)', () => {
+  it('toasts "Line N rejected · M to confirm · K rejected" on a single-line Reject', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        'Line 1 rejected · 0 to confirm · 1 rejected',
+      ),
+    );
   });
 });
 

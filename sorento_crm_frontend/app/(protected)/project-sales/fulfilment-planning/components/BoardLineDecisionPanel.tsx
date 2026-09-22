@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { Check, CheckCircle2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronRight, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
@@ -139,6 +140,21 @@ export function BoardLineDecisionPanel({
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
   /**
+   * Fix round 1, S4: the write is in flight. Without this a second click before the first
+   * `onDecide` resolves fires a second PUT (and a second toast) - `disabled` on the plain
+   * Save/Reject buttons reads this alongside their own rules, so a click while one is already
+   * on the wire is a no-op rather than a race.
+   */
+  const [pending, setPending] = React.useState(false);
+  /**
+   * Fix round 3: `pending` is the visible answer, but it is STATE - two synchronous clicks in
+   * the SAME tick (a real double-click, or two `fireEvent.click`s before React re-renders)
+   * both read the pre-render `pending` (still `false`) and both proceed. `inFlight` is the
+   * actual guard, checked and set synchronously before either `save()`/`reject()` does
+   * anything else.
+   */
+  const inFlight = React.useRef(false);
+  /**
    * Whether this line's decision is SAVED as the panel stands (S4, AC-4.1; amended by D4,
    * captain 3 Sep).
    *
@@ -149,7 +165,29 @@ export function BoardLineDecisionPanel({
    * every input already sets). A line that opens on somebody else's saved draft starts
    * there too: pressing Save on it would write what is already written.
    */
-  const [savedOnce, setSavedOnce] = React.useState(() => Boolean(contribution.draft));
+  /**
+   * A rejected draft is NOT a saved one (fix round 1, B1): `useLineDraftMutation.save.onSuccess`
+   * patches `contribution.draft` before `mutateAsync` resolves, so `Boolean(contribution.draft)`
+   * alone is true for a landed Reject too - the button read Saved AND Rejected side by side.
+   * The two states are mutually exclusive by construction: seeded (and re-seeded below) off the
+   * SAME `contribution.draft`, split by its own verdict.
+   */
+  // Seed only - the N3 effect below recomputes its own local each time it re-seeds.
+  const rejectedDraft = contribution.draft?.decision?.verdict === 'rejected';
+  const [savedOnce, setSavedOnce] = React.useState(
+    () => Boolean(contribution.draft) && !rejectedDraft,
+  );
+  /**
+   * Whether this line's Reject has LANDED, the same reading `savedOnce` above gives a Save -
+   * `decide()` saves a rejection through the identical draft write a Save uses, so
+   * `contribution.draft.decision.verdict` carries `'rejected'` the same way it carries
+   * `'approved'`/`'amended'`. Seeded off `contribution.draft` rather than the `decision` prop
+   * for the same reason `savedOnce` is: the prop is the board's own session map and lags a
+   * beat behind what this panel can already read at mount.
+   */
+  const [rejectedOnce, setRejectedOnce] = React.useState(() => rejectedDraft);
+  /** Options closed until the planner asks - untouched per row, no persistence. */
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
 
   /**
    * N3 (fix round 5): re-seeded whenever the contribution's OWN saved draft changes - a
@@ -160,7 +198,9 @@ export function BoardLineDecisionPanel({
    * while this panel's own `savedOnce` (still `true` from mount) kept the button on "Saved".
    */
   React.useEffect(() => {
-    setSavedOnce(Boolean(contribution.draft));
+    const rejected = contribution.draft?.decision?.verdict === 'rejected';
+    setSavedOnce(Boolean(contribution.draft) && !rejected);
+    setRejectedOnce(rejected);
   }, [contribution.draft]);
 
   /**
@@ -168,6 +208,8 @@ export function BoardLineDecisionPanel({
    * of any kind puts "Save decision" back without this having to know which one moved.
    */
   const saved = savedOnce && !dirty;
+  /** Rejected AND untouched since, the same reading `saved` gives a Save. */
+  const rejected = rejectedOnce && !dirty;
 
   React.useEffect(() => {
     onDirtyChange?.(dirty);
@@ -388,79 +430,108 @@ export function BoardLineDecisionPanel({
    * one that travels with it.
    */
   const save = async () => {
-    let ok: boolean | void;
-    const approvingNow = approving && !covered;
-    if (approvingNow) {
-      ok = await onDecide({
-        ...suggestionWithReasons(contribution, {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    try {
+      let ok: boolean | void;
+      const approvingNow = approving && !covered;
+      if (approvingNow) {
+        ok = await onDecide({
+          ...suggestionWithReasons(contribution, {
+            buy_reason: draft.buy_reason,
+            borrow: draft.borrow,
+            // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on
+            // screen for this exact line - a wholly-bought approving save used to take them
+            // from the SUGGESTION draft (always false/'') and drop whatever the planner had
+            // actually ticked or typed.
+            order_back: draft.order_back,
+            cited_document: draft.cited_document,
+          }),
+          suspected_system_issue: suspected,
+        });
+      } else {
+        ok = await onDecide({
+          ...decisionFromAmendDraft(draft, reason),
+          // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
+          // are fine, and dropping the key let the frozen `true` behind it read as current.
+          suspected_system_issue: suspected,
+        });
+      }
+      // S2 (code review round 3): the check state answers the click, but only for a click that
+      // actually landed - `onDecide` returning `false` (a rejected write) must not show a
+      // check the server never earned. `undefined` (a caller with nothing to report) reads as
+      // success, the same as before this fix.
+      //
+      // B1 (fix round 5): every "clean" state change - dirty, locked, and the approving branch's
+      // reseed to the suggestion - waits for that same guard. Setting them before the `await`
+      // meant a REJECTED second save still rendered the button as Saved and disabled: `dirty`
+      // was already false and `savedOnce` was already true from the first, successful save, so
+      // `saved = savedOnce && !dirty` read true over an edit the server never wrote.
+      if (ok === false) return;
+      setDirty(false);
+      setLocked(false);
+      if (approvingNow) {
+        // The reseed keeps the reasons just sent (measured cause 1): resetting straight to
+        // `suggestionDraftFrom` put the engine's own (reason-less) borrow sentences and a blank
+        // Buy reason back on screen the instant the save that just carried the planner's own
+        // reasons had landed - the box audibly emptied under them.
+        const suggestion = suggestionDraftFrom(contribution);
+        const typedReasons = new Map(
+          draft.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
+        );
+        setDraft({
+          ...suggestion,
           buy_reason: draft.buy_reason,
-          borrow: draft.borrow,
-          // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on
-          // screen for this exact line - a wholly-bought approving save used to take them
-          // from the SUGGESTION draft (always false/'') and drop whatever the planner had
-          // actually ticked or typed.
+          borrow: suggestion.borrow.map((row) => ({
+            ...row,
+            reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
+          })),
+          // S2: the same reseed gap one field over - Order back and Document cited went back to
+          // the suggestion's own false/'' the instant the save that just carried them landed.
           order_back: draft.order_back,
           cited_document: draft.cited_document,
-        }),
-        suspected_system_issue: suspected,
-      });
-    } else {
-      ok = await onDecide({
-        ...decisionFromAmendDraft(draft, reason),
-        // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
-        // are fine, and dropping the key let the frozen `true` behind it read as current.
-        suspected_system_issue: suspected,
-      });
+        });
+        setReason('');
+      }
+      // S4/AC-4.1: the button answers the click itself, within the interaction, before the
+      // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
+      // until the line is edited again (D4).
+      setSavedOnce(true);
+      // B1 (fix round 1): a Save on a line whose LAST landed verb was Reject must clear the
+      // stale "Rejected" reading - the two are mutually exclusive, and only one press ever
+      // sets the other back to false.
+      setRejectedOnce(false);
+    } finally {
+      inFlight.current = false;
+      setPending(false);
     }
-    // S2 (code review round 3): the check state answers the click, but only for a click that
-    // actually landed - `onDecide` returning `false` (a rejected write) must not show a
-    // check the server never earned. `undefined` (a caller with nothing to report) reads as
-    // success, the same as before this fix.
-    //
-    // B1 (fix round 5): every "clean" state change - dirty, locked, and the approving branch's
-    // reseed to the suggestion - waits for that same guard. Setting them before the `await`
-    // meant a REJECTED second save still rendered the button as Saved and disabled: `dirty`
-    // was already false and `savedOnce` was already true from the first, successful save, so
-    // `saved = savedOnce && !dirty` read true over an edit the server never wrote.
-    if (ok === false) return;
-    setDirty(false);
-    setLocked(false);
-    if (approvingNow) {
-      // The reseed keeps the reasons just sent (measured cause 1): resetting straight to
-      // `suggestionDraftFrom` put the engine's own (reason-less) borrow sentences and a blank
-      // Buy reason back on screen the instant the save that just carried the planner's own
-      // reasons had landed - the box audibly emptied under them.
-      const suggestion = suggestionDraftFrom(contribution);
-      const typedReasons = new Map(
-        draft.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
-      );
-      setDraft({
-        ...suggestion,
-        buy_reason: draft.buy_reason,
-        borrow: suggestion.borrow.map((row) => ({
-          ...row,
-          reason: typedReasons.get(borrowReasonKeyOf(row)) ?? row.reason,
-        })),
-        // S2: the same reseed gap one field over - Order back and Document cited went back to
-        // the suggestion's own false/'' the instant the save that just carried them landed.
-        order_back: draft.order_back,
-        cited_document: draft.cited_document,
-      });
-      setReason('');
-    }
-    // S4/AC-4.1: the button answers the click itself, within the interaction, before the
-    // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
-    // until the line is edited again (D4).
-    setSavedOnce(true);
   };
 
-  const reject = () => {
-    setDirty(false);
-    onDecide({
-      verdict: 'rejected',
-      reason: reason.trim(),
-      suspected_system_issue: suspected,
-    });
+  /**
+   * Mirrors `save()` above: the write lands before the button answers it, and a write the
+   * server refused (`ok === false`) leaves "Reject" exactly as a planner pressed it rather
+   * than claiming a rejection that never happened.
+   */
+  const reject = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    try {
+      const ok = await onDecide({
+        verdict: 'rejected',
+        reason: reason.trim(),
+        suspected_system_issue: suspected,
+      });
+      if (ok === false) return;
+      setDirty(false);
+      setRejectedOnce(true);
+      // B1 (fix round 1): the mirror of the same guard on `save()` above.
+      setSavedOnce(false);
+    } finally {
+      inFlight.current = false;
+      setPending(false);
+    }
   };
 
   const summary = amendSummary(
@@ -528,16 +599,41 @@ export function BoardLineDecisionPanel({
           1280px, let alone at 375. It is what the planner reads BEFORE typing, so it reads
           first. Display only - taking a different option is Amend, in the inputs below. */}
       {(contribution.options?.length ?? 0) > 0 && (
-        <div className="mb-3 space-y-1">
-          <p className="text-2xs uppercase tracking-wide text-muted-foreground">
-            Options
-          </p>
-          <BoardLadderOptionsTable
-            options={contribution.options ?? []}
-            contributionKey={contribution.key}
-            buyOrigin={contribution.buy_origin}
-          />
-        </div>
+        // Closed by default (owner, 22 Sep 2026): six columns of dates left open on every
+        // row wasted the space a planner opened this panel to compose the decision in.
+        <Collapsible open={optionsOpen} onOpenChange={setOptionsOpen} className="mb-3">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              data-testid={`line-options-toggle-${contribution.key}`}
+              // Reads as a control (fix round 1, S3), the same interactive classes the
+              // in-repo `CollapsibleTrigger` precedents carry (`PlanSection`,
+              // `TagSizeControl`, `ProductAttachmentsTab`). `min-h-8`, not
+              // `COARSE_HIT_TARGET_CLASS` (fix round 2): every use of that class lives inside
+              // a `components/ui/*` primitive, none in a feature file - a bare button here
+              // does not reach for a primitive-internal class.
+              className="-mx-1 flex min-h-8 cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-2xs uppercase tracking-wide text-muted-foreground hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              <ChevronRight
+                className={cn(
+                  'size-3.5 shrink-0 transition-transform motion-reduce:transition-none',
+                  optionsOpen && 'rotate-90',
+                )}
+                aria-hidden
+              />
+              Options
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="pt-1">
+              <BoardLadderOptionsTable
+                options={contribution.options ?? []}
+                contributionKey={contribution.key}
+                buyOrigin={contribution.buy_origin}
+              />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         {/* THE COMPOSITION. The row above already states the outstanding quantity, so the
@@ -923,7 +1019,12 @@ export function BoardLineDecisionPanel({
                       <Button
                         type="button"
                         size="sm"
-                        disabled={saved || alreadyConfirmed || (!approving && !canSave)}
+                        // `pending` (fix round 2): this Save is LIVE once Amend has unlocked
+                        // the row, so it needs the same in-flight guard the plain Save has -
+                        // a double-click here fired two `onDecide` calls.
+                        disabled={
+                          saved || pending || alreadyConfirmed || (!approving && !canSave)
+                        }
                         onClick={save}
                       >
                         {saveButtonLabel}
@@ -949,8 +1050,9 @@ export function BoardLineDecisionPanel({
                   size="sm"
                   // Disabled ON the saved state too (D4): there is nothing left to save, and
                   // a live button under the word "Saved" invites a second write of the same
-                  // row.
-                  disabled={saved || (!approving && !canSave)}
+                  // row. `pending` (fix round 1, S4): the write this same click just started
+                  // is still on the wire.
+                  disabled={saved || pending || (!approving && !canSave)}
                   onClick={save}
                 >
                   {saveButtonLabel}
@@ -988,16 +1090,27 @@ export function BoardLineDecisionPanel({
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={reason.trim().length === 0}
-                  title={
-                    reason.trim().length === 0
-                      ? 'Say why this line is being refused first.'
-                      : undefined
-                  }
+                  // Disabled ON the landed rejection too (mirrors Save/D4): there is nothing
+                  // left to reject, and a live button under "Rejected" invites a second write.
+                  // `pending` (fix round 1, S4): the write this same click just started is
+                  // still on the wire. No `title` here (fix round 2, nit): the Button
+                  // primitive's `disabled:pointer-events-none` means a `title` on a disabled
+                  // button never reaches a real hover (see the comment on
+                  // `CONFIRMED_LINE_TITLE` above), so it was dead - no tooltip added either.
+                  disabled={rejected || pending || reason.trim().length === 0}
                   onClick={reject}
                 >
-                  <X className="size-4" aria-hidden />
-                  Reject
+                  {rejected ? (
+                    <>
+                      <CheckCircle2 className="size-4" aria-hidden />
+                      Rejected
+                    </>
+                  ) : (
+                    <>
+                      <X className="size-4" aria-hidden />
+                      Reject
+                    </>
+                  )}
                 </Button>
               )}
             </div>
