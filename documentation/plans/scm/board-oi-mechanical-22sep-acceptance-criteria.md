@@ -169,15 +169,22 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
 
 ### B2 cleanup script
 - **AC-B2-11 [BE]** `scripts/fold_oi_date_notices.py` with `--dry-run` (default) prints one
-  line per live `ADVANCE` / `DELAY` row, any OI, whose `so_line_id` has a non-cancelled buy
-  row: OI number, item, qty, notice date, buy row id, buy row date.
-- **AC-B2-12 [BE]** `--apply` sets the notice row `state=cancelled`, appends
-  `; Folded into the buy row by script, <date>` to its note, and on the buy row sets
-  `delivery_date` = the NOTICE's own delivery date (the notice is the only row carrying the
-  new date, so a fold that left the buy row where it was would delete the move rather than
-  fold it - review round, 22 Sep; a notice with no date of its own is skipped and reported),
-  `previous_delivery_date` = the notice's own "Was" date parsed from its note (skipped and
-  reported when absent) and note `; Was <qty> on <date>`; commits once; prints counts.
+  line per (live `ADVANCE` / `DELAY` row, live buy row) pair - EVERY live buy row of the
+  notice's `so_line_id`, not only the first ever raised (round 3, AC-B2-5's own shape): OI
+  number, item, qty, notice date, buy row id, buy row date.
+- **AC-B2-12 [BE]** `--apply` folds onto a candidate buy row ONLY when that row's own
+  `delivery_date` still equals the notice's parsed "Was" date (round 3 recency guard) - a
+  row already moved elsewhere by some other means is left untouched and counted separately
+  under `skipped_row_not_on_was_date`, never moved backwards or guessed at. On each
+  matching row it sets `delivery_date` = the NOTICE's own delivery date (the notice is the
+  only row carrying the new date, so a fold that left the buy row where it was would delete
+  the move rather than fold it - review round, 22 Sep; a notice with no date of its own is
+  skipped and reported), `previous_delivery_date` = the notice's own "Was" date parsed from
+  its note (skipped and reported when absent) and note `; Was <qty> on <date>`. The notice
+  row is set `state=cancelled` with `; Folded into the buy row by script, <date>` appended
+  to its note ONCE every matching row has been stamped, and ONLY when at least one row
+  matched (round 3) - a notice with no matching row is left LIVE and uncancelled, so a
+  person can still see and resolve it by hand. Commits once; prints counts.
   The HANDSHAKE follows the same gate as AC-B2-2 (owner ruling, 22 Sep): on a buy row
   purchasing had already `acknowledged` (or that already reads `changed`), `changed_at` is
   stamped and `ack_state` drops to `changed`; on a row still `awaiting`, the handshake is
@@ -187,6 +194,9 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
   run apply (notice cancelled, buy row stamped), run apply again (no-op, idempotent).
   Both sides of the handshake gate are seeded: an acknowledged buy row asserting
   `ack_state = changed` with `changed_at` set, and an awaiting one asserting both untouched.
+  Round 3 additions: two live buy rows on the old date + one notice fold onto BOTH, notice
+  cancelled once; a buy row already moved off the Was date is left untouched and counted,
+  its notice left live.
 
 ### B6 deep-link ids
 - **AC-B6-7 [BE]** Given an OI row, when `list_rows` / the worklist serialise it, then the

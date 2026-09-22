@@ -22,7 +22,7 @@ schema. Every row is seeded here behind the ZZT marker - CI's database has no da
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.models.project_so import (
@@ -33,6 +33,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ADVANCE,
     IV_DELAY,
+    IV_ORDER,
     OrderInquiryRow,
 )
 
@@ -253,3 +254,67 @@ def test_fold_script_apply_is_idempotent(api):
     assert seeded["buy_row"].changed_at == stamped_changed_at
     assert second["folded"] == 0, second
     assert second["pairs"] == [], second
+
+
+# ---------------------------------------------------------------------------
+# Round 3: fold onto EVERY live buy row of the line, only on the Was date
+# ---------------------------------------------------------------------------
+
+
+def test_fold_script_apply_folds_every_live_buy_row_of_the_line(api):
+    """Round-3 fix: a line may carry more than one live buy row (AC-B2-5's own shape) -
+    the notice folds onto EVERY one of them still on the date it names, not only the
+    first ever raised. Kill test: restoring the old `setdefault` (one buy row per line)
+    turns this red - the second row is left bare, untouched and unstamped."""
+    seeded = _notice_and_buy_row(api, qty="10", verb=IV_ADVANCE, note="Was 2026-08-25")
+    world = seeded["world"]
+    buy_row_a = seeded["buy_row"]
+
+    buy_row_b = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=buy_row_a.order_inquiry_id,
+        so_line_id=buy_row_a.so_line_id, item_code=buy_row_a.item_code, qty=Decimal("4"),
+        delivery_date=WAS, verb=IV_ORDER, state=INQUIRY_RAISED, ack_state=ACK_AWAITING,
+    )
+    world.db.add(buy_row_b)
+    world.db.commit()
+
+    report = fold_script.run(world.db, apply=True)
+    world.db.commit()
+
+    world.db.expire_all()
+    world.db.refresh(seeded["notice"])
+    world.db.refresh(buy_row_a)
+    world.db.refresh(buy_row_b)
+    assert seeded["notice"].state == INQUIRY_CANCELLED
+    for row in (buy_row_a, buy_row_b):
+        assert row.delivery_date == NOW, (row.id, row.delivery_date)
+        assert row.previous_delivery_date == WAS, row.id
+        assert row.note and "Was" in row.note, row.id
+    assert report["folded"] == 2, report
+
+
+def test_fold_script_apply_leaves_a_buy_row_already_moved_off_the_was_date(api):
+    """Round-3 recency guard: a buy row that no longer sits on the notice's OWN Was
+    date - moved by some other means since the notice was raised - must never be
+    folded onto, and never moved backwards. Left untouched and counted separately; the
+    notice stays LIVE (not cancelled) so a person can still see and resolve it by hand.
+    Kill test: dropping the `buy_row.delivery_date == was_date` recency check turns
+    this red - the already-moved row gets re-stamped and the notice gets cancelled."""
+    seeded = _notice_and_buy_row(api, qty="6", verb=IV_DELAY, note="Was 2026-08-25")
+    world = seeded["world"]
+    buy_row = seeded["buy_row"]
+    later = date(2026, 9, 10)
+    buy_row.delivery_date = later
+    world.db.commit()
+
+    report = fold_script.run(world.db, apply=True)
+    world.db.commit()
+
+    world.db.expire_all()
+    world.db.refresh(seeded["notice"])
+    world.db.refresh(buy_row)
+    assert seeded["notice"].state != INQUIRY_CANCELLED, "left live for a person to see"
+    assert buy_row.delivery_date == later, "never moved backwards"
+    assert buy_row.previous_delivery_date is None, "buy row untouched"
+    assert report["skipped_row_not_on_was_date"] == 1, report
+    assert report["folded"] == 0, report

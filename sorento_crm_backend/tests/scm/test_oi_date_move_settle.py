@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
@@ -46,7 +47,9 @@ from app.models.project_so import (
     IV_ADVANCE,
     IV_DELAY,
     IV_ORDER,
+    OrderInquiry,
     OrderInquiryRow,
+    SOAmendment,
 )
 from app.services import planning_change_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -752,3 +755,166 @@ def test_handover_context_lists_date_change_under_changed_not_raised(api, monkey
     assert len(changed_lines) == 1, lines
     assert changed_lines[0]["was"]["delivery_date"] == WAS_1.strftime("%d/%m/%Y")
     assert changed_lines[0]["delivery_date"] == NOW.strftime("%d/%m/%Y")
+
+
+# ---------------------------------------------------------------------------
+# Round 3: guard tests for `_oi_demand_rows`'s own two refinements
+# ---------------------------------------------------------------------------
+
+
+def test_notice_raised_when_change_names_no_required_date(api):
+    """Guard (round 3) for the new-date filter at `planning_change_service.py:3892-
+    3897` (review round, 22 Sep). Before it, `buy_rows_by_line.get(...)` alone decided
+    suppression - ANY live buy row of the line, whatever date it actually carried,
+    suppressed the notice. A composition naming NO `required_date` (`to_date` parses to
+    None) must not silently read a buy row still on the OLD date as "already carries
+    the new date" - nothing on screen would say the date had moved.
+
+    Kill test: reverting the filtered lookup back to
+    `buy_rows_by_line.get(str(r.project_line_id))` turns this red - the still-on-WAS_1
+    row then suppresses the notice outright."""
+    fixture = _one_row_fixture(api, qty="10")
+    world = fixture["world"]
+    line = fixture["line"]
+    row = fixture["row"]
+    assert row.delivery_date == WAS_1, "fixture sanity: still on the old date"
+
+    live_rows = [
+        SimpleNamespace(
+            kind="delayed",
+            project_line_id=str(line.id),
+            core_line_id=str(fixture["core"].id),
+            item_code=row.item_code,
+            from_json={"required_date": WAS_1.isoformat()},
+            to_json={"qty": "10"},  # no required_date named
+            held_json={},
+        )
+    ]
+    demand_rows, counts = planning_change_service._oi_demand_rows(
+        world.db, live_rows, fixture["core_so"].so_number, [],
+        order_inquiry_id=str(row.order_inquiry_id),
+    )
+    assert len(demand_rows) == 1, demand_rows
+    assert demand_rows[0]["line_id"] == str(line.id)
+    assert counts.get("DELAY") == 1, counts
+
+
+def test_notice_raised_when_matching_buy_row_is_on_a_different_inquiry_header(api):
+    """Guard (round 3) for the `order_inquiry_id` scoping at
+    `planning_change_service.py:3859-3865` (SF-1, review round 22 Sep): the buy-row
+    lookup is scoped to the header THIS confirm writes. An amendment raises its OWN
+    separate `OrderInquiry` header on the same sales-order line (D16, the shape
+    `derive_for_amendment` produces) - a live ORDER row parked there, even one that
+    already carries the change's new date, must not suppress a notice meant for a
+    DIFFERENT header that has nothing on that date.
+
+    Kill test: dropping the `if order_inquiry_id:` filter lets the amendment header's
+    row leak into `buy_rows_by_line` and wrongly suppress the notice."""
+    fixture = _one_row_fixture(api, qty="10")
+    world = fixture["world"]
+    db = world.db
+    line = fixture["line"]
+    row = fixture["row"]
+    assert row.delivery_date == WAS_1, "this header's own row is still on the old date"
+
+    amendment = SOAmendment(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=fixture["order"].id,
+    )
+    db.add(amendment)
+    db.flush()
+    other_inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id,
+        project_sales_order_id=fixture["order"].id, amendment_id=amendment.id,
+        inquiry_no=f"ZZT-OI-{_uid()[:8]}", state=INQUIRY_RAISED,
+    )
+    db.add(other_inquiry)
+    db.flush()
+    other_row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=other_inquiry.id,
+        so_line_id=line.id, item_code=row.item_code, qty=Decimal("10"),
+        delivery_date=NOW, verb=IV_ORDER, state=INQUIRY_RAISED,
+    )
+    db.add(other_row)
+    db.commit()
+
+    live_rows = [
+        SimpleNamespace(
+            kind="delayed",
+            project_line_id=str(line.id),
+            core_line_id=str(fixture["core"].id),
+            item_code=row.item_code,
+            from_json={"required_date": WAS_1.isoformat()},
+            to_json={"required_date": NOW.isoformat(), "qty": "10"},
+            held_json={},
+        )
+    ]
+    demand_rows, counts = planning_change_service._oi_demand_rows(
+        db, live_rows, fixture["core_so"].so_number, [],
+        order_inquiry_id=str(row.order_inquiry_id),
+    )
+    assert len(demand_rows) == 1, demand_rows
+    assert demand_rows[0]["line_id"] == str(line.id)
+    assert counts.get("DELAY") == 1, counts
+
+
+# ---------------------------------------------------------------------------
+# Round 3: nit - `_stamp_date_move`'s handover target survives the netting
+# ---------------------------------------------------------------------------
+
+
+def test_stamp_date_move_handover_points_at_a_row_that_survives_the_netting(api):
+    """Nit (round 3, review round 22 Sep): when the netting below this call in `_write`
+    is about to run (`live_buy_qty != need`), a plain RAISED target is seconds from
+    being cancelled by that same netting loop
+    (`project_order_inquiry_service.py:1153-1172`) - the ONE handover line (AC-B2-9)
+    must be recorded off a row that survives it, never the one about to vanish. Drives
+    `_stamp_date_move` directly with `will_net=True` on two targets, RAISED first in the
+    list (the shape `targets[0]` would pick without the fix), and reads the queued
+    handover straight off `db.info` rather than the drained email.
+
+    Kill test: dropping the `will_net` filter (falling back to `handover_pool =
+    targets`) turns this red - the handover is recorded off the RAISED row instead."""
+    from app.services.project_order_inquiry_service import (
+        _HANDOVER_PENDING_KEY,
+        ProjectOrderInquiryService,
+    )
+
+    fixture = _one_row_fixture(api, qty="10")
+    world = fixture["world"]
+    db = world.db
+    line = fixture["line"]
+    raised_row = fixture["row"]  # RAISED, no link - about to be cancelled by netting
+    assert raised_row.state == INQUIRY_RAISED
+
+    survivor = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=raised_row.order_inquiry_id,
+        so_line_id=line.id, item_code=raised_row.item_code, qty=Decimal("5"),
+        delivery_date=raised_row.delivery_date, stock_location=raised_row.stock_location,
+        verb=IV_ORDER, state=INQUIRY_PLACED, supply_decision_id=raised_row.supply_decision_id,
+    )
+    db.add(survivor)
+    db.commit()
+
+    inquiry = (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.id == raised_row.order_inquiry_id)
+        .one()
+    )
+    entry = {"required_date": NOW, "stock_location": None}
+    # A real decision id, not a fresh UUID (`supply_decision_id` carries a FK): the
+    # confirm above already created one, and `raised_row` already points at it.
+    decision = SimpleNamespace(id=raised_row.supply_decision_id, revision_no=1)
+
+    service = ProjectOrderInquiryService(db)
+    stamped = service._stamp_date_move(
+        inquiry, [raised_row, survivor], entry, decision,
+        actor_user_id=world.actor, will_net=True,
+    )
+    assert stamped is True
+
+    pending = db.info.get(_HANDOVER_PENDING_KEY) or []
+    assert pending, "a handover line must be queued"
+    assert pending[-1]["row_id"] == str(survivor.id), (
+        "the handover target must be a row that survives netting, never the RAISED "
+        "row about to be cancelled"
+    )

@@ -1129,7 +1129,8 @@ class ProjectOrderInquiryService:
                     _ZERO,
                 )
                 stamped = self._stamp_date_move(
-                    inquiry, rows, entry, decision, actor_user_id=actor_user_id
+                    inquiry, rows, entry, decision, actor_user_id=actor_user_id,
+                    will_net=(live_buy_qty != need),
                 )
                 if stamped and live_buy_qty == need:
                     # Nothing but the date moved, so the netting has nothing left to say
@@ -1724,6 +1725,7 @@ class ProjectOrderInquiryService:
         decision: Any,
         *,
         actor_user_id: Optional[str] = None,
+        will_net: bool = False,
     ) -> bool:
         """The DATE half of a change `_settle_row_in_place` declined to read as one
         instruction - two still-owed rows, a lone placed row with no link, or every row
@@ -1752,6 +1754,16 @@ class ProjectOrderInquiryService:
         purchasing already bought against moving is exactly what that automation exists
         to tell them, and `_settle_row_in_place` fires it for the same reason.
 
+        `will_net` is the caller's own fact (round 3, nit): whether the netting loop
+        below this call in `_write` is about to run (`live_buy_qty != need`), which
+        cancels every still-RAISED row of the line seconds after this method returns. A
+        RAISED row is a live target here too - it still needs its date stamped, whether
+        or not it survives what comes next - but it must never be the row the ONE
+        handover line is recorded off: purchasing would be pointed at a row already
+        gone by the time the email lands. When netting is coming, the representative
+        is picked from whatever targets are NOT `raised`; falling back to the full list
+        only when every target is (nothing else to point at).
+
         `refresh_link_state` is deliberately NOT called, unlike the settle path: nothing
         here changes a row's quantity or its links, so there is no coverage to re-derive
         - and it would DEMOTE the very shape AC-B2-6 is about, a lone `placed` row with
@@ -1778,7 +1790,18 @@ class ProjectOrderInquiryService:
         ]
         if not targets:
             return False
-        previous_date = targets[0].delivery_date
+        # The ONE handover line (AC-B2-9) is recorded off a row that will still be here
+        # to have moved (round 3, nit): when the netting below is about to run, a
+        # still-RAISED target is seconds from being cancelled by it
+        # (`project_order_inquiry_service.py`'s own supersede loop in `_write`), so the
+        # representative is picked from whatever survives - falling back to the full
+        # list only when every target is RAISED and there is nothing else to point at.
+        handover_pool = targets
+        if will_net:
+            handover_pool = [
+                row for row in targets if row.state != INQUIRY_RAISED
+            ] or targets
+        previous_date = handover_pool[0].delivery_date
         for row in targets:
             previous_qty = _dec(row.qty)
             row_previous_date = row.delivery_date
@@ -1811,15 +1834,19 @@ class ProjectOrderInquiryService:
                 row.changed_at = datetime.utcnow()
                 row.ack_state = ACK_CHANGED
         self.db.flush()
+        # Batched (round 3, nit): one grouped load for every target's links rather than
+        # one query per row - the same `_links_by_row` the raise/settle paths above
+        # already reach for once a caller is walking a SET rather than one row.
+        links_by_target = self._links_by_row([str(row.id) for row in targets])
         for row in targets:
             self._dispatch_changed_with_links(
-                inquiry, row, had_link=bool(self._links_of(row.id))
+                inquiry, row, had_link=bool(links_by_target.get(str(row.id)))
             )
         # AC-H3/AC-H4, as `_settle_row_in_place` reads them: only the field that actually
         # moved. A row that carried NO previous date states none rather than a blank one -
         # "Was <nothing>" is a handover line nobody can act on.
         self._record_handover(
-            targets[0],
+            handover_pool[0],
             kind="settled",
             was={"delivery_date": previous_date} if previous_date else {},
             actor_user_id=actor_user_id,
