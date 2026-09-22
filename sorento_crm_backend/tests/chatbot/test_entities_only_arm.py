@@ -103,6 +103,64 @@ class TestRoutesToEntitiesOnlyNotCasual:
             "entities with no domain still fall through to the casual lane"
         )
 
+    def test_a_no_hint_product_shaped_token_still_routes_to_entities_only(
+        self, session_factory, seeded, monkeypatch, _stub_casual_llm
+    ):
+        """Review round B1(b), measured repro: a bare code the parser tagged with NO
+        hint at all ("MBF-9902-ZZT" - has both letters and digits, unlike a name) is
+        still a product ask, not idle chat."""
+        qf = _parser_output(
+            domain_hint=None,
+            intent_hint=None,
+            asks=[],
+            entities=[
+                {
+                    "raw": UNPLACED_CODE,
+                    "hint": None,
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        )
+        _run_turn(
+            session_factory, monkeypatch, qf=qf, text_body=UNPLACED_CODE,
+            msg_id="ZZT-eo-hint-1", matches=MATCHES,
+        )
+        assert not _stub_casual_llm, (
+            f"the casual LLM clarifier ran {len(_stub_casual_llm)} time(s) - a no-hint "
+            "product-shaped token still fell through to casual"
+        )
+
+    def test_a_customer_only_message_falls_through_to_casual(
+        self, session_factory, seeded, monkeypatch, _stub_casual_llm
+    ):
+        """Review round B1(b), measured repro: "Hanlim" alone (hint customer, no
+        digits) is not a bare product ask - it must fall through to `casual` exactly
+        as before, not misroute to the lane that can only resolve products."""
+        qf = _parser_output(
+            domain_hint=None,
+            intent_hint=None,
+            asks=[],
+            entities=[
+                {
+                    "raw": "Hanlim",
+                    "hint": "customer",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        )
+        _run_turn(
+            session_factory, monkeypatch, qf=qf, text_body="Hanlim",
+            msg_id="ZZT-eo-hint-2", matches=MATCHES,
+        )
+        assert _stub_casual_llm, (
+            "a customer-only message did not reach the casual clarifier - it "
+            "misrouted to entities_only"
+        )
+
 
 class TestResolvesAndSettlesFocus:
     """AC-1823: placed rows land on focus.products WITH uuids; unplaced tokens do not."""
@@ -344,6 +402,35 @@ class TestJourneyVoice:
         text = (result.reply or {}).get("text") or ""
         assert text.startswith("I heard: stock for SRTWB1455"), text
 
+    def test_voice_bare_entities_do_not_double_the_lead(
+        self, session_factory, seeded, stub_access, media_pipeline, monkeypatch
+    ):
+        """Review round nit: a voice note with a bare code (no domain) reaches the
+        entities_only arm - `_apply_media_reply_prefix` already prepends "I heard: X",
+        so the arm's OWN "I have X." lead must be suppressed, or the reply doubles it."""
+        _seed_media_limit(session_factory, modality="voice")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result({"transcript": PRODUCT_A_CODE})
+        stub_access()
+
+        import app.services.chatbot.head.parser as parser_mod
+        from unittest.mock import patch as _patch
+
+        bare_qf = _bare_entities_qf(placed=[PRODUCT_A_CODE])
+        with _patch.object(parser_mod, "parse", lambda config, user_block: bare_qf), _patch.object(
+            parser_mod,
+            "resolve_config",
+            lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            ),
+        ):
+            result = engine_mod.run_turn(_voice_envelope(), session_factory=session_factory)
+
+        text = (result.reply or {}).get("text") or ""
+        assert text.startswith(f"I heard: {PRODUCT_A_CODE}"), text
+        assert f"I have {PRODUCT_A_CODE}." not in text, f"the arm's own lead doubled the prefix: {text!r}"
+        assert text.count("I heard:") == 1, text
+
 
 class TestPromotionFocusCarriesTheSameWay:
     """AC-1831: a photo with a promotion focus already set applies the codes to the
@@ -406,3 +493,48 @@ class TestCaptionNamesANewDomain:
             msg_id="ZZT-eo-newdomain-2", matches=MATCHES,
         )
         assert result.branch_kind == "business_query"
+
+
+class TestRealResolverHonoursCompanyScope:
+    """B2 (security review, browser pass reproduced 2/2): `_run_entities_only_arm`
+    resolved on a session whose company scope was never re-stamped for THIS
+    in-process route call (`resolve_reference_post`, called directly rather than
+    over HTTP - `apply_company_scope`, the router dependency that would normally
+    stamp it, never runs) - so real, correctly company-scoped codes came back
+    unplaced. Every OTHER test in this file stubs `resolve_entity` entirely
+    (`_wire_business_services`/`matches=MATCHES`), which is exactly why this gap
+    was invisible here: this is the one test in the file that runs the REAL
+    resolver, against REAL seeded rows, on a REAL company-mapped contact
+    (`_seed_contact`, not the company-less `seeded` fixture every other test uses).
+    """
+
+    def test_seeded_codes_place_through_the_real_resolver(self, session_factory, monkeypatch):
+        from app.services.company_scope import DEFAULT_COMPANY_ID
+        from tests._mc_lookup_seed import product as seed_product
+
+        code_a, code_b = "ZZTSCOPEA1", "ZZTSCOPEB1"
+        db = session_factory()
+        seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code_a)
+        seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code_b)
+        db.commit()
+        _seed_contact(session_factory, variables={})
+
+        qf = _bare_entities_qf(placed=[code_a, code_b])
+        result, _ = _run_turn(
+            session_factory, monkeypatch, qf=qf, text_body=f"{code_a} {code_b}",
+            msg_id="ZZT-eo-scope-1", real_resolver=True,
+        )
+
+        products = _focus_products(session_factory)
+        for code in (code_a, code_b):
+            row = next((p for p in products if p.get("raw") == code), None)
+            assert row is not None and row.get("uuid"), (
+                f"{code} did not place through the real resolver - focus_settles_product "
+                f"never fired on a scoped session: {row}"
+            )
+        text = (result.reply or {}).get("text") or ""
+        assert "Couldn't find" not in text, (
+            f"a real, company-scoped code came back unplaced (B2's own symptom): {text!r}"
+        )
+
+

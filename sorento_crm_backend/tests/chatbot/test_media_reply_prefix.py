@@ -65,6 +65,32 @@ class TestImagePrefixListsEveryEntity:
         assert text.startswith("I read A, B, C and D from that photo."), text
         assert "3 more" not in text and "+1" not in text
 
+    def test_the_persisted_row_carries_the_same_prefixed_text(
+        self, session_factory, seeded, stub_access, media_pipeline, monkeypatch
+    ):
+        """Review round S1: the prefix is applied to the in-memory `TurnResult` AFTER
+        the answering arm's own tail already persisted `chatbot.turns.response` and its
+        `sent`/`replied` trace record - so a `_duplicate_result` replay of this turn
+        must read the SAME prefixed text back, not the arm's un-prefixed original."""
+        from app.models.chatbot_turn import ChatbotTurn
+
+        _seed_media_limit(session_factory, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            {**IMAGE_RESULT, "entities": [{"raw": "A"}, {"raw": "B"}]}
+        )
+        stub_access()
+
+        result = _run(
+            session_factory, monkeypatch, _image_envelope(caption="Check stock"), verdict=NOT_SUPPORTED_OUTPUT
+        )
+
+        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+        assert row is not None
+        persisted_text = ((row.response or {}).get("reply") or {}).get("text") or ""
+        assert persisted_text.startswith("I read A and B from that photo."), persisted_text
+        assert persisted_text == (result.reply or {}).get("text")
+
 
 class TestTruncatedNoteContinuesThePrefix:
     """AC-1818/AC-1821: the cap comes from `system_settings.media_max_entities`."""

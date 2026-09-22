@@ -373,7 +373,11 @@ function MediaBlock({
           <img
             src={media.url}
             alt={caption}
-            className="h-[110px] w-full object-cover"
+            // Review round nit: the standard scale's `h-28` (7rem/112px), not an
+            // arbitrary bracket value - the roster's own fixed-height thumbnail
+            // rows (`DriveGridView`) use `aspect-square`/`aspect-[3/4]` instead,
+            // which a bubble of unpredictable width would stretch unpredictably.
+            className="h-28 w-full object-cover"
             loading="lazy"
           />
         </button>

@@ -63,6 +63,7 @@ from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn.apply import apply as turn_apply
+from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -912,6 +913,7 @@ def run_turn(
                 media_box=media_box,
             )
             _apply_media_reply_prefix(result, media_box.get("outcome"))
+            _repersist_media_prefixed_reply(session_factory, turn_id, result, dry_run)
             # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
             # head returns, whichever arm produced it. Stamped at this ONE exit rather than
             # on each arm's own `TurnResult`, which is exactly how three arms - the canned
@@ -1175,12 +1177,14 @@ def _run_stages(  # noqa: PLR0915
                 }
             )
 
-        # Chatbot media-into-turn, S2: an image or voice attachment (or n8n's
-        # transition-window "already patched" shape) is intaked INSIDE the turn -
-        # decided below, in the no-DB-session window the parser call already uses.
-        # A document, a video, or a sticker with no url is not this step's concern
-        # (AC-1804): it falls through unchanged, on its caption text.
-        media_detected = media_intake.detect(_inner_message(envelope))
+        # Chatbot media-into-turn, S2/S3: an image or voice attachment is intaked
+        # INSIDE the turn - decided below, in the no-DB-session window the parser
+        # call already uses. A document, a video, or a sticker is not this step's
+        # concern (AC-1804): it falls through unchanged, on its caption text.
+        # `patched_upstream` is the SEPARATE transition-window signal (AC-1805): when
+        # n8n's own pipeline already decided this one, no intake runs here at all.
+        patched_modality = media_intake.patched_upstream(envelope)
+        media_detected = None if patched_modality else media_intake.detect(_inner_message(envelope))
 
         session_block = _read_session_vars(
             db,
@@ -1240,14 +1244,25 @@ def _run_stages(  # noqa: PLR0915
     )
 
     # -- MEDIA INTAKE (NO DB SESSION IS OPEN HERE, same window as the parser) --- #
-    if media_detected is not None:
+    if patched_modality is not None:
+        # AC-1805 (review round S3 + security item 4): n8n's own pipeline already
+        # decided, metered and recorded this one upstream - no intake runs here.
+        turn_trace.record(
+            "media_intake",
+            status="ok",
+            summary="Read the photo." if patched_modality == "image" else "Heard the voice note.",
+            why="n8n's own media pipeline already decided this one before /chat/turn ran.",
+            facts={"skipped": "patched_upstream", "modality": patched_modality},
+            raw=None,
+        )
+        media_box["patched_modality"] = patched_modality
+    elif media_detected is not None:
         modality, attachment = media_detected
-        if attachment and not jsc.truthy(jsc.get(attachment, "url")):
-            # AC-107/H5, restated (captain ruling 23 Sep 2026): a REAL attachment
-            # (non-empty - the transition-window marker case below always hands
-            # detect() an empty `{}`) whose own `url` is falsy is unreadable, not
-            # a plain-text fallthrough. Never reaches `run()`'s decide/meter/
-            # enqueue pipeline - nothing to fetch, so no ledger row, no job.
+        if not jsc.truthy(jsc.get(attachment, "url")):
+            # AC-107/H5, restated (captain ruling 23 Sep 2026): an attachment whose
+            # own `url` is falsy is unreadable, not a plain-text fallthrough. Never
+            # reaches `run()`'s decide/meter/enqueue pipeline - nothing to fetch, so
+            # no ledger row, no job.
             outcome = media_intake.no_url_outcome(modality)
         else:
             caption = jsc.js_string(jsc.get(attachment, "description")) or None
@@ -1259,6 +1274,10 @@ def _run_stages(  # noqa: PLR0915
                 caption=caption,
                 turn_id=turn_id,
                 session_factory=session_factory,
+                # note (a): the console already stored these bytes itself
+                # (`console_service._upload_console_media`, under `chatbot-console/`) -
+                # `_store_media_bytes` reads this back off the job to skip a second copy.
+                source="console" if envelope.ingress == "console" else "chat-turn",
             )
         media_box["outcome"] = outcome
         turn_trace.record(
@@ -1272,7 +1291,14 @@ def _run_stages(  # noqa: PLR0915
             why="The customer sent media; this is what the intake pipeline decided and read.",
             facts=_media_intake_facts(outcome),
             error=outcome.reply_text if outcome.stops_here and outcome.turn_status == "failed" else None,
-            raw={"result": outcome.result},
+            # Review round S5: `job_id`/`attachment_id`/the full `result` live here,
+            # never in `facts` - `TurnPanel`'s generic StageRow prints every `facts`
+            # value verbatim (`String(value)`), so a bare id there is a UUID on
+            # screen (cursor rule) and the nested `result` object prints as
+            # "[object Object]". `console_service`/`chatbot.py`'s own readers merge
+            # `facts` and `raw` back together, so nothing downstream of the trace
+            # itself lost a field.
+            raw={"job_id": outcome.job_id, "attachment_id": outcome.attachment_id, "result": outcome.result},
         )
         if outcome.stops_here:
             close_stage = "sent" if outcome.turn_status == "done" else "media_intake"
@@ -1879,7 +1905,15 @@ def _run_stages(  # noqa: PLR0915
                 space_id=space_id_for_turn,
                 remembered_before=remembered_before,
                 recalled=recalled,
-                from_photo=bool(media_box.get("outcome") and media_box["outcome"].modality == "image"),
+                contact_scope=contact_scope,
+                from_photo=_media_source_modality(media_box) == "image",
+                # Review round nit: a LIVE media outcome (image or voice) already got
+                # its own "I read .../I heard ..." line from `_apply_media_reply_prefix`
+                # - this arm's own lead would double it (most visibly on voice: "I
+                # heard: X" followed by "I have X."). `None` on a patched-upstream
+                # turn (no outcome ran here at all - S3), which still needs this arm's
+                # own lead.
+                media_prefixed=bool(media_box.get("outcome")),
             )
 
         # D9: no engine switch. The re-architected turn IS the engine, so a lane the
@@ -2834,7 +2868,9 @@ def _run_entities_only_arm(
     space_id: str | None,
     remembered_before: dict[str, Any],
     recalled: list[dict[str, Any]],
+    contact_scope: frozenset,
     from_photo: bool,
+    media_prefixed: bool = False,
 ) -> TurnResult:
     """S3 (PLAN-chatbot-media-into-turn.md): bare entities, no domain, no carried
     focus (AC-1822 to AC-1832). Resolved directly against the SAME resolver seam
@@ -2848,10 +2884,17 @@ def _run_entities_only_arm(
     needs to ENRICH the matching rows rather than build the list from nothing.
     """
     stage[0] = "looked_up"
+    # Review round B1(b): filtered the SAME way the lane gate was (`turn/apply.py::
+    # is_product_shaped_entity`) - a customer/order/brand token riding alongside a
+    # real code in one message must never be resolved as a "missed" product and
+    # reported back as "Couldn't find Hanlim".
     entities = [
         e
         for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("current_message") is True and e.get("raw")
+        if isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("raw")
+        and is_product_shaped_entity(e)
     ]
     raws = [e["raw"] for e in entities]
     placed: list[str] = []
@@ -2859,12 +2902,27 @@ def _run_entities_only_arm(
     if raws:
         from app.api.v1.system.references import ResolveReferenceRequest
 
+        # Security fix B2 (browser pass, reproduced 2/2): `resolve_reference_post`
+        # is a ROUTE function, called in-process rather than over HTTP, so the
+        # router dependency that would normally stamp company scope onto the
+        # request session (`apply_company_scope`) never runs for it - the SAME
+        # reason `run_turn` wraps `session_factory` for every OTHER session the
+        # turn opens (H56, top of this file). Re-stamped explicitly, on THIS
+        # session, right before the one call that needs it - never a fresh
+        # `SessionLocal()`, which is the mistake this fixes.
+        set_company_scope(db, contact_scope)
         services = business_services.production_services(db, space_id=space_id)
         body = {"tokens": raws, "allowed_entity_types": ["product"]}
         ResolveReferenceRequest(**body)  # validated the same way every other caller is
         result = services.resolve_entity(body)
+        # B2 fix, second half (browser pass): `resolve_reference_post`'s own
+        # resolutions carry `token`, never `raw` - keying on `raw` here silently
+        # collapsed every resolution to `None` and every code came back unplaced
+        # regardless of company scope. Masked in every OTHER test in this file by
+        # `_resolve_services`'s stub, which (correctly, for the real API) sets
+        # BOTH keys on each entry.
         resolutions = {
-            r.get("raw"): r for r in jsc.array(jsc.get(result, "resolutions")) if isinstance(r, dict)
+            r.get("token"): r for r in jsc.array(jsc.get(result, "resolutions")) if isinstance(r, dict)
         }
         by_raw = {row.get("raw"): row for row in state.focus.products if isinstance(row, dict)}
         for raw in raws:
@@ -2889,7 +2947,7 @@ def _run_entities_only_arm(
     )
 
     text = turn_compose.entities_only_reply(
-        placed, unplaced, from_photo=from_photo, media_prefixed=from_photo
+        placed, unplaced, from_photo=from_photo, media_prefixed=media_prefixed
     )
     answer = turn_compose.Answer(text=text)
     # `_run_answer` opens and commits its OWN session for the tail (persist, close);
@@ -2983,23 +3041,104 @@ def _apply_media_reply_prefix(result: TurnResult, outcome: Any) -> None:
             action["text"] = full_text
 
 
+def _repersist_media_prefixed_reply(
+    session_factory: SessionFactory, turn_id: str, result: TurnResult, dry_run: bool
+) -> None:
+    """Review round S1: `_apply_media_reply_prefix` mutates the in-memory `TurnResult`
+    handed back to the caller, but by the time it runs, the answering arm's own tail
+    (`_run_answer`/`_run_entities_only_arm`/etc, plural rather than one shared
+    `_finish_turn`) already persisted the row's `response` and its trace's `sent`/
+    `replied` record with the UN-prefixed text - so `chatbot.turns.response` and a
+    `_duplicate_result` replay disagreed with the words the customer actually got.
+    Patched back onto the row here, in place, on its own short session - a no-op
+    whenever `_apply_media_reply_prefix` itself was a no-op (a plain turn, or a
+    media-denied turn that never reaches an answering arm at all).
+    """
+    if dry_run:
+        return
+    new_text = (result.reply or {}).get("text")
+    db = session_factory()
+    try:
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+        if row is None or not isinstance(row.response, dict):
+            return
+        response = row.response
+        reply = response.get("reply") if isinstance(response.get("reply"), dict) else {}
+        if reply.get("text") == new_text:
+            return  # nothing to fix - either no prefix applied, or already persisted right
+        response = {**response, "reply": {**reply, "text": new_text}}
+        if isinstance(response.get("actions"), list):
+            response["actions"] = result.actions
+        row.response = response
+        trace = [dict(r) if isinstance(r, dict) else r for r in (row.trace or [])]
+        for record in trace:
+            if not isinstance(record, dict) or record.get("stage") not in ("sent", "replied"):
+                continue
+            raw = record.get("raw")
+            if not isinstance(raw, dict):
+                continue
+            if isinstance(raw.get("reply"), dict):
+                raw["reply"] = {**raw["reply"], "text": new_text}
+            if isinstance(raw.get("actions"), list):
+                raw["actions"] = result.actions
+        row.trace = trace
+        db.commit()
+    finally:
+        db.close()
+
+
+def _media_source_modality(media_box: dict[str, Any]) -> str | None:
+    """This turn's media source, whichever of the two intake paths produced it - a
+    live outcome this module ran itself, or a modality n8n's own pipeline already
+    decided upstream (`patched_upstream`, review round S3). `None` on a plain text
+    turn. Used for `from_photo` (the entities-only arm's wording), which must read
+    the same either way."""
+    outcome = media_box.get("outcome")
+    if outcome is not None:
+        return outcome.modality
+    return media_box.get("patched_modality")
+
+
+def _attributes_summary(attributes: list[Any]) -> str | None:
+    """"2 quantity, 1 size" - one count per `MediaAttribute.kind` (review round S5).
+    `None` on an empty list, so a text turn's facts carry no `attributes` key at
+    all rather than a printed empty string."""
+    from collections import Counter
+
+    counts = Counter(
+        a.get("kind") or "attribute" for a in attributes if isinstance(a, dict)
+    )
+    if not counts:
+        return None
+    return ", ".join(f"{n} {kind}" for kind, n in counts.items())
+
+
 def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, Any]:
     """The `media_intake` trace record's facts (AC-1800/AC-1801, AC-1836's own
-    `attachment_error`). `attachment_id`/`attachment_error` are promoted to the top
-    level (S4) - they are what the turn projection's `media` block and the storage
-    tests both read off the trace, not a nested `result` key."""
+    `attachment_error`) - FLATTENED to exactly what `TurnPanel`'s generic StageRow
+    prints (review round S5): every value here is a plain string/number/bool the
+    component renders with `String(value)` - never a nested object (which would
+    print as "[object Object]") and never a bare id (no UUIDs on screen, the
+    cursor rule) - `job_id`/`attachment_id`/the full `result` live in the trace
+    record's `raw` instead (never printed; see the `turn_trace.record` call site).
+    """
+    entities = [e for e in (outcome.result.get("entities") or []) if isinstance(e, dict)]
+    raws = [e.get("raw") for e in entities if e.get("raw")]
     facts: dict[str, Any] = {
         "modality": outcome.modality,
         "decision": outcome.decision,
         "status": outcome.status,
-        "job_id": outcome.job_id,
         "elapsed_ms": outcome.elapsed_ms,
-        "result": {
-            k: v for k, v in outcome.result.items() if k not in ("attachment_id", "attachment_error")
-        },
     }
-    if outcome.attachment_id:
-        facts["attachment_id"] = outcome.attachment_id
+    if raws:
+        facts["entities"] = ", ".join(raws)
+    attributes_summary = _attributes_summary(outcome.result.get("attributes") or [])
+    if attributes_summary:
+        facts["attributes"] = attributes_summary
+    if outcome.result.get("notes"):
+        facts["notes"] = outcome.result["notes"]
+    if outcome.result.get("truncated"):
+        facts["truncated"] = True
     if outcome.attachment_error:
         facts["attachment_error"] = outcome.attachment_error
     if outcome.extraction_error:

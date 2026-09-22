@@ -602,6 +602,12 @@ class Envelope(BaseModel):
     ingress: IngressKind = "webhook"
     # Gate 4 (shadow mode). Same reason as `messageId`: it lands in a VARCHAR(128).
     shadow_of: str | None = Field(default=None, max_length=128)
+    # PLAN-chatbot-media-into-turn.md, AC-1805 (review round S3): n8n's OWN transition-
+    # window shape, while its media pipeline still runs upstream of `/chat/turn` during
+    # the cutover - `{envelope: {..., message, media: <patched item>}}`. Read by
+    # `media_intake.patched_upstream()`; `None` on every other envelope, including
+    # every one this repo's own tests build.
+    media: dict[str, Any] | None = None
 
     @field_validator("message")
     @classmethod

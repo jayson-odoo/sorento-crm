@@ -17,6 +17,7 @@ not async) bounded by `media_sync_wait_seconds`.
 """
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,20 +25,34 @@ from typing import Any
 from app.services.chatbot import jsc
 from app.services.media_extract import wording
 
-# The two attachment `type` values this step reads, mapped to the ledger's own
-# modality vocabulary (`image | voice` - `ContactMediaUsage.modality`). A
-# document, a video, or a sticker with no url falls through unchanged: the
-# caption still reaches the parser via `build_latest_user_message`'s existing
-# `attachment.description` fallback (AC-1804).
-_ATTACHMENT_KIND_TO_MODALITY = {"image": "image", "audio": "voice"}
+# The attachment `type` values this step reads, mapped to the ledger's own modality
+# vocabulary (`image | voice` - `ContactMediaUsage.modality`). `voice`/`ptt` are
+# WhatsApp's own alternate names for a voice note (review round S7 - n8n's
+# `detect-media` node reads both). A document, a video, or a sticker falls through
+# unchanged regardless of url: the caption still reaches the parser via
+# `build_latest_user_message`'s existing `attachment.description` fallback (AC-1804).
+_ATTACHMENT_KIND_TO_MODALITY = {"image": "image", "audio": "voice", "voice": "voice", "ptt": "voice"}
 
 TERMINAL_STATUSES = ("completed", "failed")
 
 # How often the synchronous wait re-reads the job row. Mirrors
 # `external/media.py::_POLL_INTERVAL_SECONDS` / `console_service._MEDIA_POLL_
 # INTERVAL_SECONDS` - short enough not to pad a fast extraction, long enough not
-# to spin.
-POLL_INTERVAL_SECONDS = 0.25
+# to spin. Security review item 7: 0.5s (was 0.25s) - this poll runs on a request
+# thread inside `/chat/turn`, not a background worker, so halving how often it
+# spins matters for how many of those threads one slow extraction can pin.
+POLL_INTERVAL_SECONDS = 0.5
+
+# Security review item 7: an in-turn synchronous wait blocks a REQUEST thread, not a
+# background one - unlike `/external/media/process`'s own wait, which is this same
+# pipeline's `_await_job` on a route the caller expects to be async. Bounded so a
+# burst of media turns cannot pin every request thread on a slow provider at once;
+# a turn that cannot acquire a slot immediately takes the SAME timeout arm a real
+# wait timeout takes ("I could not read that photo in time...") rather than queueing
+# behind the ones already waiting. A constant, not a setting - no measurement yet
+# justifies making it operator-tunable (see PRINCIPLES.md "simplest thing").
+_CONCURRENT_WAIT_LIMIT = 8
+_wait_slots = threading.BoundedSemaphore(_CONCURRENT_WAIT_LIMIT)
 
 # AC-1814: the sentence when the job outlives the sync wait. Two words differ by
 # modality; everything else is the plan's own wording, verbatim.
@@ -81,45 +96,76 @@ class MediaIntakeOutcome:
     extraction_error: str | None = None
 
 
+def _modality_of(attachment: dict[str, Any]) -> str | None:
+    """`attachment`'s modality by `type`, falling back to a `mimeType` prefix the same
+    way n8n's own `detect-media` node does (review round S7) - a caller that sends the
+    right mime but an unexpected/missing `type` string still gets intaked. A `sticker`
+    is excluded from the mime fallback on purpose: it is never this step's concern
+    even when Respond.io happens to attach an `image/webp` mime to one.
+    """
+    attachment_type = jsc.get(attachment, "type")
+    modality = _ATTACHMENT_KIND_TO_MODALITY.get(attachment_type)
+    if modality:
+        return modality
+    if attachment_type == "sticker":
+        return None
+    mime = (jsc.js_string(jsc.get(attachment, "mimeType")) or "").lower()
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("audio/"):
+        return "voice"
+    return None
+
+
 def detect(inner_message: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
     """Whether `inner_message` (`ctx.text.message.message`) carries media this
     step should intake, and the modality it carries.
 
     Returns `(modality, attachment)` - `modality` is `"image"` or `"voice"`,
-    `attachment` is the raw attachment dict (`{}` for the transition-window
-    shape below, which carries no attachment at all; NON-empty, with no `url`
-    key, for the no-url case below). `None` when nothing here is this step's
-    concern at all - a document, a video, a sticker, or a plain text message.
+    `attachment` is the raw, NON-empty attachment dict (with or without a `url`
+    key - see `no_url_outcome()` for the no-url case). `None` when nothing here is
+    this step's concern at all - a document, a video, a sticker, or a plain text
+    message. The transition-window "already patched" signal is a SEPARATE, envelope-
+    level check (`patched_upstream()` below, review round S3) - this function no
+    longer reads an inner `_media` marker at all.
 
     An image/audio attachment with NO url is still detected here, deliberately
     (AC-107/H5, restated for this pipeline, captain ruling 23 Sep 2026): it is
-    UNREADABLE, not a plain-text turn - `engine.py` tells this apart from the
-    two cases above by whether the returned `attachment` is non-empty AND its
-    own `url` is falsy, and answers with `no_url_outcome()` below instead of
-    ever calling `run()` - no ledger row, no job, no worker call, since there
-    is nothing to fetch.
+    UNREADABLE, not a plain-text turn - `engine.py` tells this apart from a normal
+    attachment by whether its own `url` is falsy, and answers with `no_url_outcome()`
+    below instead of ever calling `run()` - no ledger row, no job, no worker call,
+    since there is nothing to fetch.
     """
     attachment = jsc.get(inner_message, "attachment") or {}
-    attachment_type = jsc.get(attachment, "type")
-    modality = _ATTACHMENT_KIND_TO_MODALITY.get(attachment_type)
+    modality = _modality_of(attachment)
     if modality:
         return modality, attachment
-
-    # AC-1805: n8n's transition-window shape - already patched to `type: "text"`
-    # with a `_media` marker (the plan's own name for it; the exact key is the
-    # coder's to choose, per the tester's own docstring). Handled through the
-    # SAME single call below rather than skipped outright, so the ledger still
-    # meters it during the brief window both paths might coexist; `decide_and_
-    # record`'s own idempotency key (respond_io_id, message_id, modality,
-    # media_ordinal) is what keeps a message that somehow reaches this twice to
-    # one row, never two.
-    media_marker = jsc.get(inner_message, "_media")
-    if isinstance(media_marker, dict) and media_marker.get("already_patched"):
-        marker_modality = media_marker.get("modality")
-        modality = "image" if marker_modality == "image" else "voice" if marker_modality == "voice" else None
-        if modality:
-            return modality, {}
     return None
+
+
+def patched_upstream(envelope: Any) -> str | None:
+    """AC-1805, restated (review round S3 + security item 4): n8n's OWN media
+    pipeline sometimes still runs UPSTREAM of `/chat/turn` during the cutover window
+    and hands this route an envelope whose top-level `media` key already carries what
+    it decided - `{envelope: {..., message, media: <patched item>}}` - rather than
+    leaving that decision for this module to make.
+
+    The old reading of AC-1805 (an inner `_media` marker nested inside the message,
+    handled through the SAME `run()` call as a live attachment) double-metered a
+    message n8n's own pipeline had already decided, metered and recorded once itself.
+    The correct rule is simpler: `envelope.media` present means NO intake runs here at
+    all - no `decide_and_record`, no job, nothing added to the ledger - because
+    upstream already did every part of that job. Returns the modality n8n's own patch
+    carried (`envelope.media._media.modality`), or `None` on every other envelope.
+    """
+    media = getattr(envelope, "media", None)
+    if not isinstance(media, dict):
+        return None
+    marker = media.get("_media")
+    if not isinstance(marker, dict):
+        return None
+    modality = marker.get("modality")
+    return "image" if modality == "image" else "voice" if modality == "voice" else None
 
 
 def no_url_outcome(modality: str) -> MediaIntakeOutcome:
@@ -147,6 +193,7 @@ def _build_request(
     attachment: dict[str, Any],
     caption: str | None,
     turn_id: str,
+    source: str = "chat-turn",
 ):
     from app.schemas.external.media import MediaProcessRequest
 
@@ -162,7 +209,10 @@ def _build_request(
         duration_ms=int(duration_ms) if isinstance(duration_ms, (int, float)) else None,
         bytes=int(size) if isinstance(size, (int, float)) else None,
         turn_id=str(turn_id),
-        context={"source": "chat-turn"},
+        # `source` (review round, note a): "console" tells `_store_media_bytes` this
+        # job's bytes are ALREADY stored under `chatbot-console/` by
+        # `console_service._upload_console_media`, so it must not store a second copy.
+        context={"source": source},
     )
 
 
@@ -201,6 +251,7 @@ def run(
     caption: str | None,
     turn_id: str,
     session_factory,
+    source: str = "chat-turn",
 ) -> MediaIntakeOutcome:
     """Decide, meter, record, enqueue and (bounded) wait - the real pipeline,
     called from inside the turn instead of from n8n.
@@ -220,6 +271,7 @@ def run(
         message_id=message_id,
         modality=modality,
         attachment=attachment,
+        source=source,
         caption=caption,
         turn_id=turn_id,
     )
@@ -260,7 +312,18 @@ def run(
     # wrote its result. `_poll`'s first read is a plain query on its own session, so
     # an already-terminal job returns on the very first iteration - no real latency
     # added over trusting the snapshot, and no staleness either.
-    snapshot = _poll(fast.job_id, fast.sync_wait_seconds, session_factory)
+    #
+    # Bounded (security review item 7): this wait blocks a REQUEST thread, not a
+    # background one. A burst past `_CONCURRENT_WAIT_LIMIT` concurrent waits takes
+    # the timeout arm immediately rather than queueing behind the ones already
+    # holding a slot.
+    if _wait_slots.acquire(blocking=False):
+        try:
+            snapshot = _poll(fast.job_id, fast.sync_wait_seconds, session_factory)
+        finally:
+            _wait_slots.release()
+    else:
+        snapshot = None
 
     if snapshot is None:
         # AC-1814: outlived the wait. The job keeps running; its later completion

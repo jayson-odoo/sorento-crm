@@ -633,8 +633,24 @@ def entities_only_reply(
     the intake's own raws) already supplies it for every media turn, and printing it
     twice would violate AC-1820 ("the prefix appears exactly once"). A typed turn
     carries no such wrapper, so it stays self-contained.
+
+    Review round B1(a): nothing PLACED is its own case, not "I have ." with an empty
+    join - a photo where every code missed says so up front ("I could not match any
+    product code in that photo."); a typed message with nothing placed says try again,
+    since "What would you like me to know?" has nothing left to be about.
     """
-    parts: list[str] = []
+    if not placed:
+        parts: list[str] = []
+        if from_photo:
+            parts.append("I could not match any product code in that photo.")
+        if unplaced:
+            parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+        parts.append(
+            "What would you like me to do with it?" if from_photo else "Ask again with the correct code."
+        )
+        return " ".join(parts)
+
+    parts = []
     if not media_prefixed:
         lead = (
             f"I read {_join_words_and(placed)} from that photo."

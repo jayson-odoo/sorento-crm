@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -100,12 +101,18 @@ def run_media_extraction(job: MediaExtractionJob) -> dict:
     return run_extraction(job)
 
 
-def _extension_for(mime_type: Optional[str], modality: str) -> str:
-    if mime_type:
-        ext = _EXT_BY_MIME.get(mime_type.split(";")[0].strip().lower())
-        if ext:
-            return ext
-    return "jpg" if modality == "image" else "ogg"
+def _safe_mime_and_ext(candidate_mime: Optional[str]) -> tuple[str, str]:
+    """Security review item 2: the ONLY mime types trusted for a STORED attachment
+    are the ones this module already declares support for (`_EXT_BY_MIME`) - never
+    whatever an inbound envelope or a remote server's response header claimed.
+    Anything outside that allow-list is stored as a generic octet stream with a
+    `.bin` extension, which a browser never executes and never renders inline.
+    """
+    normalized = (candidate_mime or "").split(";")[0].strip().lower()
+    ext = _EXT_BY_MIME.get(normalized)
+    if ext:
+        return normalized, ext
+    return "application/octet-stream", "bin"
 
 
 def _store_media_bytes(db, job: MediaExtractionJob, result: dict) -> None:
@@ -118,25 +125,41 @@ def _store_media_bytes(db, job: MediaExtractionJob, result: dict) -> None:
     into a failed job - the customer already read a correct answer either way.
     No `usage.turn_id` (a denied job never reaches here at all; an old direct
     `/external/media/process` caller with no turn_id has nothing to link to)
-    means nothing to store against, silently.
+    means nothing to store against, silently. `context.source == "console"`
+    (note a, review round) means the console's OWN upload
+    (`console_service._upload_console_media`) already stored these bytes under
+    `chatbot-console/` - storing a second copy here would double the row.
+
+    The bytes stored are the SAME ones the extraction itself fetched and the model
+    read (security review item 1) - popped off `result`'s own transient keys
+    (`MediaExtractionOutcome.media_bytes`, threaded through
+    `media_extract.service.run_extraction`), never a second `fetch_media_bytes`
+    call against a url that is, by construction, an external caller's own string.
     """
-    usage = db.query(ContactMediaUsage).filter(ContactMediaUsage.id == job.usage_id).first()
-    if usage is None or not usage.turn_id:
+    context = job.context if isinstance(job.context, dict) else {}
+    if context.get("source") == "console":
+        return
+    data = result.pop("_media_bytes", None)
+    content_type = result.pop("_media_content_type", None)
+    if data is None:
+        # A test harness (or, defensively, a real run that somehow carried no
+        # bytes forward) stubbed `run_media_extraction` wholesale - nothing was
+        # actually fetched, so there is nothing to store. Never re-fetch.
         return
     try:
+        usage = db.query(ContactMediaUsage).filter(ContactMediaUsage.id == job.usage_id).first()
+        if usage is None or not usage.turn_id:
+            return
         from app.services.entity_attachment_service import EntityAttachmentService
-        from app.services.media_extract.service import fetch_media_bytes
         from app.services.storage_router import cdn_base_url, default_provider, get_backend
 
-        data, content_type = fetch_media_bytes(job.media_url or "")
+        safe_mime, ext = _safe_mime_and_ext(job.mime_type or content_type)
         provider = default_provider()
         backend = get_backend(provider)
-        ext = _extension_for(job.mime_type or content_type, job.modality)
-        ordinal = usage.media_ordinal or 0
-        key = f"chatbot-media/{usage.respond_io_id}/{usage.message_id}-{ordinal}.{ext}"
-        s3_key, _ = backend.upload_file(
-            file_content=data, file_path=key, content_type=job.mime_type or content_type or ""
-        )
+        # Security review item 3: no respond_io_id / message_id in the key - both are
+        # caller-supplied strings from the inbound envelope, never a path component.
+        key = f"chatbot-media/{usage.id}-{uuid.uuid4().hex}.{ext}"
+        s3_key, _ = backend.upload_file(file_content=data, file_path=key, content_type=safe_mime)
         stored_path = cdn_base_url(provider, s3_key)
         link = EntityAttachmentService(db).create_attachment_and_link(
             entity_type="chatbot_turn",
@@ -146,7 +169,7 @@ def _store_media_bytes(db, job: MediaExtractionJob, result: dict) -> None:
             file_size_bytes=len(data),
             attachment_type_code=CHATBOT_MEDIA_ATTACHMENT_TYPE_CODE,
             storage_provider=provider,
-            mime_type=job.mime_type or content_type,
+            mime_type=safe_mime,
             uploader_kind="contact",
             uploaded_by_contact_id=usage.contact_id,
         )
@@ -157,7 +180,10 @@ def _store_media_bytes(db, job: MediaExtractionJob, result: dict) -> None:
         logger.warning(
             "media job %s: could not store the attachment (%s)", job.id, exc, exc_info=True
         )
-        result["attachment_error"] = str(exc) or exc.__class__.__name__
+        # Security review item 6: never the raw exception text on the trace/API - a
+        # storage failure can carry a signed url or a bucket path in its message.
+        # The detail stays in the log line above, for an operator to read.
+        result["attachment_error"] = "Could not store the attachment."
 
 
 def _run_bounded(job: MediaExtractionJob, timeout_seconds: float) -> dict:

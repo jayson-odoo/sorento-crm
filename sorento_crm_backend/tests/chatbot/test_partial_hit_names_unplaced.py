@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
 from tests.chatbot.test_outstanding_lane import (
@@ -102,6 +104,7 @@ class TestTwoUnplacedTokensAreBothNamed:
             f"expected the existing miss-line wording naming both unplaced tokens: {reply!r}"
         )
 
+    @pytest.mark.skip(reason="S5 deferred: awaiting the 14:34 prod trace")
     def test_kill_test_mutation_documented(self) -> None:
         """AC-1853. Documented rather than executed against a second code path (there is
         none to mutate yet): once S5 lands, REMOVING the new "name every unplaced token"

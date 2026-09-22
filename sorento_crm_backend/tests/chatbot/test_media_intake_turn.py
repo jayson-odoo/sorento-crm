@@ -143,20 +143,17 @@ def _document_envelope(*, contact_id: int = CONTACT_ID) -> Any:
 
 
 def _already_patched_envelope(rendered_text: str = "please check stock for A", *, contact_id: int = CONTACT_ID) -> Any:
-    """n8n's transition-window shape: `type:"text"` plus a `_media` marker the old
-    sub-media-intake used to stamp on. Exact key TBD by the coder; `_media` is the
-    plan's own name for it (module docstring, "already carries n8n's patched
-    `type:"text"` + `_media`")."""
+    """n8n's transition-window shape (review round S3): `type:"text"` on the message
+    PLUS a top-level `envelope.media` carrying what n8n's own pipeline already
+    decided - `{envelope: {..., message, media: <patched item>}}` - never an inner
+    `_media` marker nested inside the message (that reading is retired)."""
     envelope = _envelope()
     if contact_id != CONTACT_ID:
         envelope.contact["id"] = contact_id
         envelope.message["contact"]["id"] = contact_id
         envelope.message["message"]["contactId"] = contact_id
-    envelope.message["message"]["message"] = {
-        "type": "text",
-        "text": rendered_text,
-        "_media": {"modality": "image", "already_patched": True},
-    }
+    envelope.message["message"]["message"] = {"type": "text", "text": rendered_text}
+    envelope.media = {"_media": {"modality": "image", "already_patched": True}}
     return envelope
 
 
@@ -225,11 +222,28 @@ def media_pipeline(monkeypatch, session_factory):
     monkeypatch.setattr(media_tasks_mod, "SessionLocal", session_factory)
 
     class _Controller:
-        def set_result(self, result: dict[str, Any] | None = None, *, error: Exception | None = None) -> None:
+        def set_result(
+            self,
+            result: dict[str, Any] | None = None,
+            *,
+            error: Exception | None = None,
+            media_bytes: bytes | None = None,
+            media_content_type: str | None = None,
+        ) -> None:
+            """`media_bytes` (security review item 1): `_store_media_bytes` reads the
+            fetched bytes back off the result's own transient keys rather than
+            re-fetching - a test that wants a real attachment row (rather than the
+            silent "no bytes to store" no-op) passes them here, the same shape
+            `media_extract.service._result_with_bytes` produces for real.
+            """
             def _run(job):
                 if error is not None:
                     raise error
-                return result if result is not None else {}
+                body = dict(result) if result is not None else {}
+                if media_bytes is not None:
+                    body["_media_bytes"] = media_bytes
+                    body["_media_content_type"] = media_content_type
+                return body
 
             monkeypatch.setattr(media_tasks_mod, "run_media_extraction", _run)
 
@@ -302,8 +316,10 @@ class TestImageIntakeStage:
         assert facts.get("modality") == "image"
         assert facts.get("decision") == "accepted"
         assert facts.get("status") == "completed"
-        assert facts.get("job_id")
         assert "elapsed_ms" in facts
+        # Review round S5: `job_id` moved to the record's `raw` (never printed on
+        # the trace screen - `facts` alone is display-safe, and a UUID is not).
+        assert (stage.get("raw") or {}).get("job_id")
 
 
 class TestVoiceIntakeStage:
@@ -471,9 +487,14 @@ class TestNonImageAttachmentsNotIntaked:
 
 
 class TestAlreadyPatchedEnvelopeNotIntakedTwice:
-    """AC-1805."""
+    """AC-1805, restated by review round S3: n8n's own pipeline already decided,
+    metered and recorded this one upstream (`envelope.media`), so THIS module must
+    run no intake at all for it - zero ledger rows, not one. The old reading (an
+    inner `_media` marker, metered again through the SAME `run()` call as a live
+    attachment) double-counted a message n8n had already metered itself.
+    """
 
-    def test_one_usage_row_per_message(
+    def test_zero_usage_rows_for_a_patched_upstream_envelope(
         self, session_factory, stub_parser, stub_access, media_pipeline
     ):
         contact_id = _fresh_contact_id()
@@ -485,13 +506,19 @@ class TestAlreadyPatchedEnvelopeNotIntakedTwice:
         stub_access()
 
         envelope = _already_patched_envelope(contact_id=contact_id)
-        engine_mod.run_turn(envelope, session_factory=session_factory)
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
         rows = _usage_rows(session_factory, contact_id)
-        assert len(rows) == 1, (
-            f"expected exactly one contact_media_usage row for an already-patched "
-            f"envelope, found {len(rows)}"
+        assert len(rows) == 0, (
+            f"expected ZERO contact_media_usage rows for a patched-upstream "
+            f"envelope (n8n already metered it) - found {len(rows)}"
         )
+        assert not media_pipeline.calls, "decide_and_record ran for a patched-upstream envelope"
+
+        trace = _trace_of(session_factory, result.turn_id)
+        stage = _media_intake_stage(trace)
+        assert stage is not None
+        assert (stage.get("facts") or {}).get("skipped") == "patched_upstream"
 
 
 class TestAudioDeadEndRemoved:

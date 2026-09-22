@@ -59,6 +59,11 @@ function record(over: Partial<TurnTraceRecord> = {}): TurnTraceRecord {
 }
 
 function mediaIntakeRecord(over: Partial<TurnTraceRecord> = {}): TurnTraceRecord {
+  // Review round S5: the REAL shape `engine.py::_media_intake_facts` emits -
+  // flattened to what StageRow prints verbatim (a comma-joined `entities` string,
+  // no `attributes`/`notes` key at all when there is nothing to say, never the
+  // literal word "none"). `job_id`/`attachment_id`/the full `result` live under
+  // `raw` instead, which StageRow never reads - so they are absent here too.
   return record({
     // Cast: `media_intake` is not (yet) a member of the `TurnStage` union the type
     // declares - the coder adds it. Cast at the fixture, per the tester brief.
@@ -68,10 +73,11 @@ function mediaIntakeRecord(over: Partial<TurnTraceRecord> = {}): TurnTraceRecord
     facts: {
       modality: 'image',
       decision: 'accepted',
+      status: 'completed',
+      elapsed_ms: 900,
       entities: 'A, B',
-      attributes: 'none',
-      notes: 'none',
     },
+    raw: { job_id: 'ZZT-job-1', attachment_id: 'ZZT-attachment-1', result: {} },
     ...over,
   });
 }
@@ -116,7 +122,7 @@ describe('TurnPanel media stage (AC-1847)', () => {
         record({ stage: 'received' }),
         mediaIntakeRecord({
           summary: 'Heard the voice note.',
-          facts: { modality: 'voice', decision: 'accepted', entities: 'SRTWB1455', attributes: 'none', notes: 'none' },
+          facts: { modality: 'voice', decision: 'accepted', status: 'completed', elapsed_ms: 400, entities: 'SRTWB1455' },
         }),
         record({ stage: 'understood' }),
       ],

@@ -529,15 +529,29 @@ def _upload_console_media(*, kind: str, filename: str, mime: str, content_base64
 
 
 def _media_intake_result_of(turn_id: str | None) -> dict[str, Any] | None:
-    """The persisted `media_intake` trace stage's `facts`, for the console's own
-    `media_status`/`media_id`/`media_text`/`media_error` fields - read back off
-    the row `run_turn` just wrote, never recomputed."""
+    """The persisted `media_intake` trace stage's `facts` AND `raw` MERGED into one
+    dict, for the console's own `media_status`/`media_id`/`media_text`/`media_error`
+    fields - read back off the row `run_turn` just wrote, never recomputed.
+
+    Merged rather than `facts` alone (review round S5): `job_id` and the full
+    `result` now live under the record's `raw` (never printed on the trace
+    screen - `facts` alone is display-safe), but this console-internal reader is
+    not a display surface and still needs both, the same shape it always read.
+    """
     if not turn_id:
         return None
-    row = SessionLocal().query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    # Review round S8: closed rather than left open - this is a SHORT read, not a
+    # session the caller goes on to use.
+    db = SessionLocal()
+    try:
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    finally:
+        db.close()
     for record in (row.trace if row else None) or []:
         if isinstance(record, dict) and record.get("stage") == "media_intake":
-            return record.get("facts") or {}
+            facts = record.get("facts") or {}
+            raw = record.get("raw") or {}
+            return {**facts, **raw}
     return None
 
 
@@ -629,9 +643,15 @@ def _run_console_media_turn(
             # got as far as running an extraction that then failed - never shown to
             # a real customer (whose reply stays the friendly `wording.nothing_read`/
             # `voice_unclear` text), but this IS the console's own diagnostic surface,
-            # so the plain generic sentence is only the fallback for a denial that
-            # never ran an extraction at all (gate/quota/burst/no-url).
-            media_error = intake_facts.get("extraction_error") or "This contact's media could not be read."
+            # so `reply_text` - the SAME denial wording the turn actually replied with
+            # (`wording.nothing_read`/`voice_unclear`/a gate notice) - is the fallback
+            # for a denial that never ran an extraction at all (gate/quota/burst/no-url;
+            # review round nit: never a second, unrelated generic sentence).
+            media_error = (
+                intake_facts.get("extraction_error")
+                or reply_text
+                or "This contact's media could not be read."
+            )
             media_text = None
 
     return ConsoleTurnResult(

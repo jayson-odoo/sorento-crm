@@ -20,15 +20,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Idempotent on re-run (AC-1838): insert only when no row of this type_name
-    # exists yet, the same guard `069_seed_promotion_attachment_type` uses.
+    # Idempotent on re-run (AC-1838): insert only when no row of this CODE exists
+    # yet - the stable identifier, not the `type_name` display label a later
+    # rename could change (review round note (d): the upgrade guard and the
+    # downgrade below must key on the same column).
     op.execute(
         text(
             "INSERT INTO attachment_types "
             "(id, code, type_name, allowed_extensions, max_file_size_mb, created_at) "
             "SELECT gen_random_uuid(), 'chatbot_media', 'Chatbot Media', "
             "'jpg,jpeg,png,webp,gif,ogg,mp3,m4a,wav', 25, now() AT TIME ZONE 'utc' "
-            "WHERE NOT EXISTS (SELECT 1 FROM attachment_types WHERE type_name = 'Chatbot Media')"
+            "WHERE NOT EXISTS (SELECT 1 FROM attachment_types WHERE code = 'chatbot_media')"
         )
     )
 

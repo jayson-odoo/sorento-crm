@@ -259,6 +259,19 @@
             "title": "Is Test",
             "type": "boolean"
           },
+          "media": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Media"
+          },
           "message": {
             "additionalProperties": true,
             "title": "Message",

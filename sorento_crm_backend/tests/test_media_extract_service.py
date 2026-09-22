@@ -1291,6 +1291,14 @@ def _install_streaming_client(monkeypatch, response):
     import httpx
 
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeStreamingClient(response))
+    # Security review item 5 (SSRF guard): these tests exercise the STREAMING/size-cap
+    # mechanics, never a real network, so `cdn.example` (an IANA reserved, deliberately
+    # non-resolving domain - the same reason these tests picked it) would otherwise
+    # fail the guard's DNS-resolution check before the fake client is ever reached.
+    # The guard itself is covered directly below (`TestFetchMediaBytesSsrfGuard`).
+    monkeypatch.setattr(
+        "app.services.outbound_url_guard.assert_safe_outbound_url", lambda url, **kwargs: url
+    )
     return response
 
 
@@ -1402,6 +1410,49 @@ def test_a_transport_failure_is_reported_as_a_download_failure(monkeypatch):
         fetch_media_bytes("https://cdn.example/gone.jpg")
 
     assert "Could not download the media" in str(excinfo.value)
+
+
+class TestFetchMediaBytesSsrfGuard:
+    """Security review item 5: `media_url` is a caller-supplied string on every path
+    that reaches `fetch_media_bytes` - a WhatsApp attachment, an n8n-patched item, the
+    console's own upload. Refused BEFORE any socket opens, the same guard
+    `chatbot/dispatch.py`'s retry webhook already uses."""
+
+    def test_a_loopback_url_is_refused_before_any_request(self, monkeypatch):
+        import httpx
+
+        from app.services.media_extract.service import MediaExtractionError, fetch_media_bytes
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            httpx, "Client", lambda **kwargs: calls.append("client-opened") or _FakeStreamingClient(None)
+        )
+
+        with pytest.raises(MediaExtractionError):
+            fetch_media_bytes("https://127.0.0.1/x.jpg")
+
+        assert not calls, "a socket was opened for a loopback url - the guard did not run first"
+
+    def test_a_private_network_url_is_refused_before_any_request(self, monkeypatch):
+        import httpx
+
+        from app.services.media_extract.service import MediaExtractionError, fetch_media_bytes
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            httpx, "Client", lambda **kwargs: calls.append("client-opened") or _FakeStreamingClient(None)
+        )
+
+        with pytest.raises(MediaExtractionError):
+            fetch_media_bytes("https://10.0.0.5/x.jpg")
+
+        assert not calls, "a socket was opened for a private-network url - the guard did not run first"
+
+    def test_an_http_url_is_refused(self, monkeypatch):
+        from app.services.media_extract.service import MediaExtractionError, fetch_media_bytes
+
+        with pytest.raises(MediaExtractionError):
+            fetch_media_bytes("http://cdn.respond.io/x.jpg")
 
 
 def test_the_voice_lane_never_posts_another_providers_key_to_openai(monkeypatch):

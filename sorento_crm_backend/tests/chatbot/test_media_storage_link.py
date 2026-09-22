@@ -109,14 +109,12 @@ class TestImageAttachmentRowCreated:
         _seed_media_limit(session_factory, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         _seed_chatbot_media_attachment_type(session_factory)
-        media_pipeline.set_result(IMAGE_RESULT)
-        # `_store_media_bytes` (S4, `app/tasks/media_tasks.py`) fetches the media bytes
-        # for real before uploading - mocked the same way
-        # `tests/test_media_extract_service.py` mocks it, so this test only asserts on
-        # the storage/attachment wiring, never on a real network fetch.
-        monkeypatch.setattr(
-            "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-image-bytes", "image/jpeg"),
+        # `_store_media_bytes` (S4, `app/tasks/media_tasks.py`) stores the SAME bytes
+        # the extraction itself fetched (security review item 1: never a second
+        # `fetch_media_bytes` call) - handed to the canned result the same shape
+        # `media_extract.service._result_with_bytes` produces for real.
+        media_pipeline.set_result(
+            IMAGE_RESULT, media_bytes=b"fake-image-bytes", media_content_type="image/jpeg"
         )
         stub_parser()
         stub_access()
@@ -147,10 +145,9 @@ class TestVoiceAttachmentRowCreated:
         _seed_media_limit(session_factory, modality="voice")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         _seed_chatbot_media_attachment_type(session_factory)
-        media_pipeline.set_result({"transcript": "stock for SRTWB1455"})
-        monkeypatch.setattr(
-            "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-voice-bytes", "audio/ogg"),
+        media_pipeline.set_result(
+            {"transcript": "stock for SRTWB1455"},
+            media_bytes=b"fake-voice-bytes", media_content_type="audio/ogg",
         )
         stub_parser()
         stub_access()
@@ -172,10 +169,8 @@ class TestStorageFailureDoesNotFailTheExtraction:
         _seed_media_limit(session_factory, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         _seed_chatbot_media_attachment_type(session_factory)
-        media_pipeline.set_result(IMAGE_RESULT)
-        monkeypatch.setattr(
-            "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-image-bytes", "image/jpeg"),
+        media_pipeline.set_result(
+            IMAGE_RESULT, media_bytes=b"fake-image-bytes", media_content_type="image/jpeg"
         )
         stub_parser()
         stub_access()
@@ -344,8 +339,20 @@ class TestTurnDetailCarriesMediaBlock:
         db.commit()
         return turn_id, attachment.id
 
-    def test_detail_endpoint_carries_the_media_block(self, session_factory):
+    def test_detail_endpoint_carries_the_media_block(self, session_factory, monkeypatch):
         from tests.chatbot.test_turns_admin_api import BASE, client, db, _permissions  # noqa: F401
+
+        # `_media_block` now signs `strict=True` (review round note (b)): a broken
+        # signer must surface as no url, never an unsigned one - so this test, which
+        # has no real CloudFront key configured, mocks the signer the same way
+        # `fake_storage` does elsewhere in this file, rather than relying on the
+        # OLD fail-open behaviour this note retired.
+        import app.services.storage_router as storage_router
+
+        monkeypatch.setattr(
+            storage_router, "resolve_signed_url",
+            lambda path, *, provider, expires_in=900, strict=False: f"{path}?sig=zzt",
+        )
 
         db_session = session_factory()
         turn_id, attachment_id = self._seed_media_turn(db_session, contact=f"ZZT-media-{uuid.uuid4().hex[:8]}")
