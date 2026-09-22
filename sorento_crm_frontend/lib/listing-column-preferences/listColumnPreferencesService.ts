@@ -38,8 +38,10 @@ export type UserListColumnConfigPayload = {
   defaultSavedViewId?: string | null;
   /**
    * Rows-per-page. Owned by `useListingColumnPreferences` like the three column keys
-   * above. One of `DEFAULT_PAGE_SIZES` (`components/ui/data-grid-pagination.tsx`) -
-   * anything else is dropped on read by the BE `Literal` field, never applied.
+   * above. A bounded int (1..`MAX_LIST_PAGE_SIZE`, `lib/listNavQuery.ts`), not a fixed
+   * list - review round 1: several listings default their own Rows-per-page menu
+   * outside 25/50/100. The BE bound only guards the WRITE; a legacy out-of-range value
+   * can still survive a GET, so the FE applies the same bound on read and drops it.
    */
   pageSize?: number | null;
 };

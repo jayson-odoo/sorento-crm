@@ -4,7 +4,7 @@ import { Table } from '@tanstack/react-table';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { debounce } from '@/lib/helpers';
-import { DEFAULT_PAGE_SIZES } from '@/components/ui/data-grid-pagination';
+import { MAX_LIST_PAGE_SIZE } from '@/lib/listNavQuery';
 import {
   getUserListColumnConfig,
   resetUserListColumnConfig,
@@ -20,6 +20,17 @@ type ColumnStateFromTanStack = {
   columnVisibility?: ColumnVisibilityState;
   columnSizing?: Record<string, number>;
 };
+
+/**
+ * The one predicate that decides whether a `pageSize` is usable - on READ (apply a
+ * saved value) and on WRITE (save a size change) alike, per review round 1. Bounded
+ * int, NOT a fixed list of sizes: several listings default their own Rows-per-page
+ * menu outside 25/50/100 (e.g. 10, `roles/role-list.tsx`), and the BE bound mirrors
+ * this exactly (`MAX_LIST_PAGE_SIZE`, `lib/listNavQuery.ts`).
+ */
+function isValidPageSize(n: unknown): n is number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_LIST_PAGE_SIZE;
+}
 
 function stableStringify(value: unknown): string {
   if (value === undefined) return 'undefined';
@@ -157,6 +168,27 @@ export function useListingColumnPreferences<TData extends object>({
     if (!payload) {
       appliedRef.current = true;
       setApplied(true);
+      // B2 (review round 1, blocker): without this, "nothing saved yet" left
+      // `persistedPageSizeRef` at its initial `null`, so the page-size save effect
+      // read that as "the server holds something different from the table's current
+      // size" and wrote the table's own default straight back on first open - a
+      // write nobody asked for.
+      persistedPageSizeRef.current = table.getState().pagination?.pageSize ?? null;
+      // Same gap, same fix, for the column keys: `persistedRef` was left at its
+      // initial `null` here too, so the column-save effect's first run (right after
+      // apply) compared the table's current defaults against `null`, found a
+      // "difference", and wrote a full default-column-state row on first open - the
+      // exact B2 failure, via the OTHER writer this hook owns. The table has not
+      // moved from its mount-time defaults in this branch (nothing was applied), so
+      // those defaults are exactly what "already saved" means here.
+      persistedRef.current = columnStateFingerprint({
+        columnOrder: mergeColumnOrderWithLeafColumns(
+          defaultOrder,
+          table.getAllLeafColumns().map((c) => c.id),
+        ),
+        columnVisibility: defaultVisibility,
+        columnSizing: defaultSizing,
+      });
       return;
     }
 
@@ -231,15 +263,18 @@ export function useListingColumnPreferences<TData extends object>({
       columnSizing: appliedSizes,
     });
 
-    // A saved size outside the sizes the rows-per-page menu offers is dropped, never
-    // applied (AC-5) - it can only reach here from a row written before the BE
-    // `Literal` validation existed.
+    // A saved size outside the bound is dropped, never applied (AC-5) - it can only
+    // reach here from a row written before the BE bound existed (or a restore).
     const savedPageSize = payload.pageSize;
-    if (typeof savedPageSize === 'number' && (DEFAULT_PAGE_SIZES as number[]).includes(savedPageSize)) {
+    if (isValidPageSize(savedPageSize)) {
       const currentPageSize = table.getState().pagination?.pageSize;
       if (currentPageSize !== savedPageSize) {
         skipPageSizeSaveOnceRef.current = true;
-        table.setPageSize(savedPageSize);
+        // S3 (review round 1): TanStack's `setPageSize` keeps the TOP ROW visible
+        // (`old.pageSize * old.pageIndex / newPageSize`), it does not reset
+        // `pageIndex`. A saved size is a different page boundary, so this hook wants
+        // page 1 of it, not wherever the mount-time index happened to land.
+        table.setPagination({ pageIndex: 0, pageSize: savedPageSize });
       }
       persistedPageSizeRef.current = savedPageSize;
     } else {
@@ -248,7 +283,7 @@ export function useListingColumnPreferences<TData extends object>({
 
     appliedRef.current = true;
     setApplied(true);
-  }, [key, saved, table]);
+  }, [key, saved, table, defaultOrder, defaultVisibility, defaultSizing]);
 
   const columnOrderState = (table.getState() as ColumnStateFromTanStack)?.columnOrder;
   const columnVisibilityState = (table.getState() as ColumnStateFromTanStack)?.columnVisibility;
@@ -320,6 +355,19 @@ export function useListingColumnPreferences<TData extends object>({
     }, debounceMs),
   );
 
+  // B1 (review round 1, blocker): a SEPARATE debounce instance from the column-save
+  // effect below, not shared. `debounce` (`lib/helpers.ts`) keeps ONE timer and only
+  // its LATEST call's args - a page-size change inside the same window as a column
+  // change replaced the column payload outright, and both `persisted*Ref`s had
+  // already advanced past it, so the dropped write was never retried. Two independent
+  // timers mean a column change and a page-size change inside one window are two
+  // separate PUTs instead of one clobbering the other.
+  const debouncedSavePageSizeRef = useRef(
+    debounce((payload: unknown) => {
+      upsertMutation.mutate(payload as UserListColumnConfigPayload);
+    }, debounceMs),
+  );
+
   useEffect(() => {
     if (!key) return;
     if (isFetching) return;
@@ -371,8 +419,8 @@ export function useListingColumnPreferences<TData extends object>({
 
   const pageSizeState = table.getState().pagination?.pageSize;
 
-  // Rows-per-page, saved through the SAME debounced PUT as the column keys but as its
-  // own `{ pageSize }` body - the endpoint's partial merge (`exclude_unset`) leaves the
+  // Rows-per-page, saved as its own `{ pageSize }` body through its OWN debounce
+  // instance (B1 above) - the endpoint's partial merge (`exclude_unset`) leaves the
   // column keys untouched either way, so there is no reason to resend them here.
   useEffect(() => {
     if (!key) return;
@@ -383,13 +431,16 @@ export function useListingColumnPreferences<TData extends object>({
       skipPageSizeSaveOnceRef.current = false;
       return;
     }
-    if (typeof pageSizeState !== 'number') return;
+    // Same predicate as the apply gate above (`isValidPageSize`): a caller-driven
+    // pagination change this hook did not originate must still never write an
+    // out-of-bound value.
+    if (!isValidPageSize(pageSizeState)) return;
 
     // Never write back what the server already holds (or what this hook just applied).
     if (persistedPageSizeRef.current === pageSizeState) return;
     persistedPageSizeRef.current = pageSizeState;
 
-    debouncedSaveRef.current({ pageSize: pageSizeState } as UserListColumnConfigPayload);
+    debouncedSavePageSizeRef.current({ pageSize: pageSizeState } as UserListColumnConfigPayload);
   }, [key, pageSizeState, isFetching, suppressPersist]);
 
   const resetMutation = useMutation({
@@ -424,7 +475,9 @@ export function useListingColumnPreferences<TData extends object>({
     table.setColumnVisibility(defaultVisibility);
     table.setColumnSizing(defaultSizing);
     if (typeof defaultPageSize === 'number') {
-      table.setPageSize(defaultPageSize);
+      // S3 (review round 1): `setPageSize` alone keeps the top row, not `pageIndex`
+      // 0 - the same gap as the apply effect. A reset is a fresh view of the grid.
+      table.setPagination({ pageIndex: 0, pageSize: defaultPageSize });
     }
     await resetMutation.mutateAsync();
   };
