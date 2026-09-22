@@ -318,13 +318,36 @@ def test_ac_d1b_all_run_range_narrows_project_leg_only_retail_leg_unbounded(scm_
     on an All run exactly as on a Dealer run. AC-D1b: on an All run it must stay IN; the
     project leg (a confirmed row due after the date) must still be excluded, same as
     today.
+
+    Both runs are scoped to `product_codes=[code]` (fix round 1: G10's named-product
+    admission bypass - `_planning_rows`' own docstring, "a run given explicit
+    product_ids plans those products regardless of committed demand") - product_ids
+    exempts the row from G1's ADMISSION gate, but G10 does not manufacture a
+    recommendation out of nothing: `_emit_cell`/`_covered_rec` still write no row at
+    all for a cell with zero committed AND nothing else to report (`_covered_rec`:
+    "None when the pool has no committed demand at all - that is genuinely nothing to
+    say"). So this product ALSO gets an explicit product-wide `scm.reorder_level` row
+    and a nonzero forecast (`_seed_pool_below_level`'s own pattern) - stock (0) below
+    that level triggers a REAL `buy` row on every run regardless of `committed`, which
+    is what makes the Dealer run's `committed = 0` actually OBSERVABLE via
+    `_committed_for` rather than erroring "no recommendation row".
     """
     _, db, _, _ = scm_app
+    code = _code("P")
     wid = _mk_warehouse(db, _code("WH"))
-    pid = _mk_product(db, _code("P"))
+    pid = _mk_product(db, code)
     _mk_stock(db, pid, wid, 0)
-    _mk_demand(db, pid, wid, 0.0)
+    _mk_demand(db, pid, wid, 5.0)
+    _mk_movement(db, pid, wid, 1, days_ago=7)
     _link(db, pid, _mk_supplier(db, f"{MARKER} Supplier"))
+    eng.ensure_reorder_policy_defaults(db)
+    db.execute(
+        text(
+            "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, "
+            "company_id, created_at) VALUES (:id, :p, NULL, :lvl, 'manual', :co, now())"
+        ),
+        {"id": _u(), "p": pid, "lvl": 10, "co": SORENTO_COMPANY_ID},
+    )
     db.flush()
 
     # Retail line due AFTER the plan's range end.
@@ -337,7 +360,7 @@ def test_ac_d1b_all_run_range_narrows_project_leg_only_retail_leg_unbounded(scm_
     ])
 
     all_run = svc.create_run(
-        db, [], enqueue=False,
+        db, [], enqueue=False, product_codes=[code],
         plan_horizon_start=date(2026, 8, 1), plan_horizon_date=date(2026, 10, 31),
         demand_class=None, so_numbers=[so["so_number"]],
     )
@@ -345,7 +368,7 @@ def test_ac_d1b_all_run_range_narrows_project_leg_only_retail_leg_unbounded(scm_
     all_committed = _committed_for(db, all_run["run_id"], pid)
 
     dealer_run = svc.create_run(
-        db, [], enqueue=False,
+        db, [], enqueue=False, product_codes=[code],
         plan_horizon_start=date(2026, 8, 1), plan_horizon_date=date(2026, 10, 31),
         demand_class="retail", so_numbers=[],
     )

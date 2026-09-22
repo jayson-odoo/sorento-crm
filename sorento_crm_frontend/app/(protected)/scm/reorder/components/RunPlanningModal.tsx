@@ -216,39 +216,35 @@ export function RunPlanningModal({
     setSoNumbers(next);
   };
 
-  /** `so_number - project label or customer name`, trimmed when neither is on file. The
-   *  LABEL is the option's accessible name and stays as-is; the raised count joins the
-   *  description instead, appended only while a raise window is set. */
-  const raiseWindowSet = Boolean(raisedFrom || raisedTo);
+  /** `so_number - project label or customer name`, trimmed when neither is on file - the
+   *  option's accessible name (also the closed-trigger label's source when no summary
+   *  suffix applies). The two-line description (former "N lines in range[, raised N]")
+   *  is gone - the owner's Lane D fix-round-1 ruling retired it everywhere in favour of
+   *  the one-line menu row below. */
   const orderOptions = useMemo(
     () =>
       (candidateOrders ?? []).map((o) => {
         const suffix = o.project_label ?? o.customer_name ?? '';
-        const description = raiseWindowSet
-          ? `${o.rows_in_range} lines in range · raised ${o.rows_raised_in_window}`
-          : `${o.rows_in_range} lines in range`;
         return {
           value: o.so_number,
           label: suffix ? `${o.so_number} - ${suffix}` : o.so_number,
-          description,
         };
       }),
-    [candidateOrders, raiseWindowSet],
+    [candidateOrders],
   );
 
   /** Awaiting-ack counts, kept apart from `orderOptions` so `renderOption` can colour just
-   *  that part of the description rather than the whole secondary line (27 Aug ruling:
-   *  never bought against, so it has to stay visible before Start). */
+   *  that part of the row (27 Aug ruling: never bought against, so it has to stay visible
+   *  before Start). */
   const awaitingBySoNumber = useMemo(() => {
     const map = new Map<string, number>();
     for (const o of candidateOrders ?? []) map.set(o.so_number, o.rows_awaiting);
     return map;
   }, [candidateOrders]);
 
-  /** SO number -> customer name, for the Lane D one-line menu row under Demand = All
-   *  (AC-D1: "<SO number> - <customer>", no second description line, no awaiting count -
-   *  the two-line `renderOption` with the raise/awaiting description below is kept
-   *  under Demand = Project only, where V2/AC-RF-5..8 already pin it). */
+  /** SO number -> customer name, for the one-line menu row (owner ruling, Lane D fix
+   *  round 1: "<SO number> - <customer>", the awaiting count appended only when
+   *  non-zero - under Demand = Project AND All alike, full stop). */
   const customerBySoNumber = useMemo(() => {
     const map = new Map<string, string>();
     for (const o of candidateOrders ?? []) map.set(o.so_number, o.customer_name ?? '');
@@ -429,32 +425,20 @@ export function RunPlanningModal({
                   candidatesError ? 'Could not load orders.' : 'No project orders found.'
                 }
                 renderTriggerLabel={renderOrdersTriggerLabel}
+                // Owner ruling (Lane D fix round 1): one-line menu rows under Project
+                // AND All, full stop - "<SO number> - <customer>", the awaiting-ack
+                // count appended only when it is non-zero. The old two-line row
+                // (description + "N lines in range") is gone everywhere, not just All.
                 renderOption={(opt) => {
-                  // Demand = Project keeps the two-line row (description + "N awaiting
-                  // ack") that already exists. Demand = All (Lane D, AC-D1) drops it for
-                  // ONE line, "<SO number> - <customer>" - no lines-in-range count, no
-                  // awaiting suffix, since the picker here exists only to narrow the
-                  // plan's own project legs, not to police acknowledgement.
-                  if (demand === 'project') {
-                    const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
-                    return (
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <span className="break-words">{opt.label}</span>
-                        <span className="break-words text-xs text-muted-foreground">
-                          {opt.description}
-                          {awaiting > 0 ? (
-                            <span className="text-warning">
-                              {`, ${awaiting} awaiting ack`}
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    );
-                  }
+                  const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
                   const customer = customerBySoNumber.get(opt.value) ?? '';
+                  const base = customer ? `${opt.value} - ${customer}` : opt.value;
                   return (
                     <span className="break-words">
-                      {customer ? `${opt.value} - ${customer}` : opt.value}
+                      {base}
+                      {awaiting > 0 ? (
+                        <span className="text-warning">{`, ${awaiting} awaiting ack`}</span>
+                      ) : null}
                     </span>
                   );
                 }}

@@ -210,9 +210,13 @@ type CandidateOrder = {
   last_delivery: string;
 };
 type CandidateOrdersRange = { from?: string; to?: string; raised_from?: string; raised_to?: string };
-const getCandidateOrders = vi.fn(
-  async (_range: CandidateOrdersRange): Promise<CandidateOrder[]> => [],
-);
+const getCandidateOrders = vi.fn(async (range: CandidateOrdersRange): Promise<CandidateOrder[]> => {
+  // Ignored by this default implementation - kept as a named, typed parameter (not
+  // `_range`) so callers below (`mockImplementation`) type-check against the same
+  // one-argument signature `vi.mock` calls this with.
+  void range;
+  return [];
+});
 getCandidateOrders.mockResolvedValue([]);
 vi.mock('../services/reorderRunService', () => ({
   getCandidateOrders: (range: CandidateOrdersRange) => getCandidateOrders(range),
@@ -545,18 +549,12 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       expect(
         await screen.findByLabelText('SO419517 - OTM GROUP / TAT LIAN'),
       ).toBeInTheDocument();
-      expect(screen.getByTestId('option-body-SO419517').textContent).toContain(
-        '7 lines in range',
+      // Owner ruling (Lane D fix round 1): one-line menu rows under Project too -
+      // "<SO number> - <customer>", the awaiting-ack count appended only when non-zero.
+      expect(screen.getByTestId('option-body-SO419517').textContent).toBe(
+        'SO419517 - OTM, 2 awaiting ack',
       );
-      expect(screen.getByTestId('option-body-SO419517').textContent).toContain(
-        '2 awaiting ack',
-      );
-      expect(screen.getByTestId('option-body-SO420374').textContent).toContain(
-        '0 lines in range',
-      );
-      expect(screen.getByTestId('option-body-SO420374').textContent).not.toContain(
-        'awaiting ack',
-      );
+      expect(screen.getByTestId('option-body-SO420374').textContent).toBe('SO420374 - ARC');
 
       // Pre-selected: only the SO with rows_in_range > 0.
       expect(
@@ -769,9 +767,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
         // C: rows_raised_in_window 2 > 0 but rows_in_range 0 -> NOT pre-selected.
         expect((screen.getByLabelText(/^SOC - PC/) as HTMLInputElement).checked).toBe(false);
       });
-      // The raised count itself is rendered on the option (S2: appended to the
-      // description once a window is set) - not just used silently for pre-selection.
-      expect(screen.getByText(/raised 1/)).toBeInTheDocument();
+      // The raised count used to be rendered on the option (S2's own description
+      // suffix) - dropped by the owner's Lane D fix-round-1 ruling, which retires the
+      // two-line row (and its description) everywhere, Project included: the menu row
+      // is now ONE line, "<SO number> - <customer>[, N awaiting ack]" only. The raise
+      // window still drives pre-selection above, silently.
     });
 
     it('AC-RF-6: clearing the raise window widens pre-selection back to rows_in_range>0', async () => {
@@ -960,7 +960,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       expect(trigger.textContent).toBe('SO1, SO2 +12');
     });
 
-    it('AC-D1: menu rows are one line each - "<SO number> - <customer>", no second description line', async () => {
+    it('AC-D1: menu rows are one line each - "<SO number> - <customer>[, N awaiting ack]", no second description line', async () => {
       getCandidateOrders.mockResolvedValueOnce([
         {
           so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
@@ -970,9 +970,10 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       ]);
       await renderModal();
       const body = await screen.findByTestId('option-body-SO1');
-      expect(body.textContent).toBe('SO1 - C1');
+      // Owner ruling (Lane D fix round 1): the awaiting-ack count DOES join this one
+      // line when non-zero - only the old "N lines in range" description is gone.
+      expect(body.textContent).toBe('SO1 - C1, 3 awaiting ack');
       expect(body.textContent).not.toContain('lines in range');
-      expect(body.textContent).not.toContain('awaiting ack');
     });
   });
 });
