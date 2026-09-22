@@ -24,11 +24,13 @@ finds the other.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import func, literal, select, text
 
 from app.models.order import SalesOrder, SalesOrderLine
+from app.services.company_scope_sql import company_sql_predicate
 
 #: CS has ruled this line out of purchasing. It stays on the sales order (the customer is
 #: still owed it) and stops being something to buy.
@@ -959,3 +961,100 @@ FROM legs
 WHERE needed IS NOT NULL
 GROUP BY product_id
 """
+
+
+# =========================================================================== #
+# A3/C2 (PLAN-order-sheet-oi-reports-22sep.md): the run's own Start Plan scope, read as
+# ROWS rather than as a netted quantity - `_project_inquiry_map` (order sheet, Lane A)
+# aggregates these into its months/customers buckets; the OI worksheet (Lane C) prints
+# them as-is. One SELECT, so the sheet and the worksheet can never list a different row
+# set for the same run.
+# =========================================================================== #
+
+def run_scope_oi_rows(
+    db,
+    product_ids: list[str],
+    *,
+    so_numbers: Optional[list[str]] = None,
+    horizon_start: Optional[date] = None,
+    horizon: Optional[date] = None,
+) -> list[dict]:
+    """Every live OI Buy row in the run's own scope, one dict per row:
+    ``{row_id, product_id, so_number, qty, delivery_date, customer_name, project_title,
+    project_label}``.
+
+    "Live OI Buy row" (A3, owner ruling 22 Sep - "read from OI, don't care about supply
+    decision"): ``verb IN ('ORDER', 'ORDER_BACK')``, ``state <> 'cancelled'``,
+    ``ack_state <> 'rejected'``, ``qty > 0``. No join to `so_supply_decisions` at all - the
+    OLD `_project_inquiry_map` INNER JOINed it (`state = 'active'`), which is exactly the
+    join the owner's ruling retires: 12,261 of 12,763 live OI Buy rows on the 21 Sep prod
+    copy carry no supply decision (the CS form leg, never confirmed on the fulfilment
+    board) and never reached the sheet.
+
+    ``so_numbers`` (non-``None``) narrows to the CORE sales order's own `so_number` -
+    deliberately the SAME column `reorder_run_service._planning_rows` /
+    `demand.horizon_committed_select_sql(so_scoped=True)` bind `:so_numbers` against
+    (`_SO_SCOPE_JOIN_SQL` above), not `order_inquiry_worklist_service._SO_NUMBER`'s
+    `COALESCE(autocount_doc_no, provisional_ref)` - that coalesce is a DISPLAY label for a
+    project SO that may never have been adopted, while the run's own `so_numbers` are
+    picked off the candidate-orders endpoint, which lists the CORE `sales_orders.so_number`
+    (`reorder_runs.get_candidate_orders`). Matching on the display label here would silently
+    stop matching an adopted order the moment its provisional ref differs from its
+    AutoCount doc number. ``None`` applies no filter at all (every product-scoped row is in
+    scope); an empty list matches nothing (`= ANY('{}')`), which is "Project scoped, buyer
+    picked no orders" (`reorder_run_service.create_run`'s own `stored_so_numbers = []`).
+
+    ``horizon_start``/``horizon`` narrow to `delivery_date` inside `[horizon_start,
+    horizon]`; a row with no delivery date is always in scope, whatever either bound is -
+    the same "undated is always in" rule `horizon_committed_select_sql` applies to the
+    book leg.
+
+    Raw SQL, company-scoped by hand on the core sales order (`company_sql_predicate`) -
+    `OrderInquiryRow` is company-scoped but a raw `text()` bypasses the ORM's own isolation
+    listener.
+    """
+    if not product_ids:
+        return []
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="rsoi")
+    so_clause = "AND so.so_number = ANY(:so_numbers)\n          " if so_numbers is not None else ""
+    rows = db.execute(text(f"""
+        SELECT oir.id::text AS row_id, psl.product_id::text AS product_id,
+               so.so_number AS so_number, oir.qty AS qty, oir.delivery_date AS delivery_date,
+               c.customer_name AS customer_name, pj.title AS project_title,
+               so.project_label AS project_label
+        FROM projects.order_inquiry_rows oir
+        JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+        JOIN projects.sales_orders pso ON pso.id = psl.project_sales_order_id
+        JOIN sales_orders so ON so.id = pso.so_id
+        LEFT JOIN projects.projects pj ON pj.id = pso.project_id
+        LEFT JOIN customers c ON c.id = so.customer_id
+        WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
+          AND oir.state <> 'cancelled'
+          AND oir.ack_state <> 'rejected'
+          AND oir.qty > 0
+          AND psl.product_id::text = ANY(:pids)
+          {so_clause}AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
+               OR oir.delivery_date >= CAST(:horizon_start AS date))
+          AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+               OR oir.delivery_date <= CAST(:horizon AS date))
+          {("AND " + co) if co else ""}
+    """), {
+        "pids": [str(p) for p in product_ids],
+        "so_numbers": list(so_numbers) if so_numbers is not None else [],
+        "horizon_start": horizon_start,
+        "horizon": horizon,
+        **co_params,
+    }).fetchall()
+    return [
+        {
+            "row_id": r.row_id,
+            "product_id": r.product_id,
+            "so_number": r.so_number,
+            "qty": float(r.qty or 0),
+            "delivery_date": r.delivery_date,
+            "customer_name": r.customer_name,
+            "project_title": r.project_title,
+            "project_label": r.project_label,
+        }
+        for r in rows
+    ]

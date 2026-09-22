@@ -850,6 +850,32 @@ def test_a3_customer_label_prefers_the_registered_project_title_over_the_so_labe
     assert labels == {"APEX CONNECTION / Titan Ritz Tower"}, labels
 
 
+def test_a5_write_rows_scopes_project_customers_to_the_runs_own_so_numbers(db, chain):
+    """AC-A5/AC-A6 wiring: `write_rows` passes the run's OWN `so_numbers` through to
+    `_project_inquiry_map` (the tests above call that function directly), so a row on an
+    un-picked SO never reaches the frozen `project_customers` / `delivery_by_month` at
+    all. Two OI rows on the SAME product, two different SOs - only the picked one's qty
+    survives the freeze into `scm.order_summary_row`."""
+    f = chain
+    picked_so = f"{MARKER}-SO-PICKED"
+    other_so = f"{MARKER}-SO-OTHER"
+    _scope_row(db, product=f["product"], qty=10, delivery=date(2026, 10, 1),
+              so_number=picked_so, customer_name="Picked customer")
+    _scope_row(db, product=f["product"], qty=25, delivery=date(2026, 10, 1),
+              so_number=other_so, customer_name="Other customer")
+    f["run"].so_numbers = [picked_so]
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+
+    customers = row["project_customers"]
+    assert sum(c["qty"] for c in customers) == 10.0, customers
+    assert not any("Other customer" in c["label"] for c in customers), customers
+    months = {m["month"]: m["qty"] for m in row["delivery_by_month"]}
+    assert months == {"2026-10": 10.0}, months
+
+
 # =====================================================================================
 # AC-A9 regression pin: adding the Last cost lookup (A4) beside the Supplier column must
 # not disturb it - Supplier still names the newest non-cancelled PO's supplier.
@@ -904,7 +930,11 @@ def test_last_cost_map_excludes_a_cancelled_po_even_when_it_is_the_newest(db, ch
 
     out = svc._last_cost_map(db, [f["product"].product_code])
 
-    assert out[f["product"].product_code] == "15 MYR", out
+    # AC-A8: money prints with TWO decimals ("15.00 MYR"), not `_qty_text`'s own
+    # quantity-trimming ("15 MYR") - coder fix round, 23 Sep: the ONLY seam that pins a
+    # bare whole-number cost is `test_last_cost_map_reads_the_newest_non_cancelled_po_
+    # lines_cost_and_currency`'s "8.25 CNY", which already carries two decimals.
+    assert out[f["product"].product_code] == "15.00 MYR", out
 
 
 def test_last_cost_map_falls_back_to_the_po_headers_currency_when_the_line_carries_none(db, chain):
@@ -929,7 +959,8 @@ def test_last_cost_map_falls_back_to_the_po_headers_currency_when_the_line_carri
 
     out = svc._last_cost_map(db, [f["product"].product_code])
 
-    assert out[f["product"].product_code] == "15 MYR", out
+    # AC-A8: two decimals, same fix round as the sibling test above.
+    assert out[f["product"].product_code] == "15.00 MYR", out
 
 
 def test_last_cost_map_omits_a_product_with_no_po_line_carrying_a_cost(db, chain):
