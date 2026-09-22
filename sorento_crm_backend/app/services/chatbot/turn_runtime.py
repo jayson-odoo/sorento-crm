@@ -1682,11 +1682,20 @@ def make_tool_runner(
             # under), never off this turn's verdict - a bare "more" states no tier, and
             # an empty list is read downstream as "no tier filter at all".
             page_predicate, page_ids = page_the_set(db, carry)
-        # R6 (fix round 2): `policy` threaded through so a null `routing.suggested_team`
-        # gets the SAME domain-aware fill the turn's own `ctx.parse.output` carries
-        # (`engine.py`'s own `lane_parse_output` call) - without it this per-domain
-        # fetch context fell back to the flat `DEFAULT_SUGGESTED_TEAM` literal while
-        # the turn's own parse output next to it already carried the domain team.
+        # R6 (fix round 2), corrected in fix round 4: `policy` is threaded through
+        # so a null `routing.suggested_team` gets a domain-aware fill here too,
+        # rather than the flat `DEFAULT_SUGGESTED_TEAM` literal - but this is the
+        # DOMAIN RUNG ONLY. Unlike `engine.py`'s own `lane_parse_output` call, this
+        # one passes no `pending`/`prior_session`, so the fetch context's own
+        # `routing.suggested_team` can never come from an open offer or a carried
+        # prior-turn team the way the turn's real `ctx.parse.output` can (measured,
+        # fix round 4: case-025 turn 1's fetch context reads "purchasing" off the
+        # domain rung while its parse output reads "warehouse" off the open offer -
+        # the two genuinely disagree). Not a bug worth chasing today: nothing reads
+        # this fetch context's own `routing.suggested_team` - `lane_out` feeds tool
+        # ARGS (access levels, date filters, entities), never an escalate sentence
+        # or a pending write, both of which read the turn's real `ctx.parse.output`
+        # instead. Flagged here so the next reader does not assume parity.
         lane_out = lane_parse_output(verdict, focus=focus, domain=domain, policy=policy)
         lane_out = _spec_window(lane_out, spec)
         answered = spec.filters.get("outstanding")

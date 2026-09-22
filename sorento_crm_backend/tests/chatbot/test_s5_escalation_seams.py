@@ -349,7 +349,9 @@ class TestACEQ16To19PrecedenceR7:
     turn's own domain team now outranks a PREVIOUS turn's carried team; an OPEN
     offer's own carried team still outranks both (a "yes" goes where it was offered);
     the prior-turn carry still applies when this turn names no resolvable domain at
-    all."""
+    all. AC-EQ-20 (xfail, fix round 4) lives here too - the open R9 ruling on whether
+    a FRESH question (not an acceptance) over a still-open offer should re-derive
+    from its own domain instead of inheriting the offer's team."""
 
     @staticmethod
     def _verdict(*, domain_hint: Any) -> dict[str, Any]:
@@ -380,11 +382,13 @@ class TestACEQ16To19PrecedenceR7:
 
     def test_ac_eq_17_current_domain_outranks_a_stale_warehouse_carry(self) -> None:
         """The mirror of AC-EQ-16: prior "warehouse", this turn incoming, routing
-        null -> purchasing. This is the shape recorded live on
-        `replay_turns/console/case-025-d7-...` (turn 0 a stock ask, turn 1 an
-        incoming ask) - see PENDING-LIVE-RERUN.md for that case's own staleness
-        note; not re-pinned against the recording itself here, `_pin_text` is absent
-        on that case so its `text` is never graded either way."""
+        null, no open offer -> purchasing. A direct unit shape only - NOT the
+        recorded shape of `replay_turns/console/case-025-d7-...` (fix round 4,
+        reviewer measurement): that case's turn 1 has an OPEN `team_pick` pending
+        (team=warehouse) left by turn 0's stock offer, which is the AC-EQ-18 arm
+        (`pending.team`), not this one - `prior_session` is None throughout that
+        case, so R7's domain-vs-carry ordering never engages on it at all. See
+        PENDING-LIVE-RERUN.md's own note on case-025 for what IS stale there."""
         from app.services.chatbot import turn_runtime
         from app.services.chatbot.turn.policy import default_policy
 
@@ -434,6 +438,41 @@ class TestACEQ16To19PrecedenceR7:
             focus=None,
             pending=None,
             prior_session=self._prior("purchasing"),
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    @pytest.mark.xfail(strict=True, reason="awaiting owner ruling R9")
+    def test_ac_eq_20_a_fresh_question_over_an_open_offer_should_use_its_own_domain(
+        self,
+    ) -> None:
+        """Reviewer measurement, fix round 4: `replay_turns/console/case-025-d7-...`
+        turn 1 is exactly this shape - an incoming ask that is NOT an acceptance of
+        turn 0's stock offer (D7's own climb, a fresh question), yet it still
+        inherits `warehouse` from the still-open `team_pick` because `pending.team`
+        supplies unconditionally, with no read of whether THIS turn is answering
+        that offer or asking something new. Whether a fresh question should instead
+        re-derive its team from its own domain is an open ruling (R9) - do NOT
+        change the `pending.team` arm to make this pass until it lands; this test
+        stays `xfail(strict=True)` so it turns red the moment the code changes,
+        which is the signal the ruling landed."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.pending import Pending
+        from app.services.chatbot.turn.policy import default_policy
+
+        offer = Pending(
+            kind="team_pick",
+            expects="yes_no",
+            options=[],
+            team="warehouse",
+            payload={},
+            asked_at_turn=1,
+        )
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="incoming"),
+            focus=None,
+            pending=offer,
+            prior_session=None,
             policy=default_policy(),
         )
         assert out["routing"]["suggested_team"] == "purchasing"

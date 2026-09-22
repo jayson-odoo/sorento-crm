@@ -75,14 +75,38 @@ the hard default (`customer_service`).
 - AC-EQ-16 Prior turn carried `purchasing` (e.g. an incoming ask); current turn
   `domain_hint = inventory`, `routing.suggested_team = None`, no pending offer →
   `warehouse` (the domain wins over the stale carry).
-- AC-EQ-17 Prior `warehouse`, current `domain_hint = incoming`, routing null → 
-  `purchasing` (the mirror of AC-EQ-16; recorded live on `replay_turns/console/
-  case-025-d7-...`, turn 0 a stock ask carrying `warehouse` forward, turn 1 an
-  incoming ask - see `PENDING-LIVE-RERUN.md`'s own note on that case; not re-pinned
-  against the recording, `_pin_text` is absent there so `text` is never graded).
+- AC-EQ-17 Prior `warehouse`, current `domain_hint = incoming`, routing null, no
+  open offer → `purchasing` (the mirror of AC-EQ-16). A direct unit shape only - NOT
+  `replay_turns/console/case-025-d7-...`'s own recorded shape (fix round 4,
+  reviewer measurement): that case's `prior_session` is `None` throughout (R7 never
+  engages there at all), and its turn 1 has an OPEN `team_pick` pending left by
+  turn 0's stock offer - the AC-EQ-18 arm, not this one. See
+  `PENDING-LIVE-RERUN.md`'s own note on case-025 for what IS stale there.
 - AC-EQ-18 A `purchasing` team_pick offer is OPEN; current turn `domain_hint =
   inventory`, routing null → stays `purchasing` (the offer wins - a "yes" must still
-  go where it was offered, regardless of this turn's own domain).
+  go where it was offered, regardless of this turn's own domain). This IS
+  case-025's own turn 1 shape (open `warehouse` team_pick from turn 0's stock
+  offer, turn 1 an incoming ask) - measured on HEAD: turn 1 renders `warehouse`,
+  which is correct under the CURRENT (pending-always-wins) precedence, not a
+  defect - see AC-EQ-20 for the open ruling on whether a FRESH question (not an
+  acceptance) should instead re-derive from its own domain.
 - AC-EQ-19 Prior `purchasing`, current turn `domain_hint = None`/unknown, routing
   null → `purchasing` (the carry still applies when this turn names no resolvable
   domain at all).
+
+## Open-offer precedence for a FRESH question (owner ruling R9 PENDING)
+
+Reviewer measurement, fix round 4: case-025 turn 1 is an incoming ask that is NOT an
+acceptance of turn 0's stock offer (a fresh question, D7's own climb) - it still
+inherits `warehouse` from the OPEN `team_pick` pending because `lane_parse_output`'s
+`pending.team` arm supplies unconditionally, with no read of whether this turn is
+answering that offer or asking something new. Whether a fresh question like this
+should instead re-derive its team from ITS OWN domain (making case-025 turn 1
+`purchasing`) rather than inherit the stale open offer's team is an open ruling, not
+decided here - do not change the `pending.team` arm until it lands.
+
+- AC-EQ-20 (xfail, awaiting R9) Open `team_pick` pending, team `warehouse`, from a
+  stock offer; current turn `domain_hint = incoming`, routing null, NOT an
+  acceptance of that offer (a fresh question) → expected `purchasing`. Currently
+  renders `warehouse` (the pending arm wins unconditionally) - this is the test the
+  ruling will flip green.

@@ -1,8 +1,8 @@
 # PLAN: escalation quote fallback, SLA comment timestamps, stock question always routes to warehouse
 
-Status: small fix track, fix round 3 (R7) done, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
+Status: small fix track, fix round 4 done, R9 (open-offer precedence for a fresh question) pending owner ruling, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
 UAC: `escalation-quote-title-and-stock-team-22sep-acceptance-criteria.md`
-Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team, but an OPEN offer's own carried team still outranks both; R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off.
+Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team, but an OPEN offer's own carried team still outranks both; R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off; R9 (open, do not implement) whether a FRESH question over a still-open offer should re-derive its team from its own domain instead of inheriting the offer's team unconditionally.
 
 ## Journey
 
@@ -80,7 +80,45 @@ AC-EQ-15's table is now owner-signed (R8) - dropped the "sign-off pending" flag.
 `PENDING-LIVE-RERUN.md`'s case-038/039 note extended to cover
 `console/case-025-d7-an-incoming-ask-on-a-zero-stock-code-climbs-to-the-po-rung.json`
 turn 0 (a stock ask that recorded "purchasing", now stale under R6/R7 -> "warehouse")
-- turn 1 (the D7 incoming climb) is unchanged, still "purchasing" either way.
+- turn 1 (the D7 incoming climb) claimed unchanged here, still "purchasing" either
+way. **Corrected in fix round 4: this was wrong**, see below.
+
+## Fix round 4 (mechanical - an owner ruling on open-offer precedence, R9, is pending)
+
+Reviewer measurement corrects fix round 3's claim about case-025 turn 1: it is
+UNCHANGED, still "purchasing" on HEAD - measured directly, it renders "warehouse".
+Turn 0's stock offer leaves an OPEN `team_pick` pending with `team=warehouse`;
+`lane_parse_output`'s `pending.team` arm supplies that unconditionally for turn 1,
+with no read of whether turn 1 is actually accepting that offer or asking something
+fresh (D7's own climb IS a fresh question, not an acceptance) - `prior_session` is
+`None` throughout this case, so R7's domain-vs-carry reorder never engages on it at
+all. AC-EQ-17's UAC line and test docstring wrongly attributed case-025 as its own
+recorded shape - corrected to describe AC-EQ-17 as a direct unit shape only;
+case-025 turn 1 is AC-EQ-18's shape (an open offer answering unconditionally), and
+its own staleness (if any) hangs on the still-open R9 ruling below.
+`PENDING-LIVE-RERUN.md`'s case-025 note rewritten to say turn 1 is ALSO stale, via
+the open-offer arm - not "unchanged".
+
+`make_tool_runner`'s own `lane_parse_output` call (S6, fix round 2) was described as
+parity with `engine.py`'s own call - it is not: it passes `policy` but never
+`pending`/`prior_session`, so that per-domain fetch context's own
+`routing.suggested_team` can only ever be the domain rung, never an open offer or a
+prior-turn carry, and genuinely disagrees with the turn's real `ctx.parse.output` on
+a shape like case-025 turn 1 (fetch context "purchasing" vs parse output
+"warehouse", measured). Not fixed - reworded the comment there (and this note) to
+"domain rung only; the fetch context never sees pending or prior, and nothing reads
+its team" instead of claiming parity. `lane_out` feeds tool ARGS only (access
+levels, date filters, entities) - no escalate sentence or pending write reads it, so
+the disagreement is inert today, not a live bug.
+
+**Open ruling, R9, do not implement yet:** should a FRESH question (not an
+acceptance) over a still-open offer re-derive its team from its own domain, rather
+than inheriting the open offer's team unconditionally? AC-EQ-20
+(`xfail(strict=True)`, reason "awaiting owner ruling R9") pins the CURRENT behaviour
+as red-when-fixed: open `team_pick` pending team=warehouse from a stock offer,
+current turn `domain_hint = incoming`, routing null, not an acceptance -> expects
+`purchasing`, currently renders `warehouse`. The `pending.team` arm in
+`lane_parse_output` stays untouched until R9 lands.
 
 ## Out of scope
 

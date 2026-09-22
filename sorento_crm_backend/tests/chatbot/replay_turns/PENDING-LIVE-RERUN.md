@@ -268,14 +268,22 @@ re-capture of either file records `warehouse`, not the now-superseded `purchasin
 re-record owed, not urgent.
 
 `console/case-025-d7-an-incoming-ask-on-a-zero-stock-code-climbs-to-the-po-rung.json`
-(2 turns, added to this note in fix round 3 once the R7 precedence ruling landed -
-left out of the note above until then, per the coordinator's own instruction):
-**turn 0** (`domain_hint: inventory`, a plain stock ask) recorded `escalate to
-purchasing team?` - under R6/R7 this turn now says `escalate to warehouse team?`,
-stale the same way case-038/039 are. **Turn 1** (`domain_hint: incoming`, D7's own
-climb) also recorded `escalate to purchasing team?` - this one is UNCHANGED under R6
-and R7 (incoming's own domain team is `purchasing` either way; AC-EQ-17 pins the
-same shape directly - prior carry `warehouse` from a turn like turn 0, current
-`incoming`, still resolves to `purchasing`). Neither turn is a live `pytest` failure
-today (`_pin_text` absent on both, measured); re-record owed for turn 0's own text,
-not urgent.
+(2 turns; added to this note in fix round 3, corrected in fix round 4 - the round 3
+note below was wrong about turn 1, see the correction): **turn 0**
+(`domain_hint: inventory`, a plain stock ask) recorded `escalate to purchasing
+team?` - under R6/R7 this turn now says `escalate to warehouse team?`, stale the
+same way case-038/039 are. **Turn 1** (`domain_hint: incoming`, D7's own climb) also
+recorded `escalate to purchasing team?` and IS ALSO STALE, but not for the reason
+fix round 3 gave (incoming's own domain team, R6/R7's domain-carry ordering) -
+reviewer measurement, fix round 4: turn 0's stock offer leaves an OPEN `team_pick`
+pending with `team=warehouse`, and `lane_parse_output`'s `pending.team` arm supplies
+that unconditionally for turn 1, regardless of whether turn 1 is actually accepting
+that offer or asking something fresh (D7's climb is a fresh question, not an
+acceptance) - `prior_session` is `None` throughout this case, so R7's domain-vs-carry
+reorder never engages on it at all. Measured directly on HEAD: turn 1 renders
+`escalate to warehouse team?`, not `purchasing`. Whether a fresh question like this
+should instead re-derive its team from its own domain is the open R9 ruling
+(`AC-EQ-20`, `escalation-quote-title-and-stock-team-22sep-acceptance-criteria.md`) -
+until it lands, turn 1's own staleness cannot be resolved either way. Neither turn is
+a live `pytest` failure today (`_pin_text` absent on both, measured); re-record owed
+for both once R9 lands, not urgent.
