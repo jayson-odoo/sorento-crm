@@ -979,35 +979,56 @@ def run_scope_oi_rows(
     horizon_start: Optional[date] = None,
     horizon: Optional[date] = None,
 ) -> list[dict]:
-    """Every live OI Buy row in the run's own scope, one dict per row:
+    """Every OI row the ENGINE would buy for, in the run's own scope, one dict per row:
     ``{row_id, product_id, so_number, qty, delivery_date, customer_name, project_title,
-    project_label}``.
+    project_label, is_pre_order}``.
 
-    "Live OI Buy row" (A3, owner ruling 22 Sep - "read from OI, don't care about supply
-    decision"): ``verb IN ('ORDER', 'ORDER_BACK')``, ``state <> 'cancelled'``,
-    ``ack_state <> 'rejected'``, ``qty > 0``. No join to `so_supply_decisions` at all - the
-    OLD `_project_inquiry_map` INNER JOINed it (`state = 'active'`), which is exactly the
-    join the owner's ruling retires: 12,261 of 12,763 live OI Buy rows on the 21 Sep prod
-    copy carry no supply decision (the CS form leg, never confirmed on the fulfilment
-    board) and never reached the sheet.
+    THE PREDICATE (A3, captain ruling 23 Sep after review): the CONFIRMED leg's own
+    predicate in `horizon_committed_select_sql` - ``verb IN ('ORDER', 'ORDER_BACK')``,
+    ``state IN ('raised', 'partly_linked')``, not redirected (`NOT_REDIRECTED_SQL`),
+    ``ack_state IN PLANNED_ACK_STATES`` (acknowledged or changed - an awaiting row is a
+    count on the plan page, never something to buy against), owed (`_OWED_SQL`, qty minus
+    linked minus bundled) `> 0`, printed `qty` = that OWED figure, NEVER the row's raw
+    `qty`. The plan's first cut read `state <> cancelled, ack_state <> rejected`, which on
+    the 21 Sep prod copy admitted 2,006 placed + 5,713 actioned + 474 awaiting-ack + 12
+    redirected rows the engine never buys for, so Project qty ran ABOVE Buy instead of
+    tallying with it - a placed, actioned, awaiting-ack, rejected, redirected or fully
+    linked row is absent under this predicate; a half-linked row counts its owed half only.
 
-    ``so_numbers`` (non-``None``) narrows to the CORE sales order's own `so_number` -
-    deliberately the SAME column `reorder_run_service._planning_rows` /
-    `demand.horizon_committed_select_sql(so_scoped=True)` bind `:so_numbers` against
-    (`_SO_SCOPE_JOIN_SQL` above), not `order_inquiry_worklist_service._SO_NUMBER`'s
-    `COALESCE(autocount_doc_no, provisional_ref)` - that coalesce is a DISPLAY label for a
-    project SO that may never have been adopted, while the run's own `so_numbers` are
-    picked off the candidate-orders endpoint, which lists the CORE `sales_orders.so_number`
-    (`reorder_runs.get_candidate_orders`). Matching on the display label here would silently
-    stop matching an adopted order the moment its provisional ref differs from its
-    AutoCount doc number. ``None`` applies no filter at all (every product-scoped row is in
-    scope); an empty list matches nothing (`= ANY('{}')`), which is "Project scoped, buyer
-    picked no orders" (`reorder_run_service.create_run`'s own `stored_so_numbers = []`).
+    `so_supply_decisions` still plays NO part (owner ruling 22 Sep - "read from OI, don't
+    care about supply decision"): this is the confirmed leg's WHERE clause WITHOUT its
+    ``JOIN so_supply_decisions ... AND state = 'active'`` - a row with `supply_decision_id
+    IS NULL` (the CS form leg, never confirmed on the fulfilment board) still counts as
+    long as it is otherwise in the engine's own buying scope, which is the whole SRTWB248
+    story the plan's "Measured" section names.
+
+    Product read off the CORE line, ``sol.product_id`` - the same reconciled line the
+    confirmed leg requires via `psl.core_sales_order_line_id`, NOT `psl.product_id` (the
+    project-side line's own, looser copy of the fact, which the confirmed leg never reads
+    either). A row whose project line has not been reconciled to a core line drops out
+    entirely, the same shape the confirmed leg already has.
+
+    ``so_numbers`` (non-``None``) narrows to `sales_orders.so_number` - the same COLUMN
+    `horizon_committed_select_sql(so_scoped=True)` binds `:so_numbers` against via
+    `_SO_SCOPE_JOIN_SQL`, reached by a DIFFERENT join path here (off the reconciled core
+    line's own `sales_order_id`, rather than `_SO_SCOPE_JOIN_SQL`'s walk through
+    `order_inquiries -> project_sales_orders.so_id`) - the two paths should always agree
+    for a row this function admits at all (both name the SAME core sales order), but this
+    is not "the same query", only the same column reached two ways. Never
+    `order_inquiry_worklist_service._SO_NUMBER`'s `COALESCE(autocount_doc_no,
+    provisional_ref)`, which is a DISPLAY label for a project SO that may never have been
+    adopted, while the run's own `so_numbers` are picked off the candidate-orders endpoint,
+    which lists the CORE `sales_orders.so_number` (`reorder_runs.get_candidate_orders`).
+    ``None`` applies no filter at all (every product-scoped row is in scope); an empty list
+    matches nothing (`= ANY('{}')`), which is "Project scoped, buyer picked no orders"
+    (`reorder_run_service.create_run`'s own `stored_so_numbers = []`).
 
     ``horizon_start``/``horizon`` narrow to `delivery_date` inside `[horizon_start,
-    horizon]`; a row with no delivery date is always in scope, whatever either bound is -
-    the same "undated is always in" rule `horizon_committed_select_sql` applies to the
-    book leg.
+    horizon]`; a row with no delivery date is always in scope, whatever either bound is.
+
+    ``is_pre_order`` is `projects.sales_orders.is_pre_order` off the row's own project SO,
+    so a caller can print the same "PRE-ORDER" suffix `project_customer_label` gives the OI
+    worklist, without a second query.
 
     Raw SQL, company-scoped by hand on the core sales order (`company_sql_predicate`) -
     `OrderInquiryRow` is company-scoped but a raw `text()` bypasses the ORM's own isolation
@@ -1018,21 +1039,30 @@ def run_scope_oi_rows(
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="rsoi")
     so_clause = "AND so.so_number = ANY(:so_numbers)\n          " if so_numbers is not None else ""
     rows = db.execute(text(f"""
-        SELECT oir.id::text AS row_id, psl.product_id::text AS product_id,
-               so.so_number AS so_number, oir.qty AS qty, oir.delivery_date AS delivery_date,
+        SELECT oir.id::text AS row_id, sol.product_id::text AS product_id,
+               so.so_number AS so_number, ({_OWED_SQL}) AS qty,
+               oir.delivery_date AS delivery_date,
                c.customer_name AS customer_name, pj.title AS project_title,
-               so.project_label AS project_label
+               so.project_label AS project_label, pso.is_pre_order AS is_pre_order
         FROM projects.order_inquiry_rows oir
         JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+        JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
         JOIN projects.sales_orders pso ON pso.id = psl.project_sales_order_id
-        JOIN sales_orders so ON so.id = pso.so_id
         LEFT JOIN projects.projects pj ON pj.id = pso.project_id
+        JOIN sales_orders so ON so.id = sol.sales_order_id
         LEFT JOIN customers c ON c.id = so.customer_id
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(l.qty), 0) AS linked
+            FROM projects.order_inquiry_links l
+            WHERE l.row_id = oir.id
+        ) lk ON TRUE
         WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
-          AND oir.state <> 'cancelled'
-          AND oir.ack_state <> 'rejected'
+          AND oir.state IN ('raised', 'partly_linked')
+          {NOT_REDIRECTED_SQL}
+          AND oir.ack_state IN ({_PLANNED_ACK_SQL})
           AND oir.qty > 0
-          AND psl.product_id::text = ANY(:pids)
+          AND ({_OWED_SQL}) > 0
+          AND sol.product_id::text = ANY(:pids)
           {so_clause}AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
                OR oir.delivery_date >= CAST(:horizon_start AS date))
           AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
@@ -1055,6 +1085,7 @@ def run_scope_oi_rows(
             "customer_name": r.customer_name,
             "project_title": r.project_title,
             "project_label": r.project_label,
+            "is_pre_order": bool(r.is_pre_order),
         }
         for r in rows
     ]
