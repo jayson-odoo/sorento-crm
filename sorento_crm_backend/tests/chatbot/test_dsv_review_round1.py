@@ -537,3 +537,163 @@ def test_a_non_integer_slot_value_is_coerced_at_the_runtime_seam_too():
     out = _spec_quantities({"entities": []}, spec, [])
 
     assert out["requested_quantities"] == {"uuid-a": 5}
+
+
+# --------------------------------------------------------------------------- #
+# Review round 3 (live pass, dealer-stock-verdict.EVIDENCE.md, Root cause A):
+# `requested_quantities` must cross the MCP boundary as a JSON string, not a
+# native dict. The engine's internal representation (`FetchSpec.filters`,
+# `_spec_quantities`, tested above) stays a dict all the way up to
+# `entity_ids_transformer` in `lanes/business/fetch.py` - this is the ONE seam
+# where it turns into the wire arg the MCP tool actually receives.
+# --------------------------------------------------------------------------- #
+
+
+def test_fetch_arg_builder_serialises_requested_quantities_to_a_json_string():
+    """RED before the fix: `entity_ids_transformer` put a native dict on
+    `out["requested_quantities"]`. The MCP's `_compile_tool` types every query
+    param off one fixed `str | int | float | bool | list[str]` union with no
+    dict case (`sorento_crm_mcp/server.py::_compile_tool`, `_scalar_union`), so
+    a dict-valued call fails Pydantic validation with 5 errors and never
+    reaches the backend at all - the backend route already declares
+    `requested_quantities: Optional[str]` and parses it with
+    `parse_requested_quantities`. The wire arg must therefore be a compact
+    JSON string whose `json.loads` recovers the exact map."""
+    import json
+
+    from app.services.chatbot.lanes.business import fetch
+
+    trigger = {
+        "entities": [],
+        "tool": "crm_inventory_stock_balance_list",
+        "semantic_input": {
+            "requested_quantities": {"uuid-a": 5, "uuid-b": 60},
+            "contact_id": "1",
+            "space_id": "s",
+        },
+    }
+    out = fetch.entity_ids_transformer(trigger)
+
+    assert isinstance(out["requested_quantities"], str), (
+        "a native dict fails MCP-side Pydantic validation before the backend "
+        f"is ever reached: {out['requested_quantities']!r}"
+    )
+    assert json.loads(out["requested_quantities"]) == {"uuid-a": 5, "uuid-b": 60}
+
+
+def test_fetch_arg_builder_omits_requested_quantities_when_empty():
+    """The empty/absent case is unchanged by the string conversion - still
+    simply not sent, so a turn with no quantity at all still reaches the
+    backend as `needs_quantity` for every product (D14)."""
+    from app.services.chatbot.lanes.business import fetch
+
+    trigger = {
+        "entities": [],
+        "tool": "crm_inventory_stock_balance_list",
+        "semantic_input": {"requested_quantities": {}, "contact_id": "1", "space_id": "s"},
+    }
+    out = fetch.entity_ids_transformer(trigger)
+
+    assert "requested_quantities" not in out
+
+
+# --------------------------------------------------------------------------- #
+# Review round 3, Observation B (`dealer-stock-verdict.EVIDENCE.md`): the raw
+# MCP intro reaching the customer with a numbered list of nothing on the
+# noted/missing question, and the per-product verdict line (D6/D17) never
+# reaching the customer at all even once it exists.
+#
+# Root cause, precise: `_stock_availability`'s `raw_item` calls
+# (`sorento_crm_mcp/presenters.py`) always pass `fields=[]` - "an `availability`
+# answer has no fields AT ALL (that is the point of the mode)", per that
+# function's own docstring - and put the whole sentence in `title` instead.
+# `_item_line` (below) never read `title`, only `fields` - exactly the gotcha
+# `_stock_compact`'s own sibling comment already names ("n8n's output-structurer
+# walks fields and does not print title", `presenters.py` ~line 1341) and
+# deliberately avoids by putting `product_code` into `fields`.
+# `_stock_availability` is the one caller that does not follow that precedent.
+# --------------------------------------------------------------------------- #
+
+
+def _availability_render_envelope(*entries: dict) -> dict:
+    """One `stock_availability` item per entry, shaped exactly as
+    `sorento_crm_mcp/presenters.py::_stock_availability` builds them: `title`
+    carries the sentence (or the bare code while still asking), `fields` is
+    always empty, `flags` carries `needs_quantity` / `available`."""
+    return {
+        "result_type": "stock_availability",
+        "intro": "How many units do you need for MHS1028 and MSK11A-QT?",
+        "items": [
+            {
+                "title": e["title"],
+                "fields": [],
+                "flags": {
+                    "needs_quantity": e.get("needs_quantity", False),
+                    "available": e.get("available"),
+                },
+            }
+            for e in entries
+        ],
+        "has_result": True,
+    }
+
+
+def test_stock_availability_ask_prints_only_the_intro_no_numbered_list():
+    """The ask state (D14): at least one product still needs a quantity, so
+    `intro` already says everything relevant. RED before the fix: the items
+    loop still ran and appended a numbered list of blank lines (`"1.   2.
+    3."`, Observation B's exact symptom, since `fields` is always empty)."""
+    from app.services.chatbot.lanes.business import fetch
+
+    envelope = _availability_render_envelope(
+        {"title": "MWT5727SS-CR x 5", "needs_quantity": False},
+        {"title": "MHS1028", "needs_quantity": True},
+        {"title": "MSK11A-QT", "needs_quantity": True},
+    )
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert out["response"].strip() == envelope["intro"]
+
+
+def test_stock_availability_verdict_prints_the_per_product_line():
+    """D6/D17: once every product has a quantity, each item's TITLE is the
+    exact verdict sentence the presenter built - it must reach the customer.
+    RED before the fix: `_item_line` read only `fields` (always empty for this
+    mode), so every row printed as an empty numbered line."""
+    from app.services.chatbot.lanes.business import fetch
+
+    envelope = _availability_render_envelope(
+        {
+            "title": "MWT5727SS-CR x 5: Not available, but there is purchase, ETA in 90 days.",
+            "needs_quantity": False,
+            "available": False,
+        },
+        {
+            "title": "MHS1028 x 60: Not available.",
+            "needs_quantity": False,
+            "available": False,
+        },
+    )
+    envelope["intro"] = "Sorry, we do not have enough stock for that quantity."
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert (
+        "MWT5727SS-CR x 5: Not available, but there is purchase, ETA in 90 days."
+        in out["response"]
+    )
+    assert "MHS1028 x 60: Not available." in out["response"]
+
+
+def test_stock_availability_ask_with_none_answered_yet_is_also_suppressed():
+    """The FIRST ask (Observation B's exact turn): no product has a quantity
+    at all, so every entry's `needs_quantity` is true - still just the
+    intro, no numbered list of bare codes."""
+    from app.services.chatbot.lanes.business import fetch
+
+    envelope = _availability_render_envelope(
+        {"title": "MHS1028", "needs_quantity": True},
+        {"title": "MSK11A-QT", "needs_quantity": True},
+    )
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert out["response"].strip() == envelope["intro"]

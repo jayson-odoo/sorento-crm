@@ -827,9 +827,22 @@ def entity_ids_transformer(
         # quantity at all - the tool's scalar `requested_qty` contract (n8n, direct
         # callers) is untouched, and an ask with no quantity still comes back
         # `needs_quantity`, which is what OPENS the task in the first place.
+        #
+        # Review round 3 (live pass, dealer-stock-verdict.EVIDENCE.md Root cause A):
+        # this MUST cross the MCP as a JSON STRING, not a native dict. The route
+        # (`app/api/v1/inventory/stock.py`) already declares `requested_quantities:
+        # Optional[str]` and parses it with `parse_requested_quantities` - a plain
+        # string. The MCP's `_compile_tool` (sorento_crm_mcp/server.py) types every
+        # query param off one fixed `_scalar_union = "str | int | float | bool |
+        # list[str]"` with no dict case, so a native dict fails Pydantic validation
+        # with 5 errors and the tool call never reaches the backend at all.
+        # `_normalize_query_value` passes a string through untouched, so a compact
+        # JSON string is the only shape that survives the round trip.
         quantities = jsc.get(semantic_input, "requested_quantities")
         if isinstance(quantities, dict) and quantities:
-            out["requested_quantities"] = dict(quantities)
+            out["requested_quantities"] = json.dumps(
+                dict(quantities), separators=(",", ":"), sort_keys=True
+            )
 
     # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
     # every list tool this plan touches. `top_n` aliases to `limit` for the
@@ -2449,6 +2462,21 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
+        # Review round 3 (Observation B, dealer-stock-verdict.EVIDENCE.md): an item
+        # with NO fields at all falls back to its own TITLE. Today the only caller
+        # that ever reaches this with empty fields is `_stock_availability`'s
+        # `raw_item` (`sorento_crm_mcp/presenters.py`) - "an `availability` answer
+        # has no fields AT ALL (that is the point of the mode)", per that function's
+        # own docstring - which puts the whole D6/D17 verdict sentence
+        # (`_availability_line`) in `title` alone. Without this fallback that
+        # sentence never reaches the customer: every OTHER raw_item/item caller
+        # always fills `fields` on purpose (`_stock_compact`'s sibling comment says
+        # why - "n8n's output-structurer walks fields and does not print title"),
+        # so this fallback is inert for them.
+        if not field_lines:
+            title = jsc.get(it, "title")
+            if jsc.truthy(title):
+                field_lines = jsc.js_string(title)
         line = f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
@@ -2482,12 +2510,32 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 position += 1
                 msg += _item_line(position, it) + "\n\n"
 
+    # Review round 3 (Observation B, dealer-stock-verdict.EVIDENCE.md): while ANY
+    # product still needs a quantity (D14), `intro` (`_noted_and_missing_question`)
+    # has already said everything relevant - the items themselves carry no fields
+    # at all and, before the `_item_line` title fallback above existed, printed as
+    # a numbered list of nothing ("1.   2.   3." with a duplicated intro, measured
+    # on turn `9291bed4`). Suppressed only while the ask is open; once every
+    # product has a quantity the items DO carry the per-product verdict line
+    # (D6/D17) and must print, same as `qs_render`/`groups_render` above.
+    stock_ask_render = bool(
+        jsc.js_string(e.get("result_type") or "") == "stock_availability"
+        and isinstance(e.get("items"), list)
+        and any(
+            jsc.truthy(jsc.get(jsc.get(it, "flags"), "needs_quantity"))
+            for it in e["items"]
+            if jsc.truthy(it)
+        )
+    )
+
     # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
     # questions and the parser already separates them. The ROWS are suppressed from the
     # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
     # still resolves against the same page rows. And ONLY the numbered list goes: the
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
-    for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
+    for i, it in enumerate(
+        [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
+    ):
         msg += _item_line(i + 1, it) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.

@@ -293,7 +293,11 @@ def test_case_10_two_tasks_tie_then_resolve_by_position(session_factory, stub_pa
         call for call in calls[3] if call["tool"] == "crm_inventory_stock_balance_list"
     ]
     assert len(stock_calls) == 1, calls[3]
-    assert stock_calls[0]["args"]["requested_quantities"] == {
+    # Review round 3 (live pass, dealer-stock-verdict.EVIDENCE.md, Root cause A):
+    # the wire arg is a JSON STRING, not a native dict - the MCP tool has no dict
+    # case in its query-param type union and rejects one with 5 validation
+    # errors (`sorento_crm_mcp/server.py::_compile_tool`, `_scalar_union`).
+    assert json.loads(stock_calls[0]["args"]["requested_quantities"]) == {
         "00000000-0000-0000-0000-0000000000a3": 110
     }
 
