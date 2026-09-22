@@ -10,6 +10,10 @@ export const NO_DEFAULT_APPROVER_VALUE = '__none__';
  *  `EA` fallback). */
 export const NO_DEFAULT_UOM_VALUE = '__none__';
 
+/** Select value when no reserve default pool is configured (backend: null -> the row's
+ *  own site pool, `PLAN-oi-request-cs-reserve.md` section 6c F1). */
+export const NO_DEFAULT_RESERVE_POOL_VALUE = '__none__';
+
 export const GeneralSettingsSchema = z.object({
   name: z.string().min(1, 'Company name is required'),
   logoFile: z
@@ -38,6 +42,9 @@ export const GeneralSettingsSchema = z.object({
   defaultProductStandardLeadTimeDays: z.coerce.number().int().min(0).max(10950),
   /** The unit a product gets when the source states none (product import included). */
   defaultUomId: z.string(),
+  /** The reserve dialog's own default Location (`PLAN-oi-request-cs-reserve.md`
+   *  section 6c F1). */
+  oiReserveDefaultPoolWarehouseId: z.string(),
   takeoverCooldownSeconds: z.coerce.number().int().min(0).max(3600),
   formSlaGraceSeconds: z.coerce.number().int().min(0).max(600),
   /**

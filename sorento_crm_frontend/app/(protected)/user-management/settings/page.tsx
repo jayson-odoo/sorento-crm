@@ -38,6 +38,7 @@ import {
   GeneralSettingsSchema,
   GeneralSettingsSchemaType,
   NO_DEFAULT_APPROVER_VALUE,
+  NO_DEFAULT_RESERVE_POOL_VALUE,
   NO_DEFAULT_SUPPLIER_VALUE,
   NO_DEFAULT_UOM_VALUE,
 } from './forms/general-settings-schema';
@@ -47,6 +48,7 @@ import {
   type UserForSelect,
 } from '@/app/(protected)/procurement-management/purchase-requests/services/purchaseRequestService';
 import { getProductClassLabels } from '@/app/(protected)/master-data-management/product-categories/services/categoryService';
+import { usePoolWarehouseSelectQuery } from './hooks/usePoolWarehouseSelectQuery';
 
 type SupplierSelectRow = {
   id: string;
@@ -131,6 +133,7 @@ export default function Page() {
   // The units master is eight rows, so the shared static select is the right shape here -
   // no server search, no paging, and it is the same list every other UoM picker reads.
   const { data: uomOptions = [] } = useUOMSelectQuery();
+  const { data: poolWarehouseOptions = [] } = usePoolWarehouseSelectQuery();
 
   // The distinct class labels categories are grouped by - a short, closed list,
   // so a static picker is the right shape (D2). A saved value that has since
@@ -253,6 +256,11 @@ export default function Page() {
       settings?.defaultUomId && settings.defaultUomId.length > 0
         ? settings.defaultUomId
         : NO_DEFAULT_UOM_VALUE,
+    oiReserveDefaultPoolWarehouseId:
+      settings?.oiReserveDefaultPoolWarehouseId &&
+      settings.oiReserveDefaultPoolWarehouseId.length > 0
+        ? settings.oiReserveDefaultPoolWarehouseId
+        : NO_DEFAULT_RESERVE_POOL_VALUE,
     takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
     formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
     deferredDeleteSeconds: settings?.deferredDeleteSeconds ?? 10,
@@ -318,6 +326,11 @@ export default function Page() {
         settings.defaultUomId && settings.defaultUomId.length > 0
           ? settings.defaultUomId
           : NO_DEFAULT_UOM_VALUE,
+      oiReserveDefaultPoolWarehouseId:
+        settings.oiReserveDefaultPoolWarehouseId &&
+        settings.oiReserveDefaultPoolWarehouseId.length > 0
+          ? settings.oiReserveDefaultPoolWarehouseId
+          : NO_DEFAULT_RESERVE_POOL_VALUE,
       takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
       formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
       deferredDeleteSeconds: settings.deferredDeleteSeconds ?? 10,
@@ -364,6 +377,10 @@ export default function Page() {
           values.defaultUomId === NO_DEFAULT_UOM_VALUE
             ? null
             : values.defaultUomId,
+        oi_reserve_default_pool_warehouse_id:
+          values.oiReserveDefaultPoolWarehouseId === NO_DEFAULT_RESERVE_POOL_VALUE
+            ? null
+            : values.oiReserveDefaultPoolWarehouseId,
         takeover_cooldown_seconds: values.takeoverCooldownSeconds,
         form_sla_grace_seconds: values.formSlaGraceSeconds,
         deferred_delete_seconds: values.deferredDeleteSeconds,
@@ -974,6 +991,39 @@ export default function Page() {
                         ]}
                       />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="oiReserveDefaultPoolWarehouseId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reserve dialog default location</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        key={`def-reserve-pool-${field.value}-${poolWarehouseOptions.length}`}
+                        onChange={(v) =>
+                          field.onChange(v || NO_DEFAULT_RESERVE_POOL_VALUE)
+                        }
+                        value={field.value}
+                        placeholder="Select pool"
+                        clearable
+                        options={[
+                          { value: NO_DEFAULT_RESERVE_POOL_VALUE, label: 'Row’s own site pool' },
+                          ...poolWarehouseOptions.map((w) => ({
+                            value: w.id,
+                            label: w.warehouse_code,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      The location "Request CS to reserve" defaults to. Cleared, it
+                      falls back to the row&apos;s own site pool.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
