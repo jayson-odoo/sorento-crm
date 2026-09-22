@@ -356,6 +356,43 @@ describe('F5: Unreserve is its own action, offered only once nothing is left ope
   });
 });
 
+describe('gap fix (browser evidence postfix-linescope-above-net-silent): the pre-check on Unreserve qty', () => {
+  it('a qty typed above net reserved disables Unreserve and names the limit', async () => {
+    renderDialog({ openRequest: null, netReservedQty: '50' });
+
+    fireEvent.click(await screen.findByRole('button', { name: /^unreserve$/i }));
+    fireEvent.change(await screen.findByLabelText(/qty/i), { target: { value: '80' } });
+
+    expect(screen.getByRole('button', { name: /^unreserve$/i })).toBeDisabled();
+    expect(screen.getByText(/up to 50 can be released/i)).toBeInTheDocument();
+    expect(unreserveStartSpy).not.toHaveBeenCalled();
+  });
+
+  it('a blank or zero qty disables Unreserve, never starting the deferred action', async () => {
+    renderDialog({ openRequest: null, netReservedQty: '50' });
+
+    fireEvent.click(await screen.findByRole('button', { name: /^unreserve$/i }));
+    const qtyInput = await screen.findByLabelText(/qty/i);
+
+    // Blank - the form's own starting state.
+    expect(screen.getByRole('button', { name: /^unreserve$/i })).toBeDisabled();
+
+    fireEvent.change(qtyInput, { target: { value: '0' } });
+    expect(screen.getByRole('button', { name: /^unreserve$/i })).toBeDisabled();
+    expect(unreserveStartSpy).not.toHaveBeenCalled();
+  });
+
+  it('a qty within net stays enabled and carries no limit message', async () => {
+    renderDialog({ openRequest: null, netReservedQty: '50' });
+
+    fireEvent.click(await screen.findByRole('button', { name: /^unreserve$/i }));
+    fireEvent.change(await screen.findByLabelText(/qty/i), { target: { value: '20' } });
+
+    expect(screen.getByRole('button', { name: /^unreserve$/i })).not.toBeDisabled();
+    expect(screen.queryByText(/can be released/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('read-only without the reserve permission (AC-RS-62 half)', () => {
   it('canAct=false: no Reserved/Reason inputs, no Confirm, no Unreserve', async () => {
     renderDialog({ canAct: false, openRequest: null, netReservedQty: '50' });
