@@ -35,11 +35,13 @@ from app.services.chatbot import engine as engine_mod
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded  # noqa: F401
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_outstanding_lane import (
+    _capturing_mcp,
     _enable_business_lane,
     _resolve_services,
     _run_turn,
     _seed_contact,
     _session_of,
+    _wire_business_services,
     ResolveGateServices,
 )
 from tests.chatbot.test_media_intake_turn import (
@@ -186,6 +188,14 @@ class TestJourneyPhotoThenCheckStock:
             {**IMAGE_RESULT, "entities": [{"raw": PRODUCT_A_CODE}, {"raw": PRODUCT_B_CODE}]}
         )
         stub_access()
+
+        # Step 1 has no preceding `_run_turn` call (unlike J2/J3/J4, whose photo step
+        # rides the SAME `monkeypatch` a prior `_run_turn` call already wired) - so the
+        # business-lane switches and the resolver seam are wired explicitly here,
+        # exactly what `_run_turn` itself would do internally.
+        _enable_business_lane(session_factory)
+        call, _captured = _capturing_mcp()
+        _wire_business_services(monkeypatch, resolve_services=_resolve_services(MATCHES), mcp_call=call)
 
         # Step 1: bare photo, no caption -> entities_only, no domain.
         import app.services.chatbot.head.parser as parser_mod
