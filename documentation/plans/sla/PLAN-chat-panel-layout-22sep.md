@@ -1,6 +1,6 @@
 # PLAN: ticket chat panel - one-line enquiry quote, thread fills the sheet, reply-to jump fetches back
 
-Status: review READY, browser B3 PASS, fix round 5 (floor on every flex item) pushed, 375 re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
+Status: review READY, browser B3 PASS, fix round 6 (one floor not two) pushed, 375 re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
 UAC: `chat-panel-layout-22sep-acceptance-criteria.md`
 Owner rulings (22 Sep 2026): R2 enquiry quote is one line, chat window takes the most space; R3 Chat Records popup thread flex-fills; R4 reply-to jump reuses the search-jump fetch.
 
@@ -56,6 +56,18 @@ Fixed by putting the SAME floor on every flex item in the chain, not only the in
 3. `InterventionTicketDrawer.tsx` and `SlaTrackingChatRecords.tsx` (popup mode): the `className` passed to `TicketConversationPanel` changed from `"min-h-0 flex-1"` to `"min-h-40 flex-1"` - the SAME value already passed as `maxHeightClass`. The inline (non-popup) mount passes no `className` at all, unaffected (fixed `max-h-[400px]`, not a flex-fill scenario).
 
 AC-CP-3 and AC-CP-5 updated to match (the panel's `className` is now `"min-h-40 flex-1"`, not `"min-h-0 flex-1"`). New vitest in `InterventionTicketDrawer.test.tsx` pins that `RespondChatList` receives the floor via its own `className` prop (not only `maxHeightClass`), and that `TicketConversationPanel`'s root carries `min-h-40` rather than `min-h-0`. Confirmed red before the fix (reverted the drawer's `className` back to `min-h-0 flex-1`), green after. Also added an assertion in `ConversationSLATrackingDetail.gear.test.tsx` pinning the Chat Records `Sheet`'s own `SheetContent` className (round 4's fix there had no test pinning it at all - a prepared, separately-verified addition).
+
+## Fix round 6 (375 re-verify on b94356ef3: improved, still a 41px overlap)
+
+Rects on re-verify: thread scroll box `{358, 518}` (height 160), tablist `{477, 519}`, composer `{531, 898}`. `tablist.bottom <= composer.top` now holds (round 5's `shrink-0` fix works) and `SheetBody` scrolls (777 vs 675) with the composer reachable - but `thread.bottom` (518) is 41px past `tablist.top` (477).
+
+Reading the numbers: the `RespondChatList` root is now ~160px tall (top ~318 to 477), correctly honouring round 5's new floor. But that root ALSO contains its OWN header/search chrome (contact avatar/name row, ~40px, top 318 to 358) ABOVE the inner scroll box - and the inner scroll box (`RespondChatList.tsx`'s `chat-scroll-container`) STILL carries its own `min-h-40` too. Two floors for the same 160px requirement, nested inside each other: chrome (40) + inner-box-floor (160) = 200px of REQUIRED height inside a root whose OWN floor is only 160px total. The inner box wins its own min-height fight (it renders its full 160px, 358 to 518) and overflows the root's bottom edge (477) by exactly the chrome's height (41px ≈ the 40px chrome), painting over the tablist.
+
+Fixed by removing the floor from the INNER box - the root already carries the equivalent floor, and the inner box only needs to grow (`flex-1`) into whatever the root leaves it after the chrome:
+1. `InterventionTicketDrawer.tsx`: `maxHeightClass="min-h-40 flex-1"` → `maxHeightClass="min-h-0 flex-1"` (the `className="min-h-40 flex-1"` from round 5 is unchanged - the root floor stays).
+2. `SlaTrackingChatRecords.tsx` (popup mode): `maxHeightClass={showAsPopup ? 'min-h-40 flex-1' : 'max-h-[400px]'}` → `maxHeightClass={showAsPopup ? 'min-h-0 flex-1' : 'max-h-[400px]'}`. Inline (non-popup) mount and `ConversationThreadPane.tsx`'s `maxHeightClass="max-h-[52vh]"` are untouched (fixed caps, not flex-fill floors).
+
+AC-CP-3/5 (UAC + tests) updated: `maxHeightClass` is now `"min-h-0 flex-1"`; `className` (the root floor, round 5) is unchanged. New `describe` block in `InterventionTicketDrawer.test.tsx` ("fix round 6, one floor not two") pins the inner box's `maxHeightClass` no longer carries `min-h-*`, alongside the root's `className` still carrying `min-h-40`. Confirmed red before the fix (reverted both call sites' `maxHeightClass` back to `min-h-40 flex-1`), green after.
 
 ## Browser verification
 

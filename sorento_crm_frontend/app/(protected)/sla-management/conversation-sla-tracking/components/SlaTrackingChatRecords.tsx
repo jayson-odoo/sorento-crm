@@ -95,7 +95,14 @@ export default function SlaTrackingChatRecords({
           // `maxHeightClass` below, forwarded through to RespondChatList's
           // root too. See InterventionTicketDrawer.tsx's identical comment.
           className={showAsPopup ? 'min-h-40 flex-1' : undefined}
-          maxHeightClass={showAsPopup ? 'min-h-40 flex-1' : 'max-h-[400px]'}
+          // Fix round 6: the INNER scroll box no longer floors itself
+          // (`min-h-0`, not `min-h-40`) - the root already does, and the
+          // inner box sits below RespondChatList's own header/search chrome
+          // inside that same floor, so a second, equal floor on the inner
+          // box overflowed the root by exactly that chrome's height. See
+          // InterventionTicketDrawer.tsx's identical comment. Inline
+          // (non-popup) mount is unaffected - its own fixed cap, unchanged.
+          maxHeightClass={showAsPopup ? 'min-h-0 flex-1' : 'max-h-[400px]'}
           // No ticket detail (a form-scope tracker, or a viewer outside the
           // ticket's act-scope): a linked Respond conversation is still enough
           // to reply through the shared entity chat send, as it always was.

@@ -490,12 +490,21 @@ export default function InterventionTicketDrawer({
               item in the chain, not only the innermost scroll box (AC-CP-B1
               375px overlap: a floor-less ancestor could still be squeezed to
               near-zero by the outer flex algorithm, and the scroll box's own
-              min-height does not enlarge it back). */}
+              min-height does not enlarge it back).
+              Fix round 6: `maxHeightClass` (the INNER scroll box) no longer
+              carries its own `min-h-40` - the root already does, and
+              RespondChatList's own header/search chrome sits ABOVE the
+              scroll box, inside that same rooted floor. A second, EQUAL
+              floor on the inner box demanded chrome-height MORE than the
+              root actually has room for, so the inner box overflowed the
+              root's own bottom edge by exactly the chrome's height and
+              painted over the tablist. One floor, on the root; the inner
+              box only needs `flex-1` to take whatever the root leaves it. */}
           <TicketConversationPanel
             ticketId={ticketId}
             enabled={open}
             className="min-h-40 flex-1"
-            maxHeightClass="min-h-40 flex-1"
+            maxHeightClass="min-h-0 flex-1"
             jumpRequest={jumpRequest}
             onSent={onSent}
           />

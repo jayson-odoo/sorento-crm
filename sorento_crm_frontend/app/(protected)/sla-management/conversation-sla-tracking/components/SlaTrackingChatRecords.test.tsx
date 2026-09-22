@@ -277,8 +277,11 @@ describe('SlaTrackingChatRecords (AC-N8)', () => {
     expect(panel.className).toContain('min-h-40');
     expect(panel.className).toContain('flex-1');
 
+    // Fix round 6: the INNER scroll box no longer floors itself - the root
+    // does (above), and a second, equal floor on the inner box overflowed
+    // the root by exactly the header/search chrome's height.
     const maxHeight = screen.getByTestId('chat-list').getAttribute('data-max-height') ?? '';
-    expect(maxHeight).toContain('flex-1');
+    expect(maxHeight).toBe('min-h-0 flex-1');
     expect(maxHeight).not.toContain('max-h-[55vh]');
   });
 

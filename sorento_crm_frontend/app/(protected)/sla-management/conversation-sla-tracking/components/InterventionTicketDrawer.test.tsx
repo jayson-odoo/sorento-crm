@@ -930,7 +930,9 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       // 5" describe block below for why the floor has to sit on this root too.
       expect(panel.className).toContain('min-h-40');
       expect(panel.className).toContain('flex-1');
-      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-max-height', 'min-h-40 flex-1');
+      // Fix round 6: the INNER scroll box (`maxHeightClass`) does NOT also
+      // floor itself - see the dedicated "fix round 6" describe block below.
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-max-height', 'min-h-0 flex-1');
     });
 
     it('AC-CP-4: an empty quote falls back to the neutral label, with no toggle', async () => {
@@ -1271,19 +1273,19 @@ describe('InterventionTicketDrawer sheet layout (fix round 4, 375px overlap)', (
  * computed flex size, so the outer flex algorithm squeezed those ancestors to
  * near-zero under pressure, and the floored scroll box overflowed them,
  * painting over the composer laid out after the squeezed parent. Both
- * `TicketConversationPanel` and `RespondChatList`'s roots now carry the SAME
- * `min-h-40 flex-1` floor `maxHeightClass` already puts on the inner box.
+ * `TicketConversationPanel` and `RespondChatList`'s roots now carry a
+ * `min-h-40 flex-1` floor of their own - fix round 6 (below) is what stops
+ * the INNER scroll box from ALSO carrying one.
  */
 describe('InterventionTicketDrawer sheet layout (fix round 5, floor on every flex item)', () => {
-  it('the panel forwards the min-h-40 floor to RespondChatList\'s own root, not only to its inner scroll box', async () => {
+  it('the panel forwards the min-h-40 floor to RespondChatList\'s own root via className, separately from maxHeightClass', async () => {
     useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
     renderDrawer();
 
     const chatList = await screen.findByTestId('chat-list');
-    // maxHeightClass already reaches the inner scroll box (round 1/2); this
-    // pins that the SAME floor also reaches the component's own root via the
-    // new `className` prop - the actual defect round 4 missed.
-    expect(chatList).toHaveAttribute('data-max-height', 'min-h-40 flex-1');
+    // The floor reaches the component's own root via the new `className`
+    // prop - the actual defect round 4 missed. `maxHeightClass` (the inner
+    // scroll box) is asserted separately in the "fix round 6" block below.
     expect(chatList).toHaveAttribute('data-class-name', 'min-h-40 flex-1');
   });
 
@@ -1294,5 +1296,30 @@ describe('InterventionTicketDrawer sheet layout (fix round 5, floor on every fle
     const panel = await screen.findByTestId('ticket-conversation-panel');
     expect(panel.className).toContain('min-h-40');
     expect(panel.className).not.toContain('min-h-0');
+  });
+});
+
+/**
+ * Fix round 6: the 375 re-verify on round 5 (b94356ef3) improved but still
+ * showed a 41px overlap. Measured rects: the RespondChatList root honoured
+ * its new floor (~160px, top ~318 to 477), but RespondChatList's OWN
+ * header/search chrome sits ABOVE the inner scroll box, inside that SAME
+ * rooted floor (~40px, top 318 to 358) - so the inner box, which ALSO
+ * carried its own `min-h-40`, demanded chrome-height MORE room than the
+ * root actually had left, and overflowed the root's bottom edge by exactly
+ * that chrome height, painting over the tablist. Two floors (root AND inner
+ * box) for the same 160px requirement was one too many: the inner box now
+ * gets `min-h-0 flex-1` (no floor of its own) and takes whatever the
+ * rooted floor leaves it after the chrome.
+ */
+describe('InterventionTicketDrawer sheet layout (fix round 6, one floor not two)', () => {
+  it('the inner scroll box (maxHeightClass) does not ALSO carry a min-h floor - only the root does', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const chatList = await screen.findByTestId('chat-list');
+    expect(chatList).toHaveAttribute('data-max-height', 'min-h-0 flex-1');
+    // The root's floor (fix round 5) is unchanged by this round.
+    expect(chatList).toHaveAttribute('data-class-name', 'min-h-40 flex-1');
   });
 });

@@ -6,12 +6,12 @@ Plan: `PLAN-chat-panel-layout-22sep.md`
 
 - AC-CP-1 `source_message_text` of 40 chars renders on one line, no toggle.
 - AC-CP-2 `source_message_text` of 1500 chars renders as one truncated line with `title` = full text and a "Show more" button; clicking it expands (scrollable, capped height) and the button reads "Show less"; clicking again collapses.
-- AC-CP-3 With the 1500-char text expanded, `TicketConversationPanel` still receives `className="min-h-40 flex-1"` and `maxHeightClass="min-h-40 flex-1"` (the thread keeps its flex share; the quote box is height-capped). (Fix round 5: `min-h-40`, not `min-h-0` - the floor has to sit on every flex item in the chain, not only the innermost scroll box, or a floor-less ancestor can still be squeezed to near-zero and the floored descendant overflows it.)
+- AC-CP-3 With the 1500-char text expanded, `TicketConversationPanel` still receives `className="min-h-40 flex-1"` and `maxHeightClass="min-h-0 flex-1"` (the thread keeps its flex share; the quote box is height-capped). (Fix round 5: `min-h-40`, not `min-h-0`, on `className` - the floor has to sit on every flex item in the chain, not only the innermost scroll box, or a floor-less ancestor can still be squeezed to near-zero and the floored descendant overflows it. Fix round 6: `maxHeightClass` - the INNER scroll box - does NOT also carry its own `min-h-*`; one floor, on the root, not two - a second equal floor on the inner box overflowed the root by exactly the header/search chrome's height above it.)
 - AC-CP-4 Empty `source_message_text` still renders "No enquiry text captured." with no toggle.
 
 ## Chat Records popup (SlaTrackingChatRecords)
 
-- AC-CP-5 `showAsPopup` mount passes `TicketConversationPanel` `className` containing `min-h-40 flex-1` and `maxHeightClass` containing `flex-1`; `max-h-[55vh]` appears nowhere. (Fix round 5: `min-h-40`, not `min-h-0` - see AC-CP-3.)
+- AC-CP-5 `showAsPopup` mount passes `TicketConversationPanel` `className` containing `min-h-40 flex-1` and `maxHeightClass="min-h-0 flex-1"`; `max-h-[55vh]` appears nowhere. (Fix round 5/6: see AC-CP-3 - the root floors, the inner scroll box does not.)
 - AC-CP-6 Inline (non-popup) mount keeps `maxHeightClass="max-h-[400px]"`.
 - AC-CP-7 `ChatPanelParity.test.tsx` stays green.
 
