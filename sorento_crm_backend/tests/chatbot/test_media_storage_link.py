@@ -135,6 +135,20 @@ class TestImageAttachmentRowCreated:
         assert len(links) == 1
         assert links[0].attachment_id == row.id
 
+        # Hot fix (browser pass): the transient `_media_bytes`/`_media_content_type`
+        # keys must never reach the persisted job row - raw bytes in a JSONB column
+        # fail json.dumps, which turned a genuinely successful extraction into a
+        # failed job.
+        from app.models.media import ContactMediaUsage, MediaExtractionJob
+
+        db = session_factory()
+        usage = db.query(ContactMediaUsage).filter(ContactMediaUsage.contact_id == contact_uuid).first()
+        assert usage is not None
+        job = db.query(MediaExtractionJob).filter(MediaExtractionJob.usage_id == usage.id).first()
+        assert job is not None and job.result is not None
+        assert "_media_bytes" not in job.result
+        assert "_media_content_type" not in job.result
+
 
 class TestVoiceAttachmentRowCreated:
     """AC-1835."""

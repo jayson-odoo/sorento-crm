@@ -913,7 +913,11 @@ def run_turn(
                 media_box=media_box,
             )
             _apply_media_reply_prefix(result, media_box.get("outcome"))
-            _repersist_media_prefixed_reply(session_factory, turn_id, result, dry_run)
+            # Guarded on `media_box.get("outcome")` (not just inside the helper): a
+            # plain text turn - the overwhelming majority - must not pay for a SELECT
+            # that only ever matters when a media outcome actually ran.
+            if media_box.get("outcome") is not None:
+                _repersist_media_prefixed_reply(session_factory, turn_id, result, dry_run)
             # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
             # head returns, whichever arm produced it. Stamped at this ONE exit rather than
             # on each arm's own `TurnResult`, which is exactly how three arms - the canned
@@ -1905,7 +1909,6 @@ def _run_stages(  # noqa: PLR0915
                 space_id=space_id_for_turn,
                 remembered_before=remembered_before,
                 recalled=recalled,
-                contact_scope=contact_scope,
                 from_photo=_media_source_modality(media_box) == "image",
                 # Review round nit: a LIVE media outcome (image or voice) already got
                 # its own "I read .../I heard ..." line from `_apply_media_reply_prefix`
@@ -2868,7 +2871,6 @@ def _run_entities_only_arm(
     space_id: str | None,
     remembered_before: dict[str, Any],
     recalled: list[dict[str, Any]],
-    contact_scope: frozenset,
     from_photo: bool,
     media_prefixed: bool = False,
 ) -> TurnResult:
@@ -2904,13 +2906,21 @@ def _run_entities_only_arm(
 
         # Security fix B2 (browser pass, reproduced 2/2): `resolve_reference_post`
         # is a ROUTE function, called in-process rather than over HTTP, so the
-        # router dependency that would normally stamp company scope onto the
-        # request session (`apply_company_scope`) never runs for it - the SAME
-        # reason `run_turn` wraps `session_factory` for every OTHER session the
-        # turn opens (H56, top of this file). Re-stamped explicitly, on THIS
-        # session, right before the one call that needs it - never a fresh
-        # `SessionLocal()`, which is the mistake this fixes.
-        set_company_scope(db, contact_scope)
+        # naive worry was that the router dependency which would normally stamp
+        # company scope onto the request session (`apply_company_scope`) never
+        # runs for it. MEASURED (hot-fix follow-up) rather than assumed: an
+        # explicit `set_company_scope(db, contact_scope)` re-stamp right here was
+        # tried and is REDUNDANT - `db` already carries the correct scope by the
+        # time this line runs, because `run_turn` wraps `session_factory` itself
+        # (`_scoped_factory`, H56, top of this file) before `_run_stages` opens
+        # ANY session, including this arm's own `db`. Proved for a NON-default
+        # company too (`test_the_explicit_restamp_is_load_bearing_for_a_non_
+        # default_company`, deliberately named for the hypothesis it disproved):
+        # a contact mapped to Mocha, with a same-code decoy product under
+        # Sorento, still places the Mocha row with the line deleted. The actual
+        # bug this fix's other half caught (`resolutions` keyed on the wrong
+        # field, see below) is what made every code look unplaced regardless of
+        # scope - not a missing re-stamp.
         services = business_services.production_services(db, space_id=space_id)
         body = {"tokens": raws, "allowed_entity_types": ["product"]}
         ResolveReferenceRequest(**body)  # validated the same way every other caller is

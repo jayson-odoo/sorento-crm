@@ -496,16 +496,21 @@ class TestCaptionNamesANewDomain:
 
 
 class TestRealResolverHonoursCompanyScope:
-    """B2 (security review, browser pass reproduced 2/2): `_run_entities_only_arm`
-    resolved on a session whose company scope was never re-stamped for THIS
-    in-process route call (`resolve_reference_post`, called directly rather than
-    over HTTP - `apply_company_scope`, the router dependency that would normally
-    stamp it, never runs) - so real, correctly company-scoped codes came back
-    unplaced. Every OTHER test in this file stubs `resolve_entity` entirely
-    (`_wire_business_services`/`matches=MATCHES`), which is exactly why this gap
-    was invisible here: this is the one test in the file that runs the REAL
-    resolver, against REAL seeded rows, on a REAL company-mapped contact
-    (`_seed_contact`, not the company-less `seeded` fixture every other test uses).
+    """B2 (security review, browser pass reproduced 2/2): real, correctly
+    company-scoped product codes came back "Couldn't find" every time
+    `_run_entities_only_arm` actually resolved them. The real cause, measured
+    (see the second test's docstring for the full trail): `resolve_reference_
+    post`'s own resolutions carry a `"token"` field, never `"raw"` - the arm's
+    lookup dict was keyed on the wrong field, silently collapsing every
+    resolution. An explicit `set_company_scope` re-stamp was tried as a second,
+    belt-and-suspenders fix and measured to be redundant - `run_turn`'s own
+    `_scoped_factory` already stamps every session this arm's `db` could be, for
+    any company - so it was deleted rather than kept. Every OTHER test in this
+    file stubs `resolve_entity` entirely (`_wire_business_services`/
+    `matches=MATCHES`), which is exactly why this gap was invisible here: these
+    are the two tests in the file that run the REAL resolver, against REAL
+    seeded rows, on a REAL company-mapped contact (`_seed_contact`/a Mocha
+    mapping, not the company-less `seeded` fixture every other test uses).
     """
 
     def test_seeded_codes_place_through_the_real_resolver(self, session_factory, monkeypatch):
@@ -536,5 +541,98 @@ class TestRealResolverHonoursCompanyScope:
         assert "Couldn't find" not in text, (
             f"a real, company-scoped code came back unplaced (B2's own symptom): {text!r}"
         )
+
+    def test_a_non_default_company_places_its_own_row_not_a_same_code_decoy(
+        self, session_factory, monkeypatch
+    ):
+        """Hot-fix follow-up: the reviewer asked whether `test_seeded_codes_place_
+        through_the_real_resolver` above actually guards the explicit
+        `set_company_scope(db, contact_scope)` re-stamp B2 added, or only its OTHER
+        half (the `resolutions` dict keyed on the wrong field). Measured by hand,
+        twice, rather than assumed: with the re-stamp line commented out, BOTH that
+        test AND this one (written first specifically to close the gap - a contact
+        mapped to Mocha, a same-code decoy product under Sorento) stayed green.
+
+        Conclusion, and why the line is now DELETED rather than kept: `db` already
+        carries the correct company scope by the time this arm runs, for ANY
+        contact - `run_turn` wraps `session_factory` itself (`_scoped_factory`, H56)
+        before `_run_stages` opens ANY session, including this arm's own `db`, so a
+        second, later `set_company_scope` call on the same session is a no-op. The
+        actual B2 bug was entirely the `resolutions` dict keyed on `"raw"` instead of
+        `"token"` (see the fix's other comment in `engine.py`) - that alone made
+        every code look unplaced regardless of scope, on every company, which is why
+        removing the redundant re-stamp never turned anything red.
+
+        Kept as a real, non-default-company regression guard for cross-company
+        isolation in this arm (a same-code decoy under a DIFFERENT company must
+        never be the one that places) even though it no longer guards a specific
+        line - the underlying behaviour (`_scoped_factory`'s own per-contact
+        isolation) is what both this test and the one above actually exercise.
+        """
+        import json
+
+        from sqlalchemy import text as sql_text
+
+        from tests._mc_lookup_seed import MOCHA_ID, product as seed_product, seed_mocha
+
+        shared_code = "ZZTSCOPEDUP1"
+        db = session_factory()
+        seed_mocha(db)
+        db.commit()
+        mocha_row = seed_product(db, company_id=MOCHA_ID, code=shared_code)
+        db.commit()
+        # The decoy: the SAME code, owned by Sorento (the default company) - a session
+        # scoped to the WRONG company (or left ambient/unscoped) could still place this
+        # one and the assertion below would not catch a scope leak, so its uuid must
+        # differ from the one actually asserted.
+        seed_product(db, company_id="00000000-0000-0000-0000-000000000001", code=shared_code)
+        db.commit()
+
+        # `_seed_contact` (test_outstanding_lane) hardcodes DEFAULT_COMPANY_ID - this
+        # test needs Mocha instead, so the workspace/contact/company-mapping insert is
+        # done here, same shape, different company id.
+        space_id = "364817"
+        db.execute(
+            sql_text(
+                "INSERT INTO respond_workspaces (id, space_id, name, api_key_ciphertext) "
+                "VALUES (gen_random_uuid(), :sid, 'ZZT mocha workspace', 'ZZT-cipher') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"sid": space_id},
+        )
+        db.execute(
+            sql_text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), "
+                "(SELECT id FROM respond_workspaces WHERE space_id = :sid LIMIT 1))"
+            ),
+            {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}}), "sid": space_id},
+        )
+        db.execute(
+            sql_text(
+                "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+                "SELECT gen_random_uuid(), id, :company_id FROM respond_contacts WHERE respond_io_id = :cid"
+            ),
+            {"cid": str(CONTACT_ID), "company_id": MOCHA_ID},
+        )
+        db.commit()
+
+        qf = _bare_entities_qf(placed=[shared_code])
+        result, _ = _run_turn(
+            session_factory, monkeypatch, qf=qf, text_body=shared_code,
+            msg_id="ZZT-eo-scope-2", real_resolver=True,
+        )
+
+        products = _focus_products(session_factory)
+        row = next((p for p in products if p.get("raw") == shared_code), None)
+        assert row is not None and row.get("uuid"), (
+            f"{shared_code} did not place for the Mocha-mapped contact: {row}"
+        )
+        assert row.get("uuid") == mocha_row.id, (
+            f"placed the WRONG company's row (a scope leak) - expected Mocha's "
+            f"{mocha_row.id}, got {row.get('uuid')}"
+        )
+        text = (result.reply or {}).get("text") or ""
+        assert "Couldn't find" not in text, text
 
 

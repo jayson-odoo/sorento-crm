@@ -136,11 +136,21 @@ def _store_media_bytes(db, job: MediaExtractionJob, result: dict) -> None:
     `media_extract.service.run_extraction`), never a second `fetch_media_bytes`
     call against a url that is, by construction, an external caller's own string.
     """
-    context = job.context if isinstance(job.context, dict) else {}
-    if context.get("source") == "console":
-        return
+    # Hot fix (browser pass): both transient keys are popped FIRST, before any
+    # early return - `result` is the SAME dict that becomes `MediaExtractionJob.
+    # result` (a JSON column) a few lines up the caller's stack, and raw bytes
+    # left in it fail `json.dumps` there, which turned every console-origin photo
+    # into a failed job (and a ledger row that still counted) after a genuinely
+    # successful extraction.
     data = result.pop("_media_bytes", None)
     content_type = result.pop("_media_content_type", None)
+    context = job.context if isinstance(job.context, dict) else {}
+    if context.get("source") == "console":
+        # note (a): the console's OWN upload (`console_service._upload_console_
+        # media`) already stored these bytes under `chatbot-console/` - storing a
+        # second copy here would double the row. The pops above still ran, so
+        # `result` is clean either way.
+        return
     if data is None:
         # A test harness (or, defensively, a real run that somehow carried no
         # bytes forward) stubbed `run_media_extraction` wholesale - nothing was
