@@ -12,6 +12,14 @@ same technique `tests/test_ingest_perf_round_5.py` and this lane's own
 `tests/test_autocount_pull_preview_perf.py` (T5) use to pin a query count,
 never internal cache state).
 
+`--limit N` measures only the first N rows (`_build_products`' own
+`ORDER BY p.product_code`, so a run is reproducible) - for a fast profiling
+slice rather than the full ~11,900-row batch. `--profile PATH` wraps the
+`ingest()` call in `cProfile` and writes `PATH` in `pstats` format (load with
+`pstats.Stats(PATH)` or `snakeviz PATH`); omitted, profiling is skipped
+entirely so the timed numbers this script exists for are never paid its
+overhead by accident.
+
 Read-only against the database: `dry_run=True` resolves and applies every
 record exactly as a live sync would, then rolls the WHOLE transaction back -
 the same guarantee `MasterIngestService.ingest` gives every other dry-run
@@ -39,7 +47,9 @@ ever actually runs.
 from __future__ import annotations
 
 import argparse
+import cProfile
 import os
+import pstats
 import sys
 import time
 
@@ -63,6 +73,14 @@ def main() -> None:
         "--dsn", required=True, help="Full SQLAlchemy/psycopg URL - never read from env"
     )
     parser.add_argument("--company-code", default="SRT", help="companies.code (default SRT)")
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Measure only the first N rows (by product_code) instead of the whole company",
+    )
+    parser.add_argument(
+        "--profile", type=str, default=None,
+        help="Write a cProfile pstats dump to this path instead of a plain timed run",
+    )
     args = parser.parse_args()
 
     # Late imports: `app.database`'s own module-level engine reads `DATABASE_URL`
@@ -91,6 +109,8 @@ def main() -> None:
         rows = _build_products(engine, args.company_code)
         if not rows:
             raise SystemExit(f"no products found for company {args.company_code!r}")
+        if args.limit is not None:
+            rows = rows[: args.limit]
 
         statements = 0
 
@@ -100,14 +120,23 @@ def main() -> None:
 
         connection = db.get_bind()
         event.listen(connection, "before_cursor_execute", _count)
+        profiler = cProfile.Profile() if args.profile else None
         try:
             started = time.monotonic()
+            if profiler is not None:
+                profiler.enable()
             result = MasterIngestService(db, company_id=company_id).ingest(
                 "products", rows, dry_run=True
             )
+            if profiler is not None:
+                profiler.disable()
             elapsed = time.monotonic() - started
         finally:
             event.remove(connection, "before_cursor_execute", _count)
+
+        if profiler is not None:
+            pstats.Stats(profiler).dump_stats(args.profile)
+            print(f"profile:    {args.profile}")
 
         records = len(result.records)
         rate = records / elapsed if elapsed else 0.0
