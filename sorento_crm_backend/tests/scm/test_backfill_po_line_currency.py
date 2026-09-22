@@ -1,5 +1,8 @@
-"""AC-PLC-6: `scripts/backfill_po_line_currency_from_header.py` repoints an autocount
-purchase-order LINE's currency at its own HEADER's, dry-run first.
+"""AC-PLC-6: `scripts/backfill_po_line_currency_from_header.py` repoints a
+purchase-order LINE's currency at its own HEADER's, dry-run first - any line,
+whatever feed wrote it (fix round 1: the first cut of this script and this test both
+scoped the sweep to `source_system = 'autocount'`; the review measured 636 real
+`scm_po_history` rows the filter left mis-stamped, so it was dropped from both).
 
 `PLAN-po-line-currency-follows-header-22sep.md`,
 `po-line-currency-follows-header-22sep-acceptance-criteria.md`.
@@ -58,59 +61,66 @@ def _line(db, *, po, product_id, currency, source_system="autocount"):
 
 
 def _seed(db):
-    """1 autocount PO (MYR) with one mismatched (CNY) and one already-matched (MYR)
-    line, 1 autocount PO (CNY) whose line already matches, and 1 non-autocount PO
-    (MYR) whose line is a mismatched CNY the script must never touch."""
+    """1 autocount PO (MYR) with one mismatched (CNY, flips) and one already-matched
+    (MYR, stays - header == line) line; 1 PO with NO header currency at all and a CNY
+    line (stays - nothing to fall back to); 1 non-autocount (`scm_po_history`) PO
+    (MYR) whose line is a mismatched CNY - fix round 1: this used to be excluded by a
+    `source_system = 'autocount'` filter, and now flips too, since the mismatch is the
+    same bug whatever feed wrote it."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID)
     myr_po = _po(db, currency="MYR")
     mismatched = _line(db, po=myr_po, product_id=prod.id, currency="CNY")
     matched = _line(db, po=myr_po, product_id=prod.id, currency="MYR")
 
-    cny_po = _po(db, currency="CNY")
-    cny_line = _line(db, po=cny_po, product_id=prod.id, currency="CNY")
-
-    other_po = _po(db, currency="MYR", source_system="scm_upload")
-    other_line = _line(
-        db, po=other_po, product_id=prod.id, currency="CNY", source_system="scm_upload"
+    no_header_currency_po = _po(db, currency=None)
+    untouched_no_header_currency = _line(
+        db, po=no_header_currency_po, product_id=prod.id, currency="CNY"
     )
-    return mismatched, matched, cny_line, other_line
+
+    other_po = _po(db, currency="MYR", source_system="scm_po_history")
+    other_line = _line(
+        db, po=other_po, product_id=prod.id, currency="CNY", source_system="scm_po_history"
+    )
+    return mismatched, matched, untouched_no_header_currency, other_line
 
 
-def test_dry_run_reports_the_one_mismatch_and_writes_nothing(db):
-    mismatched, matched, cny_line, other_line = _seed(db)
+def test_dry_run_reports_both_mismatches_and_writes_nothing(db):
+    mismatched, matched, untouched_no_header_currency, other_line = _seed(db)
 
     report = backfill.run(db, apply=False)
 
     assert report["changed"] == 0
-    assert sum(n for _h, _l, n in report["before"]) == 1
-    assert ("MYR", "CNY", 1) in report["before"]
+    assert sum(n for _h, _l, n in report["before"]) == 2
+    assert ("MYR", "CNY", 2) in report["before"]
 
     db.refresh(mismatched)
     db.refresh(matched)
-    db.refresh(cny_line)
+    db.refresh(untouched_no_header_currency)
     db.refresh(other_line)
     assert mismatched.currency == "CNY", "a dry run wrote a change"
     assert matched.currency == "MYR"
-    assert cny_line.currency == "CNY"
-    assert other_line.currency == "CNY", "a non-autocount line was reported/touched"
+    assert untouched_no_header_currency.currency == "CNY"
+    assert other_line.currency == "CNY", "a dry run wrote a change"
 
 
-def test_apply_flips_only_the_one_autocount_mismatch(db):
-    mismatched, matched, cny_line, other_line = _seed(db)
+def test_apply_flips_every_mismatch_whatever_the_feed(db):
+    mismatched, matched, untouched_no_header_currency, other_line = _seed(db)
 
     report = backfill.run(db, apply=True)
 
-    assert report["changed"] == 1
+    assert report["changed"] == 2
     assert report["after"] == []
 
     db.refresh(mismatched)
     db.refresh(matched)
-    db.refresh(cny_line)
+    db.refresh(untouched_no_header_currency)
     db.refresh(other_line)
-    assert mismatched.currency == "MYR", "the mismatched autocount line was not flipped"
+    assert mismatched.currency == "MYR", "the autocount mismatch was not flipped"
     assert matched.currency == "MYR"
-    assert cny_line.currency == "CNY", "a header already CNY should not have moved its line"
-    assert other_line.currency == "CNY", "a non-autocount line was touched"
+    assert untouched_no_header_currency.currency == "CNY", \
+        "a header with no currency of its own must never fill a line"
+    assert other_line.currency == "MYR", \
+        "a non-autocount line with the same mismatch was left behind"
 
 
 def test_a_second_apply_is_a_no_op(db):

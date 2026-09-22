@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
-"""One-off: repoint an autocount purchase-order LINE's currency at its own
-HEADER's currency, for every line the old assumed-CNY fill mis-stamped.
+"""One-off: repoint a purchase-order LINE's currency at its own HEADER's currency,
+for every line the old assumed-CNY fill mis-stamped - whatever feed wrote it.
 
 `PLAN-po-line-currency-follows-header-22sep.md` (owner ruling 22 Sep 2026: "we
 shouldn't assume CNY"). Before that lane's fix, an autocount push or upload with no
 stated line currency wrote `DEFAULT_PO_CURRENCY` ("CNY") straight onto the line, even
 when the SAME document's header carried a real currency the file (or a prior line on
 it) had stated. Measured on the 0921 prod copy: 66,720 `purchase_order_lines` rows
-whose currency differs from their header's, every one of them `CNY` on the line side
-(MYR 20,358 / USD 46,317 / EUR 36 / SGD 9). The service-level fix stops this for a new
-push; this script repairs what already landed that way.
+whose currency differs from their header's, every one of them `CNY` on the line side -
+66,084 autocount (USD 45,681 / MYR 20,358 / EUR 36 / SGD 9) plus 636 `scm_po_history`
+rows (header USD, line CNY), the same mis-stamp from a different feed (fix round 1: the
+first cut of this script scoped the UPDATE to `source_system = 'autocount'` and left
+those 636 behind - the rule is about what the currency IS, not which feed wrote it).
+Measured separately: zero rows anywhere have a CNY header with a non-CNY line, so this
+can never demote a correct line to a wrong one. The service-level fix stops the
+mis-stamp for a new push or upload; this script repairs what already landed that way.
 
 WHAT IT DOES
 ------------
 One UPDATE: `purchase_order_lines.currency = purchase_orders.currency` for every line
-whose own `source_system = 'autocount'`, whose header carries a currency, and whose
-currency differs from it. Untouched: any line whose header carries NO currency (stays
-whatever it is), and every non-autocount line (the Excel/`scm_upload` path already
-follows its own header at write time and never needed this fill).
+whose header carries a currency and whose own currency differs from it - any line,
+regardless of `source_system`. Untouched: any line whose header carries NO currency
+(stays whatever it is), and any line that already matches its header.
 
 SAFETY / IDEMPOTENCY
 ---------------------
@@ -41,15 +45,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
 
-#: Every autocount line whose currency does not match its own header's, as
-#: (header_currency, line_currency, count) triples - what `--dry-run` would move.
+#: Every line whose currency does not match its own header's, whatever feed wrote
+#: either row, as (header_currency, line_currency, count) triples - what `--dry-run`
+#: would move.
 _PAIRS_SQL = text(
     """
     SELECT po.currency AS header_currency, pol.currency AS line_currency, COUNT(*) AS n
     FROM purchase_order_lines pol
     JOIN purchase_orders po ON po.id = pol.purchase_order_id
-    WHERE pol.source_system = 'autocount'
-      AND po.currency IS NOT NULL
+    WHERE po.currency IS NOT NULL
       AND pol.currency IS DISTINCT FROM po.currency
     GROUP BY po.currency, pol.currency
     ORDER BY po.currency, pol.currency
@@ -62,7 +66,6 @@ _UPDATE_SQL = text(
     SET currency = po.currency
     FROM purchase_orders AS po
     WHERE pol.purchase_order_id = po.id
-      AND pol.source_system = 'autocount'
       AND po.currency IS NOT NULL
       AND pol.currency IS DISTINCT FROM po.currency
     """
@@ -106,10 +109,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--apply", action="store_true", help="Write the changes. Default is dry-run."
     )
-    parser.add_argument(
+    mode.add_argument(
         "--dry-run", action="store_true", help="Explicit dry-run (also the default)."
     )
     args = parser.parse_args(argv)
@@ -120,9 +124,12 @@ def main(argv=None) -> int:
 
     db = SessionLocal()
     try:
-        # A script has no request and no principal, so the session scope would be
-        # UNSET (fail-closed, 0 rows) - same reason `backfill_order_back_rows.py`
-        # sets it. This sweep is a raw cross-company UPDATE by design.
+        # Defensive only: both `_PAIRS_SQL` and `_UPDATE_SQL` are raw `text()` and
+        # never go through the ORM's company-scope filter either way, so this has no
+        # effect on what the two statements above see - set anyway so any FUTURE
+        # ORM-side query added to this script (there is none today) fails closed by
+        # default instead of silently reading one company, the same reason
+        # `backfill_order_back_rows.py` sets it.
         set_company_scope(db, None)
 
         print(f"mode: {'APPLY' if apply_changes else 'DRY-RUN (no writes)'}")

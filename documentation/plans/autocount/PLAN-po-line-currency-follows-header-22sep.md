@@ -16,11 +16,16 @@ UAC: `po-line-currency-follows-header-22sep-acceptance-criteria.md`.
   - `sorento_crm_backend/app/services/document_ingest_service.py` `_line_values` (~L1276-1279)
   - `sorento_crm_backend/app/services/scm/outstanding_import_service.py` `_refresh_money`
     (~L1893) and the new-line insert (~L2419-2423)
-- Damage: 66,720 autocount lines whose currency differs from their header
-  (MYR 20,358 / USD 46,317 / EUR 36 / SGD 9). Every one of them is line=CNY.
+- Damage: 66,720 lines whose currency differs from their header, every one of them
+  line=CNY: autocount 66,084 (USD 45,681 / MYR 20,358 / EUR 36 / SGD 9) plus
+  `scm_po_history` 636 (header USD, line CNY) - the review pass on the reviewed fix
+  round measured the 636 the `source_system = 'autocount'` filter in the first cut of
+  the backfill left behind, on the SAME mis-stamp, written by a different feed.
 - The CNY default dates from the 28 Aug ruling for an AutoCount Excel export with NO
   currency column at all. That was a header-level fill; the line copy of it was wrong
   from the day a header currency became known.
+- Measured: zero rows anywhere have a CNY header with a non-CNY line, so the backfill
+  cannot demote a correct line.
 
 ## Change (one seam: "what currency does a PO line get when the row states none")
 
@@ -37,9 +42,11 @@ UAC: `po-line-currency-follows-header-22sep-acceptance-criteria.md`.
    ~L2236) is untouched in this lane; flagged for a separate ruling in the PR.
 4. Backfill: `sorento_crm_backend/scripts/backfill_po_line_currency_from_header.py`,
    `--dry-run` (default) / `--apply`; sets `purchase_order_lines.currency = purchase_orders.currency`
-   where the header currency is set and differs from the line's, for `source_system = 'autocount'`
-   lines; prints the per-pair counts before and after. Owner runs it on prod after deploy.
-   No alembic migration (small fix track).
+   where the header currency is set and differs from the line's - any line, whatever
+   feed wrote it (fix round 1: the first cut scoped this to `source_system = 'autocount'`
+   and left 636 `scm_po_history` rows mis-stamped the same way; the rule is about what
+   the currency IS, not which feed wrote it); prints the per-pair counts before and
+   after. Owner runs it on prod after deploy. No alembic migration (small fix track).
 
 ## Tests (red first, then green)
 
@@ -56,8 +63,12 @@ pytest only; touched files on `sorento_buc_ci` via `SORENTO_ENV_FILE=.env.ci-tes
   (refresh), and a NEW line on a header already holding MYR with no currency column in the
   file -> MYR, not CNY.
 - `tests/scm/test_backfill_po_line_currency.py`: seed 1 PO (MYR) with 2 lines (CNY, MYR)
-  + 1 PO (CNY) with 1 line (CNY) + 1 non-autocount PO (MYR) line CNY; dry-run changes
-  nothing and reports 1; apply flips exactly the one autocount CNY line to MYR.
+  + 1 PO (CNY) with 1 line (CNY, already matching - stays) + 1 PO with NO header
+  currency and a CNY line (stays, nothing to fall back to) + 1 non-autocount
+  (`scm_po_history`-sourced) PO (MYR) line CNY (fix round 1: this used to be excluded
+  by a `source_system = 'autocount'` filter and is now IN scope - the mismatch is the
+  same bug whatever feed wrote it); dry-run changes nothing and reports 2; apply flips
+  exactly the 2 mismatched lines (the autocount one and the non-autocount one) to MYR.
 
 ## Not in scope
 

@@ -1877,7 +1877,7 @@ def _money_differs(held: dict, extra: dict, bind: _Binding) -> bool:
 DEFAULT_PO_CURRENCY = "CNY"
 
 
-def _refresh_money(line, extra: dict, bind: _Binding, header_currency=None) -> None:
+def _refresh_money(line, extra: dict, bind: _Binding, *, header_currency: Optional[str]) -> None:
     """Bring the line's money columns up to what this extract says.
 
     Applied on update, not on insert only: cost is what the cash co-pilot ranks and budgets
@@ -1924,7 +1924,7 @@ def _settled_qty_differs(line, ordered: float, fulfilled: float, bind: _Binding)
 
 
 def _write_settled(line, after: Line, extra: dict, bind: _Binding,
-                   fallback_date: Optional[date], header_currency=None) -> None:
+                   fallback_date: Optional[date], *, header_currency: Optional[str]) -> None:
     """Bring a line the file states as settled up to what the row says, and close it.
 
     The quantities, the date and the money together: a completed line is a record of what
@@ -1934,7 +1934,7 @@ def _write_settled(line, after: Line, extra: dict, bind: _Binding,
     line.qty_ordered = ordered
     setattr(line, bind.fulfilled, fulfilled)
     setattr(line, bind.date, _write_date(after, fallback_date))
-    _refresh_money(line, extra, bind, header_currency)
+    _refresh_money(line, extra, bind, header_currency=header_currency)
     line.line_status = "closed"
 
 
@@ -2294,7 +2294,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
                   applied: dict, applied_line_ids: dict[int, str],
                   settled_line_ids: set[str], closed_candidates: dict,
                   lines_by_id: dict, money_differs_by_c: dict[int, bool], c,
-                  header_currency=None) -> None:
+                  *, header_currency: Optional[str]) -> None:
     """Write ONE diff change - CLOSED, ADDED, unchanged, or a real qty/date change.
 
     `header_currency` (PLAN-po-line-currency-follows-header-22sep.md): this change's
@@ -2330,7 +2330,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
                 # this system will ever have.
                 _write_settled(line, c.after,
                                read.extras.get(str(c.after.row_ref), {}), bind,
-                               c.before.required_date, header_currency)
+                               c.before.required_date, header_currency=header_currency)
             applied["closed"] += 1
             # `source_row` is None for the absence half - there is no row in the
             # upload to point at - and the row number itself for a stated
@@ -2377,7 +2377,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
             moved = (_settled_qty_differs(revived, ordered, fulfilled, bind)
                      or _money_differs(held, extra, bind))
             _write_settled(revived, c.after, extra, bind, getattr(revived, bind.date),
-                           header_currency)
+                           header_currency=header_currency)
             settled_line_ids.add(str(revived.id))
             applied_line_ids[id(c)] = str(revived.id)
             if moved:
@@ -2401,7 +2401,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
             revived.qty_ordered = already + c.after.qty
             setattr(revived, bind.date,
                     _write_date(c.after, getattr(revived, bind.date)))
-            _refresh_money(revived, extra, bind, header_currency)
+            _refresh_money(revived, extra, bind, header_currency=header_currency)
             applied["added"] += 1
             applied_line_ids[id(c)] = str(revived.id)
             outcome.success(row=source_row, code=oc.CREATED, identity=identity,
@@ -2461,7 +2461,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
         if money_differs_by_c.get(id(c), False):
             line = lines_by_id.get(str(c.before.row_ref))
             if line is not None:
-                _refresh_money(line, extra, bind, header_currency)
+                _refresh_money(line, extra, bind, header_currency=header_currency)
                 applied["updated"] += 1
                 outcome.updated(row=source_row, identity=identity, value=c.doc_number,
                                 entity_type="order_line", entity_id=line.id)
@@ -2492,7 +2492,8 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
     # was built to avoid. `_write_date` keeps the line's own stored date in that
     # case.
     setattr(line, bind.date, _write_date(c.after, c.before.required_date))
-    _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind, header_currency)
+    _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind,
+                   header_currency=header_currency)
     applied["updated"] += 1
     applied_line_ids[id(c)] = str(line.id)
     outcome.updated(row=source_row, identity=identity, value=c.doc_number,
@@ -2866,7 +2867,8 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             for c in changes_by_doc.get(number, ()):
                 _write_change(db, bind, order_ids, resolved, read, outcome, applied,
                              applied_line_ids, settled_line_ids, closed_candidates,
-                             lines_by_id, money_differs_by_c, c, header_currency)
+                             lines_by_id, money_differs_by_c, c,
+                             header_currency=header_currency)
             # Self-heal (issue #969): the book upload writes its ADDED lines straight in
             # `_write_change` (`db.add(bind.line(**fields))`), bypassing `_upsert_lines`'s
             # own self-heal, which only sees the manual FE edit. Per order rather than per

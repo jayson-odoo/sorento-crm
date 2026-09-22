@@ -157,6 +157,35 @@ def test_a_new_line_on_a_header_already_in_myr_follows_it_not_cny(db, seeded):
     assert _line(db, seeded.main_po, seeded.item_wt)["currency"] == "MYR"
 
 
+def test_a_null_currency_line_refreshed_by_a_qty_change_takes_the_header_not_cny(db, seeded):
+    """`_refresh_money`'s header fallback (`outstanding_import_service.py` ~L1897-1898)
+    is reached from the plain qty/date-changed tail of `_write_change`, not only from a
+    NEW line (the insert path) or a SETTLED one (`_write_settled`) - a case neither of
+    those two exercises. Seeds a line whose currency is NULL directly (pre-fix data, or
+    a row this extract never priced), under an MYR header, then re-uploads a plain
+    quantity change with no currency column at all."""
+    svc.apply(db, po_workbook([
+        po_row(SUPPLIER_MAIN_LABEL, seeded.main_po, date(2026, 4, 6), seeded.creditor_main,
+               seeded.item_rl, 100, 0, date(2026, 7, 1), seeded.loc_project, 12.5, "MYR"),
+    ]), PO)
+    assert _header(db, seeded.main_po)["currency"] == "MYR"
+
+    db.execute(text(
+        "UPDATE purchase_order_lines SET currency = NULL "
+        "WHERE purchase_order_id = (SELECT id FROM purchase_orders WHERE po_number = :po) "
+        "AND product_id = (SELECT id FROM products WHERE product_code = :item)"
+    ), {"po": seeded.main_po, "item": seeded.item_rl})
+    assert _line(db, seeded.main_po, seeded.item_rl)["currency"] is None
+
+    svc.apply(db, po_workbook([
+        po_minimal_row(seeded.main_po, seeded.creditor_main, seeded.item_rl, 120,
+                       date(2026, 7, 1), seeded.loc_project),
+    ], headers=PO_MINIMAL), PO)
+
+    assert _line(db, seeded.main_po, seeded.item_rl)["currency"] == "MYR", \
+        "a line refreshed with no currency cell took the assumed-CNY default, not its header"
+
+
 def test_the_reader_carries_a_repeated_row_and_no_longer_calls_it_a_problem(db, seeded):
     """Both rows are carried, and neither is complained about (AC-2.1).
 
