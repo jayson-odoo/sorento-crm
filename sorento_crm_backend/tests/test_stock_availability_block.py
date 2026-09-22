@@ -446,14 +446,14 @@ def test_availability_po_only_not_limited(db):
 
 def test_availability_supply_outside_policy_not_named(db):
     """AC-1745. Ask 110 against on hand 100 at the one allowed warehouse; an allocation of
-    50 and a PO of 50 both sit at DC1, outside the policy, so neither counts and there is
+    55 and a PO of 55 both sit at DC1, outside the policy, so neither counts and there is
     no disclaimer at all."""
     brw = _wh(db, "ZZTBRW")
     dc1 = _wh(db, "ZZTDC1")
     p = product(db, company_id=DEFAULT_COMPANY_ID)
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
-    _allocation(db, product_id=p.id, warehouse_id=dc1.id, allocated=50)
-    _po_line(db, product_id=p.id, warehouse_id=dc1.id, ordered=50)
+    _allocation(db, product_id=p.id, warehouse_id=dc1.id, allocated=55)
+    _po_line(db, product_id=p.id, warehouse_id=dc1.id, ordered=55)
     contact = _contact(db)
     _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
     db.flush()
@@ -465,7 +465,10 @@ def test_availability_supply_outside_policy_not_named(db):
     entry = _entry(result, p.id)
     assert entry["available"] is False
     assert entry["disclaimer"] is None
-    _assert_no_quantity_anywhere(result, {100, 50})
+    # 55, not 50 - the page-size default (`pagination.limit`) is also 50, and the leak
+    # sweep below walks the WHOLE payload, `pagination` included by design (never
+    # excluded, however tempting - a real leak could as easily land there).
+    _assert_no_quantity_anywhere(result, {100, 55})
 
 
 def test_availability_null_destination_not_counted(db):
@@ -640,18 +643,18 @@ def test_availability_received_or_closed_supply_not_counted(db):
     p = product(db, company_id=DEFAULT_COMPANY_ID)
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
     _allocation(
-        db, product_id=p.id, warehouse_id=brw.id, allocated=50, receipt_status="fully_received"
+        db, product_id=p.id, warehouse_id=brw.id, allocated=65, receipt_status="fully_received"
     )
-    _allocation(db, product_id=p.id, warehouse_id=brw.id, allocated=50, line_status="closed")
+    _allocation(db, product_id=p.id, warehouse_id=brw.id, allocated=65, line_status="closed")
     landed = _shipment(db, status="fully_received")
     _allocation(
         db,
         product_id=p.id,
         warehouse_id=brw.id,
-        allocated=50,
+        allocated=65,
         inbound_shipment_id=landed.id,
     )
-    _po_line(db, product_id=p.id, warehouse_id=brw.id, ordered=50, line_status="closed")
+    _po_line(db, product_id=p.id, warehouse_id=brw.id, ordered=65, line_status="closed")
     contact = _contact(db)
     _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
     db.flush()
@@ -663,7 +666,9 @@ def test_availability_received_or_closed_supply_not_counted(db):
     entry = _entry(result, p.id)
     assert entry["available"] is False
     assert entry["disclaimer"] is None
-    _assert_no_quantity_anywhere(result, {100, 50})
+    # 65, not 50 - the page-size default (`pagination.limit`) is also 50, and the leak
+    # sweep below walks the WHOLE payload, `pagination` included by design.
+    _assert_no_quantity_anywhere(result, {100, 65})
 
 
 # ============================================================ AC-1752, route level

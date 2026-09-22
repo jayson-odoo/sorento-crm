@@ -652,6 +652,9 @@ def test_availability_needs_quantity_no_leak(db):
             "needs_quantity": True,
             "requested_qty": None,
             "available": None,
+            "verdict": None,
+            "running_low": None,
+            "disclaimer": None,
         }
     ]
     assert "stock_summary" not in result
@@ -722,6 +725,9 @@ def test_availability_says_no_for_a_product_with_no_stock(db):
             "needs_quantity": False,
             "requested_qty": 50,
             "available": False,
+            "verdict": "not_available",
+            "running_low": False,
+            "disclaimer": None,
         }
     ]
     _assert_no_quantity_anywhere(result, {500})
@@ -750,6 +756,9 @@ def test_availability_still_asks_for_a_product_with_no_stock(db):
             "needs_quantity": True,
             "requested_qty": None,
             "available": None,
+            "verdict": None,
+            "running_low": None,
+            "disclaimer": None,
         }
     ]
     _assert_no_quantity_anywhere(result, {500})
