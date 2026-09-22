@@ -183,23 +183,30 @@ vi.mock('../../services/scmOptionsService', () => ({
 /** V1-V4 (PLAN-reorder-plan-demand-class-orders): the Orders field's candidates, keyed on
  *  the From/To range. `RunPlanningModal.tsx` calls
  *  `getCandidateOrders({ from: horizonStart || undefined, to: horizon || undefined })` -
- *  ONE object argument, `undefined` (not `''`) when a bound is unset. */
+ *  ONE object argument, `undefined` (not `''`) when a bound is unset.
+ *
+ *  `rows_raised_in_window` and the `raised_from`/`raised_to` range (AC-RF-1..8,
+ *  `PLAN-reorder-plan-raised-filter.md`, 22 Sep 2026) ride the SAME call/object - a
+ *  window typed into "Inquiries raised" From/To adds two more keys, never a second
+ *  fetch. */
 type CandidateOrder = {
   so_number: string;
   project_label: string;
   customer_name: string;
   rows_total: number;
   rows_in_range: number;
+  rows_raised_in_window: number;
   rows_awaiting: number;
   first_delivery: string;
   last_delivery: string;
 };
+type CandidateOrdersRange = { from?: string; to?: string; raised_from?: string; raised_to?: string };
 const getCandidateOrders = vi.fn(
-  async (_range: { from?: string; to?: string }): Promise<CandidateOrder[]> => [],
+  async (_range: CandidateOrdersRange): Promise<CandidateOrder[]> => [],
 );
 getCandidateOrders.mockResolvedValue([]);
 vi.mock('../services/reorderRunService', () => ({
-  getCandidateOrders: (range: { from?: string; to?: string }) => getCandidateOrders(range),
+  getCandidateOrders: (range: CandidateOrdersRange) => getCandidateOrders(range),
 }));
 
 import { RunPlanningModal } from './RunPlanningModal';
@@ -491,6 +498,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           project_label: 'OTM GROUP / TAT LIAN',
           customer_name: 'OTM',
           rows_total: 7,
+          rows_raised_in_window: 7,
           rows_in_range: 7,
           rows_awaiting: 2,
           first_delivery: '2026-08-01',
@@ -501,6 +509,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           project_label: 'ARC RESIDENCE',
           customer_name: 'ARC',
           rows_total: 3,
+          rows_raised_in_window: 3,
           rows_in_range: 0,
           rows_awaiting: 0,
           first_delivery: '2026-11-02',
@@ -553,6 +562,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           project_label: 'P1',
           customer_name: 'C1',
           rows_total: 2,
+          rows_raised_in_window: 2,
           rows_in_range: 2,
           rows_awaiting: 0,
           first_delivery: '2026-08-01',
@@ -591,6 +601,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
             project_label: 'P1',
             customer_name: 'C1',
             rows_total: 2,
+            rows_raised_in_window: 2,
             rows_in_range: 2,
             rows_awaiting: 0,
             first_delivery: '2026-08-01',
@@ -603,6 +614,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
             project_label: 'P2',
             customer_name: 'C2',
             rows_total: 1,
+            rows_raised_in_window: 1,
             rows_in_range: 1,
             rows_awaiting: 0,
             first_delivery: '2026-09-01',
@@ -641,6 +653,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           project_label: 'P2',
           customer_name: 'C2',
           rows_total: 1,
+          rows_raised_in_window: 1,
           rows_in_range: 1,
           rows_awaiting: 4,
           first_delivery: '2026-09-01',
@@ -663,6 +676,122 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({ demand_class: 'project', so_numbers: [] }),
+      );
+    });
+  });
+
+  // ===========================================================================
+  // AC-RF-1..8 (PLAN-reorder-plan-raised-filter.md, 22 Sep 2026) - "Inquiries raised"
+  // From/To under the delivery range, Project-only, driving PRE-SELECTION only
+  // (rows_in_range > 0 AND rows_raised_in_window > 0). The list itself is unchanged by
+  // the window (AC-RF-3, backend-only - nothing to assert here).
+  // ===========================================================================
+
+  describe('Inquiries raised window (AC-RF-5..8)', () => {
+    it('AC-RF-5: "Raised from"/"Raised to" render only while Demand = Project', async () => {
+      await renderModal();
+      expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Raised to')).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      expect(await screen.findByLabelText('Raised from')).toBeInTheDocument();
+      expect(screen.getByLabelText('Raised to')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
+      await waitFor(() => expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument());
+      expect(screen.queryByLabelText('Raised to')).not.toBeInTheDocument();
+
+      // And absent again for the empty/"All" reading (V1 default), not just Dealer.
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: '' } });
+      expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument();
+    });
+
+    it('AC-RF-6: with a raise window set, pre-selection is rows_in_range>0 AND rows_raised_in_window>0', async () => {
+      getCandidateOrders.mockResolvedValue([
+        {
+          so_number: 'SOA', project_label: 'PA', customer_name: 'CA',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 1, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOB', project_label: 'PB', customer_name: 'CB',
+          rows_total: 3, rows_in_range: 3, rows_raised_in_window: 0, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOC', project_label: 'PC', customer_name: 'CC',
+          rows_total: 2, rows_in_range: 0, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+      ]);
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+
+      // Matched with a leading-anchor regex, not an exact string: the plan's own S2
+      // ("the picker option label appends 'raised N' only when a window is set") means
+      // the accessible name may carry a suffix once a window is typed - the pre-selection
+      // fact under test does not depend on that exact display string.
+      expect(await screen.findByLabelText(/^SOA - PA/)).toBeInTheDocument();
+      await waitFor(() => {
+        // A: rows_in_range 2 > 0 AND rows_raised_in_window 1 > 0 -> pre-selected.
+        expect((screen.getByLabelText(/^SOA - PA/) as HTMLInputElement).checked).toBe(true);
+        // B: rows_in_range 3 > 0 but rows_raised_in_window 0 -> NOT pre-selected, even
+        // though the old rows_in_range-only rule would have picked it.
+        expect((screen.getByLabelText(/^SOB - PB/) as HTMLInputElement).checked).toBe(false);
+        // C: rows_raised_in_window 2 > 0 but rows_in_range 0 -> NOT pre-selected.
+        expect((screen.getByLabelText(/^SOC - PC/) as HTMLInputElement).checked).toBe(false);
+      });
+    });
+
+    it('AC-RF-6: without a raise window, pre-selection stays rows_in_range>0 (today\'s behaviour, unchanged)', async () => {
+      getCandidateOrders.mockResolvedValue([
+        {
+          so_number: 'SOA', project_label: 'PA', customer_name: 'CA',
+          // No window -> rows_raised_in_window === rows_total, same as the backend
+          // contract (AC-RF-2).
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOB', project_label: 'PB', customer_name: 'CB',
+          rows_total: 3, rows_in_range: 3, rows_raised_in_window: 3, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOC', project_label: 'PC', customer_name: 'CC',
+          rows_total: 2, rows_in_range: 0, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+      ]);
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+
+      expect(await screen.findByLabelText('SOA - PA')).toBeInTheDocument();
+      await waitFor(() => {
+        expect((screen.getByLabelText('SOA - PA') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SOB - PB') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SOC - PC') as HTMLInputElement).checked).toBe(false);
+      });
+    });
+
+    it('AC-RF-7: typing a raise window calls getCandidateOrders with raised_from/raised_to alongside from/to', async () => {
+      getCandidateOrders.mockResolvedValue([]);
+      await renderModal();
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+
+      await waitFor(() =>
+        expect(getCandidateOrders).toHaveBeenLastCalledWith({
+          from: '2026-08-01',
+          to: '2026-10-31',
+          raised_from: '2026-09-17',
+          raised_to: '2026-09-18',
+        }),
       );
     });
   });

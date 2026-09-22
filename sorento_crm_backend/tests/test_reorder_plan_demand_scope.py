@@ -796,6 +796,128 @@ def test_t11_candidate_orders_is_company_scoped_and_needs_reorder_run_permission
     assert denied.status_code == 403, denied.text
 
 
+def _stamp_row_created_at(db, row_id: str, when: datetime) -> None:
+    """The book carries no raise date - a row's raise is its first upload, `created_at`
+    (R1, `PLAN-reorder-plan-raised-filter.md`). `_project_so_with_lines` stamps it via
+    `server_default=now()`, so a specific raise day is set with a direct UPDATE after the
+    row exists, rather than widening the shared seeding helper for one lane's tests."""
+    db.execute(
+        text("UPDATE projects.order_inquiry_rows SET created_at = :dt WHERE id = :id"),
+        {"dt": when, "id": row_id},
+    )
+    db.flush()
+
+
+def test_rf1_2_3_4_raise_window_counts_rows_raised_in_it_without_moving_anything_else(scm_app):
+    """AC-RF-1/2/3/4. Two project SOs, one row each, raised (created_at) on 17 Sep and
+    20 Sep respectively. A window of 17-18 Sep counts SO A's row and not SO B's, both SOs
+    stay listed (AC-RF-3), and `rows_in_range`/`rows_awaiting`/`rows_total` read exactly
+    as they do with no raise window at all (AC-RF-4)."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so_a = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 5, "delivery_date": date(2026, 9, 1)},
+    ])
+    so_b = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 8, "delivery_date": date(2026, 9, 20)},
+    ])
+    _stamp_row_created_at(db, so_a["rows"][0].id, datetime(2026, 9, 17, 9, 0, 0))
+    _stamp_row_created_at(db, so_b["rows"][0].id, datetime(2026, 9, 20, 9, 0, 0))
+
+    with TestClient(app) as c:
+        windowed = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={
+                "from": "2026-09-01", "to": "2026-10-31",
+                "raised_from": "2026-09-17", "raised_to": "2026-09-18",
+            },
+        )
+        unwindowed = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"from": "2026-09-01", "to": "2026-10-31"},
+        )
+
+    assert windowed.status_code == 200, windowed.text
+    by_so = {row["so_number"]: row for row in windowed.json()}
+
+    # AC-RF-3: an order with zero rows in the window is still listed.
+    assert so_a["so_number"] in by_so, "SO A must be listed"
+    assert so_b["so_number"] in by_so, "SO B must be listed even with zero rows in the window"
+
+    a = by_so[so_a["so_number"]]
+    b = by_so[so_b["so_number"]]
+
+    # AC-RF-1: the field is present and response_model does not drop it silently.
+    assert "rows_raised_in_window" in a
+    assert "rows_raised_in_window" in b
+
+    # AC-RF-2: SO A's row was raised inside the window, SO B's was not.
+    assert a["rows_raised_in_window"] == 1
+    assert b["rows_raised_in_window"] == 0
+
+    # AC-RF-4: rows_in_range / rows_awaiting / rows_total read the same with or without
+    # the raise window.
+    assert unwindowed.status_code == 200, unwindowed.text
+    by_so_nw = {row["so_number"]: row for row in unwindowed.json()}
+    for so_number, row in ((so_a["so_number"], a), (so_b["so_number"], b)):
+        baseline = by_so_nw[so_number]
+        assert row["rows_in_range"] == baseline["rows_in_range"]
+        assert row["rows_awaiting"] == baseline["rows_awaiting"]
+        assert row["rows_total"] == baseline["rows_total"]
+
+
+def test_rf2_no_raise_bounds_rows_raised_in_window_equals_rows_total(scm_app):
+    """AC-RF-2: with both bounds omitted, `rows_raised_in_window` equals `rows_total`
+    regardless of how far apart the rows were actually raised."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 2, "delivery_date": date(2026, 9, 1)},
+        {"product_id": pid, "warehouse_id": wid, "qty": 3, "delivery_date": date(2026, 9, 20)},
+    ])
+    _stamp_row_created_at(db, so["rows"][0].id, datetime(2020, 1, 1))
+    _stamp_row_created_at(db, so["rows"][1].id, datetime(2030, 12, 31))
+
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/scm/reorder-runs/candidate-orders")
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["so_number"] == so["so_number"])
+    assert row["rows_raised_in_window"] == row["rows_total"] == 2
+
+
+def test_rf2_open_lower_bound_raised_to_only_counts_everything_up_to_it(scm_app):
+    """AC-RF-2: `raised_to` alone leaves the lower bound open - a row raised long before it
+    still counts, the same open-bound reading `rows_in_range` already gives `from`/`to`."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 2, "delivery_date": date(2026, 9, 1)},
+        {"product_id": pid, "warehouse_id": wid, "qty": 3, "delivery_date": date(2026, 9, 20)},
+    ])
+    _stamp_row_created_at(db, so["rows"][0].id, datetime(2020, 1, 1))
+    _stamp_row_created_at(db, so["rows"][1].id, datetime(2026, 9, 17))
+
+    with TestClient(app) as c:
+        resp = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"raised_to": "2026-09-18"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["so_number"] == so["so_number"])
+    assert row["rows_raised_in_window"] == 2, "an open lower bound must not exclude the 2020 row"
+
+
 def test_ac_ob_9_candidate_orders_lists_an_so_whose_only_open_row_is_order_back_on_a_delivered_line(
     scm_app,
 ):
