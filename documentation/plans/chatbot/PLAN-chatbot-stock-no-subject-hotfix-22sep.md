@@ -31,17 +31,37 @@ before the tool call, unless the intent is in `gate.INTENTS_ALLOWING_EMPTY`
 (`low_stock_report`). Reads `gate.ALLOWS_EMPTY` / `gate.INTENTS_ALLOWING_EMPTY` (one
 copy, never a second table). The refusal composes production's own scope-needed
 wording (the `needs_scope` sentence in `answer.not_found_error_message`), not a new
-string; extract that sentence into a small helper if that is what it takes to reuse it.
+string. AS BUILT: no helper extraction was needed - the runner asks `gate.run_gate` for
+the verdict (so `ALLOWS_EMPTY` / `INTENTS_ALLOWING_EMPTY` and the reason string each stay
+in one place) and stamps it on the refusal fragment as `scope_gate`;
+`answer_bridge.answer_for` hands that to `not_found_error_message` in place of the
+resolver's own gate, for the miss TEXT only, and its existing `needs_scope` branch
+writes the sentence. `run_miss_lane` and the breakdown bullets keep the resolver's gate.
+The stamp rides ONLY this hole - a `would_be_unfiltered` refusal (R6/R8) is excluded, so
+a named-but-unresolved subject keeps its own "could not find it" miss.
 Scope: `inventory` only. Trigger to widen: a second domain measured dumping unfiltered.
+
+The scope-needed WORDING holds on a SINGLE-domain turn. A multi-domain fan-out ("stock
+and promotions", no entity) still refuses the tool - the refusal is the runner's, one
+`FetchSpec` at a time - but renders `fetch.NO_RESULT_INTRO` ("No matching results
+found.") instead of the sentence, because `engine.py`'s `bridge_answers_a_miss` requires
+`len(fetch_plan.fetch) == 1` before `answer_bridge.answer_for` composes a miss at all;
+a two-domain plan is composed by `turn/compose.py`, which never reads this gate. The
+no-dump guarantee (AC-1790) is unaffected. Widening the sentence to the fan-out means
+changing who composes a multi-domain miss, which is not a hotfix.
 
 Not in scope: making `ALLOWS_EMPTY` a `chatbot_domains` column (needs a migration; owner
 asked, answered "not configurable today").
 
 ## Tests (pytest, engine-level, parser mocked, real gate, MCP stubbed)
 
-New file `tests/chatbot/test_rearch_r13_stock_no_subject.py`, helpers from
-`tests/chatbot/test_rearch_r12_phase3_fixes.py` (`_run_turn_engine`, `_mcp_double`,
-`_seed_state`, `_focus`, `_parser_output`, `STOCK_TOOL`).
+New file `tests/chatbot/test_rearch_r13_stock_no_subject.py`, in the harness convention
+`tests/chatbot/test_rearch_r12_phase3_fixes.py` documents, with the helpers imported from
+the files that actually define them: `_run_turn_engine` from
+`test_rearch_r6_review_round.py`; `_mcp_double` / `_seed_contact_and_get` from
+`test_rearch_r5_production_decides.py`; `STOCK_TOOL` / `_focus` / `_said` / `_seed_state`
+/ `_unknown_envelope` from `test_rearch_r12_handpass12.py`; `_parser_output` from
+`test_engine.py`; `_seed_product` from `test_engine_company_scope.py`.
 
 - T1 the live chain: focus `extra["product_set"]=[{"raw":"Srtwc8608-p-rl","hint":
   "product_set","canonical_code":None}]`, `products=[]`, `domains=["inventory"]`; open
@@ -53,5 +73,10 @@ New file `tests/chatbot/test_rearch_r13_stock_no_subject.py`, helpers from
   assertions.
 - T3 guard: `intent_hint low_stock_report`, no entities: stock/low-stock tool IS called
   (unchanged; `INTENTS_ALLOWING_EMPTY`).
+- T4 guard (reviewer S1): a typed token that resolved to NOTHING ("Srtks8060-BL stock",
+  the R6/R8 shape) still refuses the tool and keeps its OWN miss wording - the refusal's
+  fragment carries no `scope_gate`, so the scope-needed sentence never replaces the
+  "could not find it" text. Pinned at `make_tool_runner.runner` directly (red without
+  the fix) and end to end through the engine.
 - Existing guards that must stay green: `test_rearch_r12_phase3_fixes.py` (P3, P9),
   `test_low_stock_lane.py`, `test_turn_replay.py` (whole corpus).

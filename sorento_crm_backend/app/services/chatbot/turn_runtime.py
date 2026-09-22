@@ -1580,10 +1580,23 @@ def make_tool_runner(
         #
         # A predicate block IS a filter (the described-set ask, "which taps have
         # stock"), so a turn carrying one is never refused here.
+        #
+        # Reviewer S1: `would_be_unfiltered` is EXCLUDED, not merely redundant with
+        # this. Every entity it refuses is unplaced and therefore uuid-less, so
+        # without the exclusion this condition also fires on the R6/R8 refusals and
+        # stamps `scope_gate` on them - which re-points their miss text at a gate
+        # whose `compatible_entities` is empty and loses the breakdown bullets
+        # (`answer.py`'s own per-entity lines), for a turn that is not a scope gap at
+        # all: the customer DID name a subject, it just did not resolve.
+        # `not_found_error_message` says the same thing in its own `needs_scope`
+        # condition (`and not has_unresolved`). Those two refusals keep the
+        # resolver's gate and their existing "could not find X" wording untouched;
+        # `scope_gate` rides ONLY the hole this hotfix opened the guard for.
         no_subject_gate: dict[str, Any] | None = None
         if (
             domain == "inventory"
             and block is None
+            and not would_be_unfiltered
             and not any(isinstance(e, dict) and e.get("uuid") for e in entities)
         ):
             probe_gate = gate_mod.run_gate(

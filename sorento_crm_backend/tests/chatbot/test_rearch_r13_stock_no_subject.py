@@ -70,7 +70,7 @@ NEEDS_SCOPE_OPENING = "That would search every stock we have"
 LISTING_MARKER = "Stock details found"
 
 
-def _seed_product_set(session_factory, *, set_code: str, member_code: str) -> str:
+def _seed_product_set(session_factory, *, set_code: str, member_code: str) -> None:
     """A flyer/set code that resolves as `product_set` and NOTHING else - the exact
     shape `entity_resolver._probe_product_set` answers (a `ProductSet` row whose
     `set_code` matches the token, carrying one real member). This is what makes the
@@ -80,25 +80,25 @@ def _seed_product_set(session_factory, *, set_code: str, member_code: str) -> st
         session_factory, company_id=DEFAULT_COMPANY_ID, code=member_code
     )
     db = session_factory()
-    product_set = ProductSet(
-        set_code=set_code,
-        name=f"ZZT R13 set {set_code}",
-        company_id=DEFAULT_COMPANY_ID,
-    )
-    db.add(product_set)
-    db.flush()
-    db.add(
-        ProductSetMember(
-            product_set_id=product_set.id,
-            product_id=member_id,
-            quantity=1,
-            sort_order=0,
+    try:
+        product_set = ProductSet(
+            set_code=set_code,
+            name=f"ZZT R13 set {set_code}",
+            company_id=DEFAULT_COMPANY_ID,
         )
-    )
-    db.commit()
-    set_id = product_set.id
-    db.close()
-    return set_id
+        db.add(product_set)
+        db.flush()
+        db.add(
+            ProductSetMember(
+                product_set_id=product_set.id,
+                product_id=member_id,
+                quantity=1,
+                sort_order=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def _whole_book_stock_envelope(rows: int = 50) -> dict[str, Any]:
@@ -418,4 +418,153 @@ class TestT3LowStockReportStillRunsWithNoEntities:
             f"AC-1794: `low_stock_report` is in `gate.INTENTS_ALLOWING_EMPTY` - a "
             f"scope-less low stock ask must still reach {LOW_STOCK_TOOL}: "
             f"{calls!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# T4 (reviewer S1) - GUARD: the R6/R8 refusal keeps its OWN miss text.
+# --------------------------------------------------------------------------- #
+
+
+class TestT4AnUnresolvedTypedTokenKeepsTheOrdinaryMiss:
+    """GUARD, not a target. `would_be_unfiltered` (hand pass 12 R6/R8, turn
+    328e8b00 "Srtks8060-BL stock") refuses the SAME tool call, and every entity it
+    refuses is unplaced and therefore uuid-less - so the hotfix's own condition
+    would fire on that turn too and stamp `scope_gate` on its fragment, re-pointing
+    the miss at a gate whose `compatible_entities` is empty and losing the
+    per-entity breakdown lines. It is not a scope gap either: the customer DID name
+    a subject, it just did not resolve, which is exactly the distinction
+    `not_found_error_message` draws with its own `and not has_unresolved`. So this
+    turn must still refuse the tool AND still read as the ordinary "could not find
+    it" miss, naming the code that was typed - never the scope-needed sentence.
+
+    Fixture shape copied from `test_rearch_r12_handpass12_d.py::
+    TestPickPathZeroStockLadderClimbsAfterADidYouMeanPick::test_zero_filter_the_
+    miss_turn_never_calls_the_stock_tool_unfiltered`, the R8 turn's own."""
+
+    MISSED_CODE = "Srtks8060-BL"
+
+    def test_the_tool_is_refused_and_the_reply_is_not_the_scope_sentence(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact_and_get(session_factory)
+
+        verdict = _parser_output(
+            message_type="business_query",
+            intent_hint="check_stock",
+            domain_hint="inventory",
+            domain_in_message=True,
+            entities=[
+                {
+                    "raw": self.MISSED_CODE,
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+            document=[],
+            status=None,
+            order_status=None,
+            routing={
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries",
+                "team_source": None,
+            },
+        )
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            if name == STOCK_TOOL:
+                return json.dumps(_whole_book_stock_envelope())
+            return _unknown_envelope()
+
+        mcp_call, calls = _mcp_double(other=_call)
+        result = _run_turn_engine(
+            session_factory,
+            monkeypatch,
+            qf=verdict,
+            text_body=f"{self.MISSED_CODE} stock",
+            msg_id="zzt-r13-t4-unresolved",
+            mcp_call=mcp_call,
+        )
+        assert result.status == "done", result.error
+
+        stock_calls = [args for name, args in calls if name == STOCK_TOOL]
+        assert not stock_calls, (
+            f"R6/R8, unchanged: a typed token that resolved to nothing must still "
+            f"refuse {STOCK_TOOL}: {stock_calls!r}"
+        )
+
+        said = _said(result)
+        assert not said.startswith(NEEDS_SCOPE_OPENING), (
+            f"reviewer S1: this turn NAMED a subject - it is a lookup miss, not a "
+            f"scope gap - so `scope_gate` must not ride its fragment and it must "
+            f"keep its own miss wording: {said!r}"
+        )
+        assert self.MISSED_CODE.lower() in said.lower(), (
+            f"reviewer S1: the ordinary miss names the code the customer typed; "
+            f"losing it is what stamping `scope_gate` on this refusal would cost: "
+            f"{said!r}"
+        )
+        assert LISTING_MARKER not in said, said
+
+    def test_the_r6_refusal_fragment_never_carries_a_scope_gate(self) -> None:
+        """The kill test for reviewer S1, at the seam itself (the same level
+        `test_rearch_r12_phase3_fixes.py`'s P4/P5/P6 pin their own findings at): with
+        `would_be_unfiltered` already true, the hotfix's condition holds as well -
+        every unplaced entity is uuid-less by definition, `_entity_is_unplaced`'s own
+        rule - so without the exclusion this refusal leaves with a `scope_gate` on it
+        and hands `not_found_error_message` a gate the R6/R8 turn never earned.
+        `db=None` is safe here: the refusal returns before anything reads it
+        (`fill_customer_names` leaves on an empty list, and no `run_fetch` call is
+        made)."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.plan import FetchSpec
+        from app.services.chatbot.turn.state import Focus
+
+        verdict = _parser_output(
+            message_type="business_query",
+            intent_hint="check_stock",
+            domain_hint="inventory",
+            domain_in_message=True,
+            entities=[
+                {
+                    "raw": self.MISSED_CODE,
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+            document=[],
+            status=None,
+            order_status=None,
+        )
+        runner = turn_runtime.make_tool_runner(
+            None,
+            ctx={"parse": {"output": verdict}, "contact": {"id": "zzt-r13-t4"}},
+            verdict=verdict,
+            focus=Focus(domains=["inventory"]),
+            compatible_entities=[],
+            predicate=None,
+            unplaced={self.MISSED_CODE.lower().replace("-", ""): self.MISSED_CODE},
+            space_id=None,
+            dry_run=True,
+            turn_trace=None,
+        )
+
+        envelope = runner(
+            "inventory",
+            FetchSpec(domain="inventory", entities=[], filters={}, date_window=None),
+        )
+
+        # `runner` answers an ENVELOPE; the fragment itself rides on `raw_fragment`,
+        # which is the key `answer_bridge.answer_for` reads, and where `_scope_gate`
+        # looks for this stamp.
+        fragment = envelope.get("raw_fragment") or {}
+        assert fragment.get("outcome") == "not_found", envelope
+        assert "scope_gate" not in fragment, (
+            f"reviewer S1: `scope_gate` must ride ONLY the new no-subject hole - a "
+            f"`would_be_unfiltered` refusal keeps the resolver's own gate, and its "
+            f"miss text with it: {fragment!r}"
         )
