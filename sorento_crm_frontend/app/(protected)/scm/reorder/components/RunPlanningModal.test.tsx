@@ -41,6 +41,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     selectedOptions,
     placeholder,
     renderOption,
+    renderTriggerLabel,
   }: {
     value: string[];
     onChange: (v: string[]) => void;
@@ -49,6 +50,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     selectedOptions?: StubOption[];
     placeholder?: string;
     renderOption?: (opt: StubOption) => React.ReactNode;
+    renderTriggerLabel?: (selected: StubOption[]) => React.ReactNode;
   }) => {
     const [fetched, setFetched] = React.useState<StubOption[]>([]);
     const [query, setQuery] = React.useState('');
@@ -63,8 +65,15 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
       };
     }, [fetchOptions, query]);
     const rows = fetchOptions ? fetched : (options ?? []);
+    // The trigger's own closed-state label (D1: ONE line, "SO1, SO2 +12" rather than a
+    // chip wall) - `chosen` is the same set the real component would pass, options
+    // filtered to the current `value`.
+    const chosen = rows.filter((o) => value.includes(o.value));
     return (
       <div aria-label={placeholder ?? 'multi-select'}>
+        {renderTriggerLabel ? (
+          <div data-testid={`trigger-label-${placeholder}`}>{renderTriggerLabel(chosen)}</div>
+        ) : null}
         {fetchOptions ? (
           <input
             aria-label={`Search ${placeholder ?? 'multi-select'}`}
@@ -838,6 +847,115 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           raised_to: '2026-09-18',
         }),
       );
+    });
+  });
+
+  // ===========================================================================
+  // Lane D (PLAN-order-sheet-oi-reports-22sep.md, AC-D1) - Demand = All keeps the Orders
+  // picker (project SOs only, same "everything in range ticked" rule as Project), a
+  // one-line closed trigger ("SO1, SO2 +12"), and one-line menu rows (no two-line
+  // description). Today: the Orders field is hidden for every demand EXCEPT
+  // `demand === 'project'` (`RunPlanningModal.tsx` "demand === 'project' ? (...)"), so
+  // every test in this block that opens the picker under All (the default, unswitched
+  // demand) is RED for that one reason - a genuinely missing field, not a broken fixture.
+  //
+  // NOTE (measured against `test('V1: ... Orders is absent for All and Dealer ...')`
+  // above): that existing assertion (`expect(screen.queryByText('Orders')).not.toBeIn
+  // TheDocument()` for the unswitched/All state) PINS the OLD contract this lane
+  // deliberately changes - implementing AC-D1 flips that one line of V1 from absent to
+  // present. Left as-is here (not the tester's edit to make); the coder updates it
+  // alongside the fix.
+  // ===========================================================================
+
+  describe('Lane D - Demand = All keeps the Orders picker, so_numbers with no demand_class (AC-D1/AC-D2)', () => {
+    it('AC-D1: Orders picker renders under Demand = All (the default, unswitched state)', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      // Unswitched demand === '' (All) - no click on the demand select at all.
+      expect(await screen.findByText('Orders')).toBeInTheDocument();
+    });
+
+    it('AC-D1: every candidate order with rows_in_range > 0 is pre-ticked under All, same rule as Project', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+        {
+          so_number: 'SO2', project_label: 'P2', customer_name: 'C2',
+          rows_total: 3, rows_in_range: 0, rows_raised_in_window: 3, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      await waitFor(() => {
+        expect((screen.getByLabelText('SO1 - P1') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(false);
+      });
+    });
+
+    it('AC-D2: submitting under All sends so_numbers and NO demand_class', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      const { onSubmit } = await renderModal();
+      await screen.findByText('Orders');
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+
+      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('demand_class');
+      expect(onSubmit.mock.calls[0][0].so_numbers).toEqual(['SO1']);
+    });
+
+    it('AC-D6: Demand = Dealer still shows no Orders picker (unchanged)', async () => {
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
+      await waitFor(() => expect(screen.queryByText('Orders')).not.toBeInTheDocument());
+    });
+
+    it('AC-D1b: the From/To range section is labelled "Project delivery range"', async () => {
+      await renderModal();
+      expect(screen.getByText('Project delivery range')).toBeInTheDocument();
+      expect(screen.queryByText('Sales orders needed')).not.toBeInTheDocument();
+    });
+
+    it('AC-D1: the closed trigger reads ONE line, first two SO numbers then +x for the rest', async () => {
+      const orders = Array.from({ length: 14 }, (_, i) => ({
+        so_number: `SO${i + 1}`, project_label: `P${i + 1}`, customer_name: `C${i + 1}`,
+        rows_total: 1, rows_in_range: 1, rows_raised_in_window: 1, rows_awaiting: 0,
+        first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+      }));
+      getCandidateOrders.mockResolvedValueOnce(orders);
+      await renderModal();
+      await screen.findByLabelText('SO1 - P1');
+
+      const trigger = await screen.findByTestId(/trigger-label-/);
+      expect(trigger.textContent).toBe('SO1, SO2 +12');
+    });
+
+    it('AC-D1: menu rows are one line each - "<SO number> - <customer>", no second description line', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 5, rows_in_range: 5, rows_raised_in_window: 5, rows_awaiting: 3,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      const body = await screen.findByTestId('option-body-SO1');
+      expect(body.textContent).toBe('SO1 - C1');
+      expect(body.textContent).not.toContain('lines in range');
+      expect(body.textContent).not.toContain('awaiting ack');
     });
   });
 });
