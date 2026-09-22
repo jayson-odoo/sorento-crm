@@ -133,3 +133,42 @@ def test_c3_row_ids_scoped_undated_row_lands_on_the_no_date_sheet(db, chain):
 
     workbook = openpyxl.load_workbook(io.BytesIO(content))
     assert workbook.sheetnames == [EXPORT_UNDATED_SHEET], workbook.sheetnames
+
+
+def test_fr1_a_row_ids_match_under_a_different_companys_scope_yields_nothing(db, chain):
+    """Cross-company (fix round 1, security review): an OI row seeded under company B's
+    scope is invisible to `_base(row_ids=...)` read under company A's (the test process's
+    default) scope - `row_ids` naming the row is not enough, the session-level company
+    predicate still hides it. `_base`'s own ORM query carries `OrderInquiryRow`
+    (`CompanyScopedMixin`) at its top level, so this is the SAME isolation every other
+    company-scoped listing already gets, proven here rather than assumed."""
+    import uuid
+
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from tests.scm.conftest import SORENTO_COMPANY_ID
+
+    f = chain
+    company_b = str(uuid.uuid4())
+    db.add(Company(id=company_b, name=f"{MARKER}-companyB-{company_b[:8]}",
+                   code=f"ZZTB{company_b[:6]}".upper(), is_active=True))
+    db.flush()
+
+    set_company_scope(db, frozenset({company_b}))
+    leg = _scope_row(db, product=f["product"], qty=5, delivery=date(2026, 10, 1))
+    db.flush()
+
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
+    svc = OrderInquiryWorklistService(db)
+    _filename, content = svc.export_xlsx(row_ids=[leg["row"].id])
+
+    workbook = openpyxl.load_workbook(io.BytesIO(content))
+    rows = []
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows(min_row=3):
+            values = [c.value for c in row]
+            if any(v is not None for v in values):
+                rows.append(values)
+    assert rows == [], (
+        f"a row seeded under a different company's scope must not appear: {rows}"
+    )

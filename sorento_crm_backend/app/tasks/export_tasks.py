@@ -640,8 +640,10 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
         )
         from app.services.scm.demand import run_scope_oi_rows
 
+        # Fix round 1: `run.product_ids` unchanged, NOT `run.product_ids or None` - see
+        # the twin comment in `order_summary.py`'s own guard.
         scope_rows = run_scope_oi_rows(
-            db, run.product_ids or None, so_numbers=run.so_numbers,
+            db, run.product_ids, so_numbers=run.so_numbers,
             horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
         ) if run is not None else []
         row_ids = [r["row_id"] for r in scope_rows]

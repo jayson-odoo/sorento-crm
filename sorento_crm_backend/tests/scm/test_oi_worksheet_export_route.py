@@ -32,6 +32,43 @@ def _u() -> str:
     return str(uuid.uuid4())
 
 
+def _grant_permission(db, user_id: str, permission_slug: str) -> None:
+    """Grants `permission_slug` to `user_id` through a throwaway role, so a test can hold
+    a permission the seeded role (e.g. "purchasing") does not carry, without mutating that
+    shared role for every other test in the suite."""
+    from app.models.user import UserRole, UserRoleAssignment, UserRolePermission
+
+    perm_id = db.execute(text(
+        "SELECT id FROM user_permissions WHERE slug = :s"
+    ), {"s": permission_slug}).scalar()
+    assert perm_id, f"permission {permission_slug} not seeded"
+    role_id = _u()
+    db.add(UserRole(id=role_id, slug=f"{MARKER}-grant-{role_id[:8]}",
+                    name=f"{MARKER} grant {role_id[:8]}"))
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
+    db.add(UserRolePermission(role_id=role_id, permission_id=perm_id))
+    db.flush()
+
+
+#: Fix round 1 (security review): `oi_worksheet` additionally requires the OI worklist's
+#: own view permission - see `app/api/v1/projects/order_inquiries.py`'s `VIEW` constant.
+OI_WORKLIST_VIEW = "projects.projects.view"
+
+
+def _client_with_oi_view(scm_app):
+    """Purchasing PLUS the OI worklist's own view permission - what every case below that
+    exercises the `oi_worksheet` format needs now that it is gated on both. The seeded
+    "purchasing" role does NOT carry `projects.projects.view` (measured against the test
+    database), so every pre-existing case in this file needs the grant to keep exercising
+    the route the way it did before that gate landed."""
+    app, db, gcu, gcuak = scm_app
+    uid = seed_user(db, "purchasing")
+    _grant_permission(db, uid, OI_WORKLIST_VIEW)
+    as_user(app, gcu, gcuak, uid)
+    return app, db
+
+
 # =========================================================================== #
 # AC-C1/AC-C2: the POST route accepts the new format
 # =========================================================================== #
@@ -41,7 +78,7 @@ def test_c1_export_post_creates_download_row_and_enqueues_the_worksheet_task(
 ):
     from app.services import queue_service
 
-    app, db = _client(scm_app, "purchasing")
+    app, db = _client_with_oi_view(scm_app)
     run_id = _seed_run(db)
     db.flush()
 
@@ -87,7 +124,7 @@ def test_c1_export_post_answers_409_while_a_worksheet_is_in_flight(scm_app, monk
     starts nothing, and the toast names both the report and My Downloads."""
     from app.services import queue_service
 
-    app, db = _client(scm_app, "purchasing")
+    app, db = _client_with_oi_view(scm_app)
     run_id = _seed_run(db)
     db.flush()
 
@@ -115,7 +152,7 @@ def test_c1_export_post_answers_409_while_a_worksheet_is_in_flight(scm_app, monk
 def test_c1_export_post_marks_failed_and_503_when_enqueue_raises(scm_app, monkeypatch):
     from app.services import queue_service
 
-    app, db = _client(scm_app, "purchasing")
+    app, db = _client_with_oi_view(scm_app)
     run_id = _seed_run(db)
     db.flush()
 
@@ -180,6 +217,7 @@ def test_c1_export_in_flight_guard_sweeps_a_stale_row_first(scm_app, monkeypatch
 
     app, db, gcu, gcuak = scm_app
     uid = seed_user(db, "purchasing")
+    _grant_permission(db, uid, OI_WORKLIST_VIEW)
     as_user(app, gcu, gcuak, uid)
     run_id = _seed_run(db)
     db.flush()
@@ -228,7 +266,7 @@ def test_c6_the_order_sheets_2000_row_cap_does_not_apply_to_the_worksheet(
     from app.services import queue_service
     from tests.scm.conftest import SORENTO_COMPANY_ID
 
-    app, db_ = _client(scm_app, "purchasing")
+    app, db_ = _client_with_oi_view(scm_app)
     monkeypatch.setattr(queue_service, "enqueue_job",
                         lambda *a, **k: type("J", (), {"id": "x"})())
 
@@ -296,7 +334,7 @@ def test_c6_refuses_above_the_worksheets_own_row_cap_before_creating_a_download_
     from app.services import queue_service
     from app.services.scm import demand
 
-    app, db = _client(scm_app, "purchasing")
+    app, db = _client_with_oi_view(scm_app)
     run_id = _seed_run(db)
     db.flush()
 
@@ -323,3 +361,148 @@ def test_c6_refuses_above_the_worksheets_own_row_cap_before_creating_a_download_
     assert "Narrow the plan first" in resp.text, resp.text
     after = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
     assert after == before, "a guard failure left a download row behind"
+
+
+# =========================================================================== #
+# Fix round 1 (security review): `product_ids` reaches `run_scope_oi_rows`
+# UNCHANGED - `run.product_ids or None` widened a scope that resolved to nothing
+# (`[]`) into "no filter" (every product).
+# =========================================================================== #
+
+def test_fr1_product_ids_empty_list_reaches_run_scope_oi_rows_as_empty_not_none(
+    scm_app, monkeypatch,
+):
+    from app.services import queue_service
+    from app.services.scm import demand
+
+    app, db = _client_with_oi_view(scm_app)
+    run_id = _seed_run(db, product_ids=[])
+    db.flush()
+
+    calls: list = []
+    real = demand.run_scope_oi_rows
+
+    def _spy(db_, product_ids, **kw):
+        calls.append(product_ids)
+        return real(db_, product_ids, **kw)
+
+    monkeypatch.setattr(demand, "run_scope_oi_rows", _spy)
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "oi_worksheet"})
+
+    assert resp.status_code == 200, resp.text
+    assert calls == [[]], (
+        f"product_ids=[] must reach run_scope_oi_rows as [], never widened to None "
+        f"('every product'): {calls}"
+    )
+
+
+def test_fr1_product_ids_null_reaches_run_scope_oi_rows_as_none(scm_app, monkeypatch):
+    from app.services import queue_service
+    from app.services.scm import demand
+
+    app, db = _client_with_oi_view(scm_app)
+    run_id = _seed_run(db)  # product_ids left NULL - "no scope was asked for"
+    db.flush()
+
+    calls: list = []
+    real = demand.run_scope_oi_rows
+
+    def _spy(db_, product_ids, **kw):
+        calls.append(product_ids)
+        return real(db_, product_ids, **kw)
+
+    monkeypatch.setattr(demand, "run_scope_oi_rows", _spy)
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "oi_worksheet"})
+
+    assert resp.status_code == 200, resp.text
+    assert calls == [None], f"product_ids=NULL must reach run_scope_oi_rows as None: {calls}"
+
+
+# =========================================================================== #
+# Fix round 1 (security review): the OI worklist's own view permission is
+# required for this format, on top of `scm.dashboard.view`.
+# =========================================================================== #
+
+def test_fr1_dashboard_only_permission_403s_for_oi_worksheet_but_order_sheet_still_works(
+    scm_app, monkeypatch,
+):
+    from app.services import queue_service
+
+    app, db = _client(scm_app, "purchasing")  # scm.dashboard.view only, no OI grant
+    run_id = _seed_run(db)
+    db.flush()
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        worksheet_resp = c.post("/api/v1/scm/order-summary/export",
+                                json={"run_id": run_id, "format": "oi_worksheet"})
+        order_sheet_resp = c.post("/api/v1/scm/order-summary/export",
+                                  json={"run_id": run_id, "format": "xlsx"})
+
+    assert worksheet_resp.status_code == 403, worksheet_resp.text
+    assert order_sheet_resp.status_code == 200, order_sheet_resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r "
+        "AND kind = 'oi_worksheet_xlsx'"
+    ), {"r": run_id}).scalar()
+    assert count == 0, "a caller without the OI view permission got a worksheet download row"
+
+
+def test_fr1_both_permissions_grant_200_for_oi_worksheet(scm_app, monkeypatch):
+    from app.services import queue_service
+
+    app, db = _client_with_oi_view(scm_app)  # scm.dashboard.view + projects.projects.view
+    run_id = _seed_run(db)
+    db.flush()
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "oi_worksheet"})
+
+    assert resp.status_code == 200, resp.text
+
+
+# =========================================================================== #
+# Fix round 1 (security review): cross-company.
+# =========================================================================== #
+
+def test_fr1_a_company_bs_run_id_404s_before_any_download_row_is_created(
+    scm_app, monkeypatch,
+):
+    from app.models.company import Company
+    from app.services import queue_service
+
+    app, db = _client_with_oi_view(scm_app)  # company A (SORENTO_COMPANY_ID)
+    other_company_id = _u()
+    db.add(Company(id=other_company_id, name=f"{MARKER}-other-{other_company_id[:8]}",
+                   code=f"ZZTB{other_company_id[:6]}".upper(), is_active=True))
+    db.flush()
+    run_id = _seed_run(db, company_id=other_company_id)  # company B's run
+    db.flush()
+
+    monkeypatch.setattr(
+        queue_service, "enqueue_job",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not enqueue")),
+    )
+    before = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "oi_worksheet"})
+
+    assert resp.status_code == 404, resp.text
+    after = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+    assert after == before, "a cross-company run left a download row behind"

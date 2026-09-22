@@ -135,6 +135,25 @@ def export_order_summary(
             status_code=422,
             message="format must be pdf, xlsx, low_stock_xlsx or oi_worksheet.",
         )
+    if fmt == OI_WORKSHEET_FORMAT:
+        # Fix round 1 (security review): the worksheet prints the OI worklist's own row
+        # shape, so it needs the OI worklist's own view permission on top of
+        # `scm.dashboard.view` (`_EXPORT`'s dependency) - a caller who can only see the
+        # dashboard, and never the worklist itself, must not be able to print it. Checked
+        # IN-BODY rather than as a second route dependency, so the order sheet and low
+        # stock formats stay reachable on `scm.dashboard.view` alone.
+        from app.services.user_service import UserPermissionService
+
+        from app.api.v1.projects.order_inquiries import VIEW as OI_WORKLIST_VIEW
+
+        if not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], OI_WORKLIST_VIEW
+        ):
+            raise AppException(
+                403,
+                "You do not have permission to export the OI worksheet.",
+                code="oi_worksheet_permission_required",
+            )
     run_id = payload.run_id
     if run_id:
         run_id = validate_uuid_path(run_id, resource="Reorder run")
@@ -160,9 +179,16 @@ def export_order_summary(
         from app.models.scm import ReorderRun
         from app.services.scm import demand
 
-        run = db.query(ReorderRun).filter(ReorderRun.id == stats["run_id"]).one()
+        run = db.query(ReorderRun).filter(ReorderRun.id == stats["run_id"]).one_or_none()
+        if run is None:
+            raise AppException(404, "That plan does not exist.")
+        # Fix round 1: `run.product_ids` passed straight through, NOT `run.product_ids or
+        # None` - `run_scope_oi_rows` already reads `None` as "no product filter" and `[]`
+        # as "this run's product scope resolved to nothing" (`or None` was silently
+        # turning the second case into the first, widening a run scoped to nothing into
+        # every product).
         scope_rows = demand.run_scope_oi_rows(
-            db, run.product_ids or None, so_numbers=run.so_numbers,
+            db, run.product_ids, so_numbers=run.so_numbers,
             horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
         )
         if len(scope_rows) > OrderInquiryWorklistService.MAX_WORKSHEET_ROWS:
