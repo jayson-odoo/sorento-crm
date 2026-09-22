@@ -36,6 +36,27 @@ orders). The owner expects under 50.
 - Leg 1 alone for the owner's 14 orders on the copy: 45 inquiry rows (ORDER/ORDER_BACK,
   raised/partly_linked, acknowledged/changed, owed > 0), 16 of them with delivery on or
   before 31 Oct. That is the owner's "not more than 50".
+- The prod copy's ONLY `scm.reorder_policy` row is the seeded GLOBAL default, and it
+  carries `policy_type = 'reorder_level'` with `pool_netting` off - so on prod EVERY
+  product resolves `_is_product_level_basis(..., wid=None) == True` and sizes through
+  `_emit_product` (product-grain, one level, one net), never through `_emit_cell` /
+  `_emit_pool`. The owner's pasted MPW800 / SRTBT1863-15 rows are `_emit_product` buys, not
+  pool ones (review, round 1).
+- Correcting an earlier attribution in this section: the 492 extraneous lines are removed
+  by the SIZING branches (S2 - `_emit_pool`, `_emit_cell` via `_project_only_cell`, and
+  `_emit_product`), which is where a below-level product's retail top-up is actually
+  computed and emitted. S1 (dropping leg 2 from `product_admit_join`) is RUN-TIME only: it
+  narrows how many products `_planning_rows` hands to the sizing stage (1157 fewer
+  products admitted, the leg-2-only count measured above), so a Project run evaluates
+  fewer candidates and finishes faster - but a product carrying its OWN committed project
+  demand was always going to reach sizing via leg 1 regardless of S1, below-level or not.
+  S2 is what stops it buying the retail top-up on top of the confirmed quantity.
+- S1 also exempts a NAMED product (`product_ids` given at Start Plan, G10) from every
+  sizing branch below, not merely from admission: `committed_gate_exempt`, stamped by
+  `_planning_rows` on every row of a `product_ids`-narrowed run, is read again by
+  `_emit_pool`, the `_project_only_cell` swap, and `_emit_product`, so a buyer who types a
+  SKU into Start Plan and also picks Project still gets that SKU's ordinary retail sizing
+  (review S1, round 2 - the first cut only carried buyer intent through admission).
 
 ## 3. Rulings (owner, 22 Sep 2026)
 
@@ -48,6 +69,12 @@ orders). The owner expects under 50.
   on the copy is the upload date and the picked orders spread 17-21 Sep.
 - R3 (open, asked 22 Sep): green-highlighted sheet rows (supplied from on-hand stock, no
   purchase) to be read on upload and recorded against a stock transfer. Separate lane.
+- R1a (open, review round 1): net the confirmed project Buy against on-hand at that
+  location, or buy the row in full regardless of what is sitting there - owner ruling
+  pending; this lane does NOT change the netting while it is open (B1). Reviewer's
+  measurement on the prod copy: 9 of the 11 project-admitted products, 3,193 units total,
+  are fully covered by existing on-hand at the confirmed location - so the netting choice
+  decides the shape of nearly the whole run, not an edge case.
 
 ## 4. Slices
 
@@ -56,13 +83,22 @@ orders). The owner expects under 50.
   Rows of an admitted product are still every location row, as today (the pool needs its
   members' stock to net a borrow). The `:rl_sources` / `:dead_days` binds are only added
   when leg 2 is in the SQL.
-- S2 Sizing: thread `demand_class` from the recommendation loop (`:1596-1660`) into
-  `_emit_pool`. When `demand_class == "project"`: `retail_recommended = 0`, `triggered =
-  pool_project_need > 0`, `recommended = pool_project_need`, `reason_label = "project buy:
-  ..."` (the existing label), `rounded` still applies MOQ / multiples. Everything else in
-  the function (allocation by deficit, supplier choice, basis) unchanged. A single-location
-  product that is not pooled goes through the same function today (one-member pool), so
-  one branch covers both.
+- S2 Sizing: thread `demand_class` from the recommendation loop (`:1596-1660`) into every
+  sizing function a Project run can reach - `_emit_pool` does NOT cover the single-location
+  case (that goes through `_emit_cell` instead, `len(members) == 1` in the same loop), and
+  the prod copy's only policy is `reorder_level`-global, so most real products size through
+  `_emit_product`, not `_emit_pool`. Three branches, same shape: `_emit_pool` (2+ pooled
+  members), `_emit_cell` via a `_project_only_cell` swap on the frozen cell just before the
+  call (1 member), and `_emit_product` (product-grain `reorder_level` basis, whatever the
+  pooling config). In each, when `demand_class == "project"`: `retail_recommended = 0`,
+  `triggered = pool_project_need > 0`, `recommended = pool_project_need`, `reason_label =
+  "project buy: ..."` (the existing label), `rounded` still applies MOQ / multiples, and
+  each member/location's deficit fed to `eng.allocate` is REPLACED by its own project need
+  (never `aggregate_network`/`aggregate_product`'s retail deficit, additive or not) so the
+  split lands where the inquiry row is. A named product (`product_ids`, G10) is exempted
+  from all three - `committed_gate_exempt` keeps its ordinary retail sizing under Project.
+  Everything else in each function (allocation-by-deficit mechanics, supplier choice,
+  basis) unchanged.
 - S3 Header: the run's Counts / Cash on the Header tab need no change; they sum what S1/S2
   emit.
 

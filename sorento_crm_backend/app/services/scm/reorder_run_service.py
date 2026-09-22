@@ -1027,10 +1027,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # a product with no project demand anywhere still admitted and bought the retail
     # top-up because it happened to sit below its dealer reorder level. So leg 2 is
     # dropped outright for `demand_class == "project"` and `:rl_sources` / `:dead_days`
-    # go unbound with it - both are leg 2's own params, and Postgres errors on an unused
-    # bind only when the driver validates eagerly, so leaving them out is the honest
-    # signal the leg is gone, not a latent bug. G10 still bypasses this join entirely
-    # (checked first, so a named product under a Project run keeps buyer intent).
+    # go unbound with it - both belong to leg 2 alone. G10 still bypasses this ADMISSION
+    # join entirely (checked first), so a named product under a Project run still enters
+    # the run regardless of committed demand - but admission is not sizing: the SAME
+    # `committed_gate_exempt` flag this branch stamps (further down) has to be read again
+    # by every emit function below (`_emit_pool`, `_project_only_cell`, `_emit_product`)
+    # so a G10 product keeps its RETAIL sizing under a Project run too, not just its entry.
     product_admit_join = ""
     if product_ids is None:
         if demand_class == "project":
@@ -1676,9 +1678,11 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                 # for a Project run (ruling R1, 22 Sep 2026), where `_emit_pool`'s branch
                 # below has no single-location twin unless this loop gives it one: this
                 # IS the sizing function a non-pooled product goes through, never
-                # `_emit_pool` (that only runs when a pool groups 2+ members).
+                # `_emit_pool` (that only runs when a pool groups 2+ members). G10 (review
+                # S1, round 2): a named product keeps its retail sizing even under Project -
+                # `committed_gate_exempt` is stamped on the ROW by `_planning_rows`.
                 r, c = members[0]
-                if demand_class == "project":
+                if demand_class == "project" and not r.get("committed_gate_exempt"):
                     c = _project_only_cell(c)
                 recs.extend(_emit_cell(run_id, r, c))
             else:
@@ -1907,6 +1911,15 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     recs: list[ReorderRecommendation] = []
     prows = [r for r, _ in members]
     cells = [c for _, c in members]
+    # G10 (review S1, round 2): a NAMED product (`product_ids` given at Start Plan) is
+    # buyer intent regardless of demand scope - `_planning_rows` stamps
+    # `committed_gate_exempt` on every row of such a run, admission-side. Sizing has to
+    # read the same flag, or a buyer who typed a SKU and also picked Project loses that
+    # SKU's retail sizing to the project-only branch below, which is not what naming a
+    # product means. `any(...)` rather than a single row's flag because the flag is
+    # run-scoped (every row of a `product_ids`-narrowed run carries it identically).
+    project_only = demand_class == "project" and not any(
+        r.get("committed_gate_exempt") for r in prows)
 
     # Policy is resolved for the pool, so one pool cannot be planned under two policies.
     policy = eng.resolve_policy_for_sku(db, str(prows[0]["product_id"]), pool_id,
@@ -1993,8 +2006,10 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # top of the confirmed quantity - the exact 492-line/RM 34,141 prod defect this lane
     # fixes. Deficit allocation, supplier choice, `_network_agg_cell` and `_plan_basis`
     # below are UNCHANGED, fed this project-only ``recommended`` the same way they are fed
-    # the retail one on every other run.
-    if demand_class == "project":
+    # the retail one on every other run. `project_only` (not the bare `demand_class`
+    # check) so a G10 named product keeps its retail sizing under a Project run too - see
+    # the comment above its assignment.
+    if project_only:
         retail_recommended = 0.0
         triggered = pool_project_need > 0
         recommended = pool_project_need
@@ -2039,7 +2054,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # itself, at the location that asked for it.
     for w in agg["warehouses"]:
         wid = str(w["warehouse_id"])
-        if demand_class == "project":
+        if project_only:
             w["deficit"] = project_by_wid.get(wid, 0.0)
         else:
             w["deficit"] = float(w.get("deficit") or 0.0) + project_by_wid.get(wid, 0.0)
@@ -2206,6 +2221,10 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     """
     recs: list[ReorderRecommendation] = []
     pid = str(prows[0]["product_id"])
+    # G10 (review S1, round 2): a NAMED product (`product_ids` given at Start Plan) keeps
+    # its retail sizing under a Project run - see the matching flag in `_emit_pool`.
+    project_only = demand_class == "project" and not any(
+        r.get("committed_gate_exempt") for r in prows)
     policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
     tog = eng.policy_toggles(policy)
     # G7 / AC-S13.6 (review fix round 2, 9 Sep): the SAME product-wide lookup
@@ -2277,7 +2296,9 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # than the confirmed quantity CS asked for - the same 492-line/RM 34,141 prod defect,
     # on the product-grain path rather than the pool one. Allocation, supplier choice and
     # `_product_agg_cell` below are UNCHANGED, fed this project-only ``recommended``.
-    if demand_class == "project":
+    # `project_only` (not the bare `demand_class` check) so a G10 named product keeps its
+    # retail sizing under a Project run too.
+    if project_only:
         triggered = pool_project_need > 0
         recommended = pool_project_need if triggered else 0.0
         rounded = (eng.round_order_qty(recommended, moq, order_multiple)
@@ -2291,6 +2312,19 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                                               reorder_level=effective_level)
         recommended = float(agg["recommended_qty"]) if triggered else 0.0
         rounded = float(agg["buy_qty"]) if triggered else 0.0
+    if project_only:
+        # (review S2, round 2) The same fix as `_emit_pool`'s deficit loop: `agg`'s own
+        # per-location `deficit` (`max(-net, 0.0)`, `aggregate_product`) is netted against
+        # THIS location's on-hand/on-order too, so it can read smaller than the location's
+        # raw confirmed project need (on-hand partly covering it) or, for a sibling with no
+        # project demand of its own but a genuine on-hand shortfall, nonzero when the
+        # location asked for nothing - either way pulling part of the split away from
+        # where the inquiry row actually sits. A Project run's split is ALWAYS by project
+        # need alone, the same one-line-per-inquiry rule `_emit_pool` follows.
+        project_by_wid = {str(r["warehouse_id"]): float(c.get("project_need") or 0.0)
+                          for r, c in zip(prows, cells)}
+        for w in agg["warehouses"]:
+            w["deficit"] = project_by_wid.get(str(w["warehouse_id"]), 0.0)
     split = eng.allocate(rounded, agg["warehouses"]) if rounded > 0 else {}
 
     # The row's identity comes from a real location - the one holding the most of the item,
