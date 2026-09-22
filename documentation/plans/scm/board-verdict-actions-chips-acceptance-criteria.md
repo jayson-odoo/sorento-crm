@@ -50,7 +50,8 @@ Actionable line = `!covered && !unplannable && !cancelled`.
   `Suggestion changed`), Then the cell shows the pill, Undo (unchanged) and Change decision.
   No Accept, no Reject.
 - **AC-B4** Given a covered line (verdict `Confirmed`), Then the cell shows the pill and
-  Change decision only. (Ruling R3.)
+  Change decision only. (Ruling R3.) (superseded by `PLAN-board-reject-on-confirmed-line.md`,
+  22 Sep 2026: a covered line now shows Change decision AND Reject.)
 - **AC-B5** Given a cancelled or unplannable line, Then the cell shows the pill / "Needs a
   location" text only. No buttons.
 - **AC-B6** Accept click: `onDecide(key, suggestedDecisionFor(contribution))`, event does not

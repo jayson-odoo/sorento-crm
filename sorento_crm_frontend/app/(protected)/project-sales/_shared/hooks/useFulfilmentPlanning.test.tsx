@@ -60,6 +60,7 @@ import {
   FULFILMENT_PLANNING_KEY,
   PILE_QUEUE_KEY,
   PLANNING_BOARD_KEY,
+  PLANS_KEY,
   RECONCILIATION_KEY,
   STOCK_DETAIL_KEY,
   SUPPLY_KEY,
@@ -755,6 +756,71 @@ describe('useLineDraftMutation', () => {
     // in `FulfilmentBoardPanel` reads `contribution.draft` off every one of them on every
     // render, and a new reference there would re-render a card this write never touched.
     expect(patched.contributions[1]).toBe(otherContribution);
+  });
+
+  /**
+   * S3 (fix round 3, `PLAN-board-reject-on-confirmed-line.md`): a reject that takes a
+   * COVERED line out of its confirmation is a bigger write than an ordinary draft save -
+   * the decision's own revision, that line's OI row, the worklist, the plans list, the SO
+   * detail all move on the server. The in-place cache patch above still runs (the pill
+   * reads `Rejected` the instant this resolves), but it is no longer the WHOLE story.
+   */
+  it('a rejected save on a COVERED line also invalidates the board and the confirm-all key family', async () => {
+    const saved = {
+      decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    };
+    putLineDraft.mockResolvedValue(saved);
+
+    client.setQueryDefaults([PLANNING_BOARD_KEY], { gcTime: Infinity });
+    client.setQueryData(
+      [PLANNING_BOARD_KEY, 'so-a'],
+      board({ contributions: [contribution({ covered: true })] }),
+    );
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'rejected', reason: 'wrong site' });
+
+    const flattened = invalidated.map((key) => JSON.stringify(key));
+    for (const key of [
+      PLANNING_BOARD_KEY,
+      FULFILMENT_PLANNING_KEY,
+      PLANS_KEY,
+      SALES_ORDERS_KEY,
+      SALES_ORDER_KEY,
+      ORDER_INQUIRY_ROWS_KEY,
+      ORDER_INQUIRY_WORKLIST_KEY,
+    ]) {
+      expect(flattened.some((entry) => entry.includes(key))).toBe(true);
+    }
+    // The cache patch still ran - Rejected reads back immediately, invalidation is on top.
+    const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
+    expect(patched.contributions[0].draft).toEqual(saved);
+  });
+
+  it('a rejected save on an UNCOVERED line stays the plain cache patch - nothing invalidated (D16)', async () => {
+    const saved = {
+      decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    };
+    putLineDraft.mockResolvedValue(saved);
+
+    client.setQueryDefaults([PLANNING_BOARD_KEY], { gcTime: Infinity });
+    client.setQueryData(
+      [PLANNING_BOARD_KEY, 'so-a'],
+      board({ contributions: [contribution({ covered: false })] }),
+    );
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'rejected', reason: 'wrong site' });
+
+    expect(invalidated).toEqual([]);
+    const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
+    expect(patched.contributions[0].draft).toEqual(saved);
   });
 
   it('undoes by key: patches the draft to null, and invalidates nothing (D16)', async () => {

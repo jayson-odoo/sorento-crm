@@ -145,6 +145,46 @@ vitest, `BoardLineDecisionPanel.test.tsx` (flip AC-F1, add):
   `{ verdict: 'rejected', reason, suspected_system_issue }`.
 - Red 8: before Amend (locked) nothing changes: only the Amend button renders.
 
+**Fix round 3 (review), 23 Sep 2026:**
+
+- B1: `_retire_uncovered_rows`' `only_line_ids` mode was missing the
+  `supply_decision_id == decision.id` predicate the ordinary branch carries, so a
+  book-change reaction row on the SAME line (no `supply_decision_id`) was cancelled
+  alongside the decision's own row -
+  `test_rejecting_a_covered_line_does_not_retire_a_book_change_row_on_the_same_line`.
+- B2 (kill-test gap): every test up to this round was a one-line-one-row order, so nothing
+  pinned `so_line_id.in_(only_line_ids)` itself with a second line's row in play -
+  `test_rejecting_the_only_covered_line_leaves_a_sibling_lines_live_row_alone`.
+- S1: `save_draft` ignored `uncover_lines`' own return value; `False` (nothing left to
+  uncover) now raises the same 409 `board_line_already_confirmed` rather than falling
+  through to a 200 that wrote a `rejected` draft over a still-covered line -
+  `test_a_reason_given_reject_that_uncovers_nothing_is_refused_not_silently_written`.
+- S2: `save_line_draft` now runs `_assert_can_act_on` (Confirm's own per-project check)
+  when the verdict is `rejected` AND the line is covered - the branch that reaches
+  `uncover_lines` - via the new read-only `project_line_draft_service.coverage_for`; an
+  uncovered line's rejection keeps needing only the module permission -
+  `test_a_reject_on_a_covered_line_needs_the_projects_own_edit_rights`,
+  `test_a_reject_on_an_uncovered_line_still_needs_only_the_module_permission`.
+- S3 (FE): `useLineDraftMutation`'s save patches the cache as before, but when the saved
+  verdict is `rejected` and the contribution WAS covered, it also invalidates the board
+  query and the same key family `useConfirmManyMutation` invalidates (lifted to a shared
+  const, `CONFIRMATION_INVALIDATION_KEYS`) - a reject that uncovers a line changes the
+  same surfaces a Confirm does, just smaller.
+- S4: the three retirement tests and the handshake-edges skip guard now assert the exact
+  `state` (`INQUIRY_CANCELLED`, never a bare `!= raised`) and the exact `note`; the
+  `only_line_ids` mode's own note is now `"Taken out of the confirmation: <reason>"`
+  rather than a bare reason fragment, matching the "Superseded by revision N" shape the
+  ordinary branch already writes.
+- AC-B8 (open planning-change batch) note: no dedicated reject test was added for it this
+  round - it is guarded INDIRECTLY by the existing `approved`-verdict batch tests
+  (`test_a_pending_planning_change_in_an_open_batch_exempts_the_line` and its siblings),
+  because the batch exemption sits in `_active_coverage` itself, upstream of the verdict
+  branch `save_draft` takes once coverage is known: a line the predicate reads as
+  uncovered takes ANY verdict, `rejected` included, through the plain save path those
+  tests already pin.
+- AC-B5's "or missing" half (the reason key absent, not merely blank) had no test of its
+  own until this round - `test_a_rejection_with_the_reason_key_entirely_missing_is_also_refused`.
+
 ## Verification
 
 Browser (agent-browser, via sidebar): board with one confirmed line, expand, Amend, type a

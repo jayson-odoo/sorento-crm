@@ -1132,6 +1132,72 @@ def test_a_rejection_with_no_reason_on_a_confirmed_line_is_refused(api):
     )
 
 
+def test_a_rejection_with_the_reason_key_entirely_missing_is_also_refused(api):
+    """AC-B5's other half (plan Tests note, fix round 3): the UAC states the 422 covers
+    "blank OR missing" - only the blank-string case had a test. `decision.get("reason")`
+    on a body that never sends the key at all reads `None`, and `None or ""` still strips
+    to empty, so the code path is identical; this only closes the coverage gap."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision, SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    response = _save(client, key, decision={"verdict": "rejected"})
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_line_reject_reason_required"
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .count()
+        == 1
+    ), "still covered - nothing was uncovered"
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 0
+    )
+
+
+def test_a_reason_given_reject_that_uncovers_nothing_is_refused_not_silently_written(api):
+    """S1 (fix round 3, review): `save_draft` used to ignore `uncover_lines`' own return
+    value. It answers `False` rather than raise when there is nothing left for it to do -
+    which `_active_coverage` just said was NOT the case for this line - so a `False` here
+    means the two disagree (a stale snapshot, or a reconfirm elsewhere that ran between the
+    read and the write). Falling through wrote a `rejected` draft over a line the board
+    still read as Confirmed, and the route answered 200 for a reject that changed nothing.
+    Monkeypatched rather than engineered into a race, because the race itself is not the
+    point under test - the missing check on the return value is."""
+    from app.models.project_so import SOSupplyDecisionDraft
+    from app.services.project_supply_service import ProjectSupplyService
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+    original = ProjectSupplyService.uncover_lines
+    ProjectSupplyService.uncover_lines = lambda self, *args, **kwargs: False
+    try:
+        response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+    finally:
+        ProjectSupplyService.uncover_lines = original
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "board_line_already_confirmed"
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 0
+    )
+
+
 def test_an_approval_on_a_confirmed_line_still_refuses_with_409(api):
     """AC-B6: every OTHER verdict on a covered line is unchanged by R3(b) - only `rejected`
     (this lane) and `amended` (R1) get past the guard. Guards against a reject-shaped fix
@@ -1241,8 +1307,24 @@ def test_rejecting_one_covered_line_leaves_a_sibling_lines_allocation_untouched(
 
 def test_rejecting_a_covered_line_retires_its_raised_order_row(api):
     """AC-B4: the line's raised supply OI row is no longer `raised` once the reject has
-    taken the line out of the confirmation."""
-    from app.models.project_so import IV_ORDER, INQUIRY_RAISED, OrderInquiryRow
+    taken the line out of the confirmation.
+
+    S4 (fix round 3, review): a bare `state != raised` guard would pass on a row left
+    `partly_linked` by a defect just as readily as on a properly cancelled one - the state
+    IS the fact under test, so it is pinned exactly, along with the note purchasing reads
+    (this row is retired through `uncover_lines`' ORDINARY carry-forward branch, since the
+    sibling line stays covered and a fresh revision is written - the same "Superseded by
+    revision N" a reconfirm stamps, never the `only_line_ids` mode's own "Taken out of the
+    confirmation" - that mode only runs when NOTHING else is left covered, S1's own case
+    below)."""
+    from app.models.project_so import (
+        DECISION_ACTIVE,
+        INQUIRY_CANCELLED,
+        IV_ORDER,
+        INQUIRY_RAISED,
+        OrderInquiryRow,
+        SOSupplyDecision,
+    )
 
     client, world, core_so, order, core_line_1, line_1, core_line_2, line_2 = (
         _covered_two_line_world(api)
@@ -1264,7 +1346,16 @@ def test_rejecting_a_covered_line_retires_its_raised_order_row(api):
 
     assert response.status_code == 200, response.text
     db.refresh(oi_row)
-    assert oi_row.state != INQUIRY_RAISED
+    assert oi_row.state == INQUIRY_CANCELLED
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+    )
+    assert oi_row.note == f"Superseded by revision {active.revision_no}"
 
 
 def _confirm_as_buy(client, world, order, line, *, qty="10", order_back=False):
@@ -1287,8 +1378,13 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_row(api):
     step-3 PLACEMENT rows - a plain raised `IV_ORDER` row (no `covered_by` document) is
     left standing, still flowing to purchasing, even though the line it names is no
     longer decided at all. AC-B3 (the revision retires, nothing replaces it) and AC-B4
-    (the raised row is no longer `raised`) together require this."""
-    from app.models.project_so import IV_ORDER, INQUIRY_RAISED, OrderInquiryRow
+    (the raised row is no longer `raised`) together require this.
+
+    S4 (fix round 3, review): pinned exactly, not `!= raised` - this row goes through the
+    NEW `only_line_ids` mode (the whole revision retires, so there is no successor to
+    diff against), whose own note is `"Taken out of the confirmation: <reason>"`, never a
+    bare reason fragment - purchasing reads the same `note` column for both events."""
+    from app.models.project_so import IV_ORDER, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiryRow
 
     client, world, core_so, core_line, order, line = _world(api)
     db = world.db
@@ -1305,7 +1401,8 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_row(api):
 
     assert response.status_code == 200, response.text
     db.refresh(oi_row)
-    assert oi_row.state != INQUIRY_RAISED
+    assert oi_row.state == INQUIRY_CANCELLED
+    assert oi_row.note == "Taken out of the confirmation: wrong site"
     assert (
         db.query(OrderInquiryRow)
         .filter(
@@ -1321,8 +1418,15 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_back_row(api):
     """The other verb the same gap leaves stranded: a Buy CS marked "Order back" raises
     `IV_ORDER_BACK`, not `IV_ORDER`, and it carries no `covered_by` document (that is what
     tells it apart from a step-3 placement, which `retire_supply_borrow_rows` already
-    handles) - so it needs the SAME retirement `IV_ORDER` does, not the placement one."""
-    from app.models.project_so import IV_ORDER_BACK, INQUIRY_RAISED, OrderInquiryRow
+    handles) - so it needs the SAME retirement `IV_ORDER` does, not the placement one.
+
+    S4 (fix round 3, review): pinned exactly (see the sibling `IV_ORDER` test's own note)."""
+    from app.models.project_so import (
+        IV_ORDER_BACK,
+        INQUIRY_CANCELLED,
+        INQUIRY_RAISED,
+        OrderInquiryRow,
+    )
 
     client, world, core_so, core_line, order, line = _world(api)
     db = world.db
@@ -1342,7 +1446,109 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_back_row(api):
 
     assert response.status_code == 200, response.text
     db.refresh(oi_row)
-    assert oi_row.state != INQUIRY_RAISED
+    assert oi_row.state == INQUIRY_CANCELLED
+    assert oi_row.note == "Taken out of the confirmation: wrong site"
+
+
+def test_rejecting_a_covered_line_does_not_retire_a_book_change_row_on_the_same_line(api):
+    """B1 (fix round 3, review): the first cut of `_retire_uncovered_rows`' `only_line_ids`
+    mode scoped by `so_line_id` alone, dropping the `supply_decision_id == decision.id`
+    predicate the ORDINARY branch carries (its own docstring: a row with none belongs to
+    the amendment/book-change path - `derive_for_book_change` writes such a row onto the
+    order's own header, `supply_decision_id` unset, verbs including `IV_ORDER`/
+    `IV_CANCEL_BALANCE` - a different instruction to purchasing, never this method's to
+    touch). Reproduces with exactly that shape sitting on the SAME line a confirmed Buy
+    also raised a row for: rejecting the confirmed line must retire only the DECISION's
+    own row, never the book-change one beside it."""
+    from app.models.project_so import IV_ORDER, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiryRow
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    _confirm_as_buy(client, world, order, line)
+    decision_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    book_change_row = OrderInquiryRow(
+        id=str(uuid.uuid4()),
+        company_id=world.company_id,
+        order_inquiry_id=decision_row.order_inquiry_id,
+        so_line_id=line.id,
+        item_code=world.product.product_code,
+        qty=Decimal("2"),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        supply_decision_id=None,
+        note="Was 8, now 10",
+    )
+    db.add(book_change_row)
+    db.commit()
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    db.refresh(decision_row)
+    db.refresh(book_change_row)
+    assert decision_row.state == INQUIRY_CANCELLED
+    assert book_change_row.state == INQUIRY_RAISED
+    assert book_change_row.note == "Was 8, now 10"
+
+
+def test_rejecting_the_only_covered_line_leaves_a_sibling_lines_live_row_alone(api):
+    """B2 (fix round 3, review): a kill-test gap - every test above this one is a
+    one-line-one-row order, so nothing ever pinned `so_line_id.in_(only_line_ids)` itself
+    with a SECOND line's row in play. Two-line order, only line 1 confirmed as Buy (the
+    ONLY covered line - `uncover_lines`' whole-revision branch), line 2 carries its own
+    live raised row from a source that never covered it (a book-change reaction, the same
+    shape B1 guards). Rejecting line 1 must retire only line 1's own row."""
+    from app.models.project_so import IV_ORDER, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    product_2 = _product(db)
+    core_line_2 = _core_line(db, core_so, product_2, world.own_wh, qty_ordered="5")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line_1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=20, product=product_2, core_line=core_line_2)
+    db.commit()
+
+    _confirm_as_buy(client, world, order, line_1)
+    line_1_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_1.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    line_2_row = OrderInquiryRow(
+        id=str(uuid.uuid4()),
+        company_id=world.company_id,
+        order_inquiry_id=line_1_row.order_inquiry_id,
+        so_line_id=line_2.id,
+        item_code=product_2.product_code,
+        qty=Decimal("3"),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        supply_decision_id=None,
+        note="Was 2, now 5",
+    )
+    db.add(line_2_row)
+    db.commit()
+    key_1 = next(
+        contribution["key"]
+        for contribution in _board(client, core_so)["contributions"]
+        if contribution["item_code"] == world.product.product_code
+    )
+
+    response = _save(client, key_1, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    db.refresh(line_1_row)
+    db.refresh(line_2_row)
+    assert line_1_row.state == INQUIRY_CANCELLED
+    assert line_2_row.state == INQUIRY_RAISED
 
 
 def test_an_amendment_on_a_confirmed_line_still_saves(api):
@@ -1406,7 +1612,10 @@ def test_a_line_whose_only_decision_is_superseded_is_not_covered(api):
 
 
 def test_the_confirmed_line_refusal_states_the_exact_sentence(api):
-    """AC-B6: the message a planner reads when R1 refuses their save."""
+    """AC-B6: the message a planner reads when R1 refuses their save. Names Reject too
+    (fix round 3, nit): R3(b) gave a covered line a second way out, and the old sentence
+    ("Amend it to change the decision, or undo the confirmation.") went stale the moment
+    Reject stopped being dead-refused."""
     client, world, core_so, core_line, order, line = _world(api)
     key = _contribution(_board(client, core_so), core_so.so_number)["key"]
     _confirm_full_qty(client, world, order, line)
@@ -1416,8 +1625,67 @@ def test_the_confirmed_line_refusal_states_the_exact_sentence(api):
     assert response.status_code == 409, response.text
     assert response.json()["message"] == (
         "This line is already confirmed. Amend it to change the decision, "
-        "or undo the confirmation."
+        "reject it with a reason, or undo the confirmation."
     )
+
+
+# --------------------------------------------------------------------------- #
+# S2 (fix round 3, review): a `rejected` verdict on a covered line reaches     #
+# `uncover_lines`, the same un-decide seam Confirm's own `_assert_can_act_on`  #
+# guards - so it now runs that same per-project check, never only the module  #
+# EDIT permission every OTHER draft save keeps needing.                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reject_on_a_covered_line_needs_the_projects_own_edit_rights(api):
+    """A planner who holds the module's EDIT permission (the harness grants it to
+    everyone) but is neither the project's owner nor an approved collaborator gets the
+    SAME refusal Confirm itself would give them - the reject reaches `uncover_lines`, so
+    it is authorised the same way. Nothing is written."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision, SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+    outsider = _user(db, f"{CONFIRM_MARKER} Outsider")
+    db.commit()
+    _act_as(client, outsider)
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 403, response.text
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .count()
+        == 1
+    ), "still covered - the refusal must change nothing"
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 0
+    )
+
+
+def test_a_reject_on_an_uncovered_line_still_needs_only_the_module_permission(api):
+    """The other half: an UNCOVERED line's rejection never reaches `uncover_lines`, so the
+    same outsider still saves it - the per-project check is new ONLY for the branch that
+    actually touches a confirmation (AC-4.5, drafts are shared across the planning team)."""
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    outsider = _user(db, f"{CONFIRM_MARKER} Outsider")
+    db.commit()
+    _act_as(client, outsider)
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
 
 
 # --------------------------------------------------------------------------- #
@@ -1427,7 +1695,7 @@ def test_the_confirmed_line_refusal_states_the_exact_sentence(api):
 
 def test_confirming_one_line_does_not_cover_a_sibling_line_of_the_same_order(api):
     """AC-B7: guards the `line_snapshots[].core_line_id == this line` MEMBERSHIP check in
-    `_covered_by_active_decision` against a cheaper implementation that would pass every
+    `_active_coverage` against a cheaper implementation that would pass every
     OTHER test in this file - `return bool(decisions)`, "an active decision exists on this
     order at all" - because every other test here confirms an order with exactly one line.
     Two core lines, two mirror lines, only line 1 confirmed: line 2 must still take a plain
@@ -1504,7 +1772,7 @@ def test_a_pending_planning_change_in_an_open_batch_exempts_the_line(api):
     """AC-B8: a line mid-replan - a re-uploaded book row not yet applied, in a batch nobody
     has applied yet - is not the "confirmed, leave it alone" case R1 exists for; the planner
     is being asked to redecide it, so a plain Save must still land. TEST-FIRST:
-    `_covered_by_active_decision` carries no planning-change awareness yet, so this is
+    `_active_coverage` carries no planning-change awareness yet, so this is
     refused with 409 today."""
     from app.models.project_so import SOSupplyDecisionDraft
     from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING

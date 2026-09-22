@@ -412,11 +412,18 @@ def test_rejecting_the_only_row_on_a_single_covered_line_order_retires_the_revis
       a row `ack_state == ACK_REJECTED` on purpose, because cancelling it here dropped it out
       of the ack summary's `rejected` facet (`_acks` hides `state == cancelled` rows), caught
       by `test_the_summary_ack_facet_carries_all_four_keys_by_name`.
+
+    S4 (fix round 3, review): `row.note` is pinned alongside `row.state` now too - the skip
+    guard above is only proven if NEITHER field moved; `_retire_uncovered_rows`' new "Taken
+    out of the confirmation: <reason>" stamp (the note it writes for every row it DOES
+    retire in this mode) would otherwise be free to leak onto a skipped row's `note` without
+    either assertion here catching it.
     """
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
     before_state = row.state
+    before_note = row.note
     before_revision = _active_revision_no(world, fixture["order"])
     assert before_revision is not None, "sanity: the line starts covered"
 
@@ -428,6 +435,7 @@ def test_rejecting_the_only_row_on_a_single_covered_line_order_retires_the_revis
     world.db.refresh(row)
     assert row.ack_state == ACK_REJECTED
     assert row.state == before_state, "the row purchasing just rejected is left exactly as it was"
+    assert row.note == before_note, "not even the note moves - the skip is total"
     assert _active_revision_no(world, fixture["order"]) is None, (
         "the line's only decision retires - it is undecided again"
     )

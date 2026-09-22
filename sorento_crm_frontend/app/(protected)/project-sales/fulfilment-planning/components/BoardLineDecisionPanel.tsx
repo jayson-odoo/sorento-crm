@@ -52,7 +52,8 @@ import { ReserveAddDialog } from './ReserveAddDialog';
  * never reaches a real hover - the sentence has to live on a focusable wrapper instead.
  */
 const CONFIRMED_LINE_TITLE =
-  'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
+  'This line is already confirmed. Amend it to change the decision, reject it with a reason, ' +
+  'or undo the confirmation.';
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -551,6 +552,35 @@ export function BoardLineDecisionPanel({
       <Check className="size-4" aria-hidden />
       Save decision
     </>
+  );
+
+  // Shared between the covered and uncovered Reject buttons (fix round 3, nit): the two
+  // were twenty-line twins differing only in whether a Tooltip wraps them, which is exactly
+  // the shape a shared element with a conditional wrapper is for - `disabled` and the pending
+  // guard have to move together on either branch, and duplicating them invited a drift.
+  const rejectButton = (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      // Disabled ON the landed rejection too (mirrors Save/D4): there is nothing left to
+      // reject, and a live button under "Rejected" invites a second write. `pending` (fix
+      // round 1, S4): the write this same click just started is still on the wire.
+      disabled={rejected || pending || reason.trim().length === 0}
+      onClick={reject}
+    >
+      {rejected ? (
+        <>
+          <CheckCircle2 className="size-4" aria-hidden />
+          Rejected
+        </>
+      ) : (
+        <>
+          <X className="size-4" aria-hidden />
+          Reject
+        </>
+      )}
+    </Button>
   );
 
   /**
@@ -1075,25 +1105,7 @@ export function BoardLineDecisionPanel({
                       className="inline-flex"
                       data-testid={`reject-decision-trigger-${contribution.key}`}
                     >
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={rejected || pending || reason.trim().length === 0}
-                        onClick={reject}
-                      >
-                        {rejected ? (
-                          <>
-                            <CheckCircle2 className="size-4" aria-hidden />
-                            Rejected
-                          </>
-                        ) : (
-                          <>
-                            <X className="size-4" aria-hidden />
-                            Reject
-                          </>
-                        )}
-                      </Button>
+                      {rejectButton}
                     </span>
                   </TooltipTrigger>
                   {reason.trim().length === 0 && (
@@ -1106,32 +1118,11 @@ export function BoardLineDecisionPanel({
                   )}
                 </Tooltip>
               ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  // Disabled ON the landed rejection too (mirrors Save/D4): there is nothing
-                  // left to reject, and a live button under "Rejected" invites a second write.
-                  // `pending` (fix round 1, S4): the write this same click just started is
-                  // still on the wire. No `title` here (fix round 2, nit): the Button
-                  // primitive's `disabled:pointer-events-none` means a `title` on a disabled
-                  // button never reaches a real hover (see the comment on
-                  // `CONFIRMED_LINE_TITLE` above), so it was dead - no tooltip added either.
-                  disabled={rejected || pending || reason.trim().length === 0}
-                  onClick={reject}
-                >
-                  {rejected ? (
-                    <>
-                      <CheckCircle2 className="size-4" aria-hidden />
-                      Rejected
-                    </>
-                  ) : (
-                    <>
-                      <X className="size-4" aria-hidden />
-                      Reject
-                    </>
-                  )}
-                </Button>
+                // No `title` here (fix round 2, nit): the Button primitive's
+                // `disabled:pointer-events-none` means a `title` on a disabled button never
+                // reaches a real hover (see the comment on `CONFIRMED_LINE_TITLE` above), so
+                // it was dead - no tooltip added either.
+                rejectButton
               )}
             </div>
           )}

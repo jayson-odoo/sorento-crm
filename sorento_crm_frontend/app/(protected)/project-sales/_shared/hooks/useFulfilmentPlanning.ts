@@ -368,6 +368,34 @@ export function usePlans(params: PlanListParams = {}) {
 }
 
 /**
+ * Every query family a WRITTEN CONFIRMATION changes the count of (S3, fix round 3,
+ * `PLAN-board-reject-on-confirmed-line.md`): lifted out of `useConfirmManyMutation`'s own
+ * `onSuccess` so `useLineDraftMutation`'s reject-on-covered branch below can invalidate the
+ * exact same list rather than growing a second copy of it - a reject that takes a COVERED
+ * line out of its confirmation changes the same surfaces a Confirm does, just smaller (the
+ * decision's own revision, that line's OI row, the worklist, the plans list, the SO
+ * detail).
+ */
+const CONFIRMATION_INVALIDATION_KEYS = [
+  FULFILMENT_PLANNING_KEY,
+  PLANNING_BOARD_KEY,
+  PLANS_KEY,
+  RECONCILIATION_KEY,
+  SUPPLY_KEY,
+  SALES_ORDERS_KEY,
+  SALES_ORDER_KEY,
+  ORDER_INQUIRY_ROWS_KEY,
+  ORDER_INQUIRY_SUMMARY_KEY,
+  ORDER_INQUIRY_WORKLIST_KEY,
+  ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+  PILE_QUEUE_KEY,
+  STOCK_DETAIL_KEY,
+  STOCK_TRANSFERS_KEY,
+  BOARD_TRANSFERS_KEY,
+  PLANNING_CHANGE_BATCH_KEY,
+];
+
+/**
  * The board's ONE Confirm (R11/D2): one call, several orders, one result per order.
  *
  * Invalidates the same query families the per-order `confirm` does - the board, the
@@ -382,22 +410,9 @@ export function useConfirmManyMutation() {
   return useMutation({
     mutationFn: (body: ConfirmManyBody) => confirmMany(body),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
-      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
-      queryClient.invalidateQueries({ queryKey: [PLANS_KEY] });
-      queryClient.invalidateQueries({ queryKey: [RECONCILIATION_KEY] });
-      queryClient.invalidateQueries({ queryKey: [SUPPLY_KEY] });
-      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
-      queryClient.invalidateQueries({ queryKey: [SALES_ORDER_KEY] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
-      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
-      queryClient.invalidateQueries({ queryKey: [PILE_QUEUE_KEY] });
-      queryClient.invalidateQueries({ queryKey: [STOCK_DETAIL_KEY] });
-      queryClient.invalidateQueries({ queryKey: [STOCK_TRANSFERS_KEY] });
-      queryClient.invalidateQueries({ queryKey: [BOARD_TRANSFERS_KEY] });
-      queryClient.invalidateQueries({ queryKey: [PLANNING_CHANGE_BATCH_KEY] });
+      for (const key of CONFIRMATION_INVALIDATION_KEYS) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
       // NO SUCCESS TOAST HERE (D6). The board says what the press produced in the three
       // numbers a planner acts on - "37 lines confirmed - 1 transfer proposed - 0 inquiry
       // rows" - and a second toast counting ORDERS beside it made the screen shout twice and
@@ -467,6 +482,15 @@ export function patchContributionDraft<
  * have nothing to learn from either one - and now neither does the board query itself, since
  * nothing about the ENGINE's suggestion moved.
  *
+ * ONE EXCEPTION (S3, fix round 3, `PLAN-board-reject-on-confirmed-line.md`): a `rejected`
+ * save on a line that WAS covered reaches `uncover_lines` on the server - it is not an
+ * ordinary draft write, it takes the line out of an active confirmation, the same shape of
+ * change a Confirm is, just smaller. The patch below still runs (the pill has to read
+ * `Rejected` the instant this resolves), but `CONFIRMATION_INVALIDATION_KEYS` is invalidated
+ * alongside it - otherwise the breakdown dialog's `contribution.covered`, the OI chips, the
+ * SO list's Planned pill and the OI worklist all keep reading the frozen composition the
+ * patch never touches.
+ *
  * NO SUCCESS TOAST HERE (D6, matching `useConfirmManyMutation`'s own note): the sentence
  * "Line 3 saved - 4 to confirm" (AC-4.1) needs the FRESH board-wide confirm count, which
  * this hook does not have - only `FulfilmentBoardPanel`'s own `decide()`, which already
@@ -487,9 +511,21 @@ export function useLineDraftMutation() {
       proposed?: BoardSource[];
     }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
     onSuccess: (saved, { key }) => {
+      // Read BEFORE the patch below: that write is what clears `covered` on this very row,
+      // so a read taken after it would never see the line as having BEEN covered.
+      const wasCovered = queryClient
+        .getQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] })
+        .some(([, board]) =>
+          board?.contributions.some((entry) => entry.key === key && entry.covered),
+        );
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, saved) : current,
       );
+      if (saved.decision.verdict === 'rejected' && wasCovered) {
+        for (const invalidateKey of CONFIRMATION_INVALIDATION_KEYS) {
+          queryClient.invalidateQueries({ queryKey: [invalidateKey] });
+        }
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });

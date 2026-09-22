@@ -3614,8 +3614,20 @@ class ProjectOrderInquiryService:
         `IV_ORDER`/`IV_CANCEL_BALANCE` (a Buy CS marked "Order back" with no `covered_by`
         document is not a step-3 placement - `retire_supply_borrow_rows` does not see it -
         but it is exactly as much this method's "line dropped, raised row must go" case as
-        a plain ORDER row), and the note is `reason` itself: there is no successor revision
-        number to name, only the words given for taking the line out.
+        a plain ORDER row), and the note carries `reason` prefixed (B1/S4, review round 3):
+        purchasing reads the same `note` column for a superseded-revision cancellation and
+        for this one, and a bare reason fragment with no lead-in read as a glitch next to
+        "Superseded by revision N" above it.
+
+        `OrderInquiryRow.supply_decision_id == decision.id` (B1, review round 3): dropped
+        from the first cut of this mode, which scoped by `so_line_id` alone. A row with NO
+        `supply_decision_id` on the SAME line belongs to the amendment/book-change path
+        (`derive_for_book_change` writes such a row onto the order's OWN header, verbs
+        including `IV_ORDER`/`IV_CANCEL_BALANCE`, with no decision attached) - a different
+        instruction to purchasing this method has never been the one to cancel, in the
+        ordinary `else` branch below either. Without the predicate, rejecting a covered
+        line whose header also carried a planning-change reaction cancelled that reaction
+        alongside the decision's own row.
         """
         covered = {str(entry["line"].id) for entry in buy_lines}
         query = self.db.query(OrderInquiryRow).filter(
@@ -3628,6 +3640,7 @@ class ProjectOrderInquiryService:
             query = query.filter(
                 OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
                 OrderInquiryRow.so_line_id.in_([str(x) for x in only_line_ids]),
+                OrderInquiryRow.supply_decision_id == decision.id,
                 # A row purchasing has ALREADY rejected is left exactly as it is (owner
                 # case, fix round, found by `test_the_summary_ack_facet_carries_all_four_
                 # keys_by_name`): `reject_row`/`reject_rows` calls `uncover_lines` on the
@@ -3646,7 +3659,10 @@ class ProjectOrderInquiryService:
                 OrderInquiryRow.supply_decision_id != decision.id,
             )
         stale = query.all()
-        stamp = reason if reason is not None else f"Superseded by revision {decision.revision_no}"
+        if only_line_ids is not None and reason is not None:
+            stamp = f"Taken out of the confirmation: {reason}"
+        else:
+            stamp = reason if reason is not None else f"Superseded by revision {decision.revision_no}"
         # Batched (S6): one grouped load for every stale row's links, rather than one
         # query per row inside the loop below.
         stale_links = self._links_by_row([str(row.id) for row in stale])

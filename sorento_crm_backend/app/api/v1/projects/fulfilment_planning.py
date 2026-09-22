@@ -84,6 +84,12 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     Passing `order.project_id` straight to `get_project_or_404` answered 404 "Project not
     found" for every adopted order, which took Confirm and Re-sync - the last steps of the
     journey - off the screen entirely. Company scope is enforced by the mixin either way.
+
+    Callers: `confirm_supply`, `rerun_reconciliation`, and (S2, review round 3)
+    `save_line_draft` when the verdict is `rejected` AND the line is covered - that PUT
+    reaches the same `uncover_lines` seam Confirm does, so it needs the same per-project
+    check; every OTHER draft save stays gated on the module permission alone (see
+    `save_line_draft`'s own docstring).
     """
     if not order.project_id:
         return
@@ -373,6 +379,13 @@ def save_line_draft(
     so gating the save on project ownership would only stop the second planner AC-4.5 is
     about from correcting the first one's line.
 
+    S2 (review round 3): a `rejected` verdict on a COVERED line is the one exception - it
+    calls `uncover_lines`, the same un-decide seam Confirm's own authorisation guards, so it
+    now runs the SAME `_assert_can_act_on` check Confirm does, for the mirror order the
+    coverage names. Checked here rather than inside the service (`project_line_draft_service`
+    has no project-rights concept of its own) so the 403 lands before anything is written -
+    `coverage_for` is read-only and does not itself uncover the line.
+
     `{contribution_key}` is the board's own `contributions[].key` -
     `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` - URL-encoded by the client
     because it embeds characters a path segment may not carry raw. Declared `:path` so an
@@ -380,6 +393,11 @@ def save_line_draft(
     that never matched.
     """
     try:
+        if payload.decision.get("verdict") == "rejected":
+            coverage = project_line_draft_service.coverage_for(db, contribution_key)
+            if coverage is not None:
+                order, _snapshot = coverage
+                _assert_can_act_on(db, order, current_user)
         body = project_line_draft_service.save_draft(
             db,
             contribution_key,

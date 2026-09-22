@@ -1080,7 +1080,8 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     // reason): the sentence lives in a Radix Tooltip on a wrapper around the button instead.
     fireEvent.focus(screen.getByTestId(`save-decision-trigger-${KEY}`));
     expect((await screen.findByRole('tooltip')).textContent).toBe(
-      'This line is already confirmed. Amend it to change the decision, or undo the confirmation.',
+      'This line is already confirmed. Amend it to change the decision, reject it with a ' +
+        'reason, or undo the confirmation.',
     );
 
     // Still balances against the 24 outstanding (10 + 14), but neither number the revision
@@ -1118,7 +1119,8 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
  */
 describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2)', () => {
   const REFUSAL =
-    'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
+    'This line is already confirmed. Amend it to change the decision, reject it with a ' +
+    'reason, or undo the confirmation.';
   const frozen: BoardLineDecision = {
     revision_no: 1,
     confirmed_at: '2026-08-18T02:00:00',
