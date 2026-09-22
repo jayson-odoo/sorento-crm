@@ -101,4 +101,7 @@ the plan buys nothing, because the borrowing line reads delivered 3/3.
 
 Board `confirmed_unplaced_buy_rows` warehouse attribution for ORDER_BACK (already handled
 via `stock_location`), the OI detail page wording for a system close (separate ask), re-upload
-dedupe rules.
+dedupe rules. `demand_breakdown_service` drill still lists `verb = 'ORDER'` rows at the
+core line's warehouse, so an ORDER_BACK's uncapped quantity shows in the plan total
+without a drill row behind it (measured 9 units across 3 rows on the 0921 copy);
+follow-up, not this lane.

@@ -437,6 +437,49 @@ def test_424_replaces_423_in_place_and_changes_no_column_type():
 
 
 @requires_pg
+def test_525_replaces_512_in_place_and_changes_no_column_type():
+    """525's own version of `test_424_replaces_423_in_place_and_changes_no_column_type`,
+    same reason: 424 was where a bare `0::numeric` leg turned into a bare `0` and Postgres
+    refused the type change on a view already installed - every OTHER neighbour in this
+    file DROPS the view first, which a fresh CREATE may type however it likes, so an
+    in-place `CREATE OR REPLACE` over an ALREADY-INSTALLED 512 is the only replay that
+    would catch 525 making the same mistake.
+
+    No DROP between 512 and 525: this is the exact statement the captain runs on a
+    database that already carries 512's body. Column list and types must come out
+    unchanged, and the view stays selectable throughout - a `CREATE OR REPLACE` that
+    silently broke a reader would still "succeed" as DDL.
+    """
+    with blank_session() as db:
+        scm_schema, projects = _scratch_op(db)
+        m512 = _load("512_committed_v_redirect_exclude")
+        m525 = _load("525_committed_v_orderback")
+        db.execute(text(_rebind(m512._AS_OF_512, scm_schema, projects)))
+        before = _column_types(db, scm_schema)
+        db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
+
+        # The tell of the new body: Postgres reprints the frozen `CASE WHEN oir.verb =
+        # 'ORDER_BACK' THEN oir.qty` as `WHEN ((oir.verb)::text = 'ORDER_BACK'::text)
+        # THEN oir.qty` (its own casts/parens/line breaks) - unique to 525's owed-qty
+        # CASE, unlike bare `verb = 'ORDER_BACK'` which 512 already carries for the
+        # DONOR-warehouse CASE, so that alone cannot tell the two bodies apart.
+        tell = "WHEN ((oir.verb)::text = 'ORDER_BACK'::text) THEN oir.qty"
+
+        # No DROP in between: this is the statement the captain runs.
+        m525.upgrade()
+        assert _column_types(db, scm_schema) == before, "525 changed a column type"
+        db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
+        definition = _view_body(db, scm_schema)
+        assert definition and tell in definition
+
+        m525.downgrade()
+        assert _column_types(db, scm_schema) == before, "the downgrade changed a column type"
+        db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
+        restored = _view_body(db, scm_schema)
+        assert restored and tell not in restored
+
+
+@requires_pg
 def test_the_form_leg_counts_a_row_with_no_line_and_never_one_that_has_one():
     """The whole arithmetic of the new leg, on one product, in one place.
 
