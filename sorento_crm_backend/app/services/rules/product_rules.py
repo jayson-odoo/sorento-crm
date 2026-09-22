@@ -308,12 +308,21 @@ def link_default_supplier(
     *,
     default_supplier_id: Any = _NOT_PRELOADED,
     existing_lead_time_days: Any = _NOT_PRELOADED,
-) -> None:
+) -> Optional[int]:
     """Upsert the tenant's default-supplier `product_suppliers` row with the
     configured standard lead time (D5) - create-time link, or the lead time
     refreshed on update, exactly as the Excel import's own
     `link_default_supplier` closure does. `settings` is the (possibly `None`)
     `system_settings` row; a no-op when no default supplier can be resolved.
+
+    Returns the lead time now current for `(product_id, default_supplier_id)`
+    - created, refreshed, or already matching, always `lead_time_days` in
+    every one of those three cases - or `None` when no default supplier
+    resolved at all (nothing was touched). Fix round (B2): a batch caller
+    writes this back into its own per-batch cache so a LATER record sharing
+    `product_id` never re-derives it from a stale/absent map entry. Unused by
+    the other two callers (bulk Excel import, manual create/edit), which
+    already recompute the answer their own way on every call.
 
     `default_supplier_id` / `existing_lead_time_days` (bulk-preload round):
     a batch caller (`MasterIngestService`) that already resolved these once
@@ -329,7 +338,7 @@ def link_default_supplier(
     if default_supplier_id is _NOT_PRELOADED:
         default_supplier_id = resolve_default_supplier_id(db, settings)
     if not default_supplier_id:
-        return
+        return None
     lead_time_days = resolve_standard_lead_time_days(settings)
 
     existing: Optional[ProductSupplier] = None
@@ -358,7 +367,7 @@ def link_default_supplier(
             if existing is not None:
                 existing.standard_lead_time_days = lead_time_days
                 db.flush()
-        return
+        return lead_time_days
 
     db.add(
         ProductSupplier(
@@ -368,3 +377,4 @@ def link_default_supplier(
         )
     )
     db.flush()
+    return lead_time_days

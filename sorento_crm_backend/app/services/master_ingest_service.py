@@ -732,9 +732,22 @@ class _ProductBatchPreload:
     #: configured and no supplier exists to fall back to either.
     default_supplier_id: Optional[str] = None
     #: `product_id -> its EXISTING product_suppliers.standard_lead_time_days`
-    #: for that supplier. Absent means "confirmed no existing link" for ANY
-    #: id this preload covers - including one `_insert` just created, since
-    #: a brand-new id cannot possibly have a pre-existing one.
+    #: for that supplier. Absent means "never confirmed either way" - the
+    #: preload's own bulk query only ever WRITES a key for a product it found
+    #: an actual row for (round-1 review, B2): it never `setdefault`s a "no
+    #: link" `None` for a candidate id with none, unlike `origin_by_entity`
+    #: above. `_post_write_product_hooks` therefore reads this with `product_
+    #: rules._NOT_PRELOADED` as the `.get` default, never Python's bare
+    #: `None` - the two are NOT the same answer here, and reading a miss as
+    #: "confirmed no link" is exactly the bug that let a second same-batch
+    #: write (an adopt right after a create, or a renamed code resolved via
+    #: its ref rather than a code hit - neither ever appears in this dict at
+    #: all) insert a SECOND `product_suppliers` row and violate `uq_product_
+    #: suppliers_product_id_supplier_id`. `_post_write_product_hooks` writes
+    #: the id it just resolved back in here after every create/update (with
+    #: the same `_pending_preload_additions` revert bookkeeping every other
+    #: preload map uses), so a later record in the SAME batch sharing the id
+    #: (T12/T13) sees it without a query either.
     default_supplier_lead_time: dict[str, int] = field(default_factory=dict)
 
 
@@ -1390,21 +1403,36 @@ class MasterIngestService:
         create/edit path (`ProductService._ensure_default_supplier_lead_time`)
         share the one body.
 
-        Round 2: when the batch preload ran, its own already-resolved
-        `default_supplier_id` and per-product `default_supplier_lead_time`
-        are passed straight through - `product_id` not being a preload key
-        is itself a trusted "no existing link" answer (`.get` defaulting to
-        `None`), true whether `product_id` came from the preload's own
-        candidates or was minted by THIS record's own `_insert`.
+        Round 2 (fix round, B2): when the batch preload ran, its own already-
+        resolved `default_supplier_id` and per-product `default_supplier_
+        lead_time` are passed through - but `product_id` MISSING from that
+        map is not "confirmed no link" (`_ProductBatchPreload.default_
+        supplier_lead_time`'s own docstring has the full reasoning), so the
+        `.get` default is `product_rules._NOT_PRELOADED`, never Python's bare
+        `None`; only an id the preload map genuinely covers skips the real
+        query. `link_default_supplier` returns the lead time now current for
+        `product_id` (created, refreshed, or already matching) whenever a
+        default supplier resolved at all - written straight back into the
+        map, with the same `_pending_preload_additions` revert bookkeeping
+        every other preload map uses, so a LATER record in this same batch
+        sharing the id (T12: a second adopter right behind this one; T13: a
+        duplicate code right behind this record's own create) sees it
+        without a query and without re-inserting the row this call just
+        made.
         """
         if entity_type != "products":
             return
         if self._preload is not None:
-            product_rules.link_default_supplier(
+            lead_time_days = product_rules.link_default_supplier(
                 self.db, product_id, self._system_settings(),
                 default_supplier_id=self._preload.default_supplier_id,
-                existing_lead_time_days=self._preload.default_supplier_lead_time.get(product_id),
+                existing_lead_time_days=self._preload.default_supplier_lead_time.get(
+                    product_id, product_rules._NOT_PRELOADED
+                ),
             )
+            if lead_time_days is not None:
+                self._preload.default_supplier_lead_time[product_id] = lead_time_days
+                self._pending_preload_additions.append(("default_supplier_lead_time", product_id))
         else:
             product_rules.link_default_supplier(self.db, product_id, self._system_settings())
 
@@ -1551,13 +1579,29 @@ class MasterIngestService:
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
-        if entity_type == "products" and self._preload is not None and payload.source_ref:
-            # Round 2 (T10/T11): same reasoning as `_insert`'s own map update
-            # - a later same-batch record sharing this source_ref (a genuine
-            # duplicate push) resolves it via the map, and a rollback undoes
-            # this addition along with the row it named.
-            self._preload.ref_to_entity[payload.source_ref] = entity_id
-            self._pending_preload_additions.append(("ref_to_entity", payload.source_ref))
+        if entity_type == "products" and self._preload is not None:
+            if payload.source_ref:
+                # Round 2 (T10/T11): same reasoning as `_insert`'s own map
+                # update - a later same-batch record sharing this source_ref
+                # (a genuine duplicate push) resolves it via the map, and a
+                # rollback undoes this addition along with the row it named.
+                self._preload.ref_to_entity[payload.source_ref] = entity_id
+                self._pending_preload_additions.append(("ref_to_entity", payload.source_ref))
+            # Fix round, B1 (round-1 review, both reviewers): the call above
+            # just claimed `entity_id` for AutoCount (`self.refs.link`'s own
+            # default `source_system`) - without recording that here too, a
+            # SECOND record in this same batch that resolves the SAME
+            # product by a normalize-equal code right after this one reads
+            # the STALE preloaded origin (`None`, from before this call ran,
+            # or altogether absent for one `_insert` just created) instead,
+            # takes the unclaimed-adopt branch, and its own `self.refs.link`
+            # call then raises `ReferenceConflict` against the ref THIS call
+            # just wrote - a regression `_apply_scoped`'s own code-wins
+            # branch exists specifically to avoid (T12/T13).
+            self._preload.origin_by_entity[entity_id] = _PreloadedOrigin(
+                source_system=DEFAULT_SOURCE_SYSTEM
+            )
+            self._pending_preload_additions.append(("origin_by_entity", entity_id))
 
 
 def _value_changed(current: Any, incoming: Any) -> bool:
