@@ -248,10 +248,13 @@ table test on `turn/apply.py`. No live parser call in CI.
   reply is `Noted: A x 5, B x 60` plus `How many units do you need for C and D?`, and the task is
   `open` again. replay chain.
 - **AC-1773 [T]** A roster does not break the task. Turn 1 opens the task with C missing. Turn 2
-  names an ambiguous code that arms a `product_pick` roster (`open_question.kind ==
-  product_pick`, task still `open`). Turn 3 `reference_positions = [1]` resolves the pick; the
-  picked product joins the task as a slot with no quantity and the reply asks for C and the
-  picked product. replay chain.
+  arms any roster or offer pending (`open_question` non-null; a `product_pick` is not reachable
+  for the inventory domain since AC-1690 retired product rostering under `list_all`, so the
+  fixture uses whatever pending the engine arms for an unresolved token). Then the task is still
+  `open` with its slots untouched. Turn 3 answering that pending leaves the task untouched too.
+  The earlier "picked product joins the task as a slot" clause is withdrawn (no product roster
+  exists for inventory today; named trigger: a domain with a product roster gains a task). replay
+  chain.
 - **AC-1774 [T]** Proceed while parked. After a detour, a verdict `proceed_anyway = true` with
   `domain_hint` null, Then the stock tool is called with the noted quantities only, verdict lines
   plus `Not checked: C, D`, task null. replay chain.
@@ -268,7 +271,9 @@ table test on `turn/apply.py`. No live parser call in CI.
   the same `decide` and `apply` seams, and shows it opens, parks on a detour, fills from a later
   turn and closes, with no engine change. pytest.
 - **AC-1779 [T]** Two tasks at once (D24). Given the stock task open (C missing) and the
-  ideation task open with `pending_media` set, When a verdict carries `entities[C].quantity =
+  ideation task open with `pending_media` set (the session's `ideation` pointer is handed to
+  `apply()` as a keyword argument beside `resolved` / `candidates`, so `apply` stays pure and
+  `IdeationTask.claims` can read it), When a verdict carries `entities[C].quantity =
   110`, Then only the stock task fills; When a verdict has `domain_hint = ideate`, Then only the
   ideation lane runs; When a bare number arrives (`reference_positions = [2]`, no domain, no
   entity) and both could claim it, Then no task changes, `open_question.kind == task_pick` with
@@ -283,10 +288,13 @@ table test on `turn/apply.py`. No live parser call in CI.
   `parked`, `session.ideation` untouched, stock answered as today); a later verdict `domain_hint
   = ideate` with no entities runs the ideation lane with the same pointer and sets it `open`.
   replay chain.
-- **AC-1786 [T]** Ideation closes on the tool's word. Given the tool stub returns `status =
-  complete`, Then the task is removed and `session.ideation` is whatever the tool returned
-  (today's behaviour). Given `topic_reset = true` with `domain_hint = ideate`, Then the task is
-  removed. apply table test.
+- **AC-1786 [T]** Ideation task closes on the tool's word. The replay harness runs dry, so the
+  ideation tool is never called there; the tool-status half is a unit test on the kind
+  (`TASK_KINDS["ideation"].closes_on_tool_status("complete")` true, `"in_progress"` false) and
+  the engine removes the task where the ideate lane's `ideate_status` is read (both the
+  `run_turn` path and, if it is live, the `complete_turn` / `run_tail` path call the same
+  helper). Given `topic_reset = true` with `domain_hint = ideate`, Then the task is removed
+  (apply table test).
 - **AC-1787 [T]** Hint. With an ideation task open or parked, `build_user_block` emits `Open
   task: idea in progress.` (and `media menu open` when `pending_media` is set). pytest.
 - **AC-1788 [T]** Existing ideation tests (`tests/chatbot/test_ideate*.py`, the ideate replay
