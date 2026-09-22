@@ -11,15 +11,15 @@ export const PLAN_PERMISSION = 'projects.projects.view';
 /**
  * "Plan selected (N)" - the sales-order list's way onto the fulfilment board.
  *
- * It lives in the toolbar's own **Start** menu, beside Upload sales orders, and NOT in the
+ * It is the toolbar's own primary button (the owner's ruling, 22 Sep 2026), and NOT in the
  * bulk strip. The strip only exists once rows are ticked, so an action that lives there
  * cannot be found by someone who has not already guessed it is there - and when it refused
  * (over the board's bound) it refused as a greyed-out button whose reason was a hover away,
  * which is indistinguishable from a dead click.
  *
- * Start is where a day's work begins (the captain, 27 Aug): put the book in, or take a set
- * of orders to the board. In the menu the item is always present, always counts what is
- * selected, and states its refusal on itself.
+ * The one thing this list starts is taking a set of orders to the board, so that is the CTA:
+ * always present (while the caller holds the permission), always counting what is selected,
+ * and stating its own refusal on itself via a tooltip.
  *
  * There is no plan ENTITY behind it. The fulfilment board is a URL
  * (`/project-sales/fulfilment-planning?orders=SO1,SO2`) and stays one, so this action
