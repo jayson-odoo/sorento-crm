@@ -1321,12 +1321,17 @@ describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5, 17 Sep rulings): the 
 });
 
 /**
- * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the worklist's own "SO line" column -
- * `SO402757 · L5`, linking to that exact sales-order line; plain text (no id printed, per
- * the no-UUID rule) once either id the link needs is missing.
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1), fix round (22 Sep): the worklist has
+ * no separate "SO line" column - it sat beside this S/O no column and printed the same SO
+ * number twice per row (`OrderInquiriesClient.test.tsx` caught it: `Found multiple
+ * elements with the text: SO385126`). The S/O no cell itself carries the deep link
+ * instead: `SO402757 · L5` once a line number is on the row, the bare SO number
+ * otherwise; no id is printed either way (no-UUID rule). The OI detail Lines tab, which
+ * has no S/O no column of its own, still gets the separate `orderInquirySoLineColumn()`
+ * (own test above this describe block).
  */
-describe('AC-B6-1: the SO line column prints "SO<n> · L<n>" and links to the exact line', () => {
-  it('renders the label as a link once both ids are on the row', () => {
+describe('AC-B6-1: the S/O no column carries "SO<n> · L<n>" and links to the exact line', () => {
+  it('renders the label as a link to the exact line once both ids are on the row', () => {
     renderRows(
       [
         worklistRow({
@@ -1337,7 +1342,7 @@ describe('AC-B6-1: the SO line column prints "SO<n> · L<n>" and links to the ex
           core_line_id: 'core-line-5',
         }),
       ],
-      'so_line',
+      'so_number',
     );
 
     const row = screen.getByTestId('row-row-1');
@@ -1346,7 +1351,7 @@ describe('AC-B6-1: the SO line column prints "SO<n> · L<n>" and links to the ex
     expect(link).toHaveAttribute('href', '/scm/sales-orders/core-so-1?tab=lines&line=core-line-5');
   });
 
-  it('falls back to plain text - the SO number alone - once the line id is not on the row yet', () => {
+  it('falls back to the bare SO number, linking to the sales order alone, once the line id is not on the row yet', () => {
     renderRows(
       [
         worklistRow({
@@ -1357,13 +1362,16 @@ describe('AC-B6-1: the SO line column prints "SO<n> · L<n>" and links to the ex
           core_line_id: null,
         }),
       ],
-      'so_line',
+      'so_number',
     );
 
     const row = screen.getByTestId('row-row-2');
-    expect(within(row).getByText('SO402757')).toBeInTheDocument();
+    const link = within(row).getByText('SO402757').closest('a');
+    expect(link).not.toBeNull();
     expect(within(row).queryByText(/· L/)).not.toBeInTheDocument();
-    expect(row.querySelector('a')).toBeNull();
+    // Still the plain sales-order route (`orderInquiryRowHref`'s own fallback, unchanged
+    // since before S6) - not the line-specific deep link, since there is no line id yet.
+    expect(link).toHaveAttribute('href', '/scm/sales-orders/core-so-1');
   });
 });
 

@@ -671,18 +671,32 @@ export function QtyCell({ row }: { row: OrderInquiryWorklistRow }) {
   );
 }
 
+/**
+ * AC-B2-0 (`PLAN-board-oi-mechanical-22sep.md`, S2 round): a settle-in-place restates the
+ * SAME buy row with a new date and drops its ack back to `changed` - purchasing needs to
+ * see that here, beside the date, rather than a dedicated Ack column (there is none). The
+ * (i) reading "Was <qty> on <old date>" is the Qty cell's own `QtyAnnotationButton`; this
+ * tag is the OTHER half of the same fact, read off `ack_state` rather than `previous_qty`
+ * so it can never disagree about which rows still need a look.
+ */
 export function DeliveryDateCell({ row }: { row: OrderInquiryWorklistRow }) {
-  return row.delivery_date ? (
-    <span className="whitespace-nowrap">{formatDateInMalaysia(row.delivery_date)}</span>
-  ) : (
-    <Muted>No date</Muted>
+  const changed = ackStateOf(row) === 'changed';
+  if (!row.delivery_date) return <Muted>No date</Muted>;
+  return (
+    <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
+      {formatDateInMalaysia(row.delivery_date)}
+      {changed ? <WorklistPill testId={`delivery-date-changed-${row.id}`}>Changed</WorklistPill> : null}
+    </span>
   );
 }
 
 /**
  * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): `SO402757 · L5`, linking to that
- * exact sales-order line - plain text until the backend sends `core_line_id` (S6 BE half,
- * not yet built; documented in `services/orderInquiryService.ts`).
+ * exact sales-order line. The OI detail Lines tab's own "SO line" column (below) - it has
+ * no S/O no column of its own to carry this on. Fix round (22 Sep): the worklist's OWN
+ * "SO line" column was DROPPED - it sat beside the pre-existing S/O no column and printed
+ * the same SO number twice per row; the worklist's S/O no cell carries this same label and
+ * href directly instead (`useOrderInquiryWorklistColumns`'s `so_number` column).
  */
 export function SoLineCell({ row }: { row: OrderInquiryWorklistRow }) {
   const label = orderInquirySoLineLabel(row);
@@ -735,8 +749,10 @@ function FooterTotal({
 }
 
 /**
- * S6 (AC-B6-1): the "SO line" column, shared between the worklist and the OI detail Lines
- * tab so both screens name and link the same line the same way.
+ * S6 (AC-B6-1): the "SO line" column. Fix round (22 Sep): only the OI detail Lines tab
+ * (`orderInquiryHeaderLinesColumns.tsx`) uses this now - it has no S/O no column of its
+ * own to carry the link on. The worklist's S/O no cell carries the same label/href
+ * directly instead of a second column (see `SoLineCell`'s own doc comment above).
  */
 export function orderInquirySoLineColumn(): ColumnDef<OrderInquiryWorklistRow> {
   return {
@@ -873,31 +889,37 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => <DataGridColumnHeader title="S/O no" column={column} />,
         size: 150,
         meta: { headerTitle: 'S/O no', skeleton: <Skeleton className="h-4 w-20" /> },
-        // The way in. An adopted row reaches the CORE sales order and an authored one its
-        // project document; a row that can reach neither is plain text rather than a link
-        // that answers 404.
+        // The way in - AND (fix round, S6) the deep link (AC-B6-1): `SO402757 · L5` once
+        // the row carries a line number, the bare SO number otherwise, linking straight to
+        // the exact sales-order LINE when both `core_sales_order_id` and `core_line_id`
+        // are on the row. A second "SO line" column here duplicated this cell's own text
+        // (every row prints the same SO number twice) - the worklist has ONE S/O column,
+        // and it carries the line; the OI detail Lines tab, which has no S/O no column of
+        // its own, keeps the separate `orderInquirySoLineColumn()` below. Falls back to
+        // `orderInquiryRowHref` (the project document route) when no core line resolves -
+        // an adopted row reaches the CORE sales order and an authored one its project
+        // document; a row that can reach neither is plain text rather than a link that
+        // answers 404.
         cell: ({ row }) => {
-          const reference = row.original.so_number ?? 'Not numbered';
-          const href = orderInquiryRowHref(row.original);
+          const label = orderInquirySoLineLabel(row.original);
+          const href = orderInquirySoLineHref(row.original) ?? orderInquiryRowHref(row.original);
           if (!href)
             return (
-              <span className="block truncate" title={reference}>
-                {reference}
+              <span className="block truncate" title={label}>
+                {label}
               </span>
             );
           return (
             <Link
               href={href}
               className="block truncate font-medium text-primary hover:underline"
-              title={reference}
+              title={label}
             >
-              {reference}
+              {label}
             </Link>
           );
         },
       },
-      // S6 (AC-B6-1): the exact line, beside the sales order it belongs to.
-      orderInquirySoLineColumn(),
       {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,

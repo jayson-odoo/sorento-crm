@@ -683,6 +683,10 @@ _COLUMNS = (
     # Null when the mirror has no core line.
     SalesOrder.id.label("sales_order_id"),
     SalesOrderLine.id.label("core_line_id"),
+    # Fix round (22 Sep): AutoCount's own line number, for the S/O no cell's `SO402757 ·
+    # L5` label (`orderInquirySoLineLabel`) - the SAME `SalesOrderLine` join `core_line_id`
+    # above already reads, so this adds no join of its own.
+    SalesOrderLine.line_no.label("line_no"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.id.label("po_id"),
@@ -2085,6 +2089,9 @@ class OrderInquiryWorklistService:
             # when the mirror has no core line.
             "sales_order_id": row.sales_order_id,
             "core_line_id": row.core_line_id,
+            # Fix round (22 Sep): AutoCount's own line number, beside the two ids above -
+            # the S/O no cell's own `SO402757 · L5` label reads this.
+            "line_no": row.line_no,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,

@@ -66,6 +66,12 @@ def _raise_one_row(api, *, qty="10", with_core_line=True):
         db, core_so, world.product, world.own_wh, qty_ordered=qty,
         required_date=date(2026, 8, 25),
     )
+    # Fix round (22 Sep): `_core_line` never stamps AutoCount's own line number (it stays
+    # NULL by default), so this stamps ONE here - the worklist's own `line_no` field reads
+    # the CORE `SalesOrderLine.line_no`, a different field from the mirror's own `line_no`
+    # (`_project_line(..., line_no=1, ...)` below), and a test asserting it needs a real
+    # value to distinguish the two.
+    core.line_no = 7
     order = _project_so(
         db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
     )
@@ -118,6 +124,10 @@ def test_oi_row_payload_carries_core_line_id_and_sales_order_id(api):
     )
     assert worklist_row.get("core_line_id") == str(with_core["core"].id), worklist_row
     assert worklist_row.get("sales_order_id") == str(with_core["core_so"].id), worklist_row
+    # Fix round (22 Sep): AutoCount's own line number, beside the two ids above - the S/O
+    # no cell's own `SO402757 · L5` label reads this (worklist row payload only; the OI
+    # Lines tab's own `list_rows` feed already carries the MIRROR's separate `line_no`).
+    assert worklist_row.get("line_no") == 7, worklist_row
 
 
 # ---------------------------------------------------------------------------

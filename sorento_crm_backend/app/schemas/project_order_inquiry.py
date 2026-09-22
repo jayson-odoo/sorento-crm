@@ -379,6 +379,10 @@ class OrderInquiryWorklistRow(BaseModel):
     # core line.
     sales_order_id: Optional[str] = None
     core_line_id: Optional[str] = None
+    # Fix round (22 Sep): AutoCount's own line number, beside the two ids above - the S/O
+    # no cell's own `SO402757 · L5` label (`orderInquirySoLineLabel`) reads this. Null when
+    # the mirror has no core line (same as `core_line_id`).
+    line_no: Optional[int] = None
     is_adopted: bool = False
     # The placed purchase order this row traces to (same coalesce the PO NO column reads),
     # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without
