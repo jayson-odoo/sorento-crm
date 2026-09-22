@@ -1019,13 +1019,14 @@ def test_write_rows_admits_buy_covered_and_needs_level_products_with_a_suggestio
     needs_level products are ALL on the book now, not only a buy or firm project need.
     `suggested_qty` stays 0 for covered/needs_level.
 
-    Suggestion (owner ruling, review round ~11 Sep, superseding plan Slice 2 test 6):
-    reads like the plan grid's Decision label - "Stock N + PO N + Buy N" / "Nothing" -
-    never the engine's own `triggered_reason` prose. No free pool stock and no open PO
-    are seeded for any of the three products here, so the buy row's label is the bare
-    "Buy 12" (its own `rounded_qty`) and the covered/needs_level rows, with nothing to
-    buy, both read "Nothing" - still a non-empty string, so a covered/needs_level row
-    keeps SOME answer rather than a blank cell.
+    Suggestion (owner ruling, review round ~11 Sep, superseding plan Slice 2 test 6;
+    A3b, 22 Sep, moved the join from " + " to one "Label: N" part per line): reads
+    like the plan grid's Decision label - "Stock: N" / "PO: N" / "Buy: N", one per
+    line, or "Nothing" - never the engine's own `triggered_reason` prose. No free
+    pool stock and no open PO are seeded for any of the three products here, so the
+    buy row's label is the bare "Buy: 12" (its own `rounded_qty`) and the covered/
+    needs_level rows, with nothing to buy, both read "Nothing" - still a non-empty
+    string, so a covered/needs_level row keeps SOME answer rather than a blank cell.
     """
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
@@ -1060,7 +1061,7 @@ def test_write_rows_admits_buy_covered_and_needs_level_products_with_a_suggestio
     needs_row = _row(db, run, needs_p)
 
     assert float(buy_row.suggested_qty) == 12.0
-    assert buy_row.suggestion == "Buy 12", (
+    assert buy_row.suggestion == "Buy: 12", (
         "no free pool stock and no open PO were seeded, so the label is a bare Buy"
     )
 
@@ -1141,9 +1142,10 @@ def test_record_decision_accepts_a_row_whose_suggested_qty_is_zero(db):
 
 
 # =========================================================================== #
-# owner ruling (review round, ~11 Sep): Suggestion reads like the plan grid's
-# Decision label - "Stock N + PO N + Buy N" / "Nothing" - never the engine's own
-# triggered_reason prose ("reorder_level: net -1 <= level 50" was the complaint).
+# owner ruling (review round, ~11 Sep, colon/newline join per A3b 22 Sep): Suggestion
+# reads like the plan grid's Decision label - "Stock: N" / "PO: N" / "Buy: N", one
+# part per line - or "Nothing" - never the engine's own triggered_reason prose
+# ("reorder_level: net -1 <= level 50" was the complaint).
 # Mirrors `planEdits.suggestedDecisionFor` / `summariseMix` and `poCover.poOffset`
 # on the frontend byte for byte: stock first (free SITE POOL stock
 # `cover_service.propose_cover` would offer), then the open PO remainder
@@ -1182,7 +1184,7 @@ def _open_po_line(db, product, wh, *, po_number, qty_ordered, qty_received=0) ->
 def test_suggestion_offers_free_pool_stock_before_the_rest_of_the_buy(db):
     """Test 1: a buy of 487 with 1 unit of free stock at a SIBLING site-pool warehouse
     (not the buy rec's own warehouse - that stock is already inside its net) covers 1 of
-    it: "Stock 1 + Buy 486". `_open_po_line`/`_stock` are new local helpers so the
+    it: "Stock: 1\\nBuy: 486". `_open_po_line`/`_stock` are new local helpers so the
     seeding needs no cover_scope setting - `sources_in_scope` treats a row whose own pool
     is unknown, or every plausible reading of a product-grain "line", as unfiltered so
     long as the sibling shares the SAME pool (`pool_warehouse_id`), which this seed
@@ -1202,7 +1204,7 @@ def test_suggestion_offers_free_pool_stock_before_the_rest_of_the_buy(db):
 
     assert svc.write_rows(db, run.id) == 1
     row = _row(db, run, product)
-    assert row.suggestion == "Stock 1 + Buy 486"
+    assert row.suggestion == "Stock: 1\nBuy: 486"
 
 
 def test_suggestion_is_buy_only_with_no_stock_and_no_open_po(db):
@@ -1218,13 +1220,13 @@ def test_suggestion_is_buy_only_with_no_stock_and_no_open_po(db):
 
     assert svc.write_rows(db, run.id) == 1
     row = _row(db, run, product)
-    assert row.suggestion == "Buy 95"
+    assert row.suggestion == "Buy: 95"
 
 
 def test_suggestion_offsets_the_open_po_book_before_buying_the_rest(db):
     """Test 3: `poCover.poOffset` - `usePo = min(buy, poQty)`, `buy = max(buy - usePo, 0)`.
     90 needed, 20 owed on an open PO (already frozen as `po_open_qty` by issue #796), no
-    stock -> "PO 20 + Buy 70"."""
+    stock -> "PO: 20\\nBuy: 70"."""
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
     product = _product(db, stem="S797PO")
@@ -1237,7 +1239,7 @@ def test_suggestion_offsets_the_open_po_book_before_buying_the_rest(db):
 
     assert svc.write_rows(db, run.id) == 1
     row = _row(db, run, product)
-    assert row.suggestion == "PO 20 + Buy 70"
+    assert row.suggestion == "PO: 20\nBuy: 70"
 
 
 def test_suggestion_is_nothing_for_a_covered_or_needs_level_product(db):

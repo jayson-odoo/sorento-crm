@@ -11,30 +11,48 @@ on the Lines tab toolbar and pick **Order sheet PDF** or **Order sheet Excel**.
 ## What the sheet shows
 
 One row per product, with the plan's columns in the sheet's own order: **Item code**, **BRW on
-hand**, **Reorder level**, **Project qty**, **Dealer o/s**, **Order qty**, **Delivery**,
-**Project / customer**, **Supplier**, **BRW PO qty**, **BRW incoming qty**, **Last in qty**,
-**Last in date**, **Remarks**.
+hand**, **Reorder level**, **Project qty**, **Dealer o/s**, **Suggested qty**, **Suggestion**,
+**Order qty**, **Delivery**, **Project / customer**, **Supplier**, **Last cost**, **BRW PO
+qty**, **BRW incoming qty**, **Last in qty**, **Last in date**, **Remarks**.
 
 * **BRW on hand / BRW PO qty / BRW incoming qty** count the site pool only (active,
   non-project warehouses) - stock or supply sitting in a project bin is not on the sheet.
   **BRW PO qty** and **BRW incoming qty** are the same numbers the grid's PO and SPO columns
-  showed for that product on this run.
-* **Delivery** and **Project / customer** come from the project's own Order Inquiry: one
-  "Month - qty" line and one "Name - qty" line per entry. A product with no inquiry row shows
-  a blank Delivery cell even when it has Project demand elsewhere on the grid.
-* **Supplier** is the chosen supplier, or the suggested one if none has been chosen yet.
+  showed for that product on this run. **BRW incoming qty** prints one "container - quantity"
+  line per open shipment, or the bare quantity when a shipment names no container - the SPO
+  number itself is not shown. **BRW PO qty** still names each purchase order number.
+* **Suggestion** prints one part per line - **Stock:** what sits at BRW, **PO:** what is on
+  open purchase orders, **Buy:** the suggested quantity beside it in **Suggested qty**. It is
+  a reading of those figures, not a sum of them. A row with nothing to order reads "Nothing".
+* **Delivery** and **Project / customer** count exactly the order inquiry rows the plan is
+  buying for: raised or partly linked, acknowledged, not redirected to the shared pool, still
+  owed, on the sales orders picked in Start Plan, and due inside the plan's delivery window. A
+  product with no inquiry row in that scope shows blank Delivery and Project / customer cells
+  even when it has Project demand elsewhere on the grid. On a Project plan this is the same
+  row set the plan buys for, so **Project qty** reads the same figure as **Suggested qty**.
+* **Project / customer** reads **CUSTOMER / PROJECT**, the same way the Order Inquiries
+  worklist's Project column does: the project is the registered project's own title, or, for a
+  sales order adopted from AutoCount, that order's own project label.
+* **Supplier** is the chosen supplier, or the suggested one if none has been chosen yet - the
+  newest non-cancelled purchase order line for the product.
+* **Last cost**, right of Supplier, is the unit cost and currency on the newest purchase order
+  line that carries a price, for example "12.50 CNY" - blank when no priced line exists. A
+  costed line is not always the same purchase **Supplier** names: Last cost looks past a
+  costless newer line to find the newest one that carries a price.
 * **Last in qty** reads the newest shipping order line for the product, received or not - the
-  same line the chatbot's "last in" answer names. It prints "SPO number - container number -
-  quantity", or "SPO number - quantity" when that shipping order named no container. It is
-  blank when the product has no shipping order line at all.
+  same line the chatbot's "last in" answer names. It prints one "container - quantity" line,
+  or the bare quantity when that line names no container - the SPO number itself is not
+  shown. It is blank when the product has no shipping order line at all.
 * **Last in date** is that same line's expected delivery date, or its issue date when it has
   none.
 * **Remarks** shows the MOQ (for example "MOQ 1000") only when there is one.
 
-Every figure on the sheet is the plan's own - nothing is typed twice. The sheet prints exactly
-the rows the list shows (see [Run a reorder plan](run-a-reorder-plan.md#filters) for the
-covered-by-stock rows left off by default), so the Excel row count equals the plan's
-**Decisions** tile total.
+Every figure on the sheet is the plan's own - nothing is typed twice, with one exception:
+**Last cost** is read from current purchase-order data at export time, the same way
+Description and Category are on the low stock report, so it can move between two exports of
+the same run. The sheet prints exactly the rows the list shows (see
+[Run a reorder plan](run-a-reorder-plan.md#filters) for the covered-by-stock rows left off by
+default), so the Excel row count equals the plan's **Decisions** tile total.
 
 ## Getting the file
 
@@ -51,7 +69,7 @@ the background:
   My Downloads." instead of starting a second one.
 * If a sheet fails, the drawer shows the reason next to that row.
 
-**PDF** is a landscape sheet with one row per product, the same 14 columns; **Excel** is a
+**PDF** is a landscape sheet with one row per product, the same 17 columns; **Excel** is a
 workbook of the same rows.
 
 Only products with something to order are included. If more than 2,000 such products would be
