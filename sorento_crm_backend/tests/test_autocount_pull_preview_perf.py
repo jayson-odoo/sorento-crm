@@ -1,4 +1,4 @@
-"""RED tests for the AutoCount pull preview perf lane (T1-T8).
+"""RED tests for the AutoCount pull preview perf lane (T1-T8, round 2 T9-T11).
 
 Plan: documentation/plans/autocount/PLAN-autocount-pull-preview-perf.md
 UAC:  documentation/plans/autocount/autocount-pull-preview-perf-acceptance-criteria.md
@@ -8,6 +8,16 @@ REAL (non dry-run) run, `_update` being skipped when the diff is empty, the
 per-batch reference cache in `product_rules.ensure_reference` /
 `resolve_default_uom`, and `_apply_products`' own `unchanged` summary count are
 ALL the coder's deliverable for this slice.
+
+Round 2 (captain-authorised, the C1-C3 clone measurement still missed the
+<=90s target and a cProfile pass named the actual dominant cost): T9-T11 pin
+`MasterIngestService`'s new per-batch bulk preload for products - one pass
+over the batch's own codes/refs at the start of `ingest()`, instead of the
+same `resolve_master_by_code`/`IntegrationReferenceService.resolve`/
+`origin_of` queries running once per record. T9/T10 are RED until the
+preload exists at all; T11 (the failed-insert guard, T6's own analogue for
+this new map) is a guard - it exercises the SAME rollback-cleanup shape T6
+already proves for the C2 reference cache, just for the new code-to-id map.
 
 Substrate: `tests._pg_fixture.blank_session()` (Postgres, own blank schema, own
 seeded chain) for every test except T4, which drives `app.tasks.
@@ -529,3 +539,132 @@ class TestApplyProductsSummaryDistinguishesUnchanged:
         written = _job_rows(db, job_id)
         outcomes = sorted(w["outcome"] for w in written)
         assert outcomes == ["created", "updated"], written
+
+
+def _code_resolution_selects(calls: list[str]) -> list[str]:
+    """The bulk (or, pre-round-2, per-record) `upper(btrim(product_code))`
+    match `resolve_master_by_code`/the new batch preload both use - distinct
+    in shape from `_read_product_row`'s plain `WHERE id = :id` SELECT (C3,
+    round 1), which never mentions `product_code` inside an `upper(btrim(`
+    call at all."""
+    pattern = re.compile(r"upper\(\s*btrim\(", re.IGNORECASE)
+    return [
+        s for s in calls
+        if pattern.search(s) and re.search(r"product_code", s, re.IGNORECASE)
+    ]
+
+
+# ========================================================================= T9
+class TestBulkCodePreloadIsOneSelect:
+    """PP-9 round 2: code resolution for the WHOLE batch is one SELECT, not
+    one per record - the lever the round-1 clone measurement's own profile
+    named (see the PR body)."""
+
+    def test_t9_three_existing_products_issue_one_code_resolution_select(self, db):
+        rows = [_row() for _ in range(3)]
+        created = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest("products", rows)
+        assert created.created == 3, created.as_dict()
+        db.commit()
+
+        with _capture_sql(db) as calls:
+            again = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+                "products", [dict(r) for r in rows]
+            )
+
+        assert all(r.outcome is IngestOutcome.UPDATED for r in again.records), again.as_dict()
+        assert len(_code_resolution_selects(calls)) == 1, calls
+
+
+
+# ======================================================================== T10
+class TestBulkCodePreloadSeesSameBatchCreates:
+    """PP-9 round 2: a product CREATED earlier in the same batch is found by
+    a later duplicate-code record through the preload MAP (`_insert`
+    maintains it) - never an EXTRA per-record code-resolution query for that
+    later record specifically, and never a second CREATE."""
+
+    def test_t10_later_duplicate_code_record_adopts_via_the_map_not_a_query(self, db):
+        code = unique_code(MARKER)
+        record_a = _row(code=code, source_ref=f"{MARKER}:A:{uuid.uuid4().hex[:6]}")
+        record_b = _row(code=code, source_ref=f"{MARKER}:B:{uuid.uuid4().hex[:6]}")
+
+        with _capture_sql(db) as calls:
+            result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+                "products", [record_a, record_b]
+            )
+
+        entry_a, entry_b = result.records
+        assert entry_a.outcome is IngestOutcome.CREATED, entry_a
+        assert entry_b.outcome is IngestOutcome.UPDATED, entry_b
+        assert entry_b.entity_id == entry_a.entity_id, (entry_a, entry_b)
+
+        # TWO code-resolution SELECTs for the whole batch: the upfront
+        # preload (which found nothing for either record - the code did not
+        # exist yet) plus record A's own adopt-check, equally unavoidable
+        # (nothing could have preloaded a code before A itself created it).
+        # NOT three: record B's own adopt-by-code match comes from the map
+        # `_insert` updated when A was processed - a third SELECT here would
+        # mean B queried for itself too, exactly what the map exists to skip.
+        assert len(_code_resolution_selects(calls)) == 2, calls
+
+        product_count = db.execute(
+            text("SELECT count(*) FROM products WHERE upper(btrim(product_code)) = :c"),
+            {"c": code.upper()},
+        ).scalar()
+        assert product_count == 1, "must never create a second product for one code"
+
+
+# ======================================================================== T11
+class TestFailedInsertNeverPoisonsTheCodePreloadMap:
+    """PP-9 round 2: T6's own guard, re-run for the NEW code-to-id preload map
+    instead of `product_rules.ensure_reference`'s cache - a product CREATED
+    by a record whose savepoint later rolls back must never be served to the
+    next same-code record from the map.
+
+    The post-`_insert` failure is injected (`monkeypatch`) rather than
+    triggered through a naturally-occurring conflict: unlike a master
+    reference (T6), a product's own post-insert `_link` conflict paths are
+    already pre-empted by the EARLIER `resolve()` lookup (same entity_type,
+    same source_ref, checked before create/adopt is ever decided) - by
+    design, so there is no organic "insert succeeds, source_ref conflicts
+    right after" case for THIS entity_type to construct. The fault injection
+    isolates exactly the thing this test is about: whatever fails after
+    `_insert`, the savepoint rollback and the map cleanup must stay in sync.
+    """
+
+    def test_t11_rolled_back_insert_leaves_no_code_map_entry(self, db, monkeypatch):
+        from app.services.master_ingest_service import MasterIngestService as _MIS
+
+        shared_new_code = unique_code(f"{MARKER}NEWCODE")
+        record_a = _row(code=shared_new_code)
+        record_b = _row(code=shared_new_code)
+
+        real_link = _MIS._link
+        calls = {"n": 0}
+
+        def _flaky_link(self, entity_type, entity_id, payload):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # record_a only - a synthetic post-insert failure standing in
+                # for whatever real one might land after `_insert` some day;
+                # `real_link` never runs for it, so nothing IT would have
+                # added to the preload leaks either.
+                raise Exception(f"synthetic T11 failure for {payload.source_ref!r}")
+            return real_link(self, entity_type, entity_id, payload)
+
+        monkeypatch.setattr(_MIS, "_link", _flaky_link)
+
+        result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+            "products", [record_a, record_b]
+        )
+
+        entry_a, entry_b = result.records
+        assert entry_a.outcome is IngestOutcome.FAILED, entry_a
+        assert entry_b.outcome is IngestOutcome.CREATED, entry_b
+
+        rows = db.execute(
+            text("SELECT id FROM products WHERE upper(btrim(product_code)) = :c"),
+            {"c": shared_new_code.upper()},
+        ).mappings().all()
+        assert len(rows) == 1, rows
+        assert str(rows[0]["id"]) == entry_b.entity_id
