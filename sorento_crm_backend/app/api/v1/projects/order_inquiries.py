@@ -558,11 +558,23 @@ def export_order_inquiry_worklist_async(
     the `user_downloads` row, enqueue the render, mark it failed and answer 503 on an
     enqueue failure rather than leaving the row stuck pending.
     """
-    from app.models.base import get_company_scope
+    from app.api.v1.projects._common import acting_company_id
     from app.services.queue_service import enqueue_job
     from app.tasks.export_tasks import generate_order_inquiry_worklist_xlsx
 
     filters = payload.model_dump(exclude_none=True)
+    # Security review fix round 2, item 1: the SAME UUID guard the GET list/summary/
+    # matrix routes and the acknowledge route's own `filter` branch run - defense in
+    # depth alongside the schema's own `pattern=UUID_PATTERN` fields, and BEFORE any
+    # `user_downloads` row exists, so a malformed filter never reaches the worker.
+    _validate_worklist_filter_uuids(filters)
+    # The worker has no request-scoped company: snapshot the enqueuing request's own
+    # single-company scope so the task can adopt it - the render then sees exactly the
+    # rows this caller could see, not the worker's fail-closed UNSET default.
+    # `acting_company_id` (review fix round 3, item 4 - reuse, not reimplement) raises
+    # a clean 400 for an ambiguous/no scope BEFORE any `user_downloads` row exists,
+    # same as the UUID guard above.
+    company_id = acting_company_id(db)
 
     if DownloadService(db).has_in_flight(
         user_id=str(current_user["id"]), kind="order_inquiry_worklist_xlsx",
@@ -580,12 +592,6 @@ def export_order_inquiry_worklist_async(
         filename=filename,
     )
     try:
-        # The worker has no request-scoped company: snapshot the enqueuing request's
-        # own single-company scope so the task can adopt it - the render then sees
-        # exactly the rows this caller could see, not the worker's fail-closed UNSET
-        # default.
-        scope = get_company_scope(db)
-        company_id = next(iter(scope)) if isinstance(scope, frozenset) and len(scope) == 1 else None
         enqueue_job(
             generate_order_inquiry_worklist_xlsx,
             str(download.id),

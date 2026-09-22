@@ -960,13 +960,19 @@ def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str)
     The header names its own company (`OrderInquiry.company_id`), so - exactly the
     `_adopt_run_company_scope` shape `generate_order_sheet` uses for a reorder run -
     it is read under NO scope first (the row itself is what states the company), then
-    that company is adopted before the render touches anything company-scoped. A
-    header with no company (should not exist post-isolation, but the fail-closed rule
-    is never assumed away) is left under the worker's default UNSET scope: no rows,
-    no cost - visibly empty rather than wrong.
+    that company is adopted before the render touches anything company-scoped.
+
+    Security review fix round 2, item 2 (mirrors `generate_order_sheet`'s own fix,
+    Lane A fix round 2, sha 002fd3d2e on `fix/order-sheet-cells`): a header that is
+    missing, or carries a NULL `company_id` (should not exist post-isolation, but the
+    fail-closed rule is never assumed away), sets the scope to `UNSET` explicitly -
+    never left at the `None` (all-companies) scope used to look the header up - and
+    the render is refused outright rather than silently producing an empty workbook
+    under that `None` scope, which `OrderInquiryWorklistService.export_xlsx` would
+    otherwise do without raising.
     """
     db = SessionLocal()
-    from app.models.base import get_company_scope
+    from app.models.base import UNSET, get_company_scope
     from app.models.project_so import OrderInquiry
 
     caller_scope = get_company_scope(db)
@@ -976,13 +982,19 @@ def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str)
     if company_id:
         set_company_scope(db, frozenset({str(company_id)}))
     else:
+        set_company_scope(db, UNSET)
         logger.warning(
             "generate_order_inquiry_xlsx: order inquiry %s not found or carries no "
-            "company; export runs under no company", inquiry_id,
+            "company; refusing to export", inquiry_id,
         )
     svc = DownloadService(db)
     try:
         svc.mark_processing(download_id)
+        if not company_id:
+            raise ValueError(
+                f"Order inquiry {inquiry_id} could not be found or carries no "
+                "company; refusing to export."
+            )
         row = svc.get(download_id)
         filename = row.filename if row else None
 

@@ -36,6 +36,36 @@ __all__ = ["api"]  # re-exported fixture
 HEADERS_BASE = f"{BASE}/order-inquiries"
 
 
+def _grant_view_permission(db, user_id: str) -> None:
+    """Give `user_id` a real role carrying `projects.projects.view` (AC-B7's own
+    `VIEW`), seeded directly in the caller's scratch-schema session so an
+    `X-API-Key`-only request that DID resolve to a real, permitted user would still
+    succeed - proving the refusal the AC-B7 tests assert is about the AUTH METHOD,
+    never a missing grant. Mirrors `tests/scm/test_order_sheet_export_downloads.py:
+    288-292`'s own role assignment, adapted for `blank_session`'s isolated scratch
+    schema: that sibling test looks up an ALREADY-seeded `purchasing` role by slug on
+    the shared local Postgres (`scm_app`'s own substrate); a blank scratch schema has
+    no seeded RBAC rows at all, so the role/permission/grant are built here instead of
+    looked up."""
+    from app.models.user import UserPermission, UserRole, UserRolePermission, UserRoleAssignment
+
+    role = UserRole(id=_uid(), slug=f"{MARKER}-role-{_uid()[:8]}", name=f"{MARKER} role {_uid()[:8]}")
+    permission = (
+        db.query(UserPermission).filter(UserPermission.slug == "projects.projects.view").first()
+    )
+    if permission is None:
+        permission = UserPermission(
+            id=_uid(), slug="projects.projects.view", name="Projects: view",
+        )
+        db.add(permission)
+        db.flush()
+    db.add(role)
+    db.flush()
+    db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=permission.id))
+    db.add(UserRoleAssignment(id=_uid(), user_id=user_id, role_id=role.id))
+    db.flush()
+
+
 class _NoCloseSession:
     """Lets a task function's own ``SessionLocal()`` reuse the test's rolled-back
     savepoint session instead of opening a real, separate connection that cannot see
@@ -186,6 +216,13 @@ def test_detail_export_post_rejects_api_key_only_principal_AC_B7():
     and would hide this"). Only `get_db` is overridden here; a REAL, resolvable
     integration key sent with NO Authorization header proves the refusal is about
     the AUTH METHOD, not a missing permission or an unresolvable key.
+
+    Correctness review fix round 3, item 1 (BLOCKER): the integration user MUST
+    carry the `VIEW` permission for real (`_grant_view_permission`) - without it the
+    401/403 this test asserts is ambiguous between "wrong auth method" and "right
+    auth method, no grant", and `require_permission_with_api_key` (the WRONG,
+    api-key-accepting dependency) answers 403 here too, for want of a role, hiding
+    exactly the defect this test exists to catch.
     """
     from fastapi.testclient import TestClient
 
@@ -210,6 +247,7 @@ def test_detail_export_post_rejects_api_key_only_principal_AC_B7():
         )
         db.add(user)
         db.flush()
+        _grant_view_permission(db, user.id)
         integration = Integration(
             id=_uid(), name=f"{MARKER}-{_uid()[:8]}", type="autocount_esb",
             act_as_user_id=user.id, is_active=True,
@@ -240,7 +278,10 @@ def test_worklist_export_post_rejects_api_key_only_principal_AC_B7():
     """AC-B7, the list-page POST's own version of the test above - same reasoning,
     same fixture shape (no unconditional override of both current-user
     dependencies), a different route (`POST /order-inquiries/export`, no source
-    entity)."""
+    entity).
+
+    Correctness review fix round 3, item 1: same real `VIEW` grant as the detail
+    test above - see its docstring for why."""
     from fastapi.testclient import TestClient
 
     from app.database import get_db
@@ -263,6 +304,7 @@ def test_worklist_export_post_rejects_api_key_only_principal_AC_B7():
         )
         db.add(user)
         db.flush()
+        _grant_view_permission(db, user.id)
         integration = Integration(
             id=_uid(), name=f"{MARKER}-{_uid()[:8]}", type="autocount_esb",
             act_as_user_id=user.id, is_active=True,
@@ -415,6 +457,79 @@ def test_worklist_get_export_route_still_answers_AC_B6_transitional(api):
 
 
 # =========================================================================== #
+# Security review fix round 2, item 1: the worklist POST's filters must be
+# validated the SAME way the GET route's own query params are - a malformed
+# `project_id`/`supplier_id`/`agent`, an over-long `query`, or a `state` outside the
+# closed set answers 4xx IN-REQUEST, before any `user_downloads` row exists.
+# =========================================================================== #
+
+
+def test_worklist_export_post_rejects_bad_project_id_AC_B6_validation(api):
+    client, db, company_id = api
+    _header(db, company_id)
+
+    resp = client.post(f"{HEADERS_BASE}/export", json={"project_id": "not-a-uuid"})
+
+    assert resp.status_code in (400, 422), resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE kind = 'order_inquiry_worklist_xlsx'"
+    )).scalar()
+    assert count == 0, "a malformed filter must not create a download row"
+
+
+def test_worklist_export_post_rejects_bad_supplier_id_AC_B6_validation(api):
+    client, db, company_id = api
+    _header(db, company_id)
+
+    resp = client.post(f"{HEADERS_BASE}/export", json={"supplier_id": "not-a-uuid"})
+
+    assert resp.status_code in (400, 422), resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE kind = 'order_inquiry_worklist_xlsx'"
+    )).scalar()
+    assert count == 0
+
+
+def test_worklist_export_post_rejects_bad_agent_AC_B6_validation(api):
+    client, db, company_id = api
+    _header(db, company_id)
+
+    resp = client.post(f"{HEADERS_BASE}/export", json={"agent": "not-a-uuid"})
+
+    assert resp.status_code in (400, 422), resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE kind = 'order_inquiry_worklist_xlsx'"
+    )).scalar()
+    assert count == 0
+
+
+def test_worklist_export_post_rejects_overlong_query_AC_B6_validation(api):
+    client, db, company_id = api
+    _header(db, company_id)
+
+    resp = client.post(f"{HEADERS_BASE}/export", json={"query": "x" * 500})
+
+    assert resp.status_code == 422, resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE kind = 'order_inquiry_worklist_xlsx'"
+    )).scalar()
+    assert count == 0
+
+
+def test_worklist_export_post_rejects_bad_state_AC_B6_validation(api):
+    client, db, company_id = api
+    _header(db, company_id)
+
+    resp = client.post(f"{HEADERS_BASE}/export", json={"state": "bogus"})
+
+    assert resp.status_code == 422, resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE kind = 'order_inquiry_worklist_xlsx'"
+    )).scalar()
+    assert count == 0
+
+
+# =========================================================================== #
 # AC-B2: the tasks
 # =========================================================================== #
 
@@ -486,6 +601,144 @@ def test_generate_order_inquiry_xlsx_marks_failed_when_export_raises_AC_B2(api, 
     row = DownloadService(db).get(str(dl.id))
     assert row.status == "failed", row.status
     assert "render exploded" in (row.error or ""), row.error
+
+
+# =========================================================================== #
+# Security review fix round 2, item 2 (mirrors `tests/scm/test_order_sheet_export_
+# downloads.py::test_generate_order_sheet_fails_closed_when_the_run_has_no_company`,
+# Lane A fix round 2, sha 002fd3d2e on `fix/order-sheet-cells`): a header with a NULL
+# `company_id` must not export under the `None` (all-companies) scope the task starts
+# under while it looks the header up - it fails closed, never silently.
+# =========================================================================== #
+
+
+def test_generate_order_inquiry_xlsx_fails_closed_when_the_header_has_no_company(
+    api, monkeypatch,
+):
+    from app.services.download_service import DownloadService
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+    from app.tasks import export_tasks
+
+    client, db, company_id = api
+    seeded = _header(db, company_id)
+    inquiry_id = seeded["inquiry"].id
+    db.execute(text(
+        "UPDATE order_inquiries SET company_id = NULL WHERE id = :id"
+    ), {"id": inquiry_id})
+    user_id = _user(db, f"{MARKER} exporter-nocompany")
+    db.flush()
+
+    dl = DownloadService(db).create(
+        user_id=user_id, kind="order_inquiry_xlsx", source_entity_type="order_inquiry",
+        source_entity_id=inquiry_id, filename="OI-nocompany.xlsx",
+    )
+
+    calls: list[dict] = []
+
+    def _spy_export(self, **filters):
+        calls.append(filters)
+        return ("OI-nocompany.xlsx", b"fake-bytes")
+
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+    monkeypatch.setattr(OrderInquiryWorklistService, "export_xlsx", _spy_export)
+
+    result = export_tasks.generate_order_inquiry_xlsx(str(dl.id), inquiry_id, user_id)
+
+    assert result["status"] == "failed", result
+    row = DownloadService(db).get(str(dl.id))
+    assert row.status == "failed", row.status
+    assert not row.storage_key, "no bytes may be uploaded for a company-less header"
+    assert calls == [], "the render must never run for a company-less header"
+
+
+def test_generate_order_inquiry_xlsx_fails_closed_when_the_header_does_not_exist(
+    monkeypatch,
+):
+    """The other half: an `inquiry_id` that names no row at all must also fail closed
+    rather than export under `None` (all companies)."""
+    from app.services.download_service import DownloadService
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+    from app.tasks import export_tasks
+
+    from ._pg_fixture import blank_session
+
+    with blank_session() as db:
+        missing_inquiry_id = _uid()
+        user_id = _user(db, f"{MARKER} exporter-missing")
+        db.flush()
+
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="order_inquiry_xlsx", source_entity_type="order_inquiry",
+            source_entity_id=missing_inquiry_id, filename="OI-missing.xlsx",
+        )
+
+        calls: list[dict] = []
+
+        def _spy_export(self, **filters):
+            calls.append(filters)
+            return ("OI-missing.xlsx", b"fake-bytes")
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+        monkeypatch.setattr(OrderInquiryWorklistService, "export_xlsx", _spy_export)
+
+        result = export_tasks.generate_order_inquiry_xlsx(
+            str(dl.id), missing_inquiry_id, user_id,
+        )
+
+        assert result["status"] == "failed", result
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "failed", row.status
+        assert calls == [], "the render must never run for a missing header"
+
+
+def test_generate_order_inquiry_xlsx_real_render_sees_the_headers_own_row(api, monkeypatch):
+    """Correctness review fix round 3, item 2: the worker's company adoption exercised
+    through a REAL `export_xlsx` render - no monkeypatch on it - so the assertion is
+    that the ADOPTED SCOPE actually let the render see the seeded row, not merely that
+    a mocked function was called with the right arguments. The negative half (a
+    company-less header) is already covered, more strongly, by the two fail-closed
+    tests above: since fix round 2 that header now REFUSES to render at all (raises,
+    `export_xlsx` never called) rather than rendering an empty book, so there is no
+    separate "renders empty" case left to prove for this task.
+    """
+    import io
+
+    import openpyxl
+
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+
+    client, db, company_id = api
+    item_code = f"{MARKER}-REALITEM"
+    seeded = _header(db, company_id, rows=[{"item_code": item_code}])
+    inquiry_id = seeded["inquiry"].id
+    user_id = _user(db, f"{MARKER} exporter-real")
+    db.flush()
+
+    dl = DownloadService(db).create(
+        user_id=user_id, kind="order_inquiry_xlsx", source_entity_type="order_inquiry",
+        source_entity_id=inquiry_id, filename="OI-real.xlsx",
+    )
+
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+    captured: dict = {}
+
+    class _FakeBackend:
+        def upload_file(self, *, file_content, file_path, content_type):
+            captured["bytes"] = file_content
+            return (file_path, None)
+
+    monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
+    monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
+
+    result = export_tasks.generate_order_inquiry_xlsx(str(dl.id), inquiry_id, user_id)
+
+    assert result["status"] == "ready", result
+    wb = openpyxl.load_workbook(io.BytesIO(captured["bytes"]))
+    values = [
+        cell.value for sheet in wb.worksheets for row in sheet.iter_rows() for cell in row
+    ]
+    assert item_code in values, "the adopted company scope must let the render see the row"
 
 
 def test_generate_order_inquiry_worklist_xlsx_marks_ready_AC_B2(api, monkeypatch):
@@ -561,6 +814,121 @@ def test_generate_order_inquiry_worklist_xlsx_marks_failed_when_export_raises_AC
     row = DownloadService(db).get(str(dl.id))
     assert row.status == "failed", row.status
     assert "render exploded" in (row.error or ""), row.error
+
+
+def test_generate_order_inquiry_worklist_xlsx_real_render_with_company_id_kwarg(
+    api, monkeypatch,
+):
+    """Correctness review fix round 3, item 2: a REAL `export_xlsx` render (no
+    monkeypatch on it) with `company_id` set to the caller's own company - the
+    seeded row's item code must be in the workbook bytes, proving the adopted scope
+    actually let the render see it."""
+    import io
+
+    import openpyxl
+
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+
+    client, db, company_id = api
+    item_code = f"{MARKER}-WLREALITEM"
+    _header(db, company_id, rows=[{"item_code": item_code}])
+    user_id = _user(db, f"{MARKER} exporter-real-wl")
+    db.flush()
+
+    dl = DownloadService(db).create(
+        user_id=user_id, kind="order_inquiry_worklist_xlsx",
+        filename="order-inquiries-real.xlsx",
+    )
+
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+    captured: dict = {}
+
+    class _FakeBackend:
+        def upload_file(self, *, file_content, file_path, content_type):
+            captured["bytes"] = file_content
+            return (file_path, None)
+
+    monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
+    monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
+
+    result = export_tasks.generate_order_inquiry_worklist_xlsx(
+        str(dl.id), {}, user_id, company_id=str(company_id),
+    )
+
+    assert result["status"] == "ready", result
+    wb = openpyxl.load_workbook(io.BytesIO(captured["bytes"]))
+    values = [
+        cell.value for sheet in wb.worksheets for row in sheet.iter_rows() for cell in row
+    ]
+    assert item_code in values, "the adopted company scope must let the render see the row"
+
+
+def test_generate_order_inquiry_worklist_xlsx_real_render_with_no_company_id_sees_nothing(
+    monkeypatch,
+):
+    """The other half: `company_id=None` (the default - a caller with no
+    single-company scope) must render under the worker's fail-closed UNSET default,
+    never a broader one - the seeded row must NOT appear. Uses a fresh
+    `blank_session()` rather than the `api` fixture, whose own `company_scope`
+    context manager would otherwise leave the session scoped to that fixture's
+    company even though this call passes no `company_id` at all - a false pass.
+
+    `set_company_scope(db, UNSET)` runs right before the task call, after every
+    seed: `tests/conftest.py`'s own `after_begin` listener defaults an UNTOUCHED
+    session's scope to Sorento for legacy-test convenience (`session.info.
+    setdefault(...)`, never production's real default), so without this the test
+    would inherit that convenience scope - which happens to be the SAME company
+    the row was seeded under - and pass for the wrong reason, exactly the gap this
+    test exists to close. A real, untouched `SessionLocal()` in production starts
+    with no such default.
+    """
+    import io
+
+    import openpyxl
+
+    from app.models.base import UNSET, set_company_scope
+    from app.services import project_seed_service
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+
+    from ._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        item_code = f"{MARKER}-WLNOCOMPANY"
+        _header(db, company_id, rows=[{"item_code": item_code}])
+        user_id = _user(db, f"{MARKER} exporter-nocompany-wl")
+        db.flush()
+
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="order_inquiry_worklist_xlsx",
+            filename="order-inquiries-nocompany.xlsx",
+        )
+        set_company_scope(db, UNSET)
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+        captured: dict = {}
+
+        class _FakeBackend:
+            def upload_file(self, *, file_content, file_path, content_type):
+                captured["bytes"] = file_content
+                return (file_path, None)
+
+        monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
+        monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
+
+        result = export_tasks.generate_order_inquiry_worklist_xlsx(
+            str(dl.id), {}, user_id,
+        )
+
+        assert result["status"] == "ready", result
+        wb = openpyxl.load_workbook(io.BytesIO(captured["bytes"]))
+        values = [
+            cell.value for sheet in wb.worksheets for row in sheet.iter_rows() for cell in row
+        ]
+        assert item_code not in values, "a company-less caller must not see any company's rows"
 
 
 # =========================================================================== #
