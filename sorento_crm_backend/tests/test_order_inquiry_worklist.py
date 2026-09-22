@@ -175,6 +175,13 @@ def _client(db, user_id: str, permissions):
     from app.services.user_service import UserPermissionService
 
     actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    # Captured BEFORE this call's own overrides are set, so `_restore` can put back
+    # whatever an OUTER `_client` call (an `_as(...)` block nested inside `api`, for
+    # instance) had already installed - an unconditional `app.dependency_overrides.
+    # clear()` here wiped the outer client's overrides too, so the outer `client`
+    # object used again after the `with` block exited fell through to the REAL
+    # dependencies with no override at all.
+    previous_overrides = dict(app.dependency_overrides)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: dict(actor)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
@@ -183,6 +190,7 @@ def _client(db, user_id: str, permissions):
     originals = (
         UserPermissionService.check_user_has_permission,
         UserPermissionService.get_user_permission_slugs,
+        previous_overrides,
     )
     granted = list(permissions)
     UserPermissionService.check_user_has_permission = (
@@ -199,6 +207,7 @@ def _restore(originals) -> None:
     UserPermissionService.check_user_has_permission = originals[0]
     UserPermissionService.get_user_permission_slugs = originals[1]
     app.dependency_overrides.clear()
+    app.dependency_overrides.update(originals[2])
 
 
 def _seed(db, company_id: str, user_id: str) -> dict:

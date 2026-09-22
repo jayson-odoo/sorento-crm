@@ -114,30 +114,41 @@ _UUID_RE = re.compile(
 
 
 def test_pool_location_options_every_active_pool():
+    """A "site pool" is what the board's own pools axis already returns
+    (`stock-detail?group=pools`): a warehouse some OTHER active warehouse's own
+    `pool_warehouse_id` names (`group_netting.py:284-288`, unchanged by this fix -
+    captain's ruling, review round). So each of BRW, DC1, WH3 is seeded here WITH a
+    group member pointing at it, the same shape `test_fulfilment_board.py::
+    test_the_pools_drill_lists_every_site_pool_even_for_an_agent_with_no_group`
+    (`_pooled_warehouses`) already uses - this is "every ACTIVE pool is offered",
+    not "a standalone warehouse with no member becomes one"."""
     from app.services.project_fulfilment_board_service import FulfilmentBoardService
 
     with blank_session() as db:
         product = _product(db)
         brw = _warehouse(db, f"ZZBRW{_uid()[:4]}")
+        brw_member = _warehouse(db, f"{brw.warehouse_code}-IR", pool_warehouse_id=brw.id)
         dc1 = _warehouse(db, f"ZZDC1{_uid()[:4]}")
+        dc1_member = _warehouse(db, f"{dc1.warehouse_code}-IB", pool_warehouse_id=dc1.id)
         wh3 = _warehouse(db, f"ZZWH3{_uid()[:4]}")
+        wh3_member = _warehouse(db, f"{wh3.warehouse_code}-NTC", pool_warehouse_id=wh3.id)
         inactive_pool = _warehouse(db, f"ZZOFF{_uid()[:4]}")
+        _warehouse(db, f"{inactive_pool.warehouse_code}-XX", pool_warehouse_id=inactive_pool.id)
         inactive_pool.is_active = False
-        group_wh = _warehouse(db, f"{brw.warehouse_code}-IR", pool_warehouse_id=brw.id)
         db.flush()
 
         detail = FulfilmentBoardService(db).stock_detail(str(product.id), None, group="pools")
 
         codes = {entry["location"] for entry in detail["locations"]}
         assert {brw.warehouse_code, dc1.warehouse_code, wh3.warehouse_code} <= codes, (
-            "F1: every ACTIVE pool warehouse must be offered, including one with no "
-            f"group member naming it via pool_warehouse_id (DC1, WH3 here): {codes}"
+            f"F1: every ACTIVE pool warehouse must be offered: {codes}"
         )
-        assert group_wh.warehouse_code not in codes, (
-            f"a group warehouse (BRW-IR) is not a pool: {codes}"
-        )
+        for group_wh in (brw_member, dc1_member, wh3_member):
+            assert group_wh.warehouse_code not in codes, (
+                f"a group warehouse ({group_wh.warehouse_code}) is not a pool: {codes}"
+            )
         assert inactive_pool.warehouse_code not in codes, (
-            f"an inactive pool must be absent: {codes}"
+            f"an inactive pool must be absent, even with a group member: {codes}"
         )
         for entry in detail["locations"]:
             if entry["location"] in {brw.warehouse_code, dc1.warehouse_code, wh3.warehouse_code}:
@@ -156,6 +167,7 @@ def test_default_pool_setting_column_in_schema_and_payload():
     from app.database import get_db
     from app.dependencies import get_current_user
     from app.models.user import SystemSetting
+    from app.services.company_scope_resolver import apply_company_scope
     from app.services.user_service import UserPermissionService
 
     with blank_session() as db:
@@ -169,8 +181,20 @@ def test_default_pool_setting_column_in_schema_and_payload():
         def _override_db():
             yield db
 
+        # `warehouses` is company-scoped, and a principal with no grants resolves to
+        # UNSET - fail-closed, zero rows - so the PUT's own validation lookup would
+        # never find `brw`/`group_wh` at all. `None` is the documented "no predicate"
+        # state (same fix `test_default_uom_setting.py::settings_api` names for the
+        # identical trap): this test is about the column, not about isolation.
+        async def _scope():
+            from app.models.base import set_company_scope
+
+            set_company_scope(db, None)
+            return None
+
         app.dependency_overrides[get_db] = _override_db
         app.dependency_overrides[get_current_user] = lambda: dict(caller)
+        app.dependency_overrides[apply_company_scope] = _scope
         original_check = UserPermissionService.check_user_has_permission
         UserPermissionService.check_user_has_permission = lambda self, uid, slug: True
         try:
@@ -457,7 +481,11 @@ def test_unlink_never_touches_a_reserve_link(reserve_api):
     request_id = created.json()["id"]
     reserved = client.post(
         ROW_RESERVE_URL(request_id, row.id),
-        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
+        json={
+            "warehouse_id": world.site.id,
+            "qty_reserved": "50",
+            "reason": "BRW only has 50 in stock",
+        },
     )
     assert reserved.status_code == 200, reserved.text
     world.db.commit()
@@ -587,12 +615,18 @@ def _upgrade_chain(db, extra_path: Path | None) -> None:
 
 
 def _columns_of(db, table_name: str) -> set[str]:
+    """Scoped to the SCRATCH copies of the search path only, never `public` - the real
+    database (this lane's own CI DB is at `oirs_0002_reserve_round2` head already), where
+    `system_settings.oi_reserve_default_pool_warehouse_id` legitimately exists. Without
+    the exclusion, a downgrade of the SCRATCH schema's own column still reads it back via
+    `public`'s real row and the assertion passes for the wrong reason."""
     return {
         row[0]
         for row in db.execute(
             sa.text(
                 "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = :t AND table_schema = ANY (current_schemas(false))"
+                "WHERE table_name = :t AND table_schema = ANY (current_schemas(false)) "
+                "AND table_schema <> 'public'"
             ),
             {"t": table_name},
         ).fetchall()

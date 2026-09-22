@@ -1064,6 +1064,33 @@ def _load_reserve_seed_migration():
     return module
 
 
+def _load_round2_migration():
+    """`oirs_0002_reserve_round2` chains onto this file's own oirs_0001 migration and
+    creates `order_inquiry_reserve_events`, whose FK targets `order_inquiry_reserve_
+    request_rows` - a table `order_inquiry_reserve_events` ALREADY carries in `blank_
+    session()`'s own scratch schema, since that is built from the full `Base.metadata`,
+    not from whichever alembic revision has run. So downgrading oirs_0001 alone (which
+    drops `order_inquiry_reserve_request_rows`) hits `DependentObjectsStillExist` unless
+    oirs_0002's own table is dropped FIRST - the same order a real downgrade chain would
+    run in. Loaded by file name directly (not the content sniff `_find_reserve_seed_
+    migration_path` uses) since this is the one specific sibling migration the fix
+    needs, the same convention `test_order_inquiry_reserve_round2.py::_oirs_0001_path`
+    already uses for its own sibling lookup."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "oirs_0002_reserve_round2.py"
+    )
+    assert path.exists(), "oirs_0002_reserve_round2.py is missing from this branch"
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("zzt_reserve_round2_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_seed_migration_idempotent():
     module = _load_reserve_seed_migration()
     from alembic.migration import MigrationContext
@@ -1101,6 +1128,11 @@ def test_seed_migration_idempotent():
             assert cfg.get("one_email") is True
 
         with Operations.context(ctx):
+            # oirs_0002's own table first (its FK is what blocks oirs_0001's downgrade -
+            # see `_load_round2_migration`'s own docstring); running its downgrade needs
+            # no prior upgrade() call since `DROP TABLE IF EXISTS` / `DROP COLUMN IF
+            # EXISTS` are both safe against a table `blank_session()` already built.
+            _load_round2_migration().downgrade()
             module.downgrade()
 
         remaining_templates = db.execute(
