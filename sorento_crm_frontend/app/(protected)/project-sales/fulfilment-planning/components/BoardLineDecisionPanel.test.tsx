@@ -1141,7 +1141,16 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
    * event jsdom cannot synthesize the way a real mouse would), then read the accessible
    * `role="tooltip"` node's text.
    */
-  it('AC-F1: Save and Reject are disabled, and each carries the R1 sentence in a tooltip, while the draft still matches the frozen composition', async () => {
+  /**
+   * AC-F2 (`board-reject-on-confirmed-line-acceptance-criteria.md`, R3(b), 22 Sep 2026):
+   * Save keeps R1/R2's own gate untouched (still the REFUSAL sentence while the draft
+   * matches the frozen composition), but Reject is no longer dead weight on a covered line
+   * - it follows the uncovered branch's own rule, disabled only while the reason is blank,
+   * carrying the same "Say why this differs first" sentence `BoardVerdictActions`' popover
+   * Reject already uses. Was AC-F1 of `PLAN-board-draft-on-confirmed-line.md`, which this
+   * test used to pin Reject as dead-disabled with the R1 sentence too.
+   */
+  it('AC-F2: Save carries the R1 sentence disabled; Reject is disabled with "Say why this line is being refused first." while the reason is blank', async () => {
     renderPanel({ covered: true, decision: frozen });
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
@@ -1154,7 +1163,52 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
 
     fireEvent.focus(screen.getByTestId(`reject-decision-trigger-${KEY}`));
-    expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Say why this line is being refused first.',
+    );
+  });
+
+  it('AC-F3: typing a reason enables Reject on a covered line, and clicking it calls onDecide with the rejection', async () => {
+    const { onDecide } = renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const reject = screen.getByRole('button', { name: 'Reject' });
+    expect(reject).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Wrong site' },
+    });
+    expect(reject).toBeEnabled();
+
+    fireEvent.click(reject);
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'rejected',
+        reason: 'Wrong site',
+        suspected_system_issue: false,
+      }),
+    );
+  });
+
+  it('AC-F4: the Reject trigger is the same DOM node before and after typing the reason (no unmount on the enabled flip)', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const trigger = screen.getByTestId(`reject-decision-trigger-${KEY}`);
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Wrong site' },
+    });
+
+    expect(screen.getByTestId(`reject-decision-trigger-${KEY}`)).toBe(trigger);
+  });
+
+  it('AC-F1: before Amend is pressed, the covered line shows only Amend - no Save, no Reject', () => {
+    renderPanel({ covered: true, decision: frozen });
+
+    expect(screen.getByRole('button', { name: 'Amend' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save decision' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
   });
 
   it('AC-F2: enables Save once the draft differs from the frozen composition and a reason is typed', () => {

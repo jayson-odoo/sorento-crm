@@ -193,29 +193,80 @@ describe('AC-B3: a real draft (Saved, Rejected, Suggestion changed) shows Undo a
   });
 });
 
-describe('AC-B4: a covered (Confirmed) line shows Change decision only', () => {
-  it('renders only Change decision - no Undo, no Accept, no Reject (R3)', () => {
-    renderActions({
-      contribution: contribution({
-        covered: true,
-        decision: {
-          revision_no: 1,
-          timely_spo_qty: '0',
-          reserve: [],
-          borrow: [],
-          buy_qty: '43',
-        },
-      }),
-    });
+function coveredContribution(overrides: Partial<BoardContribution> = {}): BoardContribution {
+  return contribution({
+    covered: true,
+    decision: {
+      revision_no: 1,
+      timely_spo_qty: '0',
+      reserve: [],
+      borrow: [],
+      buy_qty: '43',
+    },
+    ...overrides,
+  });
+}
+
+describe('AC-R1 (`board-reject-on-confirmed-line-acceptance-criteria.md`, replaces AC-B4): a covered (Confirmed) line shows Change decision AND Reject', () => {
+  it('renders Change decision and the X - no Undo, no Accept (R3(b))', () => {
+    renderActions({ contribution: coveredContribution() });
 
     expect(
       screen.getByRole('button', { name: 'Change decision for SO397450 line 10' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Reject SO397450 line 10' }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Undo/ })).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /as suggested$/ }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Reject/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('AC-R2/AC-R3 (`board-reject-on-confirmed-line-acceptance-criteria.md`): the X on a covered line opens the same reject popover', () => {
+  it('AC-R2: opens on the X with the reason textarea, the checkbox and a Reject button disabled while blank', async () => {
+    const user = userEvent.setup();
+    renderActions({ contribution: coveredContribution() });
+
+    await user.click(screen.getByRole('button', { name: 'Reject SO397450 line 10' }));
+
+    expect(await screen.findByText('Why this differs')).toBeInTheDocument();
+    const textarea = screen.getByPlaceholderText('In your own words');
+    const rejectSubmit = screen.getByRole('button', { name: 'Reject' });
+    expect(rejectSubmit).toBeDisabled();
+
+    await user.type(textarea, 'Wrong site');
+    expect(rejectSubmit).toBeEnabled();
+  });
+
+  it('AC-R3: submitting a typed reason calls onDecide with verdict rejected, and the row click never fires', async () => {
+    const user = userEvent.setup();
+    const { onDecide, onRowClick } = renderActions({ contribution: coveredContribution() });
+
+    await user.click(screen.getByRole('button', { name: 'Reject SO397450 line 10' }));
+    await user.type(screen.getByPlaceholderText('In your own words'), 'Wrong site');
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+
+    expect(onDecide).toHaveBeenCalledWith({
+      verdict: 'rejected',
+      reason: 'Wrong site',
+      suspected_system_issue: false,
+    });
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('AC-R3/AC-B8 reused: a failed onDecide keeps the popover open with the typed reason', async () => {
+    const user = userEvent.setup();
+    const onDecide = vi.fn().mockResolvedValue(false);
+    renderActions({ contribution: coveredContribution(), onDecide });
+
+    await user.click(screen.getByRole('button', { name: 'Reject SO397450 line 10' }));
+    await user.type(screen.getByPlaceholderText('In your own words'), 'Wrong site');
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1));
+    expect(screen.getByPlaceholderText('In your own words')).toHaveValue('Wrong site');
   });
 });
 

@@ -1055,8 +1055,87 @@ def test_a_plain_approval_on_a_confirmed_line_is_refused(api):
     )
 
 
-def test_a_plain_rejection_on_a_confirmed_line_is_refused(api):
-    """AC-B2: the other verdict R1 refuses outright on a covered line."""
+def test_a_rejection_with_a_reason_on_a_confirmed_line_uncovers_it_and_records_the_rejection(api):
+    """AC-B1/AC-B2 (`PLAN-board-reject-on-confirmed-line.md`, R3(b), 22 Sep 2026): reject on
+    a covered line is no longer refused outright - it takes the line OUT of the confirmation
+    and records the rejection, in one step. Supersedes the old AC-B2 of
+    `PLAN-board-draft-on-confirmed-line.md`, which this test used to pin as a flat 409
+    (`test_a_plain_rejection_on_a_confirmed_line_is_refused`). This line is the ONLY one the
+    decision covers, so the whole revision retires (AC-B3's `supersede_for_material_change`
+    branch) rather than a fresh one naming what is left."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision, SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+    old_decision_id = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+        .id
+    )
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one_or_none()
+    )
+    assert active is None, "the only covered line just left - nothing is confirmed any more"
+    superseded = db.query(SOSupplyDecision).filter(SOSupplyDecision.id == old_decision_id).one()
+    assert superseded.superseded_reason == "wrong site"
+    draft = (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .one()
+    )
+    assert draft.decision["verdict"] == "rejected"
+
+
+def test_a_rejection_with_no_reason_on_a_confirmed_line_is_refused(api):
+    """AC-B5: a reason is required to take a confirmed line out - blank answers 422 and
+    nothing is uncovered or written."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision, SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": ""})
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_line_reject_reason_required"
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .count()
+        == 1
+    ), "still covered - nothing was uncovered"
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 0
+    )
+
+
+def test_an_approval_on_a_confirmed_line_still_refuses_with_409(api):
+    """AC-B6: every OTHER verdict on a covered line is unchanged by R3(b) - only `rejected`
+    (this lane) and `amended` (R1) get past the guard. Guards against a reject-shaped fix
+    that widened the exemption to every verdict."""
     from app.models.project_so import SOSupplyDecisionDraft
 
     client, world, core_so, core_line, order, line = _world(api)
@@ -1064,7 +1143,7 @@ def test_a_plain_rejection_on_a_confirmed_line_is_refused(api):
     key = _contribution(_board(client, core_so), core_so.so_number)["key"]
     _confirm_full_qty(client, world, order, line)
 
-    response = _save(client, key, decision={"verdict": "rejected", "reason": "local"})
+    response = _save(client, key, decision=_approval_body())
 
     assert response.status_code == 409, response.text
     assert response.json()["code"] == "board_line_already_confirmed"
@@ -1074,6 +1153,108 @@ def test_a_plain_rejection_on_a_confirmed_line_is_refused(api):
         .count()
         == 0
     )
+
+
+def _covered_two_line_world(api, *, buy_qty="10", reserve_qty="6"):
+    """Two lines of ONE order, one bought (raises an OI row) and one reserved off the pool,
+    confirmed together - the shape a reject-one-keep-one covered line needs: rejecting line
+    1 must leave line 2's coverage and allocation untouched (AC-B2), and retire line 1's own
+    raised row (AC-B4)."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=buy_qty)
+    product_2 = _product(db)
+    core_line_2 = _core_line(db, core_so, product_2, world.own_wh, qty_ordered=reserve_qty)
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line_1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=20, product=product_2, core_line=core_line_2)
+    db.commit()
+
+    confirm = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line_1.id, buy_qty=buy_qty),
+                _line_payload(
+                    line_2.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": reserve_qty}]
+                ),
+            ]
+        },
+    )
+    assert confirm.status_code == 200, confirm.text
+    db.commit()
+    return client, world, core_so, order, core_line_1, line_1, core_line_2, line_2
+
+
+def test_rejecting_one_covered_line_leaves_a_sibling_lines_allocation_untouched(api):
+    """AC-B2: the OTHER line an active decision covered stays covered, with its allocation
+    exactly as it was - `uncover_lines`' own carry-forward rule, asserted at this seam."""
+    from app.models.project_so import DECISION_ACTIVE, SOLineAllocation, SOSupplyDecision
+
+    client, world, core_so, order, core_line_1, line_1, core_line_2, line_2 = (
+        _covered_two_line_world(api)
+    )
+    db = world.db
+    before = (
+        db.query(SOLineAllocation).filter(SOLineAllocation.so_line_id == line_2.id).one()
+    )
+    before_qty, before_wh = before.qty, before.warehouse_id
+    key_1 = next(
+        contribution["key"]
+        for contribution in _board(client, core_so)["contributions"]
+        if contribution["item_code"] == world.product.product_code
+    )
+
+    response = _save(client, key_1, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+    )
+    covered_lines = {
+        (snapshot or {}).get("core_line_id") for snapshot in active.line_snapshots or []
+    }
+    assert covered_lines == {str(core_line_2.id)}
+    after = (
+        db.query(SOLineAllocation).filter(SOLineAllocation.so_line_id == line_2.id).one()
+    )
+    assert after.qty == before_qty
+    assert after.warehouse_id == before_wh
+
+
+def test_rejecting_a_covered_line_retires_its_raised_order_row(api):
+    """AC-B4: the line's raised supply OI row is no longer `raised` once the reject has
+    taken the line out of the confirmation."""
+    from app.models.project_so import IV_ORDER, INQUIRY_RAISED, OrderInquiryRow
+
+    client, world, core_so, order, core_line_1, line_1, core_line_2, line_2 = (
+        _covered_two_line_world(api)
+    )
+    db = world.db
+    oi_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_1.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    assert oi_row.state == INQUIRY_RAISED, "sanity: the row has to start raised"
+    key_1 = next(
+        contribution["key"]
+        for contribution in _board(client, core_so)["contributions"]
+        if contribution["item_code"] == world.product.product_code
+    )
+
+    response = _save(client, key_1, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    db.refresh(oi_row)
+    assert oi_row.state != INQUIRY_RAISED
 
 
 def test_an_amendment_on_a_confirmed_line_still_saves(api):
