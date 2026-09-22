@@ -21,8 +21,8 @@ Plan**) to see the upload entries:
 * **Refresh**
 
 The same two order-book uploads are also reachable from their own lists: **Upload sales orders**
-is under the **Start** button on **[Supply Chain → Orders → Sales Orders](/scm/sales-orders)**,
-and **Upload purchase orders** is under **Actions** on
+is under **Actions** on **[Supply Chain → Orders → Sales Orders](/scm/sales-orders)**, and
+**Upload purchase orders** is under **Actions** on
 **[Supply Chain → Orders → Purchase Orders](/scm/purchase-orders)**. All three open the same
 dialog.
 

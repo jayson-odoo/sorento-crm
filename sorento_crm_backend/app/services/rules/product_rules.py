@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.procurement import ProductSupplier, Supplier
 from app.services.rules.master_rules import (
     code_name_columns,
+    normalize_code,
     resolve_master_by_code,
     resolve_master_by_name,
 )
@@ -155,6 +156,7 @@ def ensure_reference(
     company_id: Optional[str],
     *,
     name: Optional[str] = None,
+    cache: Optional[dict] = None,
 ) -> tuple[str, bool]:
     """Resolve a master-data value, creating the row when it is unknown (D3).
 
@@ -169,14 +171,28 @@ def ensure_reference(
     when it actually made the row. `name` overrides the `code = name`
     convention on CREATE for the one reference whose human name is known
     (the bootstrapped `EA` / `Each` unit); matching is still by code then name.
+
+    `cache` (C2, `PLAN-autocount-pull-preview-perf.md`): an optional caller-
+    owned dict, keyed `(model, company_id, normalised code)`, that a batch
+    ingest (`MasterIngestService`) passes to skip the two SELECTs for a code
+    it has already resolved earlier in the SAME batch. Only a FOUND id is
+    ever written to it - a CREATE happens inside that record's own SAVEPOINT
+    and is rolled back whole if the record later fails (T6), so caching an id
+    this call just created would hand the next record a dead one. `None`
+    (every caller but the batch ingest) skips the cache entirely, unchanged.
     """
     value = (code or "").strip()
     if not value:
         raise ValueError("ensure_reference requires a non-blank code")
+    cache_key = (model, company_id, normalize_code(value)) if cache is not None else None
+    if cache is not None and cache_key in cache:
+        return cache[cache_key], False
     existing_id = resolve_master_by_code(db, model, value, company_id)
     if existing_id is None:
         existing_id = resolve_master_by_name(db, model, value, company_id)
     if existing_id is not None:
+        if cache is not None:
+            cache[cache_key] = existing_id
         return existing_id, False
     if len(value) > REF_CODE_MAX_LEN:
         raise ReferenceTooLong(
@@ -198,14 +214,38 @@ def ensure_reference(
     return new_id, True
 
 
-def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = None) -> Optional[str]:
+def resolve_default_uom(
+    db: Session,
+    company_id: Optional[str],
+    settings: Any = None,
+    *,
+    cache: Optional[dict] = None,
+) -> Optional[str]:
     """The unit a product takes when nobody states one - `system_settings.
     default_uom_id` when set, else `EA` (auto-created via `ensure_reference`
     when missing). Same fallback `product_service._get_default_uom_id` uses
     for the manual/xlsx channels, generalised for a caller (the ESB) that
-    passes a blank `uom_code` rather than omitting the column."""
+    passes a blank `uom_code` rather than omitting the column.
+
+    `cache` (C2): forwarded to `ensure_reference`'s own per-batch cache -
+    only reached on the `EA` fallback path, since a `configured` default is
+    validated and returned directly, never through `ensure_reference` at
+    all. The CONFIGURED-default branch gets its own cache entry too (fix
+    round, Group 3) keyed `(UnitOfMeasure, company_id, "")` - `""` never
+    collides with a real code (`ensure_reference` rejects a blank one
+    outright) - so a batch of records with a blank `uom_code` validates the
+    configured id against `units_of_measure` ONCE, not once per record.
+    Every caller SHOULD also pass its own already-resolved `settings` (the
+    batch ingest passes `self._system_settings()`) so this never re-queries
+    `system_settings` per record either - `settings=None` (every other
+    caller) still resolves it itself, unchanged.
+    """
     from app.models.product import UnitOfMeasure
     from app.models.user import SystemSetting
+
+    cache_key = (UnitOfMeasure, company_id, "") if cache is not None else None
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
 
     if settings is None:
         settings = db.query(SystemSetting).first()
@@ -234,10 +274,14 @@ def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = 
                 or_(UnitOfMeasure.company_id == company_id, UnitOfMeasure.company_id.is_(None))
             )
         if query.first():
+            if cache is not None:
+                cache[cache_key] = configured
             return configured
     uom_id, _created = ensure_reference(
-        db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id, name=DEFAULT_UOM_NAME
+        db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id, name=DEFAULT_UOM_NAME, cache=cache
     )
+    if cache is not None and uom_id:
+        cache[cache_key] = uom_id
     return uom_id
 
 
@@ -266,30 +310,89 @@ def resolve_standard_lead_time_days(settings: Any) -> int:
     return max(0, days)
 
 
-def link_default_supplier(db: Session, product_id: str, settings: Any) -> None:
+#: Bulk-preload round (`PLAN-autocount-pull-preview-perf.md`): distinct from
+#: `None` (a real, valid "no existing link" answer) the same way `_UNSET`
+#: distinguishes itself in `master_ingest_service.py` - "the caller never
+#: preloaded this at all, run the normal per-record lookup" is a third state,
+#: not the same as "preloaded and confirmed absent".
+_NOT_PRELOADED = object()
+#: Public alias (small fix round): `link_default_supplier`'s own default
+#: parameter value is part of that function's PUBLIC contract - a batch
+#: caller (`MasterIngestService`) needs to pass this exact sentinel as its
+#: own `dict.get` default too, and reaching for a leading-underscore name
+#: across a module boundary is the wrong shape for that, even though Python
+#: allows it. `_NOT_PRELOADED` itself stays the name used inside this file.
+NOT_PRELOADED = _NOT_PRELOADED
+
+
+def link_default_supplier(
+    db: Session,
+    product_id: str,
+    settings: Any,
+    *,
+    default_supplier_id: Any = _NOT_PRELOADED,
+    existing_lead_time_days: Any = _NOT_PRELOADED,
+) -> Optional[int]:
     """Upsert the tenant's default-supplier `product_suppliers` row with the
     configured standard lead time (D5) - create-time link, or the lead time
     refreshed on update, exactly as the Excel import's own
     `link_default_supplier` closure does. `settings` is the (possibly `None`)
     `system_settings` row; a no-op when no default supplier can be resolved.
+
+    Returns the lead time now current for `(product_id, default_supplier_id)`
+    - created, refreshed, or already matching, always `lead_time_days` in
+    every one of those three cases - or `None` when no default supplier
+    resolved at all (nothing was touched). Fix round (B2): a batch caller
+    writes this back into its own per-batch cache so a LATER record sharing
+    `product_id` never re-derives it from a stale/absent map entry. Unused by
+    the other two callers (bulk Excel import, manual create/edit), which
+    already recompute the answer their own way on every call.
+
+    `default_supplier_id` / `existing_lead_time_days` (bulk-preload round):
+    a batch caller (`MasterIngestService`) that already resolved these once
+    for the whole batch passes them in - `default_supplier_id` skips
+    `resolve_default_supplier_id`'s own `suppliers` SELECT, and a non-sentinel
+    `existing_lead_time_days` (an int, or `None` for "confirmed no existing
+    link") skips the `product_suppliers` SELECT below entirely, EXCEPT when
+    the preloaded lead time turns out to differ from the current setting -
+    that one rare case still needs the real row to mutate it. Neither
+    sentinel is ever passed by the other two callers (bulk Excel import,
+    manual create/edit), which keep today's per-call behaviour unchanged.
     """
-    default_supplier_id = resolve_default_supplier_id(db, settings)
+    if default_supplier_id is _NOT_PRELOADED:
+        default_supplier_id = resolve_default_supplier_id(db, settings)
     if not default_supplier_id:
-        return
+        return None
     lead_time_days = resolve_standard_lead_time_days(settings)
-    existing = (
-        db.query(ProductSupplier)
-        .filter(
-            ProductSupplier.product_id == product_id,
-            ProductSupplier.supplier_id == default_supplier_id,
+
+    existing: Optional[ProductSupplier] = None
+    if existing_lead_time_days is _NOT_PRELOADED:
+        existing = (
+            db.query(ProductSupplier)
+            .filter(
+                ProductSupplier.product_id == product_id,
+                ProductSupplier.supplier_id == default_supplier_id,
+            )
+            .first()
         )
-        .first()
-    )
-    if existing is not None:
-        if existing.standard_lead_time_days != lead_time_days:
-            existing.standard_lead_time_days = lead_time_days
-            db.flush()
-        return
+        existing_lead_time_days = existing.standard_lead_time_days if existing is not None else None
+
+    if existing_lead_time_days is not None:
+        if existing_lead_time_days != lead_time_days:
+            if existing is None:
+                existing = (
+                    db.query(ProductSupplier)
+                    .filter(
+                        ProductSupplier.product_id == product_id,
+                        ProductSupplier.supplier_id == default_supplier_id,
+                    )
+                    .first()
+                )
+            if existing is not None:
+                existing.standard_lead_time_days = lead_time_days
+                db.flush()
+        return lead_time_days
+
     db.add(
         ProductSupplier(
             product_id=product_id,
@@ -298,3 +401,4 @@ def link_default_supplier(db: Session, product_id: str, settings: Any) -> None:
         )
     )
     db.flush()
+    return lead_time_days

@@ -13,6 +13,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { COLOURS } from '../../_shared/lib/supplyVocabulary';
+import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import type {
   BoardAxisRow,
   BoardCell,
@@ -596,5 +597,94 @@ describe('FulfilmentBoardMatrix: a cell’s own quick save and undo (D15)', () =
     expect(
       screen.queryByRole('button', { name: /^Undo ZZT-PRODUCT/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * AC-D5 in the GRID (SF-1, reviewer, fix round 2): a cell carries one hazard icon per changed
+ * LINE, not one per pending batch row - two rows that both moved the same line's date are one
+ * warning about one line. A cell can still hold several DIFFERENT lines (the same product on
+ * the same date across two orders, or a line the book closed annotated onto the surviving
+ * cell), and each of those is its own warning. The mutation this pins: grouping per
+ * annotation instead of per line, which draws the old two icons again.
+ */
+describe('AC-D5: one hazard icon per changed line in a grid cell', () => {
+  const CELL_KEY = 'ZZT-PRODUCT|2026-01-01';
+
+  function annotation(
+    rowId: string,
+    projectLineId: string,
+    overrides: Partial<BoardChangeAnnotation> = {},
+  ): BoardChangeAnnotation {
+    return {
+      rowId,
+      soNumber: 'SO397450',
+      lineNo: 1,
+      itemCode: 'ZZT-PRODUCT',
+      kind: 'delayed',
+      closed: false,
+      was: { qty: '10', date: '2026-01-01', decision: 'Buy 10' },
+      now: { qty: '10', date: '2026-01-08', decision: 'Buy 10' },
+      suggestionLines: ['Keep 10'],
+      lateDays: null,
+      shortfallQty: null,
+      productChangedFrom: null,
+      movedTransfer: null,
+      projectLineId,
+      ...overrides,
+    };
+  }
+
+  function renderWithAnnotations(annotations: BoardChangeAnnotation[]) {
+    return render(
+      <FulfilmentBoardMatrix
+        dateBuckets={buckets(2)}
+        rows={rows}
+        rowHeader="Product"
+        cells={[cellWith([contribution()])]}
+        draft={{}}
+        onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
+        annotations={new Map([[CELL_KEY, annotations]])}
+      />,
+    );
+  }
+
+  it('draws ONE icon for two pending changes to the same line', () => {
+    renderWithAnnotations([
+      annotation('pcr-same-1', 'pl-1'),
+      annotation('pcr-same-2', 'pl-1', {
+        now: { qty: '10', date: '2026-01-15', decision: 'Buy 10' },
+      }),
+    ]);
+
+    expect(screen.getAllByLabelText('What changed')).toHaveLength(1);
+    // Addressed by the first (oldest) of the group, which is the row a single-change caller
+    // has always been addressed by.
+    expect(screen.getByTestId('board-change-icon-pcr-same-1')).toBeInTheDocument();
+  });
+
+  it('still draws TWO icons for two different lines that land in the same cell', () => {
+    renderWithAnnotations([
+      annotation('pcr-line-1', 'pl-1'),
+      annotation('pcr-line-2', 'pl-2', { lineNo: 2 }),
+    ]);
+
+    expect(screen.getAllByLabelText('What changed')).toHaveLength(2);
+    expect(screen.getByTestId('board-change-icon-pcr-line-1')).toBeInTheDocument();
+    expect(screen.getByTestId('board-change-icon-pcr-line-2')).toBeInTheDocument();
+  });
+
+  it('groups by the sales order and line number when a row names no planning line', () => {
+    // A line on an order nobody has adopted carries no `projectLineId` - the SO number and
+    // line number are the only address it has, and two changes to THAT line are still one
+    // warning.
+    renderWithAnnotations([
+      annotation('pcr-bare-1', null as unknown as string, { projectLineId: null }),
+      annotation('pcr-bare-2', null as unknown as string, { projectLineId: null }),
+    ]);
+
+    expect(screen.getAllByLabelText('What changed')).toHaveLength(1);
   });
 });

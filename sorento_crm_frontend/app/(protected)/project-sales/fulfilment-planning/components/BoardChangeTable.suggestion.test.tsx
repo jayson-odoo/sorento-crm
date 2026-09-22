@@ -149,15 +149,25 @@ describe('the composed suggestion on the board', () => {
     expect(linesOf('pcr-s1')).toEqual(['Buy 234 (was 134)']);
   });
 
-  it('S8: one date-and-quantity edit yields one row and one suggestion', () => {
-    const dialog = openDialog('pcr-s8');
+  it('S8: one date-and-quantity edit yields one Was/Now table and one suggestion (AC-D1)', () => {
     // Both halves of the edit are on the same row: no tie-break picks a winner (AC-C8).
-    // Was the `change-now-qty` table-cell check; the lightbox states it as a changed-field
-    // line instead, alongside the date that moved with it (AC-C10).
-    expect(within(dialog).getByText('Qty 134 → 100')).toBeInTheDocument();
-    // AC-RL-01: `shortDay` now carries the year (`PLAN-oi-replan-received-links.md` S0), so
-    // a delay to next year cannot be misread as an advance to an earlier month this year.
-    expect(within(dialog).getByText('Date 4 Sep 2026 → 20 Nov 2026')).toBeInTheDocument();
+    // AC-D1: the lightbox now prints a `BoardChangeWasNowTable`, not an arrow-line list -
+    // RED today, since `BoardChangeSummary` still renders the `fields` list verbatim.
+    const dialog = openDialog('pcr-s8');
+    const table = within(dialog).getByTestId('board-change-pcr-s8');
+
+    expect(within(table).getByText('Qty')).toBeInTheDocument();
+    expect(within(table).getByText('134')).toBeInTheDocument();
+    expect(within(table).getByTestId('change-now-qty')).toHaveTextContent('100');
+    // AC-D4 (owner ruling, fix round 1): the shared Was/Now table keeps its `dd/mm/yyyy`
+    // dates, so the Order Inquiries Qty dialog - which renders the same table - reads
+    // exactly as it does today. The year is on both sides either way (AC-RL-01).
+    expect(within(table).getByText('04/09/2026')).toBeInTheDocument();
+    expect(within(table).getByText('20/11/2026')).toBeInTheDocument();
+    // The old arrow-line list is gone from the lightbox entirely.
+    expect(
+      within(dialog).queryByTestId('board-change-fields-pcr-s8'),
+    ).not.toBeInTheDocument();
     expect(
       within(dialog)
         .getAllByTestId('board-change-suggestion-line')
@@ -258,18 +268,33 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
     expect(screen.queryByTestId('board-change-pcr-s1')).not.toBeInTheDocument();
   });
 
-  it('AC-C10: clicking the icon opens a dialog titled "What changed, <SO> (Line <n>)", listing only the changed fields then the suggestion verbatim', async () => {
+  it('AC-D1/AC-D2: clicking the icon opens a dialog titled "What changed, <SO> (Line <n>)", showing a Was/Now table (Decision row kept) then the suggestion verbatim', async () => {
+    // AC-D1: the arrow-line list this test used to pin ("Qty 234 → 334", ...) is gone -
+    // `BoardChangeSummary` now renders `BoardChangeWasNowTable` in its place, Decision row
+    // kept. RED today: `board-change-pcr-demo` does not exist in the dialog yet.
     render(<BoardChangeTable annotation={sampleAnnotation()} />);
 
     fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
     const dialog = await screen.findByTestId('board-change-dialog');
 
     expect(within(dialog).getByText('What changed, SO419772 (Line 1)')).toBeInTheDocument();
-    // Every field changed in this sample, so all three lines are present, one per line.
-    expect(within(dialog).getByText('Qty 234 → 334')).toBeInTheDocument();
-    // AC-RL-01: the year is present on both sides now.
-    expect(within(dialog).getByText('Date 4 Sep 2026 → 20 Nov 2026')).toBeInTheDocument();
-    expect(within(dialog).getByText('Decision Buy 234 → Buy 334')).toBeInTheDocument();
+    // Every field changed in this sample, so the Was/Now table shows Qty, Date AND Decision.
+    const table = within(dialog).getByTestId('board-change-pcr-demo');
+    expect(within(table).getByText('234')).toBeInTheDocument();
+    expect(within(table).getByTestId('change-now-qty')).toHaveTextContent('334');
+    // AC-D4 (owner ruling, fix round 1): the shared Was/Now table keeps its `dd/mm/yyyy`
+    // dates, so the Order Inquiries Qty dialog - which renders the same table - reads
+    // exactly as it does today. The year is on both sides either way (AC-RL-01).
+    expect(within(table).getByText('04/09/2026')).toBeInTheDocument();
+    expect(within(table).getByText('20/11/2026')).toBeInTheDocument();
+    // Decision row is KEPT (AC-D1 says so explicitly - unlike the Order Inquiries table,
+    // which drops it with `omitDecision`).
+    expect(within(table).getByText('Buy 234')).toBeInTheDocument();
+    expect(within(table).getByTestId('change-now-decision')).toHaveTextContent('Buy 334');
+    // The old arrow-line list is gone from the lightbox entirely.
+    expect(
+      within(dialog).queryByTestId('board-change-fields-pcr-demo'),
+    ).not.toBeInTheDocument();
     // Then the composed suggestion, verbatim - the server's own sentence, unchanged.
     expect(within(dialog).getByText('Buy 334 (was 234)')).toBeInTheDocument();
   });
@@ -292,7 +317,7 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
     expect(document.getElementById(describedBy as string)).not.toBeNull();
   });
 
-  it('AC-C10: an unchanged field is omitted from the dialog entirely', async () => {
+  it('AC-D2: an unchanged field gets no row at all in the Was/Now table - never a row of dashes', async () => {
     // Only the date moved this time; qty and decision are the SAME on both sides.
     render(
       <BoardChangeTable
@@ -307,11 +332,38 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
 
     fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo-date-only'));
     const dialog = await screen.findByTestId('board-change-dialog');
+    const table = within(dialog).getByTestId('board-change-pcr-demo-date-only');
 
-    // AC-RL-01: the year is present on both sides now.
-    expect(within(dialog).getByText('Date 4 Sep 2026 → 25 Sep 2026')).toBeInTheDocument();
-    expect(within(dialog).queryByText(/^Qty /)).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(/^Decision /)).not.toBeInTheDocument();
+    // AC-D4 (owner ruling, fix round 1): the shared Was/Now table keeps its `dd/mm/yyyy`
+    // dates, so the Order Inquiries Qty dialog - which renders the same table - reads
+    // exactly as it does today. The year is on both sides either way (AC-RL-01).
+    expect(within(table).getByText('04/09/2026')).toBeInTheDocument();
+    expect(within(table).getByText('25/09/2026')).toBeInTheDocument();
+    // No row at all for Qty or Decision - not a dash, not a hidden row still in the DOM.
+    expect(within(table).queryByText('Qty')).not.toBeInTheDocument();
+    expect(within(table).queryByText('Decision')).not.toBeInTheDocument();
+    expect(within(table).queryByText('134')).not.toBeInTheDocument();
+    expect(within(table).queryByText('Keep 134')).not.toBeInTheDocument();
+  });
+
+  it('AC-D2: the dialog description stays "Only the fields that moved, then the suggestion." unchanged', async () => {
+    render(<BoardChangeTable annotation={sampleAnnotation()} />);
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(
+      within(dialog).getByText('Only the fields that moved, then the suggestion.'),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-D3: the dialog stays capped at max-w-[min(28rem,calc(100vw-2rem))] so the table fits at 375px with no horizontal scroll', async () => {
+    render(<BoardChangeTable annotation={sampleAnnotation()} />);
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(dialog.className).toMatch(/max-w-\[min\(28rem,calc\(100vw-2rem\)\)\]/);
   });
 
   it('AC-C10: Escape and the Close button both close the dialog', async () => {
@@ -351,5 +403,144 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
     // The old inline block's own separate "Short 44" paragraph must not exist ANYWHERE -
     // not duplicated inside the dialog, not left behind outside it.
     expect(screen.queryByTestId('board-change-short-pcr-s11')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * AC-D5's own half of the lightbox, pinned against the mutations the reviewer found still
+ * green in fix round 1 (SF-1, SF-3, SF-4, fix round 2): the ONE icon a line with several
+ * pending changes draws opens a body that lists EVERY one of them, newest first, each with
+ * its own facts under it - a body that rendered only the newest, or only the oldest, or that
+ * read the facts off one change and printed them once, passed the suite before.
+ */
+describe('AC-D5: the lightbox behind one icon lists every pending change for the line', () => {
+  function grouped(rowId: string, overrides: Partial<BoardChangeAnnotation> = {}) {
+    return sampleAnnotation({
+      rowId,
+      suggestionLines: [],
+      ...overrides,
+    });
+  }
+
+  /** Renders the grouped icon and opens it. */
+  function openGrouped(annotations: BoardChangeAnnotation[]): HTMLElement {
+    render(<BoardChangeTable annotations={annotations} />);
+    fireEvent.click(screen.getByTestId(`board-change-icon-${annotations[0].rowId}`));
+    return screen.getByTestId('board-change-dialog');
+  }
+
+  it('SF-1: renders one Was/Now table PER change, with the newest first', () => {
+    const dialog = openGrouped([
+      // The caller hands them over oldest first, the order a batch's rows arrive in.
+      grouped('pcr-group-older', {
+        was: { qty: '50', date: '2026-09-01', decision: 'Buy 50' },
+        now: { qty: '50', date: '2026-09-05', decision: 'Buy 50' },
+      }),
+      grouped('pcr-group-newer', {
+        was: { qty: '50', date: '2026-09-05', decision: 'Buy 50' },
+        now: { qty: '50', date: '2026-09-10', decision: 'Buy 50' },
+        suggestionLines: ['Keep 50 for 10 Sep'],
+      }),
+    ]);
+
+    const tables = within(dialog).getAllByTestId(/^board-change-pcr-group-/);
+    expect(tables).toHaveLength(2);
+    // Newest first: the change a planner is answering is the last one to have happened.
+    expect(tables[0]).toHaveAttribute('data-testid', 'board-change-pcr-group-newer');
+    expect(tables[1]).toHaveAttribute('data-testid', 'board-change-pcr-group-older');
+    // Both dates the line moved through are readable, not only the newest pair.
+    expect(within(dialog).getByText('01/09/2026')).toBeInTheDocument();
+    expect(within(dialog).getByText('10/09/2026')).toBeInTheDocument();
+    // ONE suggestion, off the newest change alone - an older row's has been superseded.
+    expect(
+      within(dialog).getAllByTestId('board-change-suggestion-line').map((l) => l.textContent),
+    ).toEqual(['Keep 50 for 10 Sep']);
+  });
+
+  it('SF-3: a change in the group that moved nothing says so in words, instead of an empty table', () => {
+    const dialog = openGrouped([
+      // Same on both sides: `changedFieldsOf` finds nothing, so this one has no table.
+      grouped('pcr-group-still', {
+        was: { qty: '50', date: '2026-09-01', decision: 'Buy 50' },
+        now: { qty: '50', date: '2026-09-01', decision: 'Buy 50' },
+      }),
+      grouped('pcr-group-moved', {
+        was: { qty: '50', date: '2026-09-01', decision: 'Buy 50' },
+        now: { qty: '70', date: '2026-09-01', decision: 'Buy 70' },
+      }),
+    ]);
+
+    expect(
+      within(dialog).getByText(
+        'The book moved this line without changing its quantity, its date or its decision.',
+      ),
+    ).toBeInTheDocument();
+    // The unmoved change draws no box at all; the moved one still does.
+    expect(
+      within(dialog).queryByTestId('board-change-pcr-group-still'),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByTestId('board-change-pcr-group-moved'),
+    ).toBeInTheDocument();
+  });
+
+  it('SF-4: each change keeps its OWN product swap, held share, lateness and movement - the older one is not dropped', () => {
+    const dialog = openGrouped([
+      grouped('pcr-group-first', {
+        was: { qty: '50', date: '2026-09-01', decision: 'Buy 50' },
+        now: { qty: '40', date: '2026-09-01', decision: 'Buy 40' },
+        productChangedFrom: 'B2155-NL-WHITE',
+        movedTransfer: '10 moved BRW -> BRW-IB, line reduced',
+        whereItWent: ['Reallocate 202607-S0080 3 to pool'],
+        lateDays: 4,
+      }),
+      grouped('pcr-group-second', {
+        was: { qty: '40', date: '2026-09-01', decision: 'Buy 40' },
+        now: { qty: '40', date: '2026-10-01', decision: 'Buy 40' },
+      }),
+    ]);
+
+    // Read off the OLDER change, which is not the one the suggestion comes from.
+    expect(
+      within(dialog).getByTestId('board-change-product-pcr-group-first'),
+    ).toHaveTextContent('Product changed, was B2155-NL-WHITE');
+    expect(
+      within(dialog).getByTestId('board-change-moved-pcr-group-first'),
+    ).toHaveTextContent('10 moved BRW -> BRW-IB, line reduced');
+    expect(
+      within(dialog).getByTestId('board-change-where-pcr-group-first'),
+    ).toHaveTextContent('Reallocate 202607-S0080 3 to pool');
+    expect(
+      within(dialog).getByTestId('board-change-late-pcr-group-first'),
+    ).toHaveTextContent('Late by 4 days');
+    // And they sit under THAT change's own block, not loose at the end of the body.
+    const firstBlock = within(dialog).getByTestId('board-change-block-pcr-group-first');
+    expect(
+      within(firstBlock).getByTestId('board-change-product-pcr-group-first'),
+    ).toBeInTheDocument();
+    // The newer change said none of those things, so it prints none of them.
+    expect(
+      within(dialog).queryByTestId('board-change-product-pcr-group-second'),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByTestId('board-change-late-pcr-group-second'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('SF-4: stacked blocks are separated by a hairline rule, and a single change gets none', () => {
+    const dialog = openGrouped([
+      grouped('pcr-rule-older', {
+        now: { qty: '300', date: '2026-11-20', decision: 'Buy 300' },
+      }),
+      grouped('pcr-rule-newer'),
+    ]);
+
+    // Newest first, so the SECOND block on screen is the one carrying the separator.
+    expect(
+      within(dialog).getByTestId('board-change-block-pcr-rule-newer').className,
+    ).not.toMatch(/border-t/);
+    expect(
+      within(dialog).getByTestId('board-change-block-pcr-rule-older').className,
+    ).toMatch(/\bborder-t\b/);
   });
 });

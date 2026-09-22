@@ -95,6 +95,15 @@ def resolve_master_by_code(
     scope's own `do_orm_execute` filtering. The ESB masters ingest passes its
     anchor explicitly instead of relying on ambient scope, which a batch
     running two companies through one session never resets between calls.
+
+    Fix round (Group 3, `PLAN-autocount-pull-preview-perf.md`): `ORDER BY
+    created_at, id` before `.first()` - every model here (`Warehouse`,
+    `Supplier`, `ProductCategory`, `UnitOfMeasure`, `Product`, `Brand`) has
+    `created_at`, so this is safe for every caller; it picks the OLDEST row
+    deterministically for the rare case two rows normalize to the same code
+    (the unique constraint is on the exact stored string, not the
+    normalized one) - the same answer `MasterIngestService`'s own bulk code
+    preload now picks for the identical shape.
     """
     normalized = normalize_code(code)
     if not normalized:
@@ -103,7 +112,7 @@ def resolve_master_by_code(
     query = db.query(model.id).filter(func.upper(func.btrim(column)) == normalized)
     if company_id is not None and hasattr(model, "company_id"):
         query = query.filter(model.company_id == company_id)
-    row = query.first()
+    row = query.order_by(model.created_at, model.id).first()
     return str(row[0]) if row else None
 
 

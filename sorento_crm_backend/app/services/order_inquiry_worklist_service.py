@@ -395,12 +395,19 @@ _LINE_OUTSTANDING = case(
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
-#: The row's quantity, capped at that (7.3). ONE expression, used by the Buy card, the
-#: `kind=buy` filter and the Remaining column, so the three cannot answer differently for
-#: one row; `scm.committed_v` and the plan's horizon SQL carry the same rule as
-#: `demand._OWED_SQL`. Every reader of it must have `SalesOrderLine` joined - `_base` does,
-#: and `_quantity_flow_by_so_line` joins it for itself.
-_CAPPED_QTY = func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
+#: The row's quantity, capped at that (7.3) for an ORDER row. An ORDER_BACK row is NEVER
+#: capped by its borrowing line's outstanding (owner ruling 22 Sep 2026, SO417310 /
+#: MKT5529SS-DIY): it is a hole at the DONOR location left behind when goods already shipped
+#: off the borrowing line, so the line reading delivered in full is the normal case, not a
+#: reason to zero it out. ONE expression, used by the Buy card, the `kind=buy` filter and the
+#: Remaining column, so the three cannot answer differently for one row; `scm.committed_v`
+#: and the plan's horizon SQL carry the same rule as `demand._OWED_SQL`. Every reader of it
+#: must have `SalesOrderLine` joined - `_base` does, and `_quantity_flow_by_so_line` joins it
+#: for itself.
+_CAPPED_QTY = case(
+    (OrderInquiryRow.verb == IV_ORDER_BACK, OrderInquiryRow.qty),
+    else_=func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING),
+)
 #: PLAN-scm-supplied-with-companions.md ruling 7 excludes only a row's OWN `bundled_qty`
 #: from the cards - the item it rides ON (the host) still needs buying independently of
 #: whether a companion happens to ride inside its line: CKS1050 unlinked qty 1 is Buy 1
