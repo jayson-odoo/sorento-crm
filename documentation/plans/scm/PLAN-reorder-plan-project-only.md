@@ -57,6 +57,10 @@ orders). The owner expects under 50.
   `_emit_pool`, the `_project_only_cell` swap, and `_emit_product`, so a buyer who types a
   SKU into Start Plan and also picks Project still gets that SKU's ordinary retail sizing
   (review S1, round 2 - the first cut only carried buyer intent through admission).
+- `project_supply_reduction` (a confirmed Reserve / Borrow already recorded against the
+  line) does not reduce a Project run's buy under R1a=A - it only ever fed `sizing_net`,
+  the RETAIL netting path, and a Project run's `project_need` never reads `sizing_net` at
+  all (review round 3).
 
 ## 3. Rulings (owner, 22 Sep 2026)
 
@@ -69,12 +73,17 @@ orders). The owner expects under 50.
   on the copy is the upload date and the picked orders spread 17-21 Sep.
 - R3 (open, asked 22 Sep): green-highlighted sheet rows (supplied from on-hand stock, no
   purchase) to be read on upload and recorded against a stock transfer. Separate lane.
-- R1a (open, review round 1): net the confirmed project Buy against on-hand at that
-  location, or buy the row in full regardless of what is sitting there - owner ruling
-  pending; this lane does NOT change the netting while it is open (B1). Reviewer's
-  measurement on the prod copy: 9 of the 11 project-admitted products, 3,193 units total,
-  are fully covered by existing on-hand at the confirmed location - so the netting choice
-  decides the shape of nearly the whole run, not an edge case.
+- R1a = A (owner, 22 Sep 2026, review round 3): "a Project run buys the inquiry row
+  quantity in full, no netting against on hand / SPO / PO; a row that reaches the plan is
+  CS's decision to buy, stock cases are the green sheet rows; purchasing pushes back
+  through Request CS to reserve (#1120)." A deliberate, Project-run-only exception to the
+  11 Sep one-formula ruling (`PLAN-reorder-one-formula.md`), which nets every OTHER run's
+  demand against on-hand before sizing. Known consequence, per the reviewer's measurement
+  on the prod copy: 9 of the 11 project-admitted products, 3,193 units total, are fully
+  covered by existing on-hand at the confirmed location - so this ruling decides the shape
+  of nearly the whole run, not an edge case, and the code already matched it (S2's
+  `project_need` was always read raw/un-netted; this ruling confirms rather than changes
+  the built behaviour - review round 3 was documentation + comments only, no code diff).
 
 ## 4. Slices
 
@@ -98,7 +107,9 @@ orders). The owner expects under 50.
   split lands where the inquiry row is. A named product (`product_ids`, G10) is exempted
   from all three - `committed_gate_exempt` keeps its ordinary retail sizing under Project.
   Everything else in each function (allocation-by-deficit mechanics, supplier choice,
-  basis) unchanged.
+  basis) unchanged. Per R1a=A, `project_need`/`pool_project_need` in all three branches is
+  the RAW confirmed figure - `project_supply_reduction` (a confirmed Reserve / Borrow
+  against the line) is never subtracted from it, so it does not reduce a Project run's buy.
 - S3 Header: the run's Counts / Cash on the Header tab need no change; they sum what S1/S2
   emit.
 

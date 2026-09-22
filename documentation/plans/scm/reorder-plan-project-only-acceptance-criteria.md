@@ -25,3 +25,8 @@ Plan: `PLAN-reorder-plan-project-only.md`. AC-PO-n.
 - AC-PO-11 (browser, once a slot frees): Start Plan, Demand = Project, the owner's 14 orders,
   01/09 to 16/11: the plan lists only inquiry-backed lines (45 on the 21 Sep copy), no
   MPW800 / SRTBT1863-15 style reorder-level lines.
+- AC-PO-12 (R1a=A, owner ruling 22 Sep 2026): A Project run buys the inquiry row quantity
+  even when stock on hand at that location covers it (on hand 500, row 20 -> Buy 20); a
+  Dealer run on the same seed shows Covered.
+- AC-PO-12b: A confirmed Reserve / Borrow against the line (`project_supply_reduction`)
+  does not reduce a Project run's Buy.

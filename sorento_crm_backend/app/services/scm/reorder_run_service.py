@@ -1876,6 +1876,14 @@ def _project_only_cell(c: dict) -> dict:
     froze (`row["project_confirmed_committed"]`) - the same source `_emit_pool` sums as
     ``pool_project_need``. Rounding still applies the supplier's MOQ / order multiple,
     exactly as a Dealer run's retail buy does.
+
+    R1a (owner ruling A, 22 Sep 2026): ``project_need`` is read RAW here, never netted
+    against on-hand / SPO / PO at the location - "a row that reaches the plan is CS's
+    decision to buy; stock cases are the green sheet rows; purchasing pushes back through
+    Request CS to reserve" (#1120). A location holding 500 with a confirmed row for 20
+    still buys 20. This is a deliberate, Project-run-only exception to the 11 Sep
+    one-formula ruling (`PLAN-reorder-one-formula.md`) that nets every OTHER run's demand
+    against on-hand before sizing - not a regression back to it.
     """
     c = dict(c)
     project_need = float(c.get("project_need") or 0.0)
@@ -2009,6 +2017,11 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # the retail one on every other run. `project_only` (not the bare `demand_class`
     # check) so a G10 named product keeps its retail sizing under a Project run too - see
     # the comment above its assignment.
+    #
+    # R1a (owner ruling A, 22 Sep 2026): `pool_project_need` is the RAW confirmed figure,
+    # never netted against the pool's on-hand/SPO/PO - a Project run buys the row in full;
+    # a deliberate exception to the 11 Sep one-formula ruling, for Project runs only. See
+    # `_project_only_cell`'s docstring for the full ruling text.
     if project_only:
         retail_recommended = 0.0
         triggered = pool_project_need > 0
@@ -2279,7 +2292,12 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # under-buy bug this plan fixes (measured on B2155-NL-BLUE: bypass bought 493, the
     # one formula buys 196). `level` itself (possibly None) is still what is FROZEN onto
     # the row (`inputs.reorder_level`, `needs_level` below) - only the sizing target
-    # substitutes 0.
+    # substitutes 0. Project runs are the DELIBERATE EXCEPTION since R1a (owner ruling A,
+    # 22 Sep 2026, `PLAN-reorder-plan-project-only.md`): a Project run buys the confirmed
+    # row in full again, un-netted - not a reinstatement of the retired #794 bypass, which
+    # ran on EVERY run; this one is scoped to `demand_class == "project"` alone (the
+    # `project_only` branch a few lines down) and every other run keeps the one-formula
+    # netting this comment describes.
     effective_level = level if level is not None else 0.0
     agg = eng.aggregate_product(wh_inputs, level=effective_level, moq=moq,
                                 order_multiple=order_multiple)
@@ -2298,6 +2316,10 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # `_product_agg_cell` below are UNCHANGED, fed this project-only ``recommended``.
     # `project_only` (not the bare `demand_class` check) so a G10 named product keeps its
     # retail sizing under a Project run too.
+    #
+    # R1a (owner ruling A, 22 Sep 2026): `pool_project_need` is RAW, never netted against
+    # this product's on-hand/SPO/PO - see the comment above `wh_inputs` for why that is not
+    # the retired #794 bypass, and `_project_only_cell`'s docstring for the ruling text.
     if project_only:
         triggered = pool_project_need > 0
         recommended = pool_project_need if triggered else 0.0
