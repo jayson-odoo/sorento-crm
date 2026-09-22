@@ -244,15 +244,41 @@ def save_draft(
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
-    if decision.get("verdict") != "amended" and _covered_by_active_decision(db, core_line):
-        raise AppException(
-            status_code=409,
-            message=(
-                "This line is already confirmed. Amend it to change the decision, "
-                "or undo the confirmation."
-            ),
-            code="board_line_already_confirmed",
-        )
+    verdict = decision.get("verdict")
+    coverage = None if verdict == "amended" else _active_coverage(db, core_line)
+    if coverage is not None:
+        if verdict == "rejected":
+            # R3(b) (`PLAN-board-reject-on-confirmed-line.md`, owner ruling 22 Sep 2026): a
+            # reject on a covered line is no longer refused outright - it takes the line OUT
+            # of the confirmation and records the rejection, in one step. `uncover_lines` is
+            # the un-decide seam purchasing already calls when it refuses an order inquiry
+            # row (`project_order_inquiry_service.py`); this is the same seam, called for
+            # the same reason, from the board's own reject instead.
+            reason = str(decision.get("reason") or "").strip()
+            if not reason:
+                raise AppException(
+                    status_code=422,
+                    message="Say why this line is being refused first.",
+                    code="board_line_reject_reason_required",
+                )
+            order, snapshot = coverage
+            project_line_id = str(snapshot.get("project_line_id") or "")
+            from app.services.project_supply_service import ProjectSupplyService
+
+            ProjectSupplyService(db).uncover_lines(
+                order, [project_line_id], actor_user_id=actor_user_id, reason=reason
+            )
+            # The line is uncovered now - falls through to the ordinary draft upsert below,
+            # exactly as an uncovered line's rejection already saves.
+        else:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This line is already confirmed. Amend it to change the decision, "
+                    "or undo the confirmation."
+                ),
+                code="board_line_already_confirmed",
+            )
     row = _row_for(db, str(core_line.id), company_id=core_line.company_id)
     if row is None:
         row = SOSupplyDecisionDraft(
@@ -403,15 +429,26 @@ def is_stale(
     return snapshot.get("open_qty") != current_qty or snapshot.get("required_date") != current_date
 
 
-def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
-    """R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
+def _active_coverage(
+    db: Session, core_line: SalesOrderLine
+) -> Optional[Tuple[ProjectSalesOrder, Dict[str, Any]]]:
+    """The mirror ORDER and the LINE SNAPSHOT an active decision covers this core line
+    with, or `None` when it is not covered.
+
+    R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
     every line, and the drafts printed Saved over an already-Confirmed line. Covered = an
-    ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core line,
-    UNLESS the line sits in a planning-change batch nobody has applied yet (AC-B8/B9/B10/B11,
-    review round 2).
+    ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core
+    line, UNLESS the line sits in a planning-change batch nobody has applied yet
+    (AC-B8/B9/B10/B11, review round 2).
+
+    Returns the ORDER AND SNAPSHOT rather than a bare bool (S1,
+    `PLAN-board-reject-on-confirmed-line.md`, 22 Sep 2026): the reject seam in `save_draft`
+    needs the very snapshot this found, to read `project_line_id` off it - `uncover_lines`
+    wants the MIRROR line's id, not this function's own `core_line`. One query rather than
+    a bool-only walk plus a second lookup for the same row.
     """
     decisions = (
-        db.query(SOSupplyDecision)
+        db.query(SOSupplyDecision, ProjectSalesOrder)
         .join(ProjectSalesOrder, ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id)
         .filter(
             ProjectSalesOrder.so_id == core_line.sales_order_id,
@@ -420,13 +457,13 @@ def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
         .all()
     )
     core_line_id = str(core_line.id)
-    for decision in decisions:
+    for decision, order in decisions:
         for snapshot in decision.line_snapshots or []:
             if (snapshot or {}).get("core_line_id") == core_line_id:
-                return not _in_open_planning_change(
-                    db, core_line_id, decision.project_sales_order_id
-                )
-    return False
+                if _in_open_planning_change(db, core_line_id, decision.project_sales_order_id):
+                    return None
+                return order, snapshot
+    return None
 
 
 def _in_open_planning_change(

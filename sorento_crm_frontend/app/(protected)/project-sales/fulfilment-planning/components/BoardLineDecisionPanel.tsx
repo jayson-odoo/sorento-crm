@@ -1059,6 +1059,15 @@ export function BoardLineDecisionPanel({
                 </Button>
               )}
               {covered ? (
+                // R3(b) (`PLAN-board-reject-on-confirmed-line.md`, 22 Sep 2026): Reject on a
+                // covered line is no longer dead weight - it follows the UNCOVERED branch's
+                // own rule (disabled only while the reason is blank), because it now takes
+                // the line out of the confirmation and records the rejection, in one step.
+                // `CONFIRMED_LINE_TITLE` stays on Save alone (R2 of #989 still holds there);
+                // this tooltip only ever carries the "say why" sentence, and only while
+                // blank, so hovering an ENABLED Reject shows nothing (AC-F2/AC-F3). The
+                // wrapped span stays for the life of the covered line (AC-F4) - only
+                // `disabled` and whether the tooltip has content move.
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
@@ -1070,20 +1079,31 @@ export function BoardLineDecisionPanel({
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled
+                        disabled={rejected || pending || reason.trim().length === 0}
                         onClick={reject}
                       >
-                        <X className="size-4" aria-hidden />
-                        Reject
+                        {rejected ? (
+                          <>
+                            <CheckCircle2 className="size-4" aria-hidden />
+                            Rejected
+                          </>
+                        ) : (
+                          <>
+                            <X className="size-4" aria-hidden />
+                            Reject
+                          </>
+                        )}
                       </Button>
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent
-                    className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
-                    collisionPadding={16}
-                  >
-                    {CONFIRMED_LINE_TITLE}
-                  </TooltipContent>
+                  {reason.trim().length === 0 && (
+                    <TooltipContent
+                      className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                      collisionPadding={16}
+                    >
+                      Say why this line is being refused first.
+                    </TooltipContent>
+                  )}
                 </Tooltip>
               ) : (
                 <Button

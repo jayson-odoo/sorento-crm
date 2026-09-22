@@ -1162,10 +1162,12 @@ def _covered_two_line_world(api, *, buy_qty="10", reserve_qty="6"):
     raised row (AC-B4)."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
     core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=buy_qty)
     product_2 = _product(db)
+    # The pool has to cover PRODUCT 2's own reserve - `_stock` is one location/one product,
+    # so line 1's own Buy needs no stock seeded for it at all.
+    _stock(db, product_2, world.pool_wh, on_hand=100)
     core_line_2 = _core_line(db, core_so, product_2, world.own_wh, qty_ordered=reserve_qty)
     order = _project_so(db, world.project, so_id=core_so.id)
     line_1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
@@ -1222,8 +1224,16 @@ def test_rejecting_one_covered_line_leaves_a_sibling_lines_allocation_untouched(
         (snapshot or {}).get("core_line_id") for snapshot in active.line_snapshots or []
     }
     assert covered_lines == {str(core_line_2.id)}
+    # Scoped to the FRESH active decision, not the line alone: the superseded revision's own
+    # allocation row for line 2 is still there for audit (S4, `uncover_lines`' own docstring),
+    # so a bare `so_line_id` filter now finds two.
     after = (
-        db.query(SOLineAllocation).filter(SOLineAllocation.so_line_id == line_2.id).one()
+        db.query(SOLineAllocation)
+        .filter(
+            SOLineAllocation.so_line_id == line_2.id,
+            SOLineAllocation.decision_id == active.id,
+        )
+        .one()
     )
     assert after.qty == before_qty
     assert after.warehouse_id == before_wh
