@@ -178,8 +178,11 @@ class RecordResult:
     # field -> reason. Machine-readable so the ESB quarantines per record
     # without parsing prose (AC-AC-13).
     errors: dict[str, str] = field(default_factory=dict)
-    # Dry run only. column -> {"current": ..., "incoming": ...} for the values
-    # this record would overwrite on an existing row. None when nothing would be
+    # column -> {"current": ..., "incoming": ...} for the values this record
+    # overwrote (real run) or would overwrite (dry run) on an existing row -
+    # populated on BOTH since C1 (`PLAN-autocount-pull-preview-perf.md`): a
+    # real UPDATED record with `{}` here is the one that was skipped entirely,
+    # not a diff nobody bothered to compute. `None` when nothing would be
     # overwritten (a create), which is a different statement from an empty dict
     # (an existing row matched, but no value actually changes).
     diff: Optional[dict[str, dict[str, Any]]] = None
@@ -888,12 +891,20 @@ class MasterIngestService:
         # through refs now and has been removed.
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
         if existing_id is not None:
+            product_row = None
             if entity_type == "products":
-                self._finalize_product_derived(payload, columns, existing_id)
+                # C3: one shared SELECT for `_finalize_product_derived` and
+                # `_diff`, instead of one each.
+                product_row = self._read_product_row(existing_id, columns)
+                self._finalize_product_derived(payload, columns, existing_id, row=product_row)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, existing_id)
-            diff = self._diff(spec, existing_id, columns)
-            self._update(spec, existing_id, columns)
+            diff = self._diff(spec, existing_id, columns, row=product_row)
+            if diff != {}:
+                # C1: `{}` is a real answer ("nothing to write"), not "diff
+                # unavailable" - skipping `_update` here is the whole point,
+                # not a guard against a missing value.
+                self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
             self._post_write_product_hooks(entity_type, existing_id)
             return IngestOutcome.UPDATED, existing_id, diff, warnings
@@ -930,9 +941,15 @@ class MasterIngestService:
                     # called here, so the incoming ref is never written.
                     from app.services.master_ref_resolver import WARN_REF_MISMATCH
 
-                    self._finalize_product_derived(payload, columns, adopted)
-                    diff = self._diff(spec, adopted, columns)
-                    self._update(spec, adopted, columns)
+                    # C3: this is the DOMINANT products path (FoundryX product
+                    # rows carry no numeric key, so a push always arrives
+                    # keyed by item code even for an already-linked row) - the
+                    # one shared SELECT matters most here.
+                    product_row = self._read_product_row(adopted, columns)
+                    self._finalize_product_derived(payload, columns, adopted, row=product_row)
+                    diff = self._diff(spec, adopted, columns, row=product_row)
+                    if diff != {}:  # C1
+                        self._update(spec, adopted, columns)
                     self._post_write_product_hooks(entity_type, adopted)
                     warnings.append(WARN_REF_MISMATCH)
                     return IngestOutcome.UPDATED, adopted, diff, warnings
@@ -941,15 +958,21 @@ class MasterIngestService:
                 raise ReferenceConflict(
                     f"{spec.code_column}={payload.code!r} is already linked to another source"
                 )
+            product_row = None
             if entity_type == "products":
-                self._finalize_product_derived(payload, columns, adopted)
+                product_row = self._read_product_row(adopted, columns)  # C3
+                self._finalize_product_derived(payload, columns, adopted, row=product_row)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, adopted)
-            # Captured before the UPDATE, and the reason the dry run exists: an
-            # adoption overwrites a row somebody typed in by hand, and the
-            # operator gets no other chance to see what it replaces.
-            diff = self._diff(spec, adopted, columns)
-            self._update(spec, adopted, columns)
+            # Captured before the UPDATE (dry run) or the skip (C1, real run):
+            # an adoption overwrites a row somebody typed in by hand, and the
+            # operator/audit trail gets no other chance to see what it replaces.
+            diff = self._diff(spec, adopted, columns, row=product_row)
+            if diff != {}:  # C1
+                self._update(spec, adopted, columns)
+            # T7: adoption still links the reference even on an empty diff -
+            # the row already existed unclaimed, and this push is what claims
+            # it, whether or not it changes a single column.
             self._link(entity_type, adopted, payload)
             self._post_write_product_hooks(entity_type, adopted)
             return IngestOutcome.UPDATED, adopted, diff, warnings
@@ -1044,24 +1067,32 @@ class MasterIngestService:
         "differs" check is against the CURRENT stored value. True->False
         resets the notify watermark, same rule `product_service.update_product`
         applies manually.
+
+        `row` (C3): the caller's own pre-fetched `_read_product_row` mapping,
+        reused instead of this method running its own narrower SELECT - `None`
+        (every caller but `_apply_scoped`'s three "existing product" branches)
+        falls back to querying it here, unchanged.
         """
         current_discontinued = None
         current_length = current_width = current_height = None
         if existing_row_id is not None:
-            row = self.db.execute(
-                text(
-                    "SELECT is_discontinued, dimensions_length, dimensions_width, "
-                    "dimensions_height FROM products WHERE id = :id"
-                ),
-                {"id": existing_row_id},
-            ).first()
+            if row is None:
+                row = (
+                    self.db.execute(
+                        text(
+                            "SELECT is_discontinued, dimensions_length, dimensions_width, "
+                            "dimensions_height FROM products WHERE id = :id"
+                        ),
+                        {"id": existing_row_id},
+                    )
+                    .mappings()
+                    .first()
+                )
             if row is not None:
-                (
-                    current_discontinued,
-                    current_length,
-                    current_width,
-                    current_height,
-                ) = row
+                current_discontinued = row["is_discontinued"]
+                current_length = row["dimensions_length"]
+                current_width = row["dimensions_width"]
+                current_height = row["dimensions_height"]
 
         description = columns.get("description")
 
@@ -1172,31 +1203,46 @@ class MasterIngestService:
             return str(row.id)
 
     def _diff(
-        self, spec: EntitySpec, entity_id: str, columns: dict[str, Any]
+        self,
+        spec: EntitySpec,
+        entity_id: str,
+        columns: dict[str, Any],
+        *,
+        row: Optional[Any] = None,
     ) -> Optional[dict[str, dict[str, Any]]]:
-        """Values this record would replace on an existing row.
+        """Values this record would replace (dry run) or is about to replace
+        (real run) on an existing row.
 
-        Dry run only: a real ingest is about to write these anyway, and reading
-        every row back would cost a SELECT per record for nothing.
+        C1 (`PLAN-autocount-pull-preview-perf.md`): runs on a REAL ingest too,
+        not only a dry run - the one SELECT it costs is less than the ORM
+        SELECT + UPDATE + listener fan-out `_update` used to pay on every
+        record regardless of whether anything actually changed. The caller
+        skips `_update` entirely when this comes back `{}` (PP-1); an empty
+        dict is still a real answer, not "no diff computed" - see
+        `RecordResult.diff`'s own docstring for why that is a different
+        statement from `None` (a create, nothing to diff against).
 
         Only columns whose value actually changes are reported. An operator
         reviewing a sync is asking "what am I about to lose?", and burying three
         real changes in twelve unchanged fields answers a different question.
-        """
-        if not self._dry_run:
-            return None
 
-        # Column names come from the module's own to_columns mappings, never
-        # from the payload, so interpolating them is safe -- same basis as the
-        # UPDATE and INSERT below.
-        selected = ", ".join(columns)
-        row = (
-            self.db.execute(
-                text(f"SELECT {selected} FROM {spec.table} WHERE id = :id"), {"id": entity_id}
+        `row` (C3, built only because C1+C2 alone missed the clone target):
+        the caller's own pre-fetched mapping (`_read_product_row`, products
+        only) - reused instead of this method running its own SELECT. `None`
+        (every non-product entity, unchanged) falls back to querying it here.
+        """
+        if row is None:
+            # Column names come from the module's own to_columns mappings, never
+            # from the payload, so interpolating them is safe -- same basis as
+            # the UPDATE and INSERT below.
+            selected = ", ".join(columns)
+            row = (
+                self.db.execute(
+                    text(f"SELECT {selected} FROM {spec.table} WHERE id = :id"), {"id": entity_id}
+                )
+                .mappings()
+                .first()
             )
-            .mappings()
-            .first()
-        )
         if row is None:
             return None
 
