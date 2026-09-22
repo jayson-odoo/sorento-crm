@@ -435,3 +435,50 @@ def test_rendered_envelope_regex_sweep_no_stray_integers():
     # with the other (5/60-only) tests above.
     allowed = _ALLOWED_INTEGERS | {110}
     assert found <= allowed, f"unexpected integers leaked into the reply: {found - allowed}"
+
+
+# --------------------------------------------------------------------------- #
+# Review round 9: the question names at most ten products
+# --------------------------------------------------------------------------- #
+
+
+def test_the_missing_question_caps_the_codes_it_names():
+    """Live evidence Run 5, case F turn 3: an unscoped stock call answered with a
+    catalogue page, and this question read out FIFTY product codes to a dealer. The
+    engine's own copy of this sentence has always capped at ten and counted the rest
+    (`turn/task.py::_named`, SEC-S2); the presenter's did not, so whatever the engine
+    sends, the tool's own reply could still dump the book.
+
+    One wording, one cap, whichever side says it."""
+    codes = [f"ZZT-{index:02d}" for index in range(50)]
+    out = env(_availability_payload([_entry(code, needs_quantity=True) for code in codes]))
+
+    assert out["intro"] == (
+        "How many units do you need for "
+        + ", ".join(codes[:10])
+        + " and 40 others?"
+    )
+
+
+def test_the_noted_list_is_capped_the_same_way():
+    """The other half of the same sentence: what is already noted is a list too, and a
+    fifty-product batch would read every one of them back."""
+    noted = [
+        _entry(f"ZZT-N{index:02d}", needs_quantity=False, requested_qty=5, available=True)
+        for index in range(12)
+    ]
+    out = env(_availability_payload(noted + [_entry("ZZT-MISSING", needs_quantity=True)]))
+
+    assert "and 2 others" in out["intro"]
+    assert out["intro"].endswith("How many units do you need for ZZT-MISSING?")
+
+
+def test_ten_products_are_still_named_in_full():
+    """The cap is a cap, not a truncation of the ordinary reply."""
+    codes = [f"ZZT-{index:02d}" for index in range(10)]
+    out = env(_availability_payload([_entry(code, needs_quantity=True) for code in codes]))
+
+    assert "others" not in out["intro"]
+    assert out["intro"] == (
+        "How many units do you need for " + ", ".join(codes[:-1]) + f" and {codes[-1]}?"
+    )

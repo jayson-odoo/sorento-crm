@@ -478,6 +478,20 @@ def crossdomain_zeroset(
         out["_xd"] = {"active": False, "why": why}
         return out
 
+    # D17, review round 9 (finding 7): a DEALER availability reply answers in the
+    # dealer's own terms - "Not available, but there is limited purchase, ETA in 90
+    # days." - and this probe's own sentence ("No stock and no incoming for SRT392-24,
+    # but PO is placed: ...") states our stock and our incoming beside it, which is both
+    # a second answer to the same question and the one thing the mode exists not to say.
+    # The verdict line is the whole answer for that product, so the ladder does not run
+    # at all when the reply carries an availability block.
+    env_probe: Any = passthrough
+    if jsc.truthy(env_probe) and isinstance(jsc.get(env_probe, "output"), dict):
+        env_probe = env_probe["output"]
+    availability = jsc.get(env_probe, "stock_availability")
+    if isinstance(availability, list) and availability:
+        return off("stock_availability")
+
     qf = parser if isinstance(parser, dict) else {}
     dh = qf.get("domain_hint")
     if dh != "inventory" and dh != "incoming":

@@ -1467,6 +1467,32 @@ def _availability_line(entry: dict) -> str:
     return f"{code} x {qty}: {tail}"
 
 
+#: How many products one sentence names before it counts the rest. The engine's own
+#: copy of this question has capped at ten since SEC-S2 (`turn/task.py::MAX_NAMED`);
+#: this side had no cap at all, so a reply built from a catalogue-wide stock call read
+#: FIFTY codes out to a dealer (live evidence Run 5, case F turn 3). One wording, one
+#: cap, whichever side says it - and it holds whatever the engine sends.
+_MAX_NAMED = 10
+
+
+def _named_codes(labels: list[str]) -> str:
+    """"A, B and C" up to the cap, then "A, ... , J and 40 others"."""
+    if len(labels) > _MAX_NAMED:
+        shown = labels[:_MAX_NAMED]
+        return f"{', '.join(shown)} and {len(labels) - _MAX_NAMED} others"
+    if len(labels) > 1:
+        return ", ".join(labels[:-1]) + " and " + labels[-1]
+    return labels[0] if labels else ""
+
+
+def _listed_codes(labels: list[str]) -> str:
+    """The same cap for the plain comma list the `Noted:` half prints."""
+    if len(labels) > _MAX_NAMED:
+        shown = labels[:_MAX_NAMED]
+        return f"{', '.join(shown)} and {len(labels) - _MAX_NAMED} others"
+    return ", ".join(labels)
+
+
 def _noted_and_missing_question(noted: list[dict], missing: list[dict]) -> str:
     """AC-1757 (D14): what is noted, then one question for what is still
     missing - never a verdict, for anybody, until every product has a quantity
@@ -1474,15 +1500,14 @@ def _noted_and_missing_question(noted: list[dict], missing: list[dict]) -> str:
 
     Review round 2: a row with no `product_code` falls back to `product_name`
     (`_availability_label`), and a row with neither is dropped from the sentence
-    entirely - there is no way to ask about it by name."""
+    entirely - there is no way to ask about it by name.
+
+    Review round 9: both lists are capped at `_MAX_NAMED`, the same cap and the same
+    wording the engine's own `turn/task.py::_named` / `_listed` already use."""
     missing_codes = [label for label in (_availability_label(e) for e in missing) if label]
     if not missing_codes:
         return "How many units do you need?"
-    if len(missing_codes) > 1:
-        missing_text = ", ".join(missing_codes[:-1]) + " and " + missing_codes[-1]
-    else:
-        missing_text = missing_codes[0]
-    question = f"How many units do you need for {missing_text}?"
+    question = f"How many units do you need for {_named_codes(missing_codes)}?"
     noted_pairs = [
         (label, e.get("requested_qty"))
         for e, label in ((e, _availability_label(e)) for e in noted)
@@ -1490,7 +1515,7 @@ def _noted_and_missing_question(noted: list[dict], missing: list[dict]) -> str:
     ]
     if not noted_pairs:
         return question
-    noted_text = ", ".join(f"{code} x {qty}" for code, qty in noted_pairs)
+    noted_text = _listed_codes([f"{code} x {qty}" for code, qty in noted_pairs])
     return f"Noted: {noted_text}. {question}"
 
 

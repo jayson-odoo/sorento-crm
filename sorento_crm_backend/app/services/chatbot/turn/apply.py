@@ -28,6 +28,7 @@ from app.services.chatbot import contracts
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import (
     ANSWER,
+    CARRY,
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
@@ -1246,6 +1247,7 @@ def _narrow_and_plan(
     attributes: tuple[str, ...] = (),
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    bare_quantity_only: bool = False,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -1369,7 +1371,7 @@ def _narrow_and_plan(
             row = policy.domain(name)
             date_window = focus.date_window if row and row.takes_date_filter else None
             if (
-                len(domains) > 1
+                (len(domains) > 1 or bare_quantity_only)
                 and not entities
                 and not filters
                 and not date_window
@@ -1383,6 +1385,25 @@ def _narrow_and_plan(
                 # broad (`_REFUSES_EMPTY_SUBJECT`'s own docstring); the OTHER domains
                 # this turn asked about (D5(b)'s own incoming/PO, allowed broad by
                 # main's design) still fetch normally.
+                #
+                # `bare_quantity_only` (review round 9, finding 4) is the OTHER way a
+                # fetch can end up with nothing to scope it by, and the live evidence's
+                # most severe finding: a bare "60" typed after "never mind the stock
+                # check" had closed the task and cleared the products carried
+                # `demand_qty: 60`, `domain_hint: "inventory"` and no entities at all,
+                # `decide()` read it as a CARRY that answered nothing, and the inventory
+                # spec was planned with no product filter - so the tool's own "no filter
+                # = every product" default answered with a catalogue page and the dealer
+                # was asked to quantify fifty products (turn cfcca4a8). A number is not
+                # a subject: with nothing named, no task open and nothing carried on the
+                # focus there is nothing to look it up against, the same reading
+                # `idle_chat_plans_nothing` already takes of a greeting.
+                #
+                # A quantity is what makes this shape recognisable, and it is what keeps
+                # the rule off every ask that scopes itself by INTENT rather than by a
+                # product: "reorder report" is a CARRY with no entities either, and it
+                # carries no number (`handbuilt-lsr-*`, which this guard regressed to
+                # `low_signal` when it tested only for an empty subject).
                 #
                 # `len(domains) > 1` deliberately excludes a SINGLE-domain inventory
                 # ask with nothing to scope by (a "low stock report" with no
@@ -1406,6 +1427,45 @@ def _narrow_and_plan(
     return Plan(domains=list(domains), fetch=fetch, ask=ask, denied=denied, trace=trace)
 
 
+def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
+    """D13, review round 9 (finding 5): one statement, one shape.
+
+    The SAME sentence parses two ways one turn apart - "CB313 1200" put the number on
+    `entities[].quantity`, "CB313 361" put it on the top-level `demand_qty` (live traces
+    05ae3025 and 17bdb411, one turn apart, same phrasing). Every rule that reads a
+    quantity then has to know about both fields, and the one that did not - D29's
+    exact-code narrowing - fetched the whole product family again on the second shape.
+
+    With exactly ONE product code named, the top-level number can only be that
+    product's, so it is written onto the entity HERE, before the task step, the focus
+    rules, the narrowing or the fetch read anything. Two codes and it belongs to neither
+    (the boundary `StockQtyTask.fill`'s own single-slot fallback keeps for the same
+    reason). The entity dicts are the ones `turn_runtime.lane_parse_output` carries to
+    the fetch, which is why this is the one place it has to happen.
+    """
+    bare = _stated_quantity(verdict.get("demand_qty"))
+    if bare is None:
+        return
+    products = [
+        e
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("hint") == "product"
+    ]
+    if not products:
+        return
+    # "Exactly one code" counts CODES, not rows: the same code named once is one
+    # product, and a code that resolves to two company rows is still one product to
+    # this reader (D27).
+    code_sets = {frozenset(_row_codes(e)) for e in products}
+    if len(code_sets) != 1 or not next(iter(code_sets)):
+        return
+    if any(_stated_quantity(e.get("quantity")) is not None for e in products):
+        # The parser said it per entity; that is already the shape everything reads.
+        return
+    for e in products:
+        e["quantity"] = bare
+
+
 def apply(
     state: State,
     verdict: dict[str, Any],
@@ -1425,6 +1485,9 @@ def apply(
     else. It is READ, never written and never copied onto the state - the ideate lane
     stays its single writer (D26) - so `apply()` is as pure with it as without it."""
     trace = Trace()
+    # Before ANY reader: the task step, the focus rules, the narrowing and the fetch all
+    # see one shape for "how many of this product" (D13, review round 9).
+    _normalise_demand_qty(verdict)
 
     if state.pending is not None and _fully_answered_roster(state.pending):
         # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
@@ -1725,7 +1788,21 @@ def apply(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
     )
     plan = _narrow_and_plan(
-        focus, policy, domains, new_state, trace, attributes, candidates, unplaced
+        focus,
+        policy,
+        domains,
+        new_state,
+        trace,
+        attributes,
+        candidates,
+        unplaced,
+        bare_quantity_only=(
+            decision.kind == CARRY
+            and _stated_quantity(verdict.get("demand_qty")) is not None
+            and not entities
+            and not focus.tasks
+            and not _kind_field(focus, "product")
+        ),
     )
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)
 

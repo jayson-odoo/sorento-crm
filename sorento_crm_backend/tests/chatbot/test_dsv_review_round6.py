@@ -304,7 +304,39 @@ def test_the_task_holds_every_entry_the_block_answered():
 
 # --------------------------------------------------------------------------- #
 # Finding D (D13): a top-level demand_qty on the turn that OPENS the task
+#
+# Review round 9 moved this rule to ONE seam - `turn/apply.py::_normalise_demand_qty`,
+# which runs before the task step, the narrowing and the fetch - and deleted the copy
+# that lived in `turn_runtime._spec_quantities`. These four tests moved with it: same
+# scenarios, same boundaries, now graded on the plan the turn actually produces.
 # --------------------------------------------------------------------------- #
+
+
+def _fetch_quantities(v, candidates):
+    """The quantities the TOOL CALL ends up carrying, through the real two-step path:
+    `apply()` normalises the verdict (review round 9) and `turn_runtime._spec_quantities`
+    maps the per-entity quantity onto the uuids the resolver placed - the same order
+    production runs them in (`engine.py` builds `lane_parse_output` off the verdict
+    `apply()` has just normalised)."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+    from app.services.chatbot.turn_runtime import _spec_quantities
+
+    plan = apply(_state(Focus(), turn_no=1), v, build_policy(), candidates=candidates)[1]
+    spec = plan.fetch[0]
+    out = _spec_quantities({"entities": v.get("entities")}, spec, spec.entities)
+    return out.get("requested_quantities")
+
+
+def _candidate(code, uuid):
+    return {
+        "raw": code,
+        "hint": "product",
+        "canonical_code": code,
+        "uuid": uuid,
+        "current_message": True,
+        "confident": True,
+    }
 
 
 def test_demand_qty_belongs_to_the_one_product_named_when_no_entity_carries_it():
@@ -313,73 +345,73 @@ def test_demand_qty_belongs_to_the_one_product_named_when_no_entity_carries_it()
     parsed the other way one turn earlier. With exactly ONE product code named, the
     number can only be for that product, so the fetch carries it and the dealer is
     answered instead of asked again."""
-    from app.services.chatbot.turn.plan import FetchSpec
-    from app.services.chatbot.turn_runtime import _spec_quantities
+    quantities = _fetch_quantities(
+        verdict(
+            domain_hint="inventory",
+            demand_qty=75,
+            entities=[entity("CWC8315-NEW", hint="product")],
+        ),
+        {"product": [_candidate("CWC8315-NEW", "uuid-cwc")]},
+    )
 
-    spec = FetchSpec(domain="inventory", entities=[], filters={}, date_window=None)
-    out = {
-        "entities": [{"raw": "CWC8315-NEW", "canonical_code": "CWC8315-NEW", "quantity": None}],
-        "demand_qty": 75,
-    }
-    resolved = [{"uuid": "uuid-cwc", "code": "CWC8315-NEW", "canonical_code": "CWC8315-NEW"}]
-
-    assert _spec_quantities(out, spec, resolved)["requested_quantities"] == {"uuid-cwc": 75}
+    assert quantities == {"uuid-cwc": 75}
 
 
 def test_demand_qty_covers_every_company_variant_of_that_one_code():
     """One code, two companies, one product as far as the dealer is concerned (the same
     rule the backend's own per-code merge follows) - so the number is for both rows."""
-    from app.services.chatbot.turn.plan import FetchSpec
-    from app.services.chatbot.turn_runtime import _spec_quantities
+    quantities = _fetch_quantities(
+        verdict(
+            domain_hint="inventory",
+            demand_qty=60,
+            entities=[entity("MHS1028", hint="product")],
+        ),
+        {
+            "product": [
+                _candidate("MHS1028", "uuid-mocha"),
+                _candidate("MHS1028", "uuid-sorento"),
+            ]
+        },
+    )
 
-    spec = FetchSpec(domain="inventory", entities=[], filters={}, date_window=None)
-    out = {"entities": [{"raw": "MHS1028", "canonical_code": "MHS1028"}], "demand_qty": 60}
-    resolved = [
-        {"uuid": "uuid-mocha", "canonical_code": "MHS1028"},
-        {"uuid": "uuid-sorento", "canonical_code": "MHS1028"},
-    ]
-
-    assert _spec_quantities(out, spec, resolved)["requested_quantities"] == {
-        "uuid-mocha": 60,
-        "uuid-sorento": 60,
-    }
+    assert quantities == {"uuid-mocha": 60, "uuid-sorento": 60}
 
 
 def test_demand_qty_is_not_guessed_across_two_named_products():
     """The same boundary the task's own bare-number fallback keeps (D13): with two
     products named, one number belongs to neither."""
-    from app.services.chatbot.turn.plan import FetchSpec
-    from app.services.chatbot.turn_runtime import _spec_quantities
+    quantities = _fetch_quantities(
+        verdict(
+            domain_hint="inventory",
+            demand_qty=60,
+            entities=[
+                entity("MHS1028", hint="product"),
+                entity("MSK11A-QT", hint="product"),
+            ],
+        ),
+        {
+            "product": [
+                _candidate("MHS1028", "uuid-mhs"),
+                _candidate("MSK11A-QT", "uuid-msk"),
+            ]
+        },
+    )
 
-    spec = FetchSpec(domain="inventory", entities=[], filters={}, date_window=None)
-    out = {
-        "entities": [
-            {"raw": "MHS1028", "canonical_code": "MHS1028"},
-            {"raw": "MSK11A-QT", "canonical_code": "MSK11A-QT"},
-        ],
-        "demand_qty": 60,
-    }
-    resolved = [
-        {"uuid": "uuid-mhs", "canonical_code": "MHS1028"},
-        {"uuid": "uuid-msk", "canonical_code": "MSK11A-QT"},
-    ]
-
-    assert "requested_quantities" not in _spec_quantities(out, spec, resolved)
+    assert quantities is None
 
 
 def test_a_per_entity_quantity_still_wins_over_demand_qty():
-    """The fallback fires only when no entity carried a quantity of its own."""
-    from app.services.chatbot.turn.plan import FetchSpec
-    from app.services.chatbot.turn_runtime import _spec_quantities
+    """The normalisation fires only when no entity carried a quantity of its own."""
+    quantities = _fetch_quantities(
+        verdict(
+            domain_hint="inventory",
+            demand_qty=75,
+            entities=[entity("CWC8315-NEW", hint="product", quantity=935)],
+        ),
+        {"product": [_candidate("CWC8315-NEW", "uuid-cwc")]},
+    )
 
-    spec = FetchSpec(domain="inventory", entities=[], filters={}, date_window=None)
-    out = {
-        "entities": [{"raw": "CWC8315-NEW", "canonical_code": "CWC8315-NEW", "quantity": 935}],
-        "demand_qty": 75,
-    }
-    resolved = [{"uuid": "uuid-cwc", "canonical_code": "CWC8315-NEW"}]
-
-    assert _spec_quantities(out, spec, resolved)["requested_quantities"] == {"uuid-cwc": 935}
+    assert quantities == {"uuid-cwc": 935}
 
 
 # --------------------------------------------------------------------------- #
@@ -647,3 +679,251 @@ def test_a_plain_decline_with_no_topic_reset_leaves_the_task_alone():
     assert plan.trace.lane == "escalation_declined"
     stock = _task_of_kind(state2.focus, "stock_qty")
     assert _slot_values(stock) == {"MHS1028": 60, "MSK11A-QT": None}
+
+
+# --------------------------------------------------------------------------- #
+# Review round 9, finding 4: a bare number with nothing open plans no fetch
+# --------------------------------------------------------------------------- #
+
+
+def test_a_bare_number_with_no_task_and_no_product_plans_nothing():
+    """Live evidence Run 5, case F turn 3 (trace cfcca4a8), the most severe finding of
+    the pass. After "never mind the stock check" closed the task and cleared the
+    products, a bare "60" parsed as `demand_qty: 60`, `domain_hint: "inventory"`,
+    `entities: []` (verdict read off the trace) and `decide()` read it as a CARRY that
+    answered nothing - yet the turn still planned an inventory fetch with no product
+    filter at all, so the tool's own "no filter = every product" default answered with a
+    catalogue page and the dealer was asked to quantify ~50 products they had never
+    mentioned.
+
+    Nothing was named, nothing is open, and there is nothing carried to re-answer: the
+    turn has nothing to look up. Same shape as `idle_chat_plans_nothing`, for the same
+    reason."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    focus = Focus(domains=["inventory"])
+    v = verdict(
+        domain_hint="inventory",
+        intent_hint="check_stock",
+        demand_qty=60,
+        entities=[],
+        user_goal="trying to set the quantity to 60 for the current stock task",
+    )
+
+    _state2, plan = apply(_state(focus, turn_no=3), v, build_policy())
+
+    assert plan.fetch == [], "a catalogue-wide stock fetch is not an answer to '60'"
+    assert plan.ask is None
+
+
+def test_an_open_task_still_answers_a_bare_number():
+    """The boundary that must not move: with a task open, the same bare number is the
+    D13 fallback's own input and the task still drives its fetch."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    task = _stock_task(slots=[("uuid-mhs", "MHS1028", None)])
+    focus = Focus(tasks=(task,), domains=["inventory"])
+    v = verdict(domain_hint="inventory", demand_qty=60, entities=[])
+
+    _state2, plan = apply(_state(focus, turn_no=3), v, build_policy())
+
+    assert [s.domain for s in plan.fetch] == ["inventory"]
+    assert plan.fetch[0].filters["requested_quantities"] == {"uuid-mhs": 60}
+
+
+def test_a_carried_product_still_answers_a_bare_number():
+    """The other boundary: the products axis still carries what the conversation is
+    about, so the fetch is scoped and the turn is answerable. Only the UNSCOPED fetch is
+    refused."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    focus = Focus(
+        domains=["inventory"],
+        products=[entity("MHS1028", hint="product", uuid="uuid-mhs")],
+    )
+    v = verdict(domain_hint="inventory", demand_qty=60, entities=[])
+
+    _state2, plan = apply(_state(focus, turn_no=3), v, build_policy())
+
+    assert [s.domain for s in plan.fetch] == ["inventory"]
+    assert [e["canonical_code"] for e in plan.fetch[0].entities] == ["MHS1028"]
+
+
+# --------------------------------------------------------------------------- #
+# Review round 9, finding 5: demand_qty is normalised before the narrowing (D13)
+# --------------------------------------------------------------------------- #
+
+
+def _cb313_plan(v):
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    return apply(_state(Focus(), turn_no=1), v, build_policy(), candidates=_family())[1]
+
+
+def test_both_parse_shapes_of_one_quantified_code_plan_the_same_fetch():
+    """Finding 5, case H rows 5 and 6 (traces 05ae3025 and 17bdb411): the SAME sentence
+    shape parsed two ways one turn apart - "CB313 1200" put the number on
+    `entities[].quantity`, "CB313 361" put it on the top-level `demand_qty`. D29's
+    narrowing read only the per-entity field, so the second shape fetched the whole
+    family again. With exactly one product code named the two are the same statement, so
+    the verdict is normalised once, before anything reads it."""
+    per_entity = _cb313_plan(
+        verdict(
+            domain_hint="inventory",
+            entities=[entity("CB313", hint="product", quantity=361)],
+        )
+    )
+    top_level = _cb313_plan(
+        verdict(
+            domain_hint="inventory",
+            demand_qty=361,
+            entities=[entity("CB313", hint="product")],
+        )
+    )
+
+    assert [e["canonical_code"] for e in per_entity.fetch[0].entities] == ["CB313"]
+    assert [e["canonical_code"] for e in top_level.fetch[0].entities] == ["CB313"]
+    assert (
+        top_level.fetch[0].filters == per_entity.fetch[0].filters
+    ), "the two shapes are one statement and plan one fetch"
+
+
+def test_demand_qty_is_not_spread_over_two_named_codes():
+    """The boundary D13 already keeps everywhere else: two codes named, one number - it
+    belongs to neither, and the family narrowing does not fire either."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    candidates = _family()
+    candidates["product"] = candidates["product"] + [
+        {
+            "raw": "MHS1028",
+            "hint": "product",
+            "canonical_code": "MHS1028",
+            "uuid": "uuid-mhs",
+            "current_message": True,
+            "confident": True,
+        }
+    ]
+    v = verdict(
+        domain_hint="inventory",
+        demand_qty=361,
+        entities=[entity("CB313", hint="product"), entity("MHS1028", hint="product")],
+    )
+
+    _state2, plan = apply(_state(Focus(), turn_no=1), v, build_policy(), candidates=candidates)
+
+    assert len(plan.fetch[0].entities) == 5, "nothing narrowed, nothing quantified"
+    assert "requested_quantities" not in plan.fetch[0].filters
+
+
+def test_no_task_opens_when_the_only_named_code_was_answered():
+    """Finding 6: the stray four-slot CB313 task Run 5 saw riding into the next row's
+    turn was the family expansion's own doing. With the fetch narrowed, the reply
+    answers the one code, nothing is owed and no task opens."""
+    from app.services.chatbot.turn.task import tasks_after_reply
+
+    block = _entries("CB313", answered=("CB313",))
+
+    assert tasks_after_reply((), [{"stock_availability": block}], turn_no=1) == ()
+
+
+# --------------------------------------------------------------------------- #
+# Review round 9, finding 7: no cross-domain boilerplate on an availability reply
+# --------------------------------------------------------------------------- #
+
+
+def _availability_envelope(codes):
+    return {
+        "has_result": True,
+        "intro": "Sorry, we do not have enough stock for that quantity.",
+        "items": [{"title": f"{code} x 180: Not available.", "fields": []} for code in codes],
+        "stock_availability": [
+            {
+                "product_id": f"uuid-{code}",
+                "product_code": code,
+                "product_name": code,
+                "needs_quantity": False,
+                "requested_qty": 180,
+                "available": False,
+                "verdict": "not_available",
+                "running_low": False,
+                "disclaimer": {
+                    "sources": ["purchase"],
+                    "limited": True,
+                    "incoming_eta": None,
+                    "purchase_eta_days": 90,
+                },
+            }
+            for code in codes
+        ],
+    }
+
+
+def test_the_crossdomain_probe_does_not_run_on_an_availability_reply():
+    """Finding 7, case H rows 7 and 8. The verdict line was exactly right
+    ("SRT392-24 x 180: Not available, but there is limited purchase, ETA in 90 days.")
+    and the reply then appended the cross-domain probe's own boilerplate - "No stock and
+    no incoming for SRT392-24, but PO is placed:..." - a sentence about our stock and our
+    incoming, which is precisely what the dealer mode exists not to say (D17) and what
+    the verdict line has already answered in the dealer's own terms."""
+    from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+    out = crossdomain_zeroset(
+        _availability_envelope(["SRT392-24"]),
+        parser={"domain_hint": "inventory", "message_type": "business_query"},
+        resolved={
+            "tokens": ["SRT392-24"],
+            "resolutions": [
+                {
+                    "token": "SRT392-24",
+                    "matches": [
+                        {
+                            "entity_type": "product",
+                            "canonical_code": "SRT392-24",
+                            "uuid": "uuid-SRT392-24",
+                            "match_tier": "exact",
+                        }
+                    ],
+                }
+            ],
+        },
+        session_block=None,
+    )
+
+    assert out["_xd"]["active"] is False
+    assert out["_xd"]["why"] == "stock_availability"
+
+
+def test_a_detailed_stock_reply_still_runs_the_crossdomain_probe():
+    """The boundary: only the DEALER block turns it off. A staff / detailed answer with
+    nothing found is exactly what the probe exists for, and it is untouched."""
+    from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+    out = crossdomain_zeroset(
+        {"has_result": False, "items": [], "intro": "No matching results found."},
+        parser={"domain_hint": "inventory", "message_type": "business_query"},
+        resolved={
+            "tokens": ["SRT392-24"],
+            "resolutions": [
+                {
+                    "token": "SRT392-24",
+                    "matches": [
+                        {
+                            "entity_type": "product",
+                            "canonical_code": "SRT392-24",
+                            "uuid": "uuid-SRT392-24",
+                            "match_tier": "exact",
+                        }
+                    ],
+                }
+            ],
+        },
+        session_block=None,
+    )
+
+    assert out["_xd"]["active"] is True
