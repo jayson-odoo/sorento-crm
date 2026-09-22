@@ -268,10 +268,10 @@ def test_case_10_two_tasks_tie_then_resolve_by_position(session_factory, stub_pa
     assert open_question.get("kind") == "task_pick", open_question
     assert len(open_question.get("options") or []) == 2, open_question
 
-    resolved_stock = _task(after_resolved, "stock_qty")
-    slots = _slot_values(resolved_stock)
-    assert any(v == 110 for v in slots.values()), (
-        f"the tie-breaking pick must apply the carried number to the stock task: {slots}"
+    resolved_tasks = _tasks_of(after_resolved)
+    assert not any(t["kind"] == "stock_qty" for t in resolved_tasks), (
+        "the tie-breaking pick applies the carried quantity to the stock task, whose reply "
+        f"answers every product (needs_quantity false), so no stock task remains: {resolved_tasks}"
     )
 
 

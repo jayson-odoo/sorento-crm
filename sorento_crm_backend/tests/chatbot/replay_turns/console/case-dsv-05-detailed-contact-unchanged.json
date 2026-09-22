@@ -151,7 +151,8 @@
             "is_active": null,
             "product_ids": null,
             "space_id": null,
-            "view": null
+            "view": null,
+            "requested_quantities": null
           },
           "envelope": {
             "has_result": true,
