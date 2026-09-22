@@ -78,9 +78,9 @@ Carrying out a suggestion writes to the **Order Inquiries** page:
 * **A Reduce or Release** cancels or reduces the row in place - it reads **CANCEL BALANCE** or
   **RELEASE**, with a note saying why (for example "Line closed", "Was 134").
 * **A Reallocate** to another order's waiting row lands on that row as a note, for example
-  "Found: PO-A 34" - that row's own state moves to **Linked** or **Partly linked**. Its own CS is
-  never asked to approve it; their Order Inquiries row and their own board simply read the new
-  state the next time they open it.
+  "Found: PO-A 34" - that row's own state moves to **On PO/SPO** or **Partly on PO/SPO**. Its own
+  CS is never asked to approve it; their Order Inquiries row and their own board simply read the
+  new state the next time they open it.
 * With nowhere else for it to go, a pool-location row is raised instead, and the reorder engine
   counts it as available stock.
 * **A Borrow** raises an **ORDER BACK** row on the donor order's own line, for the quantity it
@@ -97,8 +97,13 @@ Carrying out a suggestion writes to the **Order Inquiries** page:
   is what shows in the **Buy** card and what purchasing actually buys against. Its own (i) shows
   Was/Now against the quantity and date it replaces, and its Instruction (i) names the document
   that was received and when - so a line the confirm restates this way never also raises a
-  separate delay row; only a line the confirm leaves in place still gets one. Stock debt for the
-  line is counted against the new row, not the old one.
+  separate delay row. Stock debt for the line is counted against the new row, not the old one.
+* **Every other line that already has a buy row - Kept, part-linked, more than one live row,
+  actioned and fully linked, it makes no difference - has its date stamped straight onto that
+  same row (or every one of its rows) instead of getting a separate notice.** You see a
+  **Changed** tag beside the **Delivery date** and the usual Was/Now (i) on **Qty**; every link the
+  row held stays put. Only a line with no buy row at all, that the confirm does not raise one for
+  either, still gets a plain delay/advance notice row.
 
 ## Removing a line, or setting its quantity to 0
 

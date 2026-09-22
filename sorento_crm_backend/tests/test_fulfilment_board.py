@@ -245,6 +245,11 @@ def test_bucket_assignment_for_day_week_and_month():
     assert bucket_key_for(when, TODAY, "day") == "2026-09-03"
     assert bucket_key_for(when, TODAY, "week") == "2026-08-31"
     assert bucket_key_for(when, TODAY, "month") == "2026-09-01"
+    # AC-B1-9 (`PLAN-board-oi-mechanical-22sep.md`, S1): `date` keys exactly like `day` -
+    # the line's own required date, never a week/month bucket. Today `bucket_key_for` only
+    # special-cases `"month"` and `"day"`, so an unrecognised granularity value falls
+    # through to the week branch - red on the mismatch below, not on a missing symbol.
+    assert bucket_key_for(when, TODAY, "date") == bucket_key_for(when, TODAY, "day")
 
 
 def test_a_past_date_keeps_its_own_period_and_only_no_date_is_special():
@@ -362,6 +367,61 @@ def test_day_granularity_is_a_thirty_day_window_not_a_column_per_distinct_date()
         # Empty days inside the window are still columns: a calendar that hides its empty days
         # is not a calendar, and the gap is the information.
         assert dated[1]["key"] == "2026-09-04"
+
+
+# --------------------------------------------------------------------------- #
+# S1 (`PLAN-board-oi-mechanical-22sep.md`) - AC-B1-6/7/8: `date` granularity
+# --------------------------------------------------------------------------- #
+
+
+def test_date_granularity_bucket_keys_are_required_date_iso_and_only_populated_dates():
+    """AC-B1-6/AC-B1-9. `date` granularity keys each bucket by the line's own
+    `required_date` ISO string - never a week bucket, never the day-window's 30-column
+    calendar fill - and `dateBuckets` lists only the dates somebody actually owes,
+    sorted ascending with `No date` last. `granularity="date"` is not in `GRANULARITIES`
+    today and `bucket_key_for` does not special-case it, so it falls through to the week
+    branch: three lines a week apart collapse onto fewer than three columns, and none of
+    those columns' keys match the lines' own dates - red on the mismatch, not on a
+    missing route (the service is called directly, the same way every other test in
+    this file calls it)."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="5", required_date=date(2026, 11, 1), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2027, 2, 1), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2027, 4, 1), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=None, warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="date", as_of=TODAY)
+
+        keys = [b["key"] for b in board["dateBuckets"]]
+        assert keys == ["2026-11-01", "2027-02-01", "2027-04-01", "no_date"], keys
+        for bucket in board["dateBuckets"]:
+            assert "is_past" in bucket
+
+        cell = _cell(board, product.product_code, "2026-11-01")
+        assert cell["contributions"][0]["required_date"] == date(2026, 11, 1)
+
+
+def test_date_granularity_label_is_dd_mm_yyyy():
+    """AC-B1-7. `date` granularity's own bucket label is `DD/MM/YYYY` - not the week's
+    `w/c ...` phrasing `_bucket_label` falls back to for any granularity value it does
+    not recognise (only `"month"` and `"day"` are special-cased today)."""
+    from app.services.project_fulfilment_board_service import _bucket_label
+
+    assert _bucket_label("2026-11-01", "date") == "01/11/2026"
+
+
+def test_day_granularity_unchanged():
+    """AC-B1-8, pinned: `day` granularity is untouched by the new `date` option.
+    `test_day_granularity_is_a_thirty_day_window_not_a_column_per_distinct_date` above
+    already covers the 30-column window end to end; this is the narrower `bucket_key_
+    for` pin the AC names directly."""
+    from app.services.project_fulfilment_board_service import bucket_key_for
+
+    when = date(2026, 9, 3)
+    assert bucket_key_for(when, TODAY, "day") == "2026-09-03"
 
 
 # --------------------------------------------------------------------------- #
@@ -7665,6 +7725,71 @@ def test_the_order_inquiry_dict_carries_its_documents_and_whether_it_was_redirec
             {"document": allocation.spo_number, "kind": "spo", "received": True},
         ]
         assert order_inquiry["redirected"] is True
+
+
+def test_the_order_inquiry_dict_reaches_the_wire_with_its_inquiry_and_row_ids():
+    """S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15/AC-B6-9): the List view's own
+    OI column links to `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`, so
+    the contribution has to carry BOTH ids - and carry them to the WIRE, which is why
+    this is asserted off the route rather than off `build()`: `response_model` silently
+    drops any field the service returns that `BoardLineOrderInquiry` does not declare,
+    and the cell would then fall back to plain text with nothing failing."""
+    from app.models.base import company_scope
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_RAISED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryRow,
+    )
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id,
+            project_sales_order_id=mirrors[0].project_sales_order_id,
+            state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+        )
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirrors[0].id, item_code=f"{MARKER}-ITEM", qty=Decimal("3"),
+            verb=IV_ORDER, state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        db.add(row)
+        db.flush()
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={
+                        "orders": order.so_number,
+                        "granularity": "week",
+                        "as_of": TODAY.isoformat(),
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        order_inquiry = response.json()["contributions"][0]["order_inquiry"]
+        assert order_inquiry["inquiry_no"] == inquiry.inquiry_no
+        assert order_inquiry["inquiry_id"] == str(inquiry.id), order_inquiry
+        assert order_inquiry["row_id"] == str(row.id), order_inquiry
 
 
 # --------------------------------------------------------------------------- AC-S2-8

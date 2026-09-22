@@ -264,7 +264,7 @@ export function useReconciliationMutations() {
  */
 export function usePlanningBoard(
   soNumbers: string[],
-  granularity: BoardGranularity = 'week',
+  granularity: BoardGranularity = 'date',
   previewPolicy: boolean | string = false,
   options: { dayWindow?: string; asOf?: string } = {},
   enabled = true,
