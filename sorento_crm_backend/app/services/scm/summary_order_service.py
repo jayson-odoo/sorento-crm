@@ -61,6 +61,7 @@ from app.models.scm import (
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.project_order_inquiry_service import project_customer_label
 from app.services.scm import cover_service, plan_grain, po_book_service
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
@@ -823,8 +824,8 @@ def _project_inquiry_map(
     horizon: Optional[date] = None,
 ) -> dict[str, dict]:
     """``{product_id: {"months": {month_or_None: qty}, "customers": {label: qty}}}`` - the
-    run's OWN Start Plan scope (A3, PLAN-order-sheet-oi-reports-22sep.md, owner ruling 22
-    Sep - "read from OI, don't care about supply decision"), read through
+    OI rows the ENGINE would buy for, in the run's OWN Start Plan scope (A3, PLAN-order-
+    sheet-oi-reports-22sep.md, captain ruling 23 Sep after review), read through
     `demand.run_scope_oi_rows` so the sheet and the OI worksheet (Lane C) can never list a
     different row set for the same run. `delivery_by_month` and `project_customers` are
     both built from this ONE map, so the two always tie by construction.
@@ -832,19 +833,22 @@ def _project_inquiry_map(
     Superseded the S14 reading (INNER JOIN `so_supply_decisions`, `state = 'active'`): on
     the 21 Sep prod copy 12,261 of 12,763 live OI Buy rows carry no supply decision (the CS
     form leg, never confirmed on the fulfilment board) and never reached the sheet - the
-    SRTWB248 case the plan's "Measured" section names. `run_scope_oi_rows` drops that join
-    entirely; a row's OWN state/ack/qty gate it now, not a decision pointing at it.
+    SRTWB248 case the plan's "Measured" section names. `run_scope_oi_rows` drops the
+    `so_supply_decisions` join entirely (owner ruling 22 Sep - "read from OI, don't care
+    about supply decision") but keeps the CONFIRMED leg's own engine predicate otherwise -
+    a placed, actioned, awaiting-ack, redirected or fully linked row is still excluded, the
+    same as it is from the plan's own Buy.
 
     ``so_numbers`` (non-``None``) narrows to the run's picked orders; ``horizon_start``/
     ``horizon`` narrow to the run's own window, undated rows always included - see
     `run_scope_oi_rows`'s own docstring for the exact predicate.
 
     Label = ``project_customer_label(customer_name, project_title or the SO's own
-    project_label)`` (AC-A4) - an adopted AutoCount SO carries a `project_label` but no
-    `projects.projects` row, so it must not fall back to the customer alone.
+    project_label, is_pre_order)`` (AC-A4) - an adopted AutoCount SO carries a
+    `project_label` but no `projects.projects` row, so it must not fall back to the
+    customer alone; a pre-order row gets the same "PRE-ORDER" suffix the OI worklist
+    prints, read straight off `run_scope_oi_rows`'s own `is_pre_order` key.
     """
-    from app.services.project_order_inquiry_service import project_customer_label
-
     rows = run_scope_oi_rows(
         db, product_ids, so_numbers=so_numbers,
         horizon_start=horizon_start, horizon=horizon,
@@ -859,6 +863,7 @@ def _project_inquiry_map(
         bucket["months"][month] = bucket["months"].get(month, 0.0) + q
         label = project_customer_label(
             r["customer_name"], r["project_title"] or r["project_label"],
+            r.get("is_pre_order"),
         ) or "Unnamed customer"
         bucket["customers"][label] = bucket["customers"].get(label, 0.0) + q
     return out
@@ -982,13 +987,23 @@ def _last_cost_map(db: Session, product_codes: list[str]) -> dict[str, str]:
     """``{product_code: "<cost> <CCY>"}`` - the sheet's "Last cost" column (AC-A7/AC-A8,
     PLAN-order-sheet-oi-reports-22sep.md), the newest non-cancelled PO line's own
     `unit_cost`, in the line's OWN currency when set, else the PO HEADER's - never a
-    literal default currency (R2, owner ruling 22 Sep). The SAME `DISTINCT ON` shape
-    `_last_po_supplier_map` reads for the Supplier column, extended to select cost/
-    currency instead of supplier, so the two columns can never disagree about which PO is
-    "the newest". Keyed by CODE, not id, because that is how `_export_rows`/
-    `_export_xlsx_rows` address a row - joined at EXPORT time, like Description/Category on
-    the low stock report, so a cost that moved since the run is the cost purchasing pays
-    today.
+    literal default currency (R2, owner ruling 22 Sep). Keyed by CODE, not id, because
+    that is how `_export_rows`/`_export_xlsx_rows` address a row - joined at EXPORT time,
+    like Description/Category on the low stock report, so a cost that moved since the run
+    is the cost purchasing pays today.
+
+    NOT the same `DISTINCT ON` shape as `_last_po_supplier_map` (fix round 2, 23 Sep
+    review) - three real differences: this one filters `pol.unit_cost IS NOT NULL` before
+    the pick (a costless line never wins "newest" over an older costed one), it tie-breaks
+    on `po.id DESC` last rather than `po.supplier_id DESC`, and it groups by
+    `p.product_code` (per-COMPANY unique, `uq_products_company_product_code`) rather than
+    by `pol.product_id` (globally unique). That last difference is why the company
+    predicate here is pinned on `p.company_id`, not `pol.company_id` the way
+    `_last_po_supplier_map` pins it (security fix round 2, AC-A10): two companies can
+    share one product CODE, so scoping only the PO line would let another company's PO
+    line win the `DISTINCT ON (p.product_code)` slot for a code this company also holds -
+    `_last_po_supplier_map` has no such risk because it matches `pol.product_id` directly,
+    an id no other company's row can equal.
 
     `pol.unit_cost IS NOT NULL` is a WHERE, not a NULL-check after the pick: a line with no
     cost never wins the "newest" slot over an older line that has one, so a product's Last
@@ -1004,7 +1019,7 @@ def _last_cost_map(db: Session, product_codes: list[str]) -> dict[str, str]:
     """
     if not product_codes:
         return {}
-    co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="lcm")
+    co, co_params = company_sql_predicate(db, "p.company_id", param_prefix="lcm")
     rows = db.execute(text(f"""
         SELECT DISTINCT ON (p.product_code) p.product_code AS code,
                pol.unit_cost AS unit_cost,
@@ -1419,9 +1434,16 @@ def _remarks_text(row: dict) -> str:
 def _last_in_text(receipt: Optional[dict]) -> str:
     """"Last in qty" (AC-A2, PLAN-order-sheet-oi-reports-22sep.md, superseding the earlier
     "SPO - container - qty" reading): `"<container> - <qty>"`, the bare quantity when the
-    line names no container OR when the frozen row predates migration 518 (SPO number NULL
-    but a qty/date were already frozen), `""` when there is no last-in line at all - the
-    SPO number itself never appears in this cell any more.
+    line names no container, `""` when there is no last-in line at all - the SPO number
+    itself never appears in this cell any more.
+
+    Gated on CONTAINER alone (fix round 2, 23 Sep review - item 6 found the earlier cut
+    gating on `spo_number` instead, so a receipt with a container but no SPO number
+    printed the bare quantity, dropping the one piece of traceability the cell has left).
+    The bare-qty branch covers BOTH real cases that have no container: a genuinely
+    container-less receipt, and a row frozen before migration 518 (SPO number and
+    container both NULL, qty/date already frozen) - the same reading either way, since
+    neither carries a container to show.
 
     Shaped like `_incoming_text`'s cell but with no total-then-lines split: there is
     exactly ONE document behind this cell, never several to trace.
@@ -1429,9 +1451,6 @@ def _last_in_text(receipt: Optional[dict]) -> str:
     if not receipt:
         return ""
     qty_text = _qty_text(receipt.get("qty"))
-    spo_number = receipt.get("spo_number")
-    if not spo_number:
-        return qty_text
     container = receipt.get("container")
     return f"{container} - {qty_text}" if container else qty_text
 
@@ -1582,8 +1601,10 @@ def _export_xlsx_rows(rows: list[dict], last_cost: dict[str, str]) -> list[tuple
 #: AC-A7 (Lane A, PLAN-order-sheet-oi-reports-22sep.md): "Last cost" (11) inserted right of
 #: Supplier shifts every one of these three right by one - Delivery/Project-customer stay
 #: at 8/9 (they sit LEFT of Supplier), BRW PO qty/BRW incoming qty/Last in qty move to
-#: 12/13/14.
-_PDF_LIST_COLUMNS = (8, 9, 12, 13, 14)
+#: 12/13/14. AC-A6b (fix round 2, 23 Sep): Suggestion (6) joins the wrapped set too - it
+#: now prints one part per line (`_suggestion_text`'s "\n" join), so the PDF cell must
+#: keep the line breaks the same way the Delivery/Project-customer cells already do.
+_PDF_LIST_COLUMNS = (6, 8, 9, 12, 13, 14)
 #: Quantity columns, right-aligned on the PDF the way a printed sheet's numbers are. 12 and
 #: 13 are NOT here (issue #796): a cell class is exclusive (`_export_pdf_html` picks "list"
 #: over "num" when both would apply), and right-aligning "PO-A - 4" under its own total

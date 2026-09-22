@@ -520,7 +520,7 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     # then its OWN company is adopted before anything company-scoped is touched -
     # `reorder_run_service._adopt_run_company_scope`, the same shape
     # `generate_promotions_pdf` above uses via its own snapshotted `company_id` param.
-    from app.models.base import get_company_scope
+    from app.models.base import UNSET, get_company_scope
     from app.models.scm import ReorderRun
     from app.services.scm.reorder_run_service import _adopt_run_company_scope
 
@@ -534,9 +534,21 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     run = db.get(ReorderRun, run_id)
     if run is not None:
         _adopt_run_company_scope(db, run)
-    else:
+    if run is None or not getattr(run, "company_id", None):
+        # AC-A10 (security should-fix, PLAN-order-sheet-oi-reports-22sep.md, 23 Sep
+        # review): a run that does not exist, or whose OWN `company_id` is NULL (a
+        # legacy row from before the column existed - `_adopt_run_company_scope`
+        # deliberately leaves such a row's scope untouched rather than defaulting it),
+        # must not export under the `None` scope set two lines up - `None` means "no
+        # predicate, every company", the exact isolation break this export exists to
+        # close. UNSET fails closed instead: every raw-SQL company predicate downstream
+        # (`company_sql_predicate`, read by `_last_cost_map` / `_project_inquiry_map`)
+        # renders `1=0`, and `ReorderRun` itself is company-scoped, so `export_report`'s
+        # own `_run_for` lookup finds nothing and the export fails rather than leaking.
+        set_company_scope(db, UNSET)
         logger.warning(
-            "generate_order_sheet: run %s not found; export runs under no company", run_id
+            "generate_order_sheet: run %s not found or has no company; "
+            "failing closed rather than exporting under no company scope", run_id
         )
     svc = DownloadService(db)
     try:
