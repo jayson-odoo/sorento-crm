@@ -1764,3 +1764,102 @@ describe('AC-D5: one hazard icon per column, however many pending changes touch 
     expect(dateIcons).toHaveLength(1);
   });
 });
+
+/**
+ * Owner ruling, 22 Sep 2026: EVERY column on the fulfilment board List view must be
+ * sortable - not just Line, Sales order and Verdict. RED today: Agent, Customer, Product,
+ * OI, Required date, Outstanding qty, Suggested, Decided and Rank all carry
+ * `enableSorting: false` and a plain string `header`, so `DataGridColumnHeader` never
+ * renders its sort button for them (`data-grid-column-header.tsx`: a column with neither
+ * `getCanSort()` nor a resizable header falls through to the plain `headerLabel()`, no
+ * `role="button"`).
+ */
+describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', () => {
+  it('renders a sort control on every column header', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+
+    const sortableTitles = [
+      'Line',
+      'Sales order',
+      'Agent',
+      'Customer',
+      'Product',
+      'OI',
+      'Required date',
+      'Outstanding qty',
+      'Suggested',
+      'Decided',
+      'Rank',
+      'Verdict',
+    ];
+    for (const title of sortableTitles) {
+      expect(screen.getByRole('button', { name: title })).toBeInTheDocument();
+    }
+  });
+
+  it('sorts Outstanding qty numerically, not lexicographically (9 before 20)', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          key: 'so-1:line-1',
+          so_number: 'SO000001',
+          line_no: 1,
+          qty: '20',
+          qty_outstanding: '20',
+        }),
+        contribution({
+          key: 'so-2:line-2',
+          sales_order_id: 'so-2',
+          line_id: 'core-line-2',
+          so_number: 'SO000002',
+          line_no: 2,
+          qty: '9',
+          qty_outstanding: '9',
+        }),
+      ],
+    });
+
+    await screen.findByText('SO000001');
+    fireEvent.click(screen.getByRole('button', { name: 'Outstanding qty' }));
+
+    // Ascending: 9 (SO000002) before 20 (SO000001). A lexicographic sort would leave
+    // '20' before '9' instead, since '2' < '9' as characters.
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^SO00000[1-2]$/).map((el) => el.textContent),
+      ).toEqual(['SO000002', 'SO000001']),
+    );
+  });
+
+  it('sorts Suggested by the same text the cell prints, e.g. "Needs a location" before "Not recorded"', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          key: 'so-1:line-1',
+          so_number: 'SO000001',
+          line_no: 1,
+        }),
+        contribution({
+          key: 'so-2:line-2',
+          sales_order_id: 'so-2',
+          line_id: 'core-line-2',
+          so_number: 'SO000002',
+          line_no: 2,
+          unplannable: true,
+        }),
+      ],
+    });
+
+    await screen.findByText('SO000001');
+    fireEvent.click(screen.getByRole('button', { name: 'Suggested' }));
+
+    // Ascending alphabetically: "Buy 43" (SO000001) sorts before "Needs a location"
+    // (SO000002).
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^SO00000[1-2]$/).map((el) => el.textContent),
+      ).toEqual(['SO000001', 'SO000002']),
+    );
+  });
+});

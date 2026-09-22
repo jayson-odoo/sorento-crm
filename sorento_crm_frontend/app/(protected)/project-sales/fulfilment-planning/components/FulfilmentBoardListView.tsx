@@ -348,9 +348,7 @@ export function FulfilmentBoardListView({
         },
         size: 150,
         minSize: 120,
-        // S6 (AC-B6-13): sortable now, so it can carry the default sort alongside Line -
-        // every OTHER column stays `enableSorting: false` so the reading order nobody
-        // asked to change stays put.
+        // Owner ruling, 22 Sep 2026: every column on this list sorts.
         enableSorting: true,
         meta: {
           // The SAME editor the cell breakdown expands, so a decision reads and is taken
@@ -381,7 +379,7 @@ export function FulfilmentBoardListView({
       {
         id: 'agent',
         accessorFn: (row) => row.agent_code ?? '',
-        header: 'Agent',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         cell: ({ row }) =>
           row.original.agent_code ? (
             <span
@@ -395,12 +393,12 @@ export function FulfilmentBoardListView({
           ),
         size: 110,
         minSize: 90,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'customer',
         accessorFn: (row) => row.customer_name ?? '',
-        header: 'Customer',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         cell: ({ row }) =>
           row.original.customer_name ? (
             <span className="block truncate" title={row.original.customer_name}>
@@ -411,12 +409,12 @@ export function FulfilmentBoardListView({
           ),
         size: 180,
         minSize: 130,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'product',
         accessorFn: (row) => row.item_code,
-        header: 'Product',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
           // AC-RL-06 amended (17 Sep, "beside the PRODUCT"), and the whole ladder since
           // AC-A1 to AC-A7: ONE word for how far this line's own inquiry has got, on every
@@ -451,7 +449,7 @@ export function FulfilmentBoardListView({
         },
         size: 140,
         minSize: 110,
-        enableSorting: false,
+        enableSorting: true,
       },
       // S6 (AC-B6-15): the live OI row this line raised, linking straight to it. A line
       // with no live row - nothing raised, or the row it raised has since settled/gone -
@@ -459,7 +457,7 @@ export function FulfilmentBoardListView({
       {
         id: 'order_inquiry',
         accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
-        header: 'OI',
+        header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
         cell: ({ row }) => {
           const inquiry = row.original.order_inquiry;
           if (!inquiry?.inquiry_no) return <span className="text-muted-foreground">-</span>;
@@ -490,12 +488,12 @@ export function FulfilmentBoardListView({
         },
         size: 120,
         minSize: 100,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
-        header: 'Required date',
+        header: ({ column }) => <DataGridColumnHeader title="Required date" column={column} />,
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1">
             {row.original.required_date ? (
@@ -510,12 +508,14 @@ export function FulfilmentBoardListView({
         ),
         size: 130,
         minSize: 110,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'owed_qty',
-        accessorFn: (row) => row.qty_outstanding ?? row.qty,
-        header: 'Outstanding qty',
+        // Numeric, not the raw string `qty_outstanding`/`qty` ride on - a lexicographic
+        // sort would put "20" ahead of "9" (owner ruling, 22 Sep 2026).
+        accessorFn: (row) => Number(row.qty_outstanding ?? row.qty ?? 0),
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding qty" column={column} />,
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1">
             <span className="block min-w-0 truncate tabular-nums">
@@ -526,7 +526,7 @@ export function FulfilmentBoardListView({
         ),
         size: 100,
         minSize: 90,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         // AC-D4: what the ENGINE said, in PLAN section 2's own words. Split off the old
@@ -534,8 +534,11 @@ export function FulfilmentBoardListView({
         // proposal on an undecided one - so the two could never be compared, which is the
         // one thing the planner opens this view to do.
         id: 'suggested',
-        accessorFn: () => '',
-        header: 'Suggested',
+        // Owner ruling, 22 Sep 2026: sorts on the SAME text the cell prints
+        // (`suggestedSortText` below), so the sort order and the words on screen can never
+        // disagree.
+        accessorFn: (row) => suggestedSortText(row),
+        header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           if (contribution.unplannable) {
@@ -569,12 +572,14 @@ export function FulfilmentBoardListView({
         },
         size: 240,
         minSize: 170,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'decided',
-        accessorFn: () => '',
-        header: 'Decided',
+        // Owner ruling, 22 Sep 2026: sorts on the SAME text the cell prints
+        // (`decidedSortText` below).
+        accessorFn: (row) => decidedSortText(row, draft[row.key] ?? null),
+        header: ({ column }) => <DataGridColumnHeader title="Decided" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           const drafted = draft[contribution.key] ?? null;
@@ -621,12 +626,12 @@ export function FulfilmentBoardListView({
         },
         size: 240,
         minSize: 170,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'rank',
         accessorFn: (row) => row.rank_score,
-        header: 'Rank',
+        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
         cell: ({ row }) =>
           row.original.covered || row.original.unplannable ? (
             <span className="text-muted-foreground">-</span>
@@ -637,7 +642,7 @@ export function FulfilmentBoardListView({
           ),
         size: 80,
         minSize: 70,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'verdict',
@@ -748,9 +753,7 @@ export function FulfilmentBoardListView({
       onExpandedChange={setExpanded}
       onRowClick={(row) => requestRow(row.key)}
       pageSize={25}
-      // AC-7: turns sorting on for the table so the Verdict column can offer it - every OTHER
-      // column opts back out above (`enableSorting: false`) so this is a change to Verdict
-      // alone, not a live control appearing on eight headers nobody asked to sort.
+      // Owner ruling, 22 Sep 2026: every column on this list sorts.
       sortable
       // AC-5, fix round 1: the banner's link names a ROW, not a page - `PanelDataGrid` jumps
       // to whichever page currently holds it, in its own sorted order, so a left-out line
@@ -765,4 +768,27 @@ export function FulfilmentBoardListView({
 /** Whether a Buy actually contributed to this composition (S3, R-Local). */
 function hasBuy(parts: SupplyPart[] | null): boolean {
   return Boolean(parts?.some((part) => part.kind === 'buy' && Number(part.qty) > 0));
+}
+
+/**
+ * The plain text the Suggested column's cell prints, shared with its own `accessorFn`
+ * (owner ruling, 22 Sep 2026: every column sorts) so the sort order can never disagree with
+ * the words on screen.
+ */
+function suggestedSortText(contribution: BoardContribution): string {
+  if (contribution.unplannable) return 'Needs a location';
+  const parts = contributionSuggestion(contribution);
+  if (!parts) return 'Not recorded';
+  return describeSupply(parts, contribution.fulfilment_location) || 'Nothing proposed';
+}
+
+/** The Decided column's own equivalent of `suggestedSortText` above. */
+function decidedSortText(contribution: BoardContribution, drafted: BoardDecision | null): string {
+  const parts = contributionDecision(contribution, drafted);
+  if (!parts) {
+    const inquiry = contributionInquiryDecision(contribution);
+    if (inquiry) return inquiry.inquiry_no ?? 'Unnumbered inquiry';
+    return 'Not decided';
+  }
+  return describeSupply(parts, contribution.fulfilment_location);
 }
