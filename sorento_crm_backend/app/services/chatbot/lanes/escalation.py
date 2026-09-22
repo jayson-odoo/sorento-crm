@@ -190,7 +190,8 @@ def _company_keys(company: Any) -> set[str]:
 def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
     """The brand / company axes this escalation routes on. Pure.
 
-    A five-rung ladder, in the live body's order:
+    A SIX-rung ladder, in the live body's order (round 4, owner-approved: `carried_
+    brand` is the ONE new rung, added 22 Sep 2026):
 
     1. `picked_member` - the customer picked a row out of the frozen `last_result_set`, so
        both axes are that row's own, verbatim;
@@ -199,12 +200,28 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     3. `sameTeam` - the roster the offer was fetched with, which splits three ways:
        `prior_state` (one company), `prior_state_no_company` (one row, no id) and
        `multi_company_unpicked` (more than one, nobody picked - the clarify arm);
-    4. `stated_brand` - a brand the customer named when no roster was involved at all;
-    5. `none`.
+    4. `carried_brand` - the OFFER TURN's own resolved brand
+       (`turn_runtime._accepted_pending_brand`, the SAME acceptance carry the agent half
+       already uses), read when NONE of the three roster arms above named one. `same_team`
+       is never true in the rearch engine today (`_prev_variables` reads `session_vars.
+       variables`, a nest `turn/tail.py`'s five session keys never write), so THIS rung is
+       what a rearch "yes" after an incoming/ETA miss actually reaches - measured live
+       (SRTSC07, 22 Sep 2026): a bare "yes" carried no brand at all, and the whole
+       Packing List team rotated instead of drawing the brand-tagged member;
+    5. `stated_brand` - a brand the customer named when no roster was involved at all;
+    6. `none`.
 
     Both axes are always what the `get-cs-members` call USED, never re-derived from this
     turn's `query_brands`: re-deriving would narrow the assignee pool to one the customer
-    was never shown.
+    was never shown. `carried_brand` is the ONE exception to "never re-derived" by
+    necessity - the rearch engine has no `get-cs-members` roster fetch to remember a
+    brand from at all, so it carries the offer turn's OWN resolved brand instead
+    (`lanes/business/gate.py`'s `routing_brand`, stamped onto the pending at MINT time,
+    read back here through the acceptance carry) - never a brand this turn re-derives
+    for itself, which is what the "never re-derived" rule is actually protecting
+    against (see also `_accepted_pending_field`'s own docstring for why the picked-
+    member and company-pick arms above stay untouched: their brand is a SPECIFIC row's
+    own and must keep outranking a generic carry).
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     prev = _prev_variables(ctx)
@@ -228,6 +245,12 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
         if jsc.is_array(query_brands) and len(query_brands) == 1
         else None
     )
+    # Round 4 (owner-approved, 22 Sep 2026): `turn_runtime.lane_parse_output` writes
+    # this key the SAME way it already writes `preferred_assignee_id`/`company_pick`,
+    # under the SAME accept gate `_accepted_pending_field` shares with the agent carry
+    # - so an unaccepted turn carries no brand, exactly like it carries no agent.
+    raw_carried_brand = jsc.get(jsc.get(output, "escalation"), "carried_brand")
+    carried_brand = jsc.js_string(raw_carried_brand).lower() if jsc.truthy(raw_carried_brand) else None
 
     raw_pick = jsc.get(jsc.get(output, "escalation"), "company_pick")
     company_pick = jsc.js_string(raw_pick).lower().strip() if jsc.truthy(raw_pick) else None
@@ -303,6 +326,9 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
             if source_name != "multi_company_unpicked":
                 routing_brand = jsc.get(prev, "routing_brand")
                 brand_code = routing_brand if routing_brand is not None else None
+    elif carried_brand:
+        brand_code = carried_brand
+        source_name = "carried_brand"
     elif stated_brand:
         brand_code = stated_brand
         source_name = "stated_brand"

@@ -208,7 +208,11 @@ export function BoardDecisionPill({
   const pill = (
     <span
       data-testid={`decision-pill-${contribution.key}`}
-      className={`${STATUS_PILL_BASE} normal-case ${VERDICT_PILL[verdict]}`}
+      // `truncate` (AC-C2, `board-verdict-actions-chips-acceptance-criteria.md`): the Verdict
+      // cell now carries the row's own actions beside this pill, and at 375px - or on a
+      // column dragged to its minimum - the PILL is what gives way, never the buttons. Left
+      // to wrap, "Change proposed" made the whole row two text lines tall.
+      className={`${STATUS_PILL_BASE} normal-case truncate ${VERDICT_PILL[verdict]}`}
       title={decision?.reason ?? contribution.decision?.amend_reason ?? ''}
     >
       {VERDICT_LABEL[verdict]}
@@ -234,7 +238,11 @@ export function BoardDecisionPill({
               type="button"
               aria-label={`Saved by ${savedBy}`}
               data-testid={`decision-saved-by-${contribution.key}`}
-              className="rounded-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              // `block min-w-0 overflow-hidden` (N-4, reviewer): this wrapper is the flex
+              // item, so without it the button keeps its content's full width and the
+              // pill's own `truncate` inside it has nothing to truncate against - a Saved
+              // line's pill would still push the Verdict cell's icons out at 375px.
+              className="block min-w-0 overflow-hidden rounded-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               {pill}
             </button>

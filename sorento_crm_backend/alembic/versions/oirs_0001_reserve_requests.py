@@ -26,7 +26,7 @@ restored, so those links are deleted FIRST, then the column, then both new table
 the two seeded rows, in that order.
 
 Revision ID: oirs_0001_reserve_requests
-Revises: spec_vocab_close_couple
+Revises: 525_committed_v_orderback
 Create Date: 2026-09-22
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "oirs_0001_reserve_requests"
-down_revision = "spec_vocab_close_couple"
+down_revision = "525_committed_v_orderback"
 branch_labels = None
 depends_on = None
 
