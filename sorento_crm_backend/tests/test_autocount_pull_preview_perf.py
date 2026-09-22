@@ -72,6 +72,7 @@ from app.services.audit_service import register_audit_listeners
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 from app.services.integration_reference_service import IntegrationReferenceService
 from app.services.master_ingest_service import IngestOutcome, MasterIngestService
+from app.services.rules import product_rules
 
 from tests._pg_fixture import blank_session, unique_code
 from tests.test_autocount_pull_sr1 import (  # noqa: F401 - task_db is a fixture
@@ -902,3 +903,144 @@ class TestAsDictDiffOnlyOnDryRun:
         )
         assert preview.dry_run is True
         assert "diff" in preview.as_dict()["records"][0], preview.as_dict()
+
+
+# ================================================== Group 3 (fix round)
+class TestPreloadFailureRecoversViaRollback:
+    """Group 3: `_build_product_preload`'s own except swallowed the
+    exception but left the session's transaction ABORTED (a real DB error,
+    not a Python one, leaves Postgres refusing every further statement until
+    a ROLLBACK) - every record's own `self.db.begin_nested()` then raised
+    `PendingRollbackError`, which is UNCAUGHT there and killed the whole
+    batch, not just the preload optimisation."""
+
+    def test_preload_db_error_recovers_and_the_batch_still_ingests(self, db, monkeypatch):
+        rows = [_row() for _ in range(2)]
+
+        def _broken_resolve_default_supplier_id(db, settings):
+            # A genuine Postgres error (division by zero), not a Python one -
+            # exactly what actually aborts a transaction; a bare `raise
+            # ValueError(...)` would not reproduce the bug this pins.
+            db.execute(text("SELECT 1/0"))
+            return None
+
+        monkeypatch.setattr(
+            product_rules, "resolve_default_supplier_id", _broken_resolve_default_supplier_id
+        )
+
+        result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest("products", rows)
+        assert result.created == 2, result.as_dict()
+
+
+class TestRefCacheResetPerBatch:
+    """Group 3: `self._ref_cache` must be a FRESH dict per `ingest()` call -
+    `MasterIngestService` instances are already one-per-batch in every real
+    caller, but this pins the reset explicitly so a future caller that
+    re-runs `ingest()` on the SAME instance can never see a stale id from an
+    earlier, unrelated batch."""
+
+    def test_ref_cache_resets_between_two_ingest_calls_on_one_instance(self, db):
+        # A brand-new category/uom/brand is CREATED, never cached (only a
+        # FOUND reference is - see `ensure_reference`'s own docstring), so
+        # the batch needs an EXISTING one to actually populate the cache.
+        cat = ProductCategory(
+            category_code=unique_code(MARKER), category_name="cat", company_id=DEFAULT_COMPANY_ID
+        )
+        uom = UnitOfMeasure(
+            uom_code=unique_code(MARKER), uom_name="uom", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add_all([cat, uom])
+        db.commit()
+
+        service = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID)
+        service.ingest(
+            "products", [_row(category_code=cat.category_code, uom_code=uom.uom_code)]
+        )
+        assert service._ref_cache, "the first batch should have cached something"
+
+        service._ref_cache[("sentinel", "marker", "zzt-should-not-survive")] = "dead"
+        service.ingest(
+            "products", [_row(category_code=cat.category_code, uom_code=uom.uom_code)]
+        )
+        assert ("sentinel", "marker", "zzt-should-not-survive") not in service._ref_cache
+
+
+class TestDiscontinuedWatermarkInPreviewDiff:
+    """Group 3 (both reviewers): a discontinued -> live product's diff must
+    show the watermark reset (`discontinued_notified_at` /
+    `discontinued_notify_batch_id`), or an operator's preview silently omits
+    a real write the real sync makes."""
+
+    def test_dry_run_diff_names_the_discontinued_watermark_reset(self, db):
+        row = _row(description=f"**** {MARKER} discontinued model")
+        created = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest("products", [row])
+        product_id = created.records[0].entity_id
+        db.commit()
+
+        db.execute(
+            text(
+                "UPDATE products SET discontinued_notified_at = now(), "
+                "discontinued_notify_batch_id = :b WHERE id = :id"
+            ),
+            {"b": str(uuid.uuid4()), "id": product_id},
+        )
+        db.commit()
+
+        live_row = dict(row)
+        live_row["description"] = f"{MARKER} back in stock"
+
+        preview = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+            "products", [live_row], dry_run=True
+        )
+        diff = preview.records[0].diff
+        assert diff is not None
+        assert "discontinued_notified_at" in diff, diff
+        assert diff["discontinued_notified_at"]["incoming"] is None, diff
+
+
+class TestDefaultUomResolvedOncePerBatch:
+    """Group 3: three records with a BLANK `uom_code` and a configured
+    `system_settings.default_uom_id` must resolve that default ONCE for the
+    batch, not once per record - `resolve_default_uom`'s own `system_settings`
+    read is already cached via `_system_settings()`; this pins the
+    `units_of_measure` VALIDATION query too."""
+
+    def test_three_blank_uom_records_issue_one_units_of_measure_select(self, db):
+        cat = ProductCategory(
+            category_code=unique_code(MARKER), category_name="cat", company_id=DEFAULT_COMPANY_ID
+        )
+        configured_uom = UnitOfMeasure(
+            uom_code=unique_code(MARKER), uom_name="Configured", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add_all([cat, configured_uom])
+        db.flush()
+
+        from app.models.user import SystemSetting
+
+        settings = db.query(SystemSetting).first()
+        if settings is None:
+            settings = SystemSetting(id=str(uuid.uuid4()))
+            db.add(settings)
+        settings.default_uom_id = configured_uom.id
+        db.commit()
+
+        rows = [
+            _row(category_code=cat.category_code, uom_code="")
+            for _ in range(3)
+        ]
+
+        with _capture_sql(db) as calls:
+            result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+                "products", rows
+            )
+
+        assert result.created == 3, result.as_dict()
+        assert all(r.entity_id for r in result.records)
+        uom_rows = db.execute(
+            text("SELECT base_uom_id FROM products WHERE id::text = ANY(:ids)"),
+            {"ids": [r.entity_id for r in result.records]},
+        ).mappings().all()
+        assert all(str(row["base_uom_id"]) == str(configured_uom.id) for row in uom_rows)
+
+        uom_selects = _select_statements(calls, "units_of_measure")
+        assert len(uom_selects) == 1, calls
