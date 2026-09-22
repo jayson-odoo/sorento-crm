@@ -16,9 +16,13 @@
  *                                          //   user narrowed the run.
  *      demand_class?: 'project' | 'retail', // Start Plan (21 Sep) - which leg of demand
  *                                          //   to net. Omitted = both (today's behaviour).
- *      so_numbers?: string[],              // SO scope, project only. Sent only when
- *                                          //   demand_class === 'project'; [] means every
- *                                          //   project order in range, not narrowed to none.
+ *      so_numbers?: string[],              // SO scope (Lane D, 23 Sep: widened from
+ *                                          //   project-only). Sent whenever narrowed to
+ *                                          //   it - under Project OR an omitted
+ *                                          //   demand_class (All); [] means every project
+ *                                          //   order in range, not narrowed to none. The
+ *                                          //   server refuses it alongside
+ *                                          //   demand_class === 'retail'.
  *      budget_id?: string | null           // M4 - always null/omitted in M3
  *    }
  *    Planning scope is fixed server-side (M8-D5) - no `buy_scope` in the request.
@@ -444,12 +448,13 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       // Demand scope (21 Sep 2026): same "omit when unset" rule - a run that never
       // narrowed by demand class sends a byte-identical request to before this existed.
       ...(req.demand_class ? { demand_class: req.demand_class } : {}),
-      // SO scope is project-only and sent only when the user narrowed to it: an empty
-      // list under Project means every project order in range, not narrowed to none, so
-      // it still has to travel - but only ever alongside demand_class === 'project'.
-      ...(req.so_numbers?.length && req.demand_class === 'project'
-        ? { so_numbers: req.so_numbers }
-        : {}),
+      // SO scope, sent whenever the buyer narrowed to it - under Project (unchanged) AND
+      // under All (Lane D, AC-D2: `so_numbers` may accompany an All run with no
+      // `demand_class`, narrowing its own project legs). The schema now refuses it only
+      // alongside `demand_class === 'retail'`, and the modal never builds that
+      // combination (Dealer has no Orders picker), so gating on `req.so_numbers?.length`
+      // alone is the same test as the server's.
+      ...(req.so_numbers?.length ? { so_numbers: req.so_numbers } : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));
@@ -520,9 +525,9 @@ export async function replanReorderRun(
         // Same "omit when unset" rule as `createReorderRun` - a re-plan of a run that
         // carries no demand scope sends a byte-identical request to before this existed.
         ...(req.demand_class ? { demand_class: req.demand_class } : {}),
-        ...(req.so_numbers?.length && req.demand_class === 'project'
-          ? { so_numbers: req.so_numbers }
-          : {}),
+        // Same widened rule as `createReorderRun` (Lane D, AC-D2) - sent whenever
+        // narrowed to it, under Project or All alike.
+        ...(req.so_numbers?.length ? { so_numbers: req.so_numbers } : {}),
       }),
     },
   );

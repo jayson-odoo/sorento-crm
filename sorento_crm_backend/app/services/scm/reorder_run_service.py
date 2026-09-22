@@ -915,11 +915,15 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # turns on only when there is something to bind - a Project run with no SO named still
     # nets every project order in range, the same as an unscoped call.
     so_scoped = bool(so_numbers)
-    # AC-D1b: on an unscoped (All) run only, the book leg plans every open retail line
-    # regardless of "Plan until" - the range narrows the two project legs alone. A Dealer
-    # or Project run keeps windowing the retail leg exactly as before (retail_windowed's
-    # default).
-    retail_windowed = demand_class is not None
+    # AC-D1b, RULING NARROWED (fix round 3, 23 Sep 2026 - `test_reorder_window_start.py`
+    # broke: the chatbot's own date-range plan is ALSO an unscoped (demand_class=None)
+    # run, with no Orders picker to narrow its project legs, and its retail leg must stay
+    # windowed exactly as before): the book leg only drops "Plan until" when the run is
+    # BOTH unscoped AND has a picked Orders list to narrow its project legs with - an All
+    # run with nothing picked keeps windowing the retail leg exactly like every other run.
+    # A Dealer or Project run is unaffected either way (the `demand_class is None` half is
+    # already false for both).
+    retail_windowed = not (demand_class is None and bool(so_numbers))
     cv_with = f"""WITH cv_all AS ({demand.horizon_committed_select_sql(demand_class=demand_class, so_scoped=so_scoped, retail_windowed=retail_windowed)}),
     keys AS (
         SELECT product_id, warehouse_id FROM scm.net_position_v

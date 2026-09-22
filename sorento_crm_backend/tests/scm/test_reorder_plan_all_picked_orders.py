@@ -13,7 +13,7 @@ STEP 1 MEASURE (captain's brief, 23 Sep 2026), confirmed on this branch before w
 these tests:
 
   (a) `CreateReorderRunRequest`/`ReplanReorderRunRequest`
-      (`app/schemas/scm_reorder.py::require_so_numbers_need_project_demand_class`) RAISES
+      (`app/schemas/scm_reorder.py::refuse_so_numbers_on_a_dealer_run`) RAISES
       when `so_numbers` is non-empty and `demand_class != "project"` - so an All run
       (`demand_class` absent) carrying `so_numbers` is refused 422 at the HTTP layer
       TODAY. `tests/test_reorder_plan_demand_scope.py::test_t2_so_numbers_without_
@@ -80,6 +80,7 @@ from sqlalchemy import text
 
 from app.models.project_so import ACK_ACKNOWLEDGED
 from app.models.scm import ReorderRun
+from app.services.scm import demand_breakdown_service as dbs
 from app.services.scm import reorder_engine as eng
 from app.services.scm import reorder_run_service as svc
 from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg, scm_app  # noqa: F401
@@ -135,7 +136,7 @@ def _buy_rows(db, run_id: str, pid: str) -> list[dict]:
 # =============================================================================
 
 def test_ac_d2_all_run_with_so_numbers_and_no_demand_class_is_accepted(scm_app):
-    """RED today: `require_so_numbers_need_project_demand_class` raises 422 whenever
+    """RED today: `refuse_so_numbers_on_a_dealer_run` raises 422 whenever
     `so_numbers` is non-empty and `demand_class != "project"`, so an omitted
     `demand_class` (All) is refused exactly like a stated `retail` one. Fixed shape:
     2xx, `demand_class` stays NULL, `so_numbers` stored as sent.
@@ -385,6 +386,55 @@ def test_ac_d1b_all_run_range_narrows_project_leg_only_retail_leg_unbounded(scm_
     )
 
 
+def test_ac_d1b_all_run_with_no_picked_orders_keeps_the_retail_leg_windowed(scm_app):
+    """Fix round 3 ruling (narrowed from round 0's `demand_class is not None`, which
+    broke `test_reorder_window_start.py` - the chatbot's own date-range plan is ALSO an
+    unscoped run with no Orders picker): the retail leg only drops "Plan until" when the
+    run is BOTH unscoped (All) AND has a picked `so_numbers` list. An All run with
+    NOTHING picked keeps windowing the retail leg exactly as today - the twin of
+    `test_ac_d1b_all_run_range_narrows_project_leg_only_retail_leg_unbounded` above,
+    `so_numbers=[]` instead of `[so_a]`.
+
+    `product_codes=[code]` (G10) plus an explicit level/forecast, same as that twin: with
+    `committed=0` and nothing else to trigger on, admission/sizing would otherwise write
+    no recommendation row at all, and `_committed_for` needs one to read.
+    """
+    _, db, _, _ = scm_app
+    code = _code("P")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, code)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 5.0)
+    _mk_movement(db, pid, wid, 1, days_ago=7)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} Supplier"))
+    eng.ensure_reorder_policy_defaults(db)
+    db.execute(
+        text(
+            "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, "
+            "company_id, created_at) VALUES (:id, :p, NULL, :lvl, 'manual', :co, now())"
+        ),
+        {"id": _u(), "p": pid, "lvl": 10, "co": SORENTO_COMPANY_ID},
+    )
+    db.flush()
+
+    # Retail line due AFTER the plan's range end - same seed as the picked-orders twin.
+    _retail_row(db, product_id=pid, warehouse_id=wid, qty=12, so_number=_code("SOR"),
+                required_date=date(2026, 12, 1))
+
+    all_run = svc.create_run(
+        db, [], enqueue=False, product_codes=[code],
+        plan_horizon_start=date(2026, 8, 1), plan_horizon_date=date(2026, 10, 31),
+        demand_class=None, so_numbers=[],
+    )
+    svc.run_reorder(all_run["run_id"], db=db)
+    all_committed = _committed_for(db, all_run["run_id"], pid)
+
+    assert all_committed == 0.0, (
+        f"All run with NOTHING picked: today's behaviour - the retail line due after "
+        f"the range end stays excluded - got {all_committed}"
+    )
+
+
 # =============================================================================
 # AC-D6 - Demand = Dealer (retail) with so_numbers is unaffected by this lane; Project
 # behaves as PR #1122 left it (not re-pinned here - see test_reorder_plan_project_only.py).
@@ -403,3 +453,65 @@ def test_ac_d6_dealer_run_with_so_numbers_stays_refused_at_the_http_layer(scm_ap
             "warehouse_codes": [], "demand_class": "retail", "so_numbers": ["SO1"],
         })
     assert resp.status_code == 422, resp.text
+
+
+# =============================================================================
+# Fix round 2 (security review) - the demand drill (`demand_breakdown_service.py`) has
+# its OWN reading of the run's SO scope, separate from `_planning_rows`'/
+# `_apply_project_supply_reduction`'s - an All run's picked SO must narrow the drill's
+# LISTED lines the same way it narrows `committed_total`, and `committed_total` itself
+# must recompute the SAME figure the run froze (AC-D1b's `retail_windowed`, mirrored
+# here). `so_filter` gated on `demand_class == "project"` only (never widened for Lane
+# D) and `_committed_total` passed no `retail_windowed` at all - both silently
+# unscoped/unwindowed on an All run before this fix.
+# =============================================================================
+
+def test_demand_drill_on_all_run_lists_only_the_picked_sos_rows_and_ties_to_frozen(scm_app):
+    """T8's own scenario (`_seed_scope_universe`), Demand = All instead of Project: SO A's
+    confirmed acked in-range (11), confirmed AWAITING in-range (50, listed but not
+    counted), and form (5) rows must be the ONLY project-leg rows listed - SO B's
+    confirmed (13) and form (3) rows must not leak in, exactly like T8 pins for a Project
+    run. The retail (7) and unlocated (9) lines are listed too (an All run's own book
+    leg, untouched by the SO scope) and `committed_total` must equal the run's own frozen
+    `inputs.committed` (32.0, matching `test_ac_d2_service_level_committed_already_
+    scoped_on_all_run_bypassing_http` above) - not a live recomputation that disagrees
+    with it.
+    """
+    _, db, _, _ = scm_app
+    u = _seed_scope_universe(db)
+
+    created = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 8, 1), plan_horizon_date=date(2026, 10, 31),
+        demand_class=None, so_numbers=[u["so_a"]],
+    )
+    svc.run_reorder(created["run_id"], db=db)
+
+    row = _inputs_for(db, created["run_id"], u["pid"])
+    frozen = float((row["inputs"] or {}).get("committed"))
+    assert frozen == 32.0
+
+    out = dbs.demand_for_recommendation(db, row["id"])
+
+    # The drill's own recomputed total must TIE to the frozen figure, not merely exist -
+    # this is the `retail_windowed` half of the fix (an unrelated bug would recompute a
+    # different, live-windowed number for a run whose retail leg is unwindowed).
+    assert out["committed_total"] == frozen
+
+    qtys = sorted(float(line["qty"]) for line in out["lines"])
+    # SO A's own rows (this is the `so_filter` half of the fix): confirmed acked (11),
+    # confirmed awaiting (50, listed not counted), form (5) - plus the All run's own book
+    # leg, unaffected by the SO scope: retail (7) and unlocated (9).
+    assert sum(qtys) == 82.0, (
+        f"expected retail(7)+unlocated(9)+SO A confirmed(11)+awaiting(50)+form(5)=82, "
+        f"got {sum(qtys)} from {qtys}"
+    )
+    for expected in (7.0, 9.0, 11.0, 50.0, 5.0):
+        assert expected in qtys, f"{expected} missing from {qtys}"
+    # SO B's rows (confirmed 13, form 3) must not leak in - the drill's own SO-scope join,
+    # on BOTH the confirmed and form legs.
+    assert 13.0 not in qtys
+    assert 3.0 not in qtys
+
+    confirmed_lines = [line for line in out["lines"] if line["source"] == "order_inquiry_confirmed"]
+    assert confirmed_lines and all(line["so_number"] == u["so_a"] for line in confirmed_lines)

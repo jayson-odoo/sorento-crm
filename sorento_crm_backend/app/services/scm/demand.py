@@ -650,7 +650,8 @@ GROUP BY product_id, warehouse_id;
 
 
 def horizon_committed_select_sql(
-    demand_class: Optional[str] = None, so_scoped: bool = False,
+    demand_class: Optional[str] = None,
+    so_scoped: bool = False,
     retail_windowed: bool = True,
 ) -> str:
     """THE PLAN'S committed figure: `COMMITTED_V_SQL`'s body as a bare SELECT (no

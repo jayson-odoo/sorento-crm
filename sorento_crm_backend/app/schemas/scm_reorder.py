@@ -32,7 +32,7 @@ def require_start_on_or_before_end(start: Optional[date], end: Optional[date]) -
         raise ValueError("plan_horizon_start must be on or before plan_horizon_date")
 
 
-def require_so_numbers_need_project_demand_class(
+def refuse_so_numbers_on_a_dealer_run(
     demand_class: Optional[str], so_numbers: List[str]
 ) -> None:
     """Raises when ``so_numbers`` is asked for against a retail run (T2, Lane D AC-D2/AC-D6).
@@ -83,7 +83,7 @@ class CreateReorderRunRequest(BaseModel):
     @model_validator(mode="after")
     def _start_before_end(self):
         require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
-        require_so_numbers_need_project_demand_class(self.demand_class, self.so_numbers)
+        refuse_so_numbers_on_a_dealer_run(self.demand_class, self.so_numbers)
         return self
 
 
@@ -112,7 +112,7 @@ class ReplanReorderRunRequest(BaseModel):
     @model_validator(mode="after")
     def _start_before_end(self):
         require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
-        require_so_numbers_need_project_demand_class(self.demand_class, self.so_numbers)
+        refuse_so_numbers_on_a_dealer_run(self.demand_class, self.so_numbers)
         return self
 
 

@@ -546,8 +546,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
         expect(getCandidateOrders).toHaveBeenCalledWith({ from: '2026-08-01', to: '2026-10-31' }),
       );
 
+      // Fix round 3 item 3: the option's accessible name (label) and the menu row's own
+      // printed text now agree - both "<SO number> - <customer_name>", `project_label`
+      // dropped from the label.
       expect(
-        await screen.findByLabelText('SO419517 - OTM GROUP / TAT LIAN'),
+        await screen.findByLabelText('SO419517 - OTM'),
       ).toBeInTheDocument();
       // Owner ruling (Lane D fix round 1): one-line menu rows under Project too -
       // "<SO number> - <customer>", the awaiting-ack count appended only when non-zero.
@@ -558,10 +561,10 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
 
       // Pre-selected: only the SO with rows_in_range > 0.
       expect(
-        (screen.getByLabelText('SO419517 - OTM GROUP / TAT LIAN') as HTMLInputElement).checked,
+        (screen.getByLabelText('SO419517 - OTM') as HTMLInputElement).checked,
       ).toBe(true);
       expect(
-        (screen.getByLabelText('SO420374 - ARC RESIDENCE') as HTMLInputElement).checked,
+        (screen.getByLabelText('SO420374 - ARC') as HTMLInputElement).checked,
       ).toBe(false);
 
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
@@ -604,7 +607,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Project, untick the pre-selected order: empty so_numbers means "every project
       // order in range", sent as `[]`, never omitted.
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      fireEvent.click(await screen.findByLabelText('SO1 - P1'));
+      fireEvent.click(await screen.findByLabelText('SO1 - C1'));
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit.mock.calls[0][0].demand_class).toBe('project');
       expect(onSubmit.mock.calls[0][0].so_numbers).toEqual([]);
@@ -653,16 +656,16 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
       fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-08-31' } });
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      expect(await screen.findByLabelText('SO1 - P1')).toBeInTheDocument();
+      expect(await screen.findByLabelText('SO1 - C1')).toBeInTheDocument();
 
       // Range changes BEFORE the user has touched the list: the new pre-selection replaces
       // the old one. Only `To` moves, so this is exactly one more fetch (one new queryKey).
       fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-30' } });
-      expect(await screen.findByLabelText('SO2 - P2')).toBeInTheDocument();
-      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(true);
+      expect(await screen.findByLabelText('SO2 - C2')).toBeInTheDocument();
+      expect((screen.getByLabelText('SO2 - C2') as HTMLInputElement).checked).toBe(true);
 
       // Now the user edits the list by hand.
-      fireEvent.click(screen.getByLabelText('SO2 - P2'));
+      fireEvent.click(screen.getByLabelText('SO2 - C2'));
 
       // A further range change - even one whose candidates would re-select SO2 (still
       // rows_in_range > 0) - must not override the user's own edit. `rows_awaiting` is
@@ -695,7 +698,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Fresh data says SO2 qualifies for pre-selection again; the user's own untick must
       // still win. Removing `touchedOrdersRef.current` from the guard (RunPlanningModal.tsx)
       // re-checks SO2 here and fails this assertion.
-      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(false);
+      expect((screen.getByLabelText('SO2 - C2') as HTMLInputElement).checked).toBe(false);
 
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit).toHaveBeenCalledWith(
@@ -757,15 +760,15 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // ("the picker option label appends 'raised N' only when a window is set") means
       // the accessible name may carry a suffix once a window is typed - the pre-selection
       // fact under test does not depend on that exact display string.
-      expect(await screen.findByLabelText(/^SOA - PA/)).toBeInTheDocument();
+      expect(await screen.findByLabelText(/^SOA - CA/)).toBeInTheDocument();
       await waitFor(() => {
         // A: rows_in_range 2 > 0 AND rows_raised_in_window 1 > 0 -> pre-selected.
-        expect((screen.getByLabelText(/^SOA - PA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
         // B: rows_in_range 3 > 0 but rows_raised_in_window 0 -> NOT pre-selected, even
         // though the old rows_in_range-only rule would have picked it.
-        expect((screen.getByLabelText(/^SOB - PB/) as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText(/^SOB - CB/) as HTMLInputElement).checked).toBe(false);
         // C: rows_raised_in_window 2 > 0 but rows_in_range 0 -> NOT pre-selected.
-        expect((screen.getByLabelText(/^SOC - PC/) as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText(/^SOC - CC/) as HTMLInputElement).checked).toBe(false);
       });
       // The raised count used to be rendered on the option (S2's own description
       // suffix) - dropped by the owner's Lane D fix-round-1 ruling, which retires the
@@ -801,8 +804,8 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
 
       // Windowed: only A qualifies.
       await waitFor(() => {
-        expect((screen.getByLabelText(/^SOA - PA/) as HTMLInputElement).checked).toBe(true);
-        expect((screen.getByLabelText(/^SOB - PB/) as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOB - CB/) as HTMLInputElement).checked).toBe(false);
       });
 
       // Clear both raise inputs - the buyer has not touched the Orders list by hand, so
@@ -811,8 +814,8 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '' } });
 
       await waitFor(() => {
-        expect((screen.getByLabelText(/^SOA - PA/) as HTMLInputElement).checked).toBe(true);
-        expect((screen.getByLabelText(/^SOB - PB/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOB - CB/) as HTMLInputElement).checked).toBe(true);
       });
     });
 
@@ -839,11 +842,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       await renderModal();
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
 
-      expect(await screen.findByLabelText('SOA - PA')).toBeInTheDocument();
+      expect(await screen.findByLabelText('SOA - CA')).toBeInTheDocument();
       await waitFor(() => {
-        expect((screen.getByLabelText('SOA - PA') as HTMLInputElement).checked).toBe(true);
-        expect((screen.getByLabelText('SOB - PB') as HTMLInputElement).checked).toBe(true);
-        expect((screen.getByLabelText('SOC - PC') as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText('SOA - CA') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SOB - CB') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SOC - CC') as HTMLInputElement).checked).toBe(false);
       });
     });
 
@@ -913,8 +916,8 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       ]);
       await renderModal();
       await waitFor(() => {
-        expect((screen.getByLabelText('SO1 - P1') as HTMLInputElement).checked).toBe(true);
-        expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText('SO1 - C1') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SO2 - C2') as HTMLInputElement).checked).toBe(false);
       });
     });
 
@@ -954,10 +957,18 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       }));
       getCandidateOrders.mockResolvedValueOnce(orders);
       await renderModal();
-      await screen.findByLabelText('SO1 - P1');
+      await screen.findByLabelText('SO1 - C1');
 
       const trigger = await screen.findByTestId(/trigger-label-/);
       expect(trigger.textContent).toBe('SO1, SO2 +12');
+      // Fix round 3 item 2: `truncate` + `title` (every selected SO number, not just the
+      // two shown) - the ADR-PRODUCT-STANDARDS pattern every other long-text cell uses,
+      // so a hover/long-press at 375px still reads the full pick.
+      const span = trigger.querySelector('span');
+      expect(span?.className).toContain('truncate');
+      expect(span?.title).toBe(
+        Array.from({ length: 14 }, (_, i) => `SO${i + 1}`).join(', '),
+      );
     });
 
     it('AC-D1: menu rows are one line each - "<SO number> - <customer>[, N awaiting ack]", no second description line', async () => {

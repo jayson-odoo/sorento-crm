@@ -216,18 +216,17 @@ export function RunPlanningModal({
     setSoNumbers(next);
   };
 
-  /** `so_number - project label or customer name`, trimmed when neither is on file - the
-   *  option's accessible name (also the closed-trigger label's source when no summary
-   *  suffix applies). The two-line description (former "N lines in range[, raised N]")
-   *  is gone - the owner's Lane D fix-round-1 ruling retired it everywhere in favour of
-   *  the one-line menu row below. */
+  /** `so_number - customer_name`, trimmed when neither is on file - the option's
+   *  accessible name AND search text, kept IDENTICAL to the menu row's own printed text
+   *  (fix round 3: the row and the label must agree, so `project_label` is dropped here
+   *  too - a buyer searching the label for what the row shows must find it). */
   const orderOptions = useMemo(
     () =>
       (candidateOrders ?? []).map((o) => {
-        const suffix = o.project_label ?? o.customer_name ?? '';
+        const customer = o.customer_name ?? '';
         return {
           value: o.so_number,
-          label: suffix ? `${o.so_number} - ${suffix}` : o.so_number,
+          label: customer ? `${o.so_number} - ${customer}` : o.so_number,
         };
       }),
     [candidateOrders],
@@ -242,24 +241,24 @@ export function RunPlanningModal({
     return map;
   }, [candidateOrders]);
 
-  /** SO number -> customer name, for the one-line menu row (owner ruling, Lane D fix
-   *  round 1: "<SO number> - <customer>", the awaiting count appended only when
-   *  non-zero - under Demand = Project AND All alike, full stop). */
-  const customerBySoNumber = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const o of candidateOrders ?? []) map.set(o.so_number, o.customer_name ?? '');
-    return map;
-  }, [candidateOrders]);
-
   /** The Orders field's own closed-trigger label (AC-D1: ONE line, the first two SO
    *  numbers then `+x` for the rest - `SO418869, SO419517 +12`, no chip wall) - shared by
    *  Demand = All and Demand = Project alike ("Same trigger under Demand = Project"). */
   const renderOrdersTriggerLabel = useCallback(
     (selected: { value: string; label: string }[]) => {
       if (selected.length === 0) return 'Every project order in range';
-      const shown = selected.slice(0, 2).map((o) => o.value).join(', ');
-      const rest = selected.length - 2;
-      return rest > 0 ? `${shown} +${rest}` : shown;
+      const soNumbers = selected.map((o) => o.value);
+      const shown = soNumbers.slice(0, 2).join(', ');
+      const rest = soNumbers.length - 2;
+      const text = rest > 0 ? `${shown} +${rest}` : shown;
+      // `truncate` + `title` (fix round 3 item 2): every selected SO number, not just
+      // the two shown, so a hover/long-press at 375px still reads the full pick - the
+      // ADR-PRODUCT-STANDARDS truncate+title pattern every other long-text cell uses.
+      return (
+        <span className="truncate" title={soNumbers.join(', ')}>
+          {text}
+        </span>
+      );
     },
     [],
   );
@@ -425,17 +424,16 @@ export function RunPlanningModal({
                   candidatesError ? 'Could not load orders.' : 'No project orders found.'
                 }
                 renderTriggerLabel={renderOrdersTriggerLabel}
-                // Owner ruling (Lane D fix round 1): one-line menu rows under Project
-                // AND All, full stop - "<SO number> - <customer>", the awaiting-ack
-                // count appended only when it is non-zero. The old two-line row
-                // (description + "N lines in range") is gone everywhere, not just All.
+                // Owner ruling (Lane D fix round 1, narrowed round 3): one-line menu rows
+                // under Project AND All, full stop - `opt.label` IS "<SO number> -
+                // <customer>" (the option's own accessible name, fix round 3 item 3), so
+                // the row prints that same string, with the awaiting-ack count appended
+                // only when it is non-zero.
                 renderOption={(opt) => {
                   const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
-                  const customer = customerBySoNumber.get(opt.value) ?? '';
-                  const base = customer ? `${opt.value} - ${customer}` : opt.value;
                   return (
                     <span className="break-words">
-                      {base}
+                      {opt.label}
                       {awaiting > 0 ? (
                         <span className="text-warning">{`, ${awaiting} awaiting ack`}</span>
                       ) : null}
