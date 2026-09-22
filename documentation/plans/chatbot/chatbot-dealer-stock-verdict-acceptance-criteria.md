@@ -134,8 +134,9 @@ contact with an `availability` policy `warehouse_ids = [BRW, MWH]`, stock rows, 
 absent from the payload with the existing `_assert_no_quantity_anywhere` helper.
 
 - **AC-1740 [BE]** Given on hand BRW 60, MWH 40, DC1 500 and open SO BRW 10, When
-  `requested_quantities = {p: 90}`, Then the entry has `available` false (90 > 100 - 10), and DC1 is
-  not counted. pytest.
+  `requested_quantities = {p: 91}`, Then the entry has `available` false (91 > 100 - 10; an ask of
+  exactly 90 is `available`, the boundary is inclusive per AC-1720 row 4), and DC1 is not counted.
+  pytest.
 - **AC-1741 [BE]** Given on hand 100 (allowed) and open SO 0, When ask 50, Then `available` true and
   `running_low` true; ask 49 gives `running_low` false; ask 100 gives true; ask 101 gives
   `available` false. pytest.

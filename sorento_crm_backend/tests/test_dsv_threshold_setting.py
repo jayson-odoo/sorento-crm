@@ -103,9 +103,17 @@ def settings_api(db, monkeypatch):
         app.dependency_overrides.pop(apply_company_scope, None)
 
 
-def _seed_settings_row(db) -> None:
-    db.add(SystemSetting(id=str(uuid.uuid4()), name=f"{MARKER} Co"))
+def _seed_settings_row(db) -> SystemSetting:
+    """Seeds through the ORM, not a raw `INSERT`: several NOT NULL columns on this table
+    (`active`, `language`, `timezone`, `currency`, ...) carry a Python-side `Column(...,
+    default=...)` only, no `server_default` - SQLAlchemy supplies those at flush time, a raw
+    SQL insert never sees them and dies on `active`'s `NotNullViolation` regardless of
+    anything a new migration does. Returns the row so a caller can read back a
+    server-defaulted column (AC-1730) without a second query."""
+    row = SystemSetting(id=str(uuid.uuid4()), name=f"{MARKER} Co")
+    db.add(row)
     db.commit()
+    return row
 
 
 # --------------------------------------------------------------------- migration harness
@@ -138,9 +146,21 @@ def _script_directory() -> ScriptDirectory:
 
 
 def test_dsv_0001_adds_threshold_column_default_50(db):
-    """AC-1730: applying `dsv_0001` adds `system_settings.chatbot_stock_low_threshold_pct`
-    (integer, not null, server default 50), chained onto `spec_vocab_close_couple`, and the
-    alembic graph stays a single head."""
+    """AC-1730: `system_settings.chatbot_stock_low_threshold_pct` is present - integer, not
+    null, server default 50 - chained onto `spec_vocab_close_couple`, with the alembic graph
+    still a single head.
+
+    `dsv_0001`'s `upgrade()` is still called here so it is exercised, but it is column-existence
+    guarded: `blank_session` builds its scratch schema from the MODELS (`Base.metadata.create_
+    all`), which already carry the column once the coder's migration adds it to
+    `app/models/user.py`, so upgrade() is a no-op against this schema rather than what puts the
+    column there. The "column exists with the right shape" assertions below check the column
+    directly (`information_schema`) instead of assuming upgrade() created it from nothing.
+
+    Seeded through the ORM (`_seed_settings_row`, the same helper AC-1731 below uses), not a raw
+    `INSERT INTO system_settings (id, name)`: that raw form hits `NotNullViolation` on `active`
+    (a NOT NULL column with a Python-side-only default) regardless of anything this migration
+    does - reproduced identically on `origin/main` with no diff applied."""
     module = _load_dsv_migration()
 
     assert module.revision == "dsv_0001"
@@ -150,18 +170,9 @@ def test_dsv_0001_adds_threshold_column_default_50(db):
     with Operations.context(context):
         module.upgrade()
 
-    settings_id = str(uuid.uuid4())
-    db.execute(
-        text("INSERT INTO system_settings (id, name) VALUES (:id, :name)"),
-        {"id": settings_id, "name": f"{MARKER} Co"},
-    )
-    value = db.execute(
-        text(
-            "SELECT chatbot_stock_low_threshold_pct FROM system_settings WHERE id = :id"
-        ),
-        {"id": settings_id},
-    ).scalar()
-    assert value == 50
+    row = _seed_settings_row(db)
+    db.refresh(row)
+    assert row.chatbot_stock_low_threshold_pct == 50
 
     not_null = db.execute(
         text(
@@ -171,6 +182,15 @@ def test_dsv_0001_adds_threshold_column_default_50(db):
         )
     ).scalar()
     assert not_null == "NO"
+
+    column_default = db.execute(
+        text(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name = 'system_settings' "
+            "AND column_name = 'chatbot_stock_low_threshold_pct'"
+        )
+    ).scalar()
+    assert column_default is not None and "50" in column_default
 
     heads = _script_directory().get_heads()
     assert len(heads) == 1, f"expected a single alembic head, found {heads}"
