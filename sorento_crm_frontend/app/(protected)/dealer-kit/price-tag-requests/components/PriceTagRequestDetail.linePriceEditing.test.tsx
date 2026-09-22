@@ -23,7 +23,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// `dismiss` is here even though `useDeferredAction` is mocked below: the
+// pending-entity store this hook would otherwise drive calls `toast.dismiss`
+// on its own follow-through timer, and a mock missing the key throws if
+// anything in this file ever exercises the real hook.
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
 
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,

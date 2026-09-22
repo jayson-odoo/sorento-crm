@@ -12,7 +12,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// `dismiss` is here even though `useDeferredAction` is mocked below: the
+// pending-entity store this hook would otherwise drive calls `toast.dismiss`
+// on its own follow-through timer, and a mock missing the key throws if
+// anything in this file ever exercises the real hook.
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
 
 // D5 (line-level promotion, Phase 1 mock): the Lines tab now gates its
 // Promotion/Selling price cells on `price_tag_requests.process` via
