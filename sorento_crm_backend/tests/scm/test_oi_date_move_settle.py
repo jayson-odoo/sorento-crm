@@ -426,7 +426,14 @@ def test_two_live_rows_both_stamped_no_notice(api):
     and a THIRD row would be raised for any outstanding remainder. This is a pure date
     move (same qty), so there is no remainder to raise, and the plan wants both existing
     rows date-stamped in place instead of left bare with a duplicate ADVANCE/DELAY
-    notice beside them."""
+    notice beside them.
+
+    The pair is deliberately MIXED on the handshake (owner ruling, 22 Sep, AC-B2-2): row A
+    is still AWAITING as the confirm raised it, row B was already ACKNOWLEDGED. Both get
+    the date and the Was columns; only B stamps `changed_at` and drops back to To confirm,
+    because that is the only one purchasing had read. This is also `_stamp_date_move`'s own
+    acknowledged case - `test_date_move_ack_acknowledged_becomes_changed` above covers the
+    single-live-row branch, which is `_settle_row_in_place`'s, not this method's."""
     client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
@@ -448,11 +455,15 @@ def test_two_live_rows_both_stamped_no_notice(api):
     _link(world, row_a, po_a, qty=10, document="ROW-A")
     db.commit()
 
+    assert row_a.ack_state == ACK_AWAITING, "row A is the one nobody has read"
+
     row_b = OrderInquiryRow(
         id=_uid(), company_id=world.company_id, order_inquiry_id=row_a.order_inquiry_id,
         so_line_id=line.id, item_code=row_a.item_code, qty=Decimal("10"),
         delivery_date=row_a.delivery_date, stock_location=row_a.stock_location,
         verb=IV_ORDER, state=INQUIRY_RAISED, supply_decision_id=row_a.supply_decision_id,
+        ack_state=ACK_ACKNOWLEDGED, acknowledged_by=world.actor,
+        acknowledged_at=datetime.utcnow(),
     )
     db.add(row_b)
     db.commit()
@@ -470,10 +481,18 @@ def test_two_live_rows_both_stamped_no_notice(api):
     for row, document in ((row_a, "ROW-A"), (row_b, "ROW-B")):
         assert row.delivery_date == NOW, (document, row.delivery_date)
         assert row.previous_delivery_date == WAS_1, document
-        assert row.changed_at is not None, document
+        assert Decimal(str(row.previous_qty)) == Decimal("10"), document
         assert [
             link.document for link in ProjectOrderInquiryService(db)._links_of(row.id)
         ] == [document]
+
+    # AC-B2-2 (owner ruling, 22 Sep): `changed_at` travels with the ack flip and with
+    # nothing else. A row still AWAITING is a row nobody has read, so there is no
+    # "changed since I looked" to answer for it.
+    assert row_a.ack_state == ACK_AWAITING
+    assert row_a.changed_at is None, "awaiting: left alone"
+    assert row_b.ack_state == ACK_CHANGED
+    assert row_b.changed_at is not None, "acknowledged: back to To confirm, and stamped"
 
     assert _notices(db, line.id) == []
 
@@ -507,6 +526,7 @@ def test_lone_placed_row_without_links_gets_date_stamp_qty_untouched_no_notice(a
     row_id = str(row.id)
     row.state = INQUIRY_PLACED
     db.commit()
+    assert row.ack_state == ACK_AWAITING, "nobody has read this row yet"
 
     _apply_date_move(
         world, core, order, core_so, line, old_date=WAS_1, new_date=NOW, qty="5"
@@ -518,7 +538,13 @@ def test_lone_placed_row_without_links_gets_date_stamp_qty_untouched_no_notice(a
     assert Decimal(str(placed.qty)) == Decimal("5"), "qty untouched"
     assert placed.delivery_date == NOW
     assert placed.previous_delivery_date == WAS_1
-    assert placed.changed_at is not None
+    assert Decimal(str(placed.previous_qty)) == Decimal("5")
+    # AC-B2-2 (owner ruling, 22 Sep): this row is still AWAITING, so the handshake is not
+    # touched and `changed_at` - "when CS last amended a row purchasing had already
+    # acknowledged" - stays NULL. The Was / Now table reads the two columns above and is
+    # unaffected.
+    assert placed.ack_state == ACK_AWAITING
+    assert placed.changed_at is None
 
     assert _notices(db, line.id) == []
     fresh = [
@@ -618,7 +644,13 @@ def test_actioned_fully_linked_rows_stamped_no_notice_handover_once(api):
         assert row.state == INQUIRY_ACTIONED, document
         assert row.delivery_date == NOW, document
         assert row.previous_delivery_date == WAS_1, document
-        assert row.changed_at is not None, document
+        # AC-B2-2 (owner ruling, 22 Sep): both rows of this fixture are still AWAITING on
+        # the handshake - `actioned` is the STATE, a different question from whether
+        # purchasing confirmed the instruction - so neither stamps `changed_at`. The
+        # acknowledged half of the rule is `test_two_live_rows_both_stamped_no_notice`'s
+        # row B, which is `_stamp_date_move`'s own acknowledged case.
+        assert row.ack_state == ACK_AWAITING, document
+        assert row.changed_at is None, document
         assert [
             link.document
             for link in ProjectOrderInquiryService(world.db)._links_of(row.id)

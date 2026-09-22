@@ -1790,7 +1790,6 @@ class ProjectOrderInquiryService:
             row.previous_qty = previous_qty
             row.previous_delivery_date = row_previous_date
             row.delivery_date = new_date
-            row.changed_at = datetime.utcnow()
             row.note = f"{row.note}; {moved}" if row.note else moved
             # Whose instruction the row is now, the same two facts `_settle_row_in_place`
             # restates: this decision's, at the location this composition states (when it
@@ -1799,10 +1798,17 @@ class ProjectOrderInquiryService:
             if entry.get("stock_location"):
                 row.stock_location = entry.get("stock_location")
             row.supply_decision_id = decision.id
-            # Same handshake rule as `_settle_row_in_place`: a row purchasing has
-            # already taken on goes back to To confirm; one still AWAITING is left
-            # alone, since CS is free to change what nobody has read yet.
+            # Same handshake rule as `_settle_row_in_place`, `changed_at` included (owner
+            # ruling, 22 Sep): a row purchasing has already taken on goes back to To
+            # confirm and stamps WHEN it was amended under them; one still AWAITING is
+            # left alone, because CS is free to change what nobody has read yet.
+            # `changed_at` is the column's own question - "when CS last amended a row
+            # purchasing had already acknowledged" (`OrderInquiryRow.changed_at`) - so a
+            # stamp on an awaiting row would answer it about a row nobody had read. The
+            # Was/Now table is unaffected: it reads `previous_qty` /
+            # `previous_delivery_date`, which every stamped row gets either way.
             if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
                 row.ack_state = ACK_CHANGED
         self.db.flush()
         for row in targets:

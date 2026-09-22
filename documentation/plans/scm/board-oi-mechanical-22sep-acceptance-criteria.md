@@ -86,7 +86,8 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
   the Lines tab is selected, that row is scrolled into view and highlighted for ~2s, and the
   `row` param is removed.
 - **AC-B6-5 [FE]** Given the `line` / `row` id matches nothing (row cancelled and hidden, or
-  wrong id), when the page loads, then nothing glows and no error shows.
+  wrong id), when the page loads, then nothing glows, no error styling appears, and the
+  info toast of AC-B6-12 is the only message.
 - **AC-B6-6 [UX]** Highlight uses an existing colour token and a 2s fade; under
   `prefers-reduced-motion` it appears and disappears without transition.
 - **AC-B6-10 [FE]** Given the target row sits on page 3 of a 25-per-page grid, when the page
@@ -127,10 +128,17 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
 - **AC-B2-1 [BE]** Given a line with one live buy row (raised / partly_linked / placed) and a
   confirmed planning change `advanced` or `delayed` on that line, when the change applies,
   then that row's `delivery_date` = new date, `previous_delivery_date` = old date,
-  `previous_qty` = its qty, `changed_at` set, note gains `Was <qty> on <old date>`, and NO
-  `ADVANCE` / `DELAY` row exists for the line afterwards.
+  `previous_qty` = its qty, note gains `Was <qty> on <old date>`, and NO
+  `ADVANCE` / `DELAY` row exists for the line afterwards. `changed_at` follows AC-B2-2,
+  never unconditionally.
 - **AC-B2-2 [BE]** Given that row was `acknowledged`, when it settles, then `ack_state` =
-  `changed`; given it was `awaiting`, it stays `awaiting`.
+  `changed` AND `changed_at` is stamped; given it was `awaiting`, it stays `awaiting` and
+  `changed_at` stays NULL (owner ruling, 22 Sep). The two travel together because
+  `changed_at` answers the column's own question - "when CS last amended a row purchasing
+  had already acknowledged" (`OrderInquiryRow.changed_at`) - so a stamp on a row nobody has
+  read would answer it about a change nobody was waiting on. The Was / Now table is
+  unaffected either way: it reads `previous_qty` / `previous_delivery_date`, which every
+  restated row gets. The same rule holds in `_stamp_date_move` and `_settle_row_in_place`.
 - **AC-B2-3 [BE]** Given the row carries PO and SPO links, when it settles, then every link
   survives with its qty and document unchanged.
 - **AC-B2-4 [BE]** Given a line with NO buy row before the confirm, when the confirm raises a
@@ -139,8 +147,10 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
 - **AC-B2-5 [BE]** Given a line with TWO live buy rows, when a date move applies, then both
   rows are restated in place per AC-B2-1 and no notice row is raised.
 - **AC-B2-6 [BE]** Given a lone `placed` row with no link rows, when a date move applies,
-  then the placed row gets `delivery_date` / `previous_delivery_date` / `changed_at` / ack
-  `changed`, its qty untouched, and no notice row.
+  then the placed row gets `delivery_date` / `previous_delivery_date` / `previous_qty` and
+  the note, its qty untouched, and no notice row; `changed_at` and the ack flip to
+  `changed` follow AC-B2-2 - stamped when purchasing had acknowledged the row, both left
+  alone when it was still `awaiting` (owner ruling, 22 Sep).
 - **AC-B2-7 [BE]** Given a line whose buy rows are all `actioned` and fully linked, when a
   date move applies, then each gets the same date stamp and no notice row; the handover
   email lists it once as a date change.
