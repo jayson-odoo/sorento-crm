@@ -25,6 +25,7 @@ from .test_oi_header_list import (
     BASE,
     MARKER,
     _header,
+    _sorento,
     _uid,
     _user,
     api,
@@ -170,47 +171,123 @@ def test_detail_export_post_marks_failed_and_503_when_enqueue_raises_AC_B4(api, 
     assert row["error"], "no error message was recorded"
 
 
-def test_detail_export_post_rejects_api_key_only_principal_AC_B7(api):
-    """AC-B7 / security (matches the order sheet's own S4 rule): a write endpoint is
-    never reachable by `X-API-Key` alone. `require_permission` (JWT-only
-    `get_current_user`) is what the route must gate on - a real, resolvable integration
-    key sent with NO Authorization header proves the refusal is about the AUTH METHOD,
-    not a missing permission, because `check_user_has_permission` is stubbed to always
-    grant it (the SAME override `api`'s own `_client` installs) - a route that DID
-    accept an api-key principal would sail straight through it and answer 200."""
+def test_detail_export_post_rejects_api_key_only_principal_AC_B7():
+    """AC-B7 / security (matches the order sheet's own S4 rule and its own test,
+    `tests/scm/test_order_sheet_export_downloads.py::
+    test_export_post_rejects_api_key_only_principal`): a write endpoint is never
+    reachable by `X-API-Key` alone - `require_permission` (JWT-only
+    `get_current_user`) is what the route must gate on.
+
+    Deliberately does NOT use the `api` fixture: its `_client` overrides BOTH
+    `get_current_user` AND `get_current_user_or_api_key` unconditionally for the
+    whole test body, which would make ANY dependency choice answer 200 regardless
+    of the header sent - exactly the flaw the sibling test's own docstring calls
+    out `as_user` for ("overrides both current-user dependencies unconditionally
+    and would hide this"). Only `get_db` is overridden here; a REAL, resolvable
+    integration key sent with NO Authorization header proves the refusal is about
+    the AUTH METHOD, not a missing permission or an unresolvable key.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
     from app.models.integration import Integration  # noqa: F401
-    from app.models.user import User, UserRoleAssignment
+    from app.models.user import User
+    from app.services import project_seed_service
     from app.services.integration_key_service import IntegrationKeyService
 
-    client, db, company_id = api
-    seeded = _header(db, company_id)
-    inquiry_id = seeded["inquiry"].id
+    from ._pg_fixture import blank_session
 
-    user = User(
-        id=_uid(), email=f"{_uid()}@zzt.test", name=f"{MARKER} integration",
-        status="ACTIVE", is_integration=True,
-    )
-    db.add(user)
-    db.flush()
-    integration = Integration(
-        id=_uid(), name=f"{MARKER}-{_uid()[:8]}", type="autocount_esb",
-        act_as_user_id=user.id, is_active=True,
-    )
-    db.add(integration)
-    db.flush()
-    key = IntegrationKeyService(db).issue_key(integration)
-    db.flush()
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        seeded = _header(db, company_id)
+        inquiry_id = seeded["inquiry"].id
 
-    resp = client.post(
-        f"{HEADERS_BASE}/{inquiry_id}/export",
-        headers={"X-API-Key": key},
-    )
+        user = User(
+            id=_uid(), email=f"{_uid()}@zzt.test", name=f"{MARKER} integration",
+            status="ACTIVE", is_integration=True,
+        )
+        db.add(user)
+        db.flush()
+        integration = Integration(
+            id=_uid(), name=f"{MARKER}-{_uid()[:8]}", type="autocount_esb",
+            act_as_user_id=user.id, is_active=True,
+        )
+        db.add(integration)
+        db.flush()
+        key = IntegrationKeyService(db).issue_key(integration)
+        db.flush()
 
-    assert resp.status_code in (401, 403), resp.text
-    count = db.execute(text(
-        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :id"
-    ), {"id": inquiry_id}).scalar()
-    assert count == 0, "an API-key-only caller was allowed to create a download row"
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:
+                resp = client.post(
+                    f"{HEADERS_BASE}/{inquiry_id}/export",
+                    headers={"X-API-Key": key},
+                )
+
+            assert resp.status_code in (401, 403), resp.text
+            count = db.execute(text(
+                "SELECT count(*) FROM user_downloads WHERE source_entity_id = :id"
+            ), {"id": inquiry_id}).scalar()
+            assert count == 0, "an API-key-only caller was allowed to create a download row"
+        finally:
+            app.dependency_overrides.clear()
+
+
+def test_worklist_export_post_rejects_api_key_only_principal_AC_B7():
+    """AC-B7, the list-page POST's own version of the test above - same reasoning,
+    same fixture shape (no unconditional override of both current-user
+    dependencies), a different route (`POST /order-inquiries/export`, no source
+    entity)."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+    from app.models.integration import Integration  # noqa: F401
+    from app.models.user import User
+    from app.services import project_seed_service
+    from app.services.integration_key_service import IntegrationKeyService
+
+    from ._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        _header(db, company_id)
+
+        user = User(
+            id=_uid(), email=f"{_uid()}@zzt.test", name=f"{MARKER} integration",
+            status="ACTIVE", is_integration=True,
+        )
+        db.add(user)
+        db.flush()
+        integration = Integration(
+            id=_uid(), name=f"{MARKER}-{_uid()[:8]}", type="autocount_esb",
+            act_as_user_id=user.id, is_active=True,
+        )
+        db.add(integration)
+        db.flush()
+        key = IntegrationKeyService(db).issue_key(integration)
+        db.flush()
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:
+                resp = client.post(
+                    f"{HEADERS_BASE}/export",
+                    headers={"X-API-Key": key},
+                    json={},
+                )
+
+            assert resp.status_code in (401, 403), resp.text
+            count = db.execute(text(
+                "SELECT count(*) FROM user_downloads WHERE kind = 'order_inquiry_worklist_xlsx'"
+            )).scalar()
+            assert count == 0, "an API-key-only caller was allowed to create a download row"
+        finally:
+            app.dependency_overrides.clear()
 
 
 # =========================================================================== #
@@ -259,12 +336,15 @@ def test_worklist_export_post_creates_download_row_and_enqueues_AC_B6(api, monke
 
     assert call["func"] is generate_order_inquiry_worklist_xlsx, call["func"]
     assert call["args"][0] == body["id"], call["args"]
-    # filters dict, then user id - the route's own contract (brief: "filters: dict").
-    assert call["args"][1] == {"state": "raised"} or (
-        isinstance(call["args"][1], dict) and call["args"][1].get("state") == "raised"
-    ), call["args"]
+    # filters dict, then user id - the route's own contract.
+    assert call["args"][1] == {"state": "raised"}, call["args"]
     assert call["args"][-1] == row["user_id"], call["args"]
-    assert call["kwargs"] == {"queue_name": "imports", "job_timeout": 600}, call["kwargs"]
+    # The requesting session's own single-company scope travels as an explicit
+    # `company_id` kwarg (`generate_promotions_pdf`'s own shape) - the worklist export
+    # names no single header a worker task could otherwise adopt a company from.
+    assert call["kwargs"] == {
+        "company_id": company_id, "queue_name": "imports", "job_timeout": 600,
+    }, call["kwargs"]
 
 
 def test_worklist_export_post_409_while_one_is_in_flight_no_source_entity_AC_B3(

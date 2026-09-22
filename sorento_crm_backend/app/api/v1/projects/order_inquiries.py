@@ -560,10 +560,7 @@ def export_order_inquiry_worklist_async(
     """
     from app.models.base import get_company_scope
     from app.services.queue_service import enqueue_job
-    from app.tasks.export_tasks import (
-        WORKLIST_EXPORT_COMPANY_SCOPE_KEY,
-        generate_order_inquiry_worklist_xlsx,
-    )
+    from app.tasks.export_tasks import generate_order_inquiry_worklist_xlsx
 
     filters = payload.model_dump(exclude_none=True)
 
@@ -584,18 +581,17 @@ def export_order_inquiry_worklist_async(
     )
     try:
         # The worker has no request-scoped company: snapshot the enqueuing request's
-        # own single-company scope INTO the filters dict (never a real worklist
-        # filter, popped back off in the task) so the render sees exactly the rows
-        # this caller could see, not the worker's fail-closed UNSET default.
+        # own single-company scope so the task can adopt it - the render then sees
+        # exactly the rows this caller could see, not the worker's fail-closed UNSET
+        # default.
         scope = get_company_scope(db)
-        task_filters = dict(filters)
-        if isinstance(scope, frozenset) and len(scope) == 1:
-            task_filters[WORKLIST_EXPORT_COMPANY_SCOPE_KEY] = next(iter(scope))
+        company_id = next(iter(scope)) if isinstance(scope, frozenset) and len(scope) == 1 else None
         enqueue_job(
             generate_order_inquiry_worklist_xlsx,
             str(download.id),
-            task_filters,
+            filters,
             str(current_user["id"]),
+            company_id=company_id,
             queue_name="imports",
             job_timeout=600,
         )

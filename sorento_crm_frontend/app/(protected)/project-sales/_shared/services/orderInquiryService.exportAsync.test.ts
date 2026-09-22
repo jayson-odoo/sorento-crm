@@ -16,11 +16,20 @@ const { apiFetch } = await import('@/lib/api');
 const mockFetch = apiFetch as unknown as ReturnType<typeof vi.fn>;
 
 function ok(body: unknown) {
-  return { ok: true, json: async () => body } as unknown as Response;
+  return {
+    ok: true,
+    json: async () => body,
+    headers: { get: () => 'application/json' },
+  } as unknown as Response;
 }
 
 function failed(status = 500, body: unknown = { message: 'boom' }) {
-  return { ok: false, status, json: async () => body } as unknown as Response;
+  return {
+    ok: false,
+    status,
+    json: async () => body,
+    headers: { get: () => 'application/json' },
+  } as unknown as Response;
 }
 
 beforeEach(() => mockFetch.mockReset());
@@ -54,7 +63,10 @@ describe('exportOrderInquiryXlsx (AC-B1)', () => {
 
   it('falls back to a readable message when the server sends nothing usable', async () => {
     const { exportOrderInquiryXlsx } = await import('./orderInquiryService');
-    mockFetch.mockResolvedValue(failed(500, {}));
+    // 400, not 500/401: `extractApiError` has its own dedicated wording for those two
+    // statuses, ahead of the caller's fallback - a status this test does not care about
+    // is what actually reaches `exportOrderInquiryXlsx`'s own fallback message.
+    mockFetch.mockResolvedValue(failed(400, {}));
 
     await expect(exportOrderInquiryXlsx('oi-1')).rejects.toThrow(
       /Failed to start the order inquiry export/i,
