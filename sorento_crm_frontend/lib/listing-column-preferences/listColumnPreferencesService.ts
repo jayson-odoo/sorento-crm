@@ -36,6 +36,14 @@ export type UserListColumnConfigPayload = {
    * (`SavedView.is_default`, everyone's). Owned by `SavedViewsMenu`.
    */
   defaultSavedViewId?: string | null;
+  /**
+   * Rows-per-page. Owned by `useListingColumnPreferences` like the three column keys
+   * above. A bounded int (1..`MAX_LIST_PAGE_SIZE`, `lib/listNavQuery.ts`), not a fixed
+   * list - review round 1: several listings default their own Rows-per-page menu
+   * outside 25/50/100. The BE bound only guards the WRITE; a legacy out-of-range value
+   * can still survive a GET, so the FE applies the same bound on read and drops it.
+   */
+  pageSize?: number | null;
 };
 
 export type UserListColumnConfigResponse = {

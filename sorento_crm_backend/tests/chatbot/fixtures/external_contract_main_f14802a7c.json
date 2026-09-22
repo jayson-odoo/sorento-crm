@@ -259,6 +259,19 @@
             "title": "Is Test",
             "type": "boolean"
           },
+          "media": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Media"
+          },
           "message": {
             "additionalProperties": true,
             "title": "Message",
@@ -363,7 +376,8 @@
               "not_supported",
               "stock_denied",
               "demand_qty",
-              "business_query"
+              "business_query",
+              "media_denied"
             ],
             "type": "string"
           },
