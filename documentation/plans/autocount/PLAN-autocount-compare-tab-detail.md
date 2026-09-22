@@ -1,6 +1,6 @@
 # PLAN: AutoCount pull - Compare tab shows every difference it counts
 
-Status: built, review READY, browser pass pending. Track: **small fix track** (one seam, FE
+Status: built, review READY, browser pass PASS (CT-1/3/5/7), PR #1098 ready for review; merge needs owner go. Track: **small fix track** (one seam, FE
 only, no migration, no auth change; one coder writes tests + fix, one reviewer, browser pass on
 the changed screen).
 UAC: `autocount-compare-tab-detail-acceptance-criteria.md`.
