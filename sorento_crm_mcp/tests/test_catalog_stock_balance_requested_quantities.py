@@ -11,19 +11,32 @@ Today the tool's `query_params` tuple carries only the scalar `requested_qty`
 no `requested_quantities` entry at all, so `test_catalog_declares_requested_quantities_param`
 is red on a plain membership check, not a fixture bug.
 
-Review round 3 (live pass, `dealer-stock-verdict.EVIDENCE.md`, Root cause A) adds the
-coverage gap the evidence named directly: these two tests above only ever asserted the
+Review round 3 (live pass, `dealer-stock-verdict.EVIDENCE.md`, Root cause A) added the
+coverage gap the evidence named directly: the two tests above only ever asserted the
 `ToolSpec.query_params` tuple and description text, never exercised the COMPILED tool
-with a live `requested_quantities` value. `server.py::_compile_tool` types every query
-param off one fixed `str | int | float | bool | list[str]` union with no dict case
-(`_scalar_union`), so a native-dict call fails Pydantic validation with 5 errors before
-the backend is ever reached - the JSON-string form is the only one that survives.
+with a live `requested_quantities` value.
+
+Review round 4 (Run 2 of the same evidence file) found round 3's reading of that gap was
+half right. The backend does send a compact JSON STRING now, yet the live tool still failed
+with `requested_quantities.str Input should be a valid string ... input_type=dict`, because
+FastMCP's `pre_parse_json` (`mcp/server/fastmcp/utilities/func_metadata.py`) `json.loads`
+ANY string argument whose declared annotation is not exactly `str` - the string is a dict
+again by the time Pydantic sees it. So the caller cannot pick a shape that works while the
+param is typed off `_scalar_union`: the string is pre-parsed into a dict and a dict has no
+case in that union. `TOOL_OBJECT_QUERY_PARAMS` (`server.py`) now types this one param
+`dict[str, int] | str`, and `_normalize_query_value` re-serializes a dict to the same
+compact, key-sorted JSON string for the outbound query. Both shapes are therefore accepted
+and both reach the backend as one identical string - which is what the tests below pin,
+through `FastMCP.call_tool`, the entry that actually runs `pre_parse_json`.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 
 import pytest
+from mcp.server.lowlevel.server import request_ctx
+from mcp.shared.context import RequestContext
 
 from sorento_crm_mcp.catalog import CATALOG
 from sorento_crm_mcp.server import _compile_tool, create_mcp_app
@@ -115,27 +128,73 @@ async def test_requested_quantities_as_a_json_string_reaches_the_backend_unchang
     assert client.query["requested_quantities"] == raw
 
 
-@pytest.mark.asyncio
-async def test_requested_quantities_as_a_native_dict_is_rejected_by_the_schema():
-    """Root cause A, reproduced at the boundary that actually fails in production: a
-    native dict for `requested_quantities` fails Pydantic validation before the tool
-    body ever runs, because the compiled signature types every query param off ONE
-    fixed `str | int | float | bool | list[str]` union with no dict case
-    (`server.py::_compile_tool`, `_scalar_union`). This is why the string form is the
-    contract, not a style preference - a dict-valued call from the parser/lane never
-    reaches the backend at all, and the caller sees a `ToolError`, not a 400."""
-    from mcp.server.fastmcp.exceptions import ToolError
+# --------------------------------------------------------------------------- #
+# Review round 4: through `FastMCP.call_tool`, the entry that runs pre_parse_json.
+# --------------------------------------------------------------------------- #
 
+
+@contextlib.contextmanager
+def _request_context(client):
+    """Make `FastMCP.call_tool` usable without a live server: the compiled tool
+    reads its CRMClient off `ctx.request_context.lifespan_context`, which the
+    lowlevel server normally sets from the lifespan. Setting the same contextvar
+    by hand is what lets the test exercise the REAL validation path (argument
+    pre-parsing + Pydantic) instead of calling the compiled function directly."""
+    token = request_ctx.set(
+        RequestContext(
+            request_id=1,
+            meta=None,
+            session=None,  # type: ignore[arg-type]
+            lifespan_context={"client": client, "settings": _FakeSettings()},
+        )
+    )
+    try:
+        yield
+    finally:
+        request_ctx.reset(token)
+
+
+async def _call_through_fastmcp(value):
     app = create_mcp_app(Settings(CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k"))
-
-    with pytest.raises(ToolError) as excinfo:
+    client = _CapturingClient()
+    with _request_context(client):
         await app.call_tool(
             TOOL,
-            {
-                "contact_id": "1",
-                "space_id": "s",
-                "requested_quantities": {"00000000-0000-0000-0000-0000000000a1": 5},
-            },
+            {"contact_id": "1", "space_id": "s", "requested_quantities": value},
         )
+    assert client.query is not None
+    return client.query
 
-    assert "validation error" in str(excinfo.value).lower()
+
+_EXPECTED_QUERY = (
+    '{"00000000-0000-0000-0000-0000000000a1":5,'
+    '"00000000-0000-0000-0000-0000000000a2":60}'
+)
+
+
+@pytest.mark.asyncio
+async def test_json_string_survives_fastmcp_preparse_and_reaches_the_backend():
+    """Root cause A, at the boundary that actually failed in production. The lane
+    (`lanes/business/fetch.py`) sends the compact JSON string; FastMCP pre-parses
+    it into a dict before validation, so the param has to accept an object - and
+    the value has to arrive at the backend as the string its route parses
+    (`parse_requested_quantities`, `Optional[str]`)."""
+    query = await _call_through_fastmcp(_EXPECTED_QUERY)
+
+    assert query["requested_quantities"] == _EXPECTED_QUERY
+
+
+@pytest.mark.asyncio
+async def test_native_object_reaches_the_backend_as_the_same_json_string():
+    """The other shape a caller can send (an n8n/LLM planner emitting a real JSON
+    object, and the shape FastMCP hands over after pre-parsing a string) must be
+    accepted too, and must normalize to the IDENTICAL query value - key order in
+    the object is not allowed to change the string the backend receives."""
+    query = await _call_through_fastmcp(
+        {
+            "00000000-0000-0000-0000-0000000000a2": 60,
+            "00000000-0000-0000-0000-0000000000a1": 5,
+        }
+    )
+
+    assert query["requested_quantities"] == _EXPECTED_QUERY
