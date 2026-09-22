@@ -185,6 +185,11 @@ class SystemSettingUpdate(BaseModel):
     # when it reaches marketing without its catalogue package. Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     price_tag_guarded_classes: Optional[list[str]] = None
+    # Dealer stock verdict S0 (D7): the ONE threshold `verdict()` compares ask against
+    # available/incoming/purchase - "make the T configurable" (owner). Same rule as
+    # every block above - it must appear HERE and in the GET dict, because both are
+    # manual. Bounded 1-100 here, before the value ever reaches the column.
+    chatbot_stock_low_threshold_pct: Optional[int] = Field(None, ge=1, le=100)
 
 
 class ChatbotLane(BaseModel):
@@ -418,6 +423,9 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                # Dealer stock verdict S0 (D7): BOTH manual builders, or the threshold
+                # never reaches the Chatbot settings screen at all.
+                "chatbot_stock_low_threshold_pct": getattr(settings, "chatbot_stock_low_threshold_pct", 50) if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
@@ -723,6 +731,9 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "local_buy_routing_enabled": False,
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
+        # Dealer stock verdict S0 (D7): repeats `SystemSetting.chatbot_stock_low_threshold_pct`'s
+        # own default (app/models/user.py).
+        "chatbot_stock_low_threshold_pct": 50,
         # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
         # default (app/models/user.py).
         "chatbot_crossdomain_ladder": {
