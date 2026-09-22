@@ -276,11 +276,22 @@ class TestParserFailure:
         assert result.actions[0]["text"] == parser_mod.PARSER_ERROR_REPLY
 
 
-class TestAudioDeadEnd:
-    def test_an_unpatched_voice_note_fails_at_intake(
+class TestMediaWithoutUrl:
+    """AC-107 / H5, restated for the media-into-turn pipeline (captain ruling 23 Sep
+    2026): an image/audio attachment that DECLARES its type but carries no url is
+    UNREADABLE, not a plain-text fallthrough and not a silently vanished turn either.
+    `media_intake.detect()` still catches it, `engine.py` never calls `media_intake.
+    run()` for it (no url to fetch - no ledger row, no meter, no job, no worker call),
+    and the turn closes the SAME arm a completed-but-failed extraction does (AC-1813):
+    branch_kind `media_denied`, `wording.voice_unclear()` for audio (`nothing_read()`
+    for image), turn status failed with Retry.
+    """
+
+    def test_a_voice_note_with_no_url_fails_at_intake_with_no_ledger_row(
         self, session_factory, seeded, stub_parser, stub_access
     ):
-        """AC-107 / H5: n8n's audio branch had no successor and the turn vanished."""
+        from app.services.media_extract import wording
+
         stub_parser()
         stub_access()
         envelope = _envelope()
@@ -288,12 +299,20 @@ class TestAudioDeadEnd:
 
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
-        assert result.branch_kind is None
-        assert result.reply["text"] == parser_mod.PARSER_ERROR_REPLY
+        assert result.branch_kind == "media_denied"
+        assert result.reply["text"] == wording.voice_unclear()
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "failed"
-        assert row.stage == "intake"
-        assert "transcribe" in row.error
+        assert row.stage == "media_intake"
+        assert row.error == wording.voice_unclear()
+
+        # No meter, no enqueue (captain's ruling) - there was nothing to fetch, so
+        # neither the ledger nor a job row exists for this turn at all.
+        from app.models.media import ContactMediaUsage, MediaExtractionJob
+
+        db = session_factory()
+        assert db.query(ContactMediaUsage).count() == 0
+        assert db.query(MediaExtractionJob).count() == 0
 
     def test_it_never_reaches_the_parser(self, session_factory, seeded, stub_parser, stub_access):
         calls: list[str] = []

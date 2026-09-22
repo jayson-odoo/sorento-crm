@@ -132,11 +132,20 @@ class MediaJobInput:
 
 @dataclass
 class MediaExtractionOutcome:
-    """The result body plus what it cost, for the ledger and the dashboard."""
+    """The result body plus what it cost, for the ledger and the dashboard.
+
+    `media_bytes`/`media_content_type` (security review, chatbot media-into-turn):
+    the SAME bytes `fetch_media_bytes` already downloaded to run the extraction -
+    carried back so `app.tasks.media_tasks._store_media_bytes` uploads exactly what
+    the model read, never a second fetch of a url that is, by construction, an
+    external caller's own string.
+    """
 
     result: dict[str, Any]
     provider: Optional[str] = None
     model: Optional[str] = None
+    media_bytes: Optional[bytes] = None
+    media_content_type: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
@@ -178,8 +187,19 @@ def fetch_media_bytes(url: str) -> tuple[bytes, Optional[str]]:
     """
     import httpx
 
+    from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
+
     if not url:
         raise MediaExtractionError("The message carried no media url.")
+    # Security review item 5 (SSRF): `media_url` is a caller-supplied string on every
+    # path that reaches here (a WhatsApp attachment, an n8n-patched item, the
+    # console's own signed upload) - refused BEFORE the socket opens, the same guard
+    # `chatbot/dispatch.py`'s retry webhook already uses. https-only, no loopback /
+    # link-local / private-network address, never the CRM's own host.
+    try:
+        assert_safe_outbound_url(url, label="The media url")
+    except OutboundUrlRejected as exc:
+        raise MediaExtractionError(str(exc)) from exc
     try:
         with httpx.Client(
             timeout=MEDIA_FETCH_TIMEOUT_SECONDS, follow_redirects=True
@@ -246,14 +266,29 @@ def build_image_result_body(
 ) -> dict[str, Any]:
     """The PLAN 3.5 result body for an image, including `rendered_text`.
 
-    `rendered_text` is what the far end patches into the queue item upstream of
-    `tf-message`, so it must read like something a customer typed - that is what
-    the parser is tuned on. PLAN 4.5's table, implemented:
+    `rendered_text` is what the engine now hands the parser directly (chatbot
+    media-into-turn, S2 - it used to be what n8n patched into the queue item
+    upstream of `tf-message`, back when a `needs_clarification` reading meant no
+    `/chat/turn` call ran at all and n8n answered blind). It must read like
+    something a customer typed either way - that is what the parser is tuned on.
+    PLAN 4.5's table, AMENDED 23 Sep 2026 (owner ruling, `rendered_text` is now
+    ALWAYS rendered - see below for why):
 
     | caption plus entities        | the caption with the raw strings appended |
-    | no caption                   | null, with `needs_clarification: true`    |
-    | unclear caption intent       | null, with `needs_clarification: true`    |
+    | no caption, entities read    | the raw strings alone                     |
+    | unclear caption intent       | the caption/raws exactly as above         |
     | nothing extracted            | the caption alone - today's behaviour      |
+
+    `needs_clarification` is still reported true in every one of the first three
+    rows - the customer's INTENT is still unclear and `clarification_message` is
+    still the confirmation text a caller may still want - but `rendered_text` no
+    longer goes null on it. Nulling it was right for the OLD n8n reply-arm (send
+    the clarification sentence, stop, no turn ever runs) and wrong once intake
+    moved inside the turn: a bare photo of codes, no caption, must still reach
+    the parser as "A, B" so the engine's `entities_only` arm can resolve them and
+    ask what to do with it (S3) - the alternative is the amnesia bug S2 exists to
+    fix, a photo that reaches `/chat/turn` during the n8n transition window with
+    a null `rendered_text` and nothing for `detect()`'s "_media" shape to carry.
 
     Only ENTITY raws are appended. Attributes have no hint, so `resolve-entity`
     cannot look them up and appending them would be noise in the parser's input;
@@ -284,10 +319,20 @@ def build_image_result_body(
         }
     )
 
+    raws = [entity.raw for entity in extraction.entities]
+    rendered_text = (
+        f"{caption_text}: {', '.join(raws)}"
+        if caption_text and raws
+        else ", ".join(raws)
+        if raws
+        else caption_text
+    )
+
     if needs_clarification:
-        # Nothing is rendered for the parser: guessing the intent on top of an
-        # imperfect reading stacks two silent failure modes, so the system asks.
-        body["rendered_text"] = None
+        # The intent is unclear (no caption, or one the model could not read),
+        # but there is still something to hand the parser whenever entities were
+        # read - never null just because the caller's own words were missing.
+        body["rendered_text"] = rendered_text
         body["clarification_message"] = wording.clarification(
             extraction.entities, extraction.attributes
         )
@@ -299,10 +344,7 @@ def build_image_result_body(
         body["confirmation_message"] = wording.nothing_read()
         return body
 
-    raws = [entity.raw for entity in extraction.entities]
-    body["rendered_text"] = (
-        f"{caption_text}: {', '.join(raws)}" if raws else caption_text
-    )
+    body["rendered_text"] = rendered_text
     confirmation = wording.confirmation(
         extraction.entities, extraction.attributes, extraction.conflicts
     )
@@ -431,6 +473,8 @@ class MediaExtractService:
             model=model_name,
             prompt_tokens=int(result.prompt_tokens or 0),
             completion_tokens=int(result.completion_tokens or 0),
+            media_bytes=data,
+            media_content_type=content_type,
         )
 
     def _resolve_image_provider(self, tier: Optional[str], settings: Any):
@@ -594,7 +638,8 @@ class MediaExtractService:
             answered=bool(heard.text),
         )
         return MediaExtractionOutcome(
-            result=body, provider="openai", model=heard.model
+            result=body, provider="openai", model=heard.model,
+            media_bytes=data, media_content_type=content_type,
         )
 
     # ----- Accounting -------------------------------------------------------
@@ -734,6 +779,21 @@ def _filename_for(mime: str) -> str:
     return f"media{extension}"
 
 
+def _result_with_bytes(outcome: MediaExtractionOutcome) -> dict[str, Any]:
+    """`outcome.result` plus the fetched bytes under TRANSIENT, underscore-prefixed
+    keys (security review: never a second `fetch_media_bytes` call to store what the
+    model already read). `app.tasks.media_tasks._store_media_bytes` pops both keys
+    back off before the dict becomes `MediaExtractionJob.result` - a JSON column that
+    cannot hold raw bytes, and callback/API consumers that must never see them."""
+    if outcome.media_bytes is None:
+        return outcome.result
+    return {
+        **outcome.result,
+        "_media_bytes": outcome.media_bytes,
+        "_media_content_type": outcome.media_content_type,
+    }
+
+
 def run_extraction(job: Any, *, db: Optional[Session] = None) -> dict[str, Any]:
     """Convenience entry point: snapshot the ORM row, extract, return the body.
 
@@ -743,13 +803,13 @@ def run_extraction(job: Any, *, db: Optional[Session] = None) -> dict[str, Any]:
     """
     job_input = MediaJobInput.from_job(job)
     if db is not None:
-        return MediaExtractService(db).extract(job_input).result
+        return _result_with_bytes(MediaExtractService(db).extract(job_input))
 
     from app.database import SessionLocal
 
     session = SessionLocal()
     try:
-        return MediaExtractService(session).extract(job_input).result
+        return _result_with_bytes(MediaExtractService(session).extract(job_input))
     finally:
         session.close()
 

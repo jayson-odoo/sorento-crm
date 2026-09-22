@@ -146,11 +146,18 @@ def _seed_job_row(
     context=None,
     notices=None,
     modality="image",
+    turn_id=None,
 ) -> str:
     """Seeds a standalone `contact_media_usage` + `media_extraction_job` pair
     (no `contact_media_limit`, no gate involved) directly at "queued", the
     state the task-level tests below start from. Returns the job id. Caller
-    cleans up."""
+    cleans up.
+
+    `turn_id`, given, makes the usage row eligible for `_store_media_bytes`'s
+    OWN storage attempt (it returns early with no `usage.turn_id`) - a test that
+    wants to prove a DIFFERENT guard (e.g. `context.source == "console"`) skips
+    storage needs this set, or the "no attachment row" outcome proves nothing
+    about that guard specifically."""
     from app.models.access import RespondContact
     from app.models.media import ContactMediaLimit, ContactMediaUsage, MediaExtractionJob
 
@@ -177,6 +184,7 @@ def _seed_job_row(
         outcome="accepted",
         tier="standard",
         notices=notices,
+        turn_id=turn_id,
     )
     db.add(usage)
     db.flush()
@@ -1086,5 +1094,70 @@ def test_the_task_claims_a_queued_job_and_completes_it(monkeypatch):
         job = _fetch_job(job_id)
         assert job.status == "completed"
         assert job.started_at is not None
+    finally:
+        _cleanup_chain(contact_id)
+
+
+def test_console_origin_job_with_real_bytes_completes_with_a_json_safe_result(monkeypatch):
+    """Hot fix: `_store_media_bytes` used to `return` for a console-origin job
+    BEFORE popping `_media_bytes`/`_media_content_type` off `result` - the same
+    dict that becomes `MediaExtractionJob.result` (a JSON column) a few lines up
+    the caller's stack. Raw bytes left in it failed `json.dumps` there, so a
+    console-origin photo with a real extraction result turned into a FAILED job
+    (`_fail_job_last_resort`) despite a successful extraction, and the ledger row
+    still counted it as spent. Both keys must be popped unconditionally, before
+    any early return - console or otherwise - so `result` is always JSON-safe by
+    the time it reaches the database.
+    """
+    from app.tasks import media_tasks
+
+    turn_id = str(uuid.uuid4())
+    job_id, contact_id = _seed_job_row(context={"source": "console"}, turn_id=turn_id)
+    canned = {
+        "rendered_text": "check stock for SRTWC8517",
+        "entities": [{"raw": "SRTWC8517"}],
+        "_media_bytes": b"fake-console-photo-bytes",
+        "_media_content_type": "image/jpeg",
+    }
+    monkeypatch.setattr(media_tasks, "run_media_extraction", lambda job: dict(canned))
+    monkeypatch.setattr(media_tasks, "deliver_callback", lambda job: None)
+    try:
+        media_tasks.process_media_extraction(job_id)
+
+        job = _fetch_job(job_id)
+        assert job.status == "completed", (
+            f"a console-origin job with real bytes must still complete, got "
+            f"{job.status!r} (error={job.error!r})"
+        )
+        assert job.result is not None
+        assert "_media_bytes" not in job.result, "raw bytes leaked into the persisted result"
+        assert "_media_content_type" not in job.result
+        assert job.result.get("rendered_text") == canned["rendered_text"]
+
+        # JSON-serialisable by construction (SQLAlchemy already round-tripped it
+        # through the JSONB column above), asserted explicitly so a future
+        # regression here fails on THIS line, not a cryptic worker crash.
+        import json
+
+        json.dumps(job.result)
+
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        db = SessionLocal()
+        try:
+            links = (
+                db.query(EntityAttachmentLink)
+                .filter(
+                    EntityAttachmentLink.entity_type == "chatbot_turn",
+                    EntityAttachmentLink.entity_id == turn_id,
+                )
+                .all()
+            )
+        finally:
+            db.close()
+        assert not links, (
+            "a console-origin job must not store a second attachment copy - the "
+            "console already stored its own bytes under chatbot-console/"
+        )
     finally:
         _cleanup_chain(contact_id)

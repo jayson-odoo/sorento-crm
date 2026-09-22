@@ -143,22 +143,29 @@ def test_ac_c1_migration_creates_both_tables_explicitly():
     New tables are absent on a database built by `create_all`, so an
     autogenerate stub that forgets `op.create_table` ships a model with no
     table behind it and every read 500s on `UndefinedTable`.
+
+    Later merge-head migrations ("merge ptag and product_sets", "merge oi
+    product_sets join...") also match the `*product_sets*` glob because they
+    name the branch they merge, not because they touch the tables, and they
+    are empty stubs. `glob()` order is filesystem order, not creation order,
+    so picking `migrations[0]` picked a stub on at least one CI runner. Scan
+    every match instead and require the real DDL to exist somewhere among
+    them.
     """
     from pathlib import Path
 
-    # CI (fix round, security review): a bare glob has no defined order, and three
-    # files match `*product_sets*.py` (this one plus two later merge revisions that
-    # only mention the name) - `migrations[0]` picked whichever the directory listing
-    # happened to return first, which changed with directory order on CI shard 3 and
-    # went red on a file that creates no table at all. `411_product_sets.py` is the
-    # ONE migration that actually issues the DDL this test is about, named explicitly.
     versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    migration = versions / "411_product_sets.py"
-    assert migration.exists(), f"expected migration missing: {migration}"
-    source = migration.read_text()
-    assert 'op.create_table(\n        "product_sets"' in source or \
-           "op.create_table(\n        'product_sets'" in source, "product_sets not created explicitly"
-    assert "product_set_members" in source
+    migrations = list(versions.glob("*product_sets*.py"))
+    assert migrations, "no product-sets migration found in alembic/versions"
+    sources = [migration.read_text() for migration in migrations]
+    assert any(
+        (
+            'op.create_table(\n        "product_sets"' in source
+            or "op.create_table(\n        'product_sets'" in source
+        )
+        and "product_set_members" in source
+        for source in sources
+    ), "no matching migration creates product_sets explicitly alongside product_set_members"
 
 
 def test_ac_c2_set_code_is_unique_per_company_not_globally(db: Session, scaffold):
