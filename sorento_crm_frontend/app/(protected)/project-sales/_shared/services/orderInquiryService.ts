@@ -40,6 +40,15 @@ const BASE = '/api/v1/project-sales';
  * in Fulfilment Planning (the Buy residual of the confirmed revision, Stage 1C) or when an
  * amendment publishes, which are the only moments the instruction is true. What this
  * service does is read them, export them and record what purchasing did about them.
+ *
+ * EXPECTED BE CONTRACT (S6, `PLAN-board-oi-mechanical-22sep.md`, AC-B6-7, backend half not
+ * yet built): `listOrderInquiryWorklist` and `getOrderInquiryHeaderLines` below are expected
+ * to grow two fields per row, both optional here until Phase 2 lands them -
+ * `OrderInquiryWorklistRow.line_no` (the AutoCount line number) and
+ * `OrderInquiryWorklistRow.core_line_id` (the row's mirror line resolved server-side to its
+ * CORE sales-order line id, null when the mirror has no core line). The "SO line" column
+ * (`orderInquirySoLineLabel`/`orderInquirySoLineHref`, `orderInquiryWorklistColumns.tsx`)
+ * reads both; a row missing either renders as plain, unlinked text rather than guessing.
  */
 
 function normaliseEnvelope(body: unknown, fallbackLimit: number): OrderInquiryListEnvelope {

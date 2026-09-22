@@ -473,6 +473,21 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   project_id?: string | null;
   project_sales_order_id?: string | null;
   core_sales_order_id?: string | null;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1/AC-B6-7, BE half not yet built): the
+   * AutoCount line number, for the "SO line" column's own text (`SO402757 · L5`,
+   * `orderInquirySoLineLabel`). Absent on every row until the backend adds it.
+   */
+  line_no?: number | null;
+  /**
+   * S6 (AC-B6-1/AC-B6-7, BE half not yet built): the CORE sales-order line's own id, which
+   * the backend resolves server-side off the row's mirror line (`ProjectOrderInquiryService`)
+   * - never the mirror id itself, which this screen has no use for. Addresses the "SO line"
+   * link's own `?line=` param (`orderInquirySoLineHref`); null (or absent) on every row
+   * until Phase 2 lands it, in which case the cell reads as plain text, the same fallback
+   * `orderInquiryRowHref` already uses for a row that reaches no book at all.
+   */
+  core_line_id?: string | null;
   /** Came from the AutoCount book rather than a document authored here. */
   is_adopted?: boolean;
   /**

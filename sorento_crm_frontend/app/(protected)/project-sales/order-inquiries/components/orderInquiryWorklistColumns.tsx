@@ -28,9 +28,13 @@ import {
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
-  flowExclusionLabel,
   formatInquiryQty,
+  inquiryFooterTotals,
+  inquiryRowRemaining,
+  inquiryRowTaken,
   orderInquiryRowHref,
+  orderInquirySoLineHref,
+  orderInquirySoLineLabel,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryLinkSuggestion,
@@ -675,6 +679,101 @@ export function DeliveryDateCell({ row }: { row: OrderInquiryWorklistRow }) {
   );
 }
 
+/**
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): `SO402757 · L5`, linking to that
+ * exact sales-order line - plain text until the backend sends `core_line_id` (S6 BE half,
+ * not yet built; documented in `services/orderInquiryService.ts`).
+ */
+export function SoLineCell({ row }: { row: OrderInquiryWorklistRow }) {
+  const label = orderInquirySoLineLabel(row);
+  const href = orderInquirySoLineHref(row);
+  if (!href) {
+    return (
+      <span className="block truncate" title={label}>
+        {label}
+      </span>
+    );
+  }
+  return (
+    <Link href={href} className="block truncate font-medium text-primary hover:underline" title={label}>
+      {label}
+    </Link>
+  );
+}
+
+export function TakenCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return <span className="tabular-nums">{inquiryRowTaken(row)}</span>;
+}
+
+export function RemainingCell({ row }: { row: OrderInquiryWorklistRow }) {
+  return <span className="tabular-nums">{inquiryRowRemaining(row)}</span>;
+}
+
+/**
+ * Taken / Remaining (S3, `PLAN-board-oi-mechanical-22sep.md`, AC-B3-1..7), shared between
+ * the OI detail Lines tab and this worklist (AC-B3-1, AC-B3-6) so the two screens can never
+ * state what a row has taken two different ways. `pageScoped` only changes the FOOTER's own
+ * words: the worklist paginates server-side, so its footer totals the page and says so
+ * (AC-B3-6); the Lines tab loads every line at once, so its footer is simply the total.
+ */
+function FooterTotal({
+  table,
+  field,
+  pageScoped,
+}: {
+  table: { getPrePaginationRowModel: () => { rows: { original: OrderInquiryWorklistRow }[] } };
+  field: 'qty' | 'taken' | 'remaining';
+  pageScoped: boolean;
+}) {
+  const totals = inquiryFooterTotals(table.getPrePaginationRowModel().rows.map((r) => r.original));
+  return (
+    <span className="tabular-nums">
+      {formatInquiryQty(String(totals[field]))}
+      {pageScoped ? <span className="text-muted-foreground"> (page)</span> : null}
+    </span>
+  );
+}
+
+/**
+ * S6 (AC-B6-1): the "SO line" column, shared between the worklist and the OI detail Lines
+ * tab so both screens name and link the same line the same way.
+ */
+export function orderInquirySoLineColumn(): ColumnDef<OrderInquiryWorklistRow> {
+  return {
+    id: 'so_line',
+    accessorFn: (row) => orderInquirySoLineLabel(row),
+    header: ({ column }) => <DataGridColumnHeader title="SO line" column={column} />,
+    size: 160,
+    meta: { headerTitle: 'SO line', skeleton: <Skeleton className="h-4 w-20" /> },
+    cell: ({ row }) => <SoLineCell row={row.original} />,
+  };
+}
+
+export function orderInquiryTakenRemainingColumns({
+  pageScoped = false,
+}: { pageScoped?: boolean } = {}): ColumnDef<OrderInquiryWorklistRow>[] {
+  return [
+    {
+      id: 'taken',
+      header: ({ column }) => <DataGridColumnHeader title="Taken" column={column} />,
+      size: 110,
+      enableSorting: false,
+      meta: { headerTitle: 'Taken', skeleton: <Skeleton className="h-4 w-10" /> },
+      cell: ({ row }) => <TakenCell row={row.original} />,
+      footer: ({ table }) => <FooterTotal table={table} field="taken" pageScoped={pageScoped} />,
+    },
+    {
+      id: 'remaining',
+      header: ({ column }) => <DataGridColumnHeader title="Remaining" column={column} />,
+      size: 120,
+      enableSorting: false,
+      meta: { headerTitle: 'Remaining', skeleton: <Skeleton className="h-4 w-10" /> },
+      cell: ({ row }) => <RemainingCell row={row.original} />,
+      footer: ({ table }) => <FooterTotal table={table} field="remaining" pageScoped={pageScoped} />,
+    },
+  ];
+}
+
 export function SupplierCell({ row }: { row: OrderInquiryWorklistRow }) {
   return row.supplier ? (
     <span className="block truncate" title={row.supplier}>
@@ -797,6 +896,8 @@ export function useOrderInquiryWorklistColumns({
           );
         },
       },
+      // S6 (AC-B6-1): the exact line, beside the sales order it belongs to.
+      orderInquirySoLineColumn(),
       {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,
@@ -1015,65 +1116,13 @@ export function useOrderInquiryWorklistColumns({
             <Muted>Not numbered</Muted>
           ),
       },
-      {
-        accessorKey: 'taken_from_po',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Taken by PO/SPO" column={column} />
-        ),
-        size: 140,
-        enableSorting: false,
-        meta: { headerTitle: 'Taken by PO/SPO', skeleton: <Skeleton className="h-4 w-14" /> },
-        // What has actually been taken off a document for this row's own SO line - the
-        // sum of every link on every ORDER / ORDER BACK row of that line, never this
-        // row's own qty alone. A row whose OWN verb is neither (an ADVANCE/DELAY/...)
-        // is not what this figure is about, and printing it anyway reads as "this
-        // instruction is fully handled" next to one that is not placeable at all - so it
-        // names what actually happened to ITS OWN row instead.
-        cell: ({ row }) => {
-          const excluded = flowExclusionLabel(row.original.verb);
-          if (excluded) {
-            return (
-              <Muted>
-                <span title="Only ORDER and ORDER BACK rows on this SO line count toward Taken by PO/SPO">
-                  {excluded}
-                </span>
-              </Muted>
-            );
-          }
-          return (
-            <span className="tabular-nums">
-              {formatInquiryQty(row.original.taken_from_po ?? '0')}
-            </span>
-          );
-        },
-      },
-      {
-        accessorKey: 'remaining_open',
-        header: ({ column }) => <DataGridColumnHeader title="Remaining" column={column} />,
-        size: 120,
-        enableSorting: false,
-        meta: { headerTitle: 'Remaining', skeleton: <Skeleton className="h-4 w-14" /> },
-        cell: ({ row }) => {
-          const excluded = flowExclusionLabel(row.original.verb);
-          if (excluded) {
-            return (
-              <Muted>
-                <span title="Only ORDER and ORDER BACK rows on this SO line still flow to reorder planning">
-                  {excluded}
-                </span>
-              </Muted>
-            );
-          }
-          return (
-            <span
-              className="tabular-nums"
-              title="What still flows to reorder planning: the unlinked remainder of this SO line\u2019s ORDER and ORDER BACK rows"
-            >
-              {formatInquiryQty(row.original.remaining_open ?? '0')}
-            </span>
-          );
-        },
-      },
+      // S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-6): the SHARED, row-level Taken /
+      // Remaining pair, same factory the OI detail Lines tab uses - superseding the older
+      // `taken_from_po` / `remaining_open` line-level pair, which read every sibling
+      // ORDER/ORDER BACK row's links on the same SO line rather than this row's own.
+      // `pageScoped`: this grid paginates server-side (`manualPagination`), so `rows` IS
+      // already the current page and the footer says so.
+      ...orderInquiryTakenRemainingColumns({ pageScoped: true }),
       {
         accessorKey: 'verb',
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,

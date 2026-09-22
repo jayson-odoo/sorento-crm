@@ -6,12 +6,14 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { OrderInquiryStatePill } from '../../../_shared/components/OrderInquiryVerbPill';
-import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
+import { formatInquiryQty, inquiryFooterTotals } from '../../../_shared/lib/orderInquiryWorklist';
 import {
   DeliveryDateCell,
   InstructionCell,
   ItemCodeCell,
   LocationCell,
+  orderInquirySoLineColumn,
+  orderInquiryTakenRemainingColumns,
   QtyCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
@@ -19,12 +21,13 @@ import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquir
 import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentDialog';
 
 /**
- * The Lines tab's own columns (AC-DP-03): Product, Qty, Delivery date, Supplier, PO,
- * SPO, Location, Instruction, State. Product/Qty/Delivery date/Supplier/Location/
- * Instruction reuse the worklist's OWN cell renderers (`orderInquiryWorklistColumns.tsx`)
- * so the same fact reads the same way on both screens. PO/SPO are the ONE deliberate
- * difference (AC-DP-04): this single-header screen opens the simpler
- * `OrderInquiryDocumentDialog`, not the worklist's bundling/reallocate-aware
+ * The Lines tab's own columns (AC-DP-03): Product, SO line, Qty, Taken, Remaining,
+ * Delivery date, Supplier, PO, SPO, Location, Instruction, State. Taken/Remaining are S3
+ * (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1); SO line is S6 (AC-B6-1). Product/Qty/
+ * Delivery date/Supplier/Location/Instruction reuse the worklist's OWN cell renderers
+ * (`orderInquiryWorklistColumns.tsx`) so the same fact reads the same way on both screens.
+ * PO/SPO are the ONE deliberate difference (AC-DP-04): this single-header screen opens the
+ * simpler `OrderInquiryDocumentDialog`, not the worklist's bundling/reallocate-aware
  * `DocumentsCell` - a header's own lines have no "which OTHER row is this bundled with"
  * question to answer, since every row here already belongs to the one document.
  */
@@ -58,22 +61,31 @@ export function useOrderInquiryHeaderLinesColumns(): ColumnDef<OrderInquiryWorkl
         // `product_name` line the worklist's own cell prints for a real row.
         cell: ({ row }) => <ItemCodeCell row={row.original} codeOnly />,
       },
+      // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the exact sales-order line this
+      // row belongs to, linking straight there - the same shared column the worklist uses.
+      orderInquirySoLineColumn(),
       {
         accessorKey: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
         size: 160,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
         cell: ({ row }) => <QtyCell row={row.original} />,
-        // AC-DP-03: a footer total under Qty, over the rows actually loaded (this tab's
-        // whole set - Phase 1 and Phase 2 both hand this table every non-cancelled line
-        // at once, so there is no server page this total could disagree with).
+        // AC-DP-03/AC-B3-5: a footer total under Qty, over the rows actually loaded (this
+        // tab's whole set - Phase 1 and Phase 2 both hand this table every non-cancelled
+        // line at once, so there is no server page this total could disagree with) - buy
+        // rows only, the same gate Taken/Remaining's own footers read, so the three
+        // numbers beside each other can never disagree about which rows they total.
         footer: ({ table }) => {
-          const total = table
-            .getPrePaginationRowModel()
-            .rows.reduce((sum, r) => sum + Number(r.original.qty || '0'), 0);
-          return <span className="tabular-nums">{formatInquiryQty(String(total))}</span>;
+          const totals = inquiryFooterTotals(
+            table.getPrePaginationRowModel().rows.map((r) => r.original),
+          );
+          return <span className="tabular-nums">{formatInquiryQty(String(totals.qty))}</span>;
         },
       },
+      // S3 (AC-B3-1..5): Taken / Remaining, right after Qty - the same shared columns the
+      // worklist uses (`orderInquiryWorklistColumns.tsx`), so the two screens read one row
+      // the same way.
+      ...orderInquiryTakenRemainingColumns(),
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
