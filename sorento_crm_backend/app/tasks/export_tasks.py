@@ -877,7 +877,7 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
     ever and the buyer's row sits `processing` until it goes stale.
     """
     db = SessionLocal()
-    from app.models.base import get_company_scope
+    from app.models.base import UNSET, get_company_scope
     from app.models.scm import ReorderRun
     from app.services.scm.reorder_run_service import _adopt_run_company_scope
 
@@ -886,10 +886,17 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
     run = db.get(ReorderRun, run_id)
     if run is not None:
         _adopt_run_company_scope(db, run)
-    else:
+    if run is None or not getattr(run, "company_id", None):
+        # AC-A10 twin (security should-fix, fix round 3): the same fail-closed change
+        # `generate_order_sheet` got - a run that does not exist, or whose OWN
+        # `company_id` is NULL, must not export under the `None` scope set two lines up.
+        # UNSET fails closed instead: `ReorderRun` is itself company-scoped, so
+        # `low_stock_report_service.export_low_stock`'s own run lookup finds nothing and
+        # the export fails rather than reading every company's rows.
+        set_company_scope(db, UNSET)
         logger.warning(
-            "generate_low_stock_report: run %s not found; export runs under no company",
-            run_id,
+            "generate_low_stock_report: run %s not found or has no company; "
+            "failing closed rather than exporting under no company scope", run_id
         )
     svc = DownloadService(db)
     try:
