@@ -129,6 +129,58 @@ describe('BoardLineDecisionPanel: no read-only strip', () => {
   });
 });
 
+/**
+ * The Options table used to render open, five rows tall, ABOVE the editor on every line -
+ * wasting the space a planner opened the row to compose a decision in. It folds behind a
+ * plain toggle now, closed until asked for (owner, 22 Sep 2026); the table itself
+ * (`BoardLadderOptionsTable`) is unchanged, so these tests only prove the fold.
+ */
+describe('BoardLineDecisionPanel: the Options ladder is collapsible, and closed by default', () => {
+  const OPTIONS = [
+    {
+      step: 'use' as const,
+      label: 'Use our locations',
+      whole: true,
+      fulfil_date: '2026-06-29',
+      days_late: 0,
+      chosen: true,
+      gives_qty: '24',
+    },
+    {
+      step: 'buy' as const,
+      label: 'Buy',
+      whole: true,
+      fulfil_date: '2026-07-10',
+      days_late: 11,
+      chosen: false,
+      gives_qty: '24',
+    },
+  ];
+
+  it('starts closed: the table is not in the document, and the toggle states so', () => {
+    renderPanel({ options: OPTIONS });
+
+    expect(screen.queryByText('Use our locations')).not.toBeInTheDocument();
+    const toggle = screen.getByTestId(`line-options-toggle-${KEY}`);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('opens the table on click, and hides it again on a second click', () => {
+    renderPanel({ options: OPTIONS });
+
+    const toggle = screen.getByTestId(`line-options-toggle-${KEY}`);
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Use our locations')).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Use our locations')).not.toBeInTheDocument();
+  });
+});
+
 describe('BoardLineDecisionPanel: Reserve inputs carry the server figure beside them (C4, B1)', () => {
   it('opens on the suggestion, and shows what each location has available', () => {
     renderPanel();
@@ -197,7 +249,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     );
   });
 
-  it('reject requires a reason, and is disabled without one', () => {
+  it('reject requires a reason, and is disabled without one', async () => {
     const { onDecide } = renderPanel();
 
     const reject = screen.getByRole('button', { name: 'Reject' });
@@ -207,7 +259,11 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
       target: { value: 'The customer cancelled this line.' },
     });
     expect(reject).toBeEnabled();
-    fireEvent.click(reject);
+    // `reject()` is async (mirrors `save()`), so the state it sets afterwards lands past an
+    // `await` - wrapped so that settling is inside `act`, same as every Save assertion below.
+    await act(async () => {
+      fireEvent.click(reject);
+    });
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'rejected',
@@ -676,14 +732,16 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     );
   });
 
-  it('carries the flag on a rejection', () => {
+  it('carries the flag on a rejection', async () => {
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'Cancelled by the customer.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1629,6 +1687,310 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     );
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Save answers its own click (S4, AC-4.1); Reject used to answer nothing at all - no pill, no
+ * toast, no change to the button itself. It mirrors Save now: the button becomes a landed
+ * "Rejected" state once the write actually resolves, and only edits since it landed put the
+ * plain button back (owner, 22 Sep 2026).
+ */
+describe('BoardLineDecisionPanel: Reject says it landed', () => {
+  it('reads Rejected, and disabled, once the write resolves true', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+
+    const rejectedButton = await screen.findByRole('button', { name: 'Rejected' });
+    expect(rejectedButton).toBeDisabled();
+    // Save is untouched by a Reject landing - it never claims "Saved" for a line the planner
+    // just refused.
+    expect(
+      screen.getByRole('button', { name: 'Save decision' }),
+    ).toBeInTheDocument();
+
+    // Fix round 1, B1: the REAL board patches `contribution.draft` off the same write
+    // (`useLineDraftMutation.save.onSuccess`), ahead of this panel's own `onDecide` promise
+    // resolving - so the N3 re-seed effect has to read a REJECTED draft the same honest way,
+    // never as "a draft exists, therefore Saved". Simulated here by rerendering with exactly
+    // that shape, the same way the pre-existing N3 tests above patch `contribution.draft`.
+    rerender(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          draft: {
+            decision: {
+              verdict: 'rejected',
+              reason: 'The customer cancelled this line.',
+            },
+            saved_by: 'Test Planner',
+            saved_at: '2026-09-22T02:00:00',
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Save decision' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Saved' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The mirror of the case above: a line whose LAST landed verb is a Save, after an earlier
+   * rejection, must not still read Rejected - `save()` clears `rejectedOnce` the same way
+   * `reject()` clears `savedOnce`.
+   */
+  it('a Save after a landed rejection reads Saved, and Reject drops back to plain', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeInTheDocument();
+
+    // An edit (any edit) is what unlocks Save again - the same D4 rule already governs it.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '9' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Rejected' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  });
+
+  it('stays Reject, enabled, when the write does not land', async () => {
+    const onDecide = vi.fn().mockResolvedValue(false);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole('button', { name: 'Rejected' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+  });
+
+  it('puts Reject back, enabled, once the reason is edited after a landed rejection', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+    expect(
+      screen.getByRole('button', { name: 'Rejected' }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line, on second thought no.' },
+    });
+
+    expect(
+      screen.queryByRole('button', { name: 'Rejected' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+  });
+});
+
+/**
+ * Fix round 1, S4: neither Save nor Reject guarded against a SECOND click landing before the
+ * first write settled - a double-click fired two PUTs, and the board toasted twice for one
+ * press. `pending` disables the plain Save and Reject; the COVERED Reject twin was already
+ * unconditionally disabled and needs nothing more, but the COVERED Save twin is LIVE once
+ * Amend has unlocked the row (fix round 2), and a double-click there fired two `onDecide`
+ * calls the same way the plain button's did.
+ */
+describe('BoardLineDecisionPanel: Reject disables itself while its own write is in flight (fix round 1, S4)', () => {
+  it('disables Reject before the write resolves, and a second click posts nothing more', async () => {
+    let settle: (value: boolean) => void = () => {};
+    const onDecide = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    // In flight: disabled before the write has answered at all.
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
+
+    // A second click while it is still disabled reaches nothing - `fireEvent.click` on a
+    // disabled DOM button never fires its handler, the same guarantee `disabled` always gives.
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(onDecide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle(true);
+    });
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeInTheDocument();
+    expect(onDecide).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the COVERED line’s own Save, once Amend has unlocked it, while its write is in flight (fix round 2)', async () => {
+    let settle: (value: boolean) => void = () => {};
+    const onDecide = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const frozen: BoardLineDecision = {
+      revision_no: 1,
+      confirmed_at: '2026-08-18T02:00:00',
+      timely_spo_qty: '0',
+      reserve: [
+        { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+        { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+      ],
+      borrow: [],
+      buy_qty: '0',
+    };
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ covered: true, decision: frozen })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+    // A genuine amendment (neither the frozen 8/16 nor the engine's own 9/15), the same shape
+    // AC-F2 already uses to unlock this button.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '6' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '18' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The BRW-AM count looked short on the floor.' },
+    });
+
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    fireEvent.click(save);
+    expect(save).toBeDisabled();
+
+    fireEvent.click(save);
+    expect(onDecide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle(true);
+    });
+    expect(onDecide).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Fix round 3 (browser evidence, AC-8): two synchronous clicks in the SAME tick still fired
+   * two `PUT /draft` (200 then 500) - `pending` is React STATE, so it does not apply to the
+   * DOM (and therefore to `disabled`) until the re-render, and a second click landing before
+   * that commit reads the pre-render value. Both clicks here are inside ONE `act`, so React
+   * never commits between them - the same shape a real double-click hits.
+   */
+  it('guards a same-tick double click with a ref, not only the disabled state', async () => {
+    let settle: (value: boolean) => void = () => {};
+    const onDecide = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    const reject = screen.getByRole('button', { name: 'Reject' });
+
+    await act(async () => {
+      fireEvent.click(reject);
+      fireEvent.click(reject);
+    });
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle(true);
+    });
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeInTheDocument();
+    expect(onDecide).toHaveBeenCalledTimes(1);
   });
 });
 
