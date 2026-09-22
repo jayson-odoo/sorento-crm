@@ -14,7 +14,7 @@ the new format branch.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -506,3 +506,98 @@ def test_fr1_a_company_bs_run_id_404s_before_any_download_row_is_created(
     assert resp.status_code == 404, resp.text
     after = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
     assert after == before, "a cross-company run left a download row behind"
+
+
+# =========================================================================== #
+# Fix round 2, item 1: `so_numbers=[]` means "not narrowed" (Lane A fix round 4,
+# `fix/order-sheet-cells`), matching `_planning_rows` - the same rule
+# `product_ids` does NOT get (that one stays empty-means-nothing).
+# =========================================================================== #
+
+def test_fr2_so_numbers_empty_list_exports_every_in_window_row(scm_app, monkeypatch):
+    from app.models.inventory import Warehouse
+    from app.models.product import Product
+    from app.services import queue_service
+    from app.services.scm import demand
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+    from tests.scm.test_oi_worksheet_row_scope import _engine_row
+
+    app, db = _client_with_oi_view(scm_app)
+    marker = f"ZZTOIWSFR2A-{_u()[:8]}"
+    pid = _mk_product(db, marker)
+    wid = _mk_warehouse(db, marker)
+    db.flush()
+    product = db.get(Product, pid)
+    wh = db.get(Warehouse, wid)
+    leg = _engine_row(db, product=product, wh=wh, qty=7, delivery=date(2026, 10, 1))
+    run_id = _seed_run(db, product_ids=[pid], so_numbers=[])
+    db.flush()
+
+    calls: list = []
+    real = demand.run_scope_oi_rows
+
+    def _spy(db_, product_ids, **kw):
+        result = real(db_, product_ids, **kw)
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(demand, "run_scope_oi_rows", _spy)
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "oi_worksheet"})
+
+    assert resp.status_code == 200, resp.text
+    ids = {r["row_id"] for r in calls[0]}
+    assert leg["row"].id in ids, (
+        f"so_numbers=[] must not narrow to nothing - the run's in-window row is missing: "
+        f"{calls}"
+    )
+
+
+def test_fr2_so_numbers_one_so_exports_only_that_sos_rows(scm_app, monkeypatch):
+    from app.models.inventory import Warehouse
+    from app.models.product import Product
+    from app.services import queue_service
+    from app.services.scm import demand
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+    from tests.scm.test_oi_worksheet_row_scope import _engine_row
+
+    app, db = _client_with_oi_view(scm_app)
+    marker = f"ZZTOIWSFR2B-{_u()[:8]}"
+    pid = _mk_product(db, marker)
+    wid = _mk_warehouse(db, marker)
+    db.flush()
+    product = db.get(Product, pid)
+    wh = db.get(Warehouse, wid)
+    picked_so = f"{marker}-SO-PICKED"
+    other_so = f"{marker}-SO-OTHER"
+    leg_picked = _engine_row(db, product=product, wh=wh, qty=7, delivery=date(2026, 10, 1),
+                             so_number=picked_so)
+    leg_other = _engine_row(db, product=product, wh=wh, qty=9, delivery=date(2026, 10, 1),
+                            so_number=other_so)
+    run_id = _seed_run(db, product_ids=[pid], so_numbers=[picked_so])
+    db.flush()
+
+    calls: list = []
+    real = demand.run_scope_oi_rows
+
+    def _spy(db_, product_ids, **kw):
+        result = real(db_, product_ids, **kw)
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(demand, "run_scope_oi_rows", _spy)
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "oi_worksheet"})
+
+    assert resp.status_code == 200, resp.text
+    ids = {r["row_id"] for r in calls[0]}
+    assert leg_picked["row"].id in ids, calls
+    assert leg_other["row"].id not in ids, calls
