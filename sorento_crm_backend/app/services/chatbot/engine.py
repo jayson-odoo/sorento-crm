@@ -21,6 +21,7 @@ state; the tail (S2) is what fills it.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -2935,6 +2936,18 @@ def _run_entities_only_arm(
             r.get("token"): r for r in jsc.array(jsc.get(result, "resolutions")) if isinstance(r, dict)
         }
         by_raw = {row.get("raw"): row for row in state.focus.products if isinstance(row, dict)}
+        # Live browser pass finding: the ONE `apply` trace event every turn gets is
+        # recorded BEFORE this arm ever runs (`_run_stages`, right after parsing) -
+        # the normal business-fetch path re-enters `turn_apply` with the resolver's
+        # own output and so its OWN `apply` event (still the only one) already
+        # reflects resolved entities; this arm never re-enters `turn_apply` at all,
+        # so the drawer's Apply tab stayed on the pre-resolution snapshot forever,
+        # reading as "the code never resolved" even on a turn that resolved it
+        # correctly (proven by the SAME turn's Memory tab / `focus.products` itself).
+        # A snapshot BEFORE the loop mutates these dicts in place, so the second
+        # `apply` event below can show a real before/after rather than identical
+        # dicts.
+        before_products = copy.deepcopy(by_raw)
         for raw in raws:
             resolution = resolutions.get(raw)
             matches = jsc.array(jsc.get(resolution, "matches")) if resolution else []
@@ -2947,6 +2960,23 @@ def _run_entities_only_arm(
                 placed.append(raw)
             else:
                 unplaced.append(raw)
+        turn_trace.add(
+            "apply",
+            {
+                "verdict": verdict,
+                "decision": None,
+                "state_diff": {
+                    "products": {
+                        "before": [before_products.get(raw) for raw in raws],
+                        "after": [by_raw.get(raw) for raw in raws],
+                    }
+                },
+                "narrowing": [],
+                "reconciled": [],
+                "rules_fired": ["entities_only_resolved"],
+                "plan": {"domains": [], "fetch": [], "denied": [], "ask": None, "lane": "entities_only"},
+            },
+        )
 
     turn_trace.record(
         "looked_up",

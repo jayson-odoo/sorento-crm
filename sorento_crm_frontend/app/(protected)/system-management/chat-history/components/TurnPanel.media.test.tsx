@@ -59,25 +59,33 @@ function record(over: Partial<TurnTraceRecord> = {}): TurnTraceRecord {
 }
 
 function mediaIntakeRecord(over: Partial<TurnTraceRecord> = {}): TurnTraceRecord {
-  // Review round S5: the REAL shape `engine.py::_media_intake_facts` emits -
-  // flattened to what StageRow prints verbatim (a comma-joined `entities` string,
-  // no `attributes`/`notes` key at all when there is nothing to say, never the
-  // literal word "none"). `job_id`/`attachment_id`/the full `result` live under
-  // `raw` instead, which StageRow never reads - so they are absent here too.
+  // Copied VERBATIM (browser pass follow-up) from a real `chatbot.turns.trace`
+  // row on 0921 (turn 767e0472-2388-47f8-9b40-efef429b45a8, a live console photo
+  // turn) rather than hand-typed - the same `facts` shape
+  // `engine.py::_media_intake_facts` actually emits: a comma-joined `entities`
+  // string, `notes` as free text, no `attributes` key at all when nothing was
+  // rescued as an attribute (never the literal word "none"). `job_id`/
+  // `attachment_id`/the full extraction `result` live under `raw` instead, which
+  // StageRow never reads - so they are exactly as recorded there too.
   return record({
     // Cast: `media_intake` is not (yet) a member of the `TurnStage` union the type
     // declares - the coder adds it. Cast at the fixture, per the tester brief.
     stage: 'media_intake' as unknown as TurnTraceRecord['stage'],
     summary: 'Read the photo.',
-    why: 'The customer sent an image.',
+    why: 'The customer sent media; this is what the intake pipeline decided and read.',
     facts: {
-      modality: 'image',
-      decision: 'accepted',
+      notes: 'Simple list of product codes with no quantities or caption.',
       status: 'completed',
-      elapsed_ms: 900,
-      entities: 'A, B',
+      decision: 'accepted',
+      entities: 'BRBC22293W-1, SRTWT1506, SRTWT1805',
+      modality: 'image',
+      elapsed_ms: 72,
     },
-    raw: { job_id: 'ZZT-job-1', attachment_id: 'ZZT-attachment-1', result: {} },
+    raw: {
+      job_id: 'b6ccbbed-b617-4993-bf22-6e930900ba84',
+      attachment_id: null,
+      result: { rendered_text: 'null: BRBC22293W-1, SRTWT1506, SRTWT1805' },
+    },
     ...over,
   });
 }
@@ -112,8 +120,9 @@ describe('TurnPanel media stage (AC-1847)', () => {
 
     const stageTitle = screen.queryByText(/read the photo/i);
     expect(stageTitle, 'no "Read the photo" stage row rendered').not.toBeNull();
-    expect(screen.queryByText(/A, B/)).not.toBeNull();
+    expect(screen.queryByText(/BRBC22293W-1, SRTWT1506, SRTWT1805/)).not.toBeNull();
     expect(screen.queryByText(/accepted/i)).not.toBeNull();
+    expect(screen.queryByText(/Simple list of product codes/i)).not.toBeNull();
   });
 
   it('renders "Heard the voice note" for a voice turn', () => {

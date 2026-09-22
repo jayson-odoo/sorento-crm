@@ -638,10 +638,18 @@ def entities_only_reply(
     join - a photo where every code missed says so up front ("I could not match any
     product code in that photo."); a typed message with nothing placed says try again,
     since "What would you like me to know?" has nothing left to be about.
+
+    Browser pass follow-up: the "I could not match..." lead is ALSO gated on
+    `media_prefixed`, exactly like the placed branch below - a LIVE photo outcome
+    already told the customer what was read ("I read X from that photo.", via the
+    engine's own reply-prefix wrapper), so this arm claiming "I could not match ANY
+    product code" on top of that would contradict what the wrapper just said. Only
+    the `patched_upstream` case (no live outcome, no wrapper prefix at all) still
+    needs this arm's own lead to say anything was a photo in the first place.
     """
     if not placed:
         parts: list[str] = []
-        if from_photo:
+        if from_photo and not media_prefixed:
             parts.append("I could not match any product code in that photo.")
         if unplaced:
             parts.append(f"Couldn't find {_join_words_and(unplaced)}.")

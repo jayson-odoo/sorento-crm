@@ -243,6 +243,11 @@ export interface TurnDetailStage {
   status: TraceStatus;
   summary: string | null;
   error: string | null;
+  /** Browser pass, chatbot media-into-turn: the SAME flattened facts `TurnPanel`'s
+   * own inline StageRow already prints (modality/decision/entities/attributes/
+   * notes/... for a media_intake stage) - absent or `{}` on a stage that carries
+   * none, same optionality as `TurnTraceRecord.facts` above. */
+  facts?: Record<string, unknown>;
 }
 
 export interface TurnDetailParse {

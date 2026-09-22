@@ -207,6 +207,85 @@ class TestReplyWordingBySource:
         assert "Couldn't find" not in text
 
 
+class TestReplyWordingWhenNothingPlaced:
+    """B1(a) (review round), end to end - never independently tested before this: the
+    "nothing placed" branch of `entities_only_reply` never says "I have ." with an
+    empty join. Typed and photo sources were the reviewer's own repros; the voice
+    case (media_prefixed=True, from_photo=False - a genuinely different combination
+    from either) is the one the browser pass asked to be added here."""
+
+    def test_typed_source_nothing_placed(self, session_factory, seeded, monkeypatch):
+        qf = _bare_entities_qf(placed=[], unplaced=[UNPLACED_CODE])
+        result, _ = _run_turn(
+            session_factory, monkeypatch, qf=qf, text_body=UNPLACED_CODE,
+            msg_id="ZZT-eo-nothing-1", matches=MATCHES,
+        )
+        text = (result.reply or {}).get("text") or ""
+        assert text == f"Couldn't find {UNPLACED_CODE}. Ask again with the correct code.", text
+
+    def test_photo_source_nothing_placed(
+        self, session_factory, seeded, stub_access, media_pipeline, monkeypatch
+    ):
+        _seed_media_limit(session_factory, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result({**IMAGE_RESULT, "entities": [{"raw": UNPLACED_CODE}]})
+        stub_access()
+
+        import app.services.chatbot.head.parser as parser_mod
+        from unittest.mock import patch as _patch
+
+        photo_qf = _bare_entities_qf(placed=[], unplaced=[UNPLACED_CODE])
+        with _patch.object(parser_mod, "parse", lambda config, user_block: photo_qf), _patch.object(
+            parser_mod,
+            "resolve_config",
+            lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            ),
+        ):
+            result = engine_mod.run_turn(_image_envelope(caption=None), session_factory=session_factory)
+
+        text = (result.reply or {}).get("text") or ""
+        # A LIVE photo outcome already told the customer what was read (the engine's
+        # own reply-prefix wrapper, "I read X from that photo.") - the arm's OWN
+        # "I could not match any product code in that photo." lead would contradict
+        # that and is suppressed the same way its "something placed" lead already is
+        # (media_prefixed=True here, a real outcome ran).
+        assert text == (
+            f"I read {UNPLACED_CODE} from that photo.\nCouldn't find {UNPLACED_CODE}. "
+            "What would you like me to do with it?"
+        ), text
+
+    def test_voice_source_nothing_placed(
+        self, session_factory, seeded, stub_access, media_pipeline, monkeypatch
+    ):
+        """The browser pass's own repro: a voice note naming a code nobody could place
+        must still name it, after the "I heard: ..." echo - never a bare "What would
+        you like me to know?" that reads as though the bot ignored the code entirely.
+        """
+        _seed_media_limit(session_factory, modality="voice")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result({"transcript": UNPLACED_CODE})
+        stub_access()
+
+        import app.services.chatbot.head.parser as parser_mod
+        from unittest.mock import patch as _patch
+
+        voice_qf = _bare_entities_qf(placed=[], unplaced=[UNPLACED_CODE])
+        with _patch.object(parser_mod, "parse", lambda config, user_block: voice_qf), _patch.object(
+            parser_mod,
+            "resolve_config",
+            lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            ),
+        ):
+            result = engine_mod.run_turn(_voice_envelope(), session_factory=session_factory)
+
+        text = (result.reply or {}).get("text") or ""
+        assert text == (
+            f"I heard: {UNPLACED_CODE}\nCouldn't find {UNPLACED_CODE}. Ask again with the correct code."
+        ), text
+
+
 class TestOpenQuestionStaysNull:
     """AC-1826.
 
