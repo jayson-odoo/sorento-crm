@@ -1,13 +1,14 @@
 # PLAN - Chatbot dealer stock verdict: site-pool availability, per-product quantity, incoming and PO disclaimers
 
-Status: APPROVED by the owner 22 Sep 2026 on `.lavish/chatbot-dealer-stock-verdict-plan.html`
-("approved, slice into tickets and start S0 reds") after six markup rounds; D1 to D26 ruled.
-Round 6 additions: the ideation lane is wrapped as the second task kind in this lane (D26), a tie
-between open tasks asks the dealer through a `task_pick` roster (D24), the backend owns
+Status: BUILT 22 Sep 2026, DRAFT PR #1118; S0 to S4 files on the lane, review round 1 (reviewer +
+security reviewer, Opus) being applied; live journey pass and owner steps pending. Approved by the
+owner 22 Sep 2026 on `.lavish/chatbot-dealer-stock-verdict-plan.html` after six markup rounds;
+D1 to D26 ruled. Round 6 additions: the ideation lane is wrapped as the second task kind (D26), a
+tie between open tasks asks the dealer through a `task_pick` roster (D24), the backend owns
 validation (D25). Branch `feat/chatbot-dealer-stock-verdict`, worktree
 `sorento_crm-dealer-stock-verdict`, test DB `sorento_ai_automation_rearch_test` (reused from the
-merged #952 lane).
-UAC: `chatbot-dealer-stock-verdict-acceptance-criteria.md` (AC-1720 to AC-1783, rulings D1 to D20).
+merged #952 lane); live pass DB `sorento_ai_automation_rearch`.
+UAC: `chatbot-dealer-stock-verdict-acceptance-criteria.md` (AC-1720 to AC-1788, rulings D1 to D26).
 Base: `main` at 2280975f9 (includes #952). Branch `feat/chatbot-dealer-stock-verdict`, one lane,
 one PR. Owner ruling 22 Sep 2026: "build this full suite now".
 Precedents copied, each with the justification that earned it: the `availability` visibility
