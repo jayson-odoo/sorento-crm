@@ -57,6 +57,29 @@ If you need the underlying technical payload for a step (for a bug report to eng
 **Technical details** at the bottom of the trace - it is the full record for every step, searchable
 in place.
 
+## Photos and voice notes in the thread
+
+When a contact sends a photo or a voice note instead of typing, the incoming message in the
+thread shows what the bot read or heard, right above the message text:
+
+* A **photo** shows as a thumbnail. Click it to open it full-size in the same lightbox used
+  everywhere else in the CRM.
+* A **voice note** shows as an audio player, with the bot's transcript already printed in the
+  message text below it.
+* A photo also carries a small **Read N items** chip, counting how many codes or other details
+  the bot picked out of it. The chip turns **amber** when the photo held more than the bot was
+  allowed to take in one go (see [Chatbot - photos and voice
+  notes](chatbot-media-intake.md)) - that's your signal the reply only acted on the first ones,
+  not the whole photo.
+* When a photo or voice note is refused or fails outright (not enabled for this number, over
+  the monthly allowance, too many at once, unreadable), there is no thumbnail or player at
+  all - just the bot's plain reply explaining why, the same reply the contact received.
+
+Opening the Turn trace on one of these messages shows one extra step, **Read the photo** (or
+**Heard the voice note** for a voice message), alongside the usual Received/Understood/etc.
+steps - naming what was read or heard, and whether it was accepted, denied or failed. This step
+does not appear at all on an ordinary text message.
+
 ## The full trace panel
 
 For more than the raw payload, click the small tree icon at the end of the Turn line (its label
@@ -188,6 +211,8 @@ previous version again, not by asking engineering to revert code.
   the bot's own decision-making.
 * [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md) - the per-contact
   Field reveal that gates a cost answer, and rolling out its parser vocabulary via a Publish.
+* [Chatbot - photos and voice notes](chatbot-media-intake.md) - what a contact sees when they
+  send a photo or voice note, and why one might be refused.
 * [Chatbot Domains](chatbot-domains.md) and [Entity kinds](chatbot-entity-kinds.md) - what a
   domain answers, how it narrows, and its ladder to other topics.
 * [Chatbot settings](../user-management/chatbot-settings.md) - the Switches, Memory, Tier order

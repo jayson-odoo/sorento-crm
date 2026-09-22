@@ -247,12 +247,16 @@ class EntityAttachmentService:
         mime_type: Optional[str] = None,
         uploaded_by: Optional[str] = None,
         uploader_kind: Optional[str] = None,
+        uploaded_by_contact_id: Optional[str] = None,
     ) -> EntityAttachmentLink:
         """``uploaded_by`` / ``uploader_kind`` are additive attribution params
         (default None, no behaviour change for existing callers that don't pass
         them): an internal (JWT) upload path passes ``uploaded_by=<users.id>``
         and ``uploader_kind='user'`` so the row is distinguishable from a
-        contact/system upload (UAC B2)."""
+        contact/system upload (UAC B2). ``uploaded_by_contact_id`` (chatbot
+        media-into-turn, S4) is the same idea for a CONTACT-sourced upload (a
+        WhatsApp photo/voice note) - pass it with ``uploader_kind='contact'``
+        rather than ``uploaded_by``, which is a ``users.id`` FK."""
         et, eid = self._normalize(entity_type, entity_id)
         url = (file_url or "").strip()
         if not url:
@@ -278,6 +282,7 @@ class EntityAttachmentService:
             mime_type=mime_type,
             uploaded_by=uploaded_by,
             uploader_kind=uploader_kind,
+            uploaded_by_contact_id=uploaded_by_contact_id,
         )
         self.db.add(attachment)
         self.db.flush()
