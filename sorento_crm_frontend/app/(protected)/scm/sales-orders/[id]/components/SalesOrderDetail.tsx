@@ -1139,8 +1139,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
           if (!inquiry) return <span className="text-muted-foreground">-</span>;
           const reference = inquiry.inquiry_no ?? '-';
           // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2): lands on this exact row of
-          // the inquiry. Plain text until the backend sends `inquiry_id`/`row_id` (S6 BE
-          // half, not yet built - documented in `services/salesOrderService.ts`).
+          // the inquiry. Plain text when the payload carries neither id - a row raised
+          // before inquiries were numbered - rather than a link that lands nowhere.
           const href =
             inquiry.inquiry_id && inquiry.row_id
               ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`

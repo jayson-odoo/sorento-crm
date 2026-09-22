@@ -463,8 +463,9 @@ export function FulfilmentBoardListView({
         cell: ({ row }) => {
           const inquiry = row.original.order_inquiry;
           if (!inquiry?.inquiry_no) return <span className="text-muted-foreground">-</span>;
-          // `inquiry_id`/`row_id` are the fields the backend has not sent yet (S6 BE half,
-          // not yet built, documented on `BoardLineOrderInquiry`) - plain text until then.
+          // A row whose payload carries neither id - one raised before inquiries were
+          // numbered, or a header the join could not reach - is plain text rather than a
+          // link that lands nowhere in particular.
           const href =
             inquiry.inquiry_id && inquiry.row_id
               ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`

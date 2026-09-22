@@ -61,12 +61,18 @@ export function useTableDeepLinkHighlight<TData>(
     const qs = next.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname, router, options.paramName]);
+  }, [pathname, router, searchParams, options.paramName]);
 
   React.useEffect(() => {
     if (!target || handled.current || !enabled) return;
-    if (currentSearch) {
-      clearSearch?.();
+    // AC-B6-11: wait for the search box to empty - but only where the caller actually
+    // gave us a way to empty it. Without `clearSearch` this returned every time and the
+    // landing simply never happened: no glow, no toast, and the param left on the URL to
+    // re-fire on the next render. A caller that cannot clear its search gets the lookup
+    // against whatever is showing, which finds the row unless the search filtered it out,
+    // and `not shown here` is the honest answer when it did.
+    if (currentSearch && clearSearch) {
+      clearSearch();
       return;
     }
     handled.current = true;

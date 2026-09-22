@@ -372,15 +372,16 @@ class OrderInquiryWorklistRow(BaseModel):
     project_id: Optional[str] = None
     project_sales_order_id: Optional[str] = None
     core_sales_order_id: Optional[str] = None
-    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids the "SO line"
-    # column resolves to `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>`
-    # - `response_model` drops a field it has not been told about, so both are declared
-    # here even though `_serialize` already reads them. Null when the mirror has no
-    # core line.
-    sales_order_id: Optional[str] = None
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id, which the
+    # "SO line" cell puts on
+    # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>` beside
+    # `core_sales_order_id` above - the cell reads THAT one, so this row carries no second
+    # name for the same sales order (review round, 22 Sep). `response_model` drops a field
+    # it has not been told about, so this is declared here even though `_serialize`
+    # already reads it. Null when the mirror has no core line.
     core_line_id: Optional[str] = None
-    # Fix round (22 Sep): AutoCount's own line number, beside the two ids above - the S/O
-    # no cell's own `SO402757 · L5` label (`orderInquirySoLineLabel`) reads this. Null when
+    # Fix round (22 Sep): AutoCount's own line number, beside the id above - the S/O line
+    # cell's own `SO402757 · L5` label (`orderInquirySoLineLabel`) reads this. Null when
     # the mirror has no core line (same as `core_line_id`).
     line_no: Optional[int] = None
     is_adopted: bool = False

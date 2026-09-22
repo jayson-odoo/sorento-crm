@@ -50,7 +50,7 @@ from app.models.project_so import (
 )
 from app.services import planning_change_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-from app.services.scm.outstanding_diff import DATE_MOVED
+from app.services.scm.outstanding_diff import DATE_AND_QTY_CHANGED, DATE_MOVED
 
 from ..test_order_inquiry_handover_automation import (
     _captured_dispatches,
@@ -99,19 +99,28 @@ def _notices(db, line_id) -> list:
     )
 
 
-def _apply_date_move(world, core, order, core_so, line, *, old_date, new_date, qty):
+def _apply_date_move(world, core, order, core_so, line, *, old_date, new_date, qty, new_qty=None):
     """Write the book, build the batch off the diff, accept the frozen suggestion via
     Confirm (the board's own one-press path posts NO composition for an unamended row -
     `_confirm_a_planning_change` only calls `set_row_decision(..., "amend", composition)`
     for a row the PRESS itself named; every other row in the batch is exactly the
-    `set_row_decision(..., "confirm")` shape used here), then Apply."""
+    `set_row_decision(..., "confirm")` shape used here), then Apply.
+
+    `new_qty` moves the QUANTITY as well as the date, which is a `DATE_AND_QTY_CHANGED`
+    diff rather than a `DATE_MOVED` one - the shape the review round's own probe needs
+    (`_map_kind` reads it as `advanced`/`delayed` all the same, date first)."""
     core.required_date = new_date
     line.delivery_date = new_date
+    if new_qty is not None:
+        core.qty_ordered = Decimal(new_qty)
+        line.qty = Decimal(new_qty)
     world.db.commit()
     changes = [
         _change(
-            DATE_MOVED, core, so_number=core_so.so_number,
-            old_date=old_date, new_date=new_date, old_qty=qty, new_qty=qty,
+            DATE_MOVED if new_qty is None else DATE_AND_QTY_CHANGED,
+            core, so_number=core_so.so_number,
+            old_date=old_date, new_date=new_date, old_qty=qty,
+            new_qty=qty if new_qty is None else new_qty,
         )
     ]
     batch = _build(world, changes, core_so, [str(core.id)])
@@ -517,6 +526,65 @@ def test_lone_placed_row_without_links_gets_date_stamp_qty_untouched_no_notice(a
         if str(r.id) != row_id and r.state != INQUIRY_CANCELLED and r.verb == IV_ORDER
     ]
     assert fresh == [], "no fresh ORDER row either - the placed row just gets its date stamped"
+
+
+def test_a_date_and_qty_change_still_moves_the_date_on_the_existing_buy_row(api):
+    """Review round, 22 Sep - the reviewer's own probe, and the blocker it found.
+
+    The book moves a lone placed row's date AND its quantity in one change
+    (`DATE_AND_QTY_CHANGED`, which `_map_kind` reads as `advanced`/`delayed` - date
+    first). `_write`'s date-move branch was gated on the composed `need` matching what
+    the line's live buy rows already total, so the moment the QUANTITY moved too the
+    gate failed, `_stamp_date_move` never ran, and the line came out of the confirm with
+    the placed row still on the OLD date while the fresh remainder row sat on the new
+    one - and no ADVANCE/DELAY notice either, because a buy row existed, so nothing on
+    the screen said the date had moved at all.
+
+    The two halves are independent: the date half belongs on EVERY buy row of the line
+    (it touches neither quantity nor links), and the quantity half is the netting's own
+    business, which still runs and still raises the outstanding remainder."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="5", required_date=WAS_1
+    )
+    order = _project_so(
+        db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+    )
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    db.commit()
+    assert _confirm(client, order.id, [_line_payload(line.id, buy_qty="5")]).status_code == 200
+
+    row = _order_row(world, line)
+    row_id = str(row.id)
+    row.state = INQUIRY_PLACED
+    db.commit()
+
+    _apply_date_move(
+        world, core, order, core_so, line,
+        old_date=WAS_1, new_date=NOW, qty="5", new_qty="8",
+    )
+
+    db.expire_all()
+    placed = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
+    assert placed.state == INQUIRY_PLACED, "placed supply is not demoted back to raised"
+    assert Decimal(str(placed.qty)) == Decimal("5"), "the qty half is the netting's business"
+    assert placed.delivery_date == NOW, "the date half applies whatever the quantity did"
+    assert placed.previous_delivery_date == WAS_1
+    assert placed.note and f"Was 5 on {WAS_1.isoformat()}" in placed.note, placed.note
+
+    fresh = [
+        r for r in _rows_of(world, line)
+        if str(r.id) != row_id and r.state != INQUIRY_CANCELLED and r.verb == IV_ORDER
+    ]
+    assert len(fresh) == 1, [(r.verb, r.state, r.qty) for r in fresh]
+    assert Decimal(str(fresh[0].qty)) == Decimal("3"), "5 already placed, 3 outstanding"
+    assert fresh[0].delivery_date == NOW
+
+    assert _notices(db, line.id) == [], (
+        "a buy row carries the new date, so nothing is told twice"
+    )
 
 
 # ---------------------------------------------------------------------------

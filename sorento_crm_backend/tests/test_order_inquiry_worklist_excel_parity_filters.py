@@ -593,10 +593,13 @@ def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
             break
 
     assert target_row is not None, "row_po_match not found in any export sheet"
-    assert headers[10] == "Taken", headers
-    assert headers[11] == "Remaining", headers
-    assert target_row[10] == "10", target_row
-    assert target_row[11] == "0", target_row
+    # Review round (22 Sep): APPENDED after ACKNOWLEDGED, never inserted before it - the
+    # columns purchasing's own filters already point at keep the positions they have had.
+    assert headers[10] == "ACKNOWLEDGED", headers
+    assert headers[11] == "Taken", headers
+    assert headers[12] == "Remaining", headers
+    assert target_row[11] == "10", target_row
+    assert target_row[12] == "0", target_row
 
 
 # --------------------------------------------------------------- delivery range

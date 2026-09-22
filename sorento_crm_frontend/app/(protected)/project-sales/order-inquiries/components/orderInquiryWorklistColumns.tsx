@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ColumnDef } from '@tanstack/react-table';
+import { ColumnDef, Table } from '@tanstack/react-table';
 import { CircleCheck, CircleDashed, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -735,7 +735,7 @@ function FooterTotal({
   field,
   pageScoped,
 }: {
-  table: { getPrePaginationRowModel: () => { rows: { original: OrderInquiryWorklistRow }[] } };
+  table: Table<OrderInquiryWorklistRow>;
   field: 'qty' | 'taken' | 'remaining';
   pageScoped: boolean;
 }) {
@@ -886,9 +886,12 @@ export function useOrderInquiryWorklistColumns({
       },
       {
         accessorKey: 'so_number',
-        header: ({ column }) => <DataGridColumnHeader title="S/O no" column={column} />,
+        // "S/O line", not "S/O no" (review round, 22 Sep): the cell prints `SO402757 · L5`
+        // now, so the old heading named half of what is under it. The column id is
+        // untouched, so a saved layout keeps its place.
+        header: ({ column }) => <DataGridColumnHeader title="S/O line" column={column} />,
         size: 150,
-        meta: { headerTitle: 'S/O no', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'S/O line', skeleton: <Skeleton className="h-4 w-20" /> },
         // The way in - AND (fix round, S6) the deep link (AC-B6-1): `SO402757 · L5` once
         // the row carries a line number, the bare SO number otherwise, linking straight to
         // the exact sales-order LINE when both `core_sales_order_id` and `core_line_id`

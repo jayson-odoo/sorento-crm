@@ -318,7 +318,9 @@ describe('OrderInquiriesClient: reading the page', () => {
       // it renders no `columnheader` cell at all until a reader ticks it back on -
       // asserted separately below, via the Columns menu.
       'SO date',
-      'S/O no',
+      // Review round (22 Sep): "S/O line", not "S/O no" - the cell prints `SO402757 · L5`
+      // since S6, so the heading names the whole of what is under it.
+      'S/O line',
       'Item code',
       'Qty',
       'Delivery date',

@@ -1770,6 +1770,10 @@ class FulfilmentBoardService:
             self.db.query(
                 ProjectSalesOrderLine.core_sales_order_line_id,
                 OrderInquiry.inquiry_no,
+                # S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the HEADER's own id,
+                # beside the ROW's id read further down - the List view's OI column needs
+                # the pair to address the exact row, and prints neither.
+                OrderInquiry.id,
                 OrderInquiryRow.state,
                 # The handshake, so a REJECTED line says who refused it and why
                 # (`PLAN-scm-oi-handshake.md`, AC-H6). The line is undecided again by then
@@ -1840,7 +1844,7 @@ class FulfilmentBoardService:
         # beside a read-only "decided" would send CS to an instruction nobody holds.
         live_entry: Dict[str, Dict[str, Any]] = {}
         for (
-            core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name,
+            core_id, inquiry_no, inquiry_id, state, ack_state, rejected_at, _reason, _name,
             supply_decision_id, row_id, redirected_to_pool,
         ) in rows:
             core_key = str(core_id)
@@ -1852,6 +1856,7 @@ class FulfilmentBoardService:
                 # Rows arrive oldest first, so the last one seen is the newest.
                 live_entry[core_key] = {
                     "inquiry_no": inquiry_no,
+                    "inquiry_id": str(inquiry_id) if inquiry_id else None,
                     "state": state,
                     "ack_state": ack_state,
                     "rejected_reason": None,
@@ -1870,6 +1875,7 @@ class FulfilmentBoardService:
                     continue
             out[core_key] = {
                 "inquiry_no": inquiry_no,
+                "inquiry_id": str(inquiry_id) if inquiry_id else None,
                 "state": state,
                 # NULL once CS has answered the refusal. The entry is still seeded from the
                 # row - the cell keeps the inquiry number it was last told about - but the
@@ -1898,7 +1904,7 @@ class FulfilmentBoardService:
         # decision and not about the objection that prompted it. A flag that outlived the
         # answer would read as an open refusal on a line somebody had already dealt with.
         for (
-            core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name,
+            core_id, _inquiry_no, _inquiry_id, _state, ack_state, rejected_at, reason, name,
             _decision_id, _row_id, _redirected_to_pool,
         ) in rows:
             if ack_state != ACK_REJECTED:
@@ -1933,6 +1939,10 @@ class FulfilmentBoardService:
         )
         for entry in out.values():
             row_id = entry.pop("_row_id", None)
+            # S6 (AC-B6-15): the same id, now on the WIRE as well - the List view's OI
+            # column addresses `?row=<row_id>` with it. Read off `_row_id` at the moment
+            # it is popped so the two can never name different rows.
+            entry["row_id"] = row_id
             entry["documents"] = [
                 {
                     "document": link["document"],

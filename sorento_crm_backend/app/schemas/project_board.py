@@ -467,6 +467,12 @@ class BoardLineOrderInquiry(BaseModel):
 
     #: `OI-000123`. Null only on a row raised before inquiries were numbered.
     inquiry_no: Optional[str] = None
+    #: S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the inquiry HEADER's own id and
+    #: this row's own id. Addressing only, never rendered - the List view's OI column links
+    #: to `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>` and needs both to land
+    #: on the exact row; a cell missing either falls back to plain text.
+    inquiry_id: Optional[str] = None
+    row_id: Optional[str] = None
     state: str
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
     #: `rejected`. Defaulted so a row written before the handshake existed still reads, and

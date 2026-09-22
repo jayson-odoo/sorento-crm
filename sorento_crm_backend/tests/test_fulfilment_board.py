@@ -7727,6 +7727,71 @@ def test_the_order_inquiry_dict_carries_its_documents_and_whether_it_was_redirec
         assert order_inquiry["redirected"] is True
 
 
+def test_the_order_inquiry_dict_reaches_the_wire_with_its_inquiry_and_row_ids():
+    """S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15/AC-B6-9): the List view's own
+    OI column links to `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`, so
+    the contribution has to carry BOTH ids - and carry them to the WIRE, which is why
+    this is asserted off the route rather than off `build()`: `response_model` silently
+    drops any field the service returns that `BoardLineOrderInquiry` does not declare,
+    and the cell would then fall back to plain text with nothing failing."""
+    from app.models.base import company_scope
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_RAISED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryRow,
+    )
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id,
+            project_sales_order_id=mirrors[0].project_sales_order_id,
+            state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+        )
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirrors[0].id, item_code=f"{MARKER}-ITEM", qty=Decimal("3"),
+            verb=IV_ORDER, state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        db.add(row)
+        db.flush()
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={
+                        "orders": order.so_number,
+                        "granularity": "week",
+                        "as_of": TODAY.isoformat(),
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        order_inquiry = response.json()["contributions"][0]["order_inquiry"]
+        assert order_inquiry["inquiry_no"] == inquiry.inquiry_no
+        assert order_inquiry["inquiry_id"] == str(inquiry.id), order_inquiry
+        assert order_inquiry["row_id"] == str(row.id), order_inquiry
+
+
 # --------------------------------------------------------------------------- AC-S2-8
 
 

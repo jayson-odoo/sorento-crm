@@ -123,7 +123,15 @@ def test_oi_row_payload_carries_core_line_id_and_sales_order_id(api):
         if row["id"] == str(with_core["row"].id)
     )
     assert worklist_row.get("core_line_id") == str(with_core["core"].id), worklist_row
-    assert worklist_row.get("sales_order_id") == str(with_core["core_so"].id), worklist_row
+    # Review round (22 Sep): the worklist row's sales-order half is `core_sales_order_id`,
+    # which it has always carried and which the "SO line" cell actually reads
+    # (`orderInquirySoLineHref`). It used to also ship the SAME `sales_orders.id` a second
+    # time as `sales_order_id`; one fact under two names is one that can be read the wrong
+    # way, so the duplicate label was dropped and this asserts the surviving one.
+    assert worklist_row.get("core_sales_order_id") == str(with_core["core_so"].id), (
+        worklist_row
+    )
+    assert "sales_order_id" not in worklist_row, worklist_row
     # Fix round (22 Sep): AutoCount's own line number, beside the two ids above - the S/O
     # no cell's own `SO402757 · L5` label reads this (worklist row payload only; the OI
     # Lines tab's own `list_rows` feed already carries the MIRROR's separate `line_no`).

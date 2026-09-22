@@ -62,9 +62,7 @@ export function orderInquiryRowHref(row: OrderInquiryWorklistRow): string | null
 /**
  * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the "SO line" column's own text -
  * `SO402757 · L5` when the row carries a line number, the bare SO number otherwise (a
- * row with no line to name still deserves its SO number rather than a blank cell). `line_no`
- * is the field the backend has not sent yet (documented at the top of
- * `services/orderInquiryService.ts`, S6 BE half); absent today on every row.
+ * row with no line to name still deserves its SO number rather than a blank cell).
  */
 export function orderInquirySoLineLabel(
   row: Pick<OrderInquiryWorklistRow, 'so_number' | 'line_no'>,
@@ -76,9 +74,9 @@ export function orderInquirySoLineLabel(
 /**
  * S6 (AC-B6-1): the "SO line" column's own href, landing on the exact line
  * (`?tab=lines&line=<core_line_id>`). `null` when either id the link needs is missing -
- * `core_sales_order_id` (already on the row) or `core_line_id` (the field the backend has
- * not sent yet) - so the cell falls back to plain text rather than a link that lands
- * nowhere in particular, the same rule `orderInquiryRowHref` already follows.
+ * `core_sales_order_id`, or `core_line_id` on a row whose mirror reaches no core line -
+ * so the cell falls back to plain text rather than a link that lands nowhere in
+ * particular, the same rule `orderInquiryRowHref` already follows.
  */
 export function orderInquirySoLineHref(
   row: Pick<OrderInquiryWorklistRow, 'core_sales_order_id' | 'core_line_id'>,

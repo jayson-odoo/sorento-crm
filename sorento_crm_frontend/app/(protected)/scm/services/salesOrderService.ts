@@ -34,14 +34,6 @@
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
  *   POST   /sales-orders/{id}/reset-planning { rewind_book } → { so_number, planned, removed }
  * ============================================================================
- *
- * EXPECTED BE CONTRACT (S6, `PLAN-board-oi-mechanical-22sep.md`, AC-B6-8, backend half not
- * yet built): `GET /sales-orders/{id}` is expected to grow `SalesOrderLineInquiry.inquiry_id`
- * / `.row_id` beside its existing `inquiry_no` (`sales_order_service.py:510`), addressing
- * the Lines tab's own "Order inquiry" cell link
- * (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`, `SalesOrderDetail.tsx`). Both
- * optional on `SalesOrderLineInquiry` until Phase 2 lands them - absent renders as plain
- * text, the same fallback every other id-addressed cell in this app uses.
  */
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';

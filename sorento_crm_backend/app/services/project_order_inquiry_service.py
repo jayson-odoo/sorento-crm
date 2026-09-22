@@ -1098,16 +1098,23 @@ class ProjectOrderInquiryService:
                 # S2 (`PLAN-board-oi-mechanical-22sep.md`, AC-B2-4..7): `_settle_row_in_
                 # place` just declined - two still-owed rows, a lone placed row with no
                 # link, or every row already actioned (excluded from its own `live`
-                # filter outright). None of that changes what a PURE date move should do:
-                # every buy row of the line still gets the date stamped in place, and no
-                # second ADVANCE/DELAY row is raised beside it. Gated on the composed
-                # `need` matching what the line's own live buy rows already total - a
-                # genuine quantity change (not merely a date move) still falls through to
-                # the netting below unchanged, exactly as it does today. A line with NO
-                # existing buy row at all (`live_buy_qty` zero, nothing to stamp) also
-                # falls through, on purpose: `_stamp_date_move` finds no target and
-                # returns False, and the netting below raises its fresh row exactly as
-                # it always has (AC-B2-4).
+                # filter outright). None of that changes what the DATE half of the change
+                # should do: every buy row of the line still gets the date stamped in
+                # place, and no second ADVANCE/DELAY row is raised beside it.
+                #
+                # The stamp is UNGATED by the quantity (review round, 22 Sep). It was
+                # gated on the composed `need` matching what the line's own live buy rows
+                # already total, and a book that moved the date AND the quantity then
+                # moved neither: the gate failed, nothing was stamped, and the line came
+                # out of the confirm with its existing row on the OLD date, a fresh
+                # remainder row on the new one, and no notice either (a buy row existed,
+                # so `_oi_demand_rows` suppressed it). The stamp touches no quantity and
+                # no link, so it is safe either way; the quantity half stays with the
+                # netting below, which still runs whenever the two disagree.
+                #
+                # A line with NO existing buy row at all still falls through on its own:
+                # `_stamp_date_move` finds no target and returns False, and the netting
+                # raises its fresh row exactly as it always has (AC-B2-4).
                 live_buy_qty = sum(
                     (
                         _dec(r.qty)
@@ -1121,9 +1128,12 @@ class ProjectOrderInquiryService:
                     ),
                     _ZERO,
                 )
-                if live_buy_qty == need and self._stamp_date_move(
-                    rows, entry.get("required_date"), actor_user_id=actor_user_id
-                ):
+                stamped = self._stamp_date_move(
+                    inquiry, rows, entry, decision, actor_user_id=actor_user_id
+                )
+                if stamped and live_buy_qty == need:
+                    # Nothing but the date moved, so the netting has nothing left to say
+                    # about this line and the caller is told it is settled.
                     settled_in_place.append(str(line.id))
                     continue
             # Read BEFORE the loop below cancels anything: what purchasing had already
@@ -1708,36 +1718,52 @@ class ProjectOrderInquiryService:
 
     def _stamp_date_move(
         self,
+        inquiry: OrderInquiry,
         rows: Sequence[OrderInquiryRow],
-        new_date: Optional[date],
+        entry: Dict[str, Any],
+        decision: Any,
         *,
         actor_user_id: Optional[str] = None,
     ) -> bool:
-        """A PURE date move `_settle_row_in_place` declined to read as one instruction -
-        two still-owed rows, a lone placed row with no link, or every row already
-        actioned (excluded from its own `live` filter outright) - restated on EVERY buy
-        row of the line instead (S2, `PLAN-board-oi-mechanical-22sep.md`, AC-B2-4..7).
-        Purchasing sees the row(s) it already had, each carrying the new date, the old
-        one on its own note and as `previous_delivery_date`, rather than the same rows
-        left bare beside a duplicate ADVANCE/DELAY notice telling them the same thing a
-        second time.
+        """The DATE half of a change `_settle_row_in_place` declined to read as one
+        instruction - two still-owed rows, a lone placed row with no link, or every row
+        already actioned (excluded from its own `live` filter outright) - restated on
+        EVERY buy row of the line instead (S2, `PLAN-board-oi-mechanical-22sep.md`,
+        AC-B2-4..7). Purchasing sees the row(s) it already had, each carrying the new
+        date, the old one on its own note and as `previous_delivery_date`, rather than
+        the same rows left bare beside a duplicate ADVANCE/DELAY notice telling them the
+        same thing a second time.
 
-        Links are untouched: the quantity has not moved, so there is nothing to give
-        back or net. The caller (`_write`) only reaches here once it has confirmed the
-        composed `need` equals what the line's live buy rows already total - a genuine
-        quantity change is not this method's business and falls through to the ordinary
-        netting instead.
+        Links and QUANTITIES are untouched, and that is what makes this safe to run
+        regardless of what the quantity did (review round, 22 Sep): the two halves of a
+        `DATE_AND_QTY_CHANGED` are independent, so gating the date stamp on the composed
+        `need` matching the line's live buy total - as this used to - meant a book that
+        moved the date AND the quantity moved neither on the existing row, left it
+        sitting on the OLD date beside a freshly-raised remainder row on the new one,
+        and suppressed the notice as well because a buy row existed. The quantity half
+        stays the netting's own business: the caller falls through to it whenever `need`
+        and the live buy total disagree.
 
         One handover line for the WHOLE line, not one per row (AC-B2-9): the line's
         `ADVANCE`/`DELAY` change is told once, off a single representative row, the same
         "one row per sales-order line" rule `_oi_demand_rows` already holds for the
-        notice this replaces.
+        notice this replaces. `order_inquiry_changed_with_links` is per ROW, though, and
+        fires for each stamped row that actually carries a link (review round): a date
+        purchasing already bought against moving is exactly what that automation exists
+        to tell them, and `_settle_row_in_place` fires it for the same reason.
+
+        `refresh_link_state` is deliberately NOT called, unlike the settle path: nothing
+        here changes a row's quantity or its links, so there is no coverage to re-derive
+        - and it would DEMOTE the very shape AC-B2-6 is about, a lone `placed` row with
+        no link row behind it, back to `raised` (the reason `_settle_row_in_place`
+        declines that shape outright).
 
         Returns False, writing nothing, when there is no date to move to or every buy
         row already carries it - the caller reads that as "nothing to stamp" and falls
         through to its own fallback (AC-B2-4's fresh line has no row here to stamp at
         all).
         """
+        new_date = entry.get("required_date")
         if new_date is None:
             return False
         targets = [
@@ -1766,14 +1792,30 @@ class ProjectOrderInquiryService:
             row.delivery_date = new_date
             row.changed_at = datetime.utcnow()
             row.note = f"{row.note}; {moved}" if row.note else moved
+            # Whose instruction the row is now, the same two facts `_settle_row_in_place`
+            # restates: this decision's, at the location this composition states (when it
+            # states one - a composition naming none must not blank a location purchasing
+            # is working to).
+            if entry.get("stock_location"):
+                row.stock_location = entry.get("stock_location")
+            row.supply_decision_id = decision.id
             # Same handshake rule as `_settle_row_in_place`: a row purchasing has
             # already taken on goes back to To confirm; one still AWAITING is left
             # alone, since CS is free to change what nobody has read yet.
             if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
                 row.ack_state = ACK_CHANGED
         self.db.flush()
+        for row in targets:
+            self._dispatch_changed_with_links(
+                inquiry, row, had_link=bool(self._links_of(row.id))
+            )
+        # AC-H3/AC-H4, as `_settle_row_in_place` reads them: only the field that actually
+        # moved. A row that carried NO previous date states none rather than a blank one -
+        # "Was <nothing>" is a handover line nobody can act on.
         self._record_handover(
-            targets[0], kind="settled", was={"delivery_date": previous_date},
+            targets[0],
+            kind="settled",
+            was={"delivery_date": previous_date} if previous_date else {},
             actor_user_id=actor_user_id,
         )
         return True

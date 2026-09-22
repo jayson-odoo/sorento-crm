@@ -433,11 +433,11 @@ export interface SalesOrderLineInquiry {
    *  the column answers. `placed` reads "Linked". */
   state: string;
   /**
-   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2/AC-B6-8, backend half not yet
-   * built - `sales_order_service.py:510` is expected to add both beside `inquiry_no`):
-   * the order inquiry HEADER's own id and this LINE's OI row id, addressing the "Order
-   * inquiry" cell's own link (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`).
-   * Both optional here until Phase 2 lands them - absent means the cell stays plain text.
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2/AC-B6-8): the order inquiry
+   * HEADER's own id and this LINE's OI row id, addressing the "Order inquiry" cell's own
+   * link (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`). Optional because a
+   * row raised before inquiries were numbered carries neither - absent means the cell
+   * stays plain text.
    */
   inquiry_id?: string | null;
   row_id?: string | null;

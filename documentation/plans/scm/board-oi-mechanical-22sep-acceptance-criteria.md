@@ -146,6 +146,12 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
   email lists it once as a date change.
 - **AC-B2-8 [BE]** Given a line with no buy row and the confirm raising none, when a date
   move applies, then behaviour is unchanged from today; the test pins it.
+- **AC-B2-14 [BE]** Given a change that moved the QUANTITY as well as the date
+  (`DATE_AND_QTY_CHANGED`), when it applies, then the date half still lands on every buy
+  row of the line per AC-B2-1 (qty and links untouched) and the quantity half is left to
+  the ordinary netting, which raises the outstanding remainder on the new date. No notice
+  is raised, because a buy row now carries the change's new date - and conversely, a line
+  whose buy rows all still sit on the OLD date DOES get its notice (review round, 22 Sep).
 - **AC-B2-9 [BE]** Given the settle stamps a date change, when the handover context builds,
   then the row appears under `changed` with was/now dates, never under `raised`.
 - **AC-B2-10 [T]** `tests/scm/test_oi_confirm_per_so.py` and
@@ -157,6 +163,9 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
   row: OI number, item, qty, notice date, buy row id, buy row date.
 - **AC-B2-12 [BE]** `--apply` sets the notice row `state=cancelled`, appends
   `; Folded into the buy row by script, <date>` to its note, and on the buy row sets
+  `delivery_date` = the NOTICE's own delivery date (the notice is the only row carrying the
+  new date, so a fold that left the buy row where it was would delete the move rather than
+  fold it - review round, 22 Sep; a notice with no date of its own is skipped and reported),
   `previous_delivery_date` = the notice's own "Was" date parsed from its note (skipped and
   reported when absent), `changed_at=now()`, note `; Was <qty> on <date>`; commits once;
   prints counts.
@@ -165,12 +174,21 @@ order / On order / Done / Cancelled), not "Raised" / "Actioned". Wording per own
 
 ### B6 deep-link ids
 - **AC-B6-7 [BE]** Given an OI row, when `list_rows` / the worklist serialise it, then the
-  payload carries `core_line_id` (the mirror's `core_sales_order_line_id`) and
-  `sales_order_id` beside `so_number` and `line_no`; null when the mirror has no core line.
+  payload carries `core_line_id` (the mirror's `core_sales_order_line_id`) and the CORE
+  sales order's own id beside `so_number` and `line_no`; null when the mirror has no core
+  line. (Review round, 22 Sep: the worklist row already carried that id as
+  `core_sales_order_id`, which is the field the "SO line" cell reads, so it is NOT shipped
+  a second time as `sales_order_id`; `list_rows`, which carries no `core_sales_order_id`,
+  keeps its own `sales_order_id`.)
 - **AC-B6-8 [BE]** Given an SCM sales order line with an inquiry row, when the detail lines
   serialise (`sales_order_service.py:510`), then `order_inquiry` carries `inquiry_id` and
   `row_id` beside `inquiry_no`.
 - **AC-B6-9 [T]** Both fields asserted present in a response test (response_model guard).
+- **AC-B6-17 [BE]** Given a board line with a live OI row, when
+  `GET /project-sales/fulfilment-planning/board` serialises the contribution, then
+  `order_inquiry` carries `inquiry_id` and `row_id` beside `inquiry_no` - the pair the List
+  view's OI column (AC-B6-15) addresses the exact row with. Asserted off the route, not off
+  `build()`: `BoardLineOrderInquiry` drops an undeclared field silently.
 
 ## Phase 3 - verification
 - **AC-E2E-1 [E2E]** agent-browser, sidebar from `/`: Fulfilment Planning → Grid → default

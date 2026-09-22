@@ -199,16 +199,17 @@ EXPORT_HEADINGS = (
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
-    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
-    # row-level Taken/Remaining the grid has shown since S3, never the retired
-    # LINE-scoped `taken_from_po`/`remaining_open` pair. Between LOCATION and
-    # ACKNOWLEDGED, the grid's own relative order (Location, then Taken/Remaining, then
-    # the instruction/handshake column).
-    "Taken",
-    "Remaining",
     # APPENDED, never inserted: their own filters and habits are keyed on the columns
     # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
     "ACKNOWLEDGED",
+    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
+    # row-level Taken/Remaining the grid has shown since S3, never the retired
+    # LINE-scoped `taken_from_po`/`remaining_open` pair. APPENDED for the same reason
+    # ACKNOWLEDGED was (review round, 22 Sep): they first landed BETWEEN Location and
+    # Acknowledged, which pushed a column purchasing's own filters already point at one
+    # place to the right.
+    "Taken",
+    "Remaining",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -690,12 +691,12 @@ _COLUMNS = (
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
-    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids the "SO line"
-    # column resolves to `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>`
-    # - the SAME two columns `core_sales_order_id` above and the LOCATION fallback join
-    # already read, labelled once more under the names the deep link's own contract uses.
-    # Null when the mirror has no core line.
-    SalesOrder.id.label("sales_order_id"),
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the "SO line" cell resolves
+    # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`, so the only
+    # NEW column the deep link needs is the core LINE's own id - the sales-order half is
+    # `core_sales_order_id` above, which the cell already reads. A second label for that
+    # same column (review round, 22 Sep) put one fact on the wire under two names. Null
+    # when the mirror has no core line.
     SalesOrderLine.id.label("core_line_id"),
     # Fix round (22 Sep): AutoCount's own line number, for the S/O no cell's `SO402757 ·
     # L5` label (`orderInquirySoLineLabel`) - the SAME `SalesOrderLine` join `core_line_id`
@@ -2121,14 +2122,13 @@ class OrderInquiryWorklistService:
             "project_id": row.project_id,
             "project_sales_order_id": row.project_sales_order_id,
             "core_sales_order_id": row.core_sales_order_id,
-            # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids the
-            # "SO line" column resolves to
-            # `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>` - null
-            # when the mirror has no core line.
-            "sales_order_id": row.sales_order_id,
+            # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id,
+            # which the "SO line" cell puts on
+            # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`
+            # beside `core_sales_order_id` above - null when the mirror has no core line.
             "core_line_id": row.core_line_id,
-            # Fix round (22 Sep): AutoCount's own line number, beside the two ids above -
-            # the S/O no cell's own `SO402757 · L5` label reads this.
+            # Fix round (22 Sep): AutoCount's own line number, beside the id above - the
+            # S/O line cell's own `SO402757 · L5` label reads this.
             "line_no": row.line_no,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
@@ -3062,8 +3062,8 @@ class OrderInquiryWorklistService:
                         row.get("supplier") or "",
                         row.get("po_number") or "",
                         row.get("location") or "",
+                        ack_label(row),
                         _export_taken(row),
                         _export_remaining(row),
-                        ack_label(row),
                     ]
                 )

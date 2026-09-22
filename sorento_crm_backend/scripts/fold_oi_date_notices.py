@@ -19,9 +19,16 @@ LIVE (non-cancelled) `ORDER`/`ORDER_BACK` row - the shape the fix now prevents. 
   (`_oi_demand_rows`'s pre-fix note, `f"Was {from_date}"` with an ISO date) - a note with
   no parseable date is left alone and counted separately, never guessed at;
 * `--apply` cancels the notice, appends "Folded into the buy row by script, <today>" to
-  its own note, and stamps the buy row with `previous_delivery_date` (the parsed date),
-  `changed_at` (now) and a "Was <qty> on <date>" note - the same shape `_stamp_date_move`
-  writes for a fresh date move, so the Lines tab's Was/Now table reads either one alike.
+  its own note, and stamps the buy row with `delivery_date` (the NOTICE's own date),
+  `previous_delivery_date` (the parsed date), `changed_at` (now) and a "Was <qty> on
+  <date>" note - the same shape `_stamp_date_move` writes for a fresh date move, so the
+  Lines tab's Was/Now table reads either one alike.
+
+  The `delivery_date` hand-over is the point of the whole fold (review round, 22 Sep):
+  the NOTICE is the only row that ever carried the new date, so cancelling it without
+  moving the buy row would delete the date move rather than fold it, leaving the buy row
+  reading as though the book had never moved. A notice carrying NO date of its own has
+  nothing to hand over and is left alone and counted, the same rule as a missing `Was`.
 
 SAFETY / IDEMPOTENCY
 ---------------------
@@ -132,6 +139,9 @@ def _fold(db: Session, notice: OrderInquiryRow, buy_row: OrderInquiryRow, was_da
         if notice.note
         else f"Folded into the buy row by script, {today}"
     )
+    # The notice's own date is the new one; the buy row is still on the old.
+    if notice.delivery_date and buy_row.delivery_date != notice.delivery_date:
+        buy_row.delivery_date = notice.delivery_date
     buy_row.previous_delivery_date = was_date
     buy_row.changed_at = datetime.utcnow()
     stamp = f"Was {_qty_str(_dec(buy_row.qty))} on {was_date.isoformat()}"
@@ -144,6 +154,7 @@ def run(db: Session, *, apply: bool = False) -> Dict[str, Any]:
     pairs_out: List[Dict[str, Any]] = []
     folded = 0
     skipped_no_was = 0
+    skipped_no_notice_date = 0
 
     for notice, buy_row, oi_number in _live_notice_buy_pairs(db):
         was_date = _parse_was_date(notice.note)
@@ -168,16 +179,32 @@ def run(db: Session, *, apply: bool = False) -> Dict[str, Any]:
                 f"{notice.item_code} - note: {notice.note!r}"
             )
             continue
+        if notice.delivery_date is None:
+            # Nothing to hand over: the notice is the only row carrying the new date.
+            skipped_no_notice_date += 1
+            print(
+                f"  SKIPPED (notice has no delivery date): "
+                f"{oi_number or notice.order_inquiry_id} {notice.item_code}"
+            )
+            continue
+        # AC-B2-11: the notice's OWN delivery date is on the line, so a dry run can be
+        # read for where each buy row is about to be MOVED to, not only where it sits.
         print(
             f"  {oi_number or notice.order_inquiry_id} {notice.item_code} "
             f"qty {_qty_str(_dec(notice.qty))} was {was_date.isoformat()} "
+            f"notice date {notice.delivery_date.isoformat()} "
             f"-> buy row {buy_row.id} ({buy_row.delivery_date})"
         )
         if apply:
             _fold(db, notice, buy_row, was_date)
             folded += 1
 
-    return {"pairs": pairs_out, "folded": folded, "skipped_no_was": skipped_no_was}
+    return {
+        "pairs": pairs_out,
+        "folded": folded,
+        "skipped_no_was": skipped_no_was,
+        "skipped_no_notice_date": skipped_no_notice_date,
+    }
 
 
 def main() -> int:
@@ -216,6 +243,7 @@ def main() -> int:
         print(f"pairs examined:      {len(summary['pairs'])}")
         print(f"folded:              {summary['folded']}")
         print(f"skipped, no Was date:{summary['skipped_no_was']}")
+        print(f"skipped, no notice date:{summary['skipped_no_notice_date']}")
         if not apply and summary["pairs"]:
             print("\nRe-run with --apply to write these changes.")
     finally:

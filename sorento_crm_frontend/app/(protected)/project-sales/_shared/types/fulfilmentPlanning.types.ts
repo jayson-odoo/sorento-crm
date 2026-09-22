@@ -1382,11 +1382,12 @@ export interface BoardLineOrderInquiry {
   /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
   state: string;
   /**
-   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15, backend half not yet built): the
-   * inquiry HEADER's own id and this row's own OI row id, addressing the List view's
-   * "OI" column link (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`) -
-   * resolved server-side from the same `_row_id` the plan names. Both optional here until
-   * Phase 2 lands them; absent means the cell reads as plain text.
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the inquiry HEADER's own id and
+   * this row's own OI row id, addressing the List view's "OI" column link
+   * (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`) - resolved server-side
+   * off the winning row (`project_fulfilment_board_service._order_inquiries`).
+   * Optional because a row raised before inquiries were numbered carries neither; absent
+   * means the cell reads as plain text.
    */
   inquiry_id?: string | null;
   row_id?: string | null;
