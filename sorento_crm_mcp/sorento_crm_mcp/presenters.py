@@ -1384,17 +1384,102 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
                 fields.append({"label": str(code), "value": qty})
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
 
+def _availability_entries(payload: dict) -> list[dict]:
+    return [e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)]
+
+
+def _is_legacy_availability(entries: list[dict]) -> bool:
+    """S2 (D20): a caller still sending only the scalar `requested_qty` - n8n,
+    until the prompt names `requested_quantities` - gets entries with NO
+    `verdict` key at all, because S1 only ever attaches `verdict` / `running_low`
+    / `disclaimer` (even as `None`) through the NEW contract. Checked once per
+    LIST rather than per entry: a real payload is uniform (S1 sets the three keys
+    on every entry it builds, or the response predates S1 and has none of them),
+    so one entry missing the key is read as the whole list being the old shape -
+    which keeps `_AVAILABILITY_*`'s wording byte-identical for that caller.
+    """
+    return not entries or any("verdict" not in e for e in entries)
+
+
+def _format_eta_ddmmyyyy(iso_date: Optional[str]) -> str:
+    """D10: dd/mm/yyyy from an ISO `YYYY-MM-DD` string; "to be confirmed" when
+    there is no dated allocation to read. ISO already zero-pads month/day, so
+    reordering the three pieces needs no further padding."""
+    if not iso_date:
+        return "to be confirmed"
+    parts = str(iso_date).split("-")
+    if len(parts) != 3:
+        return "to be confirmed"
+    year, month, day = parts
+    return f"{day}/{month}/{year}"
+
+
+def _availability_line(entry: dict) -> str:
+    """AC-1755/AC-1756: one line, `CODE x N: <verdict>.` D17 - the only integers
+    ever in it are the dealer's own asked quantity, the ETA date and the
+    lead-time days; never a quantity of ours."""
+    code = entry.get("product_code")
+    qty = entry.get("requested_qty")
+    if entry.get("verdict") == "available":
+        tail = "Yes, available, but running low." if entry.get("running_low") else "Yes, available."
+        return f"{code} x {qty}: {tail}"
+
+    tail = "Not available."
+    disclaimer = entry.get("disclaimer")
+    sources = disclaimer.get("sources") if isinstance(disclaimer, dict) else None
+    if sources:
+        limited = bool(disclaimer.get("limited"))
+        adjective = "limited " if limited else ""
+        clauses = []
+        for source in sources:
+            if source == "incoming":
+                eta = _format_eta_ddmmyyyy(disclaimer.get("incoming_eta"))
+                clauses.append(f"{adjective}incoming, ETA {eta}")
+            elif source == "purchase":
+                days = disclaimer.get("purchase_eta_days")
+                clauses.append(f"{adjective}purchase, ETA in {days} days")
+        if clauses:
+            tail = "Not available, but there is " + " and ".join(clauses) + "."
+    return f"{code} x {qty}: {tail}"
+
+
+def _noted_and_missing_question(noted: list[dict], missing: list[dict]) -> str:
+    """AC-1757 (D14): what is noted, then one question for what is still
+    missing - never a verdict, for anybody, until every product has a quantity
+    or the dealer says to proceed (S3's job, not this presenter's)."""
+    missing_codes = [str(e.get("product_code")) for e in missing]
+    if len(missing_codes) > 1:
+        missing_text = ", ".join(missing_codes[:-1]) + " and " + missing_codes[-1]
+    else:
+        missing_text = missing_codes[0]
+    question = f"How many units do you need for {missing_text}?"
+    if not noted:
+        return question
+    noted_text = ", ".join(f"{e.get('product_code')} x {e.get('requested_qty')}" for e in noted)
+    return f"Noted: {noted_text}. {question}"
+
+
 def _stock_availability(payload: dict, b: _Builder) -> None:
     """`availability`: yes / no / ask, and nothing else.
 
     `fields` stays empty on purpose. This mode exists so a dealer is never told a
     quantity, and an empty field list is the only shape that cannot carry one.
+
+    Dealer stock verdict S2 (AC-1755 to AC-1757, D14): once every entry carries
+    the NEW keys (`verdict` / `running_low` / `disclaimer`, S1's contract) and
+    none is still missing its quantity, the item TITLE becomes the per-product
+    verdict sentence instead of the bare product code. While any product is
+    still missing a quantity, or for a caller on the legacy scalar-only shape,
+    the title stays the product code - no verdict is shown for anybody until
+    every product has one (D14).
     """
-    for entry in payload.get("stock_availability") or []:
-        if not isinstance(entry, dict):
-            continue
+    entries = _availability_entries(payload)
+    legacy = _is_legacy_availability(entries)
+    show_verdict = not legacy and not any(e.get("needs_quantity") for e in entries)
+    for entry in entries:
+        title = _availability_line(entry) if show_verdict else entry.get("product_code")
         b.raw_item(
-            entry.get("product_code"),
+            title,
             [],
             {
                 "needs_quantity": bool(entry.get("needs_quantity")),
@@ -1404,18 +1489,25 @@ def _stock_availability(payload: dict, b: _Builder) -> None:
 
 
 def _availability_intro(payload: dict) -> str:
-    """The whole reply, in one line.
+    """The whole reply, in one line - or, once any product still needs a
+    quantity under the NEW contract, the noted/missing question (D14).
 
     Several products can disagree. Any product still missing its quantity makes
     the turn a question, not an answer - so ask, and say nothing about the rest.
     Otherwise a shared yes or no speaks for all of them; a split verdict cannot,
-    so the intro steps back and the per-item flags carry it.
+    so the intro steps back and the per-item flags/titles carry it.
     """
-    entries = [
-        e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)
-    ]
-    if any(e.get("needs_quantity") for e in entries):
+    entries = _availability_entries(payload)
+    legacy = _is_legacy_availability(entries)
+
+    if not legacy:
+        missing = [e for e in entries if e.get("needs_quantity")]
+        if missing:
+            noted = [e for e in entries if not e.get("needs_quantity")]
+            return _noted_and_missing_question(noted, missing)
+    elif any(e.get("needs_quantity") for e in entries):
         return _AVAILABILITY_ASK
+
     verdicts = {e.get("available") for e in entries}
     if verdicts == {True}:
         return _AVAILABILITY_YES
