@@ -591,6 +591,97 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
         db.close()
 
 
+def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
+    """Render the run's OI worksheet, store it, and update the download row.
+
+    Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C1..AC-C4). `generate_order_sheet`'s
+    own twin, line for line, including the company dance: the worker has NO request-scoped
+    company, so the run row is read under NO scope (it is the one thing that states which
+    company this export belongs to), its OWN company is adopted before anything company-
+    scoped is touched, UNSET fails closed when the run is missing or carries no company
+    (AC-A10's own reasoning), and the caller's scope is restored in `finally` - a
+    synchronous caller whose session this reuses (a test) did not ask to have its scope
+    changed underneath it.
+
+    The row set is the run's own Start Plan scope (`demand.run_scope_oi_rows`, C2/C4a -
+    the SAME helper the order sheet's Project qty column reads, so the two can never list
+    a different row set for the same run), printed through the worklist's own writer with
+    the worksheet's 10-column slice (`EXPORT_HEADINGS[:10]`, C3 - no ACKNOWLEDGED / TAKEN
+    / REMAINING).
+
+    `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
+    ever and the buyer's row sits `processing` until it goes stale.
+    """
+    db = SessionLocal()
+    from app.models.base import UNSET, get_company_scope
+    from app.models.scm import ReorderRun
+    from app.services.scm.reorder_run_service import _adopt_run_company_scope
+
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, None)
+    run = db.get(ReorderRun, run_id)
+    if run is not None:
+        _adopt_run_company_scope(db, run)
+    if run is None or not getattr(run, "company_id", None):
+        set_company_scope(db, UNSET)
+        logger.warning(
+            "generate_oi_worksheet: run %s not found or has no company; "
+            "failing closed rather than exporting under no company scope", run_id
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.order_inquiry_worklist_service import (
+            EXPORT_HEADINGS,
+            OrderInquiryWorklistService,
+        )
+        from app.services.scm.demand import run_scope_oi_rows
+
+        scope_rows = run_scope_oi_rows(
+            db, run.product_ids or None, so_numbers=run.so_numbers,
+            horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
+        ) if run is not None else []
+        row_ids = [r["row_id"] for r in scope_rows]
+
+        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
+            row_ids=row_ids, columns=EXPORT_HEADINGS[:10],
+        )
+        filename = filename or fallback_filename
+        content_type = (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/oi-worksheet/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_oi_worksheet: download %s ready (%d bytes)", download_id, len(file_bytes)
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_oi_worksheet failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_oi_worksheet")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
+
+
 #: Refusals the Respond helpers raise BEFORE they reach their own `log_respond_send`, so
 #: this module has to write the outbox row itself. Every OTHER failure - notably
 #: `respond_send_failed` (502), raised after the attempt was logged - is already in the
