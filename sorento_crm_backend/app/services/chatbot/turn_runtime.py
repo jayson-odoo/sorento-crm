@@ -465,12 +465,26 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
     same roster - `lane_parse_output`'s own chain only reads `pending.team` for an
     `OFFER_KINDS` pending (`turn_runtime.py:647`), never a roster, accepted or not.
     An extra accept check now gates ONLY that arm, using the same signal `decide()`
-    itself reads at `turn/decide.py:571-573` (a bare "yes"/escalation-confirmation
-    flag) plus a numbered pick that actually lands on one of the roster's own
-    options. A proper `OFFER_KINDS` pending (`team_pick`/`company_pick`/
-    `member_offer`) keeps round 1's behaviour unconditionally - its team is ALSO
-    read unconditionally at that same `lane_parse_output` line, so the two halves
-    stay in step either way.
+    itself reads at `turn/decide.py:571-575` (a bare "yes"/escalation-confirmation
+    flag, vetoed by a decline or a negation) plus a numbered pick that actually
+    lands on one of the roster's own options. A proper `OFFER_KINDS` pending
+    (`team_pick`/`company_pick`/`member_offer`) keeps round 1's behaviour
+    unconditionally - its team is ALSO read unconditionally at that same
+    `lane_parse_output` line, so the two halves stay in step either way.
+
+    SRTSC07 review round 2 NITs: (A) a numbered pick only counts as landing on the
+    roster's OWN escalation offer when the matched option is MEMBER-typed - the
+    same reading `turn/apply.py::_picks_a_member_option` uses to decide a roster
+    pick is an escalation acceptance rather than a business one. Without it, "2"
+    over an ordinary PRODUCT option in a did-you-mean roster that also carries an
+    attached escalate sentence carried the roster's agent onto a plain business
+    fetch, with the team still defaulted (no assign happens, but the access check
+    and any miss-offer minted off that same turn saw the mismatched pair). (B) the
+    accept signal is vetoed by the SAME two reads `decide()`'s own qualifier uses
+    (`facts["declined"]` off `escalation.escalation_declined`, `facts["negated"]`
+    off `is_affirmative is False`) - a verdict can carry BOTH `is_affirmative: true`
+    and an explicit decline (the parser is not asked to keep the two mutually
+    exclusive), and `decide()` treats the decline as decisive either way.
     """
     if pending is None:
         return None
@@ -491,15 +505,19 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
     if escalate_offered_roster:
         escalation = verdict.get("escalation")
         escalation = escalation if isinstance(escalation, Mapping) else {}
-        landed_on_an_option = picked_position is not None and any(
-            isinstance(opt, Mapping) and opt.get("position") == picked_position
+        landed_on_a_member_option = picked_position is not None and any(
+            isinstance(opt, Mapping)
+            and opt.get("position") == picked_position
+            and opt.get("entity_type") == "member"
             for opt in pending.options
         )
+        declined = escalation.get("escalation_declined") is True
+        negated = verdict.get("is_affirmative") is False
         accepted = (
             verdict.get("is_affirmative") is True
             or escalation.get("is_escalation_confirmation") is True
-            or landed_on_an_option
-        )
+            or landed_on_a_member_option
+        ) and not (declined or negated)
         if not accepted:
             return None
     if picked_position is not None:

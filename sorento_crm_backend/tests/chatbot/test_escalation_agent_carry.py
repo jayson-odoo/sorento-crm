@@ -1250,6 +1250,21 @@ class TestAC1802EscalateOfferedRosterCarriesOnlyOnAccept:
             payload={"escalate_offered": True, "agent": "incoming_stock_enquiries"},
         )
 
+    def _plant_combined(self):
+        """The REAL shape `_miss_question`'s owner-R2 combine mints (review round 2
+        NIT-A's own citation, `turn/apply.py::_picks_a_member_option`): one roster,
+        PRODUCT options first, CS-MEMBER options continuing the same numbering -
+        `escalate_offered` sits on the pending's own top-level payload either way."""
+        return pending_ask(
+            "product_pick",
+            [
+                {"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}},
+                {"position": 2, "label": "Jane Doe", "entity_type": "member", "payload": {}},
+            ],
+            team="purchasing",
+            payload={"escalate_offered": True, "agent": "incoming_stock_enquiries"},
+        )
+
     def test_ac_1802_a_non_accepting_verdict_over_an_escalate_offered_roster_falls_to_the_default(
         self,
     ) -> None:
@@ -1289,13 +1304,68 @@ class TestAC1802EscalateOfferedRosterCarriesOnlyOnAccept:
 
         assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
 
-    def test_ac_1802_a_numbered_pick_landing_on_the_rosters_own_option_also_carries(self) -> None:
-        verdict_in = _position_verdict(1)
-        pending = self._plant()
+    def test_ac_1802_a_numbered_pick_landing_on_a_member_option_also_carries(self) -> None:
+        # The positive side of NIT-A: a numbered pick that lands on the roster's
+        # OWN member option (the combined roster+CS-member shape) still counts as
+        # an escalation acceptance, exactly as `_picks_a_member_option` reads it.
+        verdict_in = _position_verdict(2)
+        pending = self._plant_combined()
 
         out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
 
         assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
+
+    def test_ac_1802_a_numbered_pick_landing_on_a_product_option_does_not_carry(self) -> None:
+        # NIT-A (review round 2): a numbered pick over an ORDINARY product option
+        # (not member-typed) is a business fetch, not an escalation acceptance -
+        # measured: "2" over a did-you-mean roster that also carried an attached
+        # escalate sentence used to carry the roster's agent onto a plain product
+        # pick, with the team still at its default (the mismatched pair reaches
+        # the access check and any miss-offer minted off that same turn).
+        verdict_in = _position_verdict(1)
+        pending = self._plant_combined()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
+
+    def test_ac_1802_an_affirmative_verdict_with_an_explicit_decline_does_not_carry(
+        self,
+    ) -> None:
+        # NIT-B (review round 2): the accept signal is vetoed by the SAME two reads
+        # `decide()`'s own qualifier uses (`turn/decide.py:571-575`) - a verdict
+        # naming BOTH `is_affirmative: true` and `escalation.escalation_declined:
+        # true` is not something the parser is asked to keep mutually exclusive,
+        # and `decide()` treats the decline as decisive either way.
+        verdict_in = {
+            "routing": {"suggested_team": None, "suggested_agent": None},
+            "is_affirmative": True,
+            "escalation": {"escalation_declined": True},
+        }
+        pending = self._plant()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
+
+    def test_ac_1802_an_escalation_confirmation_with_is_affirmative_false_does_not_carry(
+        self,
+    ) -> None:
+        # NIT-B's other half: `facts["negated"]` off `is_affirmative is False` -
+        # this pins the same read `decide()` makes off a message the parser marked
+        # as a genuine "no", proven through the escalation-confirmation door
+        # (`is_escalation_confirmation` alone would otherwise carry, per the test
+        # right above this one).
+        verdict_in = {
+            "routing": {"suggested_team": None, "suggested_agent": None},
+            "is_affirmative": False,
+            "escalation": {"is_escalation_confirmation": True},
+        }
+        pending = self._plant()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
 
 
 # --------------------------------------------------------------------------- #
