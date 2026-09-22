@@ -1313,8 +1313,12 @@ def report(db: Session, *, run_id: Optional[str] = None) -> dict:
 #: "Last in qty" itself becomes a text cell shaped like BRW PO qty/incoming qty
 #: (`_last_in_text`), so the column list stays exactly as it was.
 #: AC-A7 (Lane A, PLAN-order-sheet-oi-reports-22sep.md): "Last cost" sits immediately right
-#: of Supplier - the newest non-cancelled PO line's own cost, so Supplier and its cost
-#: always describe the same purchase.
+#: of Supplier. NOT always the same purchase as Supplier names, though (reviewer round 2,
+#: 23 Sep): Supplier is the newest non-cancelled PO line full stop (`_last_po_supplier_
+#: map`); Last cost is the newest non-cancelled PO line that also carries a priced line
+#: (`_last_cost_map`'s own `pol.unit_cost IS NOT NULL` filter) - a costless newer PO can
+#: leave the two columns naming two different purchases, and that is by design: the
+#: buyer needs a real price, not a blank cell beside a newer but priceless order.
 _EXPORT_COLUMNS = (
     "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
     "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
