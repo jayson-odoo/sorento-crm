@@ -321,6 +321,60 @@ per request today; trigger: a real double-open); subject CR/LF collapse belongs 
 `EmailTemplateService.render` for every template (own small fix); admin / superadmin bypass
 the reserve gate by repo convention; request / cancel spam by an authenticated insider.
 
+## 6c. Review round 2 (owner hand test on :3080 after round 1, 22 Sep evening): five rulings
+
+Owner words: "list all the site pool with this BRW (configurable as default)"; reserve at the line,
+popup opens automatically, the reserve icon must be very clear; logs per line, in the same popup's
+history tab; date-time like every other component; "unlink is unlink, unreserve is unreserve ...
+unlink on a reserve link does nothing, unlink means unlink PO / SPO, cause the one doing the job
+different so dangerous if they are the same".
+
+**F1 Location = every site pool, configurable default.** Today `useReserveRowOptions` offers the
+row's own group members plus its site pool (AC-RS-22), so a row at `BRW-IR` shows `BRW` alone.
+New: options = every active own-company POOL warehouse (a code with no group suffix, the
+`group=pools` axis of stock-detail), each labelled `<code>  available N` from one stock-detail
+pools read for the row's product. Default = new `system_settings.oi_reserve_default_pool_warehouse_id`
+(nullable FK, seeded to the `BRW` pool by code in the lane migration, editable on the System
+Settings page as a clearable `SearchableSelect` of pools; null = the row's own site pool). Both
+manual settings dict builders carry the field (lessons). SF-3 server check unchanged.
+
+**F2 Reserve lives on the line.** `ReserveRequestsCard` (open-request card + "Earlier reserve
+requests") is deleted. The Lines grid gets a **Reserve** cell: an icon-button (lucide `Bookmark`,
+aria-label + tooltip "Reserve"), amber when `reserve_state = requested`, green when `reserved`,
+absent otherwise; visible to every viewer, actionable only with `projects.order_inquiries.reserve`.
+Click opens `ReserveRowDialog` for THAT row, tabs **Reserve** and **History** (F3). Reserve tab:
+the open request line (Request #n, requested N by <name> on <date>, note), **Location** (F1),
+**Reserved** (default `min(requested, available at the chosen pool)` floor 0, max requested),
+**Reason** (required when short, inline as soon as the value drops), primary **Confirm reserved**;
+**Cancel request** (requester or CS, countdown, existing endpoint) in the dialog header. A row
+already reserved with no open request shows net reserved + pool and the **Unreserve** control (F5).
+Without the permission the tab is read-only. `?reserve=<request_id>` auto-opens the dialog on
+that request's first open row; closing drops the param, the icon stays. Header badge unchanged.
+Backend: `POST .../reserve-requests/{id}/rows/{row_id}/reserve { warehouse_id, qty_reserved,
+reason? }` answers ONE request row (3.3 validation per row); the request stays `requested` while
+any row is unanswered and becomes `reserved` when the last one is; the `order_inquiry_reserved`
+email fires ONCE, on completion, listing every row (R6). The all-rows endpoint of 3.3 is deleted
+(one seam). Section 7 "partial answers" is superseded by this ruling.
+
+**F3 History per line** = the dialog's History tab, newest first: `Requested N by X on <date>`
+(from the request row), `Reserved N @ <pool> by Y on <date>  <reason>`, `Unreserved N by Z on
+<date>  <note>`, `Request cancelled by X on <date>`. Storage: new table
+`projects.order_inquiry_reserve_events` (id, company_id, reserve_request_row_id FK cascade, kind
+`reserved` | `unreserved`, qty, warehouse_id, note, actor_id, created_at), written by reserve and
+unreserve; requested / cancelled lines derive from the request row (no second copy). Net reserved
+on the request row = sum(reserved) - sum(unreserved) = the reserve link's qty.
+
+**F4 Dates** in the dialog, the history and the mails via the shared `formatDateTime` helper every
+other component uses; no raw ISO text anywhere.
+
+**F5 Unreserve is its own action; Unlink never touches a reserve.** `POST
+.../reserve-requests/{id}/rows/{row_id}/unreserve { qty, note? }`, gate
+`projects.order_inquiries.reserve`, `1 <= qty <= net reserved` else 422 naming the limit; reduces
+the reserve link qty by `qty` (deletes the link at 0), `refresh_link_state`, one `unreserved`
+event, no email. Unlink (bulk deferred action and per-row) SKIPS reserve links: the per-row Unlink
+is not offered on a reserve link and the bulk action ignores them; 3.3 "Reversal" is superseded.
+Section 7 "amend a reserved qty" is superseded: top-up = new request, reduce = Unreserve.
+
 ## 7. Out of scope (recorded, not built)
 
 - AutoCount stock transfer creation / transfer number on the reserve row. Trigger: the FoundryX

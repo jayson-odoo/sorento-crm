@@ -87,8 +87,25 @@ Contributing lines tabs the grid view's dialog shows.
 | AC-RS-51 | [E2E] | Board list view: the Stock button on a line opens the cell dialog with the grid; grid view dialog unchanged. |
 | AC-RS-52 | [DoD] | reviewer (Opus) with kill tests on AC-RS-1, AC-RS-8, AC-RS-13; security-reviewer (Opus) on the new permission gate, the widened CHECK and the email context (no UUID or secret in the mail beyond the request id in the link); guide sections written; alembic single head re-gated on every push. |
 
+### Round 2 (plan 6c, owner rulings 22 Sep evening)
+
+| id | tag | Given / When / Then |
+| --- | --- | --- |
+| AC-RS-53 | [BE] | Given pools BRW, DC1, WH3 active and a group warehouse BRW-IR, When the reserve dialog's location options are read for a row at BRW-IR, Then every active own-company pool is offered (BRW, DC1, WH3) with its available qty for the row's product, and no group warehouse; an inactive pool is absent. |
+| AC-RS-54 | [BE] | `system_settings.oi_reserve_default_pool_warehouse_id` exists after the migration, seeded to the BRW pool by code; it is present in BOTH settings payload builders; PUT accepts a pool id or null and refuses a non-pool warehouse with 422. |
+| AC-RS-55 | [FE] | The dialog's Location defaults to the configured pool; when the setting is null it defaults to the row's own site pool; changing it recomputes the Reserved default from that pool's available qty (AC-RS-28 kept). |
+| AC-RS-56 | [BE] | `POST .../reserve-requests/{id}/rows/{row_id}/reserve` answers one row: validation per 3.3 (qty bounds, reason when short, active own-company warehouse), 404 on a row of another request, 409 on an already-answered row; the request stays `requested` with one row unanswered and turns `reserved` on the last answer; `order_inquiry_reserved` dispatches exactly once, on completion, with every row in the context. |
+| AC-RS-57 | [BE] | The former all-rows reserve endpoint no longer exists (404 / 405). |
+| AC-RS-58 | [BE] | `POST .../rows/{row_id}/unreserve { qty, note? }`: needs `projects.order_inquiries.reserve`; `qty` 0 or above net reserved is 422 naming the limit; success reduces the reserve link qty, deletes the link at 0, refreshes the row state, writes one `unreserved` event, sends no email; Taken / Remaining on the row follow. |
+| AC-RS-59 | [BE] | Unlink (bulk deferred action and per-row) leaves reserve links untouched: unlinking a row that holds a PO link and a reserve link removes the PO link only; a per-row Unlink against a reserve link id is refused. |
+| AC-RS-60 | [BE] | History for a request row lists, newest first: requested, reserved (qty, pool, reason), unreserved (qty, note), cancelled, each with actor name and timestamp; net reserved equals reserved minus unreserved. |
+| AC-RS-61 | [FE] | Lines grid: a Reserve icon-button with aria-label "Reserve" appears on rows with `reserve_state` requested (amber) or reserved (green) and on no other row; click opens `ReserveRowDialog` for that row with tabs Reserve and History; `ReserveRequestsCard` and "Earlier reserve requests" no longer render. |
+| AC-RS-62 | [FE] | `?reserve=<request_id>` auto-opens the dialog on that request's first open row; closing it removes the param and the icon remains; without the reserve permission the Reserve tab is read-only and the Unreserve control is absent. |
+| AC-RS-63 | [FE] | Every date-time in the dialog and the history renders through the shared `formatDateTime` helper (no `T`-separated ISO text, no microseconds). |
+| AC-RS-64 | [E2E] | agent-browser on :3080, from `/` by sidebar: Eling opens the OI from the email link, the dialog opens on the first open row, she reserves at DC1 with a reason; the row shows `Reserved N`; she unreserves part, History shows reserve then unreserve, net matches; Unlink on that row is unavailable for the reserve. Screens saved under the evidence dir. |
+
 ## Out of scope (recorded, not built)
 
-AutoCount transfer / transfer number; partial answers to one request; amending a reserved qty
-(Unlink + new request instead); `StockTransfer` paper row for OI-driven reserves; Taken /
-Remaining columns with footers (ruled in `PLAN-board-oi-mechanical-22sep.md`).
+AutoCount transfer / transfer number; `StockTransfer` paper row for OI-driven reserves; Taken /
+Remaining columns with footers (ruled in `PLAN-board-oi-mechanical-22sep.md`). Superseded by
+round 2: partial answers to one request (now per row) and amending a reserved qty (Unreserve).
