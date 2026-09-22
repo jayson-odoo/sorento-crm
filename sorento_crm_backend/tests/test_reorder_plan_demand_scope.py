@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,6 +40,7 @@ from app.models.project_so import (
     INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     IV_ORDER,
+    IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -353,6 +355,87 @@ def _seed_scope_universe(db) -> dict:
     return {"wid": wid, "pid": pid, "so_a": so_a["so_number"], "so_b": so_b["so_number"]}
 
 
+def _project_so_delivered_line_with_order_back(
+    db, *, product_id, warehouse_id, donor_warehouse_code, qty="3",
+    company_id: str = SORENTO_COMPANY_ID,
+):
+    """AC-OB-7/AC-OB-9's own seed (`PLAN-oi-order-back-not-capped.md`): ONE project SO,
+    ONE core line delivered in full (3/3 - nothing outstanding, `line_status` closed the
+    way SO417310 line 16 reads), and TWO sibling confirmed-leg rows on it - an
+    ORDER_BACK of `qty` at the DONOR location its `stock_location` names, and an ORDER
+    of the same `qty` at the line's own location - so a caller reading "the ORDER_BACK
+    is uncapped, the sibling ORDER stays capped" gets both off ONE delivered line.
+    """
+    so_number = _code("SO")
+    so = SalesOrder(
+        id=_u(), so_number=so_number, status="open", demand_class="project",
+        company_id=company_id,
+    )
+    db.add(so)
+    db.flush()
+    core_line = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=product_id, warehouse_id=warehouse_id,
+        qty_ordered=Decimal(qty), qty_delivered=Decimal(qty), line_status="closed",
+        company_id=company_id,
+    )
+    db.add(core_line)
+    db.flush()
+
+    owner_id = _u()
+    db.add(User(id=owner_id, email=f"{owner_id}@{MARKER.lower()}.test", name=f"{MARKER} CS"))
+    db.flush()
+    _project_numbering_rule(db)
+    project = register_project(
+        db, company_id=company_id, actor_user_id=owner_id,
+        developer_party_id=None, title=f"{MARKER} project {_u()[:8]}",
+    )
+    pso = ProjectSalesOrder(
+        id=_u(), company_id=company_id, project_id=project.id,
+        provisional_ref=_code("PSO"), so_id=so.id,
+    )
+    db.add(pso)
+    db.flush()
+    pso_line = ProjectSalesOrderLine(
+        id=_u(), company_id=company_id, project_sales_order_id=pso.id,
+        line_no=1, product_id=product_id, qty=Decimal(qty),
+        core_sales_order_line_id=core_line.id,
+    )
+    db.add(pso_line)
+    db.flush()
+    inquiry = OrderInquiry(id=_u(), company_id=company_id, project_sales_order_id=pso.id)
+    db.add(inquiry)
+    db.flush()
+    decision = SOSupplyDecision(
+        id=_u(), company_id=company_id, project_sales_order_id=pso.id,
+        revision_no=1, state="active",
+        line_snapshots=[{
+            "line_no": 1, "project_line_id": str(pso_line.id),
+            "core_line_id": str(core_line.id), "buy_qty": str(qty),
+        }],
+        confirmed_at=datetime.utcnow(),
+    )
+    db.add(decision)
+    db.flush()
+    order_back_row = OrderInquiryRow(
+        id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER_BACK,
+        state=INQUIRY_RAISED, supply_decision_id=decision.id,
+        ack_state=ACK_ACKNOWLEDGED, stock_location=donor_warehouse_code,
+    )
+    order_row = OrderInquiryRow(
+        id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER,
+        state=INQUIRY_RAISED, supply_decision_id=decision.id,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    db.add_all([order_back_row, order_row])
+    db.flush()
+    return {
+        "so_number": so_number, "pso": pso, "inquiry": inquiry,
+        "order_back_row": order_back_row, "order_row": order_row,
+    }
+
+
 # =============================================================================
 # T1-T3 - the scope is stored on the run and carried through Re-plan (route level)
 # =============================================================================
@@ -565,6 +648,46 @@ def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app
 
 
 # =============================================================================
+# AC-OB-7 (`PLAN-oi-order-back-not-capped.md`) - the PLAN's own read of the same rule
+# AC-OB-4/5/6 pin against `scm.committed_v`: `horizon_committed_select_sql` must never
+# disagree with the view about which rows are capped.
+# =============================================================================
+
+
+def test_ac_ob_7_horizon_select_reads_the_order_back_row_uncapped(scm_app):
+    """AC-OB-7. An ORDER_BACK row on a core line delivered in full still counts its own
+    qty at the DONOR warehouse through `horizon_committed_select_sql` - the plan's own
+    committed figure - exactly as `scm.committed_v` does (AC-OB-4); the sibling ORDER row
+    on the SAME line stays capped at 0 (AC-OB-5), unchanged."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, _code("WH"))
+    donor_wid = _mk_warehouse(db, _code("DONOR"))
+    donor_code = db.execute(
+        text("select warehouse_code from warehouses where id = :w"), {"w": donor_wid}
+    ).scalar()
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    _project_so_delivered_line_with_order_back(
+        db, product_id=pid, warehouse_id=wid, donor_warehouse_code=donor_code,
+    )
+
+    sql = demand.horizon_committed_select_sql(demand_class="project", so_scoped=False)
+    rows = db.execute(
+        text(sql), {"horizon": None, "horizon_start": None}
+    ).mappings().all()
+    # `.mappings()` returns native `uuid.UUID` objects for a `uuid` column; `pid`/`wid`
+    # are plain strings (`_mk_product`/`_mk_warehouse`), so the comparison is stringwise.
+    by_warehouse = {
+        str(r["warehouse_id"]): float(r["project_committed"])
+        for r in rows if str(r["product_id"]) == pid
+    }
+
+    assert by_warehouse.get(donor_wid) == 3.0, by_warehouse
+    assert by_warehouse.get(wid, 0.0) == 0.0, by_warehouse
+
+
+# =============================================================================
 # T9-T11 - GET /reorder-runs/candidate-orders (new endpoint)
 # =============================================================================
 
@@ -671,6 +794,42 @@ def test_t11_candidate_orders_is_company_scoped_and_needs_reorder_run_permission
     with TestClient(bare_app) as c2:
         denied = c2.get("/api/v1/scm/reorder-runs/candidate-orders")
     assert denied.status_code == 403, denied.text
+
+
+def test_ac_ob_9_candidate_orders_lists_an_so_whose_only_open_row_is_order_back_on_a_delivered_line(
+    scm_app,
+):
+    """AC-OB-9 (`PLAN-oi-order-back-not-capped.md`). The picker's confirmed leg gates on
+    `AND {demand._OWED_SQL} > 0` (`app/api/v1/scm/reorder_runs.py`), the same fragment
+    AC-OB-4/AC-OB-7 pin - so once it stops capping ORDER_BACK, an SO whose only OPEN row
+    is an ORDER_BACK on a delivered line surfaces here too. This is the SO417310 journey
+    (plan section 1): the sibling ORDER row is cancelled, so `rows_total` states
+    unambiguously what the ORDER_BACK row alone buys the SO onto this list."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    donor_wid = _mk_warehouse(db, _code("DONOR"))
+    donor_code = db.execute(
+        text("select warehouse_code from warehouses where id = :w"), {"w": donor_wid}
+    ).scalar()
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    seeded = _project_so_delivered_line_with_order_back(
+        db, product_id=pid, warehouse_id=wid, donor_warehouse_code=donor_code,
+    )
+    seeded["order_row"].state = INQUIRY_CANCELLED
+    db.flush()
+
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/scm/reorder-runs/candidate-orders",
+                      params={"from": "2026-01-01", "to": "2026-12-31"})
+
+    assert resp.status_code == 200, resp.text
+    by_so = {row["so_number"]: row for row in resp.json()}
+    assert seeded["so_number"] in by_so, (
+        "an ORDER_BACK row on a delivered line must still make its SO a candidate"
+    )
+    assert by_so[seeded["so_number"]]["rows_total"] == 1
 
 
 # =============================================================================

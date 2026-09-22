@@ -423,17 +423,22 @@ _LINE_OUTSTANDING_SQL = (
 )
 
 #: What an order inquiry row still asks purchasing to buy (7.3, owner 14 Sep evening: Buy
-#: never exceeds what the line still owes). CAPPED at the line's outstanding: SO368872 /
-#: SRTWC286-SH ordered 364 and delivered 352, so twelve are owed, and the uncapped reading
-#: told the plan to buy 302 of goods the customer already had. Then less what is already on a
-#: document, less a "supplied with" bundle, floored at zero.
+#: never exceeds what the line still owes). CAPPED at the line's outstanding for an ORDER
+#: row: SO368872 / SRTWC286-SH ordered 364 and delivered 352, so twelve are owed, and the
+#: uncapped reading told the plan to buy 302 of goods the customer already had. An
+#: ORDER_BACK row is NEVER capped by its borrowing line's outstanding (owner ruling 22 Sep
+#: 2026, SO417310 / MKT5529SS-DIY): the row is a hole at the DONOR location left behind when
+#: goods already shipped off the borrowing line, so the borrowing line reading delivered in
+#: full is the NORMAL case for an order back, not a reason to zero it out. Then less what is
+#: already on a document, less a "supplied with" bundle, floored at zero.
 #:
 #: ONE fragment, interpolated into the view body, into the horizon SELECT and into the
 #: needed-date SQL, so the card, the Remaining column and the engine cannot come to answer
 #: three different numbers for one row (reviewer S1, 15 Sep). The worklist's own ORM twin is
 #: `order_inquiry_worklist_service._CAPPED_QTY`.
 _OWED_SQL = (
-    f"GREATEST(LEAST(oir.qty, {_LINE_OUTSTANDING_SQL})\n"
+    "GREATEST((CASE WHEN oir.verb = 'ORDER_BACK' THEN oir.qty\n"
+    f"              ELSE LEAST(oir.qty, {_LINE_OUTSTANDING_SQL}) END)\n"
     "       - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)"
 )
 
@@ -443,8 +448,11 @@ _OWED_SQL = (
 #: leg's mandatory join, because a form row may genuinely have no line at all - and where it
 #: has none, the CASE keeps today's reading. Without the CASE the cap would read 0 there:
 #: Postgres `GREATEST()` ignores NULLs, so the outstanding of a missing line is 0, not NULL.
+#: The `verb = 'ORDER_BACK'` branch sits ahead of the `csol.id IS NULL` one so an order back
+#: is never capped, missing core line or not (same 22 Sep ruling as `_OWED_SQL`).
 _OWED_FORM_SQL = (
-    "GREATEST(CASE WHEN csol.id IS NULL THEN oir.qty\n"
+    "GREATEST(CASE WHEN oir.verb = 'ORDER_BACK' THEN oir.qty\n"
+    "              WHEN csol.id IS NULL THEN oir.qty\n"
     "              ELSE LEAST(oir.qty,\n"
     "                         GREATEST(COALESCE(csol.qty_required, csol.qty_ordered)\n"
     "                                - COALESCE(csol.qty_delivered, 0), 0)) END\n"
