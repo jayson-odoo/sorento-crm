@@ -18,11 +18,8 @@ import { toast } from '@/lib/toast';
 import { generateExcelFile, parseExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useComparePull } from '../hooks/useAutocountPull';
 import { isCompareFullMatch } from '../types/compareMatch';
-import type {
-  AutocountCompareDifference,
-  AutocountComparePullResult,
-  AutocountPullEntity,
-} from '../types/autocountPull.types';
+import { buildCompareRows, type CompareRow } from './compareRows';
+import type { AutocountComparePullResult, AutocountPullEntity } from '../types/autocountPull.types';
 
 export interface PullCompareTabProps {
   jobId: string;
@@ -38,7 +35,7 @@ const COMPARE_LISTING_KEY: Record<AutocountPullEntity, string> = {
 };
 
 function summaryHeadline(result: AutocountComparePullResult): { title: string; body: string; ok: boolean } {
-  const { summary } = result;
+  const { summary, differences } = result;
   const ok = isCompareFullMatch(summary);
   if (ok) {
     return {
@@ -47,7 +44,23 @@ function summaryHeadline(result: AutocountComparePullResult): { title: string; b
       ok: true,
     };
   }
-  const parts = [`${summary.different} differ`];
+  // CT-2: `summary.different` counts ITEMS with at least one differing field; `differences`
+  // holds one entry PER FIELD, so an item that differs on two fields makes the two numbers
+  // diverge. Name both when they do; a bare "N differ" would be ambiguous about which count
+  // it is. Dropped entirely when there are no per-field differences at all (only-in-only
+  // result) - the only-in clauses below still say what changed.
+  const itemsDiffer = summary.different;
+  const fieldDifferences = differences.length;
+  const parts: string[] = [];
+  if (itemsDiffer > 0) {
+    const itemWord = itemsDiffer === 1 ? 'item' : 'items';
+    const verb = itemsDiffer === 1 ? 'differs' : 'differ';
+    parts.push(
+      itemsDiffer === fieldDifferences
+        ? `${itemsDiffer} ${itemWord} ${verb}`
+        : `${itemsDiffer} ${itemWord} ${verb} (${fieldDifferences} differences)`,
+    );
+  }
   if (summary.only_in_excel) parts.push(`${summary.only_in_excel} only in your Excel`);
   if (summary.only_in_pull) parts.push(`${summary.only_in_pull} only in AutoCount`);
   return {
@@ -86,12 +99,16 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
     }
   };
 
-  const columns = useMemo<ColumnDef<AutocountCompareDifference>[]>(() => {
-    const base: ColumnDef<AutocountCompareDifference>[] = [
+  const columns = useMemo<ColumnDef<CompareRow>[]>(() => {
+    const base: ColumnDef<CompareRow>[] = [
       {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
-        cell: ({ row }) => <span className="truncate">{row.original.item_code}</span>,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.item_code}>
+            {row.original.item_code}
+          </span>
+        ),
         size: 140,
       },
     ];
@@ -99,7 +116,7 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
       base.push({
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        cell: ({ row }) => <span className="truncate">{row.original.location ?? '-'}</span>,
+        cell: ({ row }) => <span className="truncate">{row.original.location || '-'}</span>,
         size: 120,
       });
     }
@@ -107,7 +124,11 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
       {
         accessorKey: 'field',
         header: ({ column }) => <DataGridColumnHeader title="Difference" column={column} />,
-        cell: ({ row }) => <span className="truncate">{row.original.field}</span>,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.field}>
+            {row.original.field}
+          </span>
+        ),
         size: 180,
       },
       {
@@ -134,15 +155,20 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
     return base;
   }, [entity]);
 
+  // Differences + only_in_excel + only_in_pull, formatted and labelled - the SAME array the
+  // grid's recordCount and the download both use (CT-4).
+  const rows = useMemo<CompareRow[]>(() => (result ? buildCompareRows(result, entity) : []), [result, entity]);
+
   const table = useReactTable({
     columns,
-    data: result?.differences ?? [],
+    data: rows,
     getRowId: (row, index) => `${row.item_code}-${row.location ?? ''}-${row.field}-${index}`,
     getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
   });
 
   const handleDownloadDifferences = async () => {
-    if (!result || result.differences.length === 0) return;
+    if (rows.length === 0) return;
     const cols: ColumnOption[] = [
       { key: 'item_code', label: 'Item Code', selected: true },
       ...(entity === 'stock_balances'
@@ -153,7 +179,7 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
       { key: 'pull', label: 'AutoCount pull', selected: true },
     ];
     // No UUID in the filename the user sees (cursor rule) - the entity, not the job id.
-    await generateExcelFile(result.differences, cols, `autocount-${entity}-differences.xlsx`);
+    await generateExcelFile(rows, cols, `autocount-${entity}-differences.xlsx`);
   };
 
   const headline = result ? summaryHeadline(result) : null;
@@ -191,10 +217,10 @@ export function PullCompareTab({ jobId, entity }: PullCompareTabProps) {
         </div>
       </div>
 
-      {result && result.differences.length > 0 && (
+      {rows.length > 0 && (
         <DataGrid
           table={table}
-          recordCount={result.differences.length}
+          recordCount={rows.length}
           isLoading={false}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
           listingKey={COMPARE_LISTING_KEY[entity]}
