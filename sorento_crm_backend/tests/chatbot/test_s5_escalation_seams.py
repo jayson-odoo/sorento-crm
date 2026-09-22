@@ -277,6 +277,49 @@ class TestACEQ4SlaCommentDatetimeFields:
         assert "[object Object]" not in comment
         assert "routed to you at 2026-09-22 14:34:00" in comment
 
+    def test_ac_eq_4_naive_utc_datetime_fields_also_become_iso_strings(
+        self, monkeypatch
+    ) -> None:
+        """`ConversationSLATracking.initiated_at`/`due_at`/`due_at_resolution` are
+        `DateTime(timezone=False)` columns - a row read back from Postgres hands
+        SQLAlchemy a NAIVE datetime (UTC by convention, no `tzinfo` attached), never
+        the tz-aware kind the first test above uses. `_sla_create`'s `.isoformat()`
+        call has to round-trip that shape too, and `_malaysia` already treats a naive
+        value as UTC (`parsed.replace(tzinfo=timezone.utc)` when `tzinfo is None`), so
+        the rendered Malaysia time must be identical to the tz-aware case."""
+        from datetime import datetime
+
+        from app.services.chatbot.lanes import escalation_services
+        from app.services.sla_service import ConversationSLATrackingService
+
+        class _Created:
+            id = "sla-row-2"
+            initiated_at = datetime(2026, 9, 22, 6, 34, 0)
+            due_at = datetime(2026, 9, 22, 10, 34, 0)
+            due_at_resolution = datetime(2026, 9, 23, 6, 34, 0)
+
+        monkeypatch.setattr(
+            ConversationSLATrackingService, "create_tracking", lambda self, payload: _Created()
+        )
+
+        call = escalation_services._sla_create(db=object())
+        sla = call(
+            {
+                "agent_code": "general_enquiries",
+                "team_set_code": "CS",
+                "contact_phone_number": "+60123450099",
+            }
+        )
+
+        assert isinstance(sla["initiated_at"], str)
+        assert sla["initiated_at"] == "2026-09-22T06:34:00"
+
+        comment = escalation_mod._comment_text(
+            _ctx(message_body={"type": "text", "text": "hi"}), "warehouse", sla
+        )
+        assert "[object Object]" not in comment
+        assert "routed to you at 2026-09-22 14:34:00" in comment
+
 
 # --------------------------------------------------------------------------- #
 # 2. `escalation_services` - the production wiring, and its session's lifecycle

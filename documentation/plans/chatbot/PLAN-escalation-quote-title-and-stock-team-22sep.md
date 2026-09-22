@@ -1,6 +1,6 @@
 # PLAN: escalation quote fallback, SLA comment timestamps, stock question always routes to warehouse
 
-Status: small fix track, building (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
+Status: small fix track, tests green, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
 UAC: `escalation-quote-title-and-stock-team-22sep-acceptance-criteria.md`
 Owner rulings (22 Sep 2026): R1 drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 a stock question is always suggested to the warehouse team, no rung override.
 
@@ -30,6 +30,35 @@ Files: `tests/chatbot/test_s5_escalation_seams.py` (or a sibling), `tests/chatbo
 
 - AC-EQ-1..3 quote fallback; AC-EQ-4 datetime comment; AC-EQ-5..7 team.
 - Flip the five assertions that pin "purchasing wins": `test_crossdomain_ladder.py:217-238` (`TestAC921...`), `:390-398` (`test_rung_found`), `:757-769`, `:894-933` (incoming-origin PO-rung tests: check whether they assert the team; incoming-origin stays purchasing so they may need no change), `:1197-1212`.
+
+## Fix round 1 (reviewer, 22 Sep 2026)
+
+Reviewer measured that AC-EQ-6/8's MISS branch was still wrong in production after the
+first pass: captured traffic shows the LLM parser names no team on 214/218 inventory
+turns, and `lanes/business/answer.py::not_found_error_message`'s own `team =
+_pretty_team(suggested_team or "customer_service")` (2863-2864) falls straight to the
+generic literal for a null `suggested_team` - deleting `_CROSSDOMAIN_RUNG_TEAM` alone
+does not fix that half.
+
+Traced further than the reviewer's own citation: `routing.suggested_team` is very
+rarely still null by the time `not_found_error_message` reads it - `turn_runtime.
+lane_parse_output`'s own chain (accepted_team -> pending.team -> `_prior_suggested_
+team` -> `DEFAULT_SUGGESTED_TEAM`) already fills a null verdict with the flat
+"customer_service" literal, early, in `engine.py`, before any composer sees the
+parser dict. That is the actual interception point - `not_found_error_message`'s own
+fallback (added anyway, belt-and-braces, for a caller that builds a bare `parser`
+dict directly, e.g. `test_warehouse_entity.py`) never fires on a real turn. Fixed at
+the root: `lane_parse_output` takes an optional `policy` (threaded from `engine.py`,
+which already holds one) and, when nothing more specific named a team, falls back to
+`policy.domain(domain_hint).escalation_team_code` before the hard default - AC-EQ-12
+to AC-EQ-14. `stock_parse`/the D7 fixture in `test_foundre_rung_end_to_end.py` are
+reverted to the captured null-routing shape so the e2e tests measure production, not
+a stub that always names a team.
+
+`tests/chatbot/test_turn_replay.py` (the S6 replay gate, full corpus) passes
+unchanged - case-038/case-039 (the two cases with `routing.suggested_team: null` and
+a recorded "purchasing" escalate offer) carry no `_pin_text` flag, so their `text`
+field is never graded; no `DIVERGENCES.md` entry is needed for them.
 
 ## Out of scope
 

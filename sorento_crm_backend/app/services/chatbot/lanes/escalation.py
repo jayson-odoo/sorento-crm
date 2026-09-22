@@ -1228,7 +1228,10 @@ def _numeric_message_id(message_id: Any) -> int | None:
 
 
 def _input_message(ctx: dict[str, Any]) -> str:
-    """`Call 'sub-human-intervention'`'s `input_message`, expression for expression.
+    """`Call 'sub-human-intervention'`'s `input_message` - expression for expression on
+    every branch except the quoted-message fallback, where R1 below deliberately
+    improves on the raw n8n expression rather than porting its `undefined` (see that
+    ruling's own note).
 
     Live, from the node's `workflowInputs.value.input_message` (two adjacent `{{ }}`
     blocks, concatenated with no separator by the template):
@@ -1254,7 +1257,11 @@ def _input_message(ctx: dict[str, Any]) -> str:
     Owner ruling 22 Sep 2026, R1 (AC-EQ-1..3): the quoted body is `text` if truthy, else
     `title` (Respond.io's quick-reply quote shape carries only `title`), else the whole
     " reply to: ..." suffix is dropped - never n8n's `undefined`, which is what reading
-    `.text` unguarded used to render for a quoted message with neither.
+    `.text` unguarded used to render for a quoted message with neither. The n8n rows this
+    ported from still read `.text` unguarded and still store the literal string
+    `undefined` for a caption-less quote today - R1 is a deliberate divergence from that
+    live behaviour for this one branch, not a port of it, so a fresh capture against
+    those still-unfixed rows will keep showing `undefined` and is not a regression here.
     """
     envelope = jsc.get(jsc.get(ctx, "text"), "message")
     body = jsc.get(envelope, "message")

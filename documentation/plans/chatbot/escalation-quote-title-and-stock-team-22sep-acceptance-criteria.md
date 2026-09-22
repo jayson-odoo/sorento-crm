@@ -20,3 +20,19 @@ Plan: `PLAN-escalation-quote-title-and-stock-team-22sep.md`
 - AC-EQ-8 No stock, no incoming, no PO → warehouse (unchanged, pinned).
 - AC-EQ-9 Incoming-origin ask (domain_hint = incoming) that climbs to the PO rung → still `purchasing` (regression guard: the fix must not touch incoming-origin routing).
 - AC-EQ-10 The PO "placed" line is still rendered when the PO rung answers (only the team word changes).
+- AC-EQ-11 The pending offer's carried `team` (what a later bare "yes" routes to) is warehouse for a stock-origin ask, including after a did-you-mean product pick that climbs the full ladder to the PO rung.
+
+## Suggested team when the parser names none (`routing.suggested_team = None`)
+
+Reviewer fix round 1, B2: captured traffic shows the LLM parser names no team on a
+real fraction of inventory turns (214/218, measured) - the MISS branch (no PO-rung
+involved at all) must not fall through to the generic "customer_service" literal for
+those. Owner ruling 22 Sep 2026, R6: deterministic post-LLM fill from the domain's own
+`escalation_team_code` (`turn/policy_rows.py`), filled by `turn_runtime.
+lane_parse_output` before any composer reads `routing.suggested_team`.
+
+- AC-EQ-12 `domain_hint = inventory`, `routing.suggested_team = None`, no stock, no
+  incoming, PO placed → `escalate to warehouse team?`.
+- AC-EQ-13 Same, but nothing on any rung either → `escalate to warehouse team?`.
+- AC-EQ-14 `domain_hint = incoming`, `routing.suggested_team = None`, PO placed →
+  `escalate to purchasing team?`.

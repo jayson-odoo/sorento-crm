@@ -282,13 +282,15 @@ def stock_parse(stub_parser, stub_access):
             intent_hint="check_stock",
             domain_hint="inventory",
             entities=[{"raw": CODE, "hint": "product", "current_message": True}],
-            # A real parse for a stock question names "warehouse" (the parser schema's
-            # own enum, `turn/policy_rows.py`'s `escalation_team_code="warehouse"` for
-            # the inventory domain) - spelled out here rather than left `None` so this
-            # stub matches what `lane_parse_output` actually receives on live traffic,
-            # not `DEFAULT_SUGGESTED_TEAM`'s "customer_service" fallback for a verdict
-            # that named none.
-            routing={"suggested_team": "warehouse", "suggested_agent": None, "team_source": "inferred"},
+            # Reviewer fix round 1, B2: left at `_parser_output`'s own default
+            # (`routing.suggested_team: None`) rather than hand-set to "warehouse" -
+            # captured traffic shows the LLM parser names no team on a real fraction
+            # of inventory turns (214/218, measured), so a stub that always sets one
+            # would test a shape production does not send. `not_found_error_message`
+            # (`lanes/business/answer.py`) now fills the domain's own team from
+            # `policy.domain(domain_hint).escalation_team_code` when routing names
+            # none - AC-EQ-12/13 pin that fallback directly; this fixture measures the
+            # SAME fallback end to end, through a real `engine.run_turn`.
         )
     )
     # The PO rung is per contact (8 Sep 2026): on-order info needs `purchase_orders.placed`.
@@ -632,9 +634,10 @@ class TestD7AnIncomingAskReachesThePORung:
                 intent_hint="check_incoming",
                 domain_hint="incoming",
                 entities=[{"raw": CODE, "hint": "product", "current_message": True}],
-                # A real parse for an incoming question names "purchasing" - same reason
-                # `stock_parse` above spells out "warehouse" for the inventory domain.
-                routing={"suggested_team": "purchasing", "suggested_agent": None, "team_source": "inferred"},
+                # Reviewer fix round 1, B2 - left at the default `routing.suggested_team:
+                # None`, same reason `stock_parse` above does: `not_found_error_message`'s
+                # domain fallback (incoming -> purchasing) is what names the team now,
+                # not this stub (AC-EQ-14).
             )
         )
         stub_access(attributes=["purchase_orders.placed"])
@@ -661,3 +664,51 @@ class TestD7AnIncomingAskReachesThePORung:
         # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
         # own comment for the file:line citation.
         assert "Would you like me to escalate to purchasing team?" in text, text
+
+
+class TestACEQ12To14NullRoutingFallsBackToTheDomainTeam:
+    """Reviewer fix round 1, B2. Captured traffic (22 Sep 2026) shows the LLM parser
+    names NO team on a real fraction of inventory turns (214/218, measured) - before
+    this fix `not_found_error_message` (`lanes/business/answer.py`) fell straight to
+    the generic "customer_service" literal for those, so the miss branch (no PO-rung
+    override involved at all, AC-EQ-6/8) offered the wrong team even after the
+    PO-rung override was retired. Owner ruling 22 Sep 2026, R6: a stock-origin ask is
+    ALWAYS warehouse, an incoming-origin ask is always purchasing - deterministic,
+    filled from `policy.domain(domain_hint).escalation_team_code` when the parser
+    named none. `stock_parse`/the D7 fixture's own `stub_parser` calls above carry NO
+    explicit `routing` any more (reverted to the captured null shape) - this class is
+    the same harness, just named to the AC ids so a reviewer can find them directly."""
+
+    def test_ac_eq_12_stock_origin_null_routing_po_placed_offers_warehouse(
+        self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
+    ) -> None:
+        result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS)
+        assert result.status == "done", result.error
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Would you like me to escalate to warehouse team?" in reply_text, reply_text
+
+    def test_ac_eq_13_stock_origin_null_routing_nothing_on_any_rung_offers_warehouse(
+        self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
+    ) -> None:
+        result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS)
+        assert result.status == "done", result.error
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Would you like me to escalate to warehouse team?" in reply_text, reply_text
+
+    def test_ac_eq_14_incoming_origin_null_routing_po_placed_offers_purchasing(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        stub_parser(
+            _parser_output(
+                intent_hint="check_incoming",
+                domain_hint="incoming",
+                entities=[{"raw": CODE, "hint": "product", "current_message": True}],
+            )
+        )
+        stub_access(attributes=["purchase_orders.placed"])
+        result, said, probes = _run_stock_turn(
+            session_factory, monkeypatch, po_response=PO_ROWS, origin="incoming"
+        )
+        assert result.status == "done", result.error
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Would you like me to escalate to purchasing team?" in reply_text, reply_text

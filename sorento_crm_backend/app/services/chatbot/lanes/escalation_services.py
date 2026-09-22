@@ -31,9 +31,20 @@ import asyncio
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
+
+
+def _iso(value: Any) -> Any:
+    """`escalation.py::_comment_text` reads `_sla_create`'s three timestamp fields
+    through `_malaysia`, which calls `jsc.js_string` on whatever it is handed - a
+    `datetime` is not one of `js_string`'s known types, so it rendered JS's own
+    `[object Object]` in the SLA comment (owner ruling 22 Sep 2026). ISO-8601 strings
+    round-trip through `_malaysia`'s own `datetime.fromisoformat` exactly like the
+    stubbed test doubles always have."""
+    return value.isoformat() if isinstance(value, datetime) else value
 
 
 @dataclass(frozen=True)
@@ -99,24 +110,13 @@ def _sla_create(db: Any):
             ConversationSLATrackingCreate(**body)
         )
 
-        def iso(value: Any) -> Any:
-            # `escalation.py::_comment_text` reads these three fields through `_malaysia`,
-            # which calls `jsc.js_string` on whatever it is handed - a `datetime` is not
-            # one of `js_string`'s known types, so it rendered JS's own `[object Object]`
-            # in the SLA comment (owner ruling 22 Sep 2026). ISO-8601 strings round-trip
-            # through `_malaysia`'s own `datetime.fromisoformat` exactly like the stubbed
-            # test doubles always have.
-            from datetime import datetime
-
-            return value.isoformat() if isinstance(value, datetime) else value
-
         # The lane reads three fields off this for the comment; hand back a plain dict so
         # the seam's contract is a dict either way, stubbed or real.
         return {
             "id": getattr(created, "id", None),
-            "initiated_at": iso(getattr(created, "initiated_at", None)),
-            "due_at": iso(getattr(created, "due_at", None)),
-            "due_at_resolution": iso(getattr(created, "due_at_resolution", None)),
+            "initiated_at": _iso(getattr(created, "initiated_at", None)),
+            "due_at": _iso(getattr(created, "due_at", None)),
+            "due_at_resolution": _iso(getattr(created, "due_at_resolution", None)),
         }
 
     return call

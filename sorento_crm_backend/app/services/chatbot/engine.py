@@ -1466,6 +1466,9 @@ def _run_stages(  # noqa: PLR0915
             accepted_company=plan.trace.company,
             declined_offer_copy=plan.trace.lane == "offer_declined",
             prior_session=session_block,
+            # R6 (22 Sep 2026): a null `routing.suggested_team` falls back to the
+            # QUESTION's own domain team before the flat "customer_service" literal.
+            policy=policy,
         )
         # Security N-3/S2 (hand pass 11 security review): an accepted offer whose options
         # carry a COMPANY needs that company - and above all its `company_id` - to reach

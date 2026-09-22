@@ -2861,6 +2861,25 @@ def not_found_error_message(
         )
         routing = jsc.get(q, "routing")
         suggested_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
+        # NO team named at all must still get the domain's own escalation team
+        # (inventory -> warehouse, incoming -> purchasing), never the generic
+        # "customer_service" literal. On a real turn `turn_runtime.lane_parse_output`
+        # is what actually fills a null `routing.suggested_team` (its own
+        # `DEFAULT_SUGGESTED_TEAM` chain, now domain-aware - see that function), so
+        # `suggested_team` read off `q["routing"]` here is rarely still falsy by the
+        # time a real turn reaches this composer. This is the SAME fallback anyway,
+        # kept as the direct-call belt-and-braces: several tests
+        # (`test_warehouse_entity.py`) and any future caller construct a bare `parser`
+        # dict with no routing key at all, and this composer must not hand THEM the
+        # generic literal either.
+        if not jsc.truthy(suggested_team):
+            from app.services.chatbot.turn.policy import default_policy
+
+            domain_row = default_policy().domain(
+                jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
+            )
+            suggested_team = domain_row.escalation_team_code if domain_row is not None else None
         team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
         is_active = jsc.get(q, "is_active")
         active_inactive = (

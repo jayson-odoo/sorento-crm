@@ -671,6 +671,7 @@ def lane_parse_output(
     accepted_company: str | None = None,
     declined_offer_copy: bool = False,
     prior_session: Any = None,
+    policy: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
 
@@ -698,9 +699,13 @@ def lane_parse_output(
       acceptance names no team of its own); a PREVIOUS turn's own carried routing
       (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
       turn had one, else the table's default", never the default unconditionally); the
-      hard default, last. The parser's own answer stays untouched on `_parser_raw`, which
-      is what `escalation._parser_team` reads to tell "this turn named a team" from "this
-      turn accepted one".
+      QUESTION's own domain (`policy.domain(domain_hint).escalation_team_code`, R6, 22 Sep
+      2026 - a parser emission naming no team gets the domain's real escalation team, not
+      a flat literal); the hard default (`DEFAULT_SUGGESTED_TEAM`), last of all, for a
+      domain `policy` cannot resolve (no session, or a domain with no escalation row).
+      The parser's own answer stays untouched on `_parser_raw`, which is what
+      `escalation._parser_team` reads to tell "this turn named a team" from "this turn
+      accepted one".
     """
     out = dict(verdict)
     if domain:
@@ -742,7 +747,22 @@ def lane_parse_output(
     if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
         routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
-        routing["suggested_team"] = _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): captured traffic shows the LLM
+        # parser names NO team on a real fraction of inventory turns (214/218,
+        # measured) - `DEFAULT_SUGGESTED_TEAM` ("customer_service") used to be the
+        # UNCONDITIONAL last resort, so every one of those turns' own escalate offer
+        # and pending team came out "customer service" regardless of domain. A
+        # domain's escalation team (inventory -> warehouse, incoming -> purchasing,
+        # `turn/policy_rows.py`) is a deterministic fact ABOUT THE QUESTION the parser
+        # was asked, not a guess, so it is read before the hard default - but still
+        # after `_prior_suggested_team`, which stays the more specific fact when a
+        # previous turn genuinely carried one forward (test_pass4_item5's B3, kept
+        # unchanged).
+        domain_row = policy.domain(out.get("domain_hint")) if policy else None
+        domain_team = domain_row.escalation_team_code if domain_row else None
+        routing["suggested_team"] = (
+            _prior_suggested_team(prior_session) or domain_team or DEFAULT_SUGGESTED_TEAM
+        )
     # `suggested_agent`'s default is applied once, upstream, by `with_routing_agent_default`
     # (finding 2b) - the access read and the lanes see the same value.
     out["routing"] = routing
