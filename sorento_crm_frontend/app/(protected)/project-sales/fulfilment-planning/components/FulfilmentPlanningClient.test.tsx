@@ -1053,10 +1053,12 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     renderClient();
 
     expect(await screen.findByText('Planning 2 sales orders together')).toBeInTheDocument();
+    // S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1): an absent granularity param now
+    // resolves to `date`, not `week`.
     await waitFor(() =>
       expect(getPlanningBoard).toHaveBeenCalledWith(
         ['SO100001', 'SO100002'],
-        'week',
+        'date',
         false,
         {},
       ),
@@ -1087,7 +1089,9 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('falls back to week on a granularity nobody defined', async () => {
+  it('falls back to date on a granularity nobody defined', async () => {
+    // S1 (AC-B1-1/AC-B1-5): `date` is what an unrecognised param resolves to now, the same
+    // default an ABSENT param gets.
     currentSearchParams = new URLSearchParams('orders=SO100001&granularity=fortnightly');
     listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
@@ -1096,7 +1100,7 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
 
     await screen.findByText('Planning 1 sales orders together');
     await waitFor(() =>
-      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'week', false, {}),
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'date', false, {}),
     );
   });
 
@@ -1160,8 +1164,9 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     );
 
     await screen.findByText('Planning 1 sales orders together');
+    // S1 (AC-B1-1): an absent granularity param now resolves to `date`, not `week`.
     await waitFor(() =>
-      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'week', false, {}),
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'date', false, {}),
     );
 
     getPlanningBoard.mockClear();
@@ -1178,7 +1183,7 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     );
 
     await waitFor(() =>
-      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100002'], 'week', false, {}),
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100002'], 'date', false, {}),
     );
   });
 

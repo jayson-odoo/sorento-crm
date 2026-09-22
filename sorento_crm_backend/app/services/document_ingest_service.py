@@ -606,6 +606,13 @@ class DocumentIngestService(MasterRefResolver):
             canonical_status = derive_document_status(line_dicts, existing_canonical)
         status = self._status(spec, canonical_status)
         header_values = self._header_values(spec, payload, status, warnings, header)
+        # PLAN-po-line-currency-follows-header-22sep.md: a line with no stated currency
+        # takes the HEADER's own resolved currency (already filled by `_header_values`
+        # above when the header itself stated none), never a hardcoded CNY. `.get()`
+        # rather than `header.currency`: for a spec with no `currency` header column at
+        # all (every non-PO document) this is simply `None` and `_line_values`' own
+        # shape-driven guard never reads it.
+        header_currency = header_values.get("currency")
         # D9: a line whose product does not resolve is DROPPED, not a reason
         # to fail the whole document - `_line_values`' only raise is the
         # ladder's Product rung (`line_refs` never resolves anything else that
@@ -622,7 +629,9 @@ class DocumentIngestService(MasterRefResolver):
         dropped_refs: list[str] = []
         for index, line in enumerate(payload.lines):
             try:
-                line_values.append(self._line_values(spec, line, index, status, warnings))
+                line_values.append(
+                    self._line_values(spec, line, index, status, warnings, header_currency)
+                )
             except MissingReference:
                 dropped += 1
                 ref = getattr(line, "source_ref", None)
@@ -1246,7 +1255,13 @@ class DocumentIngestService(MasterRefResolver):
             )
 
     def _line_values(
-        self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
+        self,
+        spec: DocumentSpec,
+        line: Any,
+        index: int,
+        status: str,
+        warnings: list[str],
+        header_currency: Optional[str] = None,
     ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(line, field) for column, field in spec.line_fields
@@ -1273,10 +1288,13 @@ class DocumentIngestService(MasterRefResolver):
             if model is Warehouse and not (ref_value or code_value):
                 continue
             values[column] = resolved_id
-        # Same shape-driven PO currency fill as the header, for the per-line
-        # `currency` column purchase-order lines alone carry.
+        # Owner ruling 22 Sep 2026 ("we shouldn't assume CNY"): a line with no stated
+        # currency takes its HEADER's currency, never a hardcoded default. `currency`
+        # only exists on this dict for a purchase-order line (shape-driven, same guard
+        # the header fill uses); `header_currency` is `None` when the header itself
+        # named none either, which leaves the line NULL too.
         if "currency" in values and not values["currency"]:
-            values["currency"] = DEFAULT_PO_CURRENCY
+            values["currency"] = header_currency
         # NOT NULL on both line tables, and an absent figure means none delivered.
         for column in ("qty_ordered", spec.line_delivered_field):
             if values.get(column) is None:

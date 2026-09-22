@@ -14,6 +14,30 @@ The board offers **Grid** and **List** views; on **List**, the **Verdict** colum
 Saved / Confirmed / Rejected) sorts like any other column - click its header to order lines by
 where they stand.
 
+## Choosing a period on Grid
+
+The period select above the Grid reads **By date** (the default), **By day**, **By week**,
+**By month**.
+
+* **By date** - one column per exact required date across your current selection, headed the
+  date itself (`01/11/2026`), in date order, with **No date** last when a line has none. Nothing
+  folds and nothing pages - however many dates your selection touches, that many columns appear,
+  and the grid scrolls sideways to reach them.
+* **By day** - unchanged: the rolling 30-day window it has always shown.
+* **By week** / **By month** - unchanged.
+
+A past column carries the same **Already past** treatment whichever period you pick.
+
+## List columns
+
+The List view's leftmost column is **Line** - the line number AutoCount itself gave the sales
+order on its own line, sortable; rows sort by **Sales order** then **Line** by default. The
+**Sales order** cell prints the number only and is a link: it opens that sales order's own detail
+page with this exact line scrolled into view and briefly highlighted. A new **OI** column names
+the order inquiry this line has raised, as a link that lands straight on that row of the order
+inquiry, scrolled into view and highlighted the same way; a line with no live order inquiry row
+reads a dash.
+
 ## Stock that already landed for this line
 
 When goods bought specifically for a sales-order line have already been received, the board
@@ -215,6 +239,8 @@ is still fresh enough to reverse.
   the same Undo applies to that Confirm too)
 * [Order inquiry handover email to purchasing](order-inquiry-handover-email.md) (what a fresh
   Confirm sends; undo sends its own "Order inquiry undone" email instead)
+* [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md) (where
+  the List view's own **OI** link lands, and what the state words mean once you're there)
 * [Manage suppliers](../procurement/manage-suppliers.md) (Country is set there)
 * [Countries](../product/countries.md)
 * [Run a reorder plan](run-a-reorder-plan.md)

@@ -44,17 +44,19 @@ import {
   BUYING_VERBS,
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
+  STATE_LABEL,
   VERB_LABEL,
 } from '../../../_shared/components/OrderInquiryVerbPill';
 
 const VERB_OPTIONS = Object.entries(VERB_LABEL).map(([value, label]) => ({ value, label }));
 
-const STATE_OPTIONS = [
-  { value: 'raised', label: 'Raised' },
-  { value: 'actioned', label: 'Actioned' },
-  { value: 'cancelled', label: 'Cancelled' },
-  { value: 'placed', label: 'Placed' },
-];
+// S5 (AC-B5-2): read off the ONE map the pill itself reads, rather than a second, looser
+// spelling of the same four words - this list used to say "Placed" where the pill already
+// read "Linked" for the very same stored `placed` value.
+const STATE_OPTIONS = ['raised', 'actioned', 'cancelled', 'placed'].map((value) => ({
+  value,
+  label: STATE_LABEL[value] ?? value,
+}));
 
 /**
  * What purchasing has been told to do on one project (P10, AC-I1 to AC-I7).
