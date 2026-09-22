@@ -196,8 +196,10 @@ def test_is_resolved_splits_open_from_resolved(db):
 
 
 def test_resolved_by_narrows_to_one_resolver(db):
-    """Resolve NULLS assigned_to_id on a conversation ticket, so "mine" after the
-    fact can only be answered by resolved_by - assigned_to would find nothing."""
+    """AC-KA-10: resolve keeps assigned_to_id on a conversation ticket (owner
+    ruling R5, 22 Sep 2026), so both resolved_by and assigned_to answer "mine"
+    after the fact - here they agree because each ticket's resolver was also
+    its assignee."""
     seed = _seed(db)
     a1 = _ticket(db, seed, phone=PHONE_A, assignee=seed["user_one"], source_message_id="m-a1")
     b1 = _ticket(db, seed, phone=PHONE_B, assignee=seed["user_two"], source_message_id="m-b1")
@@ -208,9 +210,9 @@ def test_resolved_by_narrows_to_one_resolver(db):
     mine = service.list_tracking(is_resolved=True, resolved_by=seed["user_one"])
 
     assert _ids(mine) == {str(a1.id)}
-    assert (
-        _ids(service.list_tracking(is_resolved=True, assigned_to=seed["user_one"])) == set()
-    ), "the assignee is cleared on resolve - this is why resolved_by exists"
+    assert _ids(
+        service.list_tracking(is_resolved=True, assigned_to=seed["user_one"])
+    ) == {str(a1.id)}, "the assignee survives resolve - assigned_to must find it too"
 
 
 def test_resolved_by_accepts_a_respond_user_id_or_email(db):

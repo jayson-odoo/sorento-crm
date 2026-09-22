@@ -12,11 +12,15 @@ Three defects pinned here:
    tracking id. Every sibling read (``/ticket``, ``/comments``, ``/ai-draft``,
    ``/message-snippets/select``) is assignee-or-manager scoped and 404s an
    outsider rather than 403-ing, so as not to confirm the row exists.
-2. Resolving a conversation ticket NULLs ``assigned_to_id`` by design, and
+2. Resolving a conversation ticket used to NULL ``assigned_to_id`` by design, and
    ``can_user_act_on_tracking`` refused everyone on an unassigned row - so the
    person who had just resolved the ticket instantly lost the comments, the AI
    draft, the snippet picker and (with the scope added above) the thread itself,
-   while AC-M1/M2 keep that very drawer open in front of them.
+   while AC-M1/M2 keep that very drawer open in front of them. Resolve now keeps
+   ``assigned_to_id`` (owner ruling R5, 22 Sep 2026,
+   PLAN-keep-assignee-on-resolve-22sep), so the assignee-keyed check already
+   covers the common case; the ``resolved_by`` fallback below stays for a
+   resolver who was never the assignee.
 3. The page read built a default-workspace ``RespondClient()`` instead of
    ``for_identifier``, so a contact on a non-default Respond workspace silently
    degraded to the text-only local lane.
@@ -305,8 +309,10 @@ def _resolve(db, tracking, resolver_id):
 
 
 def test_the_resolver_still_reads_the_ticket_they_just_resolved(client, db):
-    """Resolve NULLs `assigned_to_id`, so an assignee-keyed check locks the
-    resolver out of the drawer AC-M1 deliberately leaves open in front of them."""
+    """AC-KA-9: resolve keeps `assigned_to_id` (owner ruling R5, 22 Sep 2026), so
+    the assignee-keyed check in `can_user_act_on_tracking` already covers the
+    resolver here; the `resolved_by` fallback it also carries is for a resolver
+    who was never the assignee, not this case."""
     seed = _seed(db)
     tracking = _create_ticket(db, seed)
     _seed_messages(db)
@@ -326,7 +332,7 @@ def test_the_resolver_still_reads_the_ticket_they_just_resolved(client, db):
     # any work - those two also need their own RBAC permission, which a blank
     # schema does not carry, so the gate itself is asserted here.
     db.refresh(tracking)
-    assert tracking.assigned_to_id is None, "resolve NULLs the assignee by design"
+    assert str(tracking.assigned_to_id) == str(seed["assignee_id"])
     assert ConversationSLATrackingService(db).can_user_act_on_tracking(
         seed["assignee_id"], tracking
     )

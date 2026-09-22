@@ -115,7 +115,7 @@ class ConversationSLATrackingBase(BaseModel):
     # The brand this tracker routes within (lower-case brands.brand_code), null =
     # all brands. Echoed back so n8n can see which ladder the CRM picked.
     brand_code: Optional[str] = None
-    message_id: Optional[int] = None  # External message id; cleared when resolved
+    message_id: Optional[int] = None  # External message id; kept when resolved (audit)
 
 
 class ConversationSLATrackingCreate(BaseModel):

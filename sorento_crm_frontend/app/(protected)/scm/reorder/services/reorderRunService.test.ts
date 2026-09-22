@@ -15,6 +15,7 @@ import {
   getProductImages,
   getTodayRun,
   listReorderRuns,
+  replanReorderRun,
 } from './reorderRunService';
 
 function ok(body: unknown) {
@@ -87,6 +88,88 @@ describe('reorderRunService - createReorderRun', () => {
     });
     expect(JSON.parse(String(lastInit().body))).toMatchObject({
       product_codes: ['SRTWT7408', 'SRTBS4832'],
+    });
+  });
+
+  // Lane D fix round 3 addendum (browser-pass defect): `so_numbers` used to be gated
+  // on `demand_class === 'project'` here - an All run's own picked orders never
+  // reached the POST at all (captured body had no `so_numbers`, the run row stored
+  // `so_numbers=NULL`). The modal's own vitest was green throughout because it only
+  // asserts the HOOK's input shape, never the actual request body this service
+  // builds - this is the test that guards the wire contract itself.
+  it('AC-D2: sends so_numbers with NO demand_class for an All run (Lane D)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-13', status: 'running', buy_scope: 'network', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({
+      warehouse_codes: [],
+      so_numbers: ['SO418869', 'SO419517'],
+    });
+    const body = JSON.parse(String(lastInit().body));
+    expect(body.so_numbers).toEqual(['SO418869', 'SO419517']);
+    expect(body).not.toHaveProperty('demand_class');
+  });
+
+  it('still sends so_numbers under Project, demand_class included (unchanged)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-14', status: 'running', buy_scope: 'network', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({
+      warehouse_codes: [],
+      demand_class: 'project',
+      so_numbers: ['SO1'],
+    });
+    expect(JSON.parse(String(lastInit().body))).toMatchObject({
+      demand_class: 'project',
+      so_numbers: ['SO1'],
+    });
+  });
+
+  it('omits so_numbers when nothing was picked, under Dealer', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-15', status: 'running', buy_scope: 'network', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({
+      warehouse_codes: [],
+      demand_class: 'retail',
+      so_numbers: [],
+    });
+    expect(JSON.parse(String(lastInit().body))).not.toHaveProperty('so_numbers');
+  });
+});
+
+describe('reorderRunService - replanReorderRun', () => {
+  it('AC-D2: sends so_numbers with NO demand_class for an All re-plan (Lane D)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        run_id: 'run-16', status: 'running', buy_scope: 'network',
+        stage: 'resolving_policies', supersedes_run_id: 'run-9',
+      }),
+    );
+    await replanReorderRun('run-9', {
+      warehouse_codes: [],
+      so_numbers: ['SO418869', 'SO419517'],
+    });
+    const body = JSON.parse(String(lastInit().body));
+    expect(body.so_numbers).toEqual(['SO418869', 'SO419517']);
+    expect(body).not.toHaveProperty('demand_class');
+  });
+
+  it('still sends so_numbers under Project, demand_class included (unchanged)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        run_id: 'run-17', status: 'running', buy_scope: 'network',
+        stage: 'resolving_policies', supersedes_run_id: 'run-9',
+      }),
+    );
+    await replanReorderRun('run-9', {
+      warehouse_codes: [],
+      demand_class: 'project',
+      so_numbers: ['SO1'],
+    });
+    expect(JSON.parse(String(lastInit().body))).toMatchObject({
+      demand_class: 'project',
+      so_numbers: ['SO1'],
     });
   });
 });
