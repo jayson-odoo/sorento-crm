@@ -190,6 +190,18 @@ describe('inquiryRowTaken / inquiryRowRemaining (AC-B3-2..4)', () => {
     const overLinked = row({ verb: 'ORDER', qty: '10', linked_qty: '15', bundled_qty: '0' });
     expect(inquiryRowRemaining(overLinked)).toBe('0');
   });
+
+  it('B1 (review round 2, PLAN-oi-request-cs-reserve.md section 7): reserved_qty counts as Taken too - qty 139, PO 40, reserved 50 -> Taken 90, Remaining 49', () => {
+    const reservedRow = row({
+      verb: 'ORDER',
+      qty: '139',
+      linked_qty: '40',
+      reserved_qty: '50',
+      bundled_qty: '0',
+    });
+    expect(inquiryRowTaken(reservedRow)).toBe('90');
+    expect(inquiryRowRemaining(reservedRow)).toBe('49');
+  });
 });
 
 describe('inquiryFooterTotals (AC-B3-5): sums over buy rows only, never a notice or cancelled row', () => {
@@ -233,6 +245,23 @@ describe('inquiryFooterTotals (AC-B3-5): sums over buy rows only, never a notice
     expect(totals.qty).toBe(100);
     expect(totals.taken).toBe(30);
     expect(totals.remaining).toBe(70);
+  });
+
+  it('B1: the footer sums reserved_qty into Taken alongside linked_qty', () => {
+    const reserved = row({
+      id: 'reserved',
+      verb: 'ORDER',
+      qty: '139',
+      linked_qty: '40',
+      reserved_qty: '50',
+      bundled_qty: '0',
+    });
+
+    const totals = inquiryFooterTotals([reserved]);
+
+    expect(totals.qty).toBe(139);
+    expect(totals.taken).toBe(90);
+    expect(totals.remaining).toBe(49);
   });
 });
 
