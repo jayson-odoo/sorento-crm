@@ -142,7 +142,7 @@ NO_DATE_BUCKET = "no_date"
 #: the window.
 DAY_WINDOW_COLUMNS = 30
 
-GRANULARITIES = ("day", "week", "month")
+GRANULARITIES = ("day", "date", "week", "month")
 
 _MONTHS = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -196,7 +196,7 @@ def bucket_key_for(
         return NO_DATE_BUCKET
     if granularity == "month":
         return required_date.replace(day=1).isoformat()
-    if granularity == "day":
+    if granularity in ("day", "date"):
         return required_date.isoformat()
     return week_start(required_date).isoformat()
 
@@ -206,7 +206,7 @@ def bucket_end(key: str, granularity: str) -> Optional[date]:
     if key == NO_DATE_BUCKET:
         return None
     start = date.fromisoformat(key)
-    if granularity == "day":
+    if granularity in ("day", "date"):
         return start
     if granularity == "week":
         return start + timedelta(days=6)
@@ -226,6 +226,8 @@ def _bucket_label(key: str, granularity: str) -> str:
         return f"{month} {when.year}"
     if granularity == "day":
         return f"{when.day} {month} {when.year}"
+    if granularity == "date":
+        return when.strftime("%d/%m/%Y")
     return f"w/c {when.day} {month} {when.year}"
 
 
@@ -635,7 +637,7 @@ class FulfilmentBoardService:
             raise AppException(
                 status_code=422,
                 message=(
-                    "Granularity must be day, week or month, "
+                    "Granularity must be day, date, week or month, "
                     f"not '{granularity}'."
                 ),
                 code="board_granularity_unknown",

@@ -3807,6 +3807,16 @@ def _oi_demand_rows(
     instruction told twice - the duplicate "one row per sales-order line" exists to stop.
     Those lines are skipped here. A line the plan did NOT carry still gets its change row,
     because nothing else said anything about it.
+
+    S2 (`PLAN-board-oi-mechanical-22sep.md`, AC-B2-4/AC-B2-8): a date-move line
+    `_stamp_date_move` (`project_order_inquiry_service.py`, `_write`'s decline branch)
+    never reaches - it had NO buy row before this confirm - still must not carry a
+    duplicate notice beside the fresh buy row this SAME confirm just raised for it.
+    Checked here, once, for every `advanced`/`delayed` line `settled_line_ids` did not
+    already exclude: does the line hold any non-cancelled `ORDER`/`ORDER_BACK` row right
+    now? If it does, that row's own note is stamped with the old date instead of a
+    second row saying the same thing; a line with NO buy row at all (the reserve covered
+    it, AC-B2-8) still gets its notice, unchanged from today.
     """
     from app.services.project_order_inquiry_engine import (
         CHANGE_DATE_EARLIER,
@@ -3827,6 +3837,26 @@ def _oi_demand_rows(
 
     pool_cache: Dict[str, Optional[str]] = {}
     settled = {str(line_id) for line_id in (settled_line_ids or [])}
+    date_move_line_ids = [
+        str(r.project_line_id)
+        for r in live_rows
+        if r.kind in ("delayed", "advanced")
+        and r.project_line_id
+        and str(r.project_line_id) not in settled
+    ]
+    buy_rows_by_line: Dict[str, List[OrderInquiryRow]] = {}
+    if date_move_line_ids:
+        for buy_row in (
+            db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.so_line_id.in_(date_move_line_ids),
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .all()
+        ):
+            buy_rows_by_line.setdefault(str(buy_row.so_line_id), []).append(buy_row)
+
     out: List[dict] = []
     counts: Dict[str, int] = {}
     for r in live_rows:
@@ -3848,6 +3878,19 @@ def _oi_demand_rows(
             if qty <= _ZERO:
                 continue
             from_date = (r.from_json or {}).get("required_date")
+            buy_rows = buy_rows_by_line.get(str(r.project_line_id))
+            if buy_rows:
+                # AC-B2-4: this confirm already gave the line its own buy row (fresh, or
+                # one `_stamp_date_move` could not reach) - stamp ITS note rather than
+                # raise a second row saying the same thing.
+                stamp = f"Was {from_date}" if from_date else "No previous delivery date"
+                for buy_row in buy_rows:
+                    if buy_row.note and "Was" in buy_row.note:
+                        continue
+                    buy_row.note = (
+                        f"{buy_row.note}; {stamp}" if buy_row.note else stamp
+                    )
+                continue
             out.append(
                 {
                     "line_id": r.project_line_id,

@@ -1094,6 +1094,38 @@ class ProjectOrderInquiryService:
                 if asked_to_settle:
                     settled_in_place.append(str(line.id))
                 continue
+            if asked_to_settle:
+                # S2 (`PLAN-board-oi-mechanical-22sep.md`, AC-B2-4..7): `_settle_row_in_
+                # place` just declined - two still-owed rows, a lone placed row with no
+                # link, or every row already actioned (excluded from its own `live`
+                # filter outright). None of that changes what a PURE date move should do:
+                # every buy row of the line still gets the date stamped in place, and no
+                # second ADVANCE/DELAY row is raised beside it. Gated on the composed
+                # `need` matching what the line's own live buy rows already total - a
+                # genuine quantity change (not merely a date move) still falls through to
+                # the netting below unchanged, exactly as it does today. A line with NO
+                # existing buy row at all (`live_buy_qty` zero, nothing to stamp) also
+                # falls through, on purpose: `_stamp_date_move` finds no target and
+                # returns False, and the netting below raises its fresh row exactly as
+                # it always has (AC-B2-4).
+                live_buy_qty = sum(
+                    (
+                        _dec(r.qty)
+                        for r in rows
+                        if r.verb in (IV_ORDER, IV_ORDER_BACK)
+                        and r.state in (
+                            INQUIRY_RAISED, INQUIRY_PARTLY_LINKED,
+                            INQUIRY_PLACED, INQUIRY_ACTIONED,
+                        )
+                        and not r.redirected_to_pool
+                    ),
+                    _ZERO,
+                )
+                if live_buy_qty == need and self._stamp_date_move(
+                    rows, entry.get("required_date"), actor_user_id=actor_user_id
+                ):
+                    settled_in_place.append(str(line.id))
+                    continue
             # Read BEFORE the loop below cancels anything: what purchasing had already
             # taken on for this line, off the rows that are still LIVE. Taken afterwards it
             # would read the rows this loop has just cancelled, which is every superseded
@@ -1672,6 +1704,78 @@ class ProjectOrderInquiryService:
             self._record_handover(
                 row, kind="settled", was=handover_was, actor_user_id=actor_user_id
             )
+        return True
+
+    def _stamp_date_move(
+        self,
+        rows: Sequence[OrderInquiryRow],
+        new_date: Optional[date],
+        *,
+        actor_user_id: Optional[str] = None,
+    ) -> bool:
+        """A PURE date move `_settle_row_in_place` declined to read as one instruction -
+        two still-owed rows, a lone placed row with no link, or every row already
+        actioned (excluded from its own `live` filter outright) - restated on EVERY buy
+        row of the line instead (S2, `PLAN-board-oi-mechanical-22sep.md`, AC-B2-4..7).
+        Purchasing sees the row(s) it already had, each carrying the new date, the old
+        one on its own note and as `previous_delivery_date`, rather than the same rows
+        left bare beside a duplicate ADVANCE/DELAY notice telling them the same thing a
+        second time.
+
+        Links are untouched: the quantity has not moved, so there is nothing to give
+        back or net. The caller (`_write`) only reaches here once it has confirmed the
+        composed `need` equals what the line's live buy rows already total - a genuine
+        quantity change is not this method's business and falls through to the ordinary
+        netting instead.
+
+        One handover line for the WHOLE line, not one per row (AC-B2-9): the line's
+        `ADVANCE`/`DELAY` change is told once, off a single representative row, the same
+        "one row per sales-order line" rule `_oi_demand_rows` already holds for the
+        notice this replaces.
+
+        Returns False, writing nothing, when there is no date to move to or every buy
+        row already carries it - the caller reads that as "nothing to stamp" and falls
+        through to its own fallback (AC-B2-4's fresh line has no row here to stamp at
+        all).
+        """
+        if new_date is None:
+            return False
+        targets = [
+            row
+            for row in rows
+            if row.verb in (IV_ORDER, IV_ORDER_BACK)
+            and row.state in (
+                INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED, INQUIRY_ACTIONED,
+            )
+            and not row.redirected_to_pool
+            and row.delivery_date != new_date
+        ]
+        if not targets:
+            return False
+        previous_date = targets[0].delivery_date
+        for row in targets:
+            previous_qty = _dec(row.qty)
+            row_previous_date = row.delivery_date
+            moved = (
+                f"Was {_qty_str(previous_qty)} on {row_previous_date.isoformat()}"
+                if row_previous_date
+                else f"Was {_qty_str(previous_qty)}, no previous delivery date"
+            )
+            row.previous_qty = previous_qty
+            row.previous_delivery_date = row_previous_date
+            row.delivery_date = new_date
+            row.changed_at = datetime.utcnow()
+            row.note = f"{row.note}; {moved}" if row.note else moved
+            # Same handshake rule as `_settle_row_in_place`: a row purchasing has
+            # already taken on goes back to To confirm; one still AWAITING is left
+            # alone, since CS is free to change what nobody has read yet.
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.ack_state = ACK_CHANGED
+        self.db.flush()
+        self._record_handover(
+            targets[0], kind="settled", was={"delivery_date": previous_date},
+            actor_user_id=actor_user_id,
+        )
         return True
 
     def _own_arrival_credit_for_row(self, row: OrderInquiryRow, need: Decimal) -> Decimal:
@@ -4306,6 +4410,12 @@ class ProjectOrderInquiryService:
                     "so_line_id": row.so_line_id,
                     "sales_order_ref": meta.get("sales_order_ref"),
                     "project_sales_order_id": meta.get("project_sales_order_id"),
+                    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link
+                    # ids the OI Lines tab / worklist's own "SO line" column resolves to
+                    # `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>`
+                    # - never printed, addressing only.
+                    "sales_order_id": meta.get("sales_order_id"),
+                    "core_line_id": trace.get("core_line_id"),
                     # AC-D06: the buyer traces a Buy back to the Project SO, the line
                     # number and the revision that decided it, in identifiers a person
                     # reads - never an id.
@@ -4742,6 +4852,11 @@ class ProjectOrderInquiryService:
         for inquiry, order in joined:
             context[inquiry.id] = {
                 "project_sales_order_id": order.id,
+                # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the CORE
+                # `sales_orders.id` the SCM sales order detail page is keyed by
+                # (`/scm/sales-orders/<sales_order_id>`) - null on a project order never
+                # published to the core book.
+                "sales_order_id": order.so_id,
                 "sales_order_ref": order.autocount_doc_no or order.provisional_ref,
                 # The Project SO's OWN reference, beside the AutoCount number the
                 # sales_order_ref prefers: they are two different documents and the buyer
@@ -4780,17 +4895,22 @@ class ProjectOrderInquiryService:
 
         line_ids = {row.so_line_id for row in rows if row.so_line_id}
         decision_ids = {row.supply_decision_id for row in rows if row.supply_decision_id}
-        line_nos = (
-            dict(
+        line_nos: Dict[str, int] = {}
+        # AC-B6-7: the mirror's own `core_sales_order_line_id` - the AutoCount line the
+        # SCM Lines tab actually addresses - null when the mirror has no core line at all.
+        core_line_ids: Dict[str, Optional[str]] = {}
+        if line_ids:
+            for line_id, line_no, core_line_id in (
                 self.db.query(
-                    ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no
+                    ProjectSalesOrderLine.id,
+                    ProjectSalesOrderLine.line_no,
+                    ProjectSalesOrderLine.core_sales_order_line_id,
                 )
                 .filter(ProjectSalesOrderLine.id.in_(list(line_ids)))
                 .all()
-            )
-            if line_ids
-            else {}
-        )
+            ):
+                line_nos[line_id] = line_no
+                core_line_ids[line_id] = core_line_id
         revisions = (
             dict(
                 self.db.query(SOSupplyDecision.id, SOSupplyDecision.revision_no)
@@ -4804,6 +4924,7 @@ class ProjectOrderInquiryService:
             row.id: {
                 "line_no": line_nos.get(row.so_line_id),
                 "decision_revision": revisions.get(row.supply_decision_id),
+                "core_line_id": core_line_ids.get(row.so_line_id),
             }
             for row in rows
         }

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-BoardGranularity = Literal["day", "week", "month"]
+BoardGranularity = Literal["day", "date", "week", "month"]
 BoardBucketKind = Literal["dated", "no_date"]
 #: `borrow` appears on a COVERED line only. The engine never proposes one - a Borrow needs a
 #: donor and a reason from a person (AC-B09) - but a line a decision already covers states the

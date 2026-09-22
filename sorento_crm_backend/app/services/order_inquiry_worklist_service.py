@@ -676,6 +676,13 @@ _COLUMNS = (
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids the "SO line"
+    # column resolves to `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>`
+    # - the SAME two columns `core_sales_order_id` above and the LOCATION fallback join
+    # already read, labelled once more under the names the deep link's own contract uses.
+    # Null when the mirror has no core line.
+    SalesOrder.id.label("sales_order_id"),
+    SalesOrderLine.id.label("core_line_id"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.id.label("po_id"),
@@ -2072,6 +2079,12 @@ class OrderInquiryWorklistService:
             "project_id": row.project_id,
             "project_sales_order_id": row.project_sales_order_id,
             "core_sales_order_id": row.core_sales_order_id,
+            # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link ids the
+            # "SO line" column resolves to
+            # `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>` - null
+            # when the mirror has no core line.
+            "sales_order_id": row.sales_order_id,
+            "core_line_id": row.core_line_id,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,
