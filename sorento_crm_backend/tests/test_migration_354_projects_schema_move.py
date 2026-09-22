@@ -57,6 +57,11 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-oi-header-list-detail.md S1, migration 523_oi_monthly_no_raises: one raise/
     # reconfirm history row per header, born straight into `projects` the same way.
     "order_inquiry_raises",
+    # PLAN-oi-request-cs-reserve.md S1, migration oirs_0001_reserve_requests: one "request
+    # CS to reserve" ask per inquiry plus its per-row answers, born straight into
+    # `projects` the same way.
+    "order_inquiry_reserve_requests",
+    "order_inquiry_reserve_request_rows",
 })
 
 MIGRATION = (

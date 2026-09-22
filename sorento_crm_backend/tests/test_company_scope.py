@@ -538,7 +538,14 @@ def test_every_company_id_table_is_registered():
     # surface another company's pins even when a line id is guessed.
     # PLAN-oi-header-list-detail.md adds 1: `order_inquiry_raises` is company-owned, not
     # shared (security review 21 Sep 2026).
-    expected_owned = 134
+    # PLAN-oi-request-cs-reserve.md adds 2: `order_inquiry_reserve_requests` is ONE
+    # company's ask to its own CS to commit stock, and `order_inquiry_reserve_request_rows`
+    # is that ask's own per-row answer. The rows are owned rather than derived through the
+    # request because Eling's reserve call and the cancel path both load the row BY ID off
+    # a route that names only the request (`reserve()` takes `request_row_id`s), and the
+    # mixin stamps the company at insert so a row written under one scope is unreadable
+    # under another.
+    expected_owned = 136
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

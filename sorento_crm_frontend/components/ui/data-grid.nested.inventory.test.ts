@@ -83,6 +83,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx',
     'CandidateExpandPanel - a definition-list of fields plus a hand-rolled <table> of other rows already linked on the line, no grid',
   ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
+    'NESTED GRID: OrderInquiryStockGrid, a thin wrapper over CellStockTable (the hand-rolled <table> carve-out) whose rows open StockDocumentsPanel (PanelDataGrid). The expansion sits inside the OI detail lines grid\'s own provider, so the context default covers it, AND StockDocumentsPanel passes scrollerMaxHeight={false} itself (S3, PLAN-oi-request-cs-reserve.md, stock grid on the OI page)',
+  ],
   // The primitives themselves: the prop declaration, the renderer, and the
   // wrapper that forwards `expanded`. Not nesting sites.
   ['components/ui/data-grid.tsx', 'declares the ColumnMeta field'],

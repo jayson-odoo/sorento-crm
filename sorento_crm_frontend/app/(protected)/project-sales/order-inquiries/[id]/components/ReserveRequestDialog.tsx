@@ -90,7 +90,7 @@ export function ReserveRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl">
+      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Request CS to reserve</DialogTitle>
         </DialogHeader>
