@@ -181,6 +181,43 @@ class TestResolvesAndSettlesFocus:
         unplaced_row = next((p for p in products if p.get("raw") == UNPLACED_CODE), None)
         assert unplaced_row is None or not unplaced_row.get("uuid")
 
+    def test_the_arm_emits_its_own_apply_event_with_the_resolved_uuid(
+        self, session_factory, seeded, monkeypatch
+    ):
+        """Kill test (reviewer round): the ONE `apply` trace event every turn gets is
+        recorded BEFORE this arm ever runs, so the Apply tab stayed on the
+        pre-resolution snapshot forever - a real turn (f68e75a2-096b-4575-b937-
+        297889709de1) resolved correctly but LOOKED unresolved on that tab, which is
+        what the browser pass reported as a defect. `_run_entities_only_arm` now
+        emits its OWN second `apply` event after resolving; this asserts the LAST one
+        (what `trace_detail.py::_apply()` reads, `entries[-1]`) shows the enriched
+        `after` while `before` is still the raw, unresolved snapshot.
+        """
+        from tests.chatbot.test_media_intake_turn import _trace_of
+
+        qf = _bare_entities_qf(placed=[PRODUCT_A_CODE])
+        result, _ = _run_turn(
+            session_factory, monkeypatch, qf=qf, text_body=PRODUCT_A_CODE,
+            msg_id="ZZT-eo-apply-event", matches=MATCHES,
+        )
+        trace = _trace_of(session_factory, result.turn_id)
+        apply_events = [r for r in trace if r.get("kind") == "apply"]
+        assert len(apply_events) >= 2, (
+            "expected a SECOND apply event from the arm's own resolution, found "
+            f"{len(apply_events)}: {apply_events}"
+        )
+        last_apply = apply_events[-1]
+        products_diff = last_apply.get("state_diff", {}).get("products", {})
+        after_row = (products_diff.get("after") or [None])[0]
+        before_row = (products_diff.get("before") or [None])[0]
+        assert after_row is not None and after_row.get("uuid") == PRODUCT_A_UUID, (
+            f"the LAST apply event's 'after' must show the resolved uuid: {last_apply}"
+        )
+        assert before_row is not None and not before_row.get("uuid"), (
+            f"the LAST apply event's 'before' must still be the pre-resolution "
+            f"snapshot (no uuid yet): {last_apply}"
+        )
+
 
 class TestReplyWordingBySource:
     """AC-1824/AC-1825: the reply names the source (photo vs typed) with its own words."""
