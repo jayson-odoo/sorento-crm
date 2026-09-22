@@ -377,10 +377,10 @@ def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
 
     Suggestion reads like the plan grid's Decision label now, never the engine's own
     triggered_reason prose ("reorder_level: net -1 <= level 50" was the owner's own
-    complaint) - `"Stock N + PO N + Buy N"` joined by " + ", or "Nothing". Neither
-    seeded product here has any free pool stock or an open PO, so the buy row's label
-    is the bare "Buy 12" and the covered row's is "Nothing" - do the arithmetic from
-    the seed, `triggered_reason` no longer drives the cell at all.
+    complaint) - `"Stock: N"` / `"PO: N"` / `"Buy: N"`, one part per line (A3b), or
+    "Nothing". Neither seeded product here has any free pool stock or an open PO, so
+    the buy row's label is the bare "Buy: 12" and the covered row's is "Nothing" - do
+    the arithmetic from the seed, `triggered_reason` no longer drives the cell at all.
     """
     from io import BytesIO
 
@@ -430,7 +430,7 @@ def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
 
     buy_row = rows_by_code[buy_p.product_code]
     assert buy_row[5] == 12.0, "Suggested qty is a number, left of Suggestion"
-    assert buy_row[6] == "Buy 12", (
+    assert buy_row[6] == "Buy: 12", (
         "no free pool stock and no open PO were seeded, so the label is a bare Buy"
     )
     # A blank cell round-trips as None through openpyxl load_workbook - it writes ""
