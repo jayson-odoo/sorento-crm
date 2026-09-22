@@ -832,9 +832,12 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       expect(quote).toHaveTextContent(shortText);
       expect(quote.className).toContain('truncate');
       expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
-      // The jump button is a SIBLING of the text, never a wrapper around it
-      // (S1 nit) - it still exists and still carries no text of its own.
-      expect(screen.getByTestId('enquiry-quote-jump')).not.toHaveTextContent(shortText);
+      // Fix round 2: collapsed, the text is INSIDE the jump button again (as
+      // on main) - one wide, readable click target rather than a bare icon.
+      const jump = screen.getByTestId('enquiry-quote-jump');
+      expect(jump.tagName).toBe('BUTTON');
+      expect(jump).toHaveTextContent(shortText);
+      expect(jump.contains(quote)).toBe(true);
     });
 
     it('AC-CP-2: a clamped quote truncates to one line with the full text as its title, and the toggle expands/collapses it', async () => {
@@ -852,6 +855,9 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       const toggle = screen.getByTestId('enquiry-quote-toggle');
       expect(toggle).toHaveTextContent('Show more');
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      // Names the exact node it expands/collapses.
+      expect(toggle).toHaveAttribute('aria-controls', quote.id);
+      expect(quote.id).toBeTruthy();
 
       fireEvent.click(toggle);
       expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show less');
@@ -866,6 +872,44 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       expect(screen.getByTestId('enquiry-quote-toggle')).toHaveAttribute('aria-expanded', 'false');
       expect(screen.getByTestId('enquiry-quote-text').className).toContain('truncate');
       expect(screen.getByTestId('enquiry-quote-text')).toHaveAttribute('title', longText);
+    });
+
+    // Fix round 2, blocker 2: collapsed, the text is the jump target again
+    // (as on main); expanded, the box is inert so a text-select drag inside
+    // it cannot fire the jump on mouseup - a SIBLING icon button carries the
+    // jump instead.
+    it('collapsed text click triggers the jump; expanded box click does not', async () => {
+      stubQuoteOverflow(true);
+      const longText = 'E'.repeat(1500);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: longText })),
+      );
+      renderDrawer();
+
+      // Collapsed: the text IS the (whole-row) button.
+      const collapsedText = await screen.findByTestId('enquiry-quote-text');
+      expect(collapsedText.closest('button')).toBe(screen.getByTestId('enquiry-quote-jump'));
+      fireEvent.click(collapsedText);
+      await waitFor(() =>
+        expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '1'),
+      );
+
+      // Expand: the box is now a plain, non-interactive paragraph - a
+      // SEPARATE icon button (still `enquiry-quote-jump`) carries the jump.
+      fireEvent.click(screen.getByTestId('enquiry-quote-toggle'));
+      const expandedText = screen.getByTestId('enquiry-quote-text');
+      expect(expandedText.tagName).toBe('P');
+      expect(expandedText.closest('button')).toBeNull();
+
+      fireEvent.click(expandedText);
+      // No second jump from clicking the (inert) box itself.
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '1');
+
+      // The sibling icon button still works.
+      fireEvent.click(screen.getByTestId('enquiry-quote-jump'));
+      await waitFor(() =>
+        expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '2'),
+      );
     });
 
     it('AC-CP-3: expanding the quote does not change the thread panel props', async () => {

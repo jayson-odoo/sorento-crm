@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
@@ -44,6 +44,7 @@ import {
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
+import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 import {
   useInterventionTicket,
@@ -192,6 +193,16 @@ export default function InterventionTicketDrawer({
   const quoteClampClass = enquiryExpanded
     ? 'max-h-40 overflow-y-auto whitespace-pre-wrap break-words'
     : 'truncate';
+  /** aria-controls target: the toggle names the exact node it expands/collapses. */
+  const quoteTextId = useId();
+  /** AC-N6: scrolls the thread to the message this ticket started from. */
+  const handleQuoteJump = () => {
+    if (!ticket?.source_message_id) return;
+    setJumpRequest((prev) => ({
+      messageId: ticket.source_message_id,
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+  };
 
   // S1: measure the collapsed line for real overflow, once the node exists,
   // whenever the ticket or its text changes, and on a resize - a length guess
@@ -357,60 +368,83 @@ export default function InterventionTicketDrawer({
             </div>
           ) : ticket ? (
             <div className="rounded-md border bg-muted/30 p-3">
-              {/* AC-N6 / R2: the quote is the way INTO the thread - the leading
-                  icon is the jump control, clicking it scrolls to the message
-                  that started this ticket, fetching the surrounding page
-                  first when the reader has scrolled past it. It is a SIBLING
-                  of the quote text, never a wrapper around it: nesting the
-                  height-capped, scrollable expanded box inside a `<button>`
-                  meant a text-select drag inside it could still fire the
-                  jump on mouseup. Only a button when there is a message to
-                  reach. Clamped to one line by default (AC-CP-1/2) so a long
-                  enquiry cannot push the thread below its floor (AC-CP-3) - a
-                  separate "Show more" toggle expands it instead. */}
-              <div className="flex items-start gap-2">
-                {ticket.source_message_id ? (
-                  <button
-                    type="button"
-                    data-testid="enquiry-quote-jump"
-                    aria-label="Show this message in the conversation"
-                    onClick={() =>
-                      setJumpRequest((prev) => ({
-                        messageId: ticket.source_message_id,
-                        nonce: (prev?.nonce ?? 0) + 1,
-                      }))
-                    }
-                    className="mt-0.5 shrink-0 rounded text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <MessageSquareQuote className="size-4" />
-                  </button>
-                ) : (
+              {/* AC-N6 / R2: the quote is the way INTO the thread. Collapsed,
+                  the whole one-line row (icon + text) IS the jump control
+                  again, same as main - a bare 16x16 icon is a worse hit area
+                  than the text it sits beside, and there is nothing yet to
+                  protect from an accidental drag-select. Expanded, the
+                  scrollable box is a plain, non-interactive paragraph and the
+                  icon becomes its own (coarse-hit-target) button instead: a
+                  text-select drag inside the expanded box must not risk
+                  firing the jump on mouseup (fix round 1 nit), but the reader
+                  still needs a way to jump while it is open. Only ever a
+                  button when there is a message to reach. Clamped to one line
+                  by default (AC-CP-1/2) so a long enquiry cannot push the
+                  thread below its floor (AC-CP-3) - the "Show more" toggle
+                  expands it instead. */}
+              {!enquiryExpanded && ticket.source_message_id ? (
+                <button
+                  type="button"
+                  data-testid="enquiry-quote-jump"
+                  aria-label="Show this message in the conversation"
+                  onClick={handleQuoteJump}
+                  className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                >
                   <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                )}
-                <div className="min-w-0 flex-1">
+                  <span
+                    ref={setQuoteTextNode}
+                    id={quoteTextId}
+                    data-testid="enquiry-quote-text"
+                    title={enquiryText}
+                    className={cn('min-w-0 flex-1 text-sm', quoteClampClass)}
+                  >
+                    {enquiryText}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex items-start gap-2">
+                  {ticket.source_message_id ? (
+                    <button
+                      type="button"
+                      data-testid="enquiry-quote-jump"
+                      aria-label="Show this message in the conversation"
+                      onClick={handleQuoteJump}
+                      className={cn(
+                        '-m-1.5 shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground',
+                        COARSE_HIT_TARGET_CLASS,
+                        PRESSED_CLASS,
+                      )}
+                    >
+                      <MessageSquareQuote className="size-4" />
+                    </button>
+                  ) : (
+                    <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  )}
                   <p
                     ref={setQuoteTextNode}
+                    id={quoteTextId}
                     data-testid="enquiry-quote-text"
                     // S1 nit: only useful while collapsed - a `title` on an
                     // already-expanded, fully-readable box is dead weight.
                     title={enquiryExpanded ? undefined : enquiryText}
-                    className={cn('text-sm', quoteClampClass)}
+                    className={cn('min-w-0 flex-1 text-sm', quoteClampClass)}
                   >
                     {enquiryText}
                   </p>
-                  {(isQuoteClamped || enquiryExpanded) && (
-                    <button
-                      type="button"
-                      data-testid="enquiry-quote-toggle"
-                      aria-expanded={enquiryExpanded}
-                      className="mt-1 text-xs font-medium text-primary hover:underline"
-                      onClick={() => setEnquiryExpanded((v) => !v)}
-                    >
-                      {enquiryExpanded ? 'Show less' : 'Show more'}
-                    </button>
-                  )}
                 </div>
-              </div>
+              )}
+              {(isQuoteClamped || enquiryExpanded) && (
+                <button
+                  type="button"
+                  data-testid="enquiry-quote-toggle"
+                  aria-expanded={enquiryExpanded}
+                  aria-controls={quoteTextId}
+                  className="ms-6 mt-1 text-xs font-medium text-primary hover:underline"
+                  onClick={() => setEnquiryExpanded((v) => !v)}
+                >
+                  {enquiryExpanded ? 'Show less' : 'Show more'}
+                </button>
+              )}
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <Users className="size-3" />

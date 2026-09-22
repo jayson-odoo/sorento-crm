@@ -570,6 +570,21 @@ export default function RespondChatList({
     });
   }, [items]);
 
+  // B1 regression: the three "scroll to a specific bubble" effects below
+  // (highlight, active search match, external focus/jump) used to depend on
+  // `sortedItems` itself so a same-size window SWAP (an `around` page
+  // replacing the old one) would still re-run them - `.length` alone missed
+  // it. But `sortedItems` is a new array on every content-only update too (a
+  // receipt tier flip, a note added), which re-ran them on every live poll
+  // tick and re-scrolled the reader to a match they had already left. This key
+  // changes exactly when the loaded WINDOW's identity changes - a different
+  // set of message ids, in a different order - and not when only a message's
+  // own fields change.
+  const loadedIdsKey = useMemo(
+    () => sortedItems.map((item) => (item.messageId == null ? '' : String(item.messageId))).join(','),
+    [sortedItems],
+  );
+
   // Messages and internal notes are two streams shown as one thread: comments
   // live in their own table (never in `chat_histories`), so the interleave
   // happens here, at render time, on the wall clock both carry.
@@ -616,12 +631,13 @@ export default function RespondChatList({
   // The enquiry bubble is scrolled to ONCE per highlighted message, not on every
   // render that changes the item count: the drawer always passes a highlight id,
   // so re-running this on each prepended page (or each live poll) dragged the
-  // reader back to the enquiry every time they scrolled up. `sortedItems` (the
-  // array itself, not just its length) stays in the deps because the target
-  // bubble mounts asynchronously - the ref, not the dependency list, is what
-  // makes it fire once. B1: `.length` alone missed a same-size window swap (an
-  // `around` page replacing the old one) - the array reference always changes
-  // when the window's contents do, even when the count does not.
+  // reader back to the enquiry every time they scrolled up. `loadedIdsKey`
+  // stays in the deps because the target bubble mounts asynchronously - the
+  // ref, not the dependency list, is what makes it fire once. B1: `.length`
+  // alone missed a same-size window swap (an `around` page replacing the old
+  // one) - the ids key changes whenever the window's CONTENTS do, even when
+  // the count does not, but NOT on a content-only update to an already-loaded
+  // message (a receipt flip, a note), which used to re-fire this on every poll.
   const didHighlight = useRef<string | null>(null);
   useEffect(() => {
     if (activeMatchId || !normalizedHighlightId) return;
@@ -630,7 +646,7 @@ export default function RespondChatList({
     if (!node) return;
     didHighlight.current = normalizedHighlightId;
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
-  }, [sortedItems, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
+  }, [loadedIdsKey, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
 
   // Whether this thread has been landed on its tail yet. The slack check below
   // exists so a reader who scrolled up to read history is not yanked back on
@@ -688,14 +704,21 @@ export default function RespondChatList({
     if (!isLoadingOlder) prependAnchor.current = null;
   }, [isLoadingOlder]);
 
+  // Fix round 2 regression: this used to depend on `sortedItems` itself (the
+  // array reference), which is a NEW array on every content-only update (a
+  // receipt tier flip, a note) too, not only on a window swap - it re-scrolled
+  // the reader back to the match on every live poll tick that touched any
+  // message. `loadedIdsKey` changes only when the loaded window's ids change -
+  // a window swap while the SAME match is active re-fires this on purpose
+  // (the bubble has to be found again in the fresh window), a content-only
+  // tick does not.
   useEffect(() => {
     if (!activeMatchId) return;
     scrollBubbleIntoView(bubbleRefs.current.get(activeMatchId), {
       behavior: 'smooth',
       block: 'center',
     });
-    // B1: `sortedItems` itself, not `.length` - see the highlight effect above.
-  }, [activeMatchId, sortedItems, scrollBubbleIntoView]);
+  }, [activeMatchId, loadedIdsKey, scrollBubbleIntoView]);
 
   // In-flight latch for the older lane. A ref, not the `isLoadingOlder` prop:
   // scroll fires many times per frame and the prop only arrives a render later,
@@ -784,10 +807,14 @@ export default function RespondChatList({
   // quote whose target was outside the window). The nonce is the trigger, and
   // it is only marked handled once the bubble EXISTS - after an around-page
   // load the target mounts a render or two later, so the effect re-runs on
-  // `sortedItems` (not just its length: B1) until it can actually scroll.
+  // `loadedIdsKey` (not just the item count: B1) until it can actually scroll.
   // `focusNonce` is set ONCE, synchronously, before the fetch resolves; the
   // page that lands afterwards is a separate prop update that does NOT bump it
-  // again, so `sortedItems.length` alone missed a same-size window swap.
+  // again, so the item count alone missed a same-size window swap. Fix round
+  // 2: a plain array reference (`sortedItems`) also changes on a
+  // content-only tick (a receipt flip, a note), which the id-set key does not
+  // - though `handledFocusNonce` already stops this one from ACTING twice,
+  // matching it to the other two effects keeps all three on one rule.
   const handledFocusNonce = useRef(0);
   useEffect(() => {
     if (!focusNonce || focusNonce === handledFocusNonce.current) return;
@@ -797,7 +824,7 @@ export default function RespondChatList({
     handledFocusNonce.current = focusNonce;
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
     setFlashMessageId(focusMessageId);
-  }, [focusNonce, focusMessageId, sortedItems, scrollBubbleIntoView]);
+  }, [focusNonce, focusMessageId, loadedIdsKey, scrollBubbleIntoView]);
 
   // Clear the flash ring after it has been seen. Reset on every new target so a
   // second jump re-flashes instead of inheriting the first one's timer.
