@@ -31,6 +31,7 @@ revision-semantics decision. That decision is now taken (R3 below).
 | `uncover_lines` is already the answer when purchasing refuses an OI row | `project_order_inquiry_service.py:5358` |
 | Tests pinning today's refusal | BE `tests/test_fulfilment_line_draft_route.py:1059` (AC-B2); FE `BoardLineDecisionPanel.test.tsx:1086-1100` (AC-F1) |
 | A revision minted by `uncover_lines` is not in the undo journal (`undo_last_confirm` does not reverse it) | `app/services/project_supply_undo_service.py:12` |
+| **(fix round, 22 Sep 2026)** `uncover_lines`' WHOLE-REVISION branch (`covered - wanted` empty, i.e. the rejected line is the ONLY one covered) never ran `confirm()`/`refresh_for_decision`, so its `_retire_uncovered_rows` call - the thing that actually cancels a dropped line's still-raised `IV_ORDER`/`IV_ORDER_BACK` row - never fired either; `supersede_for_material_change`'s own `_release_supply_borrow_holds` only releases step-3 PLACEMENT rows (`covered_by` set), not a plain raised Buy. Confirmed empirically: a single-line order confirmed as Buy, then `uncover_lines`'d, left its `IV_ORDER` row `raised`. The owner's exact case ("one confirmed Buy line, reject it") hits precisely this branch. | `project_supply_service.py:6975-6976` (the bare `supersede_for_material_change` call, before the fix) |
 
 ## Rulings (owner, 22 Sep 2026)
 
@@ -44,11 +45,20 @@ revision-semantics decision. That decision is now taken (R3 below).
 
 ```
 if verdict == "rejected" and covered:
-    uncover_lines(order, [core_line.id], actor_user_id=actor, reason=<reason>)
+    uncover_lines(order, [project_line_id], actor_user_id=actor, reason=<reason>)
     # line is uncovered now; fall through to the ordinary draft upsert
 elif verdict != "amended" and covered:
     409 board_line_already_confirmed   # unchanged for every other verdict
 ```
+
+`project_line_id` above is the MIRROR `ProjectSalesOrderLine.id` (corrected, fix round - the
+snapshot's own `line_snapshots[].project_line_id`, not `core_line.id`): `uncover_lines`
+matches `line_ids` against each snapshot's `project_line_id`, never its `core_line_id` - the
+two are different rows (`ProjectSalesOrderLine.core_sales_order_line_id` is the FK between
+them) - so passing the core line's id left the line covered. The coder's own lift of
+`_covered_by_active_decision` returns the matching snapshot itself now (as
+`_active_coverage`), so this seam reads `project_line_id` off the exact snapshot the
+coverage check already found, at no extra query.
 
 - `reason` is required for the rejected verdict on a covered line (422
   `board_line_reject_reason_required` when blank), and it is the sentence stamped on the
@@ -105,6 +115,20 @@ pytest, `tests/test_fulfilment_line_draft_route.py` (flip AC-B2, add):
   unchanged).
 - Red 5: the covered line's raised supply OI row is retired by the reject (state not
   `raised` afterwards).
+- Red 11 (fix round, 22 Sep 2026): the OWNER's own case - a SINGLE covered line (nothing
+  else covered), confirmed as Buy, rejected -> its raised `IV_ORDER` row is no longer
+  `raised` (`test_rejecting_the_only_covered_line_retires_its_raised_order_row`), and the
+  same for a Buy CS marked "Order back" (`IV_ORDER_BACK`, no `covered_by` document -
+  `test_rejecting_the_only_covered_line_retires_its_raised_order_back_row`). Fixed in
+  `ProjectOrderInquiryService._retire_uncovered_rows`'s new `only_line_ids` mode (widens the
+  verb set to `IV_ORDER_BACK`, drops the "diff against a successor decision" filter since
+  the whole-revision branch writes no successor, and explicitly SKIPS a row purchasing has
+  already rejected - `ack_state == ACK_REJECTED` - because `reject_row`/`reject_rows`
+  reaches this same seam through `_uncover_rejected_lines`, and cancelling `row.state` there
+  dropped the row out of the ack-summary's `rejected` facet, caught live by
+  `test_the_summary_ack_facet_carries_all_four_keys_by_name`
+  (`tests/test_order_inquiry_handshake_edges.py`) failing once the first cut of this fix
+  landed).
 
 vitest, `BoardVerdictActions.test.tsx` (flip AC-B4 of #1115, add):
 

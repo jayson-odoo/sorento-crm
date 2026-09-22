@@ -399,6 +399,40 @@ def test_rejecting_an_already_rejected_row_is_refused(api):
     assert row.rejected_reason == "No stock", "the refused second reject left the first reason"
 
 
+def test_rejecting_the_only_row_on_a_single_covered_line_order_retires_the_revision_and_leaves_the_row_as_it_was(api):
+    """Owner case, 22 Sep 2026 (`PLAN-board-reject-on-confirmed-line.md`, fix round):
+    purchasing's OWN refusal reaches the SAME whole-revision `uncover_lines` seam a board
+    Reject does, on an order where this row's line is the ONLY one covered - `_raise_one_row`
+    builds exactly that shape. Two things the fix must not get wrong at once:
+
+    * the order's active decision is genuinely retired (this line is undecided again, the
+      whole point of a refusal); and
+    * this row itself, whose `ack_state` the reject already stamped `rejected`, is left
+      EXACTLY as it was otherwise - `_retire_uncovered_rows`' new `only_line_ids` mode skips
+      a row `ack_state == ACK_REJECTED` on purpose, because cancelling it here dropped it out
+      of the ack summary's `rejected` facet (`_acks` hides `state == cancelled` rows), caught
+      by `test_the_summary_ack_facet_carries_all_four_keys_by_name`.
+    """
+    _client, world = api
+    fixture = _raise_one_row(api)
+    row = fixture["row"]
+    before_state = row.state
+    before_revision = _active_revision_no(world, fixture["order"])
+    assert before_revision is not None, "sanity: the line starts covered"
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(f"{LIST}/{row.id}/reject", json={"reason": "No stock"})
+
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    world.db.refresh(row)
+    assert row.ack_state == ACK_REJECTED
+    assert row.state == before_state, "the row purchasing just rejected is left exactly as it was"
+    assert _active_revision_no(world, fixture["order"]) is None, (
+        "the line's only decision retires - it is undecided again"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Company scope: refused, not silently skipped
 # ---------------------------------------------------------------------------

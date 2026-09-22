@@ -6973,6 +6973,19 @@ class ProjectSupplyService:
             active.superseded_reason = reason
             self.db.flush()
         else:
+            # Owner case, 22 Sep 2026 (fix round, `PLAN-board-reject-on-confirmed-line.md`):
+            # "one confirmed Buy line, reject it, it must not flow to purchasing at all."
+            # This branch writes NO successor revision for the confirm-based path above to
+            # route the retirement through - `refresh_for_decision`'s own
+            # `_retire_uncovered_rows` call never runs - so the wanted lines' still-raised
+            # ORDER/ORDER_BACK rows are retired directly, the same way, before the revision
+            # they belong to is retired with no replacement. `supersede_for_material_change`
+            # already does this for a step-3 PLACEMENT (a document already covers the row);
+            # this is its own raised-instruction twin.
+            ProjectOrderInquiryService(self.db).retire_rows_for_dropped_lines(
+                str(order.id), active, sorted(wanted), reason=reason,
+                actor_user_id=actor_user_id,
+            )
             self.supersede_for_material_change(order, reason)
         return True
 

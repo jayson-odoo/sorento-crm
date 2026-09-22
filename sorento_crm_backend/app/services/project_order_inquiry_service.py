@@ -3579,6 +3579,8 @@ class ProjectOrderInquiryService:
         buy_lines: Sequence[Dict[str, Any]],
         *,
         actor_user_id: Optional[str] = None,
+        only_line_ids: Optional[Sequence[str]] = None,
+        reason: Optional[str] = None,
     ) -> None:
         """Cancel still-raised rows of an EARLIER revision on lines this one dropped.
 
@@ -3599,22 +3601,52 @@ class ProjectOrderInquiryService:
         (`PLAN-oi-confirm-per-so.md` S1): linking never waits for confirm, so an unread
         row can hold a manual link just as a confirmed one can hold only the cascade's
         own guess).
+
+        `only_line_ids`/`reason` (owner case, 22 Sep 2026,
+        `PLAN-board-reject-on-confirmed-line.md`, fix round): `ProjectSupplyService
+        .uncover_lines`' whole-revision branch retires the very decision this call would
+        otherwise diff against - there is no SUCCESSOR revision to name a
+        `supply_decision_id != decision.id` row as belonging to an earlier one, so the
+        ordinary query above would exclude every row this call means to retire (it found
+        none, ever, for that branch - "one confirmed Buy line, reject it" left its raised
+        row in front of purchasing for ever). Given explicitly, the query scopes to just
+        these lines instead of diffing against a successor, reads `IV_ORDER_BACK` alongside
+        `IV_ORDER`/`IV_CANCEL_BALANCE` (a Buy CS marked "Order back" with no `covered_by`
+        document is not a step-3 placement - `retire_supply_borrow_rows` does not see it -
+        but it is exactly as much this method's "line dropped, raised row must go" case as
+        a plain ORDER row), and the note is `reason` itself: there is no successor revision
+        number to name, only the words given for taking the line out.
         """
         covered = {str(entry["line"].id) for entry in buy_lines}
-        stale = (
-            self.db.query(OrderInquiryRow)
-            .filter(
-                OrderInquiryRow.order_inquiry_id == inquiry.id,
-                OrderInquiryRow.state.in_(
-                    (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
-                ),
+        query = self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.order_inquiry_id == inquiry.id,
+            OrderInquiryRow.state.in_(
+                (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+            ),
+        )
+        if only_line_ids is not None:
+            query = query.filter(
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
+                OrderInquiryRow.so_line_id.in_([str(x) for x in only_line_ids]),
+                # A row purchasing has ALREADY rejected is left exactly as it is (owner
+                # case, fix round, found by `test_the_summary_ack_facet_carries_all_four_
+                # keys_by_name`): `reject_row`/`reject_rows` calls `uncover_lines` on the
+                # very line it just refused, through this same whole-revision branch, and
+                # `row.state` still reads RAISED at that point (`_stamp_rejected` moves
+                # only `ack_state`) - so without this the retirement below would cancel
+                # the row purchasing just rejected, and the ack summary's "rejected" facet
+                # (`_acks`, `order_inquiry_worklist_service.py`) excludes CANCELLED rows by
+                # design, so the row purchasing was just told about vanished from it.
+                OrderInquiryRow.ack_state != ACK_REJECTED,
+            )
+        else:
+            query = query.filter(
                 OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
                 OrderInquiryRow.supply_decision_id.isnot(None),
                 OrderInquiryRow.supply_decision_id != decision.id,
             )
-            .all()
-        )
-        stamp = f"Superseded by revision {decision.revision_no}"
+        stale = query.all()
+        stamp = reason if reason is not None else f"Superseded by revision {decision.revision_no}"
         # Batched (S6): one grouped load for every stale row's links, rather than one
         # query per row inside the loop below.
         stale_links = self._links_by_row([str(row.id) for row in stale])
@@ -3646,6 +3678,35 @@ class ProjectOrderInquiryService:
             self._record_handover(
                 row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
             )
+
+    def retire_rows_for_dropped_lines(
+        self,
+        project_sales_order_id: str,
+        decision: Any,
+        line_ids: Sequence[str],
+        *,
+        reason: str,
+        actor_user_id: Optional[str] = None,
+    ) -> None:
+        """Public entry to `_retire_uncovered_rows`'s `only_line_ids` mode, for
+        `ProjectSupplyService.uncover_lines`' whole-revision branch (owner case, 22 Sep
+        2026, `PLAN-board-reject-on-confirmed-line.md`, fix round): the confirm-based
+        branch reaches the SAME retirement through `refresh_for_decision`'s own call
+        inside `confirm()`; this branch writes no fresh decision to route a confirm
+        through, so it calls the retirement directly instead. No-op when the order has
+        never raised an inquiry at all.
+        """
+        inquiry = self._existing(project_sales_order_id, None)
+        if inquiry is None:
+            return
+        self._retire_uncovered_rows(
+            inquiry,
+            decision,
+            buy_lines=[],
+            actor_user_id=actor_user_id,
+            only_line_ids=line_ids,
+            reason=reason,
+        )
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None

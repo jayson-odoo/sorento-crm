@@ -1267,6 +1267,84 @@ def test_rejecting_a_covered_line_retires_its_raised_order_row(api):
     assert oi_row.state != INQUIRY_RAISED
 
 
+def _confirm_as_buy(client, world, order, line, *, qty="10", order_back=False):
+    """Confirms `line` whole as a BUY - `order_back=True` raises `IV_ORDER_BACK` instead of
+    `IV_ORDER`, with no `covered_by` document (it is not a step-3 placement either) - the
+    shape the single-covered-line reject case needs (owner case, 22 Sep 2026)."""
+    body = {**_line_payload(line.id, buy_qty=qty), "order_back": order_back}
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm", json={"lines": [body]}
+    )
+    assert response.status_code == 200, response.text
+    return response
+
+
+def test_rejecting_the_only_covered_line_retires_its_raised_order_row(api):
+    """Owner case, 22 Sep 2026 (`PLAN-board-reject-on-confirmed-line.md` Measured facts,
+    fix round): "one confirmed Buy line, reject it, it must not flow to purchasing at
+    all." When the rejected line is the ONLY one an active decision covers,
+    `uncover_lines` takes the `supersede_for_material_change` branch, which releases only
+    step-3 PLACEMENT rows - a plain raised `IV_ORDER` row (no `covered_by` document) is
+    left standing, still flowing to purchasing, even though the line it names is no
+    longer decided at all. AC-B3 (the revision retires, nothing replaces it) and AC-B4
+    (the raised row is no longer `raised`) together require this."""
+    from app.models.project_so import IV_ORDER, INQUIRY_RAISED, OrderInquiryRow
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    _confirm_as_buy(client, world, order, line)
+    oi_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    assert oi_row.state == INQUIRY_RAISED, "sanity: the row has to start raised"
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    db.refresh(oi_row)
+    assert oi_row.state != INQUIRY_RAISED
+    assert (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.state == INQUIRY_RAISED,
+        )
+        .count()
+        == 0
+    )
+
+
+def test_rejecting_the_only_covered_line_retires_its_raised_order_back_row(api):
+    """The other verb the same gap leaves stranded: a Buy CS marked "Order back" raises
+    `IV_ORDER_BACK`, not `IV_ORDER`, and it carries no `covered_by` document (that is what
+    tells it apart from a step-3 placement, which `retire_supply_borrow_rows` already
+    handles) - so it needs the SAME retirement `IV_ORDER` does, not the placement one."""
+    from app.models.project_so import IV_ORDER_BACK, INQUIRY_RAISED, OrderInquiryRow
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    _confirm_as_buy(client, world, order, line, order_back=True)
+    oi_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER_BACK)
+        .one()
+    )
+    assert oi_row.covered_by is None, (
+        "sanity: this is the plain order-back-flagged Buy, not a step-3 placement"
+    )
+    assert oi_row.state == INQUIRY_RAISED, "sanity: the row has to start raised"
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "wrong site"})
+
+    assert response.status_code == 200, response.text
+    db.refresh(oi_row)
+    assert oi_row.state != INQUIRY_RAISED
+
+
 def test_an_amendment_on_a_confirmed_line_still_saves(api):
     """AC-B3: the amend path is untouched by R1 - it is the one verdict a covered line still
     takes."""
