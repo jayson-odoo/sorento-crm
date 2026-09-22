@@ -986,7 +986,12 @@ def _miss_question(
             if option
         ]
         if options:
-            return pending.ask("member_offer", options, asked_at_turn=asked_at_turn)
+            # SRTSC07 review round 1, SHOULD-2: the member roster's own offer needed
+            # the same top-level stamp as the other mint sites in this function -
+            # picking a member option IS an escalation acceptance (`turn/apply.py:546`).
+            return pending.ask(
+                "member_offer", options, asked_at_turn=asked_at_turn, payload={"agent": agent}
+            )
 
     if roster_options:
         # AC-1691's umbrella, "in any domain and for any entity kind" - the SAME guard

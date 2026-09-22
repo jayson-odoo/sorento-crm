@@ -38,11 +38,22 @@ boundary").
   so a genuine "two different agents" fixture has to be built by hand - this tests the
   ACCEPTANCE side's per-option read (the thing the carry fix touches), not any one
   mint site's internal signature, per the captain's own instruction not to overfit here.
+
+**Review round 1 (reviewer verdict READY, SHOULDs folded, coder-authored red-then-green
+per the small-fix-track brief):** AC-1796/AC-1797 pin the acceptable-offer GATE
+(SHOULD-1); AC-1798 pins the member-option FALL-THROUGH (SHOULD-3); AC-1799 covers the
+six further mint sites SHOULD-2 named, one end-to-end (the company clarify's own
+answering "1" turn) and five pure assertions straight against the private mint
+functions themselves, cheaper than an engine replay for the same observation; AC-1800
+is NIT-7's direct `_team_pick_question` unit test. AC-1788 and AC-1790, and half of
+AC-1787 and AC-1793, are DELETED rather than adjusted (SHOULD-4 retired the `session=`
+fallback they pinned) - see the comment above `TestPrecedenceChain`.
 """
 from __future__ import annotations
 
 import json
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -439,7 +450,15 @@ class TestAC1786MultiTeamPickCarriesThePickedOptionsOwnAgent:
 
 
 # --------------------------------------------------------------------------- #
-# AC-1787..AC-1790: `with_routing_agent_default`'s precedence chain, pure python
+# AC-1787, AC-1789: `with_routing_agent_default`'s precedence chain, pure python.
+#
+# AC-1788 and AC-1790 are RETIRED (reviewer round 1, SHOULD-4): both pinned a
+# `session=` fallback (`_prior_suggested_agent`, a `variables.routing.suggested_agent`
+# nest one turn back) that no writer in this codebase ever produces for the agent half
+# - unlike the team half, which `_prior_suggested_team` reads off a nest a real writer
+# DOES still produce. `with_routing_agent_default` no longer takes a `session=` keyword
+# at all, so their own two tests (and the ONE half of AC-1787/AC-1793 that exercised the
+# same session carry) are deleted rather than left calling a removed parameter.
 # --------------------------------------------------------------------------- #
 
 
@@ -453,63 +472,100 @@ class TestPrecedenceChain:
             payload={"escalate_offered": True, "agent": "incoming_stock_enquiries", "domain": "incoming"},
         )
 
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending, session=None)
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
 
         assert out["routing"]["suggested_agent"] == "order_enquiries", out
 
-    def test_ac_1787_a_named_agent_wins_over_a_carried_prior_session_agent_too(self) -> None:
-        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": "marketing_form"}}
-        session = {"session_vars": {"variables": {"routing": {"suggested_agent": "it_support"}}}}
-
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=None, session=session)
-
-        assert out["routing"]["suggested_agent"] == "marketing_form", out
-
-    def test_ac_1788_no_offer_parser_null_reads_the_prior_sessions_nested_shape(self) -> None:
-        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
-        session = {
-            "session_vars": {"variables": {"routing": {"suggested_agent": "incoming_stock_enquiries"}}}
-        }
-
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=None, session=session)
-
-        assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
-
-    def test_ac_1788_no_offer_parser_null_reads_the_prior_sessions_bare_variables_shape(self) -> None:
-        # The SAME second fallback `_prior_suggested_team` already reads: `ctx.session.
-        # variables` directly, bypassing `session_vars` (`turn_runtime.py:344-345`).
-        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
-        session = {"variables": {"routing": {"suggested_agent": "order_enquiries"}}}
-
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=None, session=session)
-
-        assert out["routing"]["suggested_agent"] == "order_enquiries", out
-
-    def test_ac_1789_no_offer_no_prior_routing_parser_null_falls_to_the_hard_default(self) -> None:
+    def test_ac_1789_no_offer_parser_null_falls_to_the_hard_default(self) -> None:
         verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
 
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=None, session=None)
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=None)
 
         assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
 
-    @pytest.mark.parametrize(
-        "session",
-        [
-            "not-a-dict",
-            {"session_vars": "also-not-a-dict"},
-            {"session_vars": {"variables": "blank string routing block"}},
-            {"session_vars": {"variables": {"routing": "blank string"}}},
-            {},
-            None,
-        ],
-        ids=["bare-string", "session_vars-not-dict", "variables-not-dict", "routing-not-dict", "empty-dict", "none"],
-    )
-    def test_ac_1790_an_unreadable_session_shape_reads_as_nothing_carried_never_raises(
-        self, session
-    ) -> None:
-        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
 
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=None, session=session)
+# --------------------------------------------------------------------------- #
+# AC-1796/AC-1797 (reviewer round 1, SHOULD-1): `_accepted_pending_agent` is gated on
+# the SAME condition `turn/apply.py:691` uses for "this offer is acceptable" -
+# `pending.kind in OFFER_KINDS or pending.payload.get("escalate_offered") is True`.
+# Without the gate a roster pending with no escalate offer attached could still supply
+# an agent here while `lane_parse_output`'s own team chain (which does not read that
+# same pending at all) left the team at its default - the pair disagreeing.
+# --------------------------------------------------------------------------- #
+
+
+class TestGateOnAcceptableOffers:
+    def test_ac_1796_a_roster_without_escalate_offered_carries_no_agent(self) -> None:
+        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
+        # `product_pick` is a ROSTER kind, not in `OFFER_KINDS` - and this one carries
+        # NO `escalate_offered` flag, unlike AC-1784's roster (still open while the
+        # customer asks about something else entirely, the fresh-handover shape the
+        # review measured the 404 on).
+        pending = pending_ask(
+            "product_pick",
+            [{"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}}],
+            team="purchasing",
+            payload={"agent": "incoming_stock_enquiries"},
+        )
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
+
+    def test_ac_1797_the_same_roster_with_escalate_offered_does_carry(self) -> None:
+        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
+        pending = pending_ask(
+            "product_pick",
+            [{"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}}],
+            team="purchasing",
+            payload={"escalate_offered": True, "agent": "incoming_stock_enquiries"},
+        )
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
+
+
+# --------------------------------------------------------------------------- #
+# AC-1798 (reviewer round 1, SHOULD-3): a numbered pick that lands on a MEMBER option
+# (a combined roster+CS offer's own member half - no `payload["agent"]`, no
+# `payload["hold"]`) falls through to the pending's own top-level agent, since picking
+# one IS an escalation acceptance (`turn/apply.py:546`); only the explicit hold option
+# short-circuits to `None`.
+# --------------------------------------------------------------------------- #
+
+
+class TestMemberOptionFallThrough:
+    def _plant_combined_pending(self):
+        return pending_ask(
+            "team_pick",
+            [
+                {"position": 1, "label": "Jane Doe", "entity_type": "member", "payload": {}},
+                {
+                    "position": 2,
+                    "label": "No it's okay",
+                    "entity_type": "team",
+                    "payload": {"team": None, "agent": None, "hold": True},
+                },
+            ],
+            team=None,
+            expects="pick",
+            payload={"agent": "incoming_stock_enquiries"},
+        )
+
+    def test_ac_1798_a_member_option_pick_carries_the_pendings_own_agent(self) -> None:
+        verdict_in = _position_verdict(1)
+        pending = self._plant_combined_pending()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
+
+        assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out
+
+    def test_ac_1798_the_hold_option_pick_carries_none_and_falls_to_the_default(self) -> None:
+        verdict_in = _position_verdict(2)
+        pending = self._plant_combined_pending()
+
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
 
         assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
 
@@ -755,26 +811,17 @@ class TestAC1792OfferPayloadCarriesTheAgent:
 
 
 # --------------------------------------------------------------------------- #
-# AC-1793: a pending minted with no agent falls through cleanly, no KeyError
+# AC-1793: a HAND-BUILT pending with no agent falls through to the default cleanly, no
+# KeyError. NIT-5 (reviewer round 1): an ENGINE-minted pending never actually stores
+# `agent: None` in practice - `with_routing_agent_default` has already filled the hard
+# default into `routing.suggested_agent` for THIS turn by the time any mint site reads
+# it, so a real mint's own top-level payload always carries a real agent code.
+# `agent: None` is reachable only by hand-building a pending directly, as below.
 # --------------------------------------------------------------------------- #
 
 
 class TestAC1793NoAgentOnThePendingFallsThroughCleanly:
-    def test_ac_1793_a_pending_with_agent_none_falls_through_to_prior_session(self) -> None:
-        verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
-        pending = pending_ask(
-            "team_pick",
-            [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
-            team="customer_service",
-            payload={"agent": None},
-        )
-        session = {"session_vars": {"variables": {"routing": {"suggested_agent": "order_enquiries"}}}}
-
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending, session=session)
-
-        assert out["routing"]["suggested_agent"] == "order_enquiries", out
-
-    def test_ac_1793_a_pending_with_agent_none_and_no_prior_session_falls_to_the_hard_default(
+    def test_ac_1793_a_hand_built_pending_with_agent_none_falls_to_the_hard_default(
         self,
     ) -> None:
         verdict_in = {"routing": {"suggested_team": None, "suggested_agent": None}}
@@ -785,7 +832,7 @@ class TestAC1793NoAgentOnThePendingFallsThroughCleanly:
             payload={"agent": None},
         )
 
-        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending, session=None)
+        out = turn_runtime.with_routing_agent_default(verdict_in, pending=pending)
 
         assert out["routing"]["suggested_agent"] == DEFAULT_SUGGESTED_AGENT, out
         # /external/next-assignee 400s on an empty agent_code - the carry must never
@@ -870,3 +917,200 @@ class TestAC1795TeamChainInLaneParseOutputUnchanged:
         # And the agent this call was given rides straight through, untouched by the
         # team chain above it.
         assert out["routing"]["suggested_agent"] == "incoming_stock_enquiries", out["routing"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-1799 (reviewer round 1, SHOULD-2): the six remaining mint sites each stamp THIS
+# turn's `routing.suggested_agent` the same way the two already-fixed sites do. The
+# company clarify's own answering "1" turn is the one end-to-end case (a real engine
+# replay through to the captured `/external/next-assignee` body); every other site
+# gets a pure assertion straight against the private mint function itself - none of
+# them touch the database or the parser, so there is no reason to pay for an engine
+# replay just to observe one dict.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1799SixMoreMintSitesStampTheAgent:
+    def test_company_clarify_answering_turn_carries_the_agent_on_the_wire_body(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """The one end-to-end case: turn 1's state is planted as `engine.py::
+        _question_offered`'s own company-clarify arm would have left it (payload's
+        top-level `agent`, per-option `company`/`company_id`, exactly the shape
+        `_option_payload`'s "company" branch plus this fix's own top-level stamp
+        build), and turn 2 answers "1" for real through `engine.run_turn`, all the
+        way to the captured `/external/next-assignee` body."""
+        _seed_contact(session_factory, phone="+60000001799")
+        _write_open_question(
+            session_factory,
+            open_question={
+                "kind": "company_pick",
+                "expects": "pick",
+                "team": "purchasing",
+                "asked_at_turn": 1,
+                "payload": {"agent": "incoming_stock_enquiries"},
+                "options": [
+                    {
+                        "position": 1,
+                        "label": "ACME SDN BHD",
+                        "entity_type": "company",
+                        "payload": {
+                            "company": "ACME SDN BHD",
+                            "company_id": "zzt-company-1",
+                            "brand_code": None,
+                        },
+                    },
+                    {
+                        "position": 2,
+                        "label": "BETA SDN BHD",
+                        "entity_type": "company",
+                        "payload": {
+                            "company": "BETA SDN BHD",
+                            "company_id": "zzt-company-2",
+                            "brand_code": None,
+                        },
+                    },
+                ],
+            },
+        )
+        stub_parser(_position_verdict(1))
+        stub_access()
+        bodies = _capture_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "out_of_scope", result.branch_kind
+        assert len(bodies) == 1, bodies
+        body = bodies[0]
+        assert body["team_code"] == "purchasing", body
+        assert body["agent_code"] == "incoming_stock_enquiries", body
+
+    def test_question_offered_team_clarify_stamps_agent_on_each_option(self) -> None:
+        ctx = {
+            "parse": {
+                "output": {
+                    "routing": {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}
+                }
+            }
+        }
+        values = {
+            "clarify": {"clarify_team": True, "clarify_team_options": [{"team": "purchasing", "label": "Purchasing"}]}
+        }
+
+        pending = engine_mod._question_offered(ctx, values, {}, {})
+
+        assert pending is not None and pending.kind == "team_pick", pending
+        assert pending.options[0]["payload"]["team"] == "purchasing", pending.options
+        assert pending.options[0]["payload"]["agent"] == "incoming_stock_enquiries", pending.options
+
+    def test_question_offered_member_offer_stamps_agent_on_top_level_payload(self) -> None:
+        ctx = {"parse": {"output": {"routing": {"suggested_agent": "incoming_stock_enquiries"}}}}
+        outcome = {"build-cs-member-offer": {"cs_last_result_set": [{"idx": 1, "label": "Jane Doe", "uuid": "u1"}]}}
+
+        pending = engine_mod._question_offered(ctx, {}, outcome, {})
+
+        assert pending is not None and pending.kind == "member_offer", pending
+        assert pending.payload.get("agent") == "incoming_stock_enquiries", pending.payload
+
+    def test_question_offered_escalate_catalog_stamps_agent_on_top_level_payload(self) -> None:
+        ctx = {
+            "parse": {
+                "output": {
+                    "routing": {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}
+                }
+            }
+        }
+        outcome = {"escalate-catalog": {"is_escalate_offer": True}}
+
+        pending = engine_mod._question_offered(ctx, {}, outcome, {})
+
+        assert pending is not None and pending.kind == "team_pick", pending
+        assert pending.team == "purchasing", pending
+        assert pending.payload.get("agent") == "incoming_stock_enquiries", pending.payload
+
+    def test_answer_bridge_miss_question_member_offer_arm_stamps_top_level_payload(
+        self,
+    ) -> None:
+        bridge = pytest.importorskip("app.services.chatbot.answer_bridge")
+
+        pending = bridge._miss_question(
+            {},
+            {"build-cs-member-offer": {"member_offer": True, "cs_last_result_set": [{"idx": 1, "label": "Jane Doe", "uuid": "u1"}]}},
+            gate={},
+            parser={"routing": {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}},
+            asked_at_turn=1,
+            text="",
+        )
+
+        assert pending is not None and pending.kind == "member_offer", pending
+        assert pending.payload.get("agent") == "incoming_stock_enquiries", pending.payload
+
+    def _roster_re_arm(self, *, carried_agent: str | None, ctx_agent: str | None):
+        """Drives `turn/compose.py::compose`'s roster re-arm directly: a STILL-OPEN
+        roster (contract 36) that already carries an escalate offer, over a fresh miss
+        on the SAME domain it was already escalating for - the branch at
+        `compose.py:396-408` that keeps the carried pending rather than minting a
+        fresh `_team_pick_question`."""
+        from app.services.chatbot.turn.compose import compose as _compose
+        from app.services.chatbot.turn.policy import Policy
+        from app.services.chatbot.turn.state import Focus, Profile, State
+
+        from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
+
+        row = _domain_row("incoming", narrowing={"product": "narrow_to_code"})
+        row["label"] = "Incoming (ETA)"
+        row["escalation_team_code"] = "purchasing"
+        policy = Policy.from_rows(domains=[row], kinds=[], tier_order=TIER_ORDER_FIXTURE)
+
+        carried = pending_ask(
+            "product_pick",
+            [{"position": 1, "label": "SRTSC07-A", "entity_type": "product", "payload": {}}],
+            team="purchasing",
+            payload={"agent": carried_agent, "escalate_offered": True},
+        )
+        state = State(focus=Focus(), pending=carried, profile=Profile(), turn_no=2)
+        envelopes = [
+            {"domain": "incoming", "denied": False, "entities": ["A"], "figures": [], "files": [], "miss": ["A"]}
+        ]
+
+        answer = _compose(envelopes, state, policy, SimpleNamespace(suggested_agent=ctx_agent))
+
+        assert answer.question is not None and answer.question.kind == "product_pick", answer.question
+        return answer.question
+
+    def test_compose_roster_re_arm_keeps_its_own_carried_agent_over_ctx(self) -> None:
+        question = self._roster_re_arm(carried_agent="incoming_stock_enquiries", ctx_agent="general_enquiries")
+
+        assert question.payload.get("agent") == "incoming_stock_enquiries", question.payload
+
+    def test_compose_roster_re_arm_falls_to_ctx_when_the_roster_carries_no_agent(self) -> None:
+        question = self._roster_re_arm(carried_agent=None, ctx_agent="incoming_stock_enquiries")
+
+        assert question.payload.get("agent") == "incoming_stock_enquiries", question.payload
+
+
+# --------------------------------------------------------------------------- #
+# AC-1800 (NIT-7, reviewer round 1): a direct unit test on
+# `turn/compose.py::_team_pick_question` itself, not just through a full engine
+# replay - the kill test in review round 1 showed the compose single-team branch was
+# untested on its own.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1800TeamPickQuestionDirectUnitTest:
+    def test_single_team_branch_stores_the_agent_on_the_pendings_payload(self) -> None:
+        from app.services.chatbot.turn.compose import _team_pick_question
+        from app.services.chatbot.turn.policy import Policy
+
+        from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
+
+        row = _domain_row("incoming", narrowing={"product": "narrow_to_code"})
+        row["escalation_team_code"] = "purchasing"
+        policy = Policy.from_rows(domains=[row], kinds=[], tier_order=TIER_ORDER_FIXTURE)
+
+        pending = _team_pick_question(["incoming"], policy, agent="x")
+
+        assert pending is not None
+        assert pending.expects == "yes_no", pending
+        assert pending.payload.get("agent") == "x", pending.payload

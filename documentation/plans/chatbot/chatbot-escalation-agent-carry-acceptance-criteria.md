@@ -27,14 +27,23 @@ All ACs are backend, pytest, `tests/chatbot/`. "Wire body" = the dict
   overridden by the carried one (a customer who says "yes, packing list please" and the
   parser names `incoming_stock_enquiries` keeps it; a parser naming `order_enquiries`
   keeps that too).
-- **AC-1788** No offer pending, parser null: `suggested_agent` comes from the prior
-  session's `variables.routing.suggested_agent` (same nest `_prior_suggested_team` reads,
-  both session shapes: `session_vars.variables` and bare `variables`).
-- **AC-1789** No offer, no prior routing, parser null: `DEFAULT_SUGGESTED_AGENT`
+- **AC-1788** retired: the tail never writes `variables.routing` for the agent half (no
+  writer in this codebase produces that nest - `turn/tail.py`'s five session keys hold no
+  such block, and `overwrite_for_contact` replaces rather than merges), so the
+  prior-session rung `_prior_suggested_team` keeps for the team half has no agent-half
+  counterpart and was removed rather than read a nest nothing ever writes (reviewer round
+  1, SHOULD-4). The two tests this AC covered were deleted.
+- **AC-1789** No offer pending, parser null: `DEFAULT_SUGGESTED_AGENT`
   (`general_enquiries`) - today's behaviour, unchanged. Existing
   `test_rearch_s6_handpass1_findings.py` tests 2b stay green.
-- **AC-1790** A session whose routing nest is unreadable (not a dict, blank string,
-  missing) reads as "nothing carried", never raises.
+- **AC-1790** retired alongside AC-1788 (reviewer round 1, SHOULD-4): it pinned the
+  never-raise contract of the SAME retired session-shape reader (`_prior_suggested_agent`,
+  six parametrized session shapes). `_accepted_pending_agent`'s own never-raise contract
+  (a malformed pending/verdict shape, `try/except` around `picked_positions`) is exercised
+  incidentally by AC-1790's sibling tests already in this file (AC-1793's hand-built
+  pending, AC-1798's fall-through) rather than by a dedicated parametrized case, since a
+  `Pending` only ever reaches this function through `turn_runtime.load_state`'s own
+  `from_wire`, which already guarantees the shape.
 
 ## Access
 
@@ -50,10 +59,35 @@ All ACs are backend, pytest, `tests/chatbot/`. "Wire body" = the dict
   `pending.payload["agent"]`; a multi-team `team_pick` stores it on each option's
   `payload["agent"]` beside `payload["team"]`; the hold option ("No it's okay") carries
   `agent: None`.
-- **AC-1793** A pending minted on a turn whose verdict had no agent stores `agent: None`
-  and the acceptance falls through to the prior-session / default chain (no KeyError, no
-  empty-string agent on the wire - `/external/next-assignee` 400s on an empty
-  `agent_code`).
+- **AC-1793** A HAND-BUILT pending (a unit test's own fixture, `payload={"agent": None}`)
+  falls through to the default chain cleanly (no KeyError, no empty-string agent on the
+  wire - `/external/next-assignee` 400s on an empty `agent_code`). Note (NIT-5, reviewer
+  round 1): an ENGINE-minted pending never actually stores `agent: None` in practice - by
+  the time any mint site reads `routing.suggested_agent`, `with_routing_agent_default` has
+  already run for that turn and filled the hard default in, so a real mint's own top-level
+  payload always carries a real agent code. `agent: None` is reachable only by hand-building
+  a pending directly, which is exactly what this AC's test does.
+
+## Gate and fall-through (reviewer round 1)
+
+- **AC-1796** A roster pending (`product_pick`, not in `OFFER_KINDS`) with NO
+  `escalate_offered` flag carries no agent at all, even when its payload happens to hold
+  one: `with_routing_agent_default` falls straight to `DEFAULT_SUGGESTED_AGENT`, matching
+  `lane_parse_output`'s own team chain, which also does not read that pending (SHOULD-1).
+- **AC-1797** The SAME roster pending WITH `escalate_offered: True` DOES carry its agent
+  (the gate's other side - `pending.kind in OFFER_KINDS or payload.get("escalate_offered")
+  is True`).
+- **AC-1798** A numbered pick over a combined roster+CS-member offer that lands on a
+  MEMBER option (no `payload["agent"]`, no `payload["hold"]`) carries the pending's own
+  top-level agent, not `None` (SHOULD-3); a pick that lands on the explicit hold option
+  (`payload["hold"] is True`) carries `None`.
+- **AC-1799** The six mint sites named in reviewer round 1 (`engine.py::_question_offered`'s
+  team clarify, company clarify, member offer and escalate-catalog arms;
+  `answer_bridge.py::_miss_question`'s member-offer arm; `turn/compose.py::compose`'s
+  roster re-arm) each stamp the minting turn's `routing.suggested_agent` the same way the
+  two already-fixed sites do. At minimum: the company clarify's answering "1" turn carries
+  the right `agent_code` on the wire body end to end; every other site gets a pure
+  assertion that the minted pending's payload carries the agent.
 
 ## Regression
 
@@ -63,3 +97,6 @@ All ACs are backend, pytest, `tests/chatbot/`. "Wire body" = the dict
   `test_s5_escalation_lane.py` and `test_turn_replay.py` suites stay green; replay
   fixtures under `tests/chatbot/replay_turns/console/` that pin a `suggested_agent` still
   match.
+- **AC-1800** (NIT-7) A direct unit test on `turn/compose.py::_team_pick_question` itself
+  (not just through a full engine replay): the single-team branch's own `Pending` carries
+  `payload["agent"] == "x"` when called with `agent="x"`.

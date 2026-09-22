@@ -39,31 +39,57 @@ Result: `(general_enquiries, purchasing)` -> the wrong tier-1 team.
 
 ## Fix (one seam)
 
-Carry the agent the way the team is carried, from the same two sources, and only when the
+Carry the agent the way the team is carried, from the same source, and only when the
 parser named none THIS turn:
 
-1. **Offer write.** When a pending offer that can be accepted into an escalation is minted
-   (the roster escalate offer in `lanes/business/answer.py` around line 3930, and the
-   `team_pick` offers in `turn/compose.py:72-115`), store the minting turn's
-   `routing.suggested_agent` on the pending's `payload["agent"]` (single-team) or on each
-   option's `payload["agent"]` (multi-team, beside the option's own `payload["team"]`).
-   `Pending` already has `payload: dict`; no dataclass field is added. Implementation found a
-   THIRD mint site this list did not name: `answer_bridge._miss_question`'s own
-   "escalate-catalog" arm (its single-team, no-roster branch) is the one a real
-   SINGLE-domain fetch miss actually goes through (`via_fetched_empty` ->
-   `answer_bridge.answer_for` -> `_miss_question`) - `turn/compose.py::_team_pick_question`
-   is only ever reached by a genuine MULTI-domain miss, where `answer_bridge` never runs at
-   all. Both needed the same `payload["agent"]` carry.
+1. **Offer write, NINE mint sites** (the original plan named two; implementation and
+   reviewer round 1 found seven more - every place that mints a pending an escalation
+   acceptance can answer stores the minting turn's `routing.suggested_agent` on
+   `payload["agent"]`, single-team/top-level or per-option beside `payload["team"]`, the
+   hold option always `agent: None`):
+   - `turn/compose.py::_team_pick_question` (single-team top-level payload; multi-team
+     per-option) - reached only by a genuine MULTI-domain miss.
+   - `answer_bridge.py::_miss_question`'s did-you-mean/require-specific roster arm
+     (combined-member and roster-alone, per-option `escalate_offered` payload).
+   - `answer_bridge.py::_miss_question`'s escalate-catalog arm (company-clarify and bare
+     "Yes" branches) - the THIRD mint site, found in implementation: this is the one a
+     real SINGLE-domain fetch miss actually goes through (`via_fetched_empty` ->
+     `answer_bridge.answer_for` -> `_miss_question`), not `_team_pick_question`.
+   - `answer_bridge.py::_miss_question`'s member-offer arm (top-level payload) -
+     reviewer round 1, SHOULD-2.
+   - `engine.py::_question_offered`'s team clarify arm (`_option_payload`'s "team" branch,
+     per-option, reads `ctx` directly) - SHOULD-2.
+   - `engine.py::_question_offered`'s company clarify arm (top-level payload) - SHOULD-2.
+   - `engine.py::_question_offered`'s member-offer arm (top-level payload) - SHOULD-2.
+   - `engine.py::_question_offered`'s escalate-catalog arm (top-level payload, the twin of
+     `answer_bridge.py`'s own bare-"Yes" branch) - SHOULD-2.
+   - `turn/compose.py::compose`'s roster re-arm (a miss over a STILL-OPEN roster that
+     already carries an escalate offer keeps its own agent first, else this turn's -
+     `carried.payload.get("agent") or ctx.suggested_agent`) - SHOULD-2.
+   `Pending` already has `payload: dict`; no dataclass field is added.
 2. **Acceptance read.** In `turn_runtime.with_routing_agent_default` (the one seam every
    turn passes before the access read - keep it there so access is checked against the
    carried agent, not the default), fill `routing.suggested_agent` in this order when the
-   parser's raw value is empty: the accepted option's `payload.agent` / the pending's
-   `payload.agent` (the customer picked it THIS turn), then `_prior_suggested_agent(session)`
-   (mirror of `_prior_suggested_team`, same nest `variables.routing.suggested_agent`), then
+   parser's raw value is empty: `_accepted_pending_agent(pending, verdict)`, then
    `DEFAULT_SUGGESTED_AGENT`. The function needs `pending` (`state_in.pending`, loaded at
-   `engine.py:1225`, so it is available at line 1399) and `session_block` as extra keyword
-   arguments; every other caller keeps working with them absent.
-3. A parser that DID name an agent this turn is never overridden - the carried value only
+   `engine.py:1225`, so it is available at line 1399) as an extra keyword argument; every
+   other caller keeps working with it absent. A `session=` keyword and its own
+   `_prior_suggested_agent` fallback were part of the first round and REMOVED in review
+   round 1 (SHOULD-4): no writer in this codebase ever produces
+   `variables.routing.suggested_agent` for a previous turn to carry - unlike the team
+   half, which `_prior_suggested_team` reads off a nest a real writer DOES still produce.
+3. **Gate** (SHOULD-1). `_accepted_pending_agent` only reads a pending that is actually
+   ACCEPTABLE as an escalation, the same condition `turn/apply.py:691` uses: `pending.kind
+   in OFFER_KINDS or pending.payload.get("escalate_offered") is True`. Without it a plain
+   roster pending with no escalate offer attached could still supply an agent while
+   `lane_parse_output`'s own team chain (which gates on `OFFER_KINDS` alone for that same
+   read) left the team at its default - the two halves of the pair disagreeing.
+4. **Member-option fall-through** (SHOULD-3). A numbered pick that lands on a MEMBER
+   option (a combined roster+CS offer's own member half - no `payload["agent"]`, no
+   `payload["hold"]`) falls through to the pending's own top-level agent instead of
+   returning `None` outright; only the explicit hold option or an option that actually
+   names an agent short-circuits the read.
+5. A parser that DID name an agent this turn is never overridden - the carried value only
    fills a null.
 
 Nothing else moves: `lane_parse_output`'s team chain, `_next_assignee_body`, `_sla_body`,

@@ -1395,13 +1395,12 @@ def _run_stages(  # noqa: PLR0915
 
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
-    # the same `suggested_agent`. SRTSC07 (prod transcript, 22 Sep 2026): `pending=`/
-    # `session=` let a null parser agent on the ACCEPTANCE turn carry the offer's own
-    # agent forward, the same way `lane_parse_output` already carries the team - so the
-    # access check just below is made against the CARRIED agent, not the default.
-    verdict = turn_runtime.with_routing_agent_default(
-        verdict, pending=state_in.pending, session=session_block
-    )
+    # the same `suggested_agent`. SRTSC07 (prod transcript, 22 Sep 2026): `pending=` lets
+    # a null parser agent on the ACCEPTANCE turn carry the offer's own agent forward, the
+    # same way `lane_parse_output` already carries the team - so the access check just
+    # below is made against the CARRIED agent, not the default. No `session=` (reviewer
+    # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
+    verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -3955,9 +3954,15 @@ def _question_offered(
         its `company_id` - the only field routing reads (`lanes/escalation.py::
         _next_assignee_body`), and what makes the tapped number and the typed company
         name reach `escalation_context` through the same seam (hand pass 11, blocker 2).
+
+        SRTSC07 review round 1, SHOULD-2: a TEAM option also carries THIS turn's
+        `routing.suggested_agent` beside its own `team` - read straight off `ctx`
+        (the enclosing function's own parameter) rather than off a locally-assigned
+        variable, so this stays correct regardless of which branch calls it.
         """
         if kind == "team":
-            return {"team": jsc.get(row, "team")}
+            routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+            return {"team": jsc.get(row, "team"), "agent": jsc.get(routing, "suggested_agent")}
         if kind == "company":
             return {
                 "company": jsc.get(row, "company_name") or jsc.get(row, "label"),
@@ -3987,14 +3992,22 @@ def _question_offered(
                 # to whatever team the fresh parse happened to suggest.
                 team=jsc.get(clarify, "team") or jsc.get(routing, "suggested_team"),
                 expects="pick",
+                # SRTSC07 review round 1, SHOULD-2: same reasoning as `team` above,
+                # one axis over - on the pending's own top-level payload, since a
+                # company clarify's own bare "yes" answers it without a position.
+                payload={"agent": jsc.get(routing, "suggested_agent")},
             )
 
     member = outcome.get("build-cs-member-offer")
     if jsc.truthy(member):
+        routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
         return turn_pending.ask(
             "member_offer",
             _options(jsc.get(member, "cs_last_result_set"), "member"),
             expects="pick",
+            # SRTSC07 review round 1, SHOULD-2: picking a member option IS an
+            # escalation acceptance (`turn/apply.py:546`).
+            payload={"agent": jsc.get(routing, "suggested_agent")},
         )
 
     catalog = outcome.get("escalate-catalog")
@@ -4005,6 +4018,9 @@ def _question_offered(
             [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
             team=jsc.get(routing, "suggested_team"),
             expects="yes_no",
+            # SRTSC07 review round 1, SHOULD-2: the escalate-catalog twin of
+            # `answer_bridge.py::_miss_question`'s own bare-"Yes" arm.
+            payload={"agent": jsc.get(routing, "suggested_agent")},
         )
     return None
 

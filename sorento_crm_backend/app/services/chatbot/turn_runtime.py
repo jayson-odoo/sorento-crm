@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
+from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn import policy_rows
@@ -424,29 +425,8 @@ def escalation_roster_plan(
     return plan or None
 
 
-def _prior_suggested_agent(session_block: Any) -> str | None:
-    """The legacy `variables.routing.suggested_agent` nest a previous turn wrote.
-
-    Mirror of `_prior_suggested_team` above, same two session shapes, same
-    never-raise contract: a malformed or absent nest reads as "nothing carried",
-    never an error. SRTSC07 (prod transcript, 22 Sep 2026) - the agent half of the
-    routing pair used to have no such fallback at all.
-    """
-    try:
-        session_vars = session_block.get("session_vars") if isinstance(session_block, dict) else None
-        variables = session_vars.get("variables") if isinstance(session_vars, dict) else None
-        if not variables:
-            variables = session_block.get("variables") if isinstance(session_block, dict) else None
-        routing = variables.get("routing") if isinstance(variables, dict) else None
-        agent = routing.get("suggested_agent") if isinstance(routing, dict) else None
-        agent = str(agent).strip() if agent else ""
-        return agent or None
-    except Exception:  # noqa: BLE001 - a session shape this cannot read carries nothing
-        return None
-
-
 def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any]) -> str | None:
-    """The agent the customer just picked THIS turn, off an open offer.
+    """The agent the customer just picked THIS turn, off an ACCEPTABLE open offer.
 
     Reuses `turn.decide.picked_positions` - the SAME reading `apply()` uses to tell
     which option a numbered pick answered - rather than re-parsing
@@ -454,14 +434,34 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
     `team_pick` names one specific option's own `payload["agent"]`; a plain
     acceptance (a bare "yes" over a single-option offer, or a roster's attached
     escalate sentence - nothing picked by number) falls to the pending's own
-    top-level `payload["agent"]`, which is where the single-team/roster mint sites
-    (`turn/compose.py::_team_pick_question`, `answer_bridge.py::_miss_question`)
-    store the minting turn's agent.
+    top-level `payload["agent"]`, which is where the mint sites
+    (`turn/compose.py::_team_pick_question`, `answer_bridge.py::_miss_question`,
+    `engine.py::_question_offered`) store the minting turn's agent.
+
+    SRTSC07 review round 1, SHOULD-1: gated on the SAME condition `turn/apply.py:691`
+    uses to decide "this offer is acceptable" - `pending.kind in OFFER_KINDS or
+    pending.payload.get("escalate_offered") is True`. Without this gate a roster
+    pending with NO escalate offer attached (a plain `product_pick`, still open while
+    this turn asks for something else entirely) could still supply an agent here,
+    while `lane_parse_output`'s own team chain (`pending.kind in OFFER_KINDS` alone,
+    no `escalate_offered` arm - a fresh, un-accepted handover carries no `accepted_
+    team` either) left the team at `DEFAULT_SUGGESTED_TEAM` - the two halves of the
+    pair disagreeing and `/external/next-assignee` 404ing on a pool that does not
+    exist (measured: `incoming_stock_enquiries` / `customer_service`).
+
+    SHOULD-3: the per-option read only short-circuits on an option that actually
+    NAMES an agent, or the explicit hold (`payload.get("hold") is True`, the "No
+    it's okay" decline). A MEMBER option (a combined roster+CS offer's own member
+    half, `_miss_question`'s `combined_member_rows` arm) carries no agent of its
+    own - picking one IS still an escalation acceptance (`turn/apply.py:546`) - so
+    it falls through to the pending's own top-level agent instead of returning
+    `None` outright.
     """
     if pending is None:
         return None
-    from app.services.chatbot.turn.decide import picked_positions
-
+    payload = pending.payload if isinstance(pending.payload, Mapping) else {}
+    if pending.kind not in OFFER_KINDS and payload.get("escalate_offered") is not True:
+        return None
     try:
         picked = picked_positions(pending, dict(verdict))
     except Exception:  # noqa: BLE001 - a malformed verdict must not break the carry
@@ -472,10 +472,15 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
             for opt in pending.options:
                 if not isinstance(opt, Mapping) or opt.get("position") != positions[0]:
                     continue
-                payload = opt.get("payload")
-                agent = payload.get("agent") if isinstance(payload, Mapping) else None
-                return agent or None
-    payload = pending.payload if isinstance(pending.payload, Mapping) else {}
+                opt_payload = opt.get("payload")
+                opt_payload = opt_payload if isinstance(opt_payload, Mapping) else {}
+                agent = opt_payload.get("agent")
+                if agent or opt_payload.get("hold") is True:
+                    return agent or None
+                # A matched option that names neither an agent nor the hold flag (a
+                # MEMBER option) falls through to the pending's own top-level agent
+                # below, rather than returning `None` here.
+                break
     agent = payload.get("agent")
     return agent or None
 
@@ -484,7 +489,6 @@ def with_routing_agent_default(
     verdict: dict[str, Any],
     *,
     pending: Pending | None = None,
-    session: Any = None,
 ) -> dict[str, Any]:
     """The verdict with `routing.suggested_agent` filled in ONCE, before access.
 
@@ -500,19 +504,27 @@ def with_routing_agent_default(
 
     SRTSC07 (prod transcript, 22 Sep 2026): the agent half used to stop here, at the
     hard default, while the team half two lines below (`lane_parse_output`) carried
-    an accepted offer's team forward. `pending` and `session` are the SAME two extra
-    inputs that chain already reads, added here as keywords so every existing
-    one-arg caller keeps working unchanged. Precedence, in order: a NAMED agent (this
-    turn's own, from the parser - never overridden); the accepted option's agent
-    off `pending` (`_accepted_pending_agent`, the customer picked it THIS turn); a
-    PREVIOUS turn's own carried agent (`_prior_suggested_agent`); the hard default,
-    last - the exact shape of `lane_parse_output`'s own team chain, one axis over.
+    an accepted offer's team forward. `pending` is the SAME extra input that chain
+    already reads, added here as a keyword so every existing one-arg caller keeps
+    working unchanged. Precedence, in order: a NAMED agent (this turn's own, from the
+    parser - never overridden); the accepted option's agent off `pending`
+    (`_accepted_pending_agent`, the customer picked it THIS turn); the hard default,
+    last.
+
+    SRTSC07 review round 1, SHOULD-4: a `session=` keyword and its own
+    `_prior_suggested_agent` fallback (`variables.routing.suggested_agent`, one turn
+    back) used to sit between the two - removed. No writer in this codebase ever
+    produces that nest for the agent half: `turn/tail.py`'s own five session keys hold
+    no `variables.routing` at all, and `overwrite_for_contact` replaces the whole
+    block rather than merging into a legacy nest. `_prior_suggested_team` keeps its
+    own copy of that read because a REAL writer exists for the team half (measured:
+    reviewer round 1 found none for the agent half) - the two chains are allowed to
+    differ in length for that reason.
     """
     out = dict(verdict)
     routing = dict(out.get("routing") or {})
     if not routing.get("suggested_agent"):
-        carried = _accepted_pending_agent(pending, out) or _prior_suggested_agent(session)
-        routing["suggested_agent"] = carried or DEFAULT_SUGGESTED_AGENT
+        routing["suggested_agent"] = _accepted_pending_agent(pending, out) or DEFAULT_SUGGESTED_AGENT
     out["routing"] = routing
     _report_status_means_order_domain(out)
     return out

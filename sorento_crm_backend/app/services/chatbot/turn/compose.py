@@ -396,7 +396,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 question = replace(
                     carried,
                     team=carried.team or teams[0],
-                    payload={**carried.payload, "escalate_offered": True},
+                    payload={
+                        **carried.payload,
+                        "escalate_offered": True,
+                        # SRTSC07 review round 1, SHOULD-2: mirrors the team
+                        # expression right above - the roster's own carried agent
+                        # first (it was already minted with one, or it was not),
+                        # else THIS turn's own `routing.suggested_agent`.
+                        "agent": carried.payload.get("agent") or getattr(ctx, "suggested_agent", None),
+                    },
                 )
             else:
                 # SRTSC07 (prod transcript, 22 Sep 2026): `ctx.suggested_agent` is this
