@@ -13,6 +13,7 @@ import { extractTurnAttachments, type TurnAttachment } from '@/components/chatbo
 import type {
   BranchKind,
   ChatbotTurn,
+  ChatbotTurnMedia,
   TurnStage,
   TurnStageRecord,
   TurnTraceRecord,
@@ -69,6 +70,7 @@ const LANE_WORDS: Record<BranchKind, string> = {
   stock_denied: 'Stock access refused',
   demand_qty: 'Asked for a quantity',
   business_query: 'Business query',
+  media_denied: 'Media refused',
 };
 
 export function laneWords(branchKind: BranchKind | null): string {
@@ -314,3 +316,19 @@ export function canRetry(turn: ChatbotTurn): boolean {
 export function turnAttachments(turn: ChatbotTurn): TurnAttachment[] {
   return extractTurnAttachments(turn.response?.actions);
 }
+
+/**
+ * A `media_denied` turn stops before the parser ever ran (chatbot media-into-turn,
+ * S2), so the transcript bubble renders as a plain reply - no thumbnail, no chip -
+ * even when the turn still carries a `media` block recording what was denied.
+ */
+export function isMediaDenied(turn: ChatbotTurn): boolean {
+  return turn.branch_kind === 'media_denied';
+}
+
+/** The chip on an image bubble ("Read N items"). Voice turns get no count chip - the
+ *  transcript itself is the reveal. */
+export function mediaReadCount(media: ChatbotTurnMedia): number {
+  return media.entities.length;
+}
+

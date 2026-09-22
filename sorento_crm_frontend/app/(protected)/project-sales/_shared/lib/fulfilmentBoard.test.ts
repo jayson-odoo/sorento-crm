@@ -627,6 +627,54 @@ describe('day granularity (13.3)', () => {
 });
 
 /**
+ * S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-6/AC-B1-7/AC-B1-9): the board's new default
+ * granularity - a column per distinct required date actually present, never a calendar
+ * window, labelled `DD/MM/YYYY`. The backend half (Phase 2) is not this lane's job to pin;
+ * this is the test-support fixture (`__testsupport__/boardFixture.ts`) the FE component tests
+ * build boards through, kept in step with the documented contract so a regression here shows
+ * up as a fixture-level red rather than only as a mysterious FulfilmentBoardPanel failure.
+ */
+describe('date granularity (S1, `PLAN-board-oi-mechanical-22sep.md`, AC-B1-6/AC-B1-9)', () => {
+  it('keys on the exact date - the same key day uses', () => {
+    expect(bucketKeyFor('2026-09-04', TODAY, 'date')).toBe(
+      bucketKeyFor('2026-09-04', TODAY, 'day'),
+    );
+    expect(bucketKeyFor(null, TODAY, 'date')).toBe('no_date');
+  });
+
+  it('renders one column per distinct date PRESENT, DD/MM/YYYY-labelled, no calendar fill - unlike day’s 30-day window', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-09-04' }),
+        line({ line_no: 2, required_date: '2027-06-01' }),
+      ],
+      { today: TODAY, granularity: 'date' },
+    );
+    const dated = board.dateBuckets.filter((bucket) => bucket.kind === 'dated');
+    expect(dated.map((bucket) => bucket.key)).toEqual(['2026-09-04', '2027-06-01']);
+    expect(dated.map((bucket) => bucket.label)).toEqual(['04/09/2026', '01/06/2027']);
+  });
+
+  it('still pins No date last, sorted ascending, each with its own is_past', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-09-04' }),
+        line({ line_no: 2, required_date: '2022-07-03' }),
+        line({ line_no: 3, required_date: null, fulfilment_location: null }),
+      ],
+      { today: TODAY, granularity: 'date' },
+    );
+    expect(board.dateBuckets.map((bucket) => bucket.key)).toEqual([
+      '2022-07-03',
+      '2026-09-04',
+      'no_date',
+    ]);
+    expect(board.dateBuckets[0].is_past).toBe(true);
+    expect(board.dateBuckets[1].is_past).toBe(false);
+  });
+});
+
+/**
  * Whether an amendment has to say why, read over the WHOLE composition.
  *
  * It used to look at the Reserve alone, which was all a board amendment could change. Now that

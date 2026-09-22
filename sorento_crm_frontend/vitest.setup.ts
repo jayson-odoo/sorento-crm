@@ -30,6 +30,28 @@ if (!globalThis.ResizeObserver) {
   } as unknown as typeof ResizeObserver;
 }
 
+// Same story for IntersectionObserver: jsdom has none, and embla-carousel's
+// `SlidesInView` plugin calls it unconditionally on mount - so ANY render of the
+// shared `AttachmentPreviewModal` (its carousel, real, not stubbed per-file) dies
+// with a ReferenceError before a test can assert anything. `AttachmentPreviewModal.
+// test.tsx` itself works around this by mocking `@/components/ui/carousel`
+// wholesale; a caller that renders the modal indirectly (a lightbox opened from
+// another screen, chatbot media-into-turn's Chat History drawer among them) has
+// no such mock and needs the global stub instead.
+if (!globalThis.IntersectionObserver) {
+  globalThis.IntersectionObserver = class {
+    root = null;
+    rootMargin = '';
+    thresholds: ReadonlyArray<number> = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
+
 // Same story for matchMedia: jsdom has none, and the DataGrid asks it whether it
 // is under `sm` (to pin the identifier column) on every render. A test that never
 // mentions responsiveness would otherwise die in a passive effect. Defaults to

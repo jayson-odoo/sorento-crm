@@ -254,8 +254,18 @@ def _conversation_assignee_from_tracking(tracking: Optional[Any], db: Session) -
 
 
 def _tracking_is_assigned(tracking: Any) -> bool:
-    """True if SLA tracking row has an assignee at CRM (user id and/or legacy respond id string)."""
+    """True if SLA tracking row has an assignee at CRM (user id and/or legacy respond id string).
+
+    A resolved tracker is never "already assigned" for routing purposes, even
+    though it now keeps its assignee for audit (owner ruling R5, 22 Sep 2026):
+    ``get_preferred_tracking_for_contact`` falls back to the most recent row
+    when nothing is open, and a returning contact whose only ticket happens to
+    be a resolved one must still get a fresh assignee, not be routed to
+    whoever last closed it out.
+    """
     if tracking is None:
+        return False
+    if getattr(tracking, "is_resolved", False):
         return False
     if getattr(tracking, "assigned_to_id", None):
         return True

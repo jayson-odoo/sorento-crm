@@ -158,12 +158,20 @@ def _run_inline(monkeypatch):
     """`enqueue_job` runs the "worker" INLINE, synchronously, against this test's own
     session (via the `media_tasks_mod.SessionLocal` patch above) - so by the time
     `_run_console_media_turn`'s poll loop runs, the job is already terminal on its first
-    read."""
+    read.
+
+    Patched at `app.api.v1.external.media.enqueue_job` - the `from`-import that module
+    holds, not `app.services.queue_service.enqueue_job` itself: `_run_console_media_turn`
+    (S2's collapse to one media path) calls `_decide_meter_record_and_enqueue`, which
+    lives in `app.api.v1.external.media` and calls `enqueue_job` through ITS OWN bound
+    name, so patching the `queue_service` module attribute never reaches it. Same seam
+    `test_media_process_endpoint.py` patches for the exact same function.
+    """
     def _inline_enqueue(func, *args, **kwargs):
         func(*args)
         return type("FakeJob", (), {"id": "fake-rq-job"})()
 
-    monkeypatch.setattr("app.services.queue_service.enqueue_job", _inline_enqueue)
+    monkeypatch.setattr("app.api.v1.external.media.enqueue_job", _inline_enqueue)
 
 
 def _media_payload(content_base64: str = "Zm9v") -> dict[str, Any]:
@@ -231,9 +239,16 @@ class TestConsoleMediaTurnCompletesInline:
         assert turn_row.is_test is True
         assert turn_row.ingress == "console"
 
-    def test_a_failed_extraction_reports_the_reason_with_no_chatbot_turn(
+    def test_a_failed_extraction_reports_the_reason_with_no_business_logic_run(
         self, client, session_factory, stub_console_and_media_seams, monkeypatch,
     ):
+        """A failed extraction never reaches the parser or a lane (S2's `media_denied`
+        arm) - proven by `branch_kind`, not by `turn_id`. `turn_id` is now ALWAYS
+        populated (S2's collapse to one path: `_run_console_media_turn` always calls
+        `run_turn`, which inserts the `chatbot.turns` row first thing, before media
+        intake decides anything) - the pre-collapse console implementation ran a
+        SEPARATE, turn-less path for a caption-less media send, which no longer exists.
+        """
         respond_io_id, _ = _seeded_contact_and_media_limit(session_factory)
         _run_inline(monkeypatch)
 
@@ -257,7 +272,8 @@ class TestConsoleMediaTurnCompletesInline:
         body = resp.json()
         assert body["media_status"] == "failed"
         assert "provider timed out" in (body["media_error"] or "")
-        assert body["turn_id"] is None, "no caption was typed, so no chatbot turn should run"
+        assert body["turn_id"] is not None
+        assert body["branch_kind"] == "media_denied", "no parser call, no lane - denied at intake alone"
 
 
 class TestConsoleMediaTurnPendingThenDonePoll:

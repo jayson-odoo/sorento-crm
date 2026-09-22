@@ -52,7 +52,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
 import { toast } from '@/lib/toast';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingChatRecords from './SlaTrackingChatRecords';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 import { humanName, slaHandler } from '../lib/slaHandler';
@@ -283,9 +283,14 @@ export default function ConversationSLATrackingDetail({
     return null;
   };
 
-  // Assignee on an open row, resolver on a resolved one (resolve NULLs the
-  // assignee). Same helper the listing cell uses, so they cannot disagree.
+  // Owner ruling S4 (23 Sep 2026): resolve keeps the assignee for audit now,
+  // so the header names the assignee whether the row is open or resolved -
+  // same helper the listing cell uses, so they cannot disagree. Who resolved
+  // it is a separate fact, shown alongside it below when the row is resolved.
   const handler = slaHandler(tracking);
+  const resolverName = tracking.is_resolved
+    ? humanName(tracking.resolved_by_user_name, tracking.resolved_by)
+    : null;
 
   const respondIoId = tracking.respond_io_id ?? tracking.contact?.respond_io_id ?? null;
   const contactId = tracking.contact?.id ?? tracking.respond_contact_id ?? null;
@@ -335,12 +340,22 @@ export default function ConversationSLATrackingDetail({
           </div>
           <p className="text-sm text-muted-foreground">
             Policy: {tracking.policy?.name || tracking.policy_name || tracking.policy?.code || tracking.policy_code || '-'} • Current Tier: {tracking.current_tier} •{' '}
-            {/* Who handled it, in the header rather than only inside a collapsed
-                section: a resolved row has no assignee (resolve NULLs it), so it
-                names the resolver instead. */}
+            {/* Who is assigned, in the header rather than only inside a
+                collapsed section - the captain landed here from "Recently
+                resolved" and needs it without opening a section. Resolve
+                keeps the assignee now (owner ruling S4), so this reads the
+                same on an open or a resolved row. */}
             <span data-testid="tracking-handler">
               {handler.prefix}: {handler.name ?? '-'}
             </span>
+            {tracking.is_resolved && (
+              <>
+                {' '}•{' '}
+                <span data-testid="tracking-resolver">
+                  Resolved by: {resolverName ?? '-'}
+                </span>
+              </>
+            )}
           </p>
         </div>
         <DetailActions
@@ -1066,17 +1081,24 @@ export default function ConversationSLATrackingDetail({
 
       {respondInboxUrl && (
         <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
-          <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
+          {/* Fix round 4: `overflow-hidden`, not `-y-auto` - `SheetBody`
+              below is the ONE scroll container. Same shape as the ticket
+              drawer's Sheet (InterventionTicketDrawer.tsx), same fix -
+              see its comment for why two scrollable ancestors around a
+              flex-fill thread is the defect. */}
+          <SheetContent side="right" className="flex w-full flex-col overflow-hidden sm:max-w-lg">
             <SheetHeader className="sr-only">
               <SheetTitle>Chat Records</SheetTitle>
             </SheetHeader>
-            <div className="flex-1 min-h-0 pt-2">
+            {/* R3: the thread flex-fills the sheet like the worklist drawer's
+                SheetBody already does, instead of stopping at a fixed cap. */}
+            <SheetBody className="flex min-h-0 flex-1 flex-col pt-2">
               <SlaTrackingChatRecords
                 trackingId={trackingId}
                 respondInboxUrl={respondInboxUrl}
                 showAsPopup
               />
-            </div>
+            </SheetBody>
           </SheetContent>
         </Sheet>
       )}

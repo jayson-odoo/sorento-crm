@@ -408,6 +408,8 @@ def test_form_row_resolve_is_never_gated_by_conversation_siblings(db):
     enqueue.assert_not_called()  # form rows never trigger the Respond-close side effect
     db.refresh(form)
     assert form.is_resolved is True
-    # Form resolve keeps assignee/agent/team fields (audit trail) - conversation
-    # resolve clears them. Confirms the two paths stayed genuinely separate.
+    # AC-KA-8: both the form path and the conversation path keep assignee/agent/
+    # team fields (audit trail) on resolve (owner ruling R5, 22 Sep 2026). This
+    # only re-confirms the form side; the two paths stay otherwise separate
+    # (the sibling-open guard above is conversation-scope only).
     assert form.assigned_to_id == seed["user_id"]

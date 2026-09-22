@@ -180,7 +180,9 @@ describe('OrderInquiryClient', () => {
     expect(screen.getByText('600')).toBeInTheDocument();
     expect(screen.getByText('BRW-BB')).toBeInTheDocument();
     expect(screen.getByText('ORDER')).toBeInTheDocument();
-    expect(screen.getByText('Raised')).toBeInTheDocument();
+    // S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's pick, 22 Sep 2026): the
+    // State pill reads the plain word now - `raised` prints "To buy", not "Raised".
+    expect(screen.getByText('To buy')).toBeInTheDocument();
     expect(screen.queryByText('row-1')).not.toBeInTheDocument();
     expect(screen.queryByText('inq-1')).not.toBeInTheDocument();
   });

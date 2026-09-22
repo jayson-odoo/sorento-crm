@@ -176,28 +176,34 @@ _EMPTY_DOCS_ROW = {
 
 
 def test_export_rows_and_xlsx_rows_render_document_breakdown_lines():
-    """On the slice 2 16-column layout, BRW PO qty (index 11) and BRW incoming qty (index
-    12) carry the total on the first line and one "<number> - <qty>" line per document
-    below it (AC-13), in both the PDF's text shape (`_export_rows`) and the workbook's
-    shape (`_export_xlsx_rows` - TEXT once documents exist, the one exception to the H1
-    "quantities are numbers" rule). A row with nothing open keeps the bare numeric total,
-    unchanged (AC-14): text "0" in `_export_rows`, numeric 0.0 in `_export_xlsx_rows`.
+    """On the AC-A7 17-column layout ("Last cost" inserted right of Supplier), BRW PO qty
+    (index 12) and BRW incoming qty (index 13) carry the total on the first line and one
+    document line below it (AC-13), in both the PDF's text shape (`_export_rows`) and the
+    workbook's shape (`_export_xlsx_rows` - TEXT once documents exist, the one exception
+    to the H1 "quantities are numbers" rule). AC-A1 (Lane A): the incoming cell's document
+    line never carries the SPO number - `SPO-X` prints as a bare qty line since it names
+    no container. A row with nothing open keeps the bare numeric total, unchanged (AC-14):
+    text "0" in `_export_rows`, numeric 0.0 in `_export_xlsx_rows`. Both row builders now
+    take a `last_cost` dict as their second argument (AC-A7/AC-A8); `{}` here since this
+    test is not about that column.
     """
-    (text_row,) = svc._export_rows([_FULL_ROW])
-    assert text_row[11] == "5\nPO-A - 4\nPO-B - 1"
-    assert text_row[12] == "30\nSPO-X - 30"
+    (text_row,) = svc._export_rows([_FULL_ROW], {})
+    assert text_row[12] == "5\nPO-A - 4\nPO-B - 1"
+    assert text_row[13] == "30\n30"
+    assert "SPO-X" not in text_row[13]
 
-    (text_empty,) = svc._export_rows([_EMPTY_DOCS_ROW])
-    assert text_empty[11] == "0"
+    (text_empty,) = svc._export_rows([_EMPTY_DOCS_ROW], {})
     assert text_empty[12] == "0"
+    assert text_empty[13] == "0"
 
-    (xlsx_row,) = svc._export_xlsx_rows([_FULL_ROW])
-    assert xlsx_row[11] == "5\nPO-A - 4\nPO-B - 1"
-    assert xlsx_row[12] == "30\nSPO-X - 30"
+    (xlsx_row,) = svc._export_xlsx_rows([_FULL_ROW], {})
+    assert xlsx_row[12] == "5\nPO-A - 4\nPO-B - 1"
+    assert xlsx_row[13] == "30\n30"
+    assert "SPO-X" not in xlsx_row[13]
 
-    (xlsx_empty,) = svc._export_xlsx_rows([_EMPTY_DOCS_ROW])
-    assert xlsx_empty[11] == 0.0, "no documents keeps the numeric total (H1), not text"
-    assert xlsx_empty[12] == 0.0
+    (xlsx_empty,) = svc._export_xlsx_rows([_EMPTY_DOCS_ROW], {})
+    assert xlsx_empty[12] == 0.0, "no documents keeps the numeric total (H1), not text"
+    assert xlsx_empty[13] == 0.0
 
 
 # =========================================================================== #
@@ -207,23 +213,26 @@ def test_export_rows_and_xlsx_rows_render_document_breakdown_lines():
 def test_export_pdf_html_renders_one_document_per_line():
     """The PDF's own two supply cells wrap one document per line - the same check the
     Delivery column's own S14 test makes
-    (`test_s14_export_pdf_html_renders_a_two_month_delivery_cell_with_a_line_break`)."""
-    rows = svc._export_rows([_FULL_ROW])
+    (`test_s14_export_pdf_html_renders_a_two_month_delivery_cell_with_a_line_break`).
+    AC-A7 shifts both cells one column right; AC-A1 drops the SPO number from the
+    incoming cell's own line."""
+    rows = svc._export_rows([_FULL_ROW], {})
     html = svc._export_pdf_html(rows, "2026-09-10")
     assert "5\nPO-A - 4\nPO-B - 1" in html or "5<br>PO-A - 4<br>PO-B - 1" in html
-    assert "30\nSPO-X - 30" in html or "30<br>SPO-X - 30" in html
+    assert "30\n30" in html or "30<br>30" in html
+    assert "SPO-X" not in html
 
     # The substrings above pass whether or not the cell actually wraps - `_export_pdf_html`
     # only wraps (`class="list"`, `white-space: pre-line`) a column index listed in
     # `_PDF_LIST_COLUMNS`, so pin the indices AND the class on the cell itself, or removing
     # the wrap here stays green.
-    assert 11 in svc._PDF_LIST_COLUMNS and 12 in svc._PDF_LIST_COLUMNS, (
-        "BRW PO qty (11) and BRW incoming qty (12) must be in the wrapped set"
+    assert 12 in svc._PDF_LIST_COLUMNS and 13 in svc._PDF_LIST_COLUMNS, (
+        "BRW PO qty (12) and BRW incoming qty (13) must be in the wrapped set"
     )
     assert '<td class="list">5\nPO-A - 4\nPO-B - 1</td>' in html, (
         "the BRW PO qty cell itself must carry the list (wrap) class"
     )
-    assert '<td class="list">30\nSPO-X - 30</td>' in html, (
+    assert '<td class="list">30\n30</td>' in html, (
         "the BRW incoming qty cell itself must carry the list (wrap) class"
     )
 
@@ -457,30 +466,36 @@ _CONTAINER_ROW = {
 
 def test_export_rows_and_xlsx_rows_render_container_lines():
     """AC-22: the order sheet PDF and Excel both show the new line shape in "BRW incoming
-    qty" (index 12) - and EVERY OTHER CELL is byte-identical to what the same row renders
-    today. The container is one cell's worth of change; comparing against the file's
-    existing `_FULL_ROW` tuple is what says so, rather than asserting the new cell alone
-    and leaving the other fifteen unwatched.
+    qty" (index 13 on the AC-A7 17-column layout) - and EVERY OTHER CELL is byte-identical
+    to what the same row renders today. The container is one cell's worth of change;
+    comparing against the file's existing `_FULL_ROW` tuple is what says so, rather than
+    asserting the new cell alone and leaving the other columns unwatched. AC-A1 (Lane A):
+    the SPO number itself never appears in this cell any more - "TLLU8306312 - 180" and
+    the bare "200" (SPO-B names no container), not "SPO-A - ..." / "SPO-B - 200".
     """
-    base_text, = svc._export_rows([_FULL_ROW])
-    text_row, = svc._export_rows([_CONTAINER_ROW])
-    assert text_row[12] == "380\nSPO-A - TLLU8306312 - 180\nSPO-B - 200"
-    assert text_row[1:12] == base_text[1:12], "no other PDF cell may move"
-    assert text_row[13:] == base_text[13:], "no other PDF cell may move"
+    base_text, = svc._export_rows([_FULL_ROW], {})
+    text_row, = svc._export_rows([_CONTAINER_ROW], {})
+    assert text_row[13] == "380\nTLLU8306312 - 180\n200"
+    assert "SPO-A" not in text_row[13] and "SPO-B" not in text_row[13]
+    assert text_row[1:13] == base_text[1:13], "no other PDF cell may move"
+    assert text_row[14:] == base_text[14:], "no other PDF cell may move"
 
-    base_xlsx, = svc._export_xlsx_rows([_FULL_ROW])
-    xlsx_row, = svc._export_xlsx_rows([_CONTAINER_ROW])
-    assert xlsx_row[12] == "380\nSPO-A - TLLU8306312 - 180\nSPO-B - 200"
-    assert xlsx_row[1:12] == base_xlsx[1:12], "no other workbook cell may move"
-    assert xlsx_row[13:] == base_xlsx[13:], "no other workbook cell may move"
+    base_xlsx, = svc._export_xlsx_rows([_FULL_ROW], {})
+    xlsx_row, = svc._export_xlsx_rows([_CONTAINER_ROW], {})
+    assert xlsx_row[13] == "380\nTLLU8306312 - 180\n200"
+    assert xlsx_row[1:13] == base_xlsx[1:13], "no other workbook cell may move"
+    assert xlsx_row[14:] == base_xlsx[14:], "no other workbook cell may move"
 
 
 # --------------------------------------------------------------------------- AC-23
 
 def test_frozen_docs_without_container_key_still_print():
     """AC-23: no migration. A run frozen BEFORE this slice has `incoming_spo_docs` entries
-    of the old `{number, qty}` shape, and re-opening its order sheet must still print
-    `SPO-A - 200` rather than raising a KeyError or printing "SPO-A - None - 200".
+    of the old `{number, qty}` shape, and re-opening its order sheet must still print a
+    bare quantity line rather than raising a KeyError. AC-A1 (Lane A) then drops the SPO
+    number from that cell entirely - `_incoming_text` prints "200\\n200", never
+    "SPO-A - 200" - while `_docs_text` itself (the PO cell's own builder, unaffected by
+    Lane A) still prints the document number.
 
     Green before the slice and green after is the whole point: it is the pin that stops
     the new printer from assuming the key is always there.
@@ -491,6 +506,7 @@ def test_frozen_docs_without_container_key_still_print():
         "incoming_spo_qty": 200,
         "incoming_spo_docs": [{"number": "SPO-A", "qty": 200}],
     }
-    text_row, = svc._export_rows([frozen_row])
-    assert text_row[12] == "200\nSPO-A - 200"
+    text_row, = svc._export_rows([frozen_row], {})
+    assert text_row[13] == "200\n200"
+    assert "SPO-A" not in text_row[13]
     assert svc._docs_text(200, [{"number": "SPO-A", "qty": 200}]) == "200\nSPO-A - 200"

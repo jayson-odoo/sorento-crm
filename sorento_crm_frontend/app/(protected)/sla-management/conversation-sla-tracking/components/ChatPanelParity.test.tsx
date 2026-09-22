@@ -218,6 +218,12 @@ describe('the ticket drawer and Chat Records are one chat panel', () => {
       expect(typeof surface.onLoadOlder).toBe('function');
       expect(typeof surface.mediaProxy).toBe('function');
       expect(surface.comments).toHaveLength(1);
+      // B2 / R4: the reply-to quote's fetch-back loader (`thread.jumpToMessage`)
+      // has to actually reach RespondChatList on BOTH surfaces - deleting the
+      // wiring in TicketConversationPanel left every other assertion in this
+      // file green, since the shape() comparison only checks the two surfaces
+      // agree with EACH OTHER, not that either of them got a real function.
+      expect(typeof surface.onJumpToMessage).toBe('function');
     }
   });
 
