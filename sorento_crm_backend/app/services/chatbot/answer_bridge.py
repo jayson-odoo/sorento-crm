@@ -913,6 +913,11 @@ def _miss_question(
     option` always prefers a row's own `idx` over the position it is called with)."""
     routing = (parser or {}).get("routing") or {}
     team = routing.get("suggested_team")
+    # SRTSC07 (prod transcript, 22 Sep 2026): carried onto the pending beside `team`, so
+    # the acceptance turn's `(agent_code, team_code)` pair reaches `/external/
+    # next-assignee` intact - the pair it resolves a pool by - instead of the acceptance
+    # turn's own null `suggested_agent` falling to `DEFAULT_SUGGESTED_AGENT`.
+    agent = routing.get("suggested_agent")
 
     # The did-you-mean roster (`build_suggest_offer`'s D1/D2/D3 arms all populate
     # `suggest_last_result_set`). The require-specific PICKER (F6/AC-1701) is a FOURTH
@@ -965,7 +970,11 @@ def _miss_question(
                 roster_options + member_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+                payload={
+                    "domain": (parser or {}).get("domain_hint"),
+                    "escalate_offered": True,
+                    "agent": agent,
+                },
             )
 
     member = producers.get("build-cs-member-offer")
@@ -990,7 +999,11 @@ def _miss_question(
                 roster_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+                payload={
+                    "domain": (parser or {}).get("domain_hint"),
+                    "escalate_offered": True,
+                    "agent": agent,
+                },
             )
 
     catalog = producers.get("escalate-catalog")
@@ -1028,6 +1041,10 @@ def _miss_question(
                 team=team,
                 asked_at_turn=asked_at_turn,
                 expects="yes_no",
+                # SRTSC07: the company clarify's own bare "yes" (no numbered pick) is
+                # answered by the generic accept arm, so this offer's top-level
+                # `payload["agent"]` is what the acceptance carry reads.
+                payload={"agent": agent},
             )
         return pending.ask(
             "team_pick",
@@ -1035,6 +1052,7 @@ def _miss_question(
             team=team,
             asked_at_turn=asked_at_turn,
             expects="yes_no",
+            payload={"agent": agent},
         )
     return None
 

@@ -1395,8 +1395,13 @@ def _run_stages(  # noqa: PLR0915
 
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
-    # the same `suggested_agent`.
-    verdict = turn_runtime.with_routing_agent_default(verdict)
+    # the same `suggested_agent`. SRTSC07 (prod transcript, 22 Sep 2026): `pending=`/
+    # `session=` let a null parser agent on the ACCEPTANCE turn carry the offer's own
+    # agent forward, the same way `lane_parse_output` already carries the team - so the
+    # access check just below is made against the CARRIED agent, not the default.
+    verdict = turn_runtime.with_routing_agent_default(
+        verdict, pending=state_in.pending, session=session_block
+    )
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -1962,6 +1967,10 @@ def _run_stages(  # noqa: PLR0915
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
                 contains_flyer=bool(verdict.get("contains_flyer")),
+                # SRTSC07 (prod transcript, 22 Sep 2026): the SAME `routing.
+                # suggested_agent` `with_routing_agent_default` already resolved at
+                # L1399, before `compose()` mints a fresh `team_pick` off it.
+                suggested_agent=jsc.get(verdict.get("routing"), "suggested_agent"),
             )
             # Will `answer_bridge.answer_for` (R4/R5) answer this turn's miss? ONE
             # rule, computed once, read TWICE below: it gates that call, and it is

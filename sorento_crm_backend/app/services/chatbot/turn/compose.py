@@ -69,7 +69,7 @@ def _file_key(f: dict[str, Any]) -> Any:
     return f.get("url") or f.get("id") or f.get("filename")
 
 
-def _team_pick_question(missed_domains: list[str], policy: Policy):
+def _team_pick_question(missed_domains: list[str], policy: Policy, *, agent: str | None = None):
     """Team pick over the missed domains (contract 106-113, 127; AC-1533). A single
     missed team is yes/no over that one team; two or more become a numbered pick plus
     a "No it's okay" hold option (contract 43).
@@ -77,6 +77,13 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
     `Pending.team` stays a single `str | None` (S2): set when there is exactly one
     team, else None until the pick resolves - each option carries ITS OWN team under
     `payload.team` (captain ruling, 16 Sep 2026).
+
+    `agent` is this minting turn's own `routing.suggested_agent` (SRTSC07, prod
+    transcript 22 Sep 2026), carried the same way `team` is: onto the single-team
+    offer's own top-level `payload`, and onto EACH multi-team option beside its own
+    `payload.team` - so a bare "yes" acceptance turn, which names no agent of its own,
+    can still hand `/external/next-assignee` the `(agent_code, team_code)` pair this
+    turn actually meant, instead of falling to `DEFAULT_SUGGESTED_AGENT`.
     """
     teams: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -94,10 +101,17 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
     if len(teams) == 1:
         team, label = teams[0]
         options = [{"position": 1, "label": label, "entity_type": "team", "payload": {"team": team}}]
-        return pending_ask("team_pick", options, team=team, expects="yes_no")
+        return pending_ask(
+            "team_pick", options, team=team, expects="yes_no", payload={"agent": agent}
+        )
 
     options = [
-        {"position": i + 1, "label": label, "entity_type": "team", "payload": {"team": team}}
+        {
+            "position": i + 1,
+            "label": label,
+            "entity_type": "team",
+            "payload": {"team": team, "agent": agent},
+        }
         for i, (team, label) in enumerate(teams)
     ]
     options.append(
@@ -109,7 +123,7 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
             # so in its own payload rather than being inferred from a null team - a
             # `company_pick` option carries no team either, and "the customer said no"
             # must not be a thing the reader works out from a missing field.
-            "payload": {"team": None, "hold": True},
+            "payload": {"team": None, "agent": None, "hold": True},
         }
     )
     return pending_ask("team_pick", options, team=None, expects="pick")
@@ -385,7 +399,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     payload={**carried.payload, "escalate_offered": True},
                 )
             else:
-                question = _team_pick_question(missed_domains, policy)
+                # SRTSC07 (prod transcript, 22 Sep 2026): `ctx.suggested_agent` is this
+                # turn's own `routing.suggested_agent` (`TurnContext`, set by
+                # `engine.py` off the SAME verdict the team half above is read from),
+                # carried onto the fresh offer so a later bare "yes" over it can hand
+                # `/external/next-assignee` the `(agent_code, team_code)` pair this
+                # turn actually meant.
+                question = _team_pick_question(
+                    missed_domains, policy, agent=getattr(ctx, "suggested_agent", None)
+                )
 
     actions: list[dict[str, Any]] = []
     if files:
