@@ -1205,15 +1205,21 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     #: PLAN-oi-request-cs-reserve.md 3.1: the THIRD target a link may name - a row of an
-    #: `OrderInquiryReserveRequest` Eling confirmed. Nullable, `SET NULL` like the other
-    #: two, so a request row that is later deleted (cascade off its own parent) does not
-    #: delete the placement it made - the link keeps `document` ("Reserved @ BRW") as its
-    #: own record the same way a deleted PO line does.
+    #: `OrderInquiryReserveRequest` Eling confirmed.
+    #:
+    #: `CASCADE`, NOT `SET NULL` (B2, security review round 2 - the original `SET NULL`
+    #: was wrong, not merely unsafe-by-omission: `__table_args__` below requires EXACTLY
+    #: ONE of the three targets set at all times, so setting only THIS one null while a
+    #: reserve link's other two are already null leaves the row satisfying none of them,
+    #: which the CHECK rejects outright). Deleting the request row this link was made
+    #: against removes the placement WITH it - there is no "keep the link, forget which
+    #: request confirmed it" reading the CHECK would even allow, unlike a PO/SPO link,
+    #: whose OTHER two targets stay null while its own document is merely re-imported.
     reserve_request_row_id = Column(
         UUID(as_uuid=False),
         ForeignKey(
             "projects.order_inquiry_reserve_request_rows.id",
-            ondelete="SET NULL",
+            ondelete="CASCADE",
             name="fk_order_inquiry_links_reserve_request_row",
         ),
         nullable=True,

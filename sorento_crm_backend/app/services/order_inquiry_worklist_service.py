@@ -794,10 +794,20 @@ def _qty_str(value: Decimal) -> str:
 #: the buy-verb gate (`_SUGGESTION_LINKABLE_VERBS`, the same set the FE's
 #: `TAKEN_REMAINING_VERBS` names): `-` on a notice row (it never carries a link of its
 #: own), `0` on a row or line already cancelled.
+#:
+#: Review round 2, B1 (`PLAN-oi-request-cs-reserve.md` section 7): `linked_qty`
+#: deliberately excludes a reserve link (`links_for_rows`'s own AC-RS-12 note), so
+#: `reserved_qty` (the serializer's own separate field) is the only other place that
+#: quantity can come from - both readers add it in, the same way the FE's own
+#: `inquiryRowTakenQty` does.
+def _export_taken_qty(row: Dict[str, Any]) -> Decimal:
+    return _dec(row.get("linked_qty")) + _dec(row.get("reserved_qty"))
+
+
 def _export_taken(row: Dict[str, Any]) -> str:
     if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
         return "-"
-    return _qty_str(_dec(row.get("linked_qty")))
+    return _qty_str(_export_taken_qty(row))
 
 
 def _export_remaining(row: Dict[str, Any]) -> str:
@@ -806,7 +816,7 @@ def _export_remaining(row: Dict[str, Any]) -> str:
     if row.get("state") == "cancelled" or row.get("line_cancelled"):
         return "0"
     remaining = (
-        _dec(row.get("qty")) - _dec(row.get("linked_qty")) - _dec(row.get("bundled_qty"))
+        _dec(row.get("qty")) - _export_taken_qty(row) - _dec(row.get("bundled_qty"))
     )
     return _qty_str(max(remaining, _ZERO))
 

@@ -114,20 +114,26 @@ PURGE_ORDER: List[Type] = [
     # --- sales order side: divergences, inquiries and amendments hang off the SO -------
     ProjectSODivergenceLine,
     ProjectSODivergence,
+    # order_inquiry_links.row_id CASCADEs off the row and .reserve_request_row_id
+    # CASCADEs off the reserve request row (B2, security review round 2 - flipped from
+    # SET NULL: a reserve link's `reserve_request_row_id` is one leg of the widened
+    # `ck_order_inquiry_links_one_target` CHECK, and a SET NULL there is NOT
+    # self-resolving the way an ordinary detach is - deleting `order_inquiry_reserve_
+    # request_rows` first used to leave the link with none of its three targets set and
+    # the CHECK failed, aborting the whole purge). So the link purges BEFORE every
+    # reserve table below it, not just before the row - its own statement so the
+    # operator sees the placements counted.
+    OrderInquiryLink,
     # order_inquiry_reserve_events.reserve_request_row_id CASCADEs off the request row
     # (section 6c, `PLAN-oi-request-cs-reserve.md`), so it purges first, its own
     # statement so the operator sees the history counted.
     OrderInquiryReserveEvent,
     # order_inquiry_reserve_request_rows.request_id and .row_id both CASCADE, so either
-    # parent would take the rows anyway; like the links below, its own statement so the
-    # operator sees the asks counted. Rows before requests, requests before the header
-    # (order_inquiry_reserve_requests.order_inquiry_id CASCADEs off it, S1,
-    # `PLAN-oi-request-cs-reserve.md`).
+    # parent would take the rows anyway; own statement so the operator sees the asks
+    # counted. Rows before requests, requests before the header (order_inquiry_reserve_
+    # requests.order_inquiry_id CASCADEs off it, S1, `PLAN-oi-request-cs-reserve.md`).
     OrderInquiryReserveRequestRow,
     OrderInquiryReserveRequest,
-    # order_inquiry_links.row_id CASCADEs, so the row would take its links anyway; the
-    # link still gets its own statement so the operator sees the placements counted.
-    OrderInquiryLink,
     OrderInquiryRow,
     # order_inquiry_raises.order_inquiry_id CASCADEs off the header too (S1,
     # `PLAN-oi-header-list-detail.md`) - same reason, its own statement for its own count.

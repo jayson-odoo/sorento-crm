@@ -212,11 +212,31 @@ def _create_tables(bind) -> None:
                 ON "{projects}".order_inquiry_reserve_request_rows (row_id);
 
             ALTER TABLE "{projects}".order_inquiry_links
-                ADD COLUMN IF NOT EXISTS reserve_request_row_id UUID
-                    REFERENCES "{projects}".order_inquiry_reserve_request_rows(id)
-                    ON DELETE SET NULL;
+                ADD COLUMN IF NOT EXISTS reserve_request_row_id UUID;
             CREATE INDEX IF NOT EXISTS ix_order_inquiry_links_reserve_request_row
                 ON "{projects}".order_inquiry_links (reserve_request_row_id);
+            """
+        )
+    )
+    # `ON DELETE CASCADE`, NOT `SET NULL` (B2, security review round 2, amended in
+    # place - unmerged, so no database outside this lane's own has applied the OLD
+    # SET NULL constraint at all). A SET NULL onto this column is not self-resolving:
+    # `ck_order_inquiry_links_one_target` requires EXACTLY ONE of the link's three
+    # targets set at all times, and a reserve link's other two are already null, so
+    # nulling this one leaves the CHECK satisfying none of them. `DROP CONSTRAINT IF
+    # EXISTS` + `ADD CONSTRAINT`, named explicitly (matching `app/models/project_so.py`),
+    # rather than a bare `ADD COLUMN ... REFERENCES`, so a re-run of this migration
+    # against a database that already carries the column still lands on CASCADE.
+    bind.execute(
+        sa.text(
+            f"""
+            ALTER TABLE "{projects}".order_inquiry_links
+                DROP CONSTRAINT IF EXISTS fk_order_inquiry_links_reserve_request_row;
+            ALTER TABLE "{projects}".order_inquiry_links
+                ADD CONSTRAINT fk_order_inquiry_links_reserve_request_row
+                    FOREIGN KEY (reserve_request_row_id)
+                    REFERENCES "{projects}".order_inquiry_reserve_request_rows(id)
+                    ON DELETE CASCADE;
             """
         )
     )
