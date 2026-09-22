@@ -118,8 +118,16 @@ describe('the change lightbox at 375px', () => {
     const dialog = openDialog('pcr-381895-1');
 
     // Decision 1 (`Buy 10`) and Decision 2 (the long borrow sentence in `annotation()`'s
-    // `now.decision`) both changed, so the dialog's own Decision line carries the long one.
-    const decisionLine = within(dialog).getByText(/^Decision /);
+    // `now.decision`) both changed, so the dialog's own Decision row carries the long one.
+    // AC-D1 moved that from a `Decision <from> -> <to>` line to the Was/Now table's own
+    // Decision row, so the cell is found through the row's header rather than by reading
+    // the retired line's text; the guarantee is unchanged - the long sentence truncates and
+    // rides in full in the cell's `title`.
+    const decisionRow = within(dialog)
+      .getByText('Decision')
+      .closest('tr') as HTMLElement;
+    expect(decisionRow).not.toBeNull();
+    const decisionLine = within(decisionRow).getByTestId('change-now-decision');
     expect(decisionLine.className).toMatch(/\btruncate\b/);
     expect(decisionLine.getAttribute('title')).toContain(
       'Use BRW 5 from BRW, 10 from WH3',
