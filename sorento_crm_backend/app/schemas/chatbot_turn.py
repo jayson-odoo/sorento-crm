@@ -41,6 +41,12 @@ class ChatbotTurnResponse(BaseModel):
     # The answer the turn returned: `{ctx, item, actions}` today, `{reply, actions}` from
     # S3. Null on a turn that failed or is still running.
     response: dict[str, Any] | None = None
+    # The photo or voice note this turn read (chatbot media-into-turn, S4). Built by
+    # the route from the turn's own `media_intake` trace stage - never an ORM column,
+    # so a plain `model_validate(row)` never fills it; the route merges it in by hand
+    # (`_media_block`). Null on a text turn. Declared here or `response_model` drops
+    # it even when the route DOES set it (the lesson this file's own docstring names).
+    media: dict[str, Any] | None = None
 
 
 class ChatbotTurnDetailResponse(ChatbotTurnResponse):

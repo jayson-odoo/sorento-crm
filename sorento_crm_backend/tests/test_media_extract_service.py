@@ -98,15 +98,20 @@ def test_caption_plus_confident_entities_renders_caption_with_raws_appended():
     assert body["confirmation_message"] == confirmation(extraction.entities, [], [])
 
 
-def test_no_caption_renders_null_and_asks_even_when_the_model_said_otherwise():
-    """PLAN 4.5 row 2 - and the load-bearing part: `needs_clarification` is
-    forced True by the ABSENCE of a caption regardless of what the model's own
-    `needs_clarification` flag said (S4-08 is enforced in code, not trusted to
-    the prompt)."""
+def test_no_caption_still_renders_the_raws_and_asks_even_when_the_model_said_otherwise():
+    """PLAN 4.5 row 2, AMENDED 23 Sep 2026 (owner ruling, chatbot media-into-turn
+    S2): `rendered_text` is no longer nulled here - the engine now runs the turn
+    itself instead of n8n replying blind off `clarification_message` alone, and
+    a bare photo of codes with no caption must still reach the parser as the
+    raws joined, or the entities-only arm has nothing to resolve.
+    `needs_clarification` is still forced True by the ABSENCE of a caption
+    regardless of what the model's own `needs_clarification` flag said (S4-08 is
+    enforced in code, not trusted to the prompt) - the customer's INTENT is
+    still unclear even though there is now something to answer with."""
     extraction = MediaExtraction(entities=[_entity("SRTKS6647")], needs_clarification=False)
     body = build_image_result_body(extraction, caption=None, max_entities=10)
 
-    assert body["rendered_text"] is None
+    assert body["rendered_text"] == "SRTKS6647"
     assert body["needs_clarification"] is True
     assert body["confirmation_message"] is None
     assert body["clarification_message"] == clarification(extraction.entities, [])
@@ -115,14 +120,17 @@ def test_no_caption_renders_null_and_asks_even_when_the_model_said_otherwise():
     )
 
 
-def test_unclear_caption_intent_renders_null_and_asks():
-    """PLAN 4.5 row 3."""
+def test_unclear_caption_intent_still_renders_caption_and_raws_and_asks():
+    """PLAN 4.5 row 3, amended the same way as row 2 above: `rendered_text` is
+    the caption with the raws appended, same shape row 1's happy path renders -
+    only `needs_clarification`/`clarification_message` say the intent itself is
+    still unclear."""
     extraction = MediaExtraction(entities=[_entity("SRTKS6647")], needs_clarification=True)
     body = build_image_result_body(
         extraction, caption="hmm what is this", max_entities=10
     )
 
-    assert body["rendered_text"] is None
+    assert body["rendered_text"] == "hmm what is this: SRTKS6647"
     assert body["needs_clarification"] is True
     assert body["clarification_message"] is not None
 
@@ -1283,6 +1291,14 @@ def _install_streaming_client(monkeypatch, response):
     import httpx
 
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeStreamingClient(response))
+    # Security review item 5 (SSRF guard): these tests exercise the STREAMING/size-cap
+    # mechanics, never a real network, so `cdn.example` (an IANA reserved, deliberately
+    # non-resolving domain - the same reason these tests picked it) would otherwise
+    # fail the guard's DNS-resolution check before the fake client is ever reached.
+    # The guard itself is covered directly below (`TestFetchMediaBytesSsrfGuard`).
+    monkeypatch.setattr(
+        "app.services.outbound_url_guard.assert_safe_outbound_url", lambda url, **kwargs: url
+    )
     return response
 
 
@@ -1394,6 +1410,49 @@ def test_a_transport_failure_is_reported_as_a_download_failure(monkeypatch):
         fetch_media_bytes("https://cdn.example/gone.jpg")
 
     assert "Could not download the media" in str(excinfo.value)
+
+
+class TestFetchMediaBytesSsrfGuard:
+    """Security review item 5: `media_url` is a caller-supplied string on every path
+    that reaches `fetch_media_bytes` - a WhatsApp attachment, an n8n-patched item, the
+    console's own upload. Refused BEFORE any socket opens, the same guard
+    `chatbot/dispatch.py`'s retry webhook already uses."""
+
+    def test_a_loopback_url_is_refused_before_any_request(self, monkeypatch):
+        import httpx
+
+        from app.services.media_extract.service import MediaExtractionError, fetch_media_bytes
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            httpx, "Client", lambda **kwargs: calls.append("client-opened") or _FakeStreamingClient(None)
+        )
+
+        with pytest.raises(MediaExtractionError):
+            fetch_media_bytes("https://127.0.0.1/x.jpg")
+
+        assert not calls, "a socket was opened for a loopback url - the guard did not run first"
+
+    def test_a_private_network_url_is_refused_before_any_request(self, monkeypatch):
+        import httpx
+
+        from app.services.media_extract.service import MediaExtractionError, fetch_media_bytes
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            httpx, "Client", lambda **kwargs: calls.append("client-opened") or _FakeStreamingClient(None)
+        )
+
+        with pytest.raises(MediaExtractionError):
+            fetch_media_bytes("https://10.0.0.5/x.jpg")
+
+        assert not calls, "a socket was opened for a private-network url - the guard did not run first"
+
+    def test_an_http_url_is_refused(self, monkeypatch):
+        from app.services.media_extract.service import MediaExtractionError, fetch_media_bytes
+
+        with pytest.raises(MediaExtractionError):
+            fetch_media_bytes("http://cdn.respond.io/x.jpg")
 
 
 def test_the_voice_lane_never_posts_another_providers_key_to_openai(monkeypatch):

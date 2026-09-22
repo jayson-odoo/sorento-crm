@@ -76,9 +76,16 @@ def _cap_envelope(envelope: Any) -> Any:
 
 
 def _stages(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """`{name, started_at, ms, status, summary, error}`, the failing stage FIRST
-    (AC-973) - an operator opening a failed turn should not have to scroll to find
-    what broke.
+    """`{name, started_at, ms, status, summary, error, facts}`, the failing stage
+    FIRST (AC-973) - an operator opening a failed turn should not have to scroll to
+    find what broke.
+
+    `facts` (browser pass, chatbot media-into-turn): every stage record already
+    carries it, flattened to plain display values (`engine.py::_media_intake_facts`
+    is the one that matters here - modality/decision/status/elapsed_ms/entities/
+    attributes/notes/truncated, never a bare id) - dropped from this projection
+    before now, which is why a media turn's own Stages tab showed the badge and the
+    summary line but none of what was actually read.
     """
     stages = [
         {
@@ -88,6 +95,7 @@ def _stages(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "status": r.get("status"),
             "summary": r.get("summary"),
             "error": r.get("error"),
+            "facts": r.get("facts") or {},
         }
         for r in _stage_records(records)
     ]

@@ -31,7 +31,9 @@ export type TurnStatus = 'queued' | 'processing' | 'delegated' | 'done' | 'faile
 
 export type TraceStatus = 'ok' | 'failed' | 'skipped';
 
-/** The 13 lanes the router decides between. */
+/** The 13 lanes the router decides between, plus `media_denied` (chatbot media-into-turn
+ *  S2): a photo or voice note the intake step refused (quota, burst, disabled number,
+ *  clip too long) before a parser ever ran. */
 export type BranchKind =
   | 'access_denied'
   | 'escalate_offer'
@@ -45,7 +47,8 @@ export type BranchKind =
   | 'not_supported'
   | 'stock_denied'
   | 'demand_qty'
-  | 'business_query';
+  | 'business_query'
+  | 'media_denied';
 
 /**
  * One stage of one turn.
@@ -124,6 +127,30 @@ export interface TurnResponseBody {
 // off its own `ConsoleTurnResponse`, so the type lives with the shared extractor
 // rather than duplicated per screen.
 
+/**
+ * What the media-intake step (chatbot media-into-turn, S2/S4) read out of an incoming
+ * photo or voice note, joined onto the turn it produced. Null on a text turn - the
+ * transcript and the turn panel both treat its absence as "not a media turn", never as
+ * a loading or error state.
+ */
+export interface ChatbotTurnMedia {
+  modality: 'image' | 'voice';
+  mime_type: string | null;
+  /** The stored `attachments` row (S4). Never rendered - the FE reads `url`. */
+  attachment_id: string | null;
+  /** Signed, short-lived CDN url (S4). Null while the bytes were never stored (denied). */
+  url: string | null;
+  /** The text handed to the parser: the entity raws joined (image) or the transcript
+   *  verbatim (voice). Null on a denied/failed job. */
+  transcript_or_rendered_text: string | null;
+  entities: Array<{ raw: string; hint?: string | null; confident?: boolean | null }>;
+  attributes: Array<{ kind: string; raw: string; entity_raw?: string | null }>;
+  notes: string | null;
+  truncated: boolean;
+  /** e.g. `accepted`, `denied_gate`, `denied_quota`, `denied_burst`, `failed`. */
+  decision: string;
+}
+
 export interface ChatbotTurn {
   id: string;
   contact_respond_id: string;
@@ -149,6 +176,9 @@ export interface ChatbotTurn {
   retry_requested_at?: string | null;
   trace: TurnTraceRecord[];
   response: TurnResponseBody | null;
+  /** The photo or voice note this turn read (chatbot media-into-turn, S2/S4). Null on a
+   *  text turn. */
+  media?: ChatbotTurnMedia | null;
 }
 
 export interface ChatbotTurnListResponse {
@@ -213,6 +243,11 @@ export interface TurnDetailStage {
   status: TraceStatus;
   summary: string | null;
   error: string | null;
+  /** Browser pass, chatbot media-into-turn: the SAME flattened facts `TurnPanel`'s
+   * own inline StageRow already prints (modality/decision/entities/attributes/
+   * notes/... for a media_intake stage) - absent or `{}` on a stage that carries
+   * none, same optionality as `TurnTraceRecord.facts` above. */
+  facts?: Record<string, unknown>;
 }
 
 export interface TurnDetailParse {

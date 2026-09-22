@@ -183,6 +183,26 @@ class TestTraceLegibilityAcrossBranchKinds:
         assert result.branch_kind == "business_query"
         _assert_trace_is_legible(trace)
 
+    def test_media_denied(self, session_factory, seeded, stub_parser, stub_access):
+        """PLAN-chatbot-media-into-turn.md, S2: a voice note with no url never reaches
+        the parser (`stub_parser` proves nothing calls it) or APPLY, and closes on the
+        media intake's own denial alone. The trace still reads received -> media_intake
+        (carrying its own `decision`, and a `notice` when the intake produced one) ->
+        replied -> remembered - the SAME four-stage shape every other declared branch
+        kind gets, even though this one short-circuits before the parser is even set up.
+        """
+        stub_parser()
+        stub_access()
+        envelope = _envelope()
+        envelope.message["message"]["message"] = {"type": "audio", "attachment": {"type": "audio"}}
+        result, trace = _run(session_factory, envelope)
+        assert result.branch_kind == "media_denied"
+        stages = [entry["stage"] for entry in trace if entry.get("kind") is None]
+        assert stages == ["received", "media_intake", "replied", "remembered"]
+        media_record = next(entry for entry in trace if entry.get("stage") == "media_intake")
+        assert media_record["facts"]["decision"] == "no_url"
+        _assert_trace_is_legible(trace)
+
     def test_every_declared_branch_kind_has_a_test_above(self) -> None:
         """A new BRANCH_KINDS entry must add a scenario here, not silently go untested.
 
@@ -201,6 +221,7 @@ class TestTraceLegibilityAcrossBranchKinds:
             "clarify_menu",
             "not_supported",
             "business_query",
+            "media_denied",
         }
         retired_elsewhere_or_flagged = {
             "escalate_offer",
