@@ -218,8 +218,10 @@ describe('PullCompareTab - booleans and human field labels (CT-1, CT-5)', () => 
     renderTab();
     await dropFile();
 
-    // "Active" renders twice - the Difference column's field label AND the excel cell's value.
-    expect(await screen.findAllByText('Active')).toHaveLength(2);
+    // The Difference column reads "Is Active" (captain ruling N7) - it never collides with
+    // the Active/Inactive VALUE cells next to it.
+    expect(await screen.findByText('Is Active')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('Inactive')).toBeInTheDocument();
     expect(screen.getByTitle('Active')).toBeInTheDocument();
     expect(screen.getByTitle('Inactive')).toBeInTheDocument();
@@ -272,7 +274,7 @@ describe('PullCompareTab - headline names both counts (CT-2)', () => {
     expect(await screen.findByText(/2 items differ \(3 differences\)/)).toBeInTheDocument();
   });
 
-  it('just "N items differ" when every differing item differs on exactly one field', async () => {
+  it('just "1 item differs" (singular) when a single item differs on exactly one field', async () => {
     useComparePull.mockReturnValue(
       mutateReturning({
         summary: {
@@ -289,8 +291,50 @@ describe('PullCompareTab - headline names both counts (CT-2)', () => {
     renderTab();
     await dropFile();
 
-    expect(await screen.findByText(/^1 items differ\.?$/)).toBeInTheDocument();
+    expect(await screen.findByText(/^1 item differs\.?$/)).toBeInTheDocument();
     expect(screen.queryByText(/differences\)/)).not.toBeInTheDocument();
+  });
+
+  it('just "N items differ" (plural) when every differing item differs on exactly one field', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'plural.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 2, matched: 0, different: 2, only_in_excel: 0, only_in_pull: 0,
+        },
+        differences: [
+          { item_code: 'SRT-1', field: 'price', excel: '1', pull: '2' },
+          { item_code: 'SRT-2', field: 'price', excel: '3', pull: '4' },
+        ],
+        only_in_excel: [], only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    expect(await screen.findByText(/^2 items differ\.?$/)).toBeInTheDocument();
+    expect(screen.queryByText(/differences\)/)).not.toBeInTheDocument();
+  });
+
+  it('review S3: drops the "items differ" clause entirely when there are no per-field differences, keeping just the only-in clauses', async () => {
+    useComparePull.mockReturnValue(
+      mutateReturning({
+        summary: {
+          filename: 'onlyin-only.xlsx', compared_at: '2026-09-22T00:00:00Z',
+          total: 0, matched: 0, different: 0, only_in_excel: 1, only_in_pull: 0,
+        },
+        differences: [],
+        only_in_excel: ['SRT-9'],
+        only_in_pull: [],
+      }),
+    );
+
+    renderTab();
+    await dropFile();
+
+    expect(await screen.findByText(/^1 only in your Excel\.$/)).toBeInTheDocument();
+    expect(screen.queryByText(/item.*differ/)).not.toBeInTheDocument();
   });
 });
 
@@ -367,7 +411,7 @@ describe('PullCompareTab - only-in rows in the grid (CT-3, CT-4)', () => {
     const [rows] = generateExcelFile.mock.calls[0];
     const typedRows = rows as Array<Record<string, unknown>>;
     expect(typedRows).toHaveLength(2);
-    expect(typedRows[0]).toMatchObject({ item_code: 'SRT-1', field: 'Active', excel: 'Active', pull: 'Inactive' });
+    expect(typedRows[0]).toMatchObject({ item_code: 'SRT-1', field: 'Is Active', excel: 'Active', pull: 'Inactive' });
     expect(typedRows[1]).toMatchObject({
       item_code: 'SRT-2', field: 'Only in your Excel', excel: 'Present', pull: 'Missing',
     });

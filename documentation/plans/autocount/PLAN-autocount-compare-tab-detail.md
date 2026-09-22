@@ -1,8 +1,8 @@
 # PLAN: AutoCount pull - Compare tab shows every difference it counts
 
-Status: planned (owner go 22 Sep 2026). Track: **small fix track** (one seam, FE only, no
-migration, no auth change; one coder writes tests + fix, one reviewer, browser pass on the
-changed screen).
+Status: built, review READY, browser pass pending. Track: **small fix track** (one seam, FE
+only, no migration, no auth change; one coder writes tests + fix, one reviewer, browser pass on
+the changed screen).
 UAC: `autocount-compare-tab-detail-acceptance-criteria.md`.
 Follows: `PLAN-autocount-pull-review.md` P11 (Compare with my Excel).
 

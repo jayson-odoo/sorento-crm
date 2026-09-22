@@ -8,19 +8,27 @@ import { formatCompareValue, fieldLabel, buildCompareRows } from './compareRows'
 import type { AutocountComparePullResult } from '../types/autocountPull.types';
 
 describe('formatCompareValue', () => {
-  it('formats is_active booleans as Active / Inactive, never true/false', () => {
-    expect(formatCompareValue('is_active', true)).toBe('Active');
-    expect(formatCompareValue('is_active', false)).toBe('Inactive');
+  it('formats booleans as Active / Inactive, never true/false', () => {
+    expect(formatCompareValue(true)).toBe('Active');
+    expect(formatCompareValue(false)).toBe('Inactive');
   });
 
   it('formats null/undefined as a dash', () => {
-    expect(formatCompareValue('price', null)).toBe('-');
-    expect(formatCompareValue('price', undefined as unknown as null)).toBe('-');
+    expect(formatCompareValue(null)).toBe('-');
+    expect(formatCompareValue(undefined as unknown as null)).toBe('-');
   });
 
-  it('formats numbers and strings as themselves', () => {
-    expect(formatCompareValue('on_hand_qty', 12)).toBe('12');
-    expect(formatCompareValue('price', '10.00')).toBe('10.00');
+  it('formats an empty string as a dash too (review S1: backend sends "" for blank description/item_group/item_brand)', () => {
+    expect(formatCompareValue('')).toBe('-');
+  });
+
+  it('formats 0 as "0", not a dash', () => {
+    expect(formatCompareValue(0)).toBe('0');
+  });
+
+  it('formats numbers and non-blank strings as themselves', () => {
+    expect(formatCompareValue(12)).toBe('12');
+    expect(formatCompareValue('10.00')).toBe('10.00');
   });
 });
 
@@ -30,8 +38,11 @@ describe('fieldLabel', () => {
     expect(fieldLabel('item_group')).toBe('Item Group');
     expect(fieldLabel('item_brand')).toBe('Item Brand');
     expect(fieldLabel('price')).toBe('Price');
-    expect(fieldLabel('is_active')).toBe('Active');
     expect(fieldLabel('on_hand_qty')).toBe('On Hand Qty');
+  });
+
+  it('labels is_active "Is Active" - matches the manual template header, and never collides with the Active/Inactive VALUE cells (captain ruling N7)', () => {
+    expect(fieldLabel('is_active')).toBe('Is Active');
   });
 
   it('falls back to the raw key for anything unknown - never renders it, but never crashes either', () => {
@@ -56,30 +67,38 @@ describe('buildCompareRows', () => {
   it('formats a boolean difference and gives the field a human label', () => {
     const rows = buildCompareRows(
       result({ differences: [{ item_code: 'SRT-1', field: 'is_active', excel: true, pull: false }] }),
+      'products',
     );
     expect(rows).toEqual([
-      { item_code: 'SRT-1', location: undefined, field: 'Active', excel: 'Active', pull: 'Inactive' },
+      { item_code: 'SRT-1', location: undefined, field: 'Is Active', excel: 'Active', pull: 'Inactive' },
     ]);
   });
 
   it('adds one row per only_in_excel code, labelled "Only in your Excel"', () => {
-    const rows = buildCompareRows(result({ only_in_excel: ['SRT-2'] }));
+    const rows = buildCompareRows(result({ only_in_excel: ['SRT-2'] }), 'products');
     expect(rows).toEqual([
       { item_code: 'SRT-2', location: undefined, field: 'Only in your Excel', excel: 'Present', pull: 'Missing' },
     ]);
   });
 
   it('adds one row per only_in_pull code, labelled "Only in AutoCount"', () => {
-    const rows = buildCompareRows(result({ only_in_pull: ['SRT-3'] }));
+    const rows = buildCompareRows(result({ only_in_pull: ['SRT-3'] }), 'products');
     expect(rows).toEqual([
       { item_code: 'SRT-3', location: undefined, field: 'Only in AutoCount', excel: 'Missing', pull: 'Present' },
     ]);
   });
 
-  it('splits a stock "code|location" only-in label into item_code and location', () => {
-    const rows = buildCompareRows(result({ only_in_excel: ['SRT-4|MAIN'] }));
+  it('splits a stock "code|location" only-in label into item_code and location for stock_balances', () => {
+    const rows = buildCompareRows(result({ only_in_excel: ['SRT-4|MAIN'] }), 'stock_balances');
     expect(rows).toEqual([
       { item_code: 'SRT-4', location: 'MAIN', field: 'Only in your Excel', excel: 'Present', pull: 'Missing' },
+    ]);
+  });
+
+  it('never splits a products only-in code, even one that happens to contain "|" (review S2: a product item code is raw, not a code|location pair)', () => {
+    const rows = buildCompareRows(result({ only_in_excel: ['A|B'] }), 'products');
+    expect(rows).toEqual([
+      { item_code: 'A|B', location: undefined, field: 'Only in your Excel', excel: 'Present', pull: 'Missing' },
     ]);
   });
 
@@ -90,6 +109,7 @@ describe('buildCompareRows', () => {
         only_in_excel: ['B'],
         only_in_pull: ['C'],
       }),
+      'products',
     );
     expect(rows.map((r) => r.item_code)).toEqual(['A', 'B', 'C']);
     expect(rows).toHaveLength(3);
