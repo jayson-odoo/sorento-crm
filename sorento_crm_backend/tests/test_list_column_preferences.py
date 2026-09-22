@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -124,6 +126,76 @@ def test_list_column_config_upsert_and_reset(api_client):
     r4 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
     assert r4.status_code == 200
     assert r4.json()['config'] is None
+
+
+def test_list_column_config_page_size_merges_with_existing_column_order(api_client):
+    """PLAN-listing-page-size-memory Red 7: PUT { pageSize } merges into a row that
+    already carries columnOrder, sorting, filters and defaultSavedViewId; GET returns
+    all of them (review round 1: the merge must not clobber the OTHER writer's keys
+    either, not just columnOrder)."""
+    client, current_user, db = api_client
+
+    perm_slug = 'test.pagesize.view'
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug=perm_slug, role_id='r1')
+
+    listing_key = f'{perm_slug}::pgsz-{uuid.uuid4().hex[:8]}'
+
+    r1 = client.put(
+        f'/api/v1/list-query/column-config/{listing_key}',
+        json={
+            'version': 1,
+            'columnOrder': ['name', 'status'],
+            'sorting': [{'id': 'name', 'desc': False}],
+            'filters': {'statuses': ['open']},
+            'defaultSavedViewId': 'view-1',
+        },
+    )
+    assert r1.status_code == 200
+    assert r1.json()['config']['columnOrder'] == ['name', 'status']
+
+    r2 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json={'pageSize': 50})
+    assert r2.status_code == 200
+    assert r2.json()['config']['pageSize'] == 50
+    assert r2.json()['config']['columnOrder'] == ['name', 'status']
+    assert r2.json()['config']['sorting'] == [{'id': 'name', 'desc': False}]
+    assert r2.json()['config']['filters'] == {'statuses': ['open']}
+    assert r2.json()['config']['defaultSavedViewId'] == 'view-1'
+
+    r3 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
+    assert r3.status_code == 200
+    assert r3.json()['config']['pageSize'] == 50
+    assert r3.json()['config']['columnOrder'] == ['name', 'status']
+    assert r3.json()['config']['sorting'] == [{'id': 'name', 'desc': False}]
+    assert r3.json()['config']['filters'] == {'statuses': ['open']}
+    assert r3.json()['config']['defaultSavedViewId'] == 'view-1'
+
+
+def test_list_column_config_page_size_rejects_out_of_bounds_value(api_client):
+    """PLAN-listing-page-size-memory Red 8 (review round 1 ruling: pageSize is a
+    BOUNDED INT, not a fixed list - ~45 listings default their own Rows-per-page menu
+    to sizes outside 25/50/100). 0 and MAX+1 (101, MAX_LIST_PAGE_SIZE in
+    lib/listNavQuery.ts) are refused and write nothing; 10, one of the sizes those
+    listings actually use, is accepted."""
+    client, current_user, db = api_client
+
+    perm_slug = 'test.pagesize.view'
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug=perm_slug, role_id='r1')
+
+    listing_key = f'{perm_slug}::pgsz-{uuid.uuid4().hex[:8]}'
+
+    r1 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json={'pageSize': 0})
+    assert r1.status_code == 422
+
+    r2 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json={'pageSize': 101})
+    assert r2.status_code == 422
+
+    r3 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
+    assert r3.status_code == 200
+    assert r3.json()['config'] is None
+
+    r4 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json={'pageSize': 10})
+    assert r4.status_code == 200
+    assert r4.json()['config']['pageSize'] == 10
 
 
 def test_list_column_config_denied_without_permission(api_client):
