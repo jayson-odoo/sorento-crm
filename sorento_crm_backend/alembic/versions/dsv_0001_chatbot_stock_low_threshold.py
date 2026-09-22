@@ -20,13 +20,13 @@ as an idempotent re-run, and on a real database replaying every migration in ord
 is the one call that actually adds the column.
 
 Revision ID: dsv_0001
-Revises: spec_vocab_close_couple
+Revises: 525_committed_v_orderback
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "dsv_0001"
-down_revision = "spec_vocab_close_couple"
+down_revision = "525_committed_v_orderback"
 branch_labels = None
 depends_on = None
 
