@@ -354,6 +354,11 @@ live pass ran; it failed 23 of 28 turns from causes no stub could see:
    suppressed while any product still needs a quantity).
 3. The same product code in two of the dealer's companies produced two entries and a doubled
    question (D27; review round 5).
+4. The block never reached the engine: the presenter built the sentence from `stock_availability`
+   and dropped it from the render envelope, so no task survived a turn while every reply looked
+   right (D30; review round 6, `_PASSTHROUGH_KEYS`). Six task-seam rules were then pinned from
+   the real traces (fill never drops open slots, ask order kept, exact code for a quantity-bearing
+   entity D29, `demand_qty` on open, resume makes no call, close clears the products axis).
 
 The lesson is recorded in `LESSONS-LEARNT.md`: a new MCP tool parameter needs a test through the
 COMPILED tool with the real value shape, and a chatbot lane keeps its one live pass at the end.
