@@ -258,6 +258,14 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
             summary["created"] += 1
             _write_created_outcome(outcome_writer, item_code, record)
         elif record.outcome == IngestOutcome.UPDATED:
+            # `not record.diff` is true for BOTH `{}` (the ordinary no-op
+            # re-sync) and `None` (`_diff`'s own edge case: the row vanished
+            # between the read and the write inside this record's own
+            # savepoint) - reading `record.diff` here directly on the
+            # in-process object, not through `as_dict()` (PP-10 gates THAT
+            # one to dry runs only), so this counter sees it either way.
+            # Both count as `unchanged`: neither is a change an operator
+            # needs an outcome row for.
             if not record.diff:
                 summary["unchanged"] += 1
                 continue

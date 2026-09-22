@@ -198,13 +198,21 @@ class RecordResult:
     # `as_dict()` in that case, same rule as `diff`.
     lines: Optional[dict[str, int]] = None
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self, *, dry_run: bool = False) -> dict[str, Any]:
+        """`dry_run` (fix round, PP-10 - captain's contract ruling): `diff` is
+        now populated on a REAL run too (C1), but the wire shape at
+        `/api/v1/ingest/*` must stay byte-identical to main for a real push -
+        only a DRY RUN ever serializes it. `IngestResult.as_dict()` is the
+        one caller and passes its own `dry_run` through; a direct call (the
+        AC-V0-3 warnings tests) defaults to `False`, matching every field
+        `diff` is unrelated to.
+        """
         return {
             "source_ref": self.source_ref,
             "outcome": self.outcome.value,
             "entity_id": self.entity_id,
             **({"errors": self.errors} if self.errors else {}),
-            **({"diff": self.diff} if self.diff is not None else {}),
+            **({"diff": self.diff} if dry_run and self.diff is not None else {}),
             **({"warnings": self.warnings} if self.warnings else {}),
             **({"lines": self.lines} if self.lines is not None else {}),
         }
@@ -265,7 +273,7 @@ class IngestResult:
                     else {}
                 ),
             },
-            "records": [r.as_dict() for r in self.records],
+            "records": [r.as_dict(dry_run=self.dry_run) for r in self.records],
         }
 
 
