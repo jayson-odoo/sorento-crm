@@ -12,3 +12,7 @@ Plan: `PLAN-keep-assignee-on-resolve-22sep.md`
 - AC-KA-8 Form-SLA tracker resolve behaviour unchanged (existing test `test_form_row_resolve_is_never_gated_by_conversation_siblings` still green, reworded to say both paths now keep the fields).
 - AC-KA-9 The resolver can still open the ticket drawer after resolving (`test_the_resolver_still_reads_the_ticket_they_just_resolved` green with the assertion on `assigned_to_id is None` removed).
 - AC-KA-10 `list_tracking(is_resolved=True, assigned_to=<assignee>)` now returns the resolved row (history filter; flips `test_resolved_by_narrows_to_one_resolver`).
+- AC-KA-11 (fix round 1) A contact whose only conversation tracker is resolved calls `POST /external/next-assignee` → `is_already_assigned` is `false`, `already_assigned` is not in `status_flags`, and a fresh assignee is drawn from round-robin.
+- AC-KA-12 (fix round 1) Same contact/route with an OPEN, assigned tracker → `is_already_assigned` is `true` (pins the other direction, so AC-KA-11's fix cannot regress the still-open case).
+- AC-KA-13 (fix round 1) `ConversationSLATrackingService.get_existing_assignee_for_contact_phone` returns `None` once the contact's only assigned tracker is resolved (it returned that resolver's info before this fix).
+- AC-KA-14 (fix round 1) `POST /{id}/extend/preview` returns 422 "Cannot extend a resolved SLA task." for a resolved tracker, matching the real extend's `is_resolved` gate.
