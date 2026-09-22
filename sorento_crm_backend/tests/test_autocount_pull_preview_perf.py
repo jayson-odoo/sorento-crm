@@ -66,6 +66,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import event, text
 
+from app.models.procurement import ProductSupplier, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.services.audit_service import register_audit_listeners
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
@@ -668,3 +669,205 @@ class TestFailedInsertNeverPoisonsTheCodePreloadMap:
         ).mappings().all()
         assert len(rows) == 1, rows
         assert str(rows[0]["id"]) == entry_b.entity_id
+
+
+# ============================================================ T12 (fix round)
+class TestSecondSameBatchAdopterSeesTheFirstLink:
+    """B1 (both reviewers, round-1 review): `_link` never wrote the ref it
+    just created into `preload.origin_by_entity`, so a SECOND record in the
+    same batch that resolves the SAME product by a normalize-equal code (a
+    different casing/whitespace, a different source_ref) reads the STALE
+    preloaded `None` origin, takes the unclaimed-adopt branch instead of the
+    code-wins one, and its own `_link` call then raises `ReferenceConflict`
+    against the ref record A just wrote - FAILED, where main (no preload)
+    would have re-queried and seen the link.
+
+    Also exercises B2 in the same scenario: once B1 is fixed, record B
+    reaches `_post_write_product_hooks` for the SAME product id record A's
+    hook just linked to the default supplier THIS batch - `default_supplier_
+    lead_time.get(product_id)` (no sentinel) reads Python's bare `None`
+    default and treats it as "confirmed no link", inserting a SECOND
+    `product_suppliers` row and violating
+    `uq_product_suppliers_product_id_supplier_id`.
+    """
+
+    def test_t12_two_records_same_normalized_code_one_batch(self, db):
+        cat = ProductCategory(
+            category_code=unique_code(MARKER), category_name="cat", company_id=DEFAULT_COMPANY_ID
+        )
+        uom = UnitOfMeasure(
+            uom_code=unique_code(MARKER), uom_name="uom", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add_all([cat, uom])
+        db.flush()
+
+        supplier = Supplier(
+            supplier_code=unique_code(MARKER), supplier_name="T12 Supplier",
+            company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(supplier)
+        db.flush()
+
+        code = unique_code(MARKER)
+        description = f"{MARKER} description {code}"
+        product = Product(
+            product_code=code,
+            product_name=code,
+            description=description,
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("10.00"),
+            company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(product)
+        db.commit()
+
+        record_a = {
+            "source_ref": f"{MARKER}:A:{uuid.uuid4().hex[:8]}",
+            "code": code,
+            "name": code,
+            "description": description,
+            "list_price": "10.00",
+        }
+        record_b = {
+            "source_ref": f"{MARKER}:B:{uuid.uuid4().hex[:8]}",
+            "code": f" {code.lower()} ",
+            "name": code,
+            "description": description,
+            "list_price": "10.00",
+        }
+
+        result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+            "products", [record_a, record_b]
+        )
+
+        entry_a, entry_b = result.records
+        assert entry_a.outcome is IngestOutcome.UPDATED, entry_a
+        assert entry_b.outcome is IngestOutcome.UPDATED, entry_b
+        assert entry_b.warnings == ["ref_mismatch"], entry_b
+        assert entry_a.entity_id == str(product.id)
+        assert entry_b.entity_id == str(product.id)
+
+        supplier_rows = db.execute(
+            text("SELECT count(*) FROM product_suppliers WHERE product_id = :pid"),
+            {"pid": str(product.id)},
+        ).scalar()
+        assert supplier_rows == 1, supplier_rows
+
+        ref_rows = db.execute(
+            text(
+                "SELECT count(*) FROM integration_references "
+                "WHERE entity_type = 'products' AND entity_id = :pid"
+            ),
+            {"pid": str(product.id)},
+        ).scalar()
+        assert ref_rows == 1, ref_rows
+
+
+# ============================================================ T13 (fix round)
+class TestCreatedThenDuplicateCodeSameBatch:
+    """B2: a product CREATED earlier in the same batch, then adopted again by
+    a later duplicate-code record via the preload's own `code_to_id` map
+    (T10's own shape) - the SECOND record's `_post_write_product_hooks` must
+    see the FIRST record's freshly-created `product_suppliers` link, not
+    attempt a second insert."""
+
+    def test_t13_created_then_duplicate_code_same_batch(self, db):
+        supplier = Supplier(
+            supplier_code=unique_code(MARKER), supplier_name="T13 Supplier",
+            company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(supplier)
+        db.commit()
+
+        code = unique_code(MARKER)
+        record_a = _row(code=code, source_ref=f"{MARKER}:A:{uuid.uuid4().hex[:8]}")
+        record_b = _row(code=code, source_ref=f"{MARKER}:B:{uuid.uuid4().hex[:8]}")
+
+        result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+            "products", [record_a, record_b]
+        )
+
+        entry_a, entry_b = result.records
+        assert entry_a.outcome is IngestOutcome.CREATED, entry_a
+        assert entry_b.outcome is IngestOutcome.UPDATED, entry_b
+        assert entry_b.entity_id == entry_a.entity_id
+
+        supplier_rows = db.execute(
+            text("SELECT count(*) FROM product_suppliers WHERE product_id = :pid"),
+            {"pid": entry_a.entity_id},
+        ).scalar()
+        assert supplier_rows == 1, supplier_rows
+
+
+# ============================================================ T14 (fix round)
+class TestRenamedCodeResolvedViaRefKeepsOneSupplierLink:
+    """B2: a product resolved by its SOURCE_REF (renamed code - the incoming
+    code no longer matches the stored one, so the batch's own code preload
+    never covers this id) already has an EXISTING `product_suppliers` row -
+    `default_supplier_lead_time.get(product_id)` must fall through to the
+    real per-record query rather than reading Python's bare `None` default
+    as "confirmed no link" and inserting a duplicate."""
+
+    def test_t14_renamed_code_resolved_via_ref_keeps_one_supplier_link(self, db):
+        cat = ProductCategory(
+            category_code=unique_code(MARKER), category_name="cat", company_id=DEFAULT_COMPANY_ID
+        )
+        uom = UnitOfMeasure(
+            uom_code=unique_code(MARKER), uom_name="uom", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add_all([cat, uom])
+        db.flush()
+
+        supplier = Supplier(
+            supplier_code=unique_code(MARKER), supplier_name="T14 Supplier",
+            company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(supplier)
+        db.flush()
+
+        old_code = unique_code(MARKER)
+        description = f"{MARKER} description {old_code}"
+        product = Product(
+            product_code=old_code,
+            product_name=old_code,
+            description=description,
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("10.00"),
+            company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(product)
+        db.flush()
+
+        source_ref = f"{MARKER}:{uuid.uuid4().hex[:8]}"
+        IntegrationReferenceService(db, company_id=DEFAULT_COMPANY_ID).link(
+            entity_type="products", entity_id=str(product.id), source_ref=source_ref,
+        )
+        db.add(
+            ProductSupplier(
+                product_id=product.id, supplier_id=supplier.id, standard_lead_time_days=45
+            )
+        )
+        db.commit()
+
+        new_code = unique_code(f"{MARKER}RENAMED")
+        row = {
+            "source_ref": source_ref,
+            "code": new_code,
+            "name": new_code,
+            "description": description,
+            "list_price": "10.00",
+        }
+
+        result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest("products", [row])
+
+        entry = result.records[0]
+        assert entry.outcome is IngestOutcome.UPDATED, entry
+        assert entry.entity_id == str(product.id)
+
+        supplier_rows = db.execute(
+            text("SELECT standard_lead_time_days FROM product_suppliers WHERE product_id = :pid"),
+            {"pid": str(product.id)},
+        ).mappings().all()
+        assert len(supplier_rows) == 1, supplier_rows
