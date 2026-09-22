@@ -1,9 +1,9 @@
 /**
- * The listing's "Assigned To" cell (feedback 2026-08-16, item 1).
- *
- * Resolve NULLs the assignee, so every resolved row used to read "-" in the one
- * column a reader scans to find out who handled it. Same rule as the detail
- * header: assignee while open, resolver once resolved.
+ * The listing's "Assigned To" cell (feedback 2026-08-16, item 1; superseded
+ * by owner ruling S4, 23 Sep 2026, PLAN-keep-assignee-on-resolve-22sep).
+ * Resolve keeps the assignee for audit now, so this column names the
+ * assignee whether the row is open or resolved - who resolved it is shown on
+ * the detail page instead, not repeated in this listing.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -83,7 +83,7 @@ describe('ConversationSLATrackingList assignee cell', () => {
     await waitFor(() => expect(screen.getByTitle('Assigned to Ben Lim')).toBeInTheDocument());
   });
 
-  it('a resolved row shows who resolved it instead of a dash', async () => {
+  it('a resolved row shows its assignee, not its resolver', async () => {
     useConversationSLATracking.mockReturnValue(
       rowsResponse([
         {
@@ -91,14 +91,17 @@ describe('ConversationSLATrackingList assignee cell', () => {
           id: 'tr-2',
           is_resolved: true,
           resolved_at: '2026-08-12T04:00:00',
-          assigned_user_name: null,
+          assigned_user_name: 'Ben Lim',
+          // Resolved by someone other than the assignee - the cell must still
+          // name the assignee, not this.
           resolved_by_user_name: 'Charissa Tan',
         },
       ]),
     );
     render(<ConversationSLATrackingList />);
 
-    const cell = await screen.findByTitle('Resolved by Charissa Tan');
-    expect(cell).toHaveTextContent('Resolved by Charissa Tan');
+    const cell = await screen.findByTitle('Assigned to Ben Lim');
+    expect(cell).toHaveTextContent('Ben Lim');
+    expect(screen.queryByText(/Charissa Tan/)).not.toBeInTheDocument();
   });
 });
