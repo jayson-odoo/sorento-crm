@@ -743,6 +743,51 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
         // C: rows_raised_in_window 2 > 0 but rows_in_range 0 -> NOT pre-selected.
         expect((screen.getByLabelText(/^SOC - PC/) as HTMLInputElement).checked).toBe(false);
       });
+      // The raised count itself is rendered on the option (S2: appended to the
+      // description once a window is set) - not just used silently for pre-selection.
+      expect(screen.getByText(/raised 1/)).toBeInTheDocument();
+    });
+
+    it('AC-RF-6: clearing the raise window widens pre-selection back to rows_in_range>0', async () => {
+      // The mock branches on whether a window was actually sent, exactly like the real
+      // backend contract (AC-RF-2): windowed counts while raised_from/raised_to are set,
+      // rows_raised_in_window === rows_total once they are cleared.
+      getCandidateOrders.mockImplementation(async (range: CandidateOrdersRange) => {
+        const windowed = Boolean(range.raised_from || range.raised_to);
+        return [
+          {
+            so_number: 'SOA', project_label: 'PA', customer_name: 'CA',
+            rows_total: 2, rows_in_range: 2, rows_raised_in_window: windowed ? 1 : 2,
+            rows_awaiting: 0, first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+          },
+          {
+            so_number: 'SOB', project_label: 'PB', customer_name: 'CB',
+            rows_total: 3, rows_in_range: 3, rows_raised_in_window: windowed ? 0 : 3,
+            rows_awaiting: 0, first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+          },
+        ];
+      });
+
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+
+      // Windowed: only A qualifies.
+      await waitFor(() => {
+        expect((screen.getByLabelText(/^SOA - PA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOB - PB/) as HTMLInputElement).checked).toBe(false);
+      });
+
+      // Clear both raise inputs - the buyer has not touched the Orders list by hand, so
+      // the pre-selection re-derives on the wider (unwindowed) result (V4's own guard).
+      fireEvent.change(screen.getByLabelText('Raised from'), { target: { value: '' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '' } });
+
+      await waitFor(() => {
+        expect((screen.getByLabelText(/^SOA - PA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOB - PB/) as HTMLInputElement).checked).toBe(true);
+      });
     });
 
     it('AC-RF-6: without a raise window, pre-selection stays rows_in_range>0 (today\'s behaviour, unchanged)', async () => {

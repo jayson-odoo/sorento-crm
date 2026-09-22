@@ -918,6 +918,54 @@ def test_rf2_open_lower_bound_raised_to_only_counts_everything_up_to_it(scm_app)
     assert row["rows_raised_in_window"] == 2, "an open lower bound must not exclude the 2020 row"
 
 
+def test_rf2_window_uses_the_kuala_lumpur_day(scm_app):
+    """AC-RF-2 (reviewer kill, round 2): R1 reads the row's raise as its first upload
+    DAY, and the buyer's day is Malaysia civil time, not UTC. `created_at` is stored naive
+    UTC (`_stamp_row_created_at`'s docstring), so a row stamped 17 Sep 23:00 UTC is really
+    18 Sep 07:00 MYT and must count under an 18 Sep window, never a 17 Sep one - a bare
+    `created_at::date` (UTC) would get this backwards. This machine's own Postgres session
+    TimeZone is Asia/Seoul (a THIRD zone), so the UPDATE's bound value is asserted to have
+    landed exactly as given before trusting the endpoint's own conversion."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 4, "delivery_date": date(2026, 9, 1)},
+    ])
+    stamped = datetime(2026, 9, 17, 23, 0, 0)
+    _stamp_row_created_at(db, so["rows"][0].id, stamped)
+
+    # The bound really did land naive/unconverted - rules out a session-TimeZone artefact
+    # (this machine's own session TimeZone is Asia/Seoul) masquerading as the MYT
+    # conversion under test.
+    landed = db.execute(
+        text("SELECT created_at FROM projects.order_inquiry_rows WHERE id = :id"),
+        {"id": so["rows"][0].id},
+    ).scalar()
+    assert landed == stamped, "the UPDATE must have stamped the naive value verbatim"
+
+    with TestClient(app) as c:
+        on_18 = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"raised_from": "2026-09-18", "raised_to": "2026-09-18"},
+        )
+        on_17 = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"raised_from": "2026-09-17", "raised_to": "2026-09-17"},
+        )
+
+    assert on_18.status_code == 200, on_18.text
+    assert on_17.status_code == 200, on_17.text
+    row_18 = next(r for r in on_18.json() if r["so_number"] == so["so_number"])
+    row_17 = next(r for r in on_17.json() if r["so_number"] == so["so_number"])
+
+    # 17 Sep 23:00 UTC == 18 Sep 07:00 MYT - the row belongs to the 18th, not the 17th.
+    assert row_18["rows_raised_in_window"] == 1, "23:00 UTC on the 17th is the 18th in MYT"
+    assert row_17["rows_raised_in_window"] == 0, "a bare UTC day would wrongly count it here"
+
+
 def test_ac_ob_9_candidate_orders_lists_an_so_whose_only_open_row_is_order_back_on_a_delivered_line(
     scm_app,
 ):
