@@ -67,6 +67,7 @@ import {
   orderListRows,
   rowMatchesSearch,
   confirmLinesFor,
+  rejectedCoveredLineIdsFor,
   shiftedDayWindow,
   unpostableDecidedFor,
   type UnpostableLine,
@@ -1035,7 +1036,12 @@ export function FulfilmentBoardPanel({
           .filter((contribution) => {
             if (contribution.unplannable) return false;
             const decision = draft[contribution.key];
-            if (decision?.verdict === 'rejected') return false;
+            // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
+            // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
+            // rejection") - its order belongs in the batch on that account alone, same as an
+            // amendment does. An UNCOVERED reject has nothing active to withdraw and is left
+            // out, exactly as before.
+            if (decision?.verdict === 'rejected') return Boolean(contribution.covered);
             // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided,
             // not agreed - it does not put its order in the batch on its account alone.
             if (!contribution.covered && !decision) return false;
@@ -1094,6 +1100,7 @@ export function FulfilmentBoardPanel({
         pso_id: string;
         lines: ReturnType<typeof confirmLinesFor>;
         batch_id: string | null;
+        rejected_line_ids: string[];
       }[] = [];
       // An order whose planning change is already applied is NOT sent again (AC-P3-4). It is
       // reported instead, in the same place a server refusal is reported, so a press that
@@ -1128,14 +1135,30 @@ export function FulfilmentBoardPanel({
           continue;
         }
         const lines = confirmLinesFor(contributions, salesOrderId, draft);
-        // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT. Every line was left out for a
-        // reason `unpostableDecidedFor` already knows (no mirror on the planning record, a
-        // Reserve at a warehouse the board cannot address, a discontinued Buy with no
-        // reason), so the order sends nothing - and said nothing, because a press whose
-        // `orders` came out empty with an empty `skipped` never set `batchResults` at all.
-        // It is reported beside every other order's outcome instead, in the wording the
-        // notice above the block already uses for the lines themselves.
-        if (lines.length === 0) {
+        // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
+        // two different pending batches each answer their own. The batches the screen LOADED
+        // first (it was opened on one), and the BOARD'S own statement of the newest pending
+        // batch for this order second (AC-B1). Same fact, two sources: a board reached
+        // without `?batch=` loads no batch rows at all, and sending `null` there confirmed
+        // the lines while leaving the change Pending.
+        const orderBatchId =
+          (soNumber ? batchIdBySoNumber.get(soNumber) : undefined) ??
+          standing?.pending_change_batch_id ??
+          null;
+        // A pending planning change has no shape for a withdrawal alongside it (server
+        // refuses the combination, 422 - `PLAN-board-reject-on-confirmed-line.md`, "Not in
+        // scope") - an order on one never carries `rejected_line_ids` from here.
+        const rejectedLineIds = orderBatchId
+          ? []
+          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draft);
+        // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT, AND NOTHING TO WITHDRAW EITHER.
+        // Every line was left out for a reason `unpostableDecidedFor` already knows (no
+        // mirror on the planning record, a Reserve at a warehouse the board cannot address,
+        // a discontinued Buy with no reason), so the order sends nothing - and said nothing,
+        // because a press whose `orders` came out empty with an empty `skipped` never set
+        // `batchResults` at all. It is reported beside every other order's outcome instead,
+        // in the wording the notice above the block already uses for the lines themselves.
+        if (lines.length === 0 && rejectedLineIds.length === 0) {
           const blocked = unpostableDecidedFor(contributions, salesOrderId, draft);
           const everyLineOffTheRecord =
             blocked.length > 0 && blocked.every((entry) => entry.reason === 'no_mirror');
@@ -1149,17 +1172,7 @@ export function FulfilmentBoardPanel({
           } as BoardBatchResult);
           continue;
         }
-        // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
-        // two different pending batches each answer their own. The batches the screen LOADED
-        // first (it was opened on one), and the BOARD'S own statement of the newest pending
-        // batch for this order second (AC-B1). Same fact, two sources: a board reached
-        // without `?batch=` loads no batch rows at all, and sending `null` there confirmed
-        // the lines while leaving the change Pending.
-        const orderBatchId =
-          (soNumber ? batchIdBySoNumber.get(soNumber) : undefined) ??
-          standing?.pending_change_batch_id ??
-          null;
-        orders.push({ pso_id: psoId, lines, batch_id: orderBatchId });
+        orders.push({ pso_id: psoId, lines, batch_id: orderBatchId, rejected_line_ids: rejectedLineIds });
       }
       if (orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);
@@ -1198,12 +1211,17 @@ export function FulfilmentBoardPanel({
       // be a number the reader has to decide to ignore.
       const kept = ok.reduce((total, entry) => total + (entry.transfers_kept ?? 0), 0);
       const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
+      // Covered lines Confirm just took OUT of their confirmation (owner ruling 23 Sep 2026,
+      // `PLAN-board-reject-on-confirmed-line.md`) - said only when there IS one, the same
+      // "zero is not worth a reader's attention" rule `kept` already follows.
+      const withdrawn = ok.reduce((total, entry) => total + (entry.rejected_count ?? 0), 0);
       if (ok.length > 0) {
         const summary =
           `${linesConfirmed} line${linesConfirmed === 1 ? '' : 's'} confirmed · ` +
           `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
           (kept > 0 ? `${kept} kept · ` : '') +
           `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}` +
+          (withdrawn > 0 ? ` · ${withdrawn} withdrawn` : '') +
           (leftOutAtConfirm > 0 ? ` · ${leftOutAtConfirm} left out` : '');
         // S4 (fix round 2, reviewer): a press that left something out is not an unqualified
         // success, the owner's own words on SO420745 were "confirming silently is dangerous" -

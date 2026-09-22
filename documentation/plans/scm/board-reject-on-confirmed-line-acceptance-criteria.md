@@ -1,28 +1,65 @@
 # UAC: Reject on a confirmed board line
 
 Plan: `PLAN-board-reject-on-confirmed-line.md`
-Owner ruling: 22 Sep 2026, R3 (b)
+Owner ruling: 22 Sep 2026, R3 (b); REWORKED 23 Sep 2026 (hand-test feedback, "we should
+confirm the rejection") - see the plan's Design section for the current contract. AC-R*/
+AC-F* (the row actions and the panel) are unchanged by the rework; AC-B* and AC-E1/AC-E4
+below are not.
 
-## Server (`PUT /api/v1/project-sales/fulfilment-planning/lines/{key}/draft`)
+## Server, draft save (`PUT /api/v1/project-sales/fulfilment-planning/lines/{key}/draft`)
 
 - AC-B1 `{ "verdict": "rejected", "reason": "<non-empty>" }` on a line an ACTIVE decision
-  covers answers 200. Afterwards no ACTIVE decision's `line_snapshots` names the line, and
-  the line's draft row holds `verdict: rejected` with that reason.
-- AC-B2 The revision the line left is superseded with `superseded_reason` equal to the
-  reason given. Every OTHER line that revision covered is covered by the new revision with
-  its allocations, claims and transfers unchanged.
-- AC-B3 When the rejected line was the ONLY covered line, the revision is retired and the
-  order has no active decision (the `supersede_for_material_change` branch).
-- AC-B4 The line's raised supply OI row (`ORDER` / `ORDER_BACK` on the order's inquiry) is
-  no longer `raised` after the reject.
+  covers answers 200. The draft row holds `verdict: rejected` with that reason. NOTHING
+  ELSE moves: the line is still named in the SAME active decision's `line_snapshots`
+  afterwards (same revision id, no supersede), and its raised supply OI row is still
+  `raised`. The save is STAGED, exactly like every other board decision - only Confirm
+  actually withdraws the line.
 - AC-B5 `{ "verdict": "rejected", "reason": "" }` (or missing) on a covered line answers
-  422 `board_line_reject_reason_required`; nothing is uncovered and no draft is written.
+  422 `board_line_reject_reason_required`; nothing is written.
 - AC-B6 Every verdict other than `amended` and `rejected` on a covered line still answers
   409 `board_line_already_confirmed` (unchanged).
-- AC-B7 A rejected verdict on an UNCOVERED line behaves exactly as today (no uncover call,
-  draft written).
+- AC-B7 A rejected verdict on an UNCOVERED line behaves exactly as today (draft written,
+  nothing else moves - unchanged by the rework, since it never touched a confirmation).
 - AC-B8 A covered line inside an OPEN planning-change batch is treated as uncovered by the
   existing predicate: the reject writes the draft without touching any revision (unchanged).
+
+## Server, Confirm (`POST /api/v1/project-sales/sales-orders/{pso_id}/confirm`)
+
+Confirm is what actually withdraws a staged reject - `ConfirmSupplyBody.rejected_line_ids`,
+the mirror `project_line_id`s of covered lines carrying a `rejected` draft.
+
+- AC-B2 A press naming both `lines` (a composition for at least one OTHER line) and
+  `rejected_line_ids` withdraws the named lines AND replaces/carries the rest in ONE fresh
+  revision - `superseded_reason` on the revision it replaces reads "Line \<no\> rejected:
+  \<reason\>" (joined with `; ` when more than one line is withdrawn), never
+  `_write_decision`'s own "Reconfirmed by CS.". Every OTHER line the old revision covered
+  that this press does not also touch is carried into the new revision with its
+  allocations, claims and transfers unchanged. `rejected_count` on the response equals the
+  number of ids withdrawn.
+- AC-B3 A press naming `rejected_line_ids` ONLY (`lines` empty), where the withdrawn
+  line(s) were the ONLY covered ones, retires the revision with no successor - the order
+  has no active decision afterwards.
+- AC-B4 The withdrawn line's raised supply OI row (`ORDER` / `ORDER_BACK` on the order's
+  inquiry) is no longer `raised` after Confirm. Its note carries the SAME "Line \<no\>
+  rejected: \<reason\>" sentence Confirm read off the staged draft.
+- AC-B9 The withdrawn line's DRAFT is kept, never deleted by Confirm - only a line NAMED in
+  `lines` has its draft deleted (the existing promote-and-delete rule), same as an ordinary
+  uncovered rejection keeps its draft today.
+- AC-B10 `rejected_line_ids` naming a line whose own draft is not a `rejected` one with a
+  reason (a stale client) is refused 422 `board_line_reject_reason_required`; nothing is
+  written.
+- AC-B11 A body naming NEITHER `lines` NOR `rejected_line_ids` is refused (the existing
+  `supply_nothing_to_confirm` refusal, now read as "no lines and no withdrawals").
+- AC-B12 `rejected_line_ids` alongside `batch_id` (a pending planning change) is refused
+  422 - a batch apply has no shape for a withdrawal riding beside it.
+- AC-B13 An outsider (module EDIT permission but not the project's own salesperson or an
+  approved collaborator) is refused 403 by the SAME `_assert_can_act_on` check Confirm
+  already runs, even when the press carries only a withdrawal.
+- AC-B14 Undoability: a press that reaches `uncover_lines` directly (`lines` empty, only
+  `rejected_line_ids`) mints an UNJOURNALLED revision, same as the purchasing-refusal path
+  - not undoable. A press that carries the withdrawal through `confirm()`'s own
+  `uncover_line_ids` (because `lines` was also non-empty) is journalled exactly as an
+  ordinary reconfirm is - undoable.
 
 ## Row actions (`BoardVerdictActions`, beside the pill)
 
@@ -49,10 +86,15 @@ Owner ruling: 22 Sep 2026, R3 (b)
 
 ## Browser (agent-browser, via sidebar)
 
-- AC-E1 Board for an order with two confirmed lines. Click the X beside line A's
-  `Confirmed` pill, type a reason, Reject. Pill on A reads `Rejected`; pill on B unchanged.
-  Order Inquiries for the order no longer lists A's row as raised. Confirm on the board
-  still succeeds afterwards and reports "1 rejected".
+- AC-E1 REWORKED (23 Sep 2026): board for an order with two confirmed lines. Click the X
+  beside line A's `Confirmed` pill, type a reason, Reject. Pill on A reads `Rejected`; pill
+  on B unchanged - AND Order Inquiries STILL lists A's row as raised (staged, not yet
+  withdrawn). Confirm button reads `Confirm (1)`. Press Confirm: A's row in Order Inquiries
+  is no longer raised, pill on B stays `Confirmed`, and the toast names "1 withdrawn"
+  alongside whatever else the press confirmed.
 - AC-E2 Same through the panel: expand line B, Amend, type a reason, Reject. Same end state
-  for B.
+  for B (staged; Confirm still owed to actually withdraw it).
 - AC-E3 Reason left empty in either place: Reject stays disabled.
+- AC-E4 Undo on line A BEFORE pressing Confirm (the list-view Undo icon, or the panel):
+  A's draft is removed and its pill returns to `Confirmed`. Nothing moved server-side - no
+  revision written, A's OI row still raised, Confirm button reflects one fewer line.

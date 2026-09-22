@@ -60,7 +60,6 @@ import {
   FULFILMENT_PLANNING_KEY,
   PILE_QUEUE_KEY,
   PLANNING_BOARD_KEY,
-  PLANS_KEY,
   RECONCILIATION_KEY,
   STOCK_DETAIL_KEY,
   SUPPLY_KEY,
@@ -759,13 +758,15 @@ describe('useLineDraftMutation', () => {
   });
 
   /**
-   * S3 (fix round 3, `PLAN-board-reject-on-confirmed-line.md`): a reject that takes a
-   * COVERED line out of its confirmation is a bigger write than an ordinary draft save -
-   * the decision's own revision, that line's OI row, the worklist, the plans list, the SO
-   * detail all move on the server. The in-place cache patch above still runs (the pill
-   * reads `Rejected` the instant this resolves), but it is no longer the WHOLE story.
+   * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+   * feedback: "we should confirm the rejection"): a reject on a COVERED line used to reach
+   * `uncover_lines` on the server at save time (S3, fix round 3), which needed the wider
+   * invalidation this test used to pin. It is a STAGED draft now, same as any other verdict
+   * - nothing about the active confirmation moves until Confirm actually withdraws it - so a
+   * reject save behaves identically whether the line is covered or not: the plain cache
+   * patch is the whole story, same as `useConfirmManyMutation`'s own D16 note above.
    */
-  it('a rejected save on a COVERED line also invalidates the board and the confirm-all key family', async () => {
+  it('a rejected save on a COVERED line stays the plain cache patch - nothing invalidated (D16)', async () => {
     const saved = {
       decision: { verdict: 'rejected' as const, reason: 'wrong site' },
       saved_by: 'Eling',
@@ -783,24 +784,13 @@ describe('useLineDraftMutation', () => {
     const api = await drafts();
     await api.save(KEY, { verdict: 'rejected', reason: 'wrong site' });
 
-    const flattened = invalidated.map((key) => JSON.stringify(key));
-    for (const key of [
-      PLANNING_BOARD_KEY,
-      FULFILMENT_PLANNING_KEY,
-      PLANS_KEY,
-      SALES_ORDERS_KEY,
-      SALES_ORDER_KEY,
-      ORDER_INQUIRY_ROWS_KEY,
-      ORDER_INQUIRY_WORKLIST_KEY,
-    ]) {
-      expect(flattened.some((entry) => entry.includes(key))).toBe(true);
-    }
-    // The cache patch still ran - Rejected reads back immediately, invalidation is on top.
+    expect(invalidated).toEqual([]);
+    // The cache patch still ran - Rejected reads back immediately.
     const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
     expect(patched.contributions[0].draft).toEqual(saved);
   });
 
-  it('a rejected save on an UNCOVERED line stays the plain cache patch - nothing invalidated (D16)', async () => {
+  it('a rejected save on an UNCOVERED line is the same plain cache patch', async () => {
     const saved = {
       decision: { verdict: 'rejected' as const, reason: 'wrong site' },
       saved_by: 'Eling',

@@ -281,6 +281,31 @@ export function confirmLinesFor(
 }
 
 /**
+ * `ConfirmSupplyBody.rejected_line_ids` for one order - the mirror ids of COVERED lines a
+ * `rejected` draft is staged on (owner ruling 23 Sep 2026,
+ * `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the rejection" - reject on a
+ * confirmed line is a STAGED decision like every other board decision now, and Confirm is
+ * what actually withdraws it, never the draft save). `confirmLinesFor` above already leaves
+ * a rejected line OUT of `lines` (covered or not, `lineFor`'s own rule) - this is the OTHER
+ * half of the same press for exactly the covered ones: an UNCOVERED rejected line has
+ * nothing active to withdraw, so it is excluded here, same as it always was.
+ */
+export function rejectedCoveredLineIdsFor(
+  contributions: BoardContribution[],
+  salesOrderId: string,
+  draft: BoardDraft,
+): string[] {
+  const ids: string[] = [];
+  for (const contribution of contributions) {
+    if (contribution.sales_order_id !== salesOrderId) continue;
+    if (!contribution.covered) continue;
+    if (draft[contribution.key]?.verdict !== 'rejected') continue;
+    if (contribution.project_line_id) ids.push(contribution.project_line_id);
+  }
+  return ids;
+}
+
+/**
  * Why a decided line cannot be posted by this confirmation. Every one of these is a line the
  * server would refuse, and the confirmation is atomic across the order, so posting it would take
  * every other line down with it. It is left out and NAMED instead.
@@ -621,6 +646,10 @@ export function plannedLineCount(
     // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
     // its apply is the retire path, which needs no composition to build.
     if (contribution.cancelled) return true;
+    // A COVERED line with a staged reject posts nothing either (`rejected_line_ids` carries
+    // it, not `lines`), and is still one of the lines THIS press acts on - Confirm is what
+    // withdraws it (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`).
+    if (contribution.covered && draft[contribution.key]?.verdict === 'rejected') return true;
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
@@ -636,10 +665,13 @@ export function plannedLineCount(
  * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): an uncovered line nobody
  * has saved a decision for is undecided, not agreed, so the counter reports nothing for it -
  * "Save all suggested" is the bulk way to agree with the engine before Confirm. A REJECTED
- * line is a decision that commits nothing, counted apart rather than simply excluded. A line
- * an active decision already COVERS and nobody has amended is not counted: the server carries
- * it into the next revision itself. A SAVED-BUT-STALE line (S4, AC-4.4) is not counted either,
- * the same reason `lineFor` will not post it.
+ * line is a decision that commits nothing, counted apart rather than simply excluded - EXCEPT
+ * a COVERED rejected line (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`):
+ * that one is a withdrawal Confirm actually carries out (`rejected_line_ids`), so it counts in
+ * `toConfirm` too, beside `rejected`. A line an active decision already COVERS and nobody has
+ * amended OR rejected is not counted: the server carries it into the next revision itself. A
+ * SAVED-BUT-STALE line (S4, AC-4.4) is not counted either, the same reason `lineFor` will not
+ * post it.
  */
 export function confirmSummaryFor(
   contributions: BoardContribution[],
@@ -649,7 +681,9 @@ export function confirmSummaryFor(
   // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
   // carries forward regardless of a local click, so it is checked FIRST - a click of
   // "rejected" on an already-confirmed line cannot make Confirm refuse it, and must not be
-  // counted as a rejection either.
+  // counted as a rejection either. REJECTED is now read BEFORE the covered/amended check
+  // (23 Sep 2026 rework): a covered line's own rule below only ever exempted an UNTOUCHED or
+  // AMENDED one, and a rejected covered line is neither - it is a THIRD thing Confirm acts on.
   let rejected = 0;
   // C4 (code review round 3 batch 2): a saved line the engine has re-suggested is dropped
   // from Confirm with no trace beyond the pill itself, which is easy to miss on a board of
@@ -672,11 +706,16 @@ export function confirmSummaryFor(
     // is the caller's own draft, already merged with whatever the server sent as
     // `contribution.draft`, so its being falsy here is the whole signal that nobody saved it.
     if (!contribution.covered && !decision) continue;
-    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;
+      // A COVERED reject is a WITHDRAWAL Confirm carries out this same press - its order
+      // belongs in the confirmable set, same as an amendment does, so `toConfirm` counts it
+      // (`plannedLineCount`'s own new branch is what actually adds the +1 for this line). An
+      // UNCOVERED reject has nothing active to withdraw and stays excluded, as it always was.
+      if (contribution.covered) orderIds.add(contribution.sales_order_id);
       continue;
     }
+    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (contribution.draft?.stale) {
       changed += 1;
       continue;

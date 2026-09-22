@@ -896,6 +896,47 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
 
     expect(onDecide).toHaveBeenCalledWith('so-1:line-10', null);
   });
+
+  /**
+   * Owner ruling 23 Sep 2026 (`PLAN-board-reject-on-confirmed-line.md`, hand-test feedback:
+   * "we should confirm the rejection"): reject on a covered line is a STAGED draft now, so
+   * Undo on it is the SAME `onDecide(key, null)` every other Undo already sends - no new
+   * code path. Removing the draft leaves the line reading `covered && !decision`, which
+   * `verdictOf` already resolves to "Confirmed" (it never stopped being covered); pinned
+   * here as a component-level regression guard rather than left to the unit-level rule.
+   */
+  it('Undo on a covered rejected row deletes its draft and returns the pill to Confirmed', async () => {
+    const row = contribution({
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '43',
+      },
+    });
+    const draft = { [row.key]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    const { onDecide, onDecideMany, rerender } = renderView({ contributions: [row], draft });
+
+    expect(await screen.findByTestId(`decision-pill-${row.key}`)).toHaveTextContent('Rejected');
+    fireEvent.click(
+      screen.getByRole('button', { name: `Undo ${row.so_number} line ${row.line_no}` }),
+    );
+    expect(onDecide).toHaveBeenCalledWith(row.key, null);
+
+    // The parent owns the draft (`onDecide` is local-first in `FulfilmentBoardPanel`) - this
+    // re-render is what its own removal looks like once the key is gone from the map.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[row]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+      />,
+    );
+    expect(await screen.findByTestId(`decision-pill-${row.key}`)).toHaveTextContent('Confirmed');
+  });
 });
 
 /**

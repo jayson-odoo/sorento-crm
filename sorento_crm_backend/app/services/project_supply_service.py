@@ -10340,6 +10340,11 @@ class ProjectSupplyService:
                         "transfers_failed": body.get("transfers_failed"),
                         "transfers_kept": body.get("transfers_kept"),
                         "suspected_issues": body.get("suspected_issues"),
+                        # How many covered lines THIS order's own press withdrew (owner
+                        # ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`) -
+                        # `.get`, the same reason every field above reads one: a body this
+                        # order's own write never populated must not fail the whole result.
+                        "rejected_count": body.get("rejected_count"),
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - every order must get an answer

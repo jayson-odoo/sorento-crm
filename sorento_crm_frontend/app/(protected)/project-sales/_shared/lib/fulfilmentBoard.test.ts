@@ -23,6 +23,7 @@ import {
   matchesSuggestion,
   plannedLineCount,
   rankingNote,
+  rejectedCoveredLineIdsFor,
   rowMatchesSearch,
   shiftedDayWindow,
   unpostableDecidedFor,
@@ -1760,20 +1761,42 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   });
 
   /**
-   * N6 (code review round 3): resolution order `confirmed > rejected > stale > saved`, the
-   * same order `BoardDecisionPill` reads by. A covered line's frozen composition is what the
-   * server carries forward regardless of a local click - marking it "rejected" in THIS
-   * session cannot make Confirm refuse a line the database already holds, so it must not be
-   * counted as a rejection either.
+   * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+   * feedback: "we should confirm the rejection"): a reject on a covered line is a STAGED
+   * decision like every other board decision now, and Confirm is what actually withdraws it
+   * (`rejected_line_ids`) - so it counts as BOTH `rejected` (the planner's own decision) AND
+   * `toConfirm` (Confirm has something to DO with this press: carry the withdrawal). This test
+   * used to pin the opposite ("carried rather than rejected") from when a covered reject was
+   * refused outright at click time; superseded by the rework below.
    */
-  it('counts a covered line as carried rather than rejected, even when this session marked it rejected', () => {
+  it('counts a covered rejected line as BOTH rejected and something this press confirms', () => {
     const summary = confirmSummaryFor(contributions, {
       [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
     });
-    expect(summary.rejected).toBe(0);
-    // Line 2 is uncovered and untouched, so it stays undecided (8 Sep 2026 ruling, reverses
-    // R11) - nothing is committable here.
-    expect(summary.toConfirm).toBe(0);
+    expect(summary.rejected).toBe(1);
+    // Line 1's withdrawal is the one thing this press commits; line 2 is uncovered and
+    // untouched, so it stays undecided (8 Sep 2026 ruling, reverses R11).
+    expect(summary.toConfirm).toBe(1);
+  });
+
+  it('rejectedCoveredLineIdsFor names the covered line’s own project_line_id', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
+      }),
+    ).toEqual(['pl-so-a-1']);
+  });
+
+  it('rejectedCoveredLineIdsFor leaves an UNCOVERED rejected line out - nothing active to withdraw', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(2)]: { verdict: 'rejected', reason: 'Not needed.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejectedCoveredLineIdsFor is empty when nothing is rejected', () => {
+    expect(rejectedCoveredLineIdsFor(contributions, 'so-a', {})).toEqual([]);
   });
 });
 
