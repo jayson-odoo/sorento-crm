@@ -252,3 +252,17 @@ plain "no" over a `team_pick` pending falls through to `business_query` instead 
 `escalation_declined` - step 3 `branch_kind`, the opposite direction from the "no" fix
 signed on `case-069`). Neither is listed in any list-paragraph above, and neither
 should be - this heading is a marker for the next tester, not a pending entry.
+
+## Not currently a failure, staleness owed: case-038 and case-039 (coder, fix round 2, 23 Sep 2026)
+
+`console/case-038-a7-no-stock-no-incoming-but-po-is-placed.json` and `console/case-039-
+a7-nothing-on-any-rung-says-so-and-offers-to-escalate.json` both recorded `escalate to
+purchasing team?` as their turn's escalate offer; owner ruling R6 (22 Sep 2026,
+`PLAN-escalation-quote-title-and-stock-team-22sep.md`) now renders `escalate to
+warehouse team?` for the same stock-origin (`domain_hint: inventory`) shape. Neither
+case is a live `pytest` failure today - their `expected.text` carries no `_pin_text`
+flag, so `test_turn_replay.py`'s own text comparison never runs for them (measured:
+`pytest tests/chatbot/test_turn_replay.py -k "case-038 or case-039"` passes clean on
+both R6 commits). Listed here rather than left silent so a future `_pin_text: true`
+re-capture of either file records `warehouse`, not the now-superseded `purchasing` -
+re-record owed, not urgent.

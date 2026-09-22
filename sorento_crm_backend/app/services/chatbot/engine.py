@@ -1965,6 +1965,10 @@ def _run_stages(  # noqa: PLR0915
                     # R4 (owner ruling 5): the record-key rerun gate asks the RESOLVER
                     # what this message's token is, not the parser's hint.
                     resolved_kinds=resolved_kinds,
+                    # R6 (fix round 2): so a null `routing.suggested_team` inside the
+                    # per-domain fetch context gets the same domain-aware fill this
+                    # turn's own `ctx.parse.output` already got above.
+                    policy=policy,
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),

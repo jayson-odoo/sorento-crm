@@ -1624,6 +1624,7 @@ def make_tool_runner(
     resolver_gate: dict[str, Any] | None = None,
     resolver_tier_gate: dict[str, Any] | None = None,
     resolved_kinds: dict[str, dict[str, int]] | None = None,
+    policy: Any = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1672,7 +1673,12 @@ def make_tool_runner(
             # under), never off this turn's verdict - a bare "more" states no tier, and
             # an empty list is read downstream as "no tier filter at all".
             page_predicate, page_ids = page_the_set(db, carry)
-        lane_out = lane_parse_output(verdict, focus=focus, domain=domain)
+        # R6 (fix round 2): `policy` threaded through so a null `routing.suggested_team`
+        # gets the SAME domain-aware fill the turn's own `ctx.parse.output` carries
+        # (`engine.py`'s own `lane_parse_output` call) - without it this per-domain
+        # fetch context fell back to the flat `DEFAULT_SUGGESTED_TEAM` literal while
+        # the turn's own parse output next to it already carried the domain team.
+        lane_out = lane_parse_output(verdict, focus=focus, domain=domain, policy=policy)
         lane_out = _spec_window(lane_out, spec)
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):

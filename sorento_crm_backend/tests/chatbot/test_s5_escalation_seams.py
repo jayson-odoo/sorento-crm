@@ -321,6 +321,29 @@ class TestACEQ4SlaCommentDatetimeFields:
         assert "routed to you at 2026-09-22 14:34:00" in comment
 
 
+class TestACEQ15aNonInventoryDomainNullRoutingFallsBack:
+    """AC-EQ-15 (owner sign-off pending, fix round 2): the domain-aware fallback is
+    not inventory/incoming-only - `turn_runtime.lane_parse_output` reads
+    `policy.domain(domain_hint).escalation_team_code` for whichever domain the turn is
+    actually about. `master_products` is the one non-stock domain the UAC table names
+    explicitly for a direct pin."""
+
+    def test_ac_eq_15a_master_products_null_routing_no_prior_names_purchasing(
+        self,
+    ) -> None:
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        verdict = {
+            "domain_hint": "master_products",
+            "routing": {"suggested_team": None, "suggested_agent": None},
+        }
+        out = turn_runtime.lane_parse_output(
+            verdict, focus=None, pending=None, prior_session=None, policy=default_policy()
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+
 # --------------------------------------------------------------------------- #
 # 2. `escalation_services` - the production wiring, and its session's lifecycle
 # --------------------------------------------------------------------------- #

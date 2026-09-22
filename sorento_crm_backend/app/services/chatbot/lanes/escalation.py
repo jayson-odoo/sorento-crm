@@ -1257,11 +1257,11 @@ def _input_message(ctx: dict[str, Any]) -> str:
     Owner ruling 22 Sep 2026, R1 (AC-EQ-1..3): the quoted body is `text` if truthy, else
     `title` (Respond.io's quick-reply quote shape carries only `title`), else the whole
     " reply to: ..." suffix is dropped - never n8n's `undefined`, which is what reading
-    `.text` unguarded used to render for a quoted message with neither. The n8n rows this
-    ported from still read `.text` unguarded and still store the literal string
-    `undefined` for a caption-less quote today - R1 is a deliberate divergence from that
-    live behaviour for this one branch, not a port of it, so a fresh capture against
-    those still-unfixed rows will keep showing `undefined` and is not a regression here.
+    `.text` unguarded renders for a quoted message with neither, per the n8n expression
+    quoted above. R1 is a deliberate divergence from that expression for this one
+    branch, not a port of it, at the time of this port (22 Sep 2026) - no claim is made
+    here about whether n8n's own node has since been fixed; a fresh capture that still
+    shows `undefined` for this shape is not a regression in this file.
     """
     envelope = jsc.get(jsc.get(ctx, "text"), "message")
     body = jsc.get(envelope, "message")

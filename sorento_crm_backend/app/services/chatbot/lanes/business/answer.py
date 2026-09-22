@@ -2864,15 +2864,19 @@ def not_found_error_message(
         # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
         # NO team named at all must still get the domain's own escalation team
         # (inventory -> warehouse, incoming -> purchasing), never the generic
-        # "customer_service" literal. On a real turn `turn_runtime.lane_parse_output`
-        # is what actually fills a null `routing.suggested_team` (its own
-        # `DEFAULT_SUGGESTED_TEAM` chain, now domain-aware - see that function), so
-        # `suggested_team` read off `q["routing"]` here is rarely still falsy by the
-        # time a real turn reaches this composer. This is the SAME fallback anyway,
-        # kept as the direct-call belt-and-braces: several tests
-        # (`test_warehouse_entity.py`) and any future caller construct a bare `parser`
-        # dict with no routing key at all, and this composer must not hand THEM the
-        # generic literal either.
+        # "customer_service" literal. On the `engine.run_turn` path
+        # `turn_runtime.lane_parse_output` is what actually fills a null
+        # `routing.suggested_team` (its own `DEFAULT_SUGGESTED_TEAM` chain, now
+        # domain-aware - see that function), so `suggested_team` read off
+        # `q["routing"]` here is rarely still falsy by the time a real TURN reaches
+        # this composer. This is the SAME fallback anyway, kept as the direct-call
+        # belt-and-braces: a caller that reaches `complete_answer` directly, bypassing
+        # `run_turn`/`lane_parse_output` entirely, builds its `parser` dict with no
+        # `routing` key at all - `test_s6c_answer_lane.py::TestErrorArmRendersTheMissLane
+        # .test_the_error_arm_reaches_the_miss_renderer` is exactly that shape
+        # (`domain_hint = "inventory"`, no `routing` key), and pins this fallback
+        # directly; this composer must not hand a caller like that the generic literal
+        # either.
         if not jsc.truthy(suggested_team):
             from app.services.chatbot.turn.policy import default_policy
 

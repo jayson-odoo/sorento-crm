@@ -41,13 +41,19 @@ generic literal for a null `suggested_team` - deleting `_CROSSDOMAIN_RUNG_TEAM` 
 does not fix that half.
 
 Traced further than the reviewer's own citation: `routing.suggested_team` is very
-rarely still null by the time `not_found_error_message` reads it - `turn_runtime.
-lane_parse_output`'s own chain (accepted_team -> pending.team -> `_prior_suggested_
-team` -> `DEFAULT_SUGGESTED_TEAM`) already fills a null verdict with the flat
-"customer_service" literal, early, in `engine.py`, before any composer sees the
-parser dict. That is the actual interception point - `not_found_error_message`'s own
-fallback (added anyway, belt-and-braces, for a caller that builds a bare `parser`
-dict directly, e.g. `test_warehouse_entity.py`) never fires on a real turn. Fixed at
+rarely still null by the time `not_found_error_message` reads it, ON THE
+`engine.run_turn` PATH - `turn_runtime.lane_parse_output`'s own chain (accepted_team
+-> pending.team -> `_prior_suggested_team` -> `DEFAULT_SUGGESTED_TEAM`) already fills
+a null verdict with the flat "customer_service" literal, early, in `engine.py`,
+before any composer on THAT path sees the parser dict. That is the actual
+interception point for a real turn - `not_found_error_message`'s own fallback (added
+anyway, belt-and-braces) still fires for a caller that reaches `complete_answer`
+directly, bypassing `run_turn`/`lane_parse_output` entirely, with a bare `parser`
+dict carrying no `routing` key at all - `test_s6c_answer_lane.py::
+TestErrorArmRendersTheMissLane.test_the_error_arm_reaches_the_miss_renderer` is
+exactly that shape and now pins it directly (fix round 2; `test_warehouse_entity.py`
+does not reach this branch - it passes `domain_hint = "procurement"` with real access
+attributes, not a null-routing miss - the earlier citation there was wrong). Fixed at
 the root: `lane_parse_output` takes an optional `policy` (threaded from `engine.py`,
 which already holds one) and, when nothing more specific named a team, falls back to
 `policy.domain(domain_hint).escalation_team_code` before the hard default - AC-EQ-12

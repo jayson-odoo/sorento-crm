@@ -36,3 +36,30 @@ lane_parse_output` before any composer reads `routing.suggested_team`.
 - AC-EQ-13 Same, but nothing on any rung either → `escalate to warehouse team?`.
 - AC-EQ-14 `domain_hint = incoming`, `routing.suggested_team = None`, PO placed →
   `escalate to purchasing team?`.
+
+## AC-EQ-15 First-turn default table for a null `routing.suggested_team` (OWNER SIGN-OFF PENDING)
+
+Fix round 2. A precedence ruling is still owed from the owner: whether a PRIOR turn's
+own carried team (`_prior_suggested_team`) should keep outranking THIS turn's own
+domain, or whether the domain should always win. The table below is the full set of
+first-turn defaults (no prior session, no accepted offer, no pending) - what
+`lane_parse_output` falls back to when the verdict itself named no team, read off
+`turn/policy_rows.py`'s `escalation_team_code` per domain, current as of fix round 2.
+Mechanical only until the ruling lands - not implemented differently by domain, this
+is `policy.domain(domain_hint).escalation_team_code` for every row already:
+
+| `domain_hint` | team |
+| --- | --- |
+| `inventory` | `warehouse` |
+| `incoming` | `purchasing` |
+| `master_products` | `purchasing` |
+| `product_attachment` | `marketing_product` (a resolved CERTIFICATE attachment type still overrides to `purchasing_certification` via the existing `answer_parse_output` special-case - unaffected, unchanged) |
+| `promotion` | `marketing_promotion` |
+| `forms` | `marketing_form` |
+| `purchase_order` | `purchasing` |
+| `purchase_cost` | `purchasing` |
+| `order` | `customer_service` (unchanged) |
+| everything else / unknown / `None` (`portal_link`, `resource_attachment`, `goods_receive`, `spo_allocation`, `ideate` - each has `escalation_team_code: None` on its own row - or a `domain_hint` `policy.domain()` cannot resolve at all) | `customer_service` (unchanged) |
+
+- AC-EQ-15a `domain_hint = master_products`, `routing.suggested_team = None`, no
+  prior session, no accepted offer → the domain fallback names `purchasing`.
