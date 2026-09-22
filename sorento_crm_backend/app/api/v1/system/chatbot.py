@@ -153,6 +153,55 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
         ) from exc
 
 
+def _media_block(db: Session, row: ChatbotTurn) -> dict | None:
+    """The `media` block `GET /turns` and `/turns/{id}` both carry (chatbot
+    media-into-turn, S4, AC-1839/AC-1840): the turn's own `media_intake` trace
+    stage, plus a 15-minute signed url for whatever `attachments` row S4's worker
+    task linked to it. `None` on a text turn (no such stage at all) or a denied
+    one that stored no attachment (`url` stays null; the rest still reports what
+    was decided).
+    """
+    stage = next(
+        (r for r in (row.trace or []) if isinstance(r, dict) and r.get("stage") == "media_intake"),
+        None,
+    )
+    if stage is None:
+        return None
+    facts = stage.get("facts") or {}
+    result = facts.get("result") or {}
+    attachment_id = facts.get("attachment_id")
+    url = None
+    mime_type = None
+    if attachment_id:
+        from app.models.resources import Attachment
+        from app.services.storage_router import resolve_signed_url
+
+        attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        if attachment is not None:
+            mime_type = attachment.mime_type
+            try:
+                url = resolve_signed_url(
+                    attachment.file_path, provider=attachment.storage_provider, expires_in=900
+                )
+            except Exception:  # noqa: BLE001 - the trace still renders without a url
+                logger.warning("chatbot turn %s: could not sign the media url", row.id, exc_info=True)
+    entities = [
+        {"raw": e} if isinstance(e, str) else e for e in (result.get("entities") or [])
+    ]
+    return {
+        "modality": facts.get("modality"),
+        "mime_type": mime_type,
+        "attachment_id": attachment_id,
+        "url": url,
+        "transcript_or_rendered_text": result.get("rendered_text") or result.get("transcript"),
+        "entities": entities,
+        "attributes": list(result.get("attributes") or []),
+        "notes": result.get("notes"),
+        "truncated": bool(result.get("truncated")),
+        "decision": facts.get("decision"),
+    }
+
+
 @router.get("/turns", response_model=ChatbotTurnListResponse)
 def list_turns(
     contact_respond_id: str | None = Query(None),
@@ -212,8 +261,12 @@ def list_turns(
     has_more = len(rows) > limit
     page = rows[:limit]
     available = retry_available(db)
+    items = [
+        {**ChatbotTurnResponse.model_validate(row).model_dump(), "media": _media_block(db, row)}
+        for row in page
+    ]
     return ChatbotTurnListResponse(
-        items=page,
+        items=items,
         next_cursor=_encode_cursor(page[-1]) if has_more and page else None,
         retry_available=available,
         retry_unavailable_reason=None
@@ -320,7 +373,7 @@ def get_turn(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turn not found.")
     return ChatbotTurnDetailResponse(
-        **ChatbotTurnResponse.model_validate(row).model_dump(),
+        **{**ChatbotTurnResponse.model_validate(row).model_dump(), "media": _media_block(db, row)},
         trace_detail=compose_trace_detail(row),
     )
 

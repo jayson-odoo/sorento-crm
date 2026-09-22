@@ -35,6 +35,25 @@ from app.services.media_access_service import (
     resolve_media_settings,
 )
 
+# S4 (chatbot media-into-turn): the attachment type chatbot media is filed under -
+# its own type so it never shares a quota with resource/product uploads. Seeded by
+# migration 526, idempotent.
+CHATBOT_MEDIA_ATTACHMENT_TYPE_CODE = "chatbot_media"
+
+_EXT_BY_MIME = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/mp4": "m4a",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+}
+
 logger = logging.getLogger(__name__)
 
 # The queue this task runs on. Must also appear in `worker.py`'s queue list or
@@ -79,6 +98,66 @@ def run_media_extraction(job: MediaExtractionJob) -> dict:
     from app.services.media_extract.service import run_extraction
 
     return run_extraction(job)
+
+
+def _extension_for(mime_type: Optional[str], modality: str) -> str:
+    if mime_type:
+        ext = _EXT_BY_MIME.get(mime_type.split(";")[0].strip().lower())
+        if ext:
+            return ext
+    return "jpg" if modality == "image" else "ogg"
+
+
+def _store_media_bytes(db, job: MediaExtractionJob, result: dict) -> None:
+    """S4 (PLAN-chatbot-media-into-turn.md, AC-1833 to AC-1837): after a completed
+    extraction, store the bytes as a tracked `attachments` row linked to the turn
+    (`entity_attachment_links`, `entity_type='chatbot_turn'`).
+
+    Best-effort by construction (AC-1836): a storage failure is noted on the
+    result (`attachment_error`) and NEVER turns an already-successful extraction
+    into a failed job - the customer already read a correct answer either way.
+    No `usage.turn_id` (a denied job never reaches here at all; an old direct
+    `/external/media/process` caller with no turn_id has nothing to link to)
+    means nothing to store against, silently.
+    """
+    usage = db.query(ContactMediaUsage).filter(ContactMediaUsage.id == job.usage_id).first()
+    if usage is None or not usage.turn_id:
+        return
+    try:
+        from app.services.entity_attachment_service import EntityAttachmentService
+        from app.services.media_extract.service import fetch_media_bytes
+        from app.services.storage_router import cdn_base_url, default_provider, get_backend
+
+        data, content_type = fetch_media_bytes(job.media_url or "")
+        provider = default_provider()
+        backend = get_backend(provider)
+        ext = _extension_for(job.mime_type or content_type, job.modality)
+        ordinal = usage.media_ordinal or 0
+        key = f"chatbot-media/{usage.respond_io_id}/{usage.message_id}-{ordinal}.{ext}"
+        s3_key, _ = backend.upload_file(
+            file_content=data, file_path=key, content_type=job.mime_type or content_type or ""
+        )
+        stored_path = cdn_base_url(provider, s3_key)
+        link = EntityAttachmentService(db).create_attachment_and_link(
+            entity_type="chatbot_turn",
+            entity_id=str(usage.turn_id),
+            file_url=stored_path,
+            file_name=key.rsplit("/", 1)[-1],
+            file_size_bytes=len(data),
+            attachment_type_code=CHATBOT_MEDIA_ATTACHMENT_TYPE_CODE,
+            storage_provider=provider,
+            mime_type=job.mime_type or content_type,
+            uploader_kind="contact",
+            uploaded_by_contact_id=usage.contact_id,
+        )
+        db.commit()
+        result["attachment_id"] = str(link.attachment_id)
+    except Exception as exc:  # noqa: BLE001 - a storage failure must not fail the extraction
+        db.rollback()
+        logger.warning(
+            "media job %s: could not store the attachment (%s)", job.id, exc, exc_info=True
+        )
+        result["attachment_error"] = str(exc) or exc.__class__.__name__
 
 
 def _run_bounded(job: MediaExtractionJob, timeout_seconds: float) -> dict:
@@ -157,6 +236,7 @@ def process_media_extraction(job_id: str) -> None:
             terminal_status = "completed"
             terminal_result: Optional[dict] = result
             terminal_error: Optional[str] = None
+            _store_media_bytes(db, job, terminal_result)
         except Exception as exc:  # noqa: BLE001 - every failure is a failed job
             logger.exception("media extraction job %s failed", job_id)
             terminal_status = "failed"
