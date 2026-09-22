@@ -290,3 +290,18 @@ def test_ac_ka_7_resolve_then_reopen_keeps_the_fields_and_restores_my_pending(db
 
     pending_ids = {row["id"] for row in service.list_my_pending(seed["assignee_id"])}
     assert str(tracking.id) in pending_ids
+
+
+def test_s2_get_existing_assignee_for_contact_phone_ignores_a_resolved_tracker(db):
+    """Fix round 1, S2: resolve keeps assigned_to_id for audit now, so this
+    lookup must exclude a resolved row outright rather than falling back to
+    the last resolver as the contact's "existing assignee"."""
+    seed = _seed(db)
+    tracking = _ticket(db, seed)
+    service = ConversationSLATrackingService(db)
+
+    assert service.get_existing_assignee_for_contact_phone(PHONE)["id"] == seed["assignee_id"]
+
+    service.update_tracking(str(tracking.id), ConversationSLATrackingUpdate(is_resolved=True))
+
+    assert service.get_existing_assignee_for_contact_phone(PHONE) is None

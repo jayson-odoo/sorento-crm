@@ -3341,8 +3341,9 @@ class ConversationSLATrackingService:
 
     def get_existing_assignee_for_contact_phone(self, contact_phone: str) -> Optional[dict]:
         """
-        If there is a conversation SLA tracking for this contact phone that already has an assignee,
-        return that user's info (id, email, name, respond_user_id). Otherwise return None.
+        If there is an OPEN conversation SLA tracking for this contact phone that
+        already has an assignee, return that user's info (id, email, name,
+        respond_user_id). Otherwise return None.
         Used by next-assignee API to avoid reassigning conversations that are already assigned.
 
         AC-F1: not currently wired into any route (kept for callers that may want a
@@ -3351,6 +3352,12 @@ class ConversationSLATrackingService:
         explicit ``order_by`` below (matching ``get_preferred_tracking_for_contact``)
         replaces what used to be an undocumented, unordered ``.first()`` over a
         possibly-multi-row result.
+
+        A resolved row is excluded outright (owner ruling R5, 22 Sep 2026, fix
+        round 1 / S2): resolve keeps ``assigned_to_id`` for audit now, so without
+        this filter a contact whose only ticket is resolved would read back its
+        last resolver as the "existing assignee", the same bug ``next_assignee.
+        _tracking_is_assigned`` had (AC-KA-11).
         """
         from sqlalchemy.orm import joinedload
         from app.models.access import RespondContact
@@ -3368,12 +3375,10 @@ class ConversationSLATrackingService:
             .filter(
                 ConversationSLATracking.respond_contact_id == contact.id,
                 ConversationSLATracking.assigned_to_id.isnot(None),
+                ConversationSLATracking.is_resolved.is_(False),
                 conversation_tracking_scope(),
             )
-            .order_by(
-                ConversationSLATracking.is_resolved.asc(),  # open first
-                ConversationSLATracking.created_at.desc(),
-            )
+            .order_by(ConversationSLATracking.created_at.desc())
             .first()
         )
         if tracking is None or getattr(tracking, "assigned_to_id", None) is None:
@@ -4896,8 +4901,10 @@ class ConversationSLATrackingService:
 
         # AC-K3: the shared write path for resolve, respond and assignment
         # changes - one poke covers every route that funnels through here.
-        # Both owners: a resolve clears the assignee, an assignment change
-        # replaces them, and either way two pending lists can be stale.
+        # Both owners: an assignment change replaces the assignee outright; a
+        # resolve keeps the same assignee (owner ruling R5, 22 Sep 2026) but
+        # still drops the row off that assignee's pending list, so both events
+        # still need publishing even when before/after are the same id.
         self._publish_conversation_event(
             tracking,
             conversation_event_bus.EVENT_TICKET_UPDATED,
