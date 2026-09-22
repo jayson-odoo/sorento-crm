@@ -927,3 +927,140 @@ def test_a_detailed_stock_reply_still_runs_the_crossdomain_probe():
     )
 
     assert out["_xd"]["active"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Review round 10: no cross-domain LADDER on an availability reply either
+# --------------------------------------------------------------------------- #
+#
+# Live evidence Run 6, turn 9c1b634c (case H row 7, "SRT392-24 180"): the lane's own
+# envelope was already right - `lane_text` read exactly "Sorry, we do not have enough
+# stock for that quantity. 1. SRT392-24 x 180: Not available, but there is limited
+# purchase, ETA in 90 days." with a one-entry `stock_availability` block - and the reply
+# the dealer received then carried "No stock and no incoming for SRT392-24, but PO is
+# placed: *Product Code:* SRT392-24 ... Would you like me to escalate to purchasing
+# team?" appended after it.
+#
+# Round 9 gated `crossdomain_zeroset`. This block comes from the ladder's PO rung, run
+# through the HIT bridge (`answer_bridge.apply_crossdomain_hit`), which rebuilds the
+# item it hands the ladder as `{"answers": envelope["figures"]}` - dropping the
+# availability block, so round 9's gate never saw it.
+
+
+def _availability_hit_envelope():
+    return {
+        "figures": [
+            {
+                "title": "SRT392-24 x 180: Not available, but there is limited purchase, ETA in 90 days.",
+                "fields": [],
+            }
+        ],
+        "stock_availability": [
+            {
+                "product_id": "uuid-srt",
+                "product_code": "SRT392-24",
+                "product_name": "SRT392-24",
+                "needs_quantity": False,
+                "requested_qty": 180,
+                "available": False,
+                "verdict": "not_available",
+                "running_low": False,
+                "disclaimer": {
+                    "sources": ["purchase"],
+                    "limited": True,
+                    "incoming_eta": None,
+                    "purchase_eta_days": 90,
+                },
+            }
+        ],
+    }
+
+
+def _ladder_probe():
+    from app.services.chatbot.lanes.business.services import AnswerServices
+
+    calls: list[str] = []
+
+    def mcp_probe(name, args):
+        calls.append(name)
+        return {
+            "answers": [
+                {"fields": [{"label": "Product Code", "value": "SRT392-24"}, {"label": "Qty", "value": "300"}]}
+            ],
+            "has_result": True,
+        }
+
+    return AnswerServices(mcp_probe=mcp_probe, family_fetch=lambda q: {"data": []}), calls
+
+
+def _run_hit_bridge(envelope):
+    from app.services.chatbot import answer_bridge
+    from app.services.chatbot.turn import compose as turn_compose
+
+    services, calls = _ladder_probe()
+    answer = turn_compose.Answer(
+        text=(
+            "Sorry, we do not have enough stock for that quantity.\n\n"
+            "1. SRT392-24 x 180: Not available, but there is limited purchase, ETA in 90 days."
+        )
+    )
+    out = answer_bridge.apply_crossdomain_hit(
+        answer,
+        envelope=envelope,
+        parser={"domain_hint": "inventory", "message_type": "business_query", "routing": {}},
+        resolved={
+            "tokens": ["SRT392-24"],
+            "resolutions": [
+                {
+                    "token": "SRT392-24",
+                    "matches": [
+                        {
+                            "entity_type": "product",
+                            "canonical_code": "SRT392-24",
+                            "uuid": "uuid-srt",
+                            "match_tier": "exact",
+                        }
+                    ],
+                }
+            ],
+        },
+        entities_names=[],
+        crossdomain_ladder={"inventory": ["incoming", "purchase_order"]},
+        ctx={"session": {"session_vars": {"variables": {}}}, "access": {"attributes": []}},
+        services=services,
+        contact_id="404285551",
+        space_id="364817",
+        asked_at_turn=1,
+    )
+    return answer, out, calls
+
+
+def test_no_ladder_rung_runs_on_an_availability_reply():
+    """D17: the verdict lines are the whole answer. No rung is probed, nothing is listed
+    beside the verdict, and no escalate offer is minted to compete with the dealer's own
+    open stock task (the shape Run 4's case F turned into a lost never-mind)."""
+    answer, out, calls = _run_hit_bridge(_availability_hit_envelope())
+
+    assert calls == [], "the ladder must not probe at all on a dealer reply"
+    assert out.text == answer.text, "the verdict line is the whole answer"
+    assert out.question is None, "and no escalation is offered beside it"
+
+
+def test_a_detailed_zero_stock_reply_still_climbs_the_ladder():
+    """The boundary: a staff / detailed answer whose rows read zero is exactly what the
+    ladder exists for, and it is untouched."""
+    detailed = {
+        "figures": [
+            {
+                "fields": [
+                    {"label": "Product Code", "value": "SRT392-24"},
+                    {"label": "Quantity On Hand", "value": "0"},
+                ]
+            }
+        ]
+    }
+
+    answer, out, calls = _run_hit_bridge(detailed)
+
+    assert calls, "a detailed zero-stock hit still probes the other domain"
+    assert out.text != answer.text
