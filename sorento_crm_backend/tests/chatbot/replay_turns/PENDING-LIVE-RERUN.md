@@ -253,7 +253,7 @@ plain "no" over a `team_pick` pending falls through to `business_query` instead 
 signed on `case-069`). Neither is listed in any list-paragraph above, and neither
 should be - this heading is a marker for the next tester, not a pending entry.
 
-## Not currently a failure, staleness owed: case-038 and case-039 (coder, fix round 2, 23 Sep 2026)
+## Not currently a failure, staleness owed: case-038, case-039 and case-025 (coder, fix rounds 2-3, 23 Sep 2026)
 
 `console/case-038-a7-no-stock-no-incoming-but-po-is-placed.json` and `console/case-039-
 a7-nothing-on-any-rung-says-so-and-offers-to-escalate.json` both recorded `escalate to
@@ -266,3 +266,16 @@ flag, so `test_turn_replay.py`'s own text comparison never runs for them (measur
 both R6 commits). Listed here rather than left silent so a future `_pin_text: true`
 re-capture of either file records `warehouse`, not the now-superseded `purchasing` -
 re-record owed, not urgent.
+
+`console/case-025-d7-an-incoming-ask-on-a-zero-stock-code-climbs-to-the-po-rung.json`
+(2 turns, added to this note in fix round 3 once the R7 precedence ruling landed -
+left out of the note above until then, per the coordinator's own instruction):
+**turn 0** (`domain_hint: inventory`, a plain stock ask) recorded `escalate to
+purchasing team?` - under R6/R7 this turn now says `escalate to warehouse team?`,
+stale the same way case-038/039 are. **Turn 1** (`domain_hint: incoming`, D7's own
+climb) also recorded `escalate to purchasing team?` - this one is UNCHANGED under R6
+and R7 (incoming's own domain team is `purchasing` either way; AC-EQ-17 pins the
+same shape directly - prior carry `warehouse` from a turn like turn 0, current
+`incoming`, still resolves to `purchasing`). Neither turn is a live `pytest` failure
+today (`_pin_text` absent on both, measured); re-record owed for turn 0's own text,
+not urgent.

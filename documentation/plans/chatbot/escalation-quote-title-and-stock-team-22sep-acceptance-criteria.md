@@ -37,16 +37,14 @@ lane_parse_output` before any composer reads `routing.suggested_team`.
 - AC-EQ-14 `domain_hint = incoming`, `routing.suggested_team = None`, PO placed →
   `escalate to purchasing team?`.
 
-## AC-EQ-15 First-turn default table for a null `routing.suggested_team` (OWNER SIGN-OFF PENDING)
+## AC-EQ-15 First-turn default table for a null `routing.suggested_team` (owner signed 23 Sep 2026)
 
-Fix round 2. A precedence ruling is still owed from the owner: whether a PRIOR turn's
-own carried team (`_prior_suggested_team`) should keep outranking THIS turn's own
-domain, or whether the domain should always win. The table below is the full set of
-first-turn defaults (no prior session, no accepted offer, no pending) - what
+Fix round 2, precedence signed off in fix round 3 (R7, below). The table is the full
+set of first-turn defaults (no prior session, no accepted offer, no pending) - what
 `lane_parse_output` falls back to when the verdict itself named no team, read off
-`turn/policy_rows.py`'s `escalation_team_code` per domain, current as of fix round 2.
-Mechanical only until the ruling lands - not implemented differently by domain, this
-is `policy.domain(domain_hint).escalation_team_code` for every row already:
+`turn/policy_rows.py`'s `escalation_team_code` per domain, current as of fix round 3.
+Not implemented differently by domain, this is `policy.domain(domain_hint).
+escalation_team_code` for every row already:
 
 | `domain_hint` | team |
 | --- | --- |
@@ -63,3 +61,28 @@ is `policy.domain(domain_hint).escalation_team_code` for every row already:
 
 - AC-EQ-15a `domain_hint = master_products`, `routing.suggested_team = None`, no
   prior session, no accepted offer → the domain fallback names `purchasing`.
+
+## Precedence when a prior turn ALSO carried a team (owner ruling 23 Sep 2026, R7)
+
+R7 = option (a): THIS turn's own domain team (the AC-EQ-15 table above) now
+outranks a PREVIOUS turn's carried team (`_prior_suggested_team`) - a turn that named
+a real domain is a fresher fact than a stale carried session. An OPEN offer's own
+carried team (`pending.team`) still outranks both, unchanged: a "yes" over an offer
+goes where it was offered, never re-pointed by this turn's own domain. Full chain:
+accepted team > open-offer team > THIS turn's domain team > prior-turn carried team >
+the hard default (`customer_service`).
+
+- AC-EQ-16 Prior turn carried `purchasing` (e.g. an incoming ask); current turn
+  `domain_hint = inventory`, `routing.suggested_team = None`, no pending offer →
+  `warehouse` (the domain wins over the stale carry).
+- AC-EQ-17 Prior `warehouse`, current `domain_hint = incoming`, routing null → 
+  `purchasing` (the mirror of AC-EQ-16; recorded live on `replay_turns/console/
+  case-025-d7-...`, turn 0 a stock ask carrying `warehouse` forward, turn 1 an
+  incoming ask - see `PENDING-LIVE-RERUN.md`'s own note on that case; not re-pinned
+  against the recording, `_pin_text` is absent there so `text` is never graded).
+- AC-EQ-18 A `purchasing` team_pick offer is OPEN; current turn `domain_hint =
+  inventory`, routing null → stays `purchasing` (the offer wins - a "yes" must still
+  go where it was offered, regardless of this turn's own domain).
+- AC-EQ-19 Prior `purchasing`, current turn `domain_hint = None`/unknown, routing
+  null → `purchasing` (the carry still applies when this turn names no resolvable
+  domain at all).

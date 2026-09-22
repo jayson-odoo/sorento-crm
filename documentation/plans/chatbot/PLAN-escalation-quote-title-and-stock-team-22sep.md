@@ -1,8 +1,8 @@
 # PLAN: escalation quote fallback, SLA comment timestamps, stock question always routes to warehouse
 
-Status: small fix track, tests green, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
+Status: small fix track, fix round 3 (R7) done, awaiting review (lane `fix/chatbot-reply-quote-and-team`, worktree `sorento_crm-ticket-reply-team`)
 UAC: `escalation-quote-title-and-stock-team-22sep-acceptance-criteria.md`
-Owner rulings (22 Sep 2026): R1 drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 a stock question is always suggested to the warehouse team, no rung override.
+Owner rulings: R1 (22 Sep 2026) drop the ` reply to:` suffix when the quoted message has neither text nor title; R6 (22 Sep 2026) a stock question is always suggested to the warehouse team, no rung override; R7 (23 Sep 2026) THIS turn's own domain team outranks a PREVIOUS turn's carried team, but an OPEN offer's own carried team still outranks both; R8 (23 Sep 2026) AC-EQ-15's first-turn default table signed off.
 
 ## Journey
 
@@ -65,6 +65,22 @@ a stub that always names a team.
 unchanged - case-038/case-039 (the two cases with `routing.suggested_team: null` and
 a recorded "purchasing" escalate offer) carry no `_pin_text` flag, so their `text`
 field is never graded; no `DIVERGENCES.md` entry is needed for them.
+
+## Fix round 3 (owner ruling R7 = option (a), R8 signed off, 23 Sep 2026)
+
+Mechanical only. `turn_runtime.lane_parse_output`'s routing-fallback chain reordered:
+accepted team > open-offer team (`pending.team`) > THIS turn's own domain team
+(`policy.domain(domain_hint).escalation_team_code`) > a PREVIOUS turn's carried team
+(`_prior_suggested_team`) > the hard default (`customer_service`) - the domain fill
+now outranks a stale prior-turn carry (was the reverse in fix round 1/2). An explicit
+parser team still wins over everything, unchanged - the fallback chain only runs when
+`routing.suggested_team` is null. AC-EQ-16..19 pin the four orderings directly against
+`lane_parse_output` (verified red against the pre-R7 ordering, green restored).
+AC-EQ-15's table is now owner-signed (R8) - dropped the "sign-off pending" flag.
+`PENDING-LIVE-RERUN.md`'s case-038/039 note extended to cover
+`console/case-025-d7-an-incoming-ask-on-a-zero-stock-code-climbs-to-the-po-rung.json`
+turn 0 (a stock ask that recorded "purchasing", now stale under R6/R7 -> "warehouse")
+- turn 1 (the D7 incoming climb) is unchanged, still "purchasing" either way.
 
 ## Out of scope
 

@@ -691,18 +691,23 @@ def lane_parse_output(
       `test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing`
       both call `escalation.run()` directly with a hand-built ctx and pin a null/inherited
       team flowing through UNGUARDED - the default belongs to the layer that builds
-      `ctx.parse.output`, not to the lane that reads it). Chain, in order: the team an
+      `ctx.parse.output`, not to the lane that reads it). Chain, in order (owner ruling
+      23 Sep 2026, R7, AC-EQ-16..19, supersedes R6's 22 Sep 2026 ordering): the team an
       ACCEPTED offer just named (`apply`'s `trace.team`, the option the customer picked
       off the roster - it outranks the rest because they picked it THIS turn, and a
       multi-team offer's own `pending.team` stays null until they do); a NAMED team
-      (this turn's own); an OFFER's carried team (`pending.team`, contract 108, an
-      acceptance names no team of its own); a PREVIOUS turn's own carried routing
-      (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
-      turn had one, else the table's default", never the default unconditionally); the
-      QUESTION's own domain (`policy.domain(domain_hint).escalation_team_code`, R6, 22 Sep
-      2026 - a parser emission naming no team gets the domain's real escalation team, not
-      a flat literal); the hard default (`DEFAULT_SUGGESTED_TEAM`), last of all, for a
-      domain `policy` cannot resolve (no session, or a domain with no escalation row).
+      (this turn's own, read straight off the verdict); an OFFER's carried team
+      (`pending.team`, contract 108, an acceptance names no team of its own - a "yes"
+      over an open offer still goes where it was offered, AC-EQ-18); THIS TURN's own
+      domain (`policy.domain(domain_hint).escalation_team_code`, R6/R7 - a parser
+      emission naming no team gets the domain's real escalation team, a deterministic
+      fact about the question just asked, which now outranks a stale carry from a
+      PREVIOUS turn, AC-EQ-16/17); a PREVIOUS turn's own carried routing
+      (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a
+      previous turn had one, else the table's default" - still applies when THIS turn
+      names no resolvable domain at all, AC-EQ-19); the hard default
+      (`DEFAULT_SUGGESTED_TEAM`), last of all, for a domain `policy` cannot resolve (no
+      `policy` in scope, or a domain with no escalation row) and no prior carry either.
       The parser's own answer stays untouched on `_parser_raw`, which is what
       `escalation._parser_team` reads to tell "this turn named a team" from "this turn
       accepted one".
@@ -747,21 +752,25 @@ def lane_parse_output(
     if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
         routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
-        # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): captured traffic shows the LLM
-        # parser names NO team on a real fraction of inventory turns (214/218,
-        # measured) - `DEFAULT_SUGGESTED_TEAM` ("customer_service") used to be the
-        # UNCONDITIONAL last resort, so every one of those turns' own escalate offer
-        # and pending team came out "customer service" regardless of domain. A
-        # domain's escalation team (inventory -> warehouse, incoming -> purchasing,
-        # `turn/policy_rows.py`) is a deterministic fact ABOUT THE QUESTION the parser
-        # was asked, not a guess, so it is read before the hard default - but still
-        # after `_prior_suggested_team`, which stays the more specific fact when a
-        # previous turn genuinely carried one forward (test_pass4_item5's B3, kept
-        # unchanged).
+        # Owner ruling 23 Sep 2026, R7 (AC-EQ-16..19), supersedes R6's own ordering
+        # (22 Sep 2026): the domain fill now outranks a PREVIOUS turn's carried team.
+        # Full chain, in order: an ACCEPTED offer's team (above); an OFFER's own
+        # carried team (`pending.team`, above - a "yes" over an open offer still goes
+        # where it was offered, AC-EQ-18, never re-pointed by this turn's own domain);
+        # THIS TURN's domain (`policy.domain(domain_hint).escalation_team_code`,
+        # `turn/policy_rows.py`) - a deterministic fact about the QUESTION the parser
+        # was just asked, and now read BEFORE the prior-turn carry, because a turn
+        # that named a real domain is a fresher fact than whatever team a stale
+        # session happened to be carrying (AC-EQ-16/17: an incoming ask carrying
+        # "purchasing" forward must not paint the NEXT turn's plain stock question
+        # "purchasing" too); a PREVIOUS turn's own carried routing
+        # (`_prior_suggested_team`, test_pass4_item5's B3) - still applies when THIS
+        # turn names no resolvable domain at all (AC-EQ-19, `policy.domain(None)` is
+        # `None`); the hard default (`DEFAULT_SUGGESTED_TEAM`), last of all.
         domain_row = policy.domain(out.get("domain_hint")) if policy else None
         domain_team = domain_row.escalation_team_code if domain_row else None
         routing["suggested_team"] = (
-            _prior_suggested_team(prior_session) or domain_team or DEFAULT_SUGGESTED_TEAM
+            domain_team or _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
         )
     # `suggested_agent`'s default is applied once, upstream, by `with_routing_agent_default`
     # (finding 2b) - the access read and the lanes see the same value.

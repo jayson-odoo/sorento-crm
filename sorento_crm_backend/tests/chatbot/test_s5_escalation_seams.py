@@ -322,8 +322,8 @@ class TestACEQ4SlaCommentDatetimeFields:
 
 
 class TestACEQ15aNonInventoryDomainNullRoutingFallsBack:
-    """AC-EQ-15 (owner sign-off pending, fix round 2): the domain-aware fallback is
-    not inventory/incoming-only - `turn_runtime.lane_parse_output` reads
+    """AC-EQ-15 (owner signed 23 Sep 2026): the domain-aware fallback is not
+    inventory/incoming-only - `turn_runtime.lane_parse_output` reads
     `policy.domain(domain_hint).escalation_team_code` for whichever domain the turn is
     actually about. `master_products` is the one non-stock domain the UAC table names
     explicitly for a direct pin."""
@@ -340,6 +340,101 @@ class TestACEQ15aNonInventoryDomainNullRoutingFallsBack:
         }
         out = turn_runtime.lane_parse_output(
             verdict, focus=None, pending=None, prior_session=None, policy=default_policy()
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+
+class TestACEQ16To19PrecedenceR7:
+    """Owner ruling 23 Sep 2026, R7 (AC-EQ-16..19), supersedes R6's own ordering: THIS
+    turn's own domain team now outranks a PREVIOUS turn's carried team; an OPEN
+    offer's own carried team still outranks both (a "yes" goes where it was offered);
+    the prior-turn carry still applies when this turn names no resolvable domain at
+    all."""
+
+    @staticmethod
+    def _verdict(*, domain_hint: Any) -> dict[str, Any]:
+        return {
+            "domain_hint": domain_hint,
+            "routing": {"suggested_team": None, "suggested_agent": None},
+        }
+
+    @staticmethod
+    def _prior(team: str) -> dict[str, Any]:
+        return {"session_vars": {"variables": {"routing": {"suggested_team": team}}}}
+
+    def test_ac_eq_16_current_domain_outranks_a_stale_incoming_carry(self) -> None:
+        """Prior turn carried "purchasing" (an incoming ask); this turn is a plain
+        stock question, routing null, no open offer -> warehouse, not the stale
+        carry."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="inventory"),
+            focus=None,
+            pending=None,
+            prior_session=self._prior("purchasing"),
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+    def test_ac_eq_17_current_domain_outranks_a_stale_warehouse_carry(self) -> None:
+        """The mirror of AC-EQ-16: prior "warehouse", this turn incoming, routing
+        null -> purchasing. This is the shape recorded live on
+        `replay_turns/console/case-025-d7-...` (turn 0 a stock ask, turn 1 an
+        incoming ask) - see PENDING-LIVE-RERUN.md for that case's own staleness
+        note; not re-pinned against the recording itself here, `_pin_text` is absent
+        on that case so its `text` is never graded either way."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="incoming"),
+            focus=None,
+            pending=None,
+            prior_session=self._prior("warehouse"),
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    def test_ac_eq_18_an_open_offers_own_team_still_wins_over_the_domain(self) -> None:
+        """A "purchasing" team_pick is still open; this turn is a plain stock
+        question (routing null) answering it - the offer's own team wins, never
+        re-pointed to warehouse just because this turn's domain is inventory."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.pending import Pending
+        from app.services.chatbot.turn.policy import default_policy
+
+        offer = Pending(
+            kind="team_pick",
+            expects="yes_no",
+            options=[],
+            team="purchasing",
+            payload={},
+            asked_at_turn=1,
+        )
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="inventory"),
+            focus=None,
+            pending=offer,
+            prior_session=None,
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    def test_ac_eq_19_the_prior_carry_still_applies_with_no_resolvable_domain(self) -> None:
+        """This turn names no domain at all (`domain_hint = None`, e.g. a casual
+        message) - `policy.domain(None)` resolves nothing, so the prior turn's own
+        carried team is still what answers, exactly as before R7."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint=None),
+            focus=None,
+            pending=None,
+            prior_session=self._prior("purchasing"),
+            policy=default_policy(),
         )
         assert out["routing"]["suggested_team"] == "purchasing"
 
