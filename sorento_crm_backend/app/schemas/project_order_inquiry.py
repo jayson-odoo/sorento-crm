@@ -1019,6 +1019,33 @@ class UnplaceAllRequest(BaseModel):
     raised_by: Optional[str] = None
 
 
+class OrderInquiryWorklistExportRequest(BaseModel):
+    """Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B6): the list page's own
+    async export - the SAME filter shape `GET /order-inquiries` (and its retiring
+    sync `GET /order-inquiries/export`) already take, as a JSON body rather than a
+    query string. Every field omitted means the whole book, exactly like the GET.
+    """
+
+    query: Optional[str] = None
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    state: Optional[str] = None
+    project_id: Optional[str] = None
+    project: Optional[str] = None
+    supplier_id: Optional[str] = None
+    raised_by: Optional[str] = None
+    linked: Optional[str] = None
+    kind: Optional[str] = None
+    ack: Optional[str] = None
+    location: Optional[str] = None
+    agent: Optional[str] = None
+    so_month: Optional[str] = None
+    po_number: Optional[str] = None
+    spo_number: Optional[str] = None
+    delivery_from: Optional[str] = None
+    delivery_to: Optional[str] = None
+
+
 class UnplaceAllResult(BaseModel):
     unplaced: int = 0
 

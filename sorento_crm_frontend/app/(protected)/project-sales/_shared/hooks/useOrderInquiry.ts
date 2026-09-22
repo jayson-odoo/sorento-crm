@@ -3,10 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import {
   acknowledgeOrderInquiryRows,
   acknowledgeOrderInquiryRowsByFilter,
   autoPlaceOrderInquiryRows,
+  exportOrderInquiryXlsx,
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
   getOrderInquiryHeaderRelatedDocuments,
@@ -147,6 +149,28 @@ export function useOrderInquiryHeaderRelatedDocuments(id: string | undefined) {
     queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY, id],
     queryFn: () => getOrderInquiryHeaderRelatedDocuments(id as string),
     enabled: Boolean(id),
+  });
+}
+
+/**
+ * The detail page's own Export Excel (Lane B, AC-B1/AC-B5): starts the export and
+ * refreshes both surfaces that show it - My Downloads' own drawer and this OI's
+ * "Download history" chip. The workbook itself is fetched later from My Downloads,
+ * once the worker marks the row ready - this mutation never returns or saves a file.
+ */
+export function useExportOrderInquiryXlsx(id: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => exportOrderInquiryXlsx(id as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'order_inquiry', id],
+      });
+      toast.success('Preparing the order inquiry export - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the order inquiry export'),
   });
 }
 

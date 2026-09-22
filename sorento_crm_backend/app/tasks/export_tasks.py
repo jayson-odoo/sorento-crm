@@ -943,3 +943,162 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
     finally:
         set_company_scope(db, caller_scope)
         db.close()
+
+
+#: The workbook `openpyxl` produces for both order-inquiry exports below - same media
+#: type the existing sync `GET /order-inquiries/export` route answers with.
+_OI_XLSX_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+#: The private key `export_order_inquiry_worklist_xlsx` (the route) tucks the caller's
+#: single-company scope into, inside the `filters` dict handed to
+#: `generate_order_inquiry_worklist_xlsx` - not a real `OrderInquiryWorklistService`
+#: filter, popped back off before the dict reaches `export_xlsx(**filters)`. The
+#: worklist export names no single header a task could read a `company_id` off (unlike
+#: `generate_order_inquiry_xlsx` below, which adopts the OI header's own company), so
+#: the enqueuing request's own scope has to travel with it - snapshotted the same way
+#: `generate_promotions_pdf`'s `company_id` param is, but through the filters dict
+#: rather than a fourth positional argument, so the two-line RQ call signature stays
+#: `(download_id, filters, user_id)`.
+WORKLIST_EXPORT_COMPANY_SCOPE_KEY = "_company_id"
+
+
+def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str) -> dict:
+    """Render one OI header's own workbook (Lane B, AC-B1/AC-B2), store it, update the
+    download row. Mirrors `generate_order_sheet` line for line: `mark_processing`,
+    render, upload, `mark_ready` - `_record_failure` on any exception, never raising
+    into RQ.
+
+    The header names its own company (`OrderInquiry.company_id`), so - exactly the
+    `_adopt_run_company_scope` shape `generate_order_sheet` uses for a reorder run -
+    it is read under NO scope first (the row itself is what states the company), then
+    that company is adopted before the render touches anything company-scoped. A
+    header with no company (should not exist post-isolation, but the fail-closed rule
+    is never assumed away) is left under the worker's default UNSET scope: no rows,
+    no cost - visibly empty rather than wrong.
+    """
+    db = SessionLocal()
+    from app.models.base import get_company_scope
+    from app.models.project_so import OrderInquiry
+
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, None)
+    header = db.get(OrderInquiry, inquiry_id)
+    company_id = getattr(header, "company_id", None) if header is not None else None
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    else:
+        logger.warning(
+            "generate_order_inquiry_xlsx: order inquiry %s not found or carries no "
+            "company; export runs under no company", inquiry_id,
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
+            inquiry_id=inquiry_id,
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/order-inquiry/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=_OI_XLSX_CONTENT_TYPE,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_order_inquiry_xlsx: download %s ready (%d bytes)",
+            download_id, len(file_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_order_inquiry_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_order_inquiry_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
+
+
+def generate_order_inquiry_worklist_xlsx(download_id: str, filters: dict, user_id: str) -> dict:
+    """Render the OI worklist's filtered workbook (Lane B, AC-B2/AC-B6), store it,
+    update the download row. Same shape as `generate_order_inquiry_xlsx` above, minus
+    the single header to read a company off: `filters` carries the enqueuing request's
+    own company scope under `WORKLIST_EXPORT_COMPANY_SCOPE_KEY`
+    (`export_order_inquiry_worklist_xlsx`, the route, puts it there), popped back off
+    before the rest reaches `export_xlsx(**filters)` - it is not a real worklist filter.
+
+    No scope in `filters` (a direct call, or a caller with no single-company scope)
+    leaves the worker under its default UNSET scope: no rows, fail-closed, same rule
+    every other export task in this module follows.
+    """
+    db = SessionLocal()
+    from app.models.base import get_company_scope
+
+    caller_scope = get_company_scope(db)
+    task_filters = dict(filters or {})
+    company_id = task_filters.pop(WORKLIST_EXPORT_COMPANY_SCOPE_KEY, None)
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    else:
+        logger.warning(
+            "generate_order_inquiry_worklist_xlsx: download %s carries no company "
+            "scope; export runs under no company", download_id,
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
+            **task_filters,
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/order-inquiry-worklist/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=_OI_XLSX_CONTENT_TYPE,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_order_inquiry_worklist_xlsx: download %s ready (%d bytes)",
+            download_id, len(file_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception(
+            "generate_order_inquiry_worklist_xlsx failed for download %s", download_id
+        )
+        _record_failure(db, svc, download_id, e, "generate_order_inquiry_worklist_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
