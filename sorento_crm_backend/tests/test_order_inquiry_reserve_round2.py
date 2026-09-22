@@ -81,6 +81,7 @@ from app.services.order_inquiry_reserve_service import OrderInquiryReserveServic
 
 from ._pg_fixture import blank_session
 from .test_order_inquiry_reserve import (
+    CANCEL_URL,
     REQUESTER_PERMISSIONS,
     RESERVE_URL as OLD_ALL_ROWS_RESERVE_URL,
     REQUEST_URL,
@@ -532,6 +533,74 @@ def test_unlink_never_touches_a_reserve_link(reserve_api):
     world.db.rollback()
 
 
+def test_unplace_whole_row_with_no_link_id_skips_reserve_link_removes_po_link(reserve_api):
+    """S9 (reviewer round 2): `unplace(row_id)` with NO `link_id` is the single-row
+    whole-row form (never `unplace_rows`, the BULK "Unlink all" write) - the untested
+    branch at `project_order_inquiry_service.py`'s own `else: links = [link for link in
+    links if link.reserve_request_row_id is None]`. Same shape
+    `test_unlink_never_touches_a_reserve_link` already pins for the bulk write and the
+    per-row-naming-the-reserve-link-itself refusal; this is the third case neither of
+    those two reaches."""
+    client, world = reserve_api
+    row = _open_row(world, qty="200")
+    po_line = _purchase_order(world.db, world.company_id)["line"]
+    world.db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=world.company_id, row_id=row.id,
+            po_line_id=po_line.id, document="ZZT-PO-KEEP", qty=Decimal("40"),
+        )
+    )
+    world.db.commit()
+
+    created = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "150"}]}
+    )
+    assert created.status_code == 201, created.text
+    world.db.commit()
+    request_id = created.json()["id"]
+    reserved = client.post(
+        ROW_RESERVE_URL(request_id, row.id),
+        json={
+            "warehouse_id": world.site.id,
+            "qty_reserved": "50",
+            "reason": "BRW only has 50 in stock",
+        },
+    )
+    assert reserved.status_code == 200, reserved.text
+    world.db.commit()
+
+    from app.models.project_so import OrderInquiryReserveRequestRow
+
+    request_row = (
+        world.db.query(OrderInquiryReserveRequestRow)
+        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
+        .one()
+    )
+    reserve_link = (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == request_row.id)
+        .one()
+    )
+
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    service = ProjectOrderInquiryService(world.db)
+
+    # The WHOLE-ROW single unplace, no link_id - the else: filter at ~8986.
+    service.unplace(row.id, actor_user_id=world.requester)
+    world.db.commit()
+    world.db.expire_all()
+
+    remaining = world.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).all()
+    remaining_ids = {link.id for link in remaining}
+    assert reserve_link.id in remaining_ids, (
+        f"the whole-row unplace must leave the reserve link standing: {remaining_ids}"
+    )
+    assert all(link.po_line_id is None for link in remaining), (
+        f"the PO link must be removed: {[(link.id, link.po_line_id) for link in remaining]}"
+    )
+
+
 # --------------------------------------------------------------------------------- #
 # AC-RS-60: history, newest first                                                   #
 # --------------------------------------------------------------------------------- #
@@ -576,6 +645,58 @@ def test_reserve_row_history(reserve_api):
             f"no UUID in the frontend UI (CLAUDE.md Cursor rules): {entry}"
         )
         assert entry.get("created_at"), entry
+
+
+def test_reserve_row_history_spans_every_request_that_ever_touched_the_row(reserve_api):
+    """H1 (captain ruling, browser walk): history is per LINE across every request
+    that ever touched the OI row, any state - not only the one request named in the
+    URL. Two requests on one row: the first raised then cancelled (never answered),
+    the second raised then reserved. Four entries, newest first: reserved, requested
+    (#2), cancelled, requested (#1) - the cancelled, never-answered request stays
+    visible even though a LATER request on the same row has since been reserved."""
+    client, world = reserve_api
+    row = _open_row(world, qty="50")
+
+    first = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
+    )
+    assert first.status_code == 201, first.text
+    world.db.commit()
+    first_request_id = first.json()["id"]
+
+    cancelled = client.post(CANCEL_URL(first_request_id))
+    assert cancelled.status_code == 200, cancelled.text
+    world.db.commit()
+
+    second = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
+    )
+    assert second.status_code == 201, second.text
+    world.db.commit()
+    second_request_id = second.json()["id"]
+
+    reserved = client.post(
+        ROW_RESERVE_URL(second_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
+    )
+    assert reserved.status_code == 200, reserved.text
+    world.db.commit()
+
+    # Reached via the FIRST (cancelled) request's own URL - H1's own point: the read
+    # is row-scoped, not request-scoped, so this still returns all four entries.
+    history = client.get(ROW_HISTORY_URL(first_request_id, row.id))
+    assert history.status_code == 200, history.text
+    entries = history.json()
+
+    assert len(entries) == 4, entries
+    kinds = [entry["kind"] for entry in entries]
+    assert kinds == ["reserved", "requested", "cancelled", "requested"], kinds
+
+    # The SAME four entries reached via the second (reserved) request's own URL too -
+    # row-scoped means either request id opens the same history.
+    history_via_second = client.get(ROW_HISTORY_URL(second_request_id, row.id))
+    assert history_via_second.status_code == 200, history_via_second.text
+    assert [entry["kind"] for entry in history_via_second.json()] == kinds
 
 
 # --------------------------------------------------------------------------------- #

@@ -1705,10 +1705,11 @@ def test_body_ids_malformed_are_422(api):
 
 
 def test_note_and_reason_length_capped(api):
-    """N-4: neither `note` (`CreateReserveRequestIn`) nor `reason`
-    (`ReserveAnswerRowIn`) carries a `max_length` today, so an arbitrarily long value is
-    accepted and lands verbatim in an outgoing email body / on the worklist chip. Caps
-    per the captain's list: note 5000, reason 2000."""
+    """N-4: neither `note` (`CreateReserveRequestIn`) nor `reason` (`ReserveRowIn`, the
+    per-row route's own schema - S7, review round 2: the old all-rows `ReserveAnswerRowIn`
+    this docstring used to name is retired) carries a `max_length` today, so an
+    arbitrarily long value is accepted and lands verbatim in an outgoing email body / on
+    the worklist chip. Caps per the captain's list: note 5000, reason 2000."""
     client, world = api
 
     row = _open_row(world, qty="50")
