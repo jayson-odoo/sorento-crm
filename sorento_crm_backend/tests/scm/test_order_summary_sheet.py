@@ -1054,6 +1054,35 @@ def test_a5b_write_rows_a_picked_so_row_after_the_horizon_is_absent(db, chain):
     assert row["delivery_by_month"] == [], row["delivery_by_month"]
 
 
+def test_a5c_write_rows_empty_so_numbers_means_not_narrowed_not_match_nothing(db, chain):
+    """Fix round 4 (Lane C review, root cause in the shared helper): `reorder_run_
+    service.create_run` stamps `so_numbers = []` for a Project run where the buyer
+    picked NO order at all (`stored_so_numbers = []` when `demand_class == 'project'`
+    and nothing was ticked) - and such a run still plans EVERY project order in range
+    (`_planning_rows`' own `so_scoped = bool(so_numbers)`). `run_scope_oi_rows` must
+    read that same `[]` as "not narrowed", not as `= ANY('{}')` (match nothing) - the
+    earlier cut printed Project qty 0 on exactly these runs. Two OI rows on TWO
+    different SOs, run stamped with `so_numbers = []`: BOTH must count."""
+    f = chain
+    _scope_row(db, product=f["product"], qty=10, delivery=date(2026, 10, 1),
+              so_number=f"{MARKER}-SO-A", customer_name="Customer A")
+    _scope_row(db, product=f["product"], qty=15, delivery=date(2026, 10, 1),
+              so_number=f"{MARKER}-SO-B", customer_name="Customer B")
+    f["run"].so_numbers = []
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+
+    customers = row["project_customers"]
+    assert sum(c["qty"] for c in customers) == 25.0, customers
+    labels = {c["label"] for c in customers}
+    assert any(label.startswith("Customer A") for label in labels), labels
+    assert any(label.startswith("Customer B") for label in labels), labels
+    months = {m["month"]: m["qty"] for m in row["delivery_by_month"]}
+    assert months == {"2026-10": 25.0}, months
+
+
 # =====================================================================================
 # AC-A9 regression pin: adding the Last cost lookup (A4) beside the Supplier column must
 # not disturb it - Supplier still names the newest non-cancelled PO's supplier.

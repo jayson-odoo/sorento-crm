@@ -1008,20 +1008,29 @@ def run_scope_oi_rows(
     either). A row whose project line has not been reconciled to a core line drops out
     entirely, the same shape the confirmed leg already has.
 
-    ``so_numbers`` (non-``None``) narrows to `sales_orders.so_number` - the same COLUMN
-    `horizon_committed_select_sql(so_scoped=True)` binds `:so_numbers` against via
-    `_SO_SCOPE_JOIN_SQL`, reached by a DIFFERENT join path here (off the reconciled core
-    line's own `sales_order_id`, rather than `_SO_SCOPE_JOIN_SQL`'s walk through
-    `order_inquiries -> project_sales_orders.so_id`) - the two paths should always agree
-    for a row this function admits at all (both name the SAME core sales order), but this
-    is not "the same query", only the same column reached two ways. Never
-    `order_inquiry_worklist_service._SO_NUMBER`'s `COALESCE(autocount_doc_no,
+    ``so_numbers`` (TRUTHY - fix round 4, Lane C review) narrows to `sales_orders.
+    so_number` - the same COLUMN `horizon_committed_select_sql(so_scoped=True)` binds
+    `:so_numbers` against via `_SO_SCOPE_JOIN_SQL`, reached by a DIFFERENT join path here
+    (off the reconciled core line's own `sales_order_id`, rather than `_SO_SCOPE_JOIN_
+    SQL`'s walk through `order_inquiries -> project_sales_orders.so_id`) - the two paths
+    should always agree for a row this function admits at all (both name the SAME core
+    sales order), but this is not "the same query", only the same column reached two
+    ways. Never `order_inquiry_worklist_service._SO_NUMBER`'s `COALESCE(autocount_doc_no,
     provisional_ref)`, which is a DISPLAY label for a project SO that may never have been
     adopted, while the run's own `so_numbers` are picked off the candidate-orders endpoint,
     which lists the CORE `sales_orders.so_number` (`reorder_runs.get_candidate_orders`).
-    ``None`` applies no filter at all (every product-scoped row is in scope); an empty list
-    matches nothing (`= ANY('{}')`), which is "Project scoped, buyer picked no orders"
-    (`reorder_run_service.create_run`'s own `stored_so_numbers = []`).
+
+    ``None`` AND an empty list ``[]`` BOTH apply no filter (every product-scoped row is
+    in scope) - the SAME `bool(so_numbers)` reading `reorder_run_service._planning_rows`
+    gives its own `so_scoped` flag. `reorder_run_service.create_run` stamps
+    `so_numbers = []` for a Project run where the buyer picked no order at all
+    (`stored_so_numbers = []` when `demand_class == "project"` and nothing was ticked),
+    and such a run still plans EVERY project order in range - `_planning_rows` reads that
+    `[]` as "not narrowed" for exactly that reason. An earlier cut of this function read
+    `[]` as `= ANY('{}')` (matches nothing), which printed Project qty 0 on precisely the
+    runs `_planning_rows` bought for - the bug fix round 4 found. A caller that means
+    "match nothing" narrows `product_ids` instead, which this function DOES read as
+    empty-means-nothing (the model's own early `if not product_ids: return []`).
 
     ``horizon_start``/``horizon`` narrow to `delivery_date` inside `[horizon_start,
     horizon]`; a row with no delivery date is always in scope, whatever either bound is.
@@ -1037,7 +1046,7 @@ def run_scope_oi_rows(
     if not product_ids:
         return []
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="rsoi")
-    so_clause = "AND so.so_number = ANY(:so_numbers)\n          " if so_numbers is not None else ""
+    so_clause = "AND so.so_number = ANY(:so_numbers)\n          " if so_numbers else ""
     rows = db.execute(text(f"""
         SELECT oir.id::text AS row_id, sol.product_id::text AS product_id,
                so.so_number AS so_number, ({_OWED_SQL}) AS qty,
@@ -1070,7 +1079,7 @@ def run_scope_oi_rows(
           {("AND " + co) if co else ""}
     """), {
         "pids": [str(p) for p in product_ids],
-        "so_numbers": list(so_numbers) if so_numbers is not None else [],
+        "so_numbers": list(so_numbers) if so_numbers else [],
         "horizon_start": horizon_start,
         "horizon": horizon,
         **co_params,
