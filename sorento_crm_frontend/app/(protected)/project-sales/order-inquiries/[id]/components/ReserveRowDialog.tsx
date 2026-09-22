@@ -175,6 +175,21 @@ export function ReserveRowDialog({
     setReserved(Math.min(Math.max(raw || 0, 0), requestedQty));
   }
 
+  // N2 (reviewer round): once the deferred action starts (`unreserveControl.start`
+  // parked it, the countdown appears), the qty/note form must not sit around
+  // holding what was typed - a later render finding `netReserved` already smaller
+  // (the countdown committed) would otherwise reopen the SAME form pre-filled
+  // above the new net. Keyed on the boolean, not the `ReactNode` itself: `countdown`
+  // is a fresh element on every render, which would fire this every time instead
+  // of only on the false -> true transition.
+  const unreserveCountdownActive = Boolean(unreserveControl?.countdown);
+  React.useEffect(() => {
+    if (!unreserveCountdownActive) return;
+    setUnreserveOpen(false);
+    setUnreserveQty('');
+    setUnreserveNote('');
+  }, [unreserveCountdownActive]);
+
   const short = reserved < requestedQty;
   const canConfirm = !short || reason.trim().length > 0;
 
@@ -265,6 +280,7 @@ export function ReserveRowDialog({
                             type="number"
                             min={0}
                             max={requestedQty}
+                            step="any"
                             value={reserved}
                             onChange={handleReservedChange}
                           />
@@ -310,6 +326,7 @@ export function ReserveRowDialog({
                             type="number"
                             min={1}
                             max={netReserved}
+                            step="any"
                             value={unreserveQty}
                             onChange={(event) => setUnreserveQty(event.target.value)}
                           />

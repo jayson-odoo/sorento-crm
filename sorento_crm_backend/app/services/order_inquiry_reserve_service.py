@@ -668,11 +668,24 @@ class OrderInquiryReserveService:
         note: Optional[str],
         actor_user_id: Optional[str],
     ) -> OrderInquiryReserveRequestRow:
-        """Reduces what was reserved on ONE row (`PLAN-oi-request-cs-reserve.md`
-        section 6c, F5). Its own action, never Unlink (F5's own words: "unlink is
-        unlink, unreserve is unreserve"): reduces the reserve LINK's own qty, deletes
-        it at net 0, refreshes the row's state and writes one `unreserved` event. No
-        email either way."""
+        """Reduces what was reserved on an OI ROW (`PLAN-oi-request-cs-reserve.md`
+        section 6c, F5; re-review finding 1, captain ruling 23 Sep). Its own action,
+        never Unlink (F5's own words: "unlink is unlink, unreserve is unreserve").
+
+        **Scoped to the LINE, not to the one request row named in the URL.** A row
+        can hold reserve links from several requests (R5: reserved then requested
+        again on the balance) - `request_id`/`row_id` are the ACCESS anchor only
+        (the same 404 guard as before, proving the caller may act on this row at
+        all), never the release's own scope. The release itself walks EVERY link
+        the row still carries, across every request that has ever answered it,
+        newest request first then newest link first - releasing "the last thing put
+        on" before reaching further back - reducing each link and deleting it at
+        net 0, writing one `unreserved` event per link touched (its own qty, tied to
+        the request row whose own link it came off) and recomputing `qty_reserved`
+        on each touched request row so it keeps reading its own link's remaining
+        qty rather than a frozen answer. The bound a 422 names is the row's own
+        AGGREGATE net across every link, not the one link tied to the URL's own
+        request. No email either way."""
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         request = (
@@ -689,8 +702,10 @@ class OrderInquiryReserveService:
 
         # SF-9: the same lost-update race as `reserve_row` (a lock, not a rewrite of the
         # unreserve arithmetic) - two concurrent unreserves on this row would otherwise
-        # both read the same `net_reserved` and both write `net - qty` off it.
-        rr = (
+        # both read the same `net_reserved` and both write `net - qty` off it. This is
+        # the ACCESS anchor only now - it proves `request_id`/`row_id` is a legitimate,
+        # company-scoped pair to act on, never the release's own scope (below).
+        anchor = (
             self.db.query(OrderInquiryReserveRequestRow)
             .filter(
                 OrderInquiryReserveRequestRow.request_id == request.id,
@@ -699,14 +714,14 @@ class OrderInquiryReserveService:
             .with_for_update()
             .first()
         )
-        if rr is None:
+        if anchor is None:
             raise AppException(
                 404,
                 "That row is not part of this reserve request.",
                 code="reserve_request_row_not_found",
             )
 
-        row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == rr.row_id).first()
+        row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
         if row is None:
             raise AppException(
                 409,
@@ -714,53 +729,80 @@ class OrderInquiryReserveService:
                 code="reserve_request_row_missing",
             )
 
-        # SF-9: the link itself is the value both concurrent unreserves would read and
-        # write (`net_reserved`, then `net - qty`) - locking it, not only `rr`, closes
-        # the gap between reading it here and writing it below.
-        link = (
-            self.db.query(OrderInquiryLink)
-            .filter(OrderInquiryLink.reserve_request_row_id == rr.id)
+        # Line scope: every (request row, link, request) this OI ROW still carries,
+        # across EVERY request that has ever answered it - not only the anchor's
+        # own. Newest request first (ordinal desc), then newest link first
+        # (created_at desc). `.with_for_update()` locks every row this query joins,
+        # the same SF-9 backstop as before, now widened to the whole set a release
+        # may touch.
+        pairs = (
+            self.db.query(OrderInquiryReserveRequestRow, OrderInquiryLink, OrderInquiryReserveRequest)
+            .join(
+                OrderInquiryLink,
+                OrderInquiryLink.reserve_request_row_id == OrderInquiryReserveRequestRow.id,
+            )
+            .join(
+                OrderInquiryReserveRequest,
+                OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+            )
+            .filter(OrderInquiryReserveRequestRow.row_id == row_id)
+            .order_by(
+                OrderInquiryReserveRequest.ordinal.desc(),
+                OrderInquiryLink.created_at.desc(),
+            )
             .with_for_update()
-            .first()
+            .all()
         )
-        net_reserved = _dec(link.qty) if link is not None else _ZERO
+        net_reserved_total = sum((_dec(link.qty) for _, link, _ in pairs), _ZERO)
         qty_dec = _dec(qty)
-        if qty_dec <= _ZERO or qty_dec > net_reserved:
+        if qty_dec <= _ZERO or qty_dec > net_reserved_total:
             raise AppException(
                 422,
                 f"{_row_label(row)}: unreserve quantity must be between 0 and "
-                f"{_qty_str(net_reserved)} (the net reserved).",
+                f"{_qty_str(net_reserved_total)} (the net reserved).",
                 code="reserve_unreserve_qty_out_of_range",
             )
         note_clean = (note or "").strip() or None
 
-        remaining_link_qty = net_reserved - qty_dec
-        # `OrderInquiryLink` carries no `warehouse_id` of its own (`document` is its
-        # only place-name); the request row's own `warehouse_id` is Eling's answer and
-        # is what the event's own "@ pool" reads.
-        warehouse_id_for_event = rr.warehouse_id
-        if remaining_link_qty > _ZERO:
-            link.qty = remaining_link_qty
-        else:
-            self.db.delete(link)
-        self.db.add(
-            OrderInquiryReserveEvent(
-                id=str(uuid.uuid4()),
-                company_id=row.company_id,
-                reserve_request_row_id=rr.id,
-                kind=RESERVE_EVENT_UNRESERVED,
-                qty=qty_dec,
-                warehouse_id=warehouse_id_for_event,
-                note=note_clean,
-                actor_id=actor_user_id,
-                # Explicit - see `create_request`'s own note on `requested_at`.
-                created_at=datetime.utcnow(),
+        remaining_to_release = qty_dec
+        for rr, link, _req in pairs:
+            if remaining_to_release <= _ZERO:
+                break
+            link_qty = _dec(link.qty)
+            release_amount = min(link_qty, remaining_to_release)
+            remaining_link_qty = link_qty - release_amount
+            # `OrderInquiryLink` carries no `warehouse_id` of its own (`document` is
+            # its only place-name); the ANSWERING request row's own `warehouse_id`
+            # is Eling's answer and is what this event's own "@ pool" reads.
+            warehouse_id_for_event = rr.warehouse_id
+            if remaining_link_qty > _ZERO:
+                link.qty = remaining_link_qty
+            else:
+                self.db.delete(link)
+            # Recomputed to the link's own remaining qty: once a LATER unreserve
+            # call (anchored anywhere on the row) has eaten into this request row's
+            # own answer, `qty_reserved` must stop reading the frozen original.
+            rr.qty_reserved = remaining_link_qty
+            self.db.add(
+                OrderInquiryReserveEvent(
+                    id=str(uuid.uuid4()),
+                    company_id=row.company_id,
+                    reserve_request_row_id=rr.id,
+                    kind=RESERVE_EVENT_UNRESERVED,
+                    qty=release_amount,
+                    warehouse_id=warehouse_id_for_event,
+                    note=note_clean,
+                    actor_id=actor_user_id,
+                    # Explicit - see `create_request`'s own note on `requested_at`.
+                    created_at=datetime.utcnow(),
+                )
             )
-        )
+            remaining_to_release -= release_amount
+
         self.db.flush()
         ProjectOrderInquiryService(self.db).refresh_link_state([row])
         self.db.flush()
-        return rr
+        return anchor
 
     # ----------------------------------------------------------- 6c F3: per-row history
 

@@ -56,7 +56,10 @@ import {
   orderInquiryHeaderStatusLabel,
   orderInquiryHeaderStatusVariant,
 } from '../../../_shared/lib/orderInquiryHeaderStatus';
-import { canCancelReserveRequest } from '../../../_shared/lib/orderInquiryReserve';
+import {
+  canCancelReserveRequest,
+  resolveReserveRowRequestAnchor,
+} from '../../../_shared/lib/orderInquiryReserve';
 import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryWorklistXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
@@ -318,11 +321,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const reserveRowLastRequestId = useMemo(() => {
     if (!reserveRowDialogId) return null;
     const answered = (reserveRequestsQuery.data ?? [])
-      .filter((r) =>
-        r.rows.some((row) => row.row_id === reserveRowDialogId && row.qty_reserved != null),
-      )
-      .sort((a, b) => b.ordinal - a.ordinal);
-    return answered[0]?.id ?? null;
+      .map((r) => {
+        const row = r.rows.find((row) => row.row_id === reserveRowDialogId);
+        return row && row.qty_reserved != null
+          ? { id: r.id, ordinal: r.ordinal, rowQtyReserved: row.qty_reserved }
+          : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+    return resolveReserveRowRequestAnchor(answered);
   }, [reserveRequestsQuery.data, reserveRowDialogId]);
   const reserveRowEffectiveRequestId =
     reserveRowOpenRequest?.requestId ?? reserveRowLastRequestId ?? null;

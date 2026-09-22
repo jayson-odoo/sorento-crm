@@ -23,3 +23,30 @@ export function canCancelReserveRequest(
   if (!currentUserId || !requestedBy) return false;
   return currentUserId === requestedBy;
 }
+
+export interface ReserveRowRequestAnchorCandidate {
+  id: string;
+  ordinal: number;
+  /** This ROW's own `qty_reserved` on that request - already known to be non-null
+   * (answered), the caller's own filter. */
+  rowQtyReserved: string | null;
+}
+
+/**
+ * Re-review finding 1 (captain ruling, 23 Sep): which answered request anchors
+ * `ReserveRowDialog`'s History/Unreserve for a row once nothing is open - the
+ * highest-ordinal request that STILL HOLDS a link on this row (its own
+ * `qty_reserved` > 0), else any answered one (even 0), so the anchor is never
+ * null while the row's own aggregate `reserved_qty` still reads something. The
+ * unreserve itself is row-scoped on the server regardless of which answered
+ * request supplies this id (`unreserve_row`, the same lane); this only picks the
+ * anchor whose own numbers read true rather than a request a LATER unreserve has
+ * since emptied out.
+ */
+export function resolveReserveRowRequestAnchor(
+  answeredRequests: ReserveRowRequestAnchorCandidate[],
+): string | null {
+  const byOrdinalDesc = [...answeredRequests].sort((a, b) => b.ordinal - a.ordinal);
+  const stillHoldsLink = byOrdinalDesc.find((r) => Number(r.rowQtyReserved || '0') > 0);
+  return stillHoldsLink?.id ?? byOrdinalDesc[0]?.id ?? null;
+}
