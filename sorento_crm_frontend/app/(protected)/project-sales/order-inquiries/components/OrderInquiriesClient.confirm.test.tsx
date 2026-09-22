@@ -99,7 +99,7 @@ function storedConfig(config: Record<string, unknown> | null) {
 
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
-const downloadOrderInquiryWorklistXlsx = vi.fn();
+const exportOrderInquiryWorklistXlsx = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
 const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
@@ -117,8 +117,8 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     listOrderInquiryWorklist(...args),
   getOrderInquiryWorklistSummary: (...args: unknown[]) =>
     getOrderInquiryWorklistSummary(...args),
-  downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
-    downloadOrderInquiryWorklistXlsx(...args),
+  exportOrderInquiryWorklistXlsx: (...args: unknown[]) =>
+    exportOrderInquiryWorklistXlsx(...args),
   autoPlaceOrderInquiryRows: (...args: unknown[]) =>
     autoPlaceOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
@@ -278,7 +278,10 @@ beforeEach(() => {
   storedConfig(null);
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
-  downloadOrderInquiryWorklistXlsx.mockResolvedValue(new Blob(['x']));
+  exportOrderInquiryWorklistXlsx.mockResolvedValue({
+    id: 'dl-1', kind: 'order_inquiry_worklist_xlsx', status: 'pending',
+    filename: 'order-inquiries-23092026.xlsx',
+  });
   getUnplaceAllPreview.mockResolvedValue({
     count: 0,
     product_code: null,

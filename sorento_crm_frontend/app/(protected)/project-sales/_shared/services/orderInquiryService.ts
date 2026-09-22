@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import type { MyDownload } from '@/services/myDownloadsService';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import type {
   AcknowledgeResult,
@@ -694,25 +695,54 @@ export async function getOrderInquiryWorklistSummary(
 }
 
 /**
- * The whole filtered set as the workbook purchasing already reads: one sheet per
- * delivery month, their headings, their column order.
- *
- * Paging is dropped for the same reason the per-project export drops it: an export of
- * page two of a filtered set is a file nobody can use.
+ * Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B1): one OI header's own Export
+ * Excel, through My Downloads rather than a synchronous blob - the render happens on
+ * the worker, and the file shows up in My Downloads (and this OI's own "Download
+ * history") once it is ready. Returns the created download row (`status: 'pending'`).
  */
-export async function downloadOrderInquiryWorklistXlsx(
+export async function exportOrderInquiryXlsx(inquiryId: string): Promise<MyDownload> {
+  const response = await apiFetch(`${BASE}/order-inquiries/${inquiryId}/export`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to start the order inquiry export'),
+    );
+  }
+  return (await response.json()) as MyDownload;
+}
+
+/**
+ * Lane B (AC-B6, R4): the list page's own Export Excel, through the same My Downloads
+ * pipeline - the current filters, sent as a JSON body rather than a query string. The
+ * transitional sync `GET /order-inquiries/export` this replaced on screen has no other
+ * FE caller left; it stays server-side for one release for MCP / other callers only.
+ * Paging/sorting is dropped the same way the sync export dropped it: the export is the
+ * whole filtered set, unpaged.
+ */
+export async function exportOrderInquiryWorklistXlsx(
   params: OrderInquiryWorklistParams = {},
-): Promise<Blob> {
+): Promise<MyDownload> {
   const search = worklistParams(params, 25);
   search.delete('page');
   search.delete('limit');
   search.delete('sort');
   search.delete('dir');
-  const qs = search.toString();
-  const response = await apiFetch(`${BASE}/order-inquiries/export${qs ? `?${qs}` : ''}`);
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to export the order inquiry'));
-  return response.blob();
+  const body: Record<string, string> = {};
+  search.forEach((value, key) => {
+    body[key] = value;
+  });
+  const response = await apiFetch(`${BASE}/order-inquiries/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to start the order inquiry export'),
+    );
+  }
+  return (await response.json()) as MyDownload;
 }
 
 /**
