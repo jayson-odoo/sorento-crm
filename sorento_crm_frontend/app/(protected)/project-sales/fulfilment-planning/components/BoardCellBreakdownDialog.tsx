@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Undo2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,6 +37,7 @@ import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerb
 import {
   PILL_TONE,
   SHORT_LABELS,
+  boardOrderInquiryWord,
   contributionInquiryDecision,
   contributionSuggestion,
   decisionBreakdown,
@@ -54,6 +55,7 @@ import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
+import { BoardVerdictActions } from './BoardVerdictActions';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
 import {
   UnsavedDecisionPrompt,
@@ -258,6 +260,20 @@ export function BoardCellBreakdownDialog({
   const expansion = useDecisionRowExpansion();
   const { expanded, setExpanded, openKey, setDirty, requestRow, requestClose } =
     expansion;
+
+  /**
+   * Open this line's decision panel, and only open it (AC-B10): the pencil is not a toggle -
+   * a planner who presses it on the row that is already open asked to see the panel, and
+   * closing it under them would read as the press having missed. Through `requestRow`, so
+   * this table's one-row-at-a-time rule and its unsaved-work question both still apply.
+   */
+  const openRow = React.useCallback(
+    (key: string) => {
+      if (openKey === key) return;
+      requestRow(key);
+    },
+    [openKey, requestRow],
+  );
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
   /**
@@ -475,7 +491,10 @@ export function BoardCellBreakdownDialog({
             : row.original.unplannable
               ? 'This line cannot be decided here: its sales order states no fulfilment location.'
               : isPreMarkOnly(row.original, draft[row.original.key] ?? null)
-                ? "This line's change is proposed, not saved. Open the row to decide it."
+                ? // N-2 (reviewer, fix round 2): was "Open the row to decide it", which is
+                  // no longer where the quickest answer is - the Verdict cell beside this
+                  // box now takes or refuses the proposal in one press.
+                  "This line's change is proposed, not saved. Accept or reject it in the Verdict cell."
                 : draft[row.original.key]
                   ? 'Already saved. Undo it before saving it again.'
                   : undefined,
@@ -551,15 +570,34 @@ export function BoardCellBreakdownDialog({
               header: ({ column }) => (
                 <DataGridColumnHeader title="Product" column={column} />
               ),
-              cell: ({ row }) => (
-                <span
-                  className="block truncate text-sm"
-                  title={row.original.item_code}
-                >
-                  {row.original.item_code}
-                </span>
-              ),
-              size: 130,
+              cell: ({ row }) => {
+                // The SAME chip, off the SAME helper, as the list view's Product cell
+                // (AC-A7/AC-A8): one ladder, read in both places, so the two readings of
+                // the board cannot say different things about one line's documents.
+                const word = boardOrderInquiryWord(row.original.order_inquiry);
+                return (
+                  <span className="flex min-w-0 items-center gap-1.5 text-sm">
+                    <span
+                      className="block min-w-0 truncate"
+                      title={row.original.item_code}
+                    >
+                      {row.original.item_code}
+                    </span>
+                    {word ? (
+                      <Badge
+                        size="sm"
+                        appearance="light"
+                        variant="secondary"
+                        className="shrink-0"
+                        title={word.title}
+                      >
+                        {word.word}
+                      </Badge>
+                    ) : null}
+                  </span>
+                );
+              },
+              size: 150,
               minSize: 110,
               meta: { headerTitle: 'Product' },
             } as ColumnDef<BoardContribution>,
@@ -900,40 +938,29 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => (
           <DataGridColumnHeader title="Decision" column={column} />
         ),
-        // A PILL, AND (D14) an Undo beside a saved one. The three verbs used to live here,
-        // which is why the column was 210px wide and still truncated its own composition: a
-        // decision is taken in the expanded row now, where the numbers it is made against
-        // are - Undo is the one exception, because there is nothing left to look at once a
-        // line is saved, only the choice to unsave it.
+        // A PILL, AND the row's own actions beside it (`BoardVerdictActions`, AC-B11) - the
+        // identical set the list view's Verdict column offers, so the two readings of the
+        // board teach one gesture. The composition itself is still taken in the expanded
+        // row, where the numbers it is made against are; these are the answers that need no
+        // numbers: take the proposal, refuse it with a reason, undo, or go and edit it.
         cell: ({ row }) => {
           const key = row.original.key;
-          // No Undo on a bare pre-mark (PLAN-board-change-proposed-pill): nothing has actually
-          // been saved here yet, only the board's own suggestion.
-          const drafted =
-            Boolean(draft[key]) && !isPreMarkOnly(row.original, draft[key] ?? null);
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />
-              {drafted ? (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDecide(key, null);
-                  }}
-                >
-                  <Undo2 className="size-3.5" aria-hidden />
-                </Button>
-              ) : null}
+              <BoardVerdictActions
+                contribution={row.original}
+                decision={draft[key] ?? null}
+                onDecide={(next) => onDecide(key, next)}
+                onChange={() => openRow(key)}
+              />
             </div>
           );
         },
-        size: 140,
-        minSize: 120,
+        // AC-C2: the pill and its icons, on one line at 375px - the column was 140 for a
+        // pill and at most one icon. Resizable like every other column here.
+        size: 200,
+        minSize: 170,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
       },
@@ -944,6 +971,7 @@ export function BoardCellBreakdownDialog({
       draft,
       multiProduct,
       onDecide,
+      openRow,
       setDirty,
     ],
   );
