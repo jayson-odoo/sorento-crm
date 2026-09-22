@@ -427,3 +427,112 @@ the ORIGINAL, specifically-targeted defect - `_run_entities_only_arm`'s own reso
 unchanged, confirmed by J4's own trace, and the TurnPanel inline-detail ask is not yet built. A
 third, new, backend-config issue (MCP-to-backend 401) is blocking the actual stock numbers
 end-to-end regardless of the above.
+
+## Rerun 4 (same day) - stack on db0968618: BE pid 51661 restarted, worker/MCP/FE unchanged
+
+Logged back in (BE restart invalidated the session again). Used fresh console contacts per
+sub-task to avoid the Rerun-3 history-contamination gotcha (Jayson for (a)/(b) voice attempts,
+Kay for a follow-up voice batch, Mr Loo for (c) photo - all previously untouched by my own tests
+except Kay, whose prior history was a different photo turn so unlikely to bias a bare-code parse
+the same way).
+
+### Headline result: TurnPanel inline facts (entities/decision/notes, no UUIDs) - CONFIRMED SHIPPED, and `_run_entities_only_arm`'s resolver is CONFIRMED WORKING when the lane actually fires
+
+### (c) Photo-only turn - PASS, clean, complete confirmation
+
+Contact Mr Loo, fresh Reset, the 3-code test PNG, no caption. Turn
+`7c65f49c-c046-4ed7-bf43-4d11af130846`. Reply: **"I read BRBC22293W-1, SRTWT1506 and SRTWT1805
+from that photo.\nWhat would you like me to do with it?"** - no "Couldn't find" at all (all three
+placed). Screenshot `rerun4c-photo-entities-only-clean.png`.
+
+**Stages tab, `media_intake` row - checked the raw DOM, not just the rendered text:**
+
+```html
+<li class="text-xs">
+  <div class="flex items-center gap-2">
+    <span data-slot="badge">media_intake</span><span>2633ms</span>
+  </div>
+  <p class="mt-1 text-muted-foreground">Read the photo.</p>
+  <dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5">
+    <div class="contents"><dt>notes</dt><dd>Simple list of product codes with no quantities or caption.</dd></div>
+    <div class="contents"><dt>status</dt><dd>completed</dd></div>
+    <div class="contents"><dt>decision</dt><dd>accepted</dd></div>
+    <div class="contents"><dt>entities</dt><dd>BRBC22293W-1, SRTWT1506, SRTWT1805</dd></div>
+    <div class="contents"><dt>modality</dt><dd>image</dd></div>
+    <div class="contents"><dt>elapsed ms</dt><dd>67</dd></div>
+  </dl>
+</li>
+```
+
+**This is exactly the ask: entities, decision and notes all render inline under the media_intake
+stage, and `entities` lists the RAW codes, never a uuid.** Confirmed shipped - this was absent in
+Reruns 1-3 (flat `<li>` with no `<dl>` at all). Screenshot
+`rerun4c-turnpanel-media-intake-inline-facts.png`.
+
+**Apply tab - the "second apply event" resolving the codes:** the state diff shows the BEFORE
+state (parser's raw entities, `canonical_code: null`) and an AFTER state where all three are
+enriched with `uuid`, `entity_type: "product"` and the correct `canonical_code` -
+`BRBC22293W-1` -> `152047ec-928f-4829-aa75-80483520fc2e`, `SRTWT1506` ->
+`6182c853-dea1-4a71-bea7-c1a74fbb5901`, `SRTWT1805` -> `61a9630f-9b17-4b2a-8927-7204161aad08`.
+`Turn plan: {"lane": "entities_only", "fetch": [], "domains": []}` confirms this ran through the
+arm this PR built, not a domain guess. The Stages tab's own `looked_up` row shows
+`placed: 3, unplaced: 0` too. Screenshot `rerun4c-apply-second-event-uuids-resolved.png`.
+
+**This directly overturns my Rerun 3 conclusion that `_run_entities_only_arm`'s resolver was
+still broken** - it demonstrably works correctly here, for all three codes, cleanly. Rerun 3's
+single-voice-code failure (turn `f68e75a2-...`, `canonical_code: null`) was evidently NOT a
+standing defect in the arm itself (both contacts are correctly company-mapped, confirmed by
+`respond_contact_companies`) - possibly a one-off, or something modality/session-specific that
+did not reproduce tonight.
+
+### (a) Voice bare code "SRTWT1506" -> resolved via arm's second apply event, Stages facts inline - COULD NOT LAND THE TURN IN `entities_only` DESPITE 12 ATTEMPTS
+
+Every single voice attempt tonight (12 total, across 3 contacts - Jayson, Kay, and one on Mr
+Loo's earlier session before switching - multiple TTS voices/rates/phrasings of "SRTWT1506",
+plus one of "BRBC22293W-1") had the parser assign a domain directly (`inventory` most times,
+`product_attachment` once) instead of leaving it domain-less, so the turn never reached
+`entities_only` - it went through the ordinary business/fetch lane instead (which resolves
+correctly, screenshots `rerun4a-voice-resolves-via-inventory-domain.png` et al., trace confirms
+real uuids the same way J1-J3 did in Rerun 3). One attempt mis-transcribed the code entirely
+("VRBC 202293W1") and got the generic "need a filter" reply with no entity extracted at all
+(`rerun4a-voice-misheard-code.png`). A same-input typed control ("SRTWT1506", no voice) ALSO
+routed straight to `inventory` - confirming this is the PARSER's own classification behavior
+right now (any product-code-shaped bare message reliably gets a domain guess), not a modality-
+specific bug, and not something I can force around.
+
+**Given (c) just proved the arm's resolver and the Stages facts both work correctly when
+`entities_only` DOES fire, and the mechanism (`_run_entities_only_arm`) is identical regardless
+of modality, this is very likely fine for voice too - I just could not manufacture a live sample
+tonight where the parser routed a bare voice code into that lane to confirm it directly.** Flagging
+as UNCONFIRMED rather than PASS or FAIL for the voice-specific claim in (a).
+
+### (b) Voice non-existent code "ZZQ9 8817" -> same routing issue, so the specific wording could not be checked either
+
+Synthesized "ZZQ9 8817", transcribed as "ZZQ98817" (no space this time). Reply: "I heard:
+ZZQ98817\nCouldn't find: \"ZZQ98817\" (product). Would you like me to escalate to warehouse
+team?" - turn `56b51086-e608-4c50-95d1-d9a2d0946f35`, trace confirms `domain: inventory` (parser
+guessed a domain again, not `entities_only`), so this is the ORDINARY business_query "not found"
+wording, not the `entities_only`-specific "Couldn't find ZZQ9 8817. Ask again with the correct
+code." the ask described. Screenshot `rerun4b-voice-nonexistent-code.png`. Same caveat as (a):
+could not reach the lane this wording lives in, so this is UNCONFIRMED, not a fail - the reply
+that DID come back is itself correct and sensible for the domain it actually used.
+
+### Rerun 4 summary
+
+| Item | Result | Turn id(s) |
+|---|---|---|
+| (c) Photo-only -> TurnPanel inline row shows entities/decision/notes, no UUIDs | **PASS - confirmed shipped** (checked raw DOM) | `7c65f49c-c046-4ed7-bf43-4d11af130846` |
+| (c) Apply tab's "second apply event" resolves the codes (uuid/canonical_code) | **PASS - confirmed working**, overturns the Rerun-3 "still broken" call | same |
+| (a) Voice bare code "SRTWT1506" -> "I heard" + arm resolves it | **UNCONFIRMED** - 12 attempts, parser never left this turn domain-less, so it never reached `entities_only`; the domain-first path it DID take resolved correctly every time | `f68e75a2-...` (Rerun 3, still the only voice sample that reached the lane, and it failed then) |
+| (b) Voice non-existent code -> `entities_only`'s specific "Couldn't find ... Ask again" wording | **UNCONFIRMED** - same routing issue; the reply that came back (ordinary business_query "not found") is itself correct for the domain it used | `56b51086-e608-4c50-95d1-d9a2d0946f35` |
+
+**Net for the coordinator:** the piece I could fully exercise (photo, since a 3-code list with a
+clean transcript still lands in `entities_only` reliably) is a clean PASS on everything asked -
+inline Stages facts AND the resolver both confirmed working, which also retroactively clears the
+Rerun-3 "entities_only resolver still broken" finding. The two voice-specific sub-asks are
+UNCONFIRMED rather than failed: the parser's current behavior makes it very hard to get a bare
+voice code to land in `entities_only` at all (it keeps guessing a domain directly instead,
+correctly, just via a different lane) - happy to keep trying with different phrasing/contacts if
+still needed, or this can be confirmed instead by a pytest case that calls the arm directly with
+a controlled parser verdict rather than depending on live ASR + LLM classification landing a
+particular way.
