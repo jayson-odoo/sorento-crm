@@ -11,9 +11,10 @@ raw ``verb`` so the screen can colour by verb while printing what purchasing rea
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.services.uuid_path_param import UUID_PATTERN
 
@@ -1239,6 +1240,22 @@ class OrderInquiryRelatedDocumentsOut(BaseModel):
 # ------------------------------------------------------- request CS to reserve (3.2/3.3)
 
 
+def _finite_qty(value: str) -> str:
+    """SF-9 (security review): `"nan"`/`"inf"`/`"-inf"` construct a valid `Decimal`
+    (no exception at parse time) and only blow up - `decimal.InvalidOperation` -> an
+    uncaught 500 - on the FIRST comparison the service makes against one, on reserve,
+    unreserve and create alike. Pydantic answers 422 here, before any of that code
+    runs; `order_inquiry_reserve_service._dec` rejects the same shape as its own
+    belt-and-braces, for a caller that reaches the service directly."""
+    try:
+        parsed = Decimal(value)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("must be a valid number") from None
+    if not parsed.is_finite():
+        raise ValueError("must be a finite number")
+    return value
+
+
 class ReserveRequestRowIn(BaseModel):
     """One order-inquiry row named on a request (3.2). `warehouse_id` omitted means the
     pool of the row's own `stock_location` (R3).
@@ -1249,6 +1266,8 @@ class ReserveRequestRowIn(BaseModel):
     row_id: str = Field(..., pattern=UUID_PATTERN)
     qty_requested: str
     warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+
+    _qty_requested_finite = field_validator("qty_requested")(_finite_qty)
 
 
 class CreateReserveRequestIn(BaseModel):
@@ -1303,12 +1322,16 @@ class ReserveRowIn(BaseModel):
     qty_reserved: str
     reason: Optional[str] = Field(None, max_length=2000)
 
+    _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+
 
 class UnreserveRowIn(BaseModel):
     """`POST .../reserve-requests/{request_id}/rows/{row_id}/unreserve` (F5)."""
 
     qty: str
     note: Optional[str] = Field(None, max_length=5000)
+
+    _qty_finite = field_validator("qty")(_finite_qty)
 
 
 class ReserveHistoryEntryOut(BaseModel):

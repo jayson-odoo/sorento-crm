@@ -1230,6 +1230,19 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
         Index("ix_order_inquiry_links_po_line", "po_line_id"),
         Index("ix_order_inquiry_links_spo_allocation", "spo_allocation_id"),
         Index("ix_order_inquiry_links_reserve_request_row", "reserve_request_row_id"),
+        # SF-9 (security review, `oirs_0002_reserve_round2` amended): the lost-update
+        # backstop for `reserve_row` - at most one link may ever name a given reserve
+        # request row, so a caller that reaches the flush on a stale read (the
+        # `.with_for_update()` lock in the service is the primary defence) hits this
+        # constraint and 409s instead of writing a second link. Partial: the CHECK
+        # above already requires exactly one target per link, so every non-reserve
+        # link leaves this column NULL and must stay out of the unique set.
+        Index(
+            "uq_order_inquiry_links_reserve_request_row",
+            "reserve_request_row_id",
+            unique=True,
+            postgresql_where=text("reserve_request_row_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 

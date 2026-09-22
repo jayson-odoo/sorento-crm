@@ -67,14 +67,23 @@ _REQUESTABLE_STATES = (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)
 
 
 def _dec(value: Any) -> Decimal:
+    # SF-9 (security review): `Decimal("nan")`/`Decimal("inf")` construct cleanly -
+    # neither raises here - and only blow up (`decimal.InvalidOperation`, an uncaught
+    # 500) on the FIRST comparison a caller makes against the result. The schema-level
+    # `_finite_qty` validator (`app/schemas/project_order_inquiry.py`) is the real gate
+    # for the three request-body fields; this is the belt-and-braces for every other
+    # caller of `_dec` (a live `qty`/`qty_requested` read off the row itself, for one),
+    # so a non-finite value is treated exactly like the "not a number at all" case
+    # already below it, not left to crash three lines downstream.
     if value is None:
         return _ZERO
     if isinstance(value, Decimal):
-        return value
+        return value if value.is_finite() else _ZERO
     try:
-        return Decimal(str(value))
+        parsed = Decimal(str(value))
     except Exception:  # noqa: BLE001 - a malformed number is data, not a crash
         return _ZERO
+    return parsed if parsed.is_finite() else _ZERO
 
 
 def _qty_str(value: Any) -> str:
@@ -492,12 +501,18 @@ class OrderInquiryReserveService:
                 code="reserve_request_not_open",
             )
 
+        # SF-9 (security review): `.with_for_update()` closes the lost-update race - two
+        # concurrent reserves on the SAME request row used to both read `qty_reserved is
+        # None`, both pass, and both insert their own link. This lock serializes the two
+        # transactions on this row, so the loser re-reads it already answered and 409s on
+        # the guard below, the same shape `create_request`'s ordinal race already used.
         rr = (
             self.db.query(OrderInquiryReserveRequestRow)
             .filter(
                 OrderInquiryReserveRequestRow.request_id == request.id,
                 OrderInquiryReserveRequestRow.row_id == row_id,
             )
+            .with_for_update()
             .first()
         )
         if rr is None:
@@ -582,7 +597,21 @@ class OrderInquiryReserveService:
                     created_at=datetime.utcnow(),
                 )
             )
-        self.db.flush()
+        try:
+            self.db.flush()
+        except IntegrityError:
+            # SF-9: the `.with_for_update()` lock above closes the race for two real
+            # concurrent requests, but this partial unique index
+            # (`uq_order_inquiry_links_reserve_request_row`) is the backstop for a
+            # request row read stale (the ORM guard already passed on a snapshot that
+            # predates another writer's link) - same shape as `create_request`'s own
+            # ordinal collision.
+            self.db.rollback()
+            raise AppException(
+                409,
+                "This row has already been answered.",
+                code="reserve_request_row_already_answered",
+            )
         if qty_reserved_dec > _ZERO:
             ProjectOrderInquiryService(self.db).refresh_link_state([row])
             self.db.flush()
@@ -658,12 +687,16 @@ class OrderInquiryReserveService:
                 code="reserve_request_not_found",
             )
 
+        # SF-9: the same lost-update race as `reserve_row` (a lock, not a rewrite of the
+        # unreserve arithmetic) - two concurrent unreserves on this row would otherwise
+        # both read the same `net_reserved` and both write `net - qty` off it.
         rr = (
             self.db.query(OrderInquiryReserveRequestRow)
             .filter(
                 OrderInquiryReserveRequestRow.request_id == request.id,
                 OrderInquiryReserveRequestRow.row_id == row_id,
             )
+            .with_for_update()
             .first()
         )
         if rr is None:
@@ -681,9 +714,13 @@ class OrderInquiryReserveService:
                 code="reserve_request_row_missing",
             )
 
+        # SF-9: the link itself is the value both concurrent unreserves would read and
+        # write (`net_reserved`, then `net - qty`) - locking it, not only `rr`, closes
+        # the gap between reading it here and writing it below.
         link = (
             self.db.query(OrderInquiryLink)
             .filter(OrderInquiryLink.reserve_request_row_id == rr.id)
+            .with_for_update()
             .first()
         )
         net_reserved = _dec(link.qty) if link is not None else _ZERO

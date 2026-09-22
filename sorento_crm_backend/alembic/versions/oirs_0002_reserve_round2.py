@@ -3,9 +3,14 @@ section 6c, `oi-request-cs-reserve-acceptance-criteria.md` AC-RS-54/AC-RS-60).
 
 One new table (`projects.order_inquiry_reserve_events`, F3's own per-line history: the
 dialog's History tab lists `reserved`/`unreserved` rows off it, `requested`/`cancelled`
-derive straight off `order_inquiry_reserve_requests` and are never copied here) and one
+derive straight off `order_inquiry_reserve_requests` and are never copied here), one
 new `system_settings` column (`oi_reserve_default_pool_warehouse_id`, F1's configurable
-default pool - "list all the site pool with this BRW (configurable as default)").
+default pool - "list all the site pool with this BRW (configurable as default)"), and one
+partial unique index on `projects.order_inquiry_links.reserve_request_row_id` (security
+review, SF-9: the lost-update backstop for `reserve_row`'s own `.with_for_update()` lock
+- see `OrderInquiryLink.__table_args__` in `app/models/project_so.py` for the full note).
+Amended in place rather than chained onto a fresh revision - unmerged, so no database
+outside this lane's own has applied it yet.
 
 Chained onto `oirs_0001_reserve_requests` rather than amending it in place - that
 migration is already applied on two databases (the CI DB and the :8080 lane stack) - same
@@ -99,15 +104,34 @@ def _add_settings_column(bind) -> None:
     )
 
 
+def _add_reserve_link_unique_index(bind) -> None:
+    projects = _schema(bind, "projects")
+    bind.execute(
+        sa.text(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_order_inquiry_links_reserve_request_row
+                ON "{projects}".order_inquiry_links (reserve_request_row_id)
+                WHERE reserve_request_row_id IS NOT NULL
+            """
+        )
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     _create_events_table(bind)
     _add_settings_column(bind)
+    _add_reserve_link_unique_index(bind)
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     projects = _schema(bind, "projects")
+    bind.execute(
+        sa.text(
+            f'DROP INDEX IF EXISTS "{projects}".uq_order_inquiry_links_reserve_request_row'
+        )
+    )
     bind.execute(
         sa.text(f'DROP TABLE IF EXISTS "{projects}".order_inquiry_reserve_events')
     )
