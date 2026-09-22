@@ -135,6 +135,28 @@ def test_a_purchase_book_stating_no_currency_is_cny_and_a_stated_one_wins(db, se
     assert _line(db, seeded.main_po, seeded.item_rl)["currency"] == "MYR"
 
 
+def test_a_new_line_on_a_header_already_in_myr_follows_it_not_cny(db, seeded):
+    """AC-PLC-4: a header that already carries a currency is the fallback for a brand
+    NEW line the same extract adds with no currency column value - never the CNY
+    default, which used to fire even with a real currency sitting on the header right
+    next to it."""
+    svc.apply(db, po_workbook([
+        po_row(SUPPLIER_MAIN_LABEL, seeded.main_po, date(2026, 4, 6), seeded.creditor_main,
+               seeded.item_rl, 100, 0, date(2026, 7, 1), seeded.loc_project, 12.5, "MYR"),
+    ]), PO)
+    assert _header(db, seeded.main_po)["currency"] == "MYR"
+
+    svc.apply(db, po_workbook([
+        po_row(SUPPLIER_MAIN_LABEL, seeded.main_po, date(2026, 4, 6), seeded.creditor_main,
+               seeded.item_rl, 100, 0, date(2026, 7, 1), seeded.loc_project, 12.5, "MYR"),
+        po_row(SUPPLIER_MAIN_LABEL, seeded.main_po, date(2026, 4, 6), seeded.creditor_main,
+               seeded.item_wt, 60, 0, date(2026, 9, 30), seeded.loc_project),
+    ]), PO)
+
+    assert _header(db, seeded.main_po)["currency"] == "MYR"
+    assert _line(db, seeded.main_po, seeded.item_wt)["currency"] == "MYR"
+
+
 def test_the_reader_carries_a_repeated_row_and_no_longer_calls_it_a_problem(db, seeded):
     """Both rows are carried, and neither is complained about (AC-2.1).
 
