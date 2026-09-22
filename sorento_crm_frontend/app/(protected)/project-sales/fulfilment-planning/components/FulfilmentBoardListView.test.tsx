@@ -1492,3 +1492,151 @@ describe('FulfilmentBoardListView: the page jump retries when the row arrives la
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * `board-verdict-actions-chips-acceptance-criteria.md` section B/C: the Verdict cell's row
+ * actions, wired through the shared `BoardVerdictActions` component (AC-B11), and the column
+ * itself made resizable again (AC-C1/AC-C2). RED today: the Verdict column only ever shows
+ * the quick-save Check icon and Undo, never Reject or Change decision, and carries
+ * `enableResizing: false`.
+ */
+describe('FulfilmentBoardListView: the Verdict cell actions (AC-B1 to AC-C2)', () => {
+  it('AC-B2: a "Change proposed" (pre-marked) row shows the full trio - Accept, Reject, Change decision', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved', preMarked: true } },
+    });
+
+    expect(
+      await screen.findByTestId(`decision-pill-${row.key}`),
+    ).toHaveTextContent('Change proposed');
+    expect(
+      screen.getByRole('button', { name: 'Save SO397450 line 10 as suggested' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Reject SO397450 line 10' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO397450 line 10' }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-B3: a Saved row shows Undo and Change decision (the pencil) - no Accept, no Reject', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved' } },
+    });
+
+    expect(
+      await screen.findByTestId(`decision-pill-${row.key}`),
+    ).toHaveTextContent('Saved');
+    expect(
+      screen.getByRole('button', { name: 'Undo SO397450 line 10' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO397450 line 10' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /as suggested$/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject SO397450 line 10' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-B10: clicking the pencil (Change decision) expands that row', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO397450');
+    expect(screen.queryByRole('button', { name: 'Save decision' })).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Change decision for SO397450 line 10' }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Save decision' }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-C1/AC-C2: the Verdict column carries a resize handle - enableResizing is no longer false', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+
+    const header = screen.getByRole('columnheader', { name: 'Verdict' });
+    expect(header.querySelector('.cursor-col-resize')).not.toBeNull();
+  });
+});
+
+/**
+ * AC-D5 (owner finding 22 Sep, addendum "why so many warning signs"): several pending
+ * batch rows that each move the SAME column (here, both move `date`) must still show ONE
+ * hazard icon in that column, not one per annotation. RED today: `changeIcons` maps every
+ * annotation to its own `<BoardChangeTable>`, so two date-moving rows render two icons.
+ */
+describe('AC-D5: one hazard icon per column, however many pending changes touch it', () => {
+  const LINE_ID = 'line-d5';
+
+  function dateAnnotation(
+    rowId: string,
+    overrides: Partial<BoardChangeAnnotation> = {},
+  ): BoardChangeAnnotation {
+    return {
+      rowId,
+      soNumber: 'SO400885',
+      lineNo: 1,
+      itemCode: 'CB4703',
+      kind: 'delayed',
+      closed: false,
+      was: { qty: '50', date: '2026-09-01', decision: 'Buy 50' },
+      now: { qty: '50', date: '2026-09-10', decision: 'Buy 50' },
+      suggestionLines: ['Keep 50'],
+      lateDays: null,
+      shortfallQty: null,
+      productChangedFrom: null,
+      movedTransfer: null,
+      projectLineId: LINE_ID,
+      ...overrides,
+    };
+  }
+
+  it('renders exactly one hazard icon in the Required date column for two batch rows that both moved the date', async () => {
+    const row = contribution({
+      key: 'so-d5:line-1',
+      so_number: 'SO400885',
+      line_no: 1,
+      item_code: 'CB4703',
+      project_line_id: LINE_ID,
+    });
+
+    renderView({
+      contributions: [row],
+      annotations: new Map([
+        [
+          LINE_ID,
+          [
+            dateAnnotation('row-d5-older', {
+              now: { qty: '50', date: '2026-09-05', decision: 'Buy 50' },
+            }),
+            dateAnnotation('row-d5-newer', {
+              now: { qty: '50', date: '2026-09-10', decision: 'Buy 50' },
+            }),
+          ],
+        ],
+      ]),
+    });
+
+    await screen.findByText('SO400885');
+    const dateIcons = screen
+      .getAllByLabelText('What changed')
+      .filter((icon) => icon.getAttribute('data-column') === 'required_date');
+
+    expect(dateIcons).toHaveLength(1);
+  });
+});
