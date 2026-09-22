@@ -4,6 +4,13 @@
  * with Taken/Remaining hideable through Columns like the rest of the grid. `SO line` is S6
  * (AC-B6-1), also asserted here since it sits in this same list; its own href/label
  * behaviour is `orderInquiryWorklist.test.ts`'s and `orderInquiryWorklistColumns.test.tsx`'s.
+ *
+ * Column-order list updated at the #1119 x oi-request-cs-reserve merge (22 Sep, cross-lane):
+ * main's own version of this assertion predates two columns this lane already shipped in
+ * Phase 1 - `Expand` (the board stock-grid chevron, `PLAN-oi-request-cs-reserve.md` 3.9)
+ * sits FIRST, before Product; `Reserve` (the section 6c F2 icon-button, replacing the old
+ * inline `ReservePill` beside State) is new this round and sits last. Both are real,
+ * shipped columns, not a merge artefact.
  */
 import { render, renderHook, screen } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -21,6 +28,7 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
     const titles = result.current.map((column) => headerTitleOf(column)).filter(Boolean);
 
     expect(titles).toEqual([
+      'Expand',
       'Product',
       'SO line',
       'Qty',
@@ -33,6 +41,7 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Location',
       'Instruction',
       'State',
+      'Reserve',
     ]);
   });
 

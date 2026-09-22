@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Ban,
@@ -26,6 +26,7 @@ import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdow
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -36,6 +37,7 @@ import {
   ORDER_INQUIRY_HEADER_LINES_KEY,
   ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY,
   ORDER_INQUIRY_HEADERS_KEY,
+  ORDER_INQUIRY_RESERVE_REQUESTS_KEY,
   orderInquiryHeadersPagerQuery,
   useAutoPlaceOrderInquiryRows,
   useOrderInquiryHandshake,
@@ -43,6 +45,7 @@ import {
   useOrderInquiryHeaderLines,
   useOrderInquiryHeaderRelatedDocuments,
   useOrderInquiryReserveRequests,
+  useOrderInquiryRowHistory,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useReserveRowOptions } from '../../../_shared/hooks/useReserveRowOptions';
 import { ackStateOf } from '../../../_shared/lib/orderInquiryAck';
@@ -56,6 +59,7 @@ import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquir
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
+import { ReserveRowDialog } from './ReserveRowDialog';
 import {
   OrderInquiryRelatedPurchaseOrdersTab,
   OrderInquiryRelatedSposTab,
@@ -134,6 +138,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reserveDialogOpen, setReserveDialogOpen] = useState(false);
+  // section 6c F2: which row's `ReserveRowDialog` is open, if any. Auto-opened by
+  // `?reserve=<request_id>` (AC-RS-62) or a click on the Lines grid's own Reserve
+  // icon-button (`orderInquiryHeaderLinesColumns.tsx`).
+  const [reserveRowDialogId, setReserveRowDialogId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -265,6 +273,120 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   const openReserveRequest = reserveRequestsQuery.data?.find((r) => r.state === 'requested');
+
+  // section 6c F2/F3/F5: the row `ReserveRowDialog` is open for, and which request
+  // answers it - the OPEN one when this row still has an unanswered entry, else the
+  // most recently completed one that actually reserved something for it (History and
+  // Unreserve both need a request id exactly when `openRequest` is null).
+  const reserveRowDialogRow = reserveRowDialogId
+    ? (activeLines.find((line) => line.id === reserveRowDialogId) ?? null)
+    : null;
+  const reserveRowOpenRequest = useMemo(() => {
+    if (!reserveRowDialogId) return null;
+    const request = (reserveRequestsQuery.data ?? []).find(
+      (r) =>
+        r.state === 'requested' &&
+        r.rows.some((row) => row.row_id === reserveRowDialogId && row.qty_reserved == null),
+    );
+    const row = request?.rows.find((r) => r.row_id === reserveRowDialogId);
+    if (!request || !row) return null;
+    return {
+      requestId: request.id,
+      ordinal: request.ordinal,
+      qtyRequested: row.qty_requested,
+      requestedByName: request.requested_by_name,
+      requestedAt: request.requested_at,
+    };
+  }, [reserveRequestsQuery.data, reserveRowDialogId]);
+  const reserveRowLastRequestId = useMemo(() => {
+    if (!reserveRowDialogId) return null;
+    const answered = (reserveRequestsQuery.data ?? [])
+      .filter((r) =>
+        r.rows.some((row) => row.row_id === reserveRowDialogId && row.qty_reserved != null),
+      )
+      .sort((a, b) => b.ordinal - a.ordinal);
+    return answered[0]?.id ?? null;
+  }, [reserveRequestsQuery.data, reserveRowDialogId]);
+  const reserveRowEffectiveRequestId =
+    reserveRowOpenRequest?.requestId ?? reserveRowLastRequestId ?? null;
+
+  const reserveRowOptionsEntries = useMemo(
+    () =>
+      reserveRowDialogRow
+        ? [
+            {
+              key: reserveRowDialogRow.id,
+              productId: reserveRowDialogRow.product_id ?? null,
+              location: reserveRowDialogRow.location ?? null,
+            },
+          ]
+        : [],
+    [reserveRowDialogRow],
+  );
+  const reserveRowOptionsResolved = useReserveRowOptions(reserveRowOptionsEntries);
+  const reserveRowOptions = reserveRowDialogRow
+    ? reserveRowOptionsResolved[reserveRowDialogRow.id]
+    : undefined;
+
+  const reserveRowHistoryQuery = useOrderInquiryRowHistory(
+    reserveRowEffectiveRequestId,
+    reserveRowDialogId,
+  );
+  const reserveRowHistory = useMemo(
+    () =>
+      (reserveRowHistoryQuery.data ?? []).map((entry) => ({
+        kind: entry.kind,
+        qty: entry.qty,
+        location: entry.location,
+        reason: entry.reason,
+        actorName: entry.actor_name,
+        createdAt: entry.created_at,
+      })),
+    [reserveRowHistoryQuery.data],
+  );
+
+  // F2 header "Cancel request" (plan 6c): the same countdown pattern round 1's own
+  // `ReserveRequestsCard` used, now built here and handed down as a prop - the dialog
+  // stays free of react-query so its own vitest suite can render it with no providers.
+  const reserveRowCancelAction = useDeferredAction({
+    actionKey: 'order_inquiry_reserve_request.cancel',
+    entityType: 'order_inquiry_reserve_request',
+    entityId: reserveRowOpenRequest?.requestId ?? null,
+    verb: 'Cancelling',
+    subject: reserveRowOpenRequest ? `Request #${reserveRowOpenRequest.ordinal}` : '',
+    surface: 'inline',
+    watchFromMount: Boolean(reserveRowOpenRequest),
+    successMessage: 'Reserve request cancelled',
+    invalidateKeys: [
+      [ORDER_INQUIRY_HEADER_LINES_KEY, id],
+      [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, id],
+    ],
+  });
+
+  const openReserveRowDialog = useCallback((row: OrderInquiryWorklistRow) => {
+    setReserveRowDialogId(row.id);
+  }, []);
+
+  function closeReserveRowDialog() {
+    setReserveRowDialogId(null);
+    if (searchParams.get('reserve')) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('reserve');
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }
+  }
+
+  // AC-RS-62: `?reserve=<request_id>` auto-opens the dialog on that request's FIRST
+  // open row - once, and only while nothing else is already open for this row.
+  useEffect(() => {
+    const reserveParam = searchParams.get('reserve');
+    if (!reserveParam || reserveRowDialogId) return;
+    const request = (reserveRequestsQuery.data ?? []).find((r) => r.id === reserveParam);
+    const firstOpenRow = request?.rows.find((row) => row.qty_reserved == null);
+    if (firstOpenRow) setReserveRowDialogId(firstOpenRow.row_id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, reserveRequestsQuery.data]);
 
   const header = headerQuery.data;
 
@@ -554,13 +676,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
         <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
           <OrderInquiryLinesTab
-            inquiryId={id}
             lines={lines}
             isLoading={linesQuery.isLoading}
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}
-            canRequestReserve={canAcknowledge}
-            canReserve={canReserve}
+            onReserveClick={openReserveRowDialog}
           />
         </TabsContent>
 
@@ -615,6 +735,43 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           onSent={() => {
             setRowSelection({});
             invalidateReserveQueries();
+          }}
+        />
+      ) : null}
+
+      {reserveRowDialogId && reserveRowDialogRow ? (
+        <ReserveRowDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) closeReserveRowDialog();
+          }}
+          rowId={reserveRowDialogRow.id}
+          itemCode={reserveRowDialogRow.item_code ?? null}
+          openRequest={reserveRowOpenRequest}
+          history={reserveRowHistory}
+          locationOptions={reserveRowOptions?.options ?? []}
+          defaultLocationId={reserveRowOptions?.defaultWarehouseId ?? null}
+          availableQtyByLocation={reserveRowOptions?.availableQtyByWarehouseId ?? {}}
+          netReservedQty={reserveRowDialogRow.reserved_qty ?? '0'}
+          canAct={canReserve}
+          lastRequestId={reserveRowLastRequestId}
+          cancelControl={
+            canAcknowledge || canReserve
+              ? {
+                  isPending: reserveRowCancelAction.isPending,
+                  isBlocked: reserveRowCancelAction.isBlocked,
+                  countdown: reserveRowCancelAction.countdown,
+                  start: () => reserveRowCancelAction.start(),
+                }
+              : null
+          }
+          onConfirmed={() => {
+            invalidateReserveQueries();
+            reserveRowHistoryQuery.refetch();
+          }}
+          onUnreserved={() => {
+            invalidateReserveQueries();
+            reserveRowHistoryQuery.refetch();
           }}
         />
       ) : null}

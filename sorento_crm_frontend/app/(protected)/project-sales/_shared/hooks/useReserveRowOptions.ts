@@ -1,29 +1,25 @@
 'use client';
 
-import * as React from 'react';
-import { useQueries } from '@tanstack/react-query';
-import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { STOCK_DETAIL_KEY } from './useFulfilmentPlanning';
 import { getStockDetail } from '../services/fulfilmentPlanningService';
-import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
 
 /**
- * `PLAN-oi-request-cs-reserve.md` 3.7/3.8: the reserve dialog's own "default = the pool,
- * options = the row's stock-grid locations" (AC-RS-22) and the act-mode card's "default
- * Reserved = min(requested, available at that location)" (AC-RS-26) - ONE resolution,
- * shared by both callers, so the pool default and the stock-grid options can never read
- * two different answers for the same row.
+ * `PLAN-oi-request-cs-reserve.md` section 6c F1/F2 (AC-RS-53/AC-RS-55, review round 2
+ * ruling): the reserve dialog's own "Location" options and its "Reserved" default, ONE
+ * resolution shared by both so they can never read two different answers for the same
+ * row.
  *
- * MEASURED against the real stack (22 Sep 2026, `stock-detail?group=IB`): a GROUP read
- * answers for that group's OWN members only (`BRW-IB`, `DC1-IB`, ...) - the site POOL
- * itself (bare `BRW`) is a DIFFERENT axis (`group=pools`) and is simply absent from a
- * named group's own response. So the pool's id is ALWAYS resolved the one-shot way
- * `OrderInquiryStockGrid` already resolves a bare pool code (`getWarehouses`, matching by
- * the SITE prefix) - never read off the group response - and offered as its own option
- * alongside whichever group members that response carries. A row already at a bare pool
- * code (no group suffix - it IS one) needs no second call for its own row: the pool
- * resolution IS its only option.
+ * Round 2 supersedes round 1's own group-suffix reading entirely - owner words: "list
+ * all the site pool with this BRW (configurable as default)". Options are now EVERY
+ * pool `stock-detail?group=pools` lists for the row's own product (the SAME axis the
+ * fulfilment board itself reads, unchanged - F1's own ruling), never a group-of-code
+ * resolution keyed off the row's own location. Default is the configured
+ * `system_settings.oi_reserve_default_pool_warehouse_id` when it names one of those
+ * pools, else the row's own SITE pool (the pool whose code matches the row's own
+ * location's site prefix), else the first pool offered.
  */
 
 function siteCodeOf(code: string | null | undefined): string | null {
@@ -35,7 +31,9 @@ function siteCodeOf(code: string | null | undefined): string | null {
 export interface ReserveRowOptionsEntry {
   key: string;
   productId: string | null;
-  /** The row's own stock location code (`BRW-NTC`), or null when the row states none. */
+  /** The row's own stock location code (`BRW-NTC`), or null when the row states none -
+   * used only to pick the FALLBACK default (its own site pool) when no configured
+   * default applies. */
   location: string | null;
 }
 
@@ -43,9 +41,8 @@ export interface ReserveRowOptionsResult {
   isLoading: boolean;
   defaultWarehouseId: string | null;
   options: SearchableSelectOption[];
-  /** `available_qty` at every resolved warehouse id this row's own grid carries - the
-   * act-mode card's own "Reserved" default reads this at the CHOSEN location, which may
-   * move away from the default once the reader changes it (AC-RS-28). */
+  /** `available_qty` at every pool this row's own product carries - the Reserved
+   * default recomputes from whichever one is chosen (AC-RS-28/AC-RS-55). */
   availableQtyByWarehouseId: Record<string, number>;
 }
 
@@ -56,116 +53,82 @@ const EMPTY_RESULT: ReserveRowOptionsResult = {
   availableQtyByWarehouseId: {},
 };
 
+/**
+ * The owner-configured default pool (F1). Read through the FULL settings blob - there
+ * is no narrow projection for it (`AppConfigResponse` stays at its own pinned "exactly
+ * seven fields", out of this change's scope) - so a caller without `user_management.
+ * settings.view` (CS/purchasing, typically) gets a 403 here, treated exactly like "no
+ * default configured": F1's own fallback (the row's own site pool) is what renders
+ * either way, so a denied read changes nothing on screen.
+ */
+function useConfiguredDefaultPoolId(): string | null {
+  const { data } = useQuery({
+    queryKey: ['oi-reserve-default-pool-setting'],
+    queryFn: async (): Promise<string | null> => {
+      const response = await apiFetch('/api/user-management/settings');
+      if (!response.ok) return null;
+      try {
+        const body = await response.json();
+        const id = body?.settings?.oi_reserve_default_pool_warehouse_id;
+        return typeof id === 'string' && id ? id : null;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  return data ?? null;
+}
+
 export function useReserveRowOptions(
   entries: ReserveRowOptionsEntry[],
 ): Record<string, ReserveRowOptionsResult> {
-  const siteCodes = React.useMemo(
-    () =>
-      Array.from(
-        new Set(
-          entries
-            .map((entry) => siteCodeOf(entry.location))
-            .filter((code): code is string => Boolean(code)),
-        ),
-      ),
-    [entries],
-  );
-  const siteCodesKey = siteCodes.join(',');
-  const [resolvedPoolIds, setResolvedPoolIds] = React.useState<Record<string, string | null>>({});
+  const configuredDefaultPoolId = useConfiguredDefaultPoolId();
 
-  React.useEffect(() => {
-    const codes = siteCodesKey ? siteCodesKey.split(',') : [];
-    const unresolved = codes.filter((code) => !(code in resolvedPoolIds));
-    if (unresolved.length === 0) return;
-    let cancelled = false;
-    Promise.all(
-      unresolved.map((code) =>
-        getWarehouses({
-          pageIndex: 0,
-          // Nit (review round): see `OrderInquiryStockGrid.tsx`'s own note - a bare
-          // pool code's text search also matches its own sub-locations, which can
-          // fill a page of 5 before the pool row itself ever appears.
-          pageSize: 50,
-          sorting: [],
-          searchQuery: code,
-          is_active: true,
-        }).then(
-          (response) =>
-            [code, (response.data ?? []).find((w) => w.warehouse_code === code)?.id ?? null] as const,
-        ),
-      ),
-    ).then((pairs) => {
-      if (cancelled) return;
-      setResolvedPoolIds((prev) => {
-        const next = { ...prev };
-        for (const [code, id] of pairs) next[code] = id;
-        return next;
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteCodesKey]);
-
-  const groupQueries = useQueries({
-    queries: entries.map((entry) => {
-      const group = entry.location ? groupOfWarehouseCode(entry.location) : null;
-      return {
-        queryKey: [STOCK_DETAIL_KEY, entry.productId, group, 'reserve-options-group'],
-        queryFn: () => getStockDetail(entry.productId as string, null, [], group),
-        enabled: Boolean(entry.productId) && Boolean(group),
-      };
-    }),
-  });
-
-  // The site's own POOL is a one-bin read of its own - a GROUP response never carries it
-  // (measured against the real stack, see the module docstring), so its own `available_
-  // qty` needs its own call once the pool's id has resolved.
-  const poolQueries = useQueries({
-    queries: entries.map((entry) => {
-      const siteCode = siteCodeOf(entry.location);
-      const poolId = siteCode ? resolvedPoolIds[siteCode] ?? null : null;
-      return {
-        queryKey: [STOCK_DETAIL_KEY, entry.productId, poolId, 'reserve-options-pool'],
-        queryFn: () => getStockDetail(entry.productId as string, poolId, [], null),
-        enabled: Boolean(entry.productId) && Boolean(poolId),
-      };
-    }),
+  const poolsQueries = useQueries({
+    queries: entries.map((entry) => ({
+      queryKey: [STOCK_DETAIL_KEY, entry.productId, 'pools', 'reserve-row-options'],
+      queryFn: () => getStockDetail(entry.productId as string, null, [], 'pools'),
+      enabled: Boolean(entry.productId),
+    })),
   });
 
   const result: Record<string, ReserveRowOptionsResult> = {};
   entries.forEach((entry, index) => {
-    if (!entry.location || !entry.productId) {
+    if (!entry.productId) {
       result[entry.key] = EMPTY_RESULT;
       return;
     }
-    const siteCode = siteCodeOf(entry.location) as string;
-    const poolId = resolvedPoolIds[siteCode] ?? null;
-    const group = groupOfWarehouseCode(entry.location);
-    const groupQuery = group ? groupQueries[index] : null;
-    const groupLocations = groupQuery?.data?.locations ?? [];
-    const poolQuery = poolId ? poolQueries[index] : null;
+    const query = poolsQueries[index];
+    const poolLocations = query?.data?.locations ?? [];
 
-    const availableQtyByWarehouseId: Record<string, number> = {};
     const options: SearchableSelectOption[] = [];
-    if (poolId) {
-      options.push({ value: poolId, label: siteCode });
-      if (poolQuery?.data?.available_qty != null) {
-        availableQtyByWarehouseId[poolId] = Number(poolQuery.data.available_qty);
-      }
+    const availableQtyByWarehouseId: Record<string, number> = {};
+    for (const loc of poolLocations) {
+      if (!loc.warehouse_id) continue;
+      const available = loc.available_qty != null ? Number(loc.available_qty) : null;
+      if (available != null) availableQtyByWarehouseId[loc.warehouse_id] = available;
+      options.push({
+        value: loc.warehouse_id,
+        label: available != null ? `${loc.location ?? ''}  available ${available}` : (loc.location ?? ''),
+      });
     }
-    for (const loc of groupLocations) {
-      if (!loc.warehouse_id || loc.warehouse_id === poolId) continue;
-      options.push({ value: loc.warehouse_id, label: loc.location ?? '' });
-      if (loc.available_qty != null) {
-        availableQtyByWarehouseId[loc.warehouse_id] = Number(loc.available_qty);
-      }
-    }
+
+    const siteCode = siteCodeOf(entry.location);
+    const rowSitePoolId =
+      poolLocations.find((loc) => loc.location === siteCode)?.warehouse_id ?? null;
+    const configuredIsOffered =
+      configuredDefaultPoolId != null &&
+      options.some((option) => option.value === configuredDefaultPoolId);
 
     result[entry.key] = {
-      isLoading: Boolean(groupQuery?.isLoading) || Boolean(poolQuery?.isLoading),
-      defaultWarehouseId: poolId ?? options[0]?.value ?? null,
+      isLoading: Boolean(query?.isLoading),
+      defaultWarehouseId:
+        (configuredIsOffered ? configuredDefaultPoolId : null) ??
+        rowSitePoolId ??
+        options[0]?.value ??
+        null,
       options,
       availableQtyByWarehouseId,
     };

@@ -21,17 +21,6 @@ export interface CreateReserveRequestPayload {
   note?: string | null;
 }
 
-export interface ReserveAnswerRow {
-  request_row_id: string;
-  warehouse_id: string;
-  qty_reserved: string | number;
-  reason?: string | null;
-}
-
-export interface ReserveRequestPayload {
-  rows: ReserveAnswerRow[];
-}
-
 export interface OrderInquiryReserveRequestRow {
   id: string;
   row_id: string;
@@ -98,27 +87,89 @@ export async function cancelOrderInquiryReserveRequest(
   return { ...body, first_to_name: body.notified_name ?? null };
 }
 
-/** Eling's own Confirm (AC-RS-6 to AC-RS-11). */
-export async function reserveOrderInquiryRequest(
-  requestId: string,
-  payload: ReserveRequestPayload,
-): Promise<OrderInquiryReserveRequest> {
-  const requestBody = {
-    rows: payload.rows.map((row) => ({ ...row, qty_reserved: String(row.qty_reserved) })),
-  };
-  const response = await apiFetch(`${BASE}/order-inquiries/reserve-requests/${requestId}/reserve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to confirm that reserve'));
-  const body = await response.json();
-  return { ...body, first_to_name: body.notified_name ?? null };
+export interface ReserveRowPayload {
+  warehouse_id: string;
+  qty_reserved: string | number;
+  reason?: string | null;
 }
 
-/** Every reserve request this header has ever raised, newest first - `ReserveRequestsCard`'s
- * own read. */
+export interface UnreserveRowPayload {
+  qty: string | number;
+  note?: string | null;
+}
+
+export interface OrderInquiryReserveHistoryEntry {
+  kind: 'requested' | 'reserved' | 'unreserved' | 'cancelled' | string;
+  qty: string | null;
+  location: string | null;
+  reason: string | null;
+  actor_name: string | null;
+  created_at: string | null;
+}
+
+/**
+ * Eling's own Confirm, ONE ROW at a time (`PLAN-oi-request-cs-reserve.md` section 6c
+ * F2 - supersedes the old all-rows `reserveOrderInquiryRequest`, whose own route is
+ * deleted). Answers exactly one request row; the request itself stays `requested`
+ * while any other row of it is still unanswered, `reserved` on the one that
+ * completes it.
+ */
+export async function reserveOrderInquiryRow(
+  requestId: string,
+  rowId: string,
+  payload: ReserveRowPayload,
+): Promise<OrderInquiryReserveRequestRow> {
+  const requestBody = { ...payload, qty_reserved: String(payload.qty_reserved) };
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/reserve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to confirm that reserve'));
+  return response.json();
+}
+
+/** F5: gives back part (or all) of what was reserved on ONE row - its own action,
+ * never Unlink. No email either way. */
+export async function unreserveOrderInquiryRow(
+  requestId: string,
+  rowId: string,
+  payload: UnreserveRowPayload,
+): Promise<OrderInquiryReserveRequestRow> {
+  const requestBody = { ...payload, qty: String(payload.qty) };
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/unreserve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to unreserve that row'));
+  return response.json();
+}
+
+/** F3: one row's own history, newest first - the dialog's History tab. */
+export async function getOrderInquiryRowHistory(
+  requestId: string,
+  rowId: string,
+): Promise<OrderInquiryReserveHistoryEntry[]> {
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/history`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load that history'));
+  const body = await response.json();
+  return Array.isArray(body) ? body : [];
+}
+
+/** Every reserve request this header has ever raised, newest first - used to find
+ * a row's own open request (or last-answered one) for `ReserveRowDialog`. */
 export async function getOrderInquiryReserveRequests(
   inquiryId: string,
 ): Promise<OrderInquiryReserveRequest[]> {

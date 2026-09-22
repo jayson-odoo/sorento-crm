@@ -21,7 +21,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
-import { ReserveRequestsSection } from './ReserveRequestsSection';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 /** `PLAN-oi-header-list-detail.md`, AC-DP-03. */
@@ -34,27 +33,25 @@ function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
 }
 
 export function OrderInquiryLinesTab({
-  inquiryId,
   lines,
   isLoading,
   rowSelection,
   onRowSelectionChange,
-  canRequestReserve,
-  canReserve,
+  onReserveClick,
 }: {
-  inquiryId: string;
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
-  canRequestReserve: boolean;
-  canReserve: boolean;
+  /** `PLAN-oi-request-cs-reserve.md` section 6c F2: opens `ReserveRowDialog` for the row
+   * whose Reserve icon-button was clicked (`orderInquiryHeaderLinesColumns.tsx`). */
+  onReserveClick?: (row: OrderInquiryWorklistRow) => void;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<ExpandedState>({});
-  const columns = useOrderInquiryHeaderLinesColumns();
+  const columns = useOrderInquiryHeaderLinesColumns({ onReserveClick });
 
   // Cancelled lines are hidden here, same as the worklist (S5) - they carry no
   // instruction left to confirm or link, only a history the raise-cancel already told.
@@ -96,12 +93,6 @@ export function OrderInquiryLinesTab({
 
   return (
     <div className="space-y-4">
-      <ReserveRequestsSection
-        inquiryId={inquiryId}
-        lines={lines}
-        canRequest={canRequestReserve}
-        canReserve={canReserve}
-      />
       <DataGrid
         table={table}
         recordCount={table.getFilteredRowModel().rows.length}

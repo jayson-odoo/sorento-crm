@@ -31,7 +31,10 @@ import {
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
-import { getOrderInquiryReserveRequests } from '../services/orderInquiryReserveService';
+import {
+  getOrderInquiryReserveRequests,
+  getOrderInquiryRowHistory,
+} from '../services/orderInquiryReserveService';
 import { getOrderInquiryMatrix } from '../services/orderInquiryMatrixService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
@@ -65,6 +68,7 @@ export const ORDER_INQUIRY_HEADER_LINES_KEY = 'order-inquiry-header-lines';
 export const ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY =
   'order-inquiry-header-related-documents';
 export const ORDER_INQUIRY_RESERVE_REQUESTS_KEY = 'order-inquiry-reserve-requests';
+export const ORDER_INQUIRY_ROW_HISTORY_KEY = 'order-inquiry-row-history';
 
 /**
  * The header LIST's own React Query key (`PLAN-oi-header-list-detail.md`). Built through
@@ -153,18 +157,30 @@ export function useOrderInquiryHeaderRelatedDocuments(id: string | undefined) {
 }
 
 /**
- * `PLAN-oi-request-cs-reserve.md` 3.7/3.8: every reserve request this header has ever
- * raised, newest first - `ReserveRequestsCard`'s own read. `createOrderInquiryReserve
- * Request` / `reserveOrderInquiryRequest` stay called directly from the dialog / card
- * (they already own their success toast, AC-RS-22/AC-RS-26's own wording) - this hook is
- * the READ half only, so the two writers and this one reader can never disagree about
- * what "the open request" is.
+ * `PLAN-oi-request-cs-reserve.md` section 6c: every reserve request this header has
+ * ever raised, newest first - `ReserveRowDialog`'s own read, used to find a row's open
+ * request (or its last-answered one). `createOrderInquiryReserveRequest` /
+ * `reserveOrderInquiryRow` / `unreserveOrderInquiryRow` stay called directly from the
+ * dialog (they already own their success toast) - this hook is the READ half only, so
+ * the writers and this one reader can never disagree about what "the open request" is.
  */
 export function useOrderInquiryReserveRequests(inquiryId: string | undefined) {
   return useQuery({
     queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId],
     queryFn: () => getOrderInquiryReserveRequests(inquiryId as string),
     enabled: Boolean(inquiryId),
+  });
+}
+
+/** F3: one row's own History tab, fetched only while `ReserveRowDialog` is open for it. */
+export function useOrderInquiryRowHistory(
+  requestId: string | null | undefined,
+  rowId: string | null | undefined,
+) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_ROW_HISTORY_KEY, requestId, rowId],
+    queryFn: () => getOrderInquiryRowHistory(requestId as string, rowId as string),
+    enabled: Boolean(requestId) && Boolean(rowId),
   });
 }
 
