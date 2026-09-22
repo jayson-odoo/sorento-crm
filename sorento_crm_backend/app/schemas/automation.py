@@ -16,6 +16,11 @@ class RecipientConfig(BaseModel):
     #: the trigger provides one. Reusable across triggers - not just the order
     #: inquiry handover email it was added for (AC-H11).
     include_actor: bool = False
+    #: Cc the person who raised the order inquiry / the person who requested the
+    #: reserve (`PLAN-oi-request-cs-reserve.md` 3.6) - reusable the same way
+    #: `include_actor` is, wherever a trigger's context puts `raiser`/`requester`.
+    include_raiser: bool = False
+    include_requester: bool = False
     #: One email for the whole match instead of one per recipient (AC-H26) - every
     #: resolved address on it, `include_actor`'s address moved last. Off by default:
     #: a template that personalises `{{ recipient.name }}` per copy needs the

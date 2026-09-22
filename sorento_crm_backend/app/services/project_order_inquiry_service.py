@@ -4470,6 +4470,12 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # PLAN-oi-request-cs-reserve.md (AC-RS-12): a reserve link is not a PO or
+                # an SPO document - this reader's whole vocabulary is "which BOOK is this
+                # on" - so it never leaks in here as a `kind="po"` entry with every book
+                # column blank. `reserved_qty` (the worklist serializer) is where it
+                # actually surfaces.
+                OrderInquiryLink.reserve_request_row_id.is_(None),
                 # R7/AC-E9: SPOAllocation is OUTER-joined, so this passes a plain PO
                 # link (its columns come back NULL) untouched and only excludes a
                 # link whose SPO side names a retired line.

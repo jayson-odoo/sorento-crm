@@ -308,6 +308,30 @@ register(
 )
 
 
+def _cancel_order_inquiry_reserve_request(db: Session, payload: dict):
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    return OrderInquiryReserveService(db).cancel_request(
+        request_id=_entity_id(payload), actor_user_id=payload.get("requested_by_id")
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_reserve_request.cancel",
+        entity_types=("order_inquiry_reserve_request",),
+        execute=_cancel_order_inquiry_reserve_request,
+        # Reversible (PLAN-oi-request-cs-reserve.md 3.2): a cancel while nothing has been
+        # reserved yet takes nothing back except the ask itself, and the countdown gives
+        # a misclick a few seconds to catch itself. No email either way (R9's ONE email
+        # is the request itself; a cancel is silent).
+        window=WINDOW_REVERSIBLE,
+        permission="projects.order_inquiries.acknowledge",
+        label="Cancel request",
+    )
+)
+
+
 def _actor(db: Session, payload: dict) -> dict:
     """The click's actor, in the shape a service expects `current_user` to be.
 

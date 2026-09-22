@@ -87,6 +87,22 @@ export function OrderInquiryStockGrid({
     !isBarePoolCode || Boolean(resolvedWarehouseId),
   );
 
+  // S1 fix round (22 Sep 2026): a `group` read tags every member location `where: "group"`
+  // uniformly - the backend has no notion of "this is the ROW's own bin" in that shape,
+  // since `group` mode answers for a whole ownership group, not one line. The row's own
+  // bin is a fact THIS caller holds (`location`, the prop) and the board's other readers
+  // do not need marked at all, so it is applied here, client-side, rather than asking the
+  // endpoint to carry a per-caller opinion about which of its own rows is "home". Declared
+  // above every early return - React's rules of hooks - even though it has nothing to do
+  // until the "no location" / loading / error returns below have already passed.
+  const locations = React.useMemo(() => {
+    const raw = detail.data?.locations ?? [];
+    if (!location) return raw;
+    return raw.map((entry) =>
+      entry.location === location ? { ...entry, where: 'own' as const } : entry,
+    );
+  }, [detail.data?.locations, location]);
+
   if (!location) {
     return (
       <p
@@ -117,13 +133,7 @@ export function OrderInquiryStockGrid({
     );
   }
 
-  return (
-    <CellStockTable
-      locations={detail.data?.locations ?? []}
-      lineIds={lineIds}
-      showGroupSubtotal
-    />
-  );
+  return <CellStockTable locations={locations} lineIds={lineIds} showGroupSubtotal />;
 }
 
 export default OrderInquiryStockGrid;

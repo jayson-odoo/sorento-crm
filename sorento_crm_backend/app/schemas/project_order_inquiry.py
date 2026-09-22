@@ -420,6 +420,15 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
+    #: request row exists, `reserved` once something has actually been reserved (and no
+    #: open request), else null. Declared here because `response_model` silently drops a
+    #: field it has not been told about.
+    reserve_state: Optional[str] = None
+    #: 3.4 (AC-RS-12): the sum of the row's reserve links - a THIRD figure beside
+    #: `taken_from_po`/`remaining_open`, both of which already include it (they sum by
+    #: `row_id` with no target filter).
+    reserved_qty: str = "0"
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -1204,3 +1213,67 @@ class OrderInquiryRelatedDocumentsOut(BaseModel):
 
     purchase_orders: List[OrderInquiryRelatedPOOut] = []
     spos: List[OrderInquiryRelatedSPOOut] = []
+
+
+# ------------------------------------------------------- request CS to reserve (3.2/3.3)
+
+
+class ReserveRequestRowIn(BaseModel):
+    """One order-inquiry row named on a request (3.2). `warehouse_id` omitted means the
+    pool of the row's own `stock_location` (R3)."""
+
+    row_id: str
+    qty_requested: str
+    warehouse_id: Optional[str] = None
+
+
+class CreateReserveRequestIn(BaseModel):
+    rows: List[ReserveRequestRowIn]
+    note: Optional[str] = None
+
+
+class ReserveAnswerRowIn(BaseModel):
+    """Eling's own answer for one request row (3.3) - every row of the request must be
+    named in one call (AC-RS-9)."""
+
+    request_row_id: str
+    warehouse_id: Optional[str] = None
+    qty_reserved: str
+    reason: Optional[str] = None
+
+
+class ReserveRequestIn(BaseModel):
+    rows: List[ReserveAnswerRowIn]
+
+
+class OrderInquiryReserveRequestRowOut(BaseModel):
+    id: str
+    row_id: str
+    item_code: Optional[str] = None
+    qty_requested: str
+    warehouse_id: Optional[str] = None
+    location: Optional[str] = None
+    qty_reserved: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class OrderInquiryReserveRequestOut(BaseModel):
+    """`POST .../reserve-requests`, `.../reserve-requests/{id}/cancel`, `.../reserve`
+    (AC-RS-1, AC-RS-19, AC-RS-6). `notified_name` is the first resolved recipient of the
+    request mail, read back for the dialog's own toast (plan 3.7) - null when the
+    request automation is disabled or holds no recipient yet (nothing has broken; there
+    is simply nobody configured to name)."""
+
+    id: str
+    order_inquiry_id: str
+    ordinal: int
+    state: str
+    requested_by: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    note: Optional[str] = None
+    reserved_by_name: Optional[str] = None
+    reserved_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    rows: List[OrderInquiryReserveRequestRowOut] = []
+    notified_name: Optional[str] = None

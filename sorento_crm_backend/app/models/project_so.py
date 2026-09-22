@@ -1204,15 +1204,128 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
+    #: PLAN-oi-request-cs-reserve.md 3.1: the THIRD target a link may name - a row of an
+    #: `OrderInquiryReserveRequest` Eling confirmed. Nullable, `SET NULL` like the other
+    #: two, so a request row that is later deleted (cascade off its own parent) does not
+    #: delete the placement it made - the link keeps `document` ("Reserved @ BRW") as its
+    #: own record the same way a deleted PO line does.
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.order_inquiry_reserve_request_rows.id",
+            ondelete="SET NULL",
+            name="fk_order_inquiry_links_reserve_request_row",
+        ),
+        nullable=True,
+    )
+
     __table_args__ = (
         CheckConstraint(
-            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int"
+            " + (reserve_request_row_id IS NOT NULL)::int = 1",
             name="ck_order_inquiry_links_one_target",
         ),
         CheckConstraint("qty > 0", name="ck_order_inquiry_links_qty_positive"),
         Index("ix_order_inquiry_links_row", "row_id"),
         Index("ix_order_inquiry_links_po_line", "po_line_id"),
         Index("ix_order_inquiry_links_spo_allocation", "spo_allocation_id"),
+        Index("ix_order_inquiry_links_reserve_request_row", "reserve_request_row_id"),
+        {"schema": "projects"},
+    )
+
+
+#: PLAN-oi-request-cs-reserve.md (R1-R11): purchasing asks CS to cover part of a row from
+#: own or pool stock before buying the balance. Two tables: the REQUEST (one per ask,
+#: `OI-2609-0678 request #2`, addressed by ordinal within the inquiry rather than its own
+#: number - R5 repeats the cycle on the remaining qty rather than amending) and its ROWS
+#: (one per order-inquiry row asked, `OrderInquiryReserveRequestRow` below).
+RESERVE_REQUESTED = "requested"
+RESERVE_RESERVED = "reserved"
+RESERVE_CANCELLED = "cancelled"
+
+
+class OrderInquiryReserveRequest(Base, CompanyScopedMixin):
+    """One "request CS to reserve" ask, covering one or more order inquiry rows.
+
+    `ordinal` addresses it within the inquiry (`OI-2609-0678 request #2`) - a reserve
+    request earns no number of its own (section 2, "Reserve requests get NO number").
+    `state` walks `requested` -> `reserved` (Eling's Confirm, 3.3) or `requested` ->
+    `cancelled` (the requester's own Cancel, or anyone holding the reserve permission,
+    3.2); once `reserved` it stays history even if every link it wrote is later unlinked
+    (R5's "no amend after confirm; repeat instead", AC-RS-14).
+    """
+
+    __tablename__ = "order_inquiry_reserve_requests"
+    __audit_entity_type__ = "project_order_inquiry_reserve_requests"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    order_inquiry_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ordinal = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, server_default=RESERVE_REQUESTED)
+    requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    requested_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    note = Column(Text, nullable=True)
+    reserved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reserved_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    cancelled_at = Column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            f"state IN ('{RESERVE_REQUESTED}', '{RESERVE_RESERVED}', '{RESERVE_CANCELLED}')",
+            name="ck_order_inquiry_reserve_requests_state",
+        ),
+        UniqueConstraint(
+            "order_inquiry_id", "ordinal", name="uq_order_inquiry_reserve_requests_ordinal"
+        ),
+        Index("ix_order_inquiry_reserve_requests_inquiry", "order_inquiry_id"),
+        {"schema": "projects"},
+    )
+
+
+class OrderInquiryReserveRequestRow(Base, CompanyScopedMixin):
+    """One order inquiry row named on a reserve request.
+
+    `warehouse_id` defaults to the row's own pool (R3) at request time and is Eling's own
+    to change at reserve time (3.3) - stored here, never re-derived, so the reserved mail
+    and the link's own `document` always print what she actually chose. `qty_reserved` is
+    null while the request is open; the moment Eling confirms it holds the answer for
+    every row of the request in one call (3.3's all-or-nothing), including a genuine `0`
+    with its required `reason`.
+    """
+
+    __tablename__ = "order_inquiry_reserve_request_rows"
+    __audit_entity_type__ = "project_order_inquiry_reserve_request_rows"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_reserve_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    qty_requested = Column(Numeric(15, 4), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    qty_reserved = Column(Numeric(15, 4), nullable=True)
+    reason = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("qty_requested > 0", name="ck_order_inquiry_reserve_rows_qty_positive"),
+        UniqueConstraint(
+            "request_id", "row_id", name="uq_order_inquiry_reserve_request_rows_row"
+        ),
+        Index("ix_order_inquiry_reserve_request_rows_request", "request_id"),
+        Index("ix_order_inquiry_reserve_request_rows_row", "row_id"),
         {"schema": "projects"},
     )
 

@@ -68,6 +68,8 @@ from app.models.project_so import (
     IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -380,6 +382,29 @@ def _linked_qty(*where) -> Any:
 #: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
+#: PLAN-oi-request-cs-reserve.md 3.4 (AC-RS-12): what CS has reserved off this row - a
+#: THIRD link target beside PO/SPO, never counted into either of the two above (a reserve
+#: link's `po_line_id`/`spo_allocation_id` are both null by the widened CHECK, so this is
+#: purely additive, not a re-split of the same links).
+_RESERVED_LINKED_QTY = _linked_qty(OrderInquiryLink.reserve_request_row_id.isnot(None))
+#: AC-RS-20: an OPEN reserve request row exists for this row (its parent request still
+#: `requested`) - the chip reads `requested` while this is true, whatever `_RESERVED_
+#: LINKED_QTY` above already holds from an earlier cycle (R5: reserved then requested
+#: again on the balance still reads `requested`).
+_HAS_OPEN_RESERVE_REQUEST = (
+    select(OrderInquiryReserveRequestRow.id)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequest.state == "requested",
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+)
 #: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
 #: outer-joins (`scm/demand.py`'s own expression, so the worklist and reorder planning read
 #: one definition of outstanding). The `case` is not decoration: on a row whose mirror names
@@ -702,6 +727,9 @@ _COLUMNS = (
     _LINE_CANCELLED.label("line_cancelled"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
+    # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20).
+    _RESERVED_LINKED_QTY.label("reserved_qty"),
+    _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
     # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
     # label outright (S2, review round 1) - the export runs this `json_agg` for every row
@@ -2001,6 +2029,16 @@ class OrderInquiryWorklistService:
             "location": row.location,
             "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
             "remaining_open": _qty_str(line_flow.get("remaining", _ZERO)),
+            # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20): `requested` while
+            # an open request row exists, else `reserved` once something has actually
+            # been reserved, else null - an open request always wins (R5: reserved then
+            # requested again on the balance reads `requested`, never `reserved`).
+            "reserve_state": (
+                "requested"
+                if getattr(row, "has_open_reserve_request", False)
+                else ("reserved" if _dec(getattr(row, "reserved_qty", None)) > _ZERO else None)
+            ),
+            "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,

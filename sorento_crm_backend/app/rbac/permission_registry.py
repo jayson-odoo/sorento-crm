@@ -603,6 +603,17 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.order_inquiries.reserve",
+        "name": "Reserve Stock for Order Inquiries",
+        "description": (
+            "CS-head grant (R1, `PLAN-oi-request-cs-reserve.md`): confirm how much of a "
+            "purchasing 'request CS to reserve' ask is actually reserved from own or "
+            "pool stock. Narrow on purpose - only the person who may commit stock "
+            "against a request holds it, separate from `projects.order_inquiries."
+            "acknowledge`, which is purchasing's own grant to raise the request."
+        ),
+    },
+    {
         "slug": "projects.stock_debt.view",
         "name": "View Stock Debt",
         "description": (

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
-import { OrderInquiryStatePill } from '../../../_shared/components/OrderInquiryVerbPill';
+import { OrderInquiryStatePill, ReservePill } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import {
@@ -175,9 +175,17 @@ export function useOrderInquiryHeaderLinesColumns(): ColumnDef<OrderInquiryWorkl
       {
         accessorKey: 'state',
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-        size: 130,
+        size: 190,
         meta: { headerTitle: 'State' },
-        cell: ({ row }) => <OrderInquiryStatePill state={row.original.state} />,
+        cell: ({ row }) => (
+          <div className="flex flex-wrap items-center gap-1">
+            <OrderInquiryStatePill state={row.original.state} />
+            <ReservePill
+              reserveState={row.original.reserve_state}
+              reservedQty={row.original.reserved_qty}
+            />
+          </div>
+        ),
       },
     ],
     [],

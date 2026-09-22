@@ -114,3 +114,34 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
     </span>
   );
 }
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20/AC-RS-25): `requested` while an open
+ * reserve request row exists, `reserved` once CS has actually reserved something (and no
+ * open request). Rendered BESIDE the state pill, never merged with it - the same
+ * "handshake beside state" split `OrderInquiryStatePill` already carries.
+ */
+export function ReservePill({
+  reserveState,
+  reservedQty,
+}: {
+  reserveState: 'requested' | 'reserved' | string | null | undefined;
+  reservedQty?: string | null;
+}) {
+  if (!reserveState) return null;
+  if (reserveState === 'requested') {
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}>
+        Request to reserve
+      </span>
+    );
+  }
+  if (reserveState === 'reserved') {
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('approved')}`}>
+        Reserved {reservedQty ?? ''}
+      </span>
+    );
+  }
+  return null;
+}
