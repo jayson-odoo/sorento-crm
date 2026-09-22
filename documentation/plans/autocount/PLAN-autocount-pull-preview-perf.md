@@ -1,6 +1,8 @@
 # PLAN: AutoCount pull preview - cut the dry-run ingest time
 
-Status: planned (owner go 22 Sep 2026, "let's optimize our part"). Track: focused lane, backend only, no migration.
+Status: built, review round 1 in progress (fix round applied 22 Sep 2026 - B1/B2 same-batch
+supplier-link races, the real-ingest wire contract kept diff-free, preload robustness, T9-T15).
+Track: focused lane, backend only, no migration.
 UAC: `autocount-pull-preview-perf-acceptance-criteria.md`.
 Follows: `PLAN-autocount-pull-review.md` (SR1 preview), `PLAN-ingest-products-code-wins.md` (SR0).
 
@@ -47,6 +49,13 @@ C1. **No write when nothing changed.** `_diff` runs on real ingests too (one SEL
     naming this plan (the Excel importer writes every row; that is the ONE column where the two
     paths now differ on a no-op re-sync, and F-C is the reason).
 
+    C1's "no write when nothing changed" rule is NOT product-specific - `_diff`/`_update`'s
+    skip-on-empty-diff sits in `_apply_scoped`, the ONE code path every one of the seven master
+    entities (`product_categories`, `brands`, `units_of_measure`, `warehouses`, `suppliers`,
+    `customers`, `sales_agents`) goes through, alongside `products`. The tests in this plan only
+    exercise products (the ~11.7k-row entity the measured problem is about), but the write-skip
+    itself already applies to a no-op resync of any of the other six.
+
 C2. **Per-batch reference cache.** `MasterIngestService` caches `ensure_reference` results for
     (model, company, normalised code) and `resolve_default_uom` for the batch lifetime (the
     instance already lives exactly one batch - `_settings_cache` is the precedent, perf review
@@ -61,6 +70,19 @@ C3. **One SELECT for derived + diff** (only if C1 + C2 miss the target): `_final
 Deferred, with its trigger named: bulk preloads of product code -> id, refs resolve and origin
 maps (3 statements per batch instead of 3 per record) ONLY if the clone measurement after C1-C3
 is still above the UAC target. Not built on speculation.
+
+**Round 2 (the trigger fired).** C1-C3 alone measured 157 s on the clone (`sorento_acpull_e2e`,
+11,876 SRT products) - inside the <= 90 s target's factor-of-headroom but still short of it, so
+the deferred lever above was built, not deferred a second time. A cProfile pass named the actual
+dominant cost: `IntegrationReferenceService.resolve()`/`origin_of()` and `resolve_master_by_code`
+each run once per record against a table that is NOT `CompanyScopedMixin`
+(`integration_references`, which manages its own company anchor) - `company_scope.py`'s
+`do_orm_execute` listener finds no top-level scoped mapper for a query like that and falls back to
+injecting `with_loader_criteria` for EVERY scoped model in the app (~134 of them), paid on every
+one of ~11,800 per-record calls. `MasterIngestService._build_product_preload` (built in `ingest()`,
+products only) runs the three lookups ONCE per batch instead - `_ProductBatchPreload`'s own
+docstring has the full mechanism; T9-T11 pin it, T9b/T12-T15 (fix round, both reviewers) harden
+it. Post-round-2 clone measurement: see PP-9 in the UAC and the PR body for the number.
 
 ## Measurement harness
 
@@ -91,6 +113,44 @@ company + category + brand + UOM + products (CI DB is empty):
 - T8 dry-run of 5 unchanged products issues no UPDATE and no INSERT into `audit_logs`.
 - Existing: PC-5 parity, `test_ingest_products_code_wins.py`, `test_autocount_pull_sr1/sr3`,
   `test_master_ingest.py` all green.
+
+Round 2 (the batch preload, PP-5/PP-9):
+
+- T9 three EXISTING, ALREADY-LINKED products resynced in one batch: exactly one code-resolution
+  SELECT for the whole batch.
+- T9b (fix round, reviewer kill test) the SAME assertion for the "ref miss, code hit" shape -
+  three products that exist locally but were never linked - the one the origin preload's own
+  `setdefault(None)` does NOT save a query for; without the code map this costs 1 (batch) + 3
+  (per record) instead of 1.
+- T10 a product CREATED earlier in the SAME batch is adopted by a later duplicate-code record
+  through the preload's own `code_to_id` map, never a second per-record query or a second CREATE.
+- T11 a product CREATED by a record whose savepoint later rolls back is never served to the next
+  same-code record from the map (T6's own shape, for this new map).
+- T15 (fix round) with `_PRELOAD_CHUNK_SIZE` forced to 2, a 5-record batch still preloads every
+  code (`ceil(5/2)` bulk SELECTs) and issues zero per-record fallbacks.
+
+Fix round (review round 1, both reviewers - B1/B2 same-batch races, PP-1/PP-4/PP-5):
+
+- T12 two records in ONE batch resolving the SAME existing unlinked product by a
+  normalize-equal code (different casing/whitespace, different source_refs): both UPDATED, the
+  second with warning `ref_mismatch`, exactly one `product_suppliers` row and one
+  `integration_references` row for the product (B1 - `_link` now updates the preloaded origin;
+  B2 - the post-write hook reads a miss as "not preloaded", never "confirmed no link").
+- T13 a product CREATED earlier in the batch, adopted again by a later duplicate-code record: one
+  `product_suppliers` row, not two (B2, same root cause as T12 without the origin/B1 half).
+- T14 a product resolved by its SOURCE_REF after a code RENAME (the incoming code no longer
+  matches the stored one, so the batch's own code preload never covers this id) with an EXISTING
+  `product_suppliers` row: still exactly one row after the push (B2, the sentinel-vs-`None`
+  distinction on its own, no B1 involved).
+- Contract (PP-10): a real ingest's `IngestResult.as_dict()` carries no `diff` key on any record;
+  a dry run's does. `RecordResult.diff` itself stays populated on a real run (C1, unchanged) -
+  `_apply_products`/`_preview_products` keep reading it on the in-process object.
+- Preload robustness: a genuine DB error inside `_build_product_preload` recovers via rollback
+  instead of leaving every later record's own `begin_nested()` raising `PendingRollbackError`;
+  `self._ref_cache` resets at the top of `ingest()`; a discontinued -> live product's dry-run
+  diff names the `discontinued_notified_at`/`discontinued_notify_batch_id` watermark reset; three
+  blank-`uom_code` records with a configured default resolve it once per batch, not once per
+  record.
 
 ## Out of scope
 
