@@ -49,7 +49,11 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// `dismiss` is here even though `useDeferredAction` is mocked below: the
+// pending-entity store this hook would otherwise drive calls `toast.dismiss`
+// on its own follow-through timer, and a mock missing the key throws if
+// anything in this file ever exercises the real hook.
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
 
 const useSPODocument = vi.fn();
 vi.mock('../hooks/useSPODocuments', () => ({

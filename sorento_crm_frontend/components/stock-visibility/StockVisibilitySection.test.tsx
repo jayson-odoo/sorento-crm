@@ -35,6 +35,10 @@ vi.mock('@/lib/toast', () => ({
     error: vi.fn(),
     custom: vi.fn(),
     message: vi.fn(),
+    // The pending-entity store takes its own countdown toast down once the
+    // parked removal settles - without this the store's follow-through timer
+    // throws an unhandled rejection if it fires after the test ends (E5).
+    dismiss: vi.fn(),
   },
 }));
 
@@ -177,6 +181,7 @@ vi.mock('@/services/stockVisibilityService', async (importOriginal) => {
 });
 
 import { toast } from '@/lib/toast';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 import { StockVisibilitySection } from './StockVisibilitySection';
 import type {
   StockVisibilityMode,
@@ -285,6 +290,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // E5 parks a removal with a `commit_at` in the past, so the store's own
+  // follow-through timer is armed for real; putting it down here (rather than
+  // waiting for it to fire on its own after the test ends) is what keeps a
+  // later suite from seeing an unhandled rejection from a timer this test left
+  // running.
+  pendingEntityStore.clear('stock_visibility_policy', 'contact-77');
 });
 
 describe('E1 - the policy in force, and where it comes from', () => {

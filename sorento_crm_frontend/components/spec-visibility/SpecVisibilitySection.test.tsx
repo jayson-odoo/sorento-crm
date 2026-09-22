@@ -21,7 +21,16 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), message: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    custom: vi.fn(),
+    message: vi.fn(),
+    // The pending-entity store takes its own countdown toast down once the
+    // parked removal settles - without this the store's follow-through timer
+    // throws an unhandled rejection if it fires after the test ends.
+    dismiss: vi.fn(),
+  },
 }));
 
 const pickers = vi.hoisted(() => ({ real: false }));
@@ -107,6 +116,7 @@ vi.mock('@/services/specVisibilityService', async (importOriginal) => {
 });
 
 import { toast } from '@/lib/toast';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 import { SpecVisibilitySection } from './SpecVisibilitySection';
 import type {
   SpecKeyRef,
@@ -170,6 +180,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // AC-4's "Remove only with an override" test parks a removal with a
+  // `commit_at` in the past, so the store's own follow-through timer is armed
+  // for real; putting it down here (rather than waiting for it to fire on its
+  // own after the test ends) is what keeps a later suite from seeing an
+  // unhandled rejection from a timer this test left running.
+  pendingEntityStore.clear('spec_visibility_policy', 'contact-77');
 });
 
 describe('AC-2 - the effective policy, where it comes from, and the picker', () => {
