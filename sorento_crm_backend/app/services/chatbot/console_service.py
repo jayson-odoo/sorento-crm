@@ -612,11 +612,16 @@ def _run_console_media_turn(
     reply_text, send_messages = _customer_texts(body)
     intake_facts = _media_intake_result_of(body.get("turn_id"))
     media_status: str | None = None
+    media_id: str | None = None
     media_text: str | None = None
     media_error: str | None = None
     if intake_facts is not None:
         status = intake_facts.get("status")
         media_status = "done" if status == "completed" else "failed" if status == "failed" else "pending"
+        # The console's OWN poll route (`get_console_media_status`) is keyed by
+        # `MediaExtractionJob.id`, not the turn's id - the job_id `media_intake.run`
+        # stashed on the trace facts is what a `pending` caller re-polls with below.
+        media_id = intake_facts.get("job_id")
         job_result = intake_facts.get("result") or {}
         media_text = job_result.get("rendered_text") or job_result.get("transcript") or None
         if media_status == "failed":
@@ -634,7 +639,7 @@ def _run_console_media_turn(
         prompt_version=_turn_prompt_version(db, body.get("turn_id")),
         actions=body.get("actions"),
         media_status=media_status,
-        media_id=body.get("turn_id"),
+        media_id=media_id,
         media_text=media_text,
         media_error=media_error,
     )
@@ -681,4 +686,6 @@ def get_console_media_status(db: Session, media_id: str) -> dict[str, Any]:
         return {"status": "pending", "text": None, "error": None}
     if row.status == "failed":
         return {"status": "failed", "text": None, "error": row.error or "Extraction failed."}
-    return {"status": "done", "text": _extracted_text(row.result) or None, "error": None}
+    job_result = row.result or {}
+    text = job_result.get("rendered_text") or job_result.get("transcript") or None
+    return {"status": "done", "text": text, "error": None}

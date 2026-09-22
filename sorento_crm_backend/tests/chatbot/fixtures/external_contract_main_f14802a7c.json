@@ -363,7 +363,8 @@
               "not_supported",
               "stock_denied",
               "demand_qty",
-              "business_query"
+              "business_query",
+              "media_denied"
             ],
             "type": "string"
           },
