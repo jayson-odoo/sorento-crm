@@ -1064,3 +1064,105 @@ def test_a_detailed_zero_stock_reply_still_climbs_the_ladder():
 
     assert calls, "a detailed zero-stock hit still probes the other domain"
     assert out.text != answer.text
+
+
+# --------------------------------------------------------------------------- #
+# Review round 11, D34: a cancel plans no fetch
+# --------------------------------------------------------------------------- #
+
+
+def test_never_mind_the_stock_check_plans_no_fetch():
+    """Live evidence Run 7, turn 8c11d51d. "never mind the stock check" parses as
+    `topic_reset: true`, `domain_hint: "inventory"`, `intent_hint: "check_stock"`,
+    `entities: []`, `demand_qty: null`, `user_goal: "trying to cancel the stock check"`.
+    Round 10 removed the ladder's escalate offer that used to intercept this turn, so it
+    reached the planner - and the intent word alone was enough to plan an inventory
+    fetch with no product filter, which came back as a catalogue page and a fifty-slot
+    question.
+
+    A cancel is not an ask. Closing the task is the whole turn (D23); there is nothing
+    to look up."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    task = _stock_task(
+        slots=[("uuid-mhs", "MHS1028", None), ("uuid-msk", "MSK11A-QT", None)]
+    )
+    focus = Focus(
+        tasks=(task,),
+        domains=["inventory"],
+        products=[entity("MHS1028", hint="product", uuid="uuid-mhs")],
+    )
+    v = verdict(
+        topic_reset=True,
+        domain_hint="inventory",
+        intent_hint="check_stock",
+        entities=[],
+        user_goal="trying to cancel the stock check",
+    )
+
+    state2, plan = apply(_state(focus, turn_no=2), v, build_policy())
+
+    assert plan.fetch == [], "a cancel looks nothing up"
+    assert plan.ask is None
+    assert state2.focus.tasks == (), "and it still closes the task it was aimed at"
+
+
+def test_a_reset_that_names_another_domain_is_still_that_domains_turn():
+    """Boundary: "never mind, promotions?" is a reset AND a new question, and the new
+    question is answered - the refusal is inventory's own (`_REFUSES_EMPTY_SUBJECT`) and
+    must not silence another domain. The promotion domain narrows on tier in this
+    policy, so what it does with the turn is ASK its own question; what matters here is
+    that the turn is still promotion's and is not planned away."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    focus = Focus(domains=["inventory"])
+    v = verdict(topic_reset=True, domain_hint="promotion", entities=[])
+
+    _state2, plan = apply(_state(focus, turn_no=2), v, build_policy())
+
+    assert plan.domains == ["promotion"]
+    assert plan.ask is not None or plan.fetch, "the new question is not swallowed"
+
+
+def test_a_reset_that_names_a_product_still_fetches_it():
+    """Boundary: "never mind, stock for A?" names a subject, so the inventory fetch has
+    something to be about and runs."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    v = verdict(
+        topic_reset=True,
+        domain_hint="inventory",
+        entities=[entity("MHS1028", hint="product")],
+    )
+
+    _state2, plan = apply(
+        _state(Focus(), turn_no=2),
+        v,
+        build_policy(),
+        candidates={
+            "product": [
+                {
+                    "raw": "MHS1028",
+                    "hint": "product",
+                    "canonical_code": "MHS1028",
+                    "uuid": "uuid-mhs",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ]
+        },
+    )
+
+    assert [e["canonical_code"] for e in plan.fetch[0].entities] == ["MHS1028"]
+
+
+def test_an_empty_availability_block_opens_no_task():
+    """D35's engine half: the backend answered "which product?" with an EMPTY block, so
+    there are no slots to collect for and no task rides on from the turn. The fifty-slot
+    task Run 7 saw was one slot per catalogue row of that same block."""
+    from app.services.chatbot.turn.task import tasks_after_reply
+
+    assert tasks_after_reply((), [{"stock_availability": []}], turn_no=1) == ()

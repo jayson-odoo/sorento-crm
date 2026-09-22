@@ -482,3 +482,49 @@ def test_ten_products_are_still_named_in_full():
     assert out["intro"] == (
         "How many units do you need for " + ", ".join(codes[:-1]) + f" and {codes[-1]}?"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Review round 11 (D35): the dealer ask that named no product
+# --------------------------------------------------------------------------- #
+
+
+def test_an_availability_reply_with_no_product_asks_for_the_code():
+    """The backend answers a dealer stock ask that named no product with an EMPTY block
+    and `stock_visibility.needs_product` (D25: the server owns the rule). The reply is
+    one sentence asking for the code - never the catalogue, and never "No matching
+    results found", which would say we have nothing when nothing was asked about."""
+    payload = {
+        "data": [],
+        "pagination": {"total": 0, "page": 1, "limit": 50},
+        "empty": True,
+        "stock_visibility": {
+            "mode": "availability",
+            "source": "contact",
+            "hide_zero_locations": False,
+            "needs_product": True,
+        },
+        "stock_availability": [],
+        "last_updated_at": "2026-09-22T18:00:00",
+    }
+
+    out = env(payload)
+
+    assert out["intro"] == "Which product do you need? Send the product code and the quantity."
+    assert out["items"] == []
+    assert out["has_result"] is True, "the answer IS the question, not a miss"
+
+
+def test_the_flag_is_only_read_in_the_dealer_mode():
+    """A detailed reply carrying the same key (it never does today) is not re-worded -
+    the sentence belongs to the mode that has no rows to show."""
+    payload = {
+        "data": [],
+        "pagination": {"total": 0, "page": 1, "limit": 50},
+        "empty": True,
+        "stock_visibility": {"mode": "detailed", "needs_product": True},
+    }
+
+    out = env(payload)
+
+    assert out["intro"] != "Which product do you need? Send the product code and the quantity."

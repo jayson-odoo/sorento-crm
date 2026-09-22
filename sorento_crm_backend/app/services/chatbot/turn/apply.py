@@ -1247,7 +1247,7 @@ def _narrow_and_plan(
     attributes: tuple[str, ...] = (),
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
-    bare_quantity_only: bool = False,
+    refuse_empty_subject: bool = False,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -1371,7 +1371,7 @@ def _narrow_and_plan(
             row = policy.domain(name)
             date_window = focus.date_window if row and row.takes_date_filter else None
             if (
-                (len(domains) > 1 or bare_quantity_only)
+                (len(domains) > 1 or refuse_empty_subject)
                 and not entities
                 and not filters
                 and not date_window
@@ -1404,6 +1404,18 @@ def _narrow_and_plan(
                 # product: "reorder report" is a CARRY with no entities either, and it
                 # carries no number (`handbuilt-lsr-*`, which this guard regressed to
                 # `low_signal` when it tested only for an empty subject).
+                #
+                # D34 (review round 11) is the OTHER trigger, and the same shape once
+                # more: "never mind the stock check" parses as `topic_reset: true` with
+                # `intent_hint: "check_stock"` and no entities at all (live turn
+                # 8c11d51d). Round 10 removed the ladder's escalate offer that used to
+                # intercept that turn, so it reached the planner, and the intent word
+                # alone planned an unscoped inventory fetch - a catalogue page, returned
+                # as a fifty-product question, in answer to a CANCEL. Closing the task
+                # is the whole turn (D23); a cancel is not an ask. A reset that names a
+                # product ("never mind, stock for A?") has a subject and is untouched,
+                # and a reset aimed at another domain is that domain's turn, not this
+                # refusal's - `_REFUSES_EMPTY_SUBJECT` is inventory's own list.
                 #
                 # `len(domains) > 1` deliberately excludes a SINGLE-domain inventory
                 # ask with nothing to scope by (a "low stock report" with no
@@ -1796,12 +1808,22 @@ def apply(
         attributes,
         candidates,
         unplaced,
-        bare_quantity_only=(
-            decision.kind == CARRY
-            and _stated_quantity(verdict.get("demand_qty")) is not None
-            and not entities
-            and not focus.tasks
-            and not _kind_field(focus, "product")
+        refuse_empty_subject=(
+            # A bare number with nothing open (review round 9, finding 4) ...
+            (
+                decision.kind == CARRY
+                and _stated_quantity(verdict.get("demand_qty")) is not None
+                and not entities
+                and not focus.tasks
+                and not _kind_field(focus, "product")
+            )
+            # ... or a CANCEL (D34, review round 11): a topic reset that names nothing
+            # and asks for no quantity.
+            or (
+                verdict.get("topic_reset") is True
+                and not entities
+                and _stated_quantity(verdict.get("demand_qty")) is None
+            )
         ),
     )
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)

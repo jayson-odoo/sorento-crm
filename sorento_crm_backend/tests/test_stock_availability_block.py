@@ -1237,3 +1237,76 @@ def test_compact_mode_is_not_expanded_by_code(db):
     result = StockService(db).list_stock(product_ids=[mocha_p.id], contact_id=contact.id)
 
     assert [row["product_id"] for row in result["stock_summary"]] == [mocha_p.id]
+
+
+# ====== review round 11, D35: no product named, no catalogue question (finding)
+#
+# Live evidence Run 7, turn 8c11d51d and its follow-up: an `availability` contact whose
+# stock call carried NO product filter got the catalogue page back as a block of
+# `needs_quantity` entries, and the reply asked the dealer to quantify fifty products
+# they had never mentioned. The tool's own contract makes every filter optional ("call
+# with none to span every product"), which is right for the staff grid and wrong for a
+# dealer: a dealer's question is always about a product, so a question with none in it
+# has to be answered by asking for the code.
+#
+# D25 - the server owns the rule about who must state a quantity - so the server is
+# where "and about which product" belongs too.
+
+
+def test_availability_with_no_product_named_asks_for_the_code(db):
+    """No `product_ids`, no `product_id`: an empty block and the flag the presenter
+    renders one sentence from. Never a page of the catalogue as a question."""
+    brw = _wh(db, unique_code("ZZTR11")[:50])
+    for _ in range(3):
+        p = product(db, company_id=DEFAULT_COMPANY_ID)
+        stock(
+            db,
+            company_id=DEFAULT_COMPANY_ID,
+            product_id=p.id,
+            warehouse_id=brw.id,
+            on_hand=25,
+        )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(contact_id=contact.id)
+
+    assert result["stock_availability"] == []
+    assert result["stock_visibility"]["needs_product"] is True
+    assert result["data"] == [], "the dealer mode still names no location and no row"
+
+
+def test_availability_with_a_product_named_is_unchanged(db):
+    """The flag is absent - not false-y-by-accident, absent - whenever the caller did
+    name a product, so nothing about today's answer moves."""
+    brw = _wh(db, unique_code("ZZTR11")[:50])
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=25)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 5}
+    )
+
+    assert "needs_product" not in result["stock_visibility"]
+    assert [e["product_code"] for e in result["stock_availability"]] == [p.product_code]
+    assert result["stock_availability"][0]["verdict"] == "available"
+
+
+def test_compact_with_no_product_named_still_pages_the_catalogue(db):
+    """`compact` and `detailed` are untouched: they answer with rows and locations, and
+    a staff or n8n caller asking for the page is asking for the page."""
+    brw = _wh(db, unique_code("ZZTR11")[:50])
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=25)
+    contact = _contact(db)
+    _policy_row(db, mode="compact", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(contact_id=contact.id)
+
+    assert [row["product_id"] for row in result["stock_summary"]] == [p.id]
+    assert "needs_product" not in result["stock_visibility"]

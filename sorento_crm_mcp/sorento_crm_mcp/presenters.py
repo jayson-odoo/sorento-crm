@@ -115,6 +115,12 @@ _STOCK_COMPACT_INTRO = "Stock summary for the requested products."
 # The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
 # intro and nothing else for this mode), so the wording is the contract.
 _AVAILABILITY_ASK = "How many units do you need?"
+# D35 (review round 11): the dealer's stock ask named no product at all. The backend
+# answers with an EMPTY block and `stock_visibility.needs_product` rather than a
+# catalogue page of `needs_quantity` rows (D25: the server owns that rule), and this is
+# the one sentence that says so. Not "No matching results found" - nothing was asked
+# about, so there is nothing we do not have.
+_AVAILABILITY_NEEDS_PRODUCT = "Which product do you need? Send the product code and the quantity."
 _AVAILABILITY_YES = "Yes, we have stock."
 _AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
 _AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
@@ -1787,8 +1793,18 @@ def present_response(tool_name: str, raw: str) -> str:
         seen.add(sig)
         attachments.append(a)
 
-    has_result = bool(b.items or attachments or b.action_links)
-    if attachments:
+    # D35: an availability reply that asks for the product code. Read before
+    # `has_result` is decided, because the answer IS the question - a turn with no rows
+    # is not a miss here, and the miss wording ("No matching results found") would claim
+    # we have nothing of a product nobody named.
+    needs_product = stock_mode == "availability" and bool(
+        isinstance(data.get("stock_visibility"), dict)
+        and data["stock_visibility"].get("needs_product") is True
+    )
+    has_result = bool(b.items or attachments or b.action_links or needs_product)
+    if needs_product:
+        intro = _AVAILABILITY_NEEDS_PRODUCT
+    elif attachments:
         intro = "I have attached the file(s) below."
     elif not has_result:
         # An empty answer over more than one company has to name the companies it

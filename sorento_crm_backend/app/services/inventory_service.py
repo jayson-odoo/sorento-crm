@@ -1435,6 +1435,26 @@ class StockService:
                 )
             ]
 
+        # D35, review round 11: a DEALER question is always about a product, so a stock
+        # ask that names none is answered by asking for the code - never by returning
+        # the catalogue page as a question. The tool's own contract makes every filter
+        # optional ("call with none to span every product"), which is right for the
+        # staff grid and for n8n and wrong here: the block came back with one
+        # `needs_quantity` entry per catalogue row and the dealer was asked to quantify
+        # fifty products they had never mentioned (live evidence Run 7, turn 8c11d51d).
+        #
+        # The empty block is also what keeps the engine honest: no entries, no slots, no
+        # task (`turn/task.py::tasks_after_reply`). `needs_product` is what the MCP
+        # presenter renders its one sentence from - the same division of labour D25
+        # already sets, the server deciding and the presenter saying.
+        #
+        # `compact` and `detailed` return above and are untouched: they answer with rows
+        # and locations, and a caller asking either of them for a page means it.
+        if not named_ids:
+            payload["stock_visibility"]["needs_product"] = True
+            payload["stock_availability"] = []
+            return
+
         # availability: a verdict judged against the allowed locations only. No
         # quantity of OURS reaches the block - not the total, not the per-location
         # split, not on hand/incoming/PO themselves - because a number here is
