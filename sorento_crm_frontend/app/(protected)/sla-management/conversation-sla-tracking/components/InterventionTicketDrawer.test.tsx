@@ -1215,3 +1215,43 @@ describe('InterventionTicketDrawer My Team (not the assignee)', () => {
     expect(screen.queryByTestId('ticket-takeover')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Fix round 4: at 375x812, a real ticket (long thread + the composer's
+ * "Outside the 24h window..." template notice) rendered the thread's text on
+ * TOP of the composer's, at the same y - a real defect, reproduced twice.
+ * DOM probe found the thread's own scroll box correctly clipped to its
+ * `min-h-40` floor (clientHeight 158, scrollHeight 12793) - so the box ITSELF
+ * was fine; the structural risk is `SheetContent` ALSO being independently
+ * scrollable (its own `overflow-y-auto`, on top of `SheetBody`'s) and the
+ * composer having no `shrink-0` floor of its own, so a squeeze anywhere in
+ * that chain has nowhere safe to land. jsdom cannot measure real layout, so
+ * these pin the STRUCTURE the fix relies on, not the pixels.
+ */
+describe('InterventionTicketDrawer sheet layout (fix round 4, 375px overlap)', () => {
+  it('the sheet content itself does not scroll - only SheetBody does, so there is exactly one scroll container between it and the thread', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await screen.findByTestId('chat-list');
+
+    const sheetContent = document.querySelector('[data-slot="sheet-content"]');
+    expect(sheetContent).toBeTruthy();
+    expect(sheetContent?.className).not.toContain('overflow-y-auto');
+  });
+
+  it('the composer never shrinks below its natural height, however tight the thread gets', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const send = await screen.findByTestId('composer-send');
+    expect(send.closest('.shrink-0')).toBeTruthy();
+  });
+
+  it('the Reply/Comment mode switch never shrinks either', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const tab = await screen.findByTestId('composer-mode-reply');
+    expect(tab.closest('[role="tablist"]')?.className).toContain('shrink-0');
+  });
+});

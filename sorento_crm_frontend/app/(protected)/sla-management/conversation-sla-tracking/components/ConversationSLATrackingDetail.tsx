@@ -1066,7 +1066,12 @@ export default function ConversationSLATrackingDetail({
 
       {respondInboxUrl && (
         <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
-          <SheetContent side="right" className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
+          {/* Fix round 4: `overflow-hidden`, not `-y-auto` - `SheetBody`
+              below is the ONE scroll container. Same shape as the ticket
+              drawer's Sheet (InterventionTicketDrawer.tsx), same fix -
+              see its comment for why two scrollable ancestors around a
+              flex-fill thread is the defect. */}
+          <SheetContent side="right" className="flex w-full flex-col overflow-hidden sm:max-w-lg">
             <SheetHeader className="sr-only">
               <SheetTitle>Chat Records</SheetTitle>
             </SheetHeader>

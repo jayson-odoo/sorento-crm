@@ -267,12 +267,16 @@ export default function TicketConversationPanel({
         </>
       )}
 
-      {/* ---- Mode switch: message the contact, or note to the team ---- */}
+      {/* ---- Mode switch: message the contact, or note to the team ----
+          `shrink-0` (fix round 4): a flex COLUMN child can still be
+          squeezed by the flex algorithm when the thread above it is
+          fighting for space at its `min-h-40` floor - this bar (and the
+          composer below) must never lose height to that fight. */}
       {ticket && (
         <div
           role="tablist"
           aria-label="Composer mode"
-          className="flex w-full gap-1 rounded-md border bg-muted/40 p-1"
+          className="flex w-full shrink-0 gap-1 rounded-md border bg-muted/40 p-1"
         >
           {(['reply', 'comment'] as const).map((mode) => (
             <button
@@ -297,62 +301,70 @@ export default function TicketConversationPanel({
         </div>
       )}
 
+      {/* `shrink-0` wrapper (fix round 4): neither composer variant accepts a
+          className of its own, and a bare flex-column child can still be
+          squeezed by the algorithm - this must always render at its full
+          natural height, never fight the thread above it for space. */}
       {ticket && composerMode === 'comment' && (
-        <InternalCommentComposer
-          disabled={isResolved}
-          disabledMessage="This ticket is resolved."
-          onSubmit={({ body, mentionedUserIds }) =>
-            commentMutation.mutateAsync({
-              body,
-              mentioned_user_ids: mentionedUserIds,
-            })
-          }
-        />
+        <div className="shrink-0">
+          <InternalCommentComposer
+            disabled={isResolved}
+            disabledMessage="This ticket is resolved."
+            onSubmit={({ body, mentionedUserIds }) =>
+              commentMutation.mutateAsync({
+                body,
+                mentioned_user_ids: mentionedUserIds,
+              })
+            }
+          />
+        </div>
       )}
 
       {/* Held back while the ticket is still loading: its window state and send
           capabilities decide what the composer even offers, and a flash of
           "replying is not available" is a lie the next render corrects. */}
       {composerMode === 'reply' && !ticketQuery.isLoading && (
-        <SharedConversationComposer
-          entityType="conversation_sla"
-          entityId={ticket?.id ?? ticketId ?? ''}
-          canReply={canReply}
-          mode="conversation"
-          attachmentsEnabled={!!ticket?.send_capabilities.includes('attachment')}
-          // A manual template send is a reply too: stamp THIS ticket, or the
-          // response clock runs on while the contact has an answer.
-          templateSendTrackingId={ticket?.id ?? null}
-          // Composer parity with Respond's own inbox (UAC AC-L4 / AC-L5).
-          // Snippet variables resolve against THIS ticket, and the AI draft is
-          // grounded on THIS thread - both server-side, so the panel only has
-          // to say which ticket it is.
-          snippetsEnabled={!!ticket}
-          snippetTrackingId={ticket?.id ?? null}
-          emojiEnabled={!!ticket}
-          onAiAssist={
-            ticket
-              ? async ({ instruction }) => {
-                  const result = await aiDraftMutation.mutateAsync({ instruction });
-                  return result.draft;
-                }
-              : undefined
-          }
-          onSent={handleSent}
-          // Optimistic send (M6-01): the bubble goes up before the request
-          // completes and comes down once `handleSent`'s thread refetch lands.
-          pendingBubble={{ add: thread.addPending, remove: thread.removePending }}
-          windowStateOverride={
-            ticket ? { closed: !ticket.window.open, template: ticket.chat_template } : null
-          }
-          sendAdapter={
-            ticket
-              ? (payload) =>
-                  sendMutation.mutateAsync({ text: payload.text, attachments: payload.files })
-              : undefined
-          }
-          notAvailableMessage={notAvailableMessage}
-        />
+        <div className="shrink-0">
+          <SharedConversationComposer
+            entityType="conversation_sla"
+            entityId={ticket?.id ?? ticketId ?? ''}
+            canReply={canReply}
+            mode="conversation"
+            attachmentsEnabled={!!ticket?.send_capabilities.includes('attachment')}
+            // A manual template send is a reply too: stamp THIS ticket, or the
+            // response clock runs on while the contact has an answer.
+            templateSendTrackingId={ticket?.id ?? null}
+            // Composer parity with Respond's own inbox (UAC AC-L4 / AC-L5).
+            // Snippet variables resolve against THIS ticket, and the AI draft is
+            // grounded on THIS thread - both server-side, so the panel only has
+            // to say which ticket it is.
+            snippetsEnabled={!!ticket}
+            snippetTrackingId={ticket?.id ?? null}
+            emojiEnabled={!!ticket}
+            onAiAssist={
+              ticket
+                ? async ({ instruction }) => {
+                    const result = await aiDraftMutation.mutateAsync({ instruction });
+                    return result.draft;
+                  }
+                : undefined
+            }
+            onSent={handleSent}
+            // Optimistic send (M6-01): the bubble goes up before the request
+            // completes and comes down once `handleSent`'s thread refetch lands.
+            pendingBubble={{ add: thread.addPending, remove: thread.removePending }}
+            windowStateOverride={
+              ticket ? { closed: !ticket.window.open, template: ticket.chat_template } : null
+            }
+            sendAdapter={
+              ticket
+                ? (payload) =>
+                    sendMutation.mutateAsync({ text: payload.text, attachments: payload.files })
+                : undefined
+            }
+            notAvailableMessage={notAvailableMessage}
+          />
+        </div>
       )}
     </div>
   );

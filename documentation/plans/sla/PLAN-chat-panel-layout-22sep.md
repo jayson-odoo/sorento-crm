@@ -1,6 +1,6 @@
 # PLAN: ticket chat panel - one-line enquiry quote, thread fills the sheet, reply-to jump fetches back
 
-Status: review READY, fix round 3 (replyTo.id) pushed, browser B3 re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
+Status: review READY, browser B3 PASS, 375 overlap fix pushed, re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
 UAC: `chat-panel-layout-22sep-acceptance-criteria.md`
 Owner rulings (22 Sep 2026): R2 enquiry quote is one line, chat window takes the most space; R3 Chat Records popup thread flex-fills; R4 reply-to jump reuses the search-jump fetch.
 
@@ -29,6 +29,18 @@ Staff opens a ticket (worklist drawer or SLA detail "Chat Records"). Today a lon
 ## Fix round 3 (browser pass FAIL on AC-CP-B3, real defect)
 
 `lib/respondIoChatRender.ts:53-57` typed `replyTo.messageId` and `describeQuotedContext` (`:331`) read `reply.messageId` - but the LIVE Respond.io relay's `replyTo` carries the quoted message's id as `id`, never `messageId` (verified in the browser: `"replyTo": {"id": 1788922281019104, "message": {...}, "mId": "...", "sender": {...}}`, no `messageId` key at all). Every quote in production rendered as an inert div, including one whose target was in the loaded window. Every test fixture used `messageId`, which is why the suite stayed green. Fixed by reading `reply.id ?? reply.messageId` (the `??` keeps the local `chat_histories` mirror's reconstructed shape working - `conversation_thread_service.py`'s `_row_to_item` still writes `messageId`). Confirmed `conversation_thread_service.py`'s `_respond_item()` passes Respond's raw `replyTo` through untouched for the live "respond" lane - no backend rename, the fix is frontend-only. Note: `persist_messages` in the same backend file (line ~560) reads `reply_to.get("messageId")` too, for the LOCAL search-cache write path - same wrong key, a separate function, flagged but out of this round's scope.
+
+## Fix round 4 (AC-CP-B3 PASS; new 375px overlap defect on the SAME run)
+
+At 375x812, ticket ac2e3912 (Niki) opened via `/?ticket=<id>`, reproduced twice on a fresh load: the message thread's text rendered on top of the composer's "Outside the 24h window - this is sent as the template..." text, at the same y. DOM probe: one `.overflow-y-auto` measured `scrollHeight 12793`, `clientHeight 158` - the thread's own scroll box (`min-h-40` floor, `RespondChatList.tsx:875`) is correctly clipping and scrolling its OWN content; that box is not the defect.
+
+Diagnosed against `origin/main` first: `SheetContent`'s className (`overflow-y-auto`, explicit at the call site) and `SheetBody`'s (also `overflow-y-auto`, from `sheet.tsx`'s own base class) are BOTH unchanged since main - the double-scroll-container structure (reviewer's S3 candidate) is pre-existing, not introduced by this lane. What IS new in this lane is the enquiry quote now being one line (freeing space) and the flex-fill wiring this PLAN's own R2/R3 fixes rely on - neither explains the overlap on its own, and the composer/tablist have never carried `shrink-0`, on main or here.
+
+Fixed at the smallest seam, in the two files this lane already owns:
+1. `InterventionTicketDrawer.tsx` and `ConversationSLATrackingDetail.tsx`'s Chat Records `Sheet`: `SheetContent`'s className changed from `overflow-y-auto` to `overflow-hidden` - `SheetBody` is the ONE intended scroll container (its own docstring says so), and `SheetContent` sits at a fixed `h-full`, so it never needs to scroll on its own; letting it stay independently scrollable gave the layout two competing scroll contexts around the same flex-fill thread.
+2. `TicketConversationPanel.tsx` (shared by both surfaces): the Reply/Comment mode-switch bar gets `shrink-0` directly; `InternalCommentComposer` and `SharedConversationComposer` (neither accepts a `className`) are each wrapped in a `<div className="shrink-0">` - neither carried a shrink floor before, on main or here, so a squeeze anywhere upstream had nowhere safe to land.
+
+Vitest cannot measure real layout (jsdom's `scrollWidth`/`clientHeight` are always 0), so the new tests pin the STRUCTURE: `SheetContent`'s rendered className never contains `overflow-y-auto`, and the composer / mode-switch DOM carries a `.shrink-0` ancestor. Confirmed red before the fix, green after.
 
 ## Browser verification
 

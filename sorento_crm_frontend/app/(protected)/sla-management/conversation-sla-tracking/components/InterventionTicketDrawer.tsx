@@ -222,7 +222,13 @@ export default function InterventionTicketDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-2xl sm:p-6 lg:max-w-4xl"
+        // Fix round 4: `overflow-hidden`, not `-y-auto` (the base primitive's
+        // default) - `SheetBody` below is the ONE scroll container (it has
+        // its own `overflow-y-auto`, on purpose). Two independently
+        // scrollable ancestors around the same flex-fill thread fought each
+        // other at 375x812 and the thread's text rendered on top of the
+        // composer's (AC-CP-B1 375 overlap defect).
+        className="flex w-full flex-col gap-3 overflow-hidden p-4 sm:max-w-2xl sm:p-6 lg:max-w-4xl"
       >
         <SheetHeader className="border-b pb-3 pe-8">
           <div className="flex flex-wrap items-center gap-2">
