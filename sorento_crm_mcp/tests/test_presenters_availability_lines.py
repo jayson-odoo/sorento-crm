@@ -279,6 +279,65 @@ def test_item_line_incoming_null_eta_renders_to_be_confirmed():
     )
 
 
+# ============================================================ Review round 2, SEC-N3
+
+
+def test_item_line_falls_back_to_product_name_when_code_is_null():
+    """Review round 2. A row the resolver only matched by name carries no
+    `product_code` - the item line falls back to `product_name` rather than
+    printing the Python `None`."""
+    entry = _entry(
+        None,
+        requested_qty=5,
+        available=True,
+        verdict="available",
+        running_low=False,
+    )
+    entry["product_name"] = "Basin Mixer"
+    out = env(_availability_payload([entry]))
+
+    rendered = _rendered_text(out)
+    assert "Basin Mixer x 5: Yes, available." in rendered
+    assert "None" not in rendered
+
+
+def test_item_with_neither_code_nor_name_is_dropped_not_rendered_as_none():
+    """Review round 2. A row with NEITHER `product_code` nor `product_name` cannot
+    be named to a person at all - it is dropped from the reply entirely, never
+    rendered as the string `None`. A second, nameable row still renders."""
+    nameless = _entry(None, requested_qty=5, available=True, verdict="available", running_low=False)
+    nameless["product_name"] = None
+    named = _entry("MWT5727SS-CR", requested_qty=5, available=True, verdict="available", running_low=False)
+    out = env(_availability_payload([nameless, named]))
+
+    assert len(out["items"]) == 1
+    rendered = _rendered_text(out)
+    assert "None" not in rendered
+    assert "MWT5727SS-CR x 5: Yes, available." in rendered
+
+
+def test_noted_and_missing_question_falls_back_to_name_and_drops_nameless():
+    """Review round 2, the AC-1757 question half. A `missing` row with no code
+    falls back to its name; a row with neither is dropped from the "how many for
+    ..." list and from the "Noted: ..." clause, never printed as `None`."""
+    noted_nameless = _entry(None, requested_qty=5, needs_quantity=False, available=True, verdict="available")
+    noted_nameless["product_name"] = None
+    noted_named = _entry(None, requested_qty=60, needs_quantity=False, available=True, verdict="available")
+    noted_named["product_name"] = "Shower Mixer"
+    missing_named = _entry(None, needs_quantity=True)
+    missing_named["product_name"] = "Basin Mixer"
+    missing_nameless = _entry(None, needs_quantity=True)
+    missing_nameless["product_name"] = None
+
+    out = env(
+        _availability_payload([noted_nameless, noted_named, missing_named, missing_nameless])
+    )
+
+    assert "None" not in out["intro"]
+    assert "Noted: Shower Mixer x 60" in out["intro"]
+    assert "How many units do you need for Basin Mixer?" in out["intro"]
+
+
 # ============================================================ AC-1757
 
 

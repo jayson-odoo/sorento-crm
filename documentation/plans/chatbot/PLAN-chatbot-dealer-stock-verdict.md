@@ -88,9 +88,12 @@ keeps today's `needs_quantity: true, available: null`. A product with an ask get
   "available": false,                       # kept: the presenter's existing key
   "verdict": "not_available", "running_low": false,
   "disclaimer": {"sources": ["incoming"], "limited": true,
-                 "incoming_eta": "2026-10-12", "purchase_eta_days": 90}
+                 "incoming_eta": "2026-10-12", "purchase_eta_days": null}
 }
 ```
+
+`purchase_eta_days` is set only when `purchase` is itself a named source; here `sources` names
+`incoming` alone, so it stays `null` even though a purchase line may also exist.
 
 `disclaimer` is `null` when `sources` is empty. No quantity of ours is in the block; the existing
 `_assert_no_quantity_anywhere` sweep guards it (AC-1740 to AC-1752). `detailed` and `compact`

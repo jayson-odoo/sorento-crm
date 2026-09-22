@@ -2305,8 +2305,17 @@ def _run_stages(  # noqa: PLR0915
                     turn_no=turn_no,
                     # SEC-S2: did this ask name a product at all? A bare "what stock do
                     # you have?" fetches a page of the catalogue, and a task must not be
-                    # opened to collect a quantity for every row of it.
-                    named_products=any(spec.entities for spec in fetch_plan.fetch),
+                    # opened to collect a quantity for every row of it. Scoped to the
+                    # INVENTORY spec only (review round 2): a multi-domain ask like
+                    # "promo for X, and what stock do we have?" names X on the
+                    # promotion spec, not on the inventory one, and `any(...)` across
+                    # every domain's spec read that as "a product was named" and opened
+                    # a stock task for the whole catalogue page anyway.
+                    named_products=any(
+                        spec.entities
+                        for spec in fetch_plan.fetch
+                        if spec.domain == "inventory"
+                    ),
                 )
                 turn_trace.record(
                     "looked_up",

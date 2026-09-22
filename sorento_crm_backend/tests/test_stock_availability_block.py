@@ -751,6 +751,40 @@ def test_availability_supply_outside_the_asked_warehouse_is_not_counted(db):
     assert entry["disclaimer"] is None
 
 
+def test_availability_supply_outside_the_singular_warehouse_id_is_not_counted(db):
+    """Review round 2: the SAME narrowing as the test above, but through the singular
+    `warehouse_id` query param ("stock at BRW", not the plural `warehouse_ids=[...]`
+    list). `list_stock` resolves it to `resolved_wh_ids` and uses it to narrow the
+    on-hand read, but before this fix `_apply_stock_visibility` was only ever handed
+    the plural `warehouse_ids` argument - so a caller asking with the singular param
+    left the three supply reads unscoped and an allocation parked at MWH still leaked
+    into a verdict about BRW."""
+    brw = _wh(db, "ZZTBRW")
+    mwh = _wh(db, "ZZTMWH")
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
+    _allocation(
+        db,
+        product_id=p.id,
+        warehouse_id=mwh.id,
+        allocated=10,
+        expected_date=date(2026, 10, 12),
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id, mwh.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id],
+        contact_id=contact.id,
+        warehouse_id=brw.id,
+        requested_quantities={p.id: 110},
+    )
+
+    entry = _entry(result, p.id)
+    assert entry["disclaimer"] is None
+
+
 # ============================================================ AC-1752, route level
 
 

@@ -1018,8 +1018,14 @@ class StockService:
                 limit=limit,
                 # SEC-S1: the SAME location narrowing the on-hand query above ran
                 # with ("stock at BRW"), so the supply reads cannot answer from a
-                # warehouse the question itself excluded.
-                warehouse_ids=warehouse_ids,
+                # warehouse the question itself excluded. Merged with
+                # `resolved_wh_ids` (review round 2): the singular `warehouse_id`
+                # param narrows the on-hand read above but, unmerged, left the
+                # three supply reads unscoped - a question asking about ONE
+                # warehouse by its singular param still counted supply parked at
+                # every other one.
+                warehouse_ids=list({*(warehouse_ids or []), *(resolved_wh_ids or [])})
+                or None,
             )
 
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock

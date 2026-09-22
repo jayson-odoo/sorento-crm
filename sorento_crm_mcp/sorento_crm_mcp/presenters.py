@@ -1421,11 +1421,19 @@ def _format_eta_ddmmyyyy(iso_date: Optional[str]) -> str:
     return f"{day}/{month}/{year}"
 
 
+def _availability_label(entry: dict) -> Optional[str]:
+    """Review round 2. The frontend's own "no UUIDs in the UI" rule, here at the
+    presenter seam: a row with no `product_code` (a row the resolver only matched by
+    name) falls back to `product_name`, and a row with NEITHER has no way to be named
+    to a person at all - callers skip it rather than print `None`."""
+    return entry.get("product_code") or entry.get("product_name")
+
+
 def _availability_line(entry: dict) -> str:
     """AC-1755/AC-1756: one line, `CODE x N: <verdict>.` D17 - the only integers
     ever in it are the dealer's own asked quantity, the ETA date and the
     lead-time days; never a quantity of ours."""
-    code = entry.get("product_code")
+    code = _availability_label(entry)
     qty = entry.get("requested_qty")
     if entry.get("verdict") == "available":
         tail = "Yes, available, but running low." if entry.get("running_low") else "Yes, available."
@@ -1453,16 +1461,27 @@ def _availability_line(entry: dict) -> str:
 def _noted_and_missing_question(noted: list[dict], missing: list[dict]) -> str:
     """AC-1757 (D14): what is noted, then one question for what is still
     missing - never a verdict, for anybody, until every product has a quantity
-    or the dealer says to proceed (S3's job, not this presenter's)."""
-    missing_codes = [str(e.get("product_code")) for e in missing]
+    or the dealer says to proceed (S3's job, not this presenter's).
+
+    Review round 2: a row with no `product_code` falls back to `product_name`
+    (`_availability_label`), and a row with neither is dropped from the sentence
+    entirely - there is no way to ask about it by name."""
+    missing_codes = [label for label in (_availability_label(e) for e in missing) if label]
+    if not missing_codes:
+        return "How many units do you need?"
     if len(missing_codes) > 1:
         missing_text = ", ".join(missing_codes[:-1]) + " and " + missing_codes[-1]
     else:
         missing_text = missing_codes[0]
     question = f"How many units do you need for {missing_text}?"
-    if not noted:
+    noted_pairs = [
+        (label, e.get("requested_qty"))
+        for e, label in ((e, _availability_label(e)) for e in noted)
+        if label
+    ]
+    if not noted_pairs:
         return question
-    noted_text = ", ".join(f"{e.get('product_code')} x {e.get('requested_qty')}" for e in noted)
+    noted_text = ", ".join(f"{code} x {qty}" for code, qty in noted_pairs)
     return f"Noted: {noted_text}. {question}"
 
 
@@ -1484,7 +1503,13 @@ def _stock_availability(payload: dict, b: _Builder) -> None:
     legacy = _is_legacy_availability(entries)
     show_verdict = not legacy and not any(e.get("needs_quantity") for e in entries)
     for entry in entries:
-        title = _availability_line(entry) if show_verdict else entry.get("product_code")
+        label = _availability_label(entry)
+        if not label:
+            # Review round 2: neither `product_code` nor `product_name` - there is
+            # no way to name this row to a person, so it is dropped rather than
+            # rendered as `None`.
+            continue
+        title = _availability_line(entry) if show_verdict else label
         b.raw_item(
             title,
             [],

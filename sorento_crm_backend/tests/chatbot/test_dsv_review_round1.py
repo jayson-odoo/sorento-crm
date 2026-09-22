@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from tests.chatbot._turn_helpers import build_policy, entity, verdict
+from tests.chatbot._turn_helpers import _domain_row, _kind_row, build_policy, entity, verdict
 
 
 def _state(focus, *, pending=None, turn_no=0, profile=None):
@@ -174,6 +174,125 @@ def test_task_fetch_carries_the_task_slots_not_only_this_turns_entities():
         "uuid-c": 110,
         "uuid-d": 20,
     }
+
+
+def test_task_fetch_beats_a_task_question_from_the_same_turn(monkeypatch):
+    """Review round 2. `task_mod.run()`'s own contract lets `TaskOutcome` carry a
+    `fetch` AND a `question` together - nothing about its return shape rules that out,
+    and a future kind that fills one task while resuming another (owing its own
+    question) is exactly the case this test stands in for, via a throwaway `run()`
+    that returns both. RED before the fix: `if task_outcome.question:` fired
+    unconditionally and returned the question-only Plan, silently dropping the fetch
+    the fill had already earned."""
+    from app.services.chatbot.turn import apply as apply_mod
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.plan import FetchSpec
+    from app.services.chatbot.turn.state import Focus
+    from app.services.chatbot.turn.task import TaskOutcome
+
+    task = _stock_task(slots=[("uuid-c", "C", 110)])
+    focus = Focus(tasks=(task,))
+    fake_outcome = TaskOutcome(
+        tasks=(task,),
+        fetch=FetchSpec(domain="inventory", entities=[], filters={}, date_window=None),
+        fetch_domain="inventory",
+        question="How many units do you need for D?",
+        question_domain="inventory",
+    )
+    monkeypatch.setattr(apply_mod.task_mod, "run", lambda *a, **k: fake_outcome)
+    v = verdict(entities=[entity("C", hint="product", quantity=110)])
+
+    _state2, plan = apply(_state(focus), v, build_policy())
+
+    assert plan.fetch, "the fetch a fill just earned must not be dropped for a question"
+    assert plan.ask is None
+    assert plan.trace.task_question is None
+
+
+def test_engine_named_products_reads_only_the_inventory_specs_own_entities(
+    session_factory, monkeypatch
+):
+    """Review round 2, engine level (not just `apply()`'s Plan shape): `engine.py`'s
+    `named_products=any(spec.entities for spec in fetch_plan.fetch)` read EVERY
+    domain's spec, not just inventory's own - a multi-domain ask that names a product
+    for one domain and asks inventory as a bare, general "what stock do we have"
+    would have opened a stock task for the whole catalogue page off a product
+    inventory itself was never asked about.
+
+    Under today's real `policy_rows.py` config, inventory only narrows on `product`
+    (`list_all`), so on a real multi-domain ask its spec either carries the SAME
+    resolved entities as every other domain narrowing on `product` too (both formulas
+    then agree), or - nothing named at all - gets refused outright by D5(b)'s
+    `_REFUSES_EMPTY_SUBJECT` before it ever reaches `fetch_plan.fetch` (so there is no
+    inventory spec for either formula to read). A throwaway two-domain `Policy`
+    (`load_policy` monkeypatched, `inventory` given NO `product` narrowing kind,
+    `takes_date_filter=True` so D5(b) does not refuse it) is what pins a config where
+    the two genuinely disagree - the same way this policy could grow a domain like it.
+    `turn_task.tasks_after_reply` is spied so the real, PRODUCTION `named_products`
+    value this turn computed is read straight off the call, not reconstructed by the
+    test. RED before the fix: the spy captures `True` (any spec, off promotion's
+    entities alone); the FIX captures `False` (inventory's own spec named nothing)."""
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.turn.policy import Policy
+    from tests.chatbot.test_engine import _parser_output
+    from tests.chatbot.test_outstanding_lane import (
+        PRODUCT_CODE,
+        PRODUCT_UUID,
+        _run_turn,
+        _seed_contact,
+    )
+
+    inventory_row = _domain_row("inventory", narrowing={}, tools=("crm_inventory_stock_balance_list",))
+    inventory_row["takes_date_filter"] = True
+    promotion_row = _domain_row(
+        "promotion", narrowing={"product": "narrow_to_code"}, tools=("crm_marketing_promotions_list",)
+    )
+    policy = Policy.from_rows(
+        domains=[inventory_row, promotion_row],
+        kinds=[_kind_row("product", default_narrowing="narrow_to_code")],
+        tier_order=[],
+    )
+    monkeypatch.setattr(engine_mod, "load_policy", lambda db: policy)
+
+    captured: list[bool] = []
+    real_tasks_after_reply = engine_mod.turn_task.tasks_after_reply
+
+    def _spy(tasks, envelopes, *, turn_no=0, named_products=True):
+        captured.append(named_products)
+        return real_tasks_after_reply(
+            tasks, envelopes, turn_no=turn_no, named_products=named_products
+        )
+
+    monkeypatch.setattr(engine_mod.turn_task, "tasks_after_reply", _spy)
+
+    _seed_contact(session_factory, variables={})
+    _run_turn(
+        session_factory,
+        monkeypatch,
+        qf=_parser_output(
+            domain_hint=None,
+            intent_hint=None,
+            entities=[
+                {
+                    "raw": PRODUCT_CODE,
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+            ],
+            asks=[{"domain": "promotion"}, {"domain": "inventory"}],
+        ),
+        text_body=f"promo for {PRODUCT_CODE}, and what stock do we have generally?",
+        msg_id="zzt-review2-named-products",
+        matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "code": PRODUCT_CODE, "entity_type": "product"}},
+        mcp_response={"has_result": False, "items": []},
+    )
+
+    assert captured == [False], (
+        "inventory's own spec named nothing (it has no product narrowing kind in "
+        "this policy) - a product some OTHER domain's spec named must not count"
+    )
 
 
 # --------------------------------------------------------------------------- #

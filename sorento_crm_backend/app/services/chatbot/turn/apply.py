@@ -1481,10 +1481,14 @@ def apply(
     if task_outcome.clears_pending:
         pending_after = None
 
-    if task_outcome.question:
+    if task_outcome.question and not task_locked:
         # A task RESUMED, or one a bare number could not be attributed inside: nothing
         # is fetched and nothing is rostered - only what is still owed is asked, and
-        # nothing is asked twice (D22, AC-1765, AC-1772).
+        # nothing is asked twice (D22, AC-1765, AC-1772). `not task_locked` (review
+        # round 2): a kind that fills one task AND resumes a different one carries
+        # both `task_outcome.fetch` and `task_outcome.question` - the fetch is what
+        # this turn actually answered and must win, never dropped silently in favour
+        # of asking about the OTHER task instead.
         trace.task_question = task_outcome.question
         asked = State(
             focus=focus,
