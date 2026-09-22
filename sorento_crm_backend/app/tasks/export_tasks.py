@@ -1044,17 +1044,20 @@ def generate_order_inquiry_worklist_xlsx(
     scope travels as `company_id`, snapshotted at enqueue time - the same shape
     `generate_promotions_pdf`'s own `company_id` param uses.
 
-    No `company_id` (a direct call, or a caller with no single-company scope) leaves
-    the worker under its default UNSET scope: no rows, fail-closed, same rule every
+    No `company_id` (a direct call, or a caller with no single-company scope) sets
+    the scope to `UNSET` explicitly - review fix round 4, matching
+    `generate_order_inquiry_xlsx`'s own no-company branch - never merely left at
+    whatever the session already carried: no rows, fail-closed, same rule every
     other export task in this module follows.
     """
     db = SessionLocal()
-    from app.models.base import get_company_scope
+    from app.models.base import UNSET, get_company_scope
 
     caller_scope = get_company_scope(db)
     if company_id:
         set_company_scope(db, frozenset({str(company_id)}))
     else:
+        set_company_scope(db, UNSET)
         logger.warning(
             "generate_order_inquiry_worklist_xlsx: download %s carries no company "
             "scope; export runs under no company", download_id,

@@ -700,13 +700,24 @@ def test_generate_order_inquiry_xlsx_real_render_sees_the_headers_own_row(api, m
     tests above: since fix round 2 that header now REFUSES to render at all (raises,
     `export_xlsx` never called) rather than rendering an empty book, so there is no
     separate "renders empty" case left to prove for this task.
+
+    Reviewer round 2, item 1 (should-fix): this task reads the header under the
+    BROAD `None` scope first (deliberately, to find it regardless of caller scope)
+    and only narrows afterward - the render is scoped to exactly this one
+    `inquiry_id` regardless, so row VISIBILITY cannot tell "narrowed to the header's
+    own company" apart from "still broad `None`" (both show the row; a different
+    company's own, differently-`inquiry_id`'d row would never show either way, since
+    the query is already narrowed by id). A spy on `set_company_scope` is what
+    actually proves the narrowing call ran, with the right argument - genuinely red
+    under the reviewer's `if False:` mutation around it (verified, reverted), where
+    the row-visibility assertion alone was not.
     """
     import io
 
-    import openpyxl
-
     from app.services.download_service import DownloadService
     from app.tasks import export_tasks
+
+    import openpyxl
 
     client, db, company_id = api
     item_code = f"{MARKER}-REALITEM"
@@ -731,9 +742,21 @@ def test_generate_order_inquiry_xlsx_real_render_sees_the_headers_own_row(api, m
     monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
     monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
 
+    scope_calls: list = []
+    real_set_company_scope = export_tasks.set_company_scope
+
+    def _spy_set_company_scope(db_, scope):
+        scope_calls.append(scope)
+        return real_set_company_scope(db_, scope)
+
+    monkeypatch.setattr(export_tasks, "set_company_scope", _spy_set_company_scope)
+
     result = export_tasks.generate_order_inquiry_xlsx(str(dl.id), inquiry_id, user_id)
 
     assert result["status"] == "ready", result
+    assert frozenset({str(company_id)}) in scope_calls, (
+        "the task must narrow the scope to the header's own company"
+    )
     wb = openpyxl.load_workbook(io.BytesIO(captured["bytes"]))
     values = [
         cell.value for sheet in wb.worksheets for row in sheet.iter_rows() for cell in row
@@ -822,11 +845,18 @@ def test_generate_order_inquiry_worklist_xlsx_real_render_with_company_id_kwarg(
     """Correctness review fix round 3, item 2: a REAL `export_xlsx` render (no
     monkeypatch on it) with `company_id` set to the caller's own company - the
     seeded row's item code must be in the workbook bytes, proving the adopted scope
-    actually let the render see it."""
+    actually let the render see it.
+
+    Reviewer round 2, item 1 (should-fix): `set_company_scope(db, UNSET)` runs right
+    before the task call, for the same reason the per-header test's own twin does -
+    the `api` fixture already has `db` scoped to this company for the whole test, so
+    without this the assertion would pass even if `company_id` were never adopted.
+    """
     import io
 
     import openpyxl
 
+    from app.models.base import UNSET, set_company_scope
     from app.services.download_service import DownloadService
     from app.tasks import export_tasks
 
@@ -852,6 +882,7 @@ def test_generate_order_inquiry_worklist_xlsx_real_render_with_company_id_kwarg(
     monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
     monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
 
+    set_company_scope(db, UNSET)
     result = export_tasks.generate_order_inquiry_worklist_xlsx(
         str(dl.id), {}, user_id, company_id=str(company_id),
     )
