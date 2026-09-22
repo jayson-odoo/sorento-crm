@@ -649,6 +649,7 @@ class StockService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         requested_qty: Optional[int] = None,
+        requested_quantities: Optional[dict] = None,
     ):
         """List stock with product and warehouse info.
 
@@ -674,6 +675,12 @@ class StockService:
                 of a sentence by an LLM, so a 0 is a parse artefact rather than a
                 demand, and refusing the call would lose the question ("how many
                 units do you need?") along with the number.
+            requested_quantities: Dealer stock verdict S1 (D20). Product UUID -> the
+                quantity asked for THAT product, one turn's whole ask rather than a
+                single scalar. Only read in `availability` mode. Per product the map
+                wins; `requested_qty` fills any product it does not name. A mapped
+                value below 1 is read as NOT PROVIDED, the same rule `requested_qty`
+                follows above and for the same reason.
         """
         from sqlalchemy import or_, func
         from app.services.stock_visibility import resolve_policy, warehouse_criterion
@@ -1005,6 +1012,7 @@ class StockService:
                 policy_q=policy_q,
                 last_import_at=last_import_at,
                 requested_qty=requested_qty,
+                requested_quantities=requested_quantities,
                 requested_product_ids=resolved_input_product_ids,
                 page=page,
                 limit=limit,
@@ -1190,6 +1198,7 @@ class StockService:
         requested_product_ids: set[str],
         page: int,
         limit: int,
+        requested_quantities: Optional[dict] = None,
     ) -> None:
         """Attach the visibility block(s) and, for the two summary modes, empty `data`.
 
@@ -1348,25 +1357,186 @@ class StockService:
             ]
             return
 
-        # availability: a yes/no judged against the allowed locations only. No
-        # quantity of any kind reaches the block - not the total, not the
-        # per-location split - because a number here is exactly what the dealer
-        # policy exists to withhold.
-        payload["stock_availability"] = [
-            {
+        # availability: a verdict judged against the allowed locations only. No
+        # quantity of OURS reaches the block - not the total, not the per-location
+        # split, not on hand/incoming/PO themselves - because a number here is
+        # exactly what the dealer policy exists to withhold. Only the dealer's own
+        # asked quantity (echoed back) and `stock_verdict.verdict()`'s judgement of
+        # it ever appear (dealer stock verdict S1, D1 to D3, D6, D8 to D11, D20).
+        from app.models.order import SalesOrderLine
+        from app.models.procurement import (
+            InboundShipment,
+            PurchaseOrder,
+            PurchaseOrderLine,
+            SPOAllocation,
+        )
+        from app.models.user import SystemSetting
+        from app.services.stock_verdict import verdict as compute_verdict
+
+        # D2: open SO subtracted from on-hand, per the SAME warehouse_criterion as
+        # `on hand` itself. A line with no destination is never subtracted - it
+        # cannot be placed at any warehouse the policy names, allowed or not.
+        so_rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                func.sum(SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered).label(
+                    "open_qty"
+                ),
+            )
+            .filter(
+                SalesOrderLine.product_id.in_(page_ids),
+                SalesOrderLine.warehouse_id.isnot(None),
+                warehouse_criterion(policy, SalesOrderLine.warehouse_id),
+                SalesOrderLine.line_status == "open",
+                SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            )
+            .group_by(SalesOrderLine.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        open_so_by_product = {str(r.product_id): float(r.open_qty or 0) for r in so_rows}
+
+        # D9, D10, D11: incoming = `spo_allocations` under `scm.on_order_v`'s own
+        # predicate, verbatim (`alembic/versions/420_spo_docs_in_allocations.py`,
+        # `on_order_from_spo_documents`), plus the SAME policy set. ETA = the
+        # earliest `expected_date` among the counted rows (D10); PO is never netted
+        # against it (D11, measured disjoint).
+        _RECEIVED_SHIPMENT_STATES = (
+            "fully_received",
+            "closed",
+            "received",
+            "completed",
+            "cancelled",
+        )
+        incoming_rows = (
+            self.db.query(
+                SPOAllocation.product_id,
+                func.sum(
+                    SPOAllocation.allocated_quantity
+                    - func.coalesce(SPOAllocation.quantity_received, 0)
+                ).label("incoming_qty"),
+                func.min(SPOAllocation.expected_date).label("earliest_eta"),
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .filter(
+                SPOAllocation.product_id.in_(page_ids),
+                SPOAllocation.warehouse_id.isnot(None),
+                warehouse_criterion(policy, SPOAllocation.warehouse_id),
+                sa_or(
+                    InboundShipment.id.is_(None),
+                    InboundShipment.shipment_status.notin_(_RECEIVED_SHIPMENT_STATES),
+                ),
+                SPOAllocation.line_status == "open",
+                SPOAllocation.receipt_status.notin_(("fully_received", "received")),
+                SPOAllocation.allocated_quantity
+                > func.coalesce(SPOAllocation.quantity_received, 0),
+            )
+            .group_by(SPOAllocation.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        incoming_by_product = {
+            str(r.product_id): (float(r.incoming_qty or 0), r.earliest_eta)
+            for r in incoming_rows
+        }
+
+        # D8: open purchase order lines, the SAME status set the PO book already
+        # uses (`po_book_service._po_book_sql`), destined to a NAMED warehouse
+        # inside the policy set - a NULL destination counts nowhere, the same rule
+        # incoming follows above.
+        _PO_BOOK_STATUSES = ("active", "received", "partial", "closed")
+        po_rows = (
+            self.db.query(
+                PurchaseOrderLine.product_id,
+                func.sum(
+                    PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
+                ).label("po_qty"),
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(page_ids),
+                PurchaseOrderLine.warehouse_id.isnot(None),
+                warehouse_criterion(policy, PurchaseOrderLine.warehouse_id),
+                PurchaseOrder.status.in_(_PO_BOOK_STATUSES),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+            )
+            .group_by(PurchaseOrderLine.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        purchase_by_product = {str(r.product_id): float(r.po_qty or 0) for r in po_rows}
+
+        # D7, D3: the threshold `verdict()` compares against, and the lead-time
+        # phrase a purchase disclaimer reads instead of a PO date.
+        settings_row = self.db.query(SystemSetting).first()
+        threshold_pct = (
+            int(settings_row.chatbot_stock_low_threshold_pct) if settings_row else 50
+        )
+        lead_time_days = (
+            int(settings_row.default_product_standard_lead_time_days)
+            if settings_row and settings_row.default_product_standard_lead_time_days is not None
+            else 90
+        )
+
+        def _resolve_ask(pid: str) -> Optional[int]:
+            # D20: the per-product map wins; the scalar fills whatever it does not
+            # name. Either way, below 1 reads as NOT PROVIDED - the same rule the
+            # scalar alone has always followed (a 0 is a parse artefact, not a demand).
+            if requested_quantities and pid in requested_quantities:
+                ask = requested_quantities[pid]
+            else:
+                ask = requested_qty
+            if ask is not None and ask < 1:
+                ask = None
+            return ask
+
+        entries = []
+        for pid in ordered_ids:
+            ask = _resolve_ask(pid)
+            entry = {
                 "product_id": pid,
                 "product_code": getattr(products_by_id.get(pid), "product_code", None),
                 "product_name": getattr(products_by_id.get(pid), "product_name", None),
-                "needs_quantity": requested_qty is None,
-                "requested_qty": requested_qty,
-                "available": (
-                    None
-                    if requested_qty is None
-                    else sum(int(r.on_hand or 0) for r in per_product[pid]) >= requested_qty
-                ),
+                "needs_quantity": ask is None,
+                "requested_qty": ask,
+                "available": None,
+                "verdict": None,
+                "running_low": None,
+                "disclaimer": None,
             }
-            for pid in ordered_ids
-        ]
+            if ask is not None:
+                on_hand_total = sum(int(r.on_hand or 0) for r in per_product[pid])
+                net_available = on_hand_total - int(open_so_by_product.get(pid, 0))
+                incoming_qty, incoming_eta_date = incoming_by_product.get(pid, (0, None))
+                purchase_qty = purchase_by_product.get(pid, 0)
+                v = compute_verdict(
+                    available=net_available,
+                    ask=ask,
+                    incoming=int(incoming_qty),
+                    purchase=int(purchase_qty),
+                    threshold_pct=threshold_pct,
+                )
+                entry["available"] = v.answer == "available"
+                entry["verdict"] = v.answer
+                entry["running_low"] = v.running_low
+                if v.sources:
+                    entry["disclaimer"] = {
+                        "sources": list(v.sources),
+                        "limited": v.limited,
+                        "incoming_eta": (
+                            incoming_eta_date.isoformat()
+                            if "incoming" in v.sources and incoming_eta_date
+                            else None
+                        ),
+                        "purchase_eta_days": lead_time_days,
+                    }
+            entries.append(entry)
+
+        payload["stock_availability"] = entries
 
     def _stock_entity_alternatives(
         self,
