@@ -15,8 +15,17 @@ ran on), a direct `_planning_rows` admission pin independent of any sizing branc
 `_project_only_cell` mutation kill (the single-location fixture used to seed no forecast
 demand, so the retail path coincidentally answered the same 20 the project-only path
 does), exact-number pins on AC-PO-2/AC-PO-4 in place of loose `>0`/`!=20` assertions, and
-a G10 "named product under a Project run keeps buyer intent" gap the coder has not yet
-closed (`test_named_product_under_project_keeps_buyer_intent` stays genuinely red).
+a G10 "named product under a Project run keeps buyer intent" gap - closed by the coder in
+the same in-flight session round 2 was written against, so `test_named_product_under_
+project_keeps_buyer_intent` already passes here.
+
+Round 3 (owner ruling R1a = A, this pass): a Project run buys the ACKNOWLEDGED, unlinked
+ORDER row's quantity IN FULL - no netting against on hand / SPO / PO at all ("a row that
+reaches the plan is CS's decision to buy; stock cases are the green rows"). `project_need`
+(`row["project_confirmed_committed"]`, the raw confirmed-unplaced-Buy figure every project-
+only branch already reads) was never netted against `net`/on-hand in the first place, so
+`test_ac_po_12_*` below already passes on the current code - it pins the ruling as a
+regression guard, not a red test.
 
 Every test below seeds a product that is BELOW ITS REORDER LEVEL (the leg-2 gate). Most
 are POOLED across two dealer locations (so the pool-level buy in `_emit_pool` is computed
@@ -56,7 +65,7 @@ from tests.scm.test_m3_run import (
     _mk_supplier,
     _mk_warehouse,
 )
-from tests.test_reorder_plan_demand_scope import _project_so_with_lines
+from tests.test_reorder_plan_demand_scope import _add_reserve_claim, _project_so_with_lines
 
 pytestmark = requires_pg
 
@@ -571,5 +580,113 @@ def test_named_product_under_project_keeps_buyer_intent(scm_app):
     total = sum(float(b["rounded_qty"]) for b in buys)
     assert total == 150.0, (
         f"expected the level top-up (150) a named product gets outside a Project run, "
+        f"got {total}"
+    )
+
+
+# ===========================================================================
+# Owner ruling R1a = A (review round 3, 22 Sep 2026): a Project run buys the inquiry
+# row's quantity IN FULL - no netting against on hand / SPO / PO. "A row that reaches the
+# plan is CS's decision to buy; stock cases are the green rows" (a separate lane).
+# ===========================================================================
+
+def _seed_single_covered_by_stock(db, *, level=150, on_hand=500, lead=30, moq=1, mult=1):
+    """PROD SHAPE (reorder_level basis), one dealer location, on hand well ABOVE the
+    level - the "stock already covers it" shape a Dealer run reads as covered/no-buy, so
+    AC-PO-12 can pin the Project and Dealer runs apart on the exact same seed.
+    """
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    _mk_stock(db, pid, wid, on_hand)
+    _mk_movement(db, pid, wid, 1, days_ago=7)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} Supplier"), lead=lead, moq=moq, mult=mult)
+
+    eng.ensure_reorder_policy_defaults(db)
+    db.execute(
+        text(
+            "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, "
+            "company_id, created_at) VALUES (:id, :p, NULL, :lvl, 'manual', :co, now())"
+        ),
+        {"id": _u(), "p": pid, "lvl": level, "co": SORENTO_COMPANY_ID},
+    )
+    _use_reorder_level_policy(db)
+    db.flush()
+    return {"pid": pid, "wid": wid}
+
+
+def test_ac_po_12_project_run_buys_the_row_in_full_even_when_on_hand_covers_it(scm_app):
+    """Owner ruling R1a = A: on hand 500 at the very warehouse the ORDER row names, level
+    150 - a Dealer run reads this as fully covered (500 >= 150, nothing to buy); a Project
+    run must still Buy the row's own 20, because `project_need`
+    (`row["project_confirmed_committed"]`) is the raw confirmed-committed figure the
+    `project_only` branches in `_project_only_cell`/`_emit_pool`/`_emit_product` read
+    directly - it was never netted against `net`/on-hand in the first place, so this
+    already passes on the current code; it pins the ruling as a regression guard.
+    """
+    _, db, _, _ = scm_app
+    u = _seed_single_covered_by_stock(db)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+
+    project_run = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        demand_class="project", so_numbers=[so["so_number"]],
+    )
+    svc.run_reorder(project_run["run_id"], db=db)
+
+    recs = _recs_for(db, project_run["run_id"], u["pid"])
+    buys = [r for r in recs if r["rec_type"] == "buy"]
+    assert buys, f"expected a Buy of the row's own qty despite the on-hand cover, got {recs}"
+    assert float(buys[0]["rounded_qty"]) == 20.0, (
+        f"expected the row bought in full (20), no netting against on hand, "
+        f"got {buys[0]['rounded_qty']}"
+    )
+    assert (buys[0]["reason_label"] or "").startswith("project buy"), buys[0]["reason_label"]
+
+    dealer_run = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        demand_class="retail", so_numbers=[],
+    )
+    svc.run_reorder(dealer_run["run_id"], db=db)
+
+    dealer_buys = _buy_rows(db, dealer_run["run_id"], u["pid"])
+    assert not dealer_buys, (
+        f"a Dealer run must NOT buy against stock that already covers the level, "
+        f"got {dealer_buys}"
+    )
+
+
+def test_ac_po_12b_project_run_ignores_a_confirmed_reserve_against_the_line(scm_app):
+    """R1a = A's other half: a confirmed Reserve/Borrow supply reduction against the SAME
+    line (`so_line_allocations`, `source_type='reserve'` - `_project_supply_reduction`
+    nets it against `net`/`sizing_net` for the RETAIL-basis path only, see the long
+    comment above `sizing_net` in `_compute_cell`) must not touch a Project run's figure
+    either: `project_need` reads straight off `project_confirmed_committed`, which the
+    reserve claim never adjusts.
+    """
+    _, db, _, _ = scm_app
+    u = _seed_single_covered_by_stock(db)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15)
+
+    created = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        demand_class="project", so_numbers=[so["so_number"]],
+    )
+    svc.run_reorder(created["run_id"], db=db)
+
+    buys = _buy_rows(db, created["run_id"], u["pid"])
+    assert buys, "expected a Buy of the row's own qty despite the confirmed reserve claim"
+    total = sum(float(b["rounded_qty"]) for b in buys)
+    assert total == 20.0, (
+        f"a confirmed Reserve/Borrow claim must not reduce a Project run's own row Buy, "
         f"got {total}"
     )
