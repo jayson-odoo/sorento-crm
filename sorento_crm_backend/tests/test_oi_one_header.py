@@ -31,6 +31,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.models.inventory import Stock
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     AMENDMENT_PUBLISHED,
@@ -1014,6 +1015,82 @@ def _settle_capturing_result(world, fixture, *, qty, required_date=NOW):
     return result
 
 
+def _reserved_no_buy_row_fixture(api, *, qty="50"):
+    """AC-B2-8 shape (owner ruling, 22 Sep,
+    `documentation/plans/scm/board-oi-mechanical-22sep-acceptance-criteria.md`): a
+    wholly-reserved line, confirmed with NO buy row raised at all. `_settle_row_in_place`'s
+    own `live` filter finds nothing (no ORDER/ORDER_BACK row exists to be live), and
+    `_stamp_date_move` finds no target either, so a later date move still falls straight
+    through to the ordinary DELAY/ADVANCE notice - the same shape
+    `tests/scm/test_oi_date_move_settle.py::
+    test_no_buy_row_and_none_raised_behaviour_pinned` pins."""
+    client, world = api
+    db = world.db
+    db.add(
+        Stock(
+            id=_uid(), product_id=world.product.id, warehouse_id=world.warehouse.id,
+            quantity_on_hand=Decimal("200"), quantity_reserved=Decimal("0"),
+        )
+    )
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.warehouse, qty_ordered=qty, required_date=WAS
+    )
+    order = _project_so(
+        db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+    )
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(
+            line.id, reserve=[{"warehouse_id": world.warehouse.id, "qty": qty}],
+        )
+    ])
+    assert response.status_code == 200, response.text
+    db.commit()
+    assert (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .count() == 0
+    ), "fixture sanity: fully reserved, nothing raised"
+    return {"order": order, "line": line, "core_so": core_so, "core_line": core_line}
+
+
+def _settle_capturing_result_reserved(world, fixture, *, qty, required_date=NOW):
+    """`_settle_capturing_result`'s reserve-only twin - AC-B2-8's date move keeps the
+    line wholly reserved (buy_qty stays "0"), so no buy row exists for
+    `_stamp_date_move`/the netting loop to touch either."""
+    supply = ProjectSupplyService(world.db)
+    body = ConfirmSupplyBody(
+        lines=[
+            ConfirmLine(
+                project_line_id=str(fixture["line"].id),
+                timely_spo_qty="0",
+                reserve=[{"warehouse_id": world.warehouse.id, "qty": str(qty)}],
+                borrow=[],
+                buy_qty="0",
+            )
+        ]
+    )
+    fixture["core_line"].qty_ordered = Decimal(str(qty))
+    fixture["core_line"].required_date = required_date
+    fixture["line"].qty = Decimal(str(qty))
+    fixture["line"].delivery_date = required_date
+    world.db.flush()
+    result = supply.confirm(
+        fixture["order"],
+        body,
+        actor_user_id=world.cs_user,
+        settle_in_place_line_ids=[str(fixture["line"].id)],
+    )
+    world.db.commit()
+    return result
+
+
 class TestWasNowAfterRedirect:
     def test_fresh_row_after_redirect_carries_was_now_AC_OH_40(self, api):
         """AC-OH-40: the fresh ORDER row carries `previous_qty`/`previous_delivery_date`
@@ -1174,25 +1251,38 @@ class TestNoDelayRowWhenLineRestated:
             "the ORDER row's own (i) is what now carries the date change (R4 revised)"
         )
 
-    def test_delay_row_still_written_when_line_not_restated_AC_OH_45(self, api):
-        """AC-OH-45 (guard): a line the confirm did NOT restate - here, a lone PLACED row
-        with no link, which `_settle_row_in_place` declines - still gets its DELAY row,
-        unchanged."""
+    def test_delay_row_still_written_when_no_buy_row_exists_AC_OH_45(self, api):
+        """AC-OH-45 (guard), retargeted (owner ruling, 22 Sep,
+        `documentation/plans/scm/board-oi-mechanical-22sep-acceptance-criteria.md`,
+        AC-B2-6): this guard's original seed - a lone PLACED row with no link - now
+        SETTLES in place instead of declining
+        (`tests/scm/test_oi_date_move_settle.py::
+        test_lone_placed_row_without_links_gets_date_stamp_qty_untouched_no_notice`), so
+        it no longer proves "the confirm did not restate this line". AC-B2-8 is
+        untouched by that ruling: a wholly-reserved line raises no buy row at all, so
+        there is nothing for `_settle_row_in_place`/`_stamp_date_move` to touch either -
+        this line's DELAY row is still written, unchanged."""
         _client, world = api
-        fixture = _raise_one_row(api, qty="50")
-        row = fixture["row"]
+        fixture = _reserved_no_buy_row_fixture(api, qty="50")
         line = fixture["line"]
-        row.state = INQUIRY_PLACED
-        world.db.flush()
-        world.db.commit()
 
-        result = _settle_capturing_result(
+        result = _settle_capturing_result_reserved(
             world, fixture, qty="50", required_date=date(2027, 5, 1)
         )
         settled_in_place = list(result.get("settled_in_place") or [])
         assert str(line.id) not in settled_in_place, (
-            "sanity: a lone placed row with no link cannot be settled in place"
+            "sanity: a line with no buy row at all has nothing for the settle-in-place "
+            "seam to touch (AC-B2-8)"
         )
+        assert (
+            world.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.so_line_id == line.id,
+                OrderInquiryRow.verb.in_((IV_ORDER,)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .count() == 0
+        ), "fixture sanity: still no buy row after the date move - the reserve covers it"
 
         live_rows = [
             SimpleNamespace(
@@ -1213,56 +1303,36 @@ class TestNoDelayRowWhenLineRestated:
         assert counts.get("DELAY") == 1
 
     def test_delay_row_still_written_when_redirect_raises_nothing_S2(self, api):
-        """S2 (Opus review round 1): `settled_in_place` must join only where the fresh
-        row that actually carries Was/Now gets written, not on the bare fact that some
-        row on the line redirected. Here another already-PLACED row covers the whole
-        replanned need on its own, so once the redirected row's own quantity drops out
-        of the netting nothing is left to raise - the line's DELAY row must still be
-        written, exactly like AC-OH-45's guard."""
+        """S2 (Opus review round 1), retargeted (owner ruling, 22 Sep, AC-B2-6):
+        `settled_in_place` must join only where the fresh row that actually carries
+        Was/Now gets written, not on the bare fact that some row on the line
+        redirected. The ORIGINAL seed left exactly ONE live row once the redirected
+        row dropped out of `live` (`redirected_to_pool`) - a lone PLACED row with no
+        link, which AC-B2-6 now settles in place instead of declining, so it no longer
+        proves this. AC-B2-8's shape (a wholly-reserved line, no buy row at all) is
+        untouched by that ruling: there is nothing for the settle-in-place seam to
+        touch, so the line's DELAY row is still written, unchanged."""
         _client, world = api
-        fixture = _raise_one_row(api, qty="100")
-        placed_row = fixture["row"]
+        fixture = _reserved_no_buy_row_fixture(api, qty="100")
         line = fixture["line"]
-        placed_row.state = INQUIRY_PLACED
-        world.db.flush()
 
-        redirect_row = OrderInquiryRow(
-            id=_uid(),
-            company_id=world.company_id,
-            order_inquiry_id=placed_row.order_inquiry_id,
-            so_line_id=line.id,
-            item_code=placed_row.item_code,
-            qty=Decimal("60"),
-            delivery_date=placed_row.delivery_date,
-            verb=IV_ORDER,
-            state=INQUIRY_RAISED,
-            ack_state=ACK_ACKNOWLEDGED,
-            acknowledged_by=world.cs_user,
-            acknowledged_at=datetime.utcnow(),
-        )
-        world.db.add(redirect_row)
-        world.db.flush()
-        allocation = _received_spo(world, qty="50")
-        _link_row_to(
-            world, redirect_row, qty="50", document=allocation.spo_number,
-            allocation=allocation,
-        )
-        world.db.refresh(redirect_row)
-        assert redirect_row.state == INQUIRY_PARTLY_LINKED, "fixture sanity"
-        world.db.commit()
-
-        result = _settle_capturing_result(
+        result = _settle_capturing_result_reserved(
             world, fixture, qty="100", required_date=date(2027, 5, 1)
         )
         settled_in_place = list(result.get("settled_in_place") or [])
         assert str(line.id) not in settled_in_place, (
-            "the redirect raised nothing on this line - the DELAY reaction must not "
+            "the reserve raised nothing on this line - the DELAY reaction must not "
             "be suppressed"
         )
-
-        world.db.refresh(redirect_row)
-        assert redirect_row.redirected_to_pool is True, "fixture sanity: it did redirect"
-        assert len(_rows_for_line(world, line)) == 2, "no fresh row was raised"
+        assert (
+            world.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.so_line_id == line.id,
+                OrderInquiryRow.verb.in_((IV_ORDER,)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .count() == 0
+        ), "fixture sanity: still no buy row - no fresh row was raised"
 
         live_rows = [
             SimpleNamespace(

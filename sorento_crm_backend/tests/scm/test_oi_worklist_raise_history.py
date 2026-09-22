@@ -289,4 +289,8 @@ def test_the_export_carries_no_raise_history_column(raise_history_api):
         "PO NO ",
         "LOCATION",
         "ACKNOWLEDGED",
+        # AC-D15 parity (22 Sep fix round): the row-level Taken/Remaining the grid has
+        # shown since S3, appended after ACKNOWLEDGED.
+        "TAKEN",
+        "REMAINING",
     ]

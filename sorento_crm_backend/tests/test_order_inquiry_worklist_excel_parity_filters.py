@@ -596,8 +596,8 @@ def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
     # Review round (22 Sep): APPENDED after ACKNOWLEDGED, never inserted before it - the
     # columns purchasing's own filters already point at keep the positions they have had.
     assert headers[10] == "ACKNOWLEDGED", headers
-    assert headers[11] == "Taken", headers
-    assert headers[12] == "Remaining", headers
+    assert headers[11] == "TAKEN", headers
+    assert headers[12] == "REMAINING", headers
     assert target_row[11] == "10", target_row
     assert target_row[12] == "0", target_row
 

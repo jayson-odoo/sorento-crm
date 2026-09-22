@@ -298,7 +298,7 @@ def test_a_line_names_the_inquiry_covering_it_and_the_revision_that_decided_it(s
     pso = _planned(db, core)
     mirror = _mirror(db, pso, decided)
     inquiry = _inquiry(db, pso, number=f"{MARKER}-OI-L", rows=())
-    _inquiry_row(db, inquiry, mirror, state=INQUIRY_PLACED)
+    row = _inquiry_row(db, inquiry, mirror, state=INQUIRY_PLACED)
     _active_decision(db, pso, revision_no=2, core_line_ids=[decided.id])
 
     with TestClient(app) as c:
@@ -309,9 +309,13 @@ def test_a_line_names_the_inquiry_covering_it_and_the_revision_that_decided_it(s
     # Both survive `response_model`, which silently drops anything undeclared.
     assert "order_inquiry" in line, line.keys()
     assert "decision_revision" in line, line.keys()
+    # AC-B6-8 (deep links): the dict also carries the ids the board's own OI column links
+    # through - the seeded inquiry and row, not a guess.
     assert line["order_inquiry"] == {
         "inquiry_no": f"{MARKER}-OI-L",
         "state": INQUIRY_PLACED,
+        "inquiry_id": str(inquiry.id),
+        "row_id": str(row.id),
     }
     assert line["decision_revision"] == 2
 

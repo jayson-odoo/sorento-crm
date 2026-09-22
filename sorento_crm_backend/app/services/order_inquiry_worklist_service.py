@@ -208,8 +208,8 @@ EXPORT_HEADINGS = (
     # ACKNOWLEDGED was (review round, 22 Sep): they first landed BETWEEN Location and
     # Acknowledged, which pushed a column purchasing's own filters already point at one
     # place to the right.
-    "Taken",
-    "Remaining",
+    "TAKEN",
+    "REMAINING",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
