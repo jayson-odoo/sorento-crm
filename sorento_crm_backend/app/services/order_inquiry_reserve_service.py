@@ -767,10 +767,17 @@ class OrderInquiryReserveService:
     def history_for_row(
         self, *, request_id: str, row_id: str
     ) -> List[Dict[str, Any]]:
-        """Newest first: `requested` / `cancelled` derive straight off the request row
-        itself (no second copy); `reserved` / `unreserved` come off
-        `order_inquiry_reserve_events` (`PLAN-oi-request-cs-reserve.md` section 6c,
-        F3)."""
+        """Newest first, across EVERY request that has ever touched this OI ROW, any
+        state (H1, captain ruling on the browser walk) - not only the one `request_id`
+        named in the URL. A cancelled, never-answered request stays visible even once
+        a LATER request on the same row has since been reserved: purchasing raised a
+        request, CS never got to it, purchasing cancelled and asked again - the first
+        ask is still part of the story. `request_id` still anchors the call (a bogus
+        or foreign one 404s exactly as before, AC-RS-61's own access rule is
+        unchanged) but no longer scopes WHICH rows' entries are read; `requested` /
+        `cancelled` derive straight off each request row's own parent request (no
+        second copy); `reserved` / `unreserved` come off `order_inquiry_reserve_events`
+        (`PLAN-oi-request-cs-reserve.md` section 6c, F3)."""
         request = (
             self.db.query(OrderInquiryReserveRequest)
             .filter(OrderInquiryReserveRequest.id == request_id)
@@ -782,7 +789,7 @@ class OrderInquiryReserveService:
                 "This reserve request no longer exists.",
                 code="reserve_request_not_found",
             )
-        rr = (
+        anchor = (
             self.db.query(OrderInquiryReserveRequestRow)
             .filter(
                 OrderInquiryReserveRequestRow.request_id == request.id,
@@ -790,50 +797,65 @@ class OrderInquiryReserveService:
             )
             .first()
         )
-        if rr is None:
+        if anchor is None:
             raise AppException(
                 404,
                 "That row is not part of this reserve request.",
                 code="reserve_request_row_not_found",
             )
 
-        entries: List[Dict[str, Any]] = [
-            {
-                "kind": "requested",
-                "qty": _qty_str(rr.qty_requested),
-                "location": _warehouse_code(self.db, rr.warehouse_id),
-                "reason": None,
-                "actor_name": _actor_name(self.db, request.requested_by),
-                "created_at": request.requested_at,
-            }
-        ]
-        if request.state == RESERVE_CANCELLED and request.cancelled_at is not None:
-            entries.append(
-                {
-                    "kind": "cancelled",
-                    "qty": None,
-                    "location": None,
-                    "reason": None,
-                    "actor_name": _actor_name(self.db, request.cancelled_by),
-                    "created_at": request.cancelled_at,
-                }
+        # H1: every request row this OI row has ever appeared on, across every
+        # request - the anchor above only proves `request_id`/`row_id` is a
+        # legitimate, company-scoped pair to ask about at all.
+        rows_and_requests = (
+            self.db.query(OrderInquiryReserveRequestRow, OrderInquiryReserveRequest)
+            .join(
+                OrderInquiryReserveRequest,
+                OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
             )
-        events = (
-            self.db.query(OrderInquiryReserveEvent)
-            .filter(OrderInquiryReserveEvent.reserve_request_row_id == rr.id)
+            .filter(OrderInquiryReserveRequestRow.row_id == row_id)
             .all()
         )
-        for event_row in events:
+
+        entries: List[Dict[str, Any]] = []
+        for rr, req in rows_and_requests:
             entries.append(
                 {
-                    "kind": event_row.kind,
-                    "qty": _qty_str(event_row.qty),
-                    "location": _warehouse_code(self.db, event_row.warehouse_id),
-                    "reason": event_row.note,
-                    "actor_name": _actor_name(self.db, event_row.actor_id),
-                    "created_at": event_row.created_at,
+                    "kind": "requested",
+                    "qty": _qty_str(rr.qty_requested),
+                    "location": _warehouse_code(self.db, rr.warehouse_id),
+                    "reason": None,
+                    "actor_name": _actor_name(self.db, req.requested_by),
+                    "created_at": req.requested_at,
                 }
             )
+            if req.state == RESERVE_CANCELLED and req.cancelled_at is not None:
+                entries.append(
+                    {
+                        "kind": "cancelled",
+                        "qty": None,
+                        "location": None,
+                        "reason": None,
+                        "actor_name": _actor_name(self.db, req.cancelled_by),
+                        "created_at": req.cancelled_at,
+                    }
+                )
+            events = (
+                self.db.query(OrderInquiryReserveEvent)
+                .filter(OrderInquiryReserveEvent.reserve_request_row_id == rr.id)
+                .all()
+            )
+            for event_row in events:
+                entries.append(
+                    {
+                        "kind": event_row.kind,
+                        "qty": _qty_str(event_row.qty),
+                        "location": _warehouse_code(self.db, event_row.warehouse_id),
+                        "reason": event_row.note,
+                        "actor_name": _actor_name(self.db, event_row.actor_id),
+                        "created_at": event_row.created_at,
+                    }
+                )
         entries.sort(
             key=lambda entry: entry["created_at"] or datetime.min, reverse=True
         )

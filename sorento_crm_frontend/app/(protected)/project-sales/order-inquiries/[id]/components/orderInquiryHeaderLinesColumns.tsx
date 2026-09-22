@@ -8,6 +8,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { statusTextClass } from '@/lib/status-pill';
 import { OrderInquiryStatePill } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { formatInquiryQty, inquiryFooterTotals } from '../../../_shared/lib/orderInquiryWorklist';
@@ -212,7 +213,10 @@ export function useOrderInquiryHeaderLinesColumns({
         cell: ({ row }) => {
           const state = row.original.reserve_state;
           if (state !== 'requested' && state !== 'reserved') return null;
-          const colour = state === 'requested' ? 'text-amber-600' : 'text-emerald-600';
+          // S6 (reviewer round): the SAME palette `ReservePill` reads (`pending`/`done`
+          // - `OrderInquiryVerbPill.tsx`), not a bespoke amber/emerald pair invented
+          // locally here.
+          const colour = statusTextClass(state === 'requested' ? 'pending' : 'done');
           return (
             <Tooltip>
               <TooltipTrigger asChild>

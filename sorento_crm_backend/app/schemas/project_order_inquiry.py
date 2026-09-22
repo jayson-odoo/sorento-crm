@@ -1293,23 +1293,6 @@ class CreateReserveRequestIn(BaseModel):
         return self
 
 
-class ReserveAnswerRowIn(BaseModel):
-    """Eling's own answer for one request row (3.3) - every row of the request must be
-    named in one call (AC-RS-9).
-
-    N-2/N-4 (review round): `request_row_id`/`warehouse_id` UUID-patterned; `reason`
-    capped the same way `note` is above, since it too lands in an outgoing email."""
-
-    request_row_id: str = Field(..., pattern=UUID_PATTERN)
-    warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
-    qty_reserved: str
-    reason: Optional[str] = Field(None, max_length=2000)
-
-
-class ReserveRequestIn(BaseModel):
-    rows: List[ReserveAnswerRowIn]
-
-
 # --------------------------------------------------------- request CS to reserve, round 2
 
 
