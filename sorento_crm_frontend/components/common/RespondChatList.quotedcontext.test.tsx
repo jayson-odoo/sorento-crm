@@ -55,14 +55,22 @@ describe('RespondChatList inbound quote rendering (AC-L6)', () => {
     expect(screen.getByText('Which courier?')).toBeInTheDocument();
   });
 
-  it('scrolls to the quoted message when it is loaded, and flashes it', () => {
+  it('scrolls to the quoted message when it is loaded, and flashes it (real wire shape: replyTo.id, no messageId)', () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
 
     const quoted = msg(1, { message: { type: 'text', text: 'Here is my receipt.' } });
     const reply = msg(2, {
       message: { type: 'text', text: 'Thanks!' },
-      replyTo: { messageId: quoted.messageId, message: { type: 'text', text: 'Here is my receipt.' } },
+      // Fix round 3: the LIVE Respond relay's replyTo has NO `messageId` key
+      // at all - only `id` - switched here so this suite cannot regress to
+      // messageId-only fixtures the way it did the first time round.
+      replyTo: {
+        id: quoted.messageId,
+        mId: 'wamid.abc123',
+        message: { type: 'text', text: 'Here is my receipt.' },
+        sender: { source: 'contact' },
+      },
     });
     render(<RespondChatList items={[quoted, reply]} />);
 
@@ -251,5 +259,56 @@ describe('RespondChatList reply-to jump beyond the loaded window (AC-CP-8/9/10)'
     const block = screen.getByTestId('quoted-context');
     expect(block.tagName).not.toBe('BUTTON');
     expect(block).toHaveTextContent('no id on this one');
+  });
+
+  // Fix round 3 (browser pass FAIL, real defect): the LIVE Respond relay's
+  // `replyTo` carries the quoted message's id as `id`, never `messageId` -
+  // `"replyTo": {"id": 1788922281019104, "message": {...}, "mId": "...",
+  // "sender": {...}}`, verified against a real payload in the browser.
+  // Every fixture above used `messageId`, which is exactly why they stayed
+  // green while every quote in production rendered as an inert div.
+  it('AC-CP-21: real wire shape (replyTo.id, no messageId) with the target in the loaded window is a button, and click scrolls', () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    const quoted = msg(1, { message: { type: 'text', text: 'Here is my receipt.' } });
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Thanks!' },
+      replyTo: {
+        id: quoted.messageId,
+        mId: 'wamid.real123',
+        message: { type: 'text', text: 'Here is my receipt.' },
+        sender: { source: 'contact' },
+      },
+    });
+    render(<RespondChatList items={[quoted, reply]} />);
+
+    const block = screen.getByTestId('quoted-context');
+    expect(block.tagName).toBe('BUTTON');
+    scrollIntoView.mockClear();
+    fireEvent.click(block);
+
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('AC-CP-22: real wire shape (replyTo.id, no messageId) with the target outside the loaded window still calls the fetch-back loader, with the id as a string', () => {
+    const onJumpToMessage = vi.fn();
+    const targetId = BASE_US - 999_000_000;
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Still waiting on this' },
+      replyTo: {
+        id: targetId,
+        mId: 'wamid.real456',
+        message: { type: 'text', text: 'An old message nobody scrolled back to' },
+        sender: { source: 'contact' },
+      },
+    });
+    render(<RespondChatList items={[reply]} onJumpToMessage={onJumpToMessage} />);
+
+    const block = screen.getByTestId('quoted-context');
+    expect(block.tagName).toBe('BUTTON');
+    fireEvent.click(block);
+
+    expect(onJumpToMessage).toHaveBeenCalledWith(String(targetId));
   });
 });

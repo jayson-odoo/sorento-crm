@@ -1,6 +1,6 @@
 # PLAN: ticket chat panel - one-line enquiry quote, thread fills the sheet, reply-to jump fetches back
 
-Status: small fix track, tests green, awaiting review + browser pass (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
+Status: review READY, fix round 3 (replyTo.id) pushed, browser B3 re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
 UAC: `chat-panel-layout-22sep-acceptance-criteria.md`
 Owner rulings (22 Sep 2026): R2 enquiry quote is one line, chat window takes the most space; R3 Chat Records popup thread flex-fills; R4 reply-to jump reuses the search-jump fetch.
 
@@ -25,6 +25,10 @@ Staff opens a ticket (worklist drawer or SLA detail "Chat Records"). Today a lon
 - `InterventionTicketDrawer.test.tsx`: AC-CP-1..3 (one line, toggle, long quote does not change the panel's props / the thread wrapper keeps `flex-1`).
 - `SlaTrackingChatRecords.test.tsx`: AC-CP-4..5 (popup mount passes `flex-1` classes, no `max-h-[55vh]`; inline mount keeps `max-h-[400px]`).
 - `RespondChatList.quotedcontext.test.tsx`: AC-CP-6..7 (quote outside the loaded window renders a button; click invokes the fetch-back with the quoted id, then scrolls).
+
+## Fix round 3 (browser pass FAIL on AC-CP-B3, real defect)
+
+`lib/respondIoChatRender.ts:53-57` typed `replyTo.messageId` and `describeQuotedContext` (`:331`) read `reply.messageId` - but the LIVE Respond.io relay's `replyTo` carries the quoted message's id as `id`, never `messageId` (verified in the browser: `"replyTo": {"id": 1788922281019104, "message": {...}, "mId": "...", "sender": {...}}`, no `messageId` key at all). Every quote in production rendered as an inert div, including one whose target was in the loaded window. Every test fixture used `messageId`, which is why the suite stayed green. Fixed by reading `reply.id ?? reply.messageId` (the `??` keeps the local `chat_histories` mirror's reconstructed shape working - `conversation_thread_service.py`'s `_row_to_item` still writes `messageId`). Confirmed `conversation_thread_service.py`'s `_respond_item()` passes Respond's raw `replyTo` through untouched for the live "respond" lane - no backend rename, the fix is frontend-only. Note: `persist_messages` in the same backend file (line ~560) reads `reply_to.get("messageId")` too, for the LOCAL search-cache write path - same wrong key, a separate function, flagged but out of this round's scope.
 
 ## Browser verification
 

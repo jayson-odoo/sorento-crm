@@ -51,6 +51,16 @@ export type RespondMessageRenderable = {
    * support at all, so this is inbound-only: a READ-side field.
    */
   replyTo?: {
+    /**
+     * Respond's LIVE relay carries the quoted message's id under `id`, not
+     * `messageId` - the outer envelope uses `messageId`, but the embedded
+     * quote object is shaped differently (`{id, message, mId, sender}`, no
+     * `messageId` key at all). `messageId` is kept for the local
+     * `chat_histories` mirror, which reconstructs this shape itself and
+     * still writes that key (`conversation_thread_service.py`'s
+     * `_row_to_item`).
+     */
+    id?: number | string | null;
     messageId?: number | string | null;
     traffic?: string;
     message?: { type?: string; text?: string } & Record<string, unknown>;
@@ -328,7 +338,12 @@ export function describeQuotedContext(item: RespondMessageRenderable): QuotedCon
   const reply = item.replyTo;
   if (!reply || typeof reply !== 'object') return null;
 
-  const rawId = reply.messageId;
+  // Fix round 3: the LIVE Respond relay's `replyTo` carries the quoted
+  // message's id as `id`, never `messageId` - only the local chat_histories
+  // mirror's reconstructed shape (`_row_to_item`) still uses `messageId`.
+  // Reading `id` first covers the real wire shape; the fallback keeps the
+  // older stored shape working.
+  const rawId = reply.id ?? reply.messageId;
   const messageId =
     rawId === null || rawId === undefined || String(rawId).trim() === ''
       ? null

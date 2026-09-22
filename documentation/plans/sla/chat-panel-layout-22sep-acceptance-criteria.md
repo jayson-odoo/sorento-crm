@@ -20,6 +20,8 @@ Plan: `PLAN-chat-panel-layout-22sep.md`
 - AC-CP-8 Quote whose message id IS in the loaded window: block is a button; click scrolls to that bubble (existing behaviour, pinned).
 - AC-CP-9 Quote whose message id is NOT loaded: block is still a button; click calls the fetch-back loader with that id, and after the page arrives the bubble is scrolled into view.
 - AC-CP-10 Quote with no message id (malformed replyTo): inert div, unchanged.
+- AC-CP-21 (fix round 3) Quote whose `replyTo` uses the REAL Respond relay wire shape (`id` numeric, `message`, `mId`, `sender` - no `messageId` key at all) with its target IN the loaded window: block is a button; click scrolls.
+- AC-CP-22 (fix round 3) Same wire shape, target NOT loaded: `onJumpToMessage` is called with the id as a string.
 
 ## Browser (agent-browser, lane stack)
 
