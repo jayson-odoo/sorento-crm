@@ -113,7 +113,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     onFinished: () => setRowSelection({}),
   });
 
-  const tab = searchParams.get('tab') || 'lines';
+  // S6 (AC-B6-4): a `?row=<id>` deep link always lands on Lines, whatever `tab` says -
+  // the only tab that row could ever be found on.
+  const tab = searchParams.get('row') ? 'lines' : searchParams.get('tab') || 'lines';
   function handleTabChange(next: string) {
     const params = new URLSearchParams(searchParams.toString());
     if (next === 'lines') params.delete('tab');

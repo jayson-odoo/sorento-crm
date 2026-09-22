@@ -182,6 +182,11 @@ def test_a_contribution_names_the_inquiry_raised_for_its_line():
         record = _adopted(db, company_id, order)
         mirror = _mirror(db, company_id, record, core_line)
         inquiry = _inquiry(db, company_id, record, mirror, state=INQUIRY_PLACED)
+        row = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+            .one()
+        )
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
@@ -191,8 +196,13 @@ def test_a_contribution_names_the_inquiry_raised_for_its_line():
         # purchasing has taken the instruction on. A row nobody has read says `awaiting`
         # and names no refusal, which is exactly what an untouched cell must say.
         # A row nobody has redirected carries no documents.
+        # `inquiry_id` / `row_id` (AC-B6-17, S6): the header's own id and this row's own
+        # id, addressing only - the List view's OI column links to
+        # `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`.
         assert contribution["order_inquiry"] == {
             "inquiry_no": inquiry.inquiry_no,
+            "inquiry_id": str(inquiry.id),
+            "row_id": str(row.id),
             "state": INQUIRY_PLACED,
             "ack_state": "awaiting",
             "rejected_reason": None,

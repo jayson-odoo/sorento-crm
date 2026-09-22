@@ -461,7 +461,7 @@ export async function confirmSupply(
 
 export async function getPlanningBoard(
   soNumbers: string[],
-  granularity: BoardGranularity = 'week',
+  granularity: BoardGranularity = 'date',
   /**
    * Rank by a what-if policy instead of the live one (13.5, recommendation 3). Read-only: a
    * previewed ranking is labelled on screen and may never be committed against.
