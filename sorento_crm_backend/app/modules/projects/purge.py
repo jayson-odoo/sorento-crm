@@ -57,6 +57,7 @@ from app.models.project_so import (
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRaise,
+    OrderInquiryReserveEvent,
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
     OrderInquiryRow,
@@ -113,6 +114,10 @@ PURGE_ORDER: List[Type] = [
     # --- sales order side: divergences, inquiries and amendments hang off the SO -------
     ProjectSODivergenceLine,
     ProjectSODivergence,
+    # order_inquiry_reserve_events.reserve_request_row_id CASCADEs off the request row
+    # (section 6c, `PLAN-oi-request-cs-reserve.md`), so it purges first, its own
+    # statement so the operator sees the history counted.
+    OrderInquiryReserveEvent,
     # order_inquiry_reserve_request_rows.request_id and .row_id both CASCADE, so either
     # parent would take the rows anyway; like the links below, its own statement so the
     # operator sees the asks counted. Rows before requests, requests before the header

@@ -62,6 +62,10 @@ BORN_AFTER_THE_MOVE = frozenset({
     # `projects` the same way.
     "order_inquiry_reserve_requests",
     "order_inquiry_reserve_request_rows",
+    # PLAN-oi-request-cs-reserve.md section 6c, migration oirs_0002_reserve_round2: one
+    # history row per reserve/unreserve on a reserve request row (F3), born straight into
+    # `projects` the same way.
+    "order_inquiry_reserve_events",
 })
 
 MIGRATION = (

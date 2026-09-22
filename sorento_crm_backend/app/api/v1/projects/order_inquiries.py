@@ -41,6 +41,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryPoDetail,
     OrderInquiryRelatedDocumentsOut,
     OrderInquiryReserveRequestOut,
+    OrderInquiryReserveRequestRowOut,
     OrderInquiryRowOut,
     OrderInquirySpoDetail,
     OrderInquirySummary,
@@ -50,13 +51,15 @@ from app.schemas.project_order_inquiry import (
     RejectRowRequest,
     RejectRowsRequest,
     RejectRowsResult,
-    ReserveRequestIn,
+    ReserveHistoryEntryOut,
+    ReserveRowIn,
     UnacknowledgeResult,
     UnacknowledgeRowsRequest,
     UnlinkRequest,
     UnplaceAllPreview,
     UnplaceAllRequest,
     UnplaceAllResult,
+    UnreserveRowIn,
     UploadJobScope,
     WORKLIST_FILTER_MAX_LENGTH,
     WORKLIST_QUERY_MAX_LENGTH,
@@ -1052,6 +1055,36 @@ def _serialize_reserve_request(
     }
 
 
+def _serialize_reserve_request_row(db: Session, rr: OrderInquiryReserveRequestRow) -> dict:
+    """One request row's wire shape (`OrderInquiryReserveRequestRowOut`) - the answer
+    `POST .../rows/{row_id}/reserve` and `.../unreserve` hand back (plan 6c F2/F5)."""
+    from decimal import Decimal
+
+    from app.models.project_so import OrderInquiryRow
+
+    def _qty(value) -> Optional[str]:
+        if value is None:
+            return None
+        return format(Decimal(str(value)).normalize(), "f")
+
+    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == rr.row_id).first()
+    warehouse = (
+        db.query(Warehouse).filter(Warehouse.id == rr.warehouse_id).first()
+        if rr.warehouse_id
+        else None
+    )
+    return {
+        "id": rr.id,
+        "row_id": rr.row_id,
+        "item_code": getattr(row, "item_code", None),
+        "qty_requested": _qty(rr.qty_requested),
+        "warehouse_id": rr.warehouse_id,
+        "location": warehouse.warehouse_code if warehouse is not None else None,
+        "qty_reserved": _qty(rr.qty_reserved),
+        "reason": rr.reason,
+    }
+
+
 @router.post(
     "/order-inquiries/{inquiry_id}/reserve-requests",
     response_model=OrderInquiryReserveRequestOut,
@@ -1125,30 +1158,91 @@ async def cancel_order_inquiry_reserve_request(
 
 
 @router.post(
-    "/order-inquiries/reserve-requests/{request_id}/reserve",
-    response_model=OrderInquiryReserveRequestOut,
+    "/order-inquiries/reserve-requests/{request_id}/rows/{row_id}/reserve",
+    response_model=OrderInquiryReserveRequestRowOut,
 )
-async def reserve_order_inquiry_reserve_request(
+async def reserve_order_inquiry_reserve_request_row(
     request_id: str,
-    payload: ReserveRequestIn,
+    row_id: str,
+    payload: ReserveRowIn,
     current_user: dict = Depends(require_permission(RESERVE)),
     db: Session = Depends(get_db),
 ):
-    """Eling's own Confirm (3.3, AC-RS-6 to AC-RS-11): every row of the request answered
-    in one call, all-or-nothing. `projects.order_inquiries.reserve` alone (R1) - not
-    `ACKNOWLEDGE`, which is purchasing's own grant to raise the request in the first
-    place."""
+    """Eling's own Confirm, ONE row at a time (`PLAN-oi-request-cs-reserve.md` section
+    6c, F2 - supersedes the old all-rows 3.3/AC-RS-6..11). `projects.order_inquiries.
+    reserve` alone (R1) - not `ACKNOWLEDGE`, which is purchasing's own grant to raise
+    the request in the first place. `row_id` is `OrderInquiryRow.id`, the same id the
+    Lines grid already renders on every row - not the request row's own id."""
     try:
         validate_uuid_path(request_id, resource="Reserve request")
-        request = OrderInquiryReserveService(db).reserve(
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        rr = OrderInquiryReserveService(db).reserve_row(
             request_id=request_id,
-            rows=[row.model_dump() for row in payload.rows],
+            row_id=row_id,
+            warehouse_id=payload.warehouse_id,
+            qty_reserved=payload.qty_reserved,
+            reason=payload.reason,
             actor_user_id=current_user["id"],
         )
         db.commit()
-        return _serialize_reserve_request(db, request)
+        return _serialize_reserve_request_row(db, rr)
     except Exception as exc:
         db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiries/reserve-requests/{request_id}/rows/{row_id}/unreserve",
+    response_model=OrderInquiryReserveRequestRowOut,
+)
+async def unreserve_order_inquiry_reserve_request_row(
+    request_id: str,
+    row_id: str,
+    payload: UnreserveRowIn,
+    current_user: dict = Depends(require_permission(RESERVE)),
+    db: Session = Depends(get_db),
+):
+    """Gives back part (or all) of what was reserved on ONE row
+    (`PLAN-oi-request-cs-reserve.md` section 6c, F5) - its own action, never Unlink.
+    No email either way."""
+    try:
+        validate_uuid_path(request_id, resource="Reserve request")
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        rr = OrderInquiryReserveService(db).unreserve_row(
+            request_id=request_id,
+            row_id=row_id,
+            qty=payload.qty,
+            note=payload.note,
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        return _serialize_reserve_request_row(db, rr)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiries/reserve-requests/{request_id}/rows/{row_id}/history",
+    response_model=List[ReserveHistoryEntryOut],
+)
+def order_inquiry_reserve_request_row_history(
+    request_id: str,
+    row_id: str,
+    _user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """The dialog's own History tab, newest first (`PLAN-oi-request-cs-reserve.md`
+    section 6c, F3). Same read gate as the request list beside it: `VIEW`/
+    `ACKNOWLEDGE`/`RESERVE` are the three ways to already be allowed to see this
+    inquiry's own Lines tab at all."""
+    try:
+        validate_uuid_path(request_id, resource="Reserve request")
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        return OrderInquiryReserveService(db).history_for_row(
+            request_id=request_id, row_id=row_id
+        )
+    except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 

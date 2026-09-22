@@ -545,7 +545,12 @@ def test_every_company_id_table_is_registered():
     # a route that names only the request (`reserve()` takes `request_row_id`s), and the
     # mixin stamps the company at insert so a row written under one scope is unreadable
     # under another.
-    expected_owned = 136
+    # PLAN-oi-request-cs-reserve.md section 6c (review round 2) adds 1:
+    # `order_inquiry_reserve_events` is one company's own history of a reserve line
+    # (F3) - the reserve/unreserve route both load and write it BY the reserve request
+    # row's id, never through a scoped parent query, so it is owned outright like its
+    # sibling reserve tables above.
+    expected_owned = 137
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

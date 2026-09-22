@@ -1270,6 +1270,39 @@ class ReserveRequestIn(BaseModel):
     rows: List[ReserveAnswerRowIn]
 
 
+# --------------------------------------------------------- request CS to reserve, round 2
+
+
+class ReserveRowIn(BaseModel):
+    """`POST .../reserve-requests/{request_id}/rows/{row_id}/reserve` (F2): answers ONE
+    request row. `row_id` is on the PATH (`OrderInquiryRow.id`, the id every other route
+    on this row already keys by), never repeated in the body."""
+
+    warehouse_id: str = Field(..., pattern=UUID_PATTERN)
+    qty_reserved: str
+    reason: Optional[str] = Field(None, max_length=2000)
+
+
+class UnreserveRowIn(BaseModel):
+    """`POST .../reserve-requests/{request_id}/rows/{row_id}/unreserve` (F5)."""
+
+    qty: str
+    note: Optional[str] = Field(None, max_length=5000)
+
+
+class ReserveHistoryEntryOut(BaseModel):
+    """One line of the dialog's History tab (F3): `kind` is `requested` / `reserved` /
+    `unreserved` / `cancelled`, newest first. `actor_name` is always a human name or
+    email, never a UUID (Cursor rules)."""
+
+    kind: str
+    qty: Optional[str] = None
+    location: Optional[str] = None
+    reason: Optional[str] = None
+    actor_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
 class OrderInquiryReserveRequestRowOut(BaseModel):
     id: str
     row_id: str

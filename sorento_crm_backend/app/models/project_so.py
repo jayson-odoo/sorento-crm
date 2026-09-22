@@ -1330,6 +1330,53 @@ class OrderInquiryReserveRequestRow(Base, CompanyScopedMixin):
     )
 
 
+#: PLAN-oi-request-cs-reserve.md section 6c, F3: one history row per reserve/unreserve
+#: on a request row. `requested` / `cancelled` are never rows here - they derive straight
+#: off `OrderInquiryReserveRequest` (`requested_at`/`requested_by`, `cancelled_at`/
+#: `cancelled_by`), which is already the one copy of that fact.
+RESERVE_EVENT_RESERVED = "reserved"
+RESERVE_EVENT_UNRESERVED = "unreserved"
+
+
+class OrderInquiryReserveEvent(Base, CompanyScopedMixin):
+    """One reserve or unreserve on a request row - the dialog's own History tab (F3).
+
+    `reserve_request_row_id` CASCADEs off its own parent row, so the history a request
+    row's `reserve/unreserve` calls wrote goes with it rather than orphaning; a reserve
+    LINK is a separate, live fact (`OrderInquiryLink.reserve_request_row_id`,
+    `SET NULL`) - this table is the append-only audit trail beside it, never the source
+    of the link's own quantity.
+    """
+
+    __tablename__ = "order_inquiry_reserve_events"
+    __audit_entity_type__ = "project_order_inquiry_reserve_events"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_reserve_request_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(16), nullable=False)
+    qty = Column(Numeric(15, 4), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    note = Column(Text, nullable=True)
+    actor_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            f"kind IN ('{RESERVE_EVENT_RESERVED}', '{RESERVE_EVENT_UNRESERVED}')",
+            name="ck_order_inquiry_reserve_events_kind",
+        ),
+        CheckConstraint("qty > 0", name="ck_order_inquiry_reserve_events_qty_positive"),
+        Index("ix_order_inquiry_reserve_events_row", "reserve_request_row_id"),
+        {"schema": "projects"},
+    )
+
+
 # ------------------------------------------------------------------------ allocation
 
 ALLOC_SOURCE_BRW = "brw"

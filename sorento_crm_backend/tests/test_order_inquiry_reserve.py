@@ -102,7 +102,20 @@ RESERVER_PERMISSIONS = REQUESTER_PERMISSIONS + [RESERVE_PERMISSION]
 
 REQUEST_URL = lambda inquiry_id: f"{LIST}/{inquiry_id}/reserve-requests"  # noqa: E731
 CANCEL_URL = lambda request_id: f"{LIST}/reserve-requests/{request_id}/cancel"  # noqa: E731
+#: The old ALL-ROWS reserve route (3.3), retired by section 6c F2 - kept defined here,
+#: not called by any test below, ONLY so `test_order_inquiry_reserve_round2.py` can
+#: import it (re-exported as `OLD_ALL_ROWS_RESERVE_URL`) to prove AC-RS-57 (404/405).
 RESERVE_URL = lambda request_id: f"{LIST}/reserve-requests/{request_id}/reserve"  # noqa: E731
+#: Section 6c F2/F5/F3: the per-row routes every test below now drives.
+ROW_RESERVE_URL = lambda request_id, row_id: (  # noqa: E731
+    f"{LIST}/reserve-requests/{request_id}/rows/{row_id}/reserve"
+)
+ROW_UNRESERVE_URL = lambda request_id, row_id: (  # noqa: E731
+    f"{LIST}/reserve-requests/{request_id}/rows/{row_id}/unreserve"
+)
+ROW_HISTORY_URL = lambda request_id, row_id: (  # noqa: E731
+    f"{LIST}/reserve-requests/{request_id}/rows/{row_id}/history"
+)
 
 
 # --------------------------------------------------------------------------------- #
@@ -437,16 +450,11 @@ def test_second_request_after_reserved_allowed(api):
         .one()
     )
     reserve_resp = client.post(
-        RESERVE_URL(request_id),
+        ROW_RESERVE_URL(request_id, row.id),
         json={
-            "rows": [
-                {
-                    "request_row_id": request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "50",
-                    "reason": "BRW only has 50 in stock",
-                }
-            ]
+            "warehouse_id": world.site.id,
+            "qty_reserved": "50",
+            "reason": "BRW only has 50 in stock",
         },
     )
     assert reserve_resp.status_code == 200, reserve_resp.text
@@ -485,16 +493,11 @@ def test_reserve_writes_links_and_refreshes_state(api, monkeypatch):
         .one()
     )
     response = client.post(
-        RESERVE_URL(request["id"]),
+        ROW_RESERVE_URL(request["id"], row.id),
         json={
-            "rows": [
-                {
-                    "request_row_id": request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "50",
-                    "reason": "BRW only has 50 in stock",
-                }
-            ]
+            "warehouse_id": world.site.id,
+            "qty_reserved": "50",
+            "reason": "BRW only has 50 in stock",
         },
     )
     assert response.status_code == 200, response.text
@@ -538,16 +541,8 @@ def test_reserve_writes_links_and_refreshes_state(api, monkeypatch):
         .one()
     )
     full_response = client.post(
-        RESERVE_URL(full_request["id"]),
-        json={
-            "rows": [
-                {
-                    "request_row_id": full_request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "20",
-                }
-            ]
-        },
+        ROW_RESERVE_URL(full_request["id"], full_row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "20"},
     )
     assert full_response.status_code == 200, full_response.text
     world.db.commit()
@@ -578,22 +573,17 @@ def test_reserve_zero_needs_reason(api):
     )
 
     no_reason = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "0"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "0"},
     )
     assert no_reason.status_code == 422, no_reason.text
 
     with_reason = client.post(
-        RESERVE_URL(request["id"]),
+        ROW_RESERVE_URL(request["id"], row.id),
         json={
-            "rows": [
-                {
-                    "request_row_id": request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "0",
-                    "reason": "BRW has none in stock",
-                }
-            ]
+            "warehouse_id": world.site.id,
+            "qty_reserved": "0",
+            "reason": "BRW has none in stock",
         },
     )
     assert with_reason.status_code == 200, with_reason.text
@@ -629,14 +619,14 @@ def test_reserve_short_needs_reason_full_does_not(api):
     )
 
     short_no_reason = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "30"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "30"},
     )
     assert short_no_reason.status_code == 422, short_no_reason.text
 
     full_no_reason = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
     )
     assert full_no_reason.status_code == 200, full_no_reason.text
 
@@ -660,53 +650,24 @@ def test_reserve_over_requested_is_422(api):
         .one()
     )
     over = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "51"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "51"},
     )
     assert over.status_code == 422, over.text
 
 
 # --------------------------------------------------------------------------------- #
-# RS-9                                                                               #
+# RS-9 - RETIRED. AC-RS-9 pinned the old all-or-nothing single-call answer: a          #
+# request with two rows had to be answered together, or nothing was written.           #
+# `PLAN-oi-request-cs-reserve.md` section 6c F2 supersedes it outright ("Section 7      #
+# 'partial answers' is superseded by this ruling") - the per-row route answers ONE row  #
+# per call BY DESIGN, so "a partial answer is rejected" is no longer a rule this        #
+# feature holds; a request now stays `requested` while any row of it is still           #
+# unanswered (`test_order_inquiry_reserve_round2.py::                                  #
+# test_reserve_one_row_endpoint_answers_row_by_row` pins the replacement behaviour).    #
+# There is no equivalent call to port: the new endpoint's body cannot even NAME two     #
+# rows in one request.                                                                  #
 # --------------------------------------------------------------------------------- #
-
-
-def test_reserve_all_rows_or_422(api):
-    client, world = api
-    row_a = _open_row(world, qty="50")
-    row_b = _open_row(world, qty="30")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id),
-        json={
-            "rows": [
-                {"row_id": row_a.id, "qty_requested": "50"},
-                {"row_id": row_b.id, "qty_requested": "30"},
-            ]
-        },
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row_a = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row_a.id)
-        .one()
-    )
-
-    partial = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row_a.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
-    )
-    assert partial.status_code == 422, partial.text
-    world.db.commit()
-
-    assert (
-        world.db.query(OrderInquiryLink)
-        .filter(OrderInquiryLink.reserve_request_row_id == request_row_a.id)
-        .count()
-        == 0
-    ), "an all-or-nothing rejection must write nothing"
 
 
 # --------------------------------------------------------------------------------- #
@@ -733,8 +694,8 @@ def test_reserve_requires_permission(api):
     # A user with none of the reserve permission (also covers "the requester without it").
     with _as(world.db, world.requester, REQUESTER_PERMISSIONS) as stranger:
         response = stranger.post(
-            RESERVE_URL(request["id"]),
-            json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+            ROW_RESERVE_URL(request["id"], row.id),
+            json={"warehouse_id": world.site.id, "qty_reserved": "50"},
         )
     assert response.status_code == 403, response.text
 
@@ -765,15 +726,15 @@ def test_reserve_only_once(api):
         .one()
     )
     first = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
     )
     assert first.status_code == 200, first.text
     world.db.commit()
 
     second = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "0", "reason": "again"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "0", "reason": "again"},
     )
     assert second.status_code == 409, second.text
 
@@ -825,16 +786,12 @@ def test_taken_remaining_include_reserved(worklist_api):
         .one()
     )
     reserver_id = _user(db, f"{WL_MARKER} reserver")
-    service.reserve(
+    service.reserve_row(
         request_id=request.id,
-        rows=[
-            {
-                "request_row_id": request_row.id,
-                "warehouse_id": warehouse.id,
-                "qty_reserved": Decimal("50"),
-                "reason": "BRW only has 50 in stock",
-            }
-        ],
+        row_id=row.id,
+        warehouse_id=warehouse.id,
+        qty_reserved=Decimal("50"),
+        reason="BRW only has 50 in stock",
         actor_user_id=reserver_id,
     )
     db.commit()
@@ -938,15 +895,12 @@ def test_committed_v_owed_nets_reserved_link(handshake_world):
         .filter(OrderInquiryReserveRequestRow.request_id == request.id)
         .one()
     )
-    service.reserve(
+    service.reserve_row(
         request_id=request.id,
-        rows=[
-            {
-                "request_row_id": request_row.id,
-                "warehouse_id": world.warehouse.id,
-                "qty_reserved": Decimal("50"),
-            }
-        ],
+        row_id=row.id,
+        warehouse_id=world.warehouse.id,
+        qty_reserved=Decimal("50"),
+        reason=None,
         actor_user_id=world.cs_user,
     )
     db.commit()
@@ -958,54 +912,14 @@ def test_committed_v_owed_nets_reserved_link(handshake_world):
 
 
 # --------------------------------------------------------------------------------- #
-# RS-14                                                                              #
+# RS-14 - RETIRED. AC-RS-14 pinned "reversal = the existing Unlink" (plan 3.3's own     #
+# words). `PLAN-oi-request-cs-reserve.md` section 6c F5 supersedes it outright: "Unlink  #
+# (bulk deferred action and per-row) SKIPS reserve links ... 3.3 'Reversal' is           #
+# superseded" - Unlink now does the OPPOSITE of what this test asserted (it leaves a     #
+# reserve link standing), and the replacement action is Unreserve, its own route.        #
+# `test_order_inquiry_reserve_round2.py::test_unlink_never_touches_a_reserve_link`       #
+# (AC-RS-59) pins the correct behaviour in this same lane.                               #
 # --------------------------------------------------------------------------------- #
-
-
-def test_unlink_reserve_link_restores_remaining(api):
-    client, world = api
-    row = _open_row(world, qty="139")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "139"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-    reserve_resp = client.post(
-        RESERVE_URL(request["id"]),
-        json={
-            "rows": [
-                {
-                    "request_row_id": request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "50",
-                    "reason": "BRW only has 50 in stock",
-                }
-            ]
-        },
-    )
-    assert reserve_resp.status_code == 200, reserve_resp.text
-    world.db.commit()
-
-    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-    ProjectOrderInquiryService(world.db).unplace(str(row.id), actor_user_id=world.requester)
-    world.db.commit()
-
-    world.db.expire_all()
-    refreshed_row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
-    assert refreshed_row.state == INQUIRY_RAISED, "unlinking the reserve link must restore remaining"
-
-    reloaded_request = (
-        world.db.query(OrderInquiryReserveRequest).filter(OrderInquiryReserveRequest.id == request["id"]).one()
-    )
-    assert reloaded_request.state == "reserved", "the request stays reserved as history"
 
 
 # --------------------------------------------------------------------------------- #
@@ -1114,20 +1028,22 @@ def test_recipient_order_request_and_reserved():
 
 
 def _find_reserve_seed_migration_path() -> Path | None:
-    """Content-sniffed by the new TABLE name, safe here because the plan (3.1) is
-    explicit that ONE migration creates both tables AND seeds both automations - unlike
-    the undo case (`test_board_undo_email.py`'s own note on why it sniffs by revision id
-    instead), there is no second, later migration expected to also mention this table
-    name, so no ambiguity to guard against."""
+    """Content-sniffed by the SEEDED TEMPLATE CODE, not the table name (fix round,
+    section 6c): the plan's own oirs_0002 follow-up migration necessarily mentions
+    `order_inquiry_reserve_requests` too, in its `order_inquiry_reserve_events` FK
+    (`REFERENCES order_inquiry_reserve_request_rows`, which CONTAINS the table name as
+    a substring) - the table-name sniff this helper used before round 2 existed is no
+    longer unambiguous. `order_inquiry_reserve_requested_default` is the template CODE
+    3.6 seeds and is unique to the ONE migration that seeds both automations."""
     versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
     matches = [
         path
         for path in versions_dir.glob("*.py")
-        if "order_inquiry_reserve_requests" in path.read_text(errors="ignore")
+        if "order_inquiry_reserve_requested_default" in path.read_text(errors="ignore")
     ]
     assert len(matches) <= 1, (
-        "more than one alembic migration mentions order_inquiry_reserve_requests: "
-        f"{[p.name for p in matches]}"
+        "more than one alembic migration mentions "
+        f"order_inquiry_reserve_requested_default: {[p.name for p in matches]}"
     )
     return matches[0] if matches else None
 
@@ -1327,8 +1243,8 @@ def test_cancel_request_only_while_requested(api, monkeypatch):
         .one()
     )
     client.post(
-        RESERVE_URL(request_b["id"]),
-        json={"rows": [{"request_row_id": request_row_b.id, "warehouse_id": world.site.id, "qty_reserved": "20"}]},
+        ROW_RESERVE_URL(request_b["id"], row_b.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "20"},
     )
     world.db.commit()
 
@@ -1389,16 +1305,12 @@ def test_reserve_state_derived(worklist_api):
     # 40 remaining - the fixture this test's own next step needs to prove "reserved then
     # requested again reads requested" ON THE SAME ROW, rather than reaching for a fresh
     # one with nothing to do with the transition being pinned.
-    service.reserve(
+    service.reserve_row(
         request_id=request.id,
-        rows=[
-            {
-                "request_row_id": request_row.id,
-                "warehouse_id": warehouse.id,
-                "qty_reserved": Decimal("50"),
-                "reason": "BRW only has 50",
-            }
-        ],
+        row_id=row.id,
+        warehouse_id=warehouse.id,
+        qty_reserved=Decimal("50"),
+        reason="BRW only has 50",
         actor_user_id=reserver_id,
     )
     db.commit()
@@ -1523,52 +1435,12 @@ def test_cancel_by_third_party_forbidden(api):
     assert reserver_cancel.status_code == 200, reserver_cancel.text
 
 
-def test_reserve_duplicate_request_row_id_is_422(api):
-    """SF-2: the "every row of this request must be answered in one call" guard compares
-    SETS (`answered = {entry["request_row_id"] for entry in rows}`), so a payload that
-    names the SAME `request_row_id` twice still satisfies it when the request has exactly
-    one row. The unguarded `for entry in rows` loop right after then writes one
-    `OrderInquiryLink` PER ANSWER, not per row - today this returns 200 and double-writes
-    two 50-qty links against a single 50-qty row."""
-    client, world = api
-    row = _open_row(world, qty="50")
-    request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
-    ).json()
-    world.db.commit()
-
-    from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row.id)
-        .one()
-    )
-
-    response = client.post(
-        RESERVE_URL(request["id"]),
-        json={
-            "rows": [
-                {"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"},
-                {"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"},
-            ]
-        },
-    )
-    assert response.status_code == 422, response.text
-    assert request_row.id in response.text or row.item_code in response.text, response.text
-    world.db.commit()
-
-    assert (
-        world.db.query(OrderInquiryLink)
-        .filter(OrderInquiryLink.reserve_request_row_id == request_row.id)
-        .count()
-        == 0
-    ), "a rejected duplicate-row answer must write no link"
-
-    reloaded = (
-        world.db.query(OrderInquiryReserveRequest).filter(OrderInquiryReserveRequest.id == request["id"]).one()
-    )
-    assert reloaded.state == "requested", "a rejected reserve must leave the request open"
+# RETIRED (SF-2's own guard). Its whole premise was the OLD all-rows payload naming the
+# SAME `request_row_id` twice in one `rows: [...]` array - `PLAN-oi-request-cs-reserve.md`
+# section 6c F2 supersedes the shape itself: the per-row route names exactly one row (on
+# the PATH, never in the body), so there is no "named twice in one call" to guard against
+# any more - answering the same row a second time is `test_reserve_only_once`'s own 409,
+# already ported above.
 
 
 def test_request_and_reserve_reject_bad_warehouse(api):
@@ -1639,16 +1511,9 @@ def test_request_and_reserve_reject_bad_warehouse(api):
     ).json()
     world.db.commit()
 
-    from app.models.project_so import OrderInquiryReserveRequestRow
-
-    request_row = (
-        world.db.query(OrderInquiryReserveRequestRow)
-        .filter(OrderInquiryReserveRequestRow.row_id == row_reserve.id)
-        .one()
-    )
     bad_reserve = client.post(
-        RESERVE_URL(req["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": inactive.id, "qty_reserved": "50"}]},
+        ROW_RESERVE_URL(req["id"], row_reserve.id),
+        json={"warehouse_id": inactive.id, "qty_reserved": "50"},
     )
     assert bad_reserve.status_code == 422, bad_reserve.text
 
@@ -1735,16 +1600,16 @@ def test_reserve_recheck_remaining_after_new_po_link(api):
     )
 
     over = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "100"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "100"},
     )
     assert over.status_code == 422, over.text
     assert "40" in over.text, over.text
     world.db.commit()
 
     ok = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "40"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "40"},
     )
     assert ok.status_code == 200, ok.text
     world.db.commit()
@@ -1760,12 +1625,14 @@ def test_reserve_recheck_remaining_after_new_po_link(api):
 
 
 def test_body_ids_malformed_are_422(api):
-    """N-2: neither `row_id` nor `request_row_id` is UUID-typed at the schema level, so a
-    malformed value reaches a raw `.id.in_([...])`/dict-key comparison downstream.
-    `create_request` hits Postgres with an invalid uuid literal and 500s instead of 422;
-    a `row_id` duplicated inside one CREATE payload is not caught at all (two
-    `OrderInquiryReserveRequestRow`s for the SAME row, together requesting more than the
-    row's own remaining)."""
+    """N-2: neither `row_id` (CREATE) nor `warehouse_id` (per-row reserve) is
+    UUID-typed at the schema level, so a malformed value reaches a raw
+    `.id.in_([...])`/dict-key comparison downstream. `create_request` hits Postgres
+    with an invalid uuid literal and 500s instead of 422; a `row_id` duplicated inside
+    one CREATE payload is not caught at all (two `OrderInquiryReserveRequestRow`s for
+    the SAME row, together requesting more than the row's own remaining). Section 6c
+    F2 moved the per-row route's own row id onto the PATH - `validate_uuid_path` is
+    what guards a malformed one there now, same family of defect, same assertion."""
     client, world = api
 
     bad_create = client.post(
@@ -1782,10 +1649,15 @@ def test_body_ids_malformed_are_422(api):
     world.db.commit()
 
     bad_reserve = client.post(
-        RESERVE_URL(created.json()["id"]),
-        json={"rows": [{"request_row_id": "nope", "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+        ROW_RESERVE_URL(created.json()["id"], "not-a-uuid"),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
     )
-    assert bad_reserve.status_code == 422, bad_reserve.text
+    # `row_id` moved onto the PATH (section 6c F2) - a malformed PATH id is guarded by
+    # `validate_uuid_path`, whose own convention (`uuid_path_param.py`) is 404, not 422,
+    # for a detail route: "a bad-format id is just a guaranteed-missing row", the same
+    # answer every other `{row_id}` route in this file gives (`place_order_inquiry_row_
+    # on_po` etc). Never a 500, which is the defect N-2 actually guards against.
+    assert bad_reserve.status_code == 404, bad_reserve.text
 
     row_dup = _open_row(world, qty="30")
     dup_row_create = client.post(
@@ -1840,33 +1712,15 @@ def test_note_and_reason_length_capped(api):
 
     too_long_reason = "y" * 2001
     resp_reason = client.post(
-        RESERVE_URL(request["id"]),
-        json={
-            "rows": [
-                {
-                    "request_row_id": request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "5",
-                    "reason": too_long_reason,
-                }
-            ]
-        },
+        ROW_RESERVE_URL(request["id"], row_reason.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "5", "reason": too_long_reason},
     )
     assert resp_reason.status_code == 422, resp_reason.text
 
     ok_reason = "y" * 2000
     resp_reason_ok = client.post(
-        RESERVE_URL(request["id"]),
-        json={
-            "rows": [
-                {
-                    "request_row_id": request_row.id,
-                    "warehouse_id": world.site.id,
-                    "qty_reserved": "5",
-                    "reason": ok_reason,
-                }
-            ]
-        },
+        ROW_RESERVE_URL(request["id"], row_reason.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "5", "reason": ok_reason},
     )
     assert resp_reason_ok.status_code == 200, resp_reason_ok.text
 
@@ -1902,8 +1756,8 @@ def test_po_ref_skips_reserve_link(api):
         .one()
     )
     reserve_resp = client.post(
-        RESERVE_URL(request["id"]),
-        json={"rows": [{"request_row_id": request_row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+        ROW_RESERVE_URL(request["id"], row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
     )
     assert reserve_resp.status_code == 200, reserve_resp.text
     world.db.commit()

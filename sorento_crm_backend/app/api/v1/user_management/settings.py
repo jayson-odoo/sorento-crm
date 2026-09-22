@@ -185,6 +185,11 @@ class SystemSettingUpdate(BaseModel):
     # when it reaches marketing without its catalogue package. Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     price_tag_guarded_classes: Optional[list[str]] = None
+    # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    # Location, owner-configurable. `null` clears it back to "no configured default"
+    # (the dialog then falls back to the row's own site pool, R3). Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    oi_reserve_default_pool_warehouse_id: Optional[str] = None
 
 
 class ChatbotLane(BaseModel):
@@ -419,6 +424,13 @@ async def get_settings(
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
+                # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
+                # or the setting never reaches the General settings screen at all.
+                "oi_reserve_default_pool_warehouse_id": (
+                    getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
+                    if settings
+                    else None
+                ),
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -554,6 +566,36 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             update_data["default_uom_id"] = uid_clean
         else:
             update_data["default_uom_id"] = None
+
+    # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    # Location must be an ACTIVE POOL - a bare warehouse code, no `-SUFFIX` group and no
+    # `pool_warehouse_id` of its own naming another warehouse as ITS pool. 422, not 400
+    # (the sibling id fields above are 400): this is a shape refusal about WHAT KIND of
+    # warehouse was named, the same family as the other 422s in this function.
+    if "oi_reserve_default_pool_warehouse_id" in update_data:
+        wid = update_data["oi_reserve_default_pool_warehouse_id"]
+        if wid is not None and str(wid).strip():
+            from app.models.inventory import Warehouse
+            from app.services.scm.group_netting import group_of_warehouse_code
+
+            wid_clean = str(wid).strip()
+            warehouse = (
+                db.query(Warehouse)
+                .filter(Warehouse.id == wid_clean, Warehouse.is_active.is_(True))
+                .first()
+            )
+            is_group_member = (
+                warehouse is not None
+                and group_of_warehouse_code(warehouse.warehouse_code) is not None
+            )
+            if warehouse is None or is_group_member:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Choose an active site pool, not a group warehouse.",
+                )
+            update_data["oi_reserve_default_pool_warehouse_id"] = wid_clean
+        else:
+            update_data["oi_reserve_default_pool_warehouse_id"] = None
 
     for col in (
         "purchase_request_default_approver_user_id",
