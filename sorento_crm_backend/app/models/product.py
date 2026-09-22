@@ -96,6 +96,13 @@ class Brand(Base, CompanyScopedMixin):
     # brands the active contact can see. Default mirrors the Attachment +
     # Promotion default so existing brands stay broadly visible.
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
+    # PLAN-brand-flows-to-purchasing.md (owner ruling 22 Sep 2026): a brand bought
+    # locally by CS on its own (TP Enterprise is the named one) never reaches
+    # purchasing - `app.services.scm.supply_origin.buy_origin_by_product` reads this
+    # BEFORE the local-buy-routing toggle and answers "local" for its products
+    # whatever the toggle state. Default true so nothing changes until an admin
+    # flips a brand.
+    flows_to_purchasing = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
