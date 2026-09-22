@@ -126,6 +126,113 @@ def _seed_product(session_factory, *, code: str) -> None:
     db.commit()
 
 
+def _seed_product_with_brand(session_factory, *, code: str, brand_code: str | None) -> None:
+    """`_seed_product`'s twin, with a REAL `brands` row on `Product.brand_id` - the
+    resolver's own post-pass (`entity_resolver.py::_attach_brand_info`) stamps
+    `display.brand.brand_code` off this exact FK, which is what
+    `lanes/business/gate.py::run_gate` reads into `routing_brand` (AC-1804..1806,
+    round 4, owner-approved). `brand_code=None` seeds a product with NO brand at
+    all - the gate then has nothing to resolve (AC-1806's own no-brand case)."""
+    from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+
+    db = _db(session_factory)
+    cat = ProductCategory(
+        id=str(uuid.uuid4()),
+        category_code=f"ZZTC-{code}",
+        category_name="ZZT",
+        class_label="zzt",
+        search_synonyms=[],
+    )
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"ZZTU-{code}", uom_name="ZZT uom")
+    db.add_all([cat, uom])
+    brand_id = None
+    if brand_code:
+        brand = Brand(id=str(uuid.uuid4()), brand_code=brand_code, brand_name=f"ZZT {brand_code.title()}")
+        db.add(brand)
+        db.flush()
+        brand_id = brand.id
+    db.flush()
+    db.add(
+        Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=f"ZZT {code}",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            brand_id=brand_id,
+            list_price=1,
+        )
+    )
+    db.commit()
+
+
+def _seed_packing_list_team(session_factory) -> dict[str, str]:
+    """The Packing List team, seeded fresh (owner ruling, AC-1804..1806's own brief:
+    "seed team_member_brands rows yourself... never read existing data"). Two
+    members: Lucas (tagged ONLY `mocha`) and Jereen (every OTHER brand this test
+    names - `sorento` and `cabana` - never `mocha`), matching the prod tagging the
+    owner described ("Jereen = every brand except mocha, Lucas = mocha")."""
+    from app.models.access import AccessAgent, AgentTeam, Team, TeamMember, team_member_brands
+    from app.models.sla import SLAPolicy, SLAPolicyTier
+    from app.models.user import User
+    from app.services.chatbot.lanes.escalation import NEXT_ASSIGNEE_POLICY_CODE, NEXT_ASSIGNEE_TIER
+
+    db = _db(session_factory)
+    agent_id = str(uuid.uuid4())
+    db.add(
+        AccessAgent(
+            id=agent_id, code="incoming_stock_enquiries", name="ZZT Incoming Stock Enquiries", is_active=True
+        )
+    )
+    team_id = str(uuid.uuid4())
+    db.add(Team(id=team_id, name="ZZT Packing List", company_id=SORENTO))
+    # `_next_assignee_body` always sends the escalation lane's own literal policy
+    # code/tier (`NEXT_ASSIGNEE_POLICY_CODE`/`NEXT_ASSIGNEE_TIER`) - the REAL
+    # `/external/next-assignee` handler 404s without a matching row, unlike the
+    # mocked seam the file's other tests use.
+    policy_id = str(uuid.uuid4())
+    db.add(
+        SLAPolicy(
+            id=policy_id, code=NEXT_ASSIGNEE_POLICY_CODE, name="ZZT Policy", is_active=True, company_id=SORENTO
+        )
+    )
+    db.flush()
+    db.add(
+        SLAPolicyTier(
+            id=str(uuid.uuid4()),
+            policy_id=policy_id,
+            tier_level=NEXT_ASSIGNEE_TIER,
+            tier_name="ZZT Tier 1",
+            response_hours=4,
+            resolution_hours=24,
+        )
+    )
+    db.flush()
+
+    def _member(name: str, brands: list[str], sort_order: int) -> str:
+        user_id = str(uuid.uuid4())
+        db.add(User(id=user_id, email=f"zzt-{name.lower()}@zzt.test", name=f"ZZT {name}", status="ACTIVE"))
+        db.flush()
+        member_id = str(uuid.uuid4())
+        db.add(TeamMember(id=member_id, team_id=team_id, user_id=user_id, sort_order=sort_order))
+        db.flush()
+        for code in brands:
+            db.execute(team_member_brands.insert().values(team_member_id=member_id, brand_code=code))
+        db.flush()
+        return user_id
+
+    lucas_id = _member("Lucas", ["mocha"], 1)
+    jereen_id = _member("Jereen", ["sorento", "cabana"], 2)
+
+    db.add(
+        AgentTeam(
+            id=str(uuid.uuid4()), agent_id=agent_id, code="purchasing", team_id=team_id, tier=1, company_id=SORENTO
+        )
+    )
+    db.commit()
+    return {"lucas_id": lucas_id, "jereen_id": jereen_id, "team_id": team_id, "agent_id": agent_id}
+
+
 def _stub_incoming_probe_empty(monkeypatch) -> None:
     """Every MCP probe (incoming stock included) answers "nothing" - a genuine ETA miss,
     no network reached (`conftest.py::_no_real_mcp_calls` would otherwise raise)."""
@@ -188,6 +295,29 @@ def _capture_next_assignee(monkeypatch, *, response: dict[str, Any] | None = Non
 
     monkeypatch.setattr(next_assignee_mod, "post_next_assignee", fake_post_next_assignee)
     return bodies
+
+
+def _capture_real_next_assignee(monkeypatch) -> list[dict[str, Any]]:
+    """AC-1804..1806 (round 4): WRAPS the REAL `/external/next-assignee` handler
+    rather than replacing it - every request body AND its real response are
+    captured, so the assertion is against an ACTUAL round-robin draw over seeded
+    `team_member_brands` rows (`_seed_packing_list_team`), not a canned stub. The
+    escalation lane's own closure re-imports `post_next_assignee` off the module at
+    CALL time (`escalation_services._next_assignee`'s own docstring), so patching
+    the module attribute here is picked up the same way `_capture_next_assignee`'s
+    fake already proves it is."""
+    import app.api.v1.external.next_assignee as next_assignee_mod
+
+    real = next_assignee_mod.post_next_assignee
+    calls: list[dict[str, Any]] = []
+
+    async def wrapped(body: dict, current_user: dict = None, db: Any = None):
+        response = await real(body=body, current_user=current_user, db=db)
+        calls.append({"body": dict(body), "response": dict(response)})
+        return response
+
+    monkeypatch.setattr(next_assignee_mod, "post_next_assignee", wrapped)
+    return calls
 
 
 def _capture_sla(monkeypatch) -> list[Any]:
@@ -1425,3 +1555,157 @@ class TestAC1803TheTwoMissedTeamPickMintSites:
         assert question.kind == "team_pick", question
         assert question.team == "purchasing", question
         assert question.payload.get("agent") is None, question.payload
+
+
+# --------------------------------------------------------------------------- #
+# AC-1804/AC-1805/AC-1806 (round 4, owner-approved scope extension, 22 Sep 2026):
+# the BRAND rides the SAME acceptance carry the agent now uses, so a Packing List
+# escalation draws the brand-tagged member instead of rotating the whole team -
+# "a MOCHA product's escalation goes to Lucas, a SORENTO product's to Jereen"
+# (Packing List tags in prod: Jereen = every brand except mocha, Lucas = mocha).
+# AC-1804/AC-1805 run the REAL `/external/next-assignee` handler over a freshly
+# seeded team (`_capture_real_next_assignee` + `_seed_packing_list_team`) rather
+# than the file's usual canned stub, because "the drawn assignee is the
+# brand-tagged member" is the actual claim under test - a mock could not prove it.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1804And1805And1806BrandCarriedToNextAssignee:
+    def _run_incoming_miss_then_yes(
+        self,
+        session_factory,
+        monkeypatch,
+        stub_parser,
+        stub_access,
+        *,
+        phone: str,
+        product_code: str,
+        brand_code: str | None,
+    ) -> list[dict[str, Any]]:
+        _seed_contact(session_factory, phone=phone)
+        _seed_product_with_brand(session_factory, code=product_code, brand_code=brand_code)
+        _seed_packing_list_team(session_factory)
+        _stub_incoming_probe_empty(monkeypatch)
+        stub_parser(
+            verdict(
+                domain_hint="incoming",
+                intent_hint="check_incoming",
+                entities=[entity(product_code, hint="product", confident=True)],
+                routing={"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"},
+            )
+        )
+        stub_access()
+        turn1 = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert turn1.branch_kind == "business_query", turn1.branch_kind
+
+        stub_parser(_yes_verdict())
+        calls = _capture_real_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
+        result = engine_mod.run_turn(_second_turn_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "out_of_scope", result.branch_kind
+        assert len(calls) == 1, calls
+        return calls
+
+    def test_ac_1804_a_sorento_product_escalates_to_jereen(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        calls = self._run_incoming_miss_then_yes(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            phone="+60000001804",
+            product_code="ZZTSC-SRT",
+            brand_code="sorento",
+        )
+
+        body = calls[0]["body"]
+        response = calls[0]["response"]
+        assert body["brand_code"] == "sorento", body
+        assert response.get("assignee_name") == "ZZT Jereen", (
+            f"a SORENTO product must draw the sorento-tagged member (Jereen), not "
+            f"rotate the whole team: {response!r}"
+        )
+
+    def test_ac_1805_a_mocha_product_escalates_to_lucas(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        calls = self._run_incoming_miss_then_yes(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            phone="+60000001805",
+            product_code="ZZTSC-MCH",
+            brand_code="mocha",
+        )
+
+        body = calls[0]["body"]
+        response = calls[0]["response"]
+        assert body["brand_code"] == "mocha", body
+        assert response.get("assignee_name") == "ZZT Lucas", (
+            f"a MOCHA product must draw the mocha-tagged member (Lucas), not "
+            f"rotate the whole team: {response!r}"
+        )
+
+    def test_ac_1806_a_product_with_no_brand_carries_none_and_rotates_the_whole_team(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        calls = self._run_incoming_miss_then_yes(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            phone="+60000001806",
+            product_code="ZZTSC-NOBRAND",
+            brand_code=None,
+        )
+
+        body = calls[0]["body"]
+        response = calls[0]["response"]
+        assert body["brand_code"] is None, body
+        # No brand to narrow by - the whole team (both Lucas and Jereen) is
+        # eligible, exactly as it was before this fix ever carried a brand at all.
+        assert response.get("assignee_name") in ("ZZT Lucas", "ZZT Jereen"), response
+
+    def test_ac_1806_a_picked_members_own_brand_wins_over_the_carried_one(self) -> None:
+        # Pure test on `escalation_context` itself: the picked-member row's OWN
+        # brand must keep outranking a generic `carried_brand` (round 4's own new
+        # rung sits AFTER the roster arms, never before them).
+        from app.services.chatbot.lanes.escalation import escalation_context
+
+        ctx = {
+            "parse": {
+                "output": {
+                    "routing": {"suggested_team": "purchasing"},
+                    "escalation": {
+                        "preferred_assignee_id": "zzt-member-1",
+                        # A carried brand that would say "mocha" if the picked
+                        # member's own row did not outrank it.
+                        "carried_brand": "mocha",
+                    },
+                }
+            },
+            "session": {
+                "session_vars": {
+                    "variables": {
+                        "last_result_set": [
+                            {
+                                "uuid": "zzt-member-1",
+                                "brand_code": "sorento",
+                                "company_id": "zzt-co-1",
+                                "company_name": "ZZT Co",
+                            }
+                        ],
+                    }
+                }
+            },
+        }
+
+        result = escalation_context({}, ctx=ctx)
+
+        assert result["routing_source"] == "picked_member", result
+        assert result["brand_code"] == "sorento", (
+            f"the picked member's OWN brand must win over the carried one: {result!r}"
+        )

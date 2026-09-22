@@ -91,6 +91,11 @@ class TurnContext:
     # sites read it straight off `parser["routing"]`, which needs no ctx field of its
     # own, so this is the ONE mint site that had nowhere else to read it from.
     suggested_agent: str | None = None
+    # Round 4 (owner-approved, 22 Sep 2026): the SAME reasoning, one axis over - this
+    # turn's own resolved brand (`lanes/business/gate.py`'s `routing_brand`), read by
+    # `turn/compose.py::compose` so a freshly minted `team_pick`/roster re-arm can
+    # stamp `payload["brand_code"]` beside the agent it already stamps.
+    routing_brand: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -425,24 +430,32 @@ def escalation_roster_plan(
     return plan or None
 
 
-def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any]) -> str | None:
-    """The agent the customer just picked THIS turn, off an ACCEPTABLE open offer.
+def _accepted_pending_field(
+    pending: Pending | None, verdict: Mapping[str, Any], field: str
+) -> str | None:
+    """The AGENT or BRAND the customer just picked THIS turn, off an ACCEPTABLE open
+    offer - one reader, parameterized only by which payload key it is reading, shared
+    by `_accepted_pending_agent` (called from `with_routing_agent_default`, before
+    the access read) and `_accepted_pending_brand` (round 4, called from
+    `lane_parse_output`, for `escalation_context`'s new `carried_brand` rung). The
+    gate, the accept check and the per-option/top-level fall-through are the SAME
+    for both fields - only the key read off each payload differs.
 
     Reuses `turn.decide.picked_positions` - the SAME reading `apply()` uses to tell
     which option a numbered pick answered - rather than re-parsing
     `reference_positions` a second time here (PLAN "one seam"). A multi-team
-    `team_pick` names one specific option's own `payload["agent"]`; a plain
+    `team_pick` names one specific option's own `payload[field]`; a plain
     acceptance (a bare "yes" over a single-option offer, or a roster's attached
     escalate sentence - nothing picked by number) falls to the pending's own
-    top-level `payload["agent"]`, which is where the mint sites
+    top-level `payload[field]`, which is where the mint sites
     (`turn/compose.py::_team_pick_question`, `answer_bridge.py::_miss_question`,
-    `engine.py::_question_offered`) store the minting turn's agent.
+    `engine.py::_question_offered`) store the minting turn's own value.
 
     SRTSC07 review round 1, SHOULD-1: gated on the SAME condition `turn/apply.py:691`
     uses to decide "this offer is acceptable" - `pending.kind in OFFER_KINDS or
     pending.payload.get("escalate_offered") is True`. Without this gate a roster
     pending with NO escalate offer attached (a plain `product_pick`, still open while
-    this turn asks for something else entirely) could still supply an agent here,
+    this turn asks for something else entirely) could still supply a value here,
     while `lane_parse_output`'s own team chain (`pending.kind in OFFER_KINDS` alone,
     no `escalate_offered` arm - a fresh, un-accepted handover carries no `accepted_
     team` either) left the team at `DEFAULT_SUGGESTED_TEAM` - the two halves of the
@@ -450,17 +463,17 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
     exist (measured: `incoming_stock_enquiries` / `customer_service`).
 
     SHOULD-3: the per-option read only short-circuits on an option that actually
-    NAMES an agent, or the explicit hold (`payload.get("hold") is True`, the "No
-    it's okay" decline). A MEMBER option (a combined roster+CS offer's own member
-    half, `_miss_question`'s `combined_member_rows` arm) carries no agent of its
-    own - picking one IS still an escalation acceptance (`turn/apply.py:546`) - so
-    it falls through to the pending's own top-level agent instead of returning
-    `None` outright.
+    NAMES a value for this field, or the explicit hold (`payload.get("hold") is
+    True`, the "No it's okay" decline). A MEMBER option (a combined roster+CS
+    offer's own member half, `_miss_question`'s `combined_member_rows` arm) carries
+    no agent/brand of its own - picking one IS still an escalation acceptance
+    (`turn/apply.py:546`) - so it falls through to the pending's own top-level value
+    instead of returning `None` outright.
 
     SRTSC07 review round 2, SHOULD-1 residual: the round 1 gate was "ACCEPTABLE",
     not "ACCEPTED" - an `escalate_offered` roster (not in `OFFER_KINDS`) still open
     while THIS turn asks about something else entirely (no yes, no escalation
-    confirmation, no number landing on the roster) supplied its carried agent
+    confirmation, no number landing on the roster) supplied its carried value
     unconditionally, while the TEAM half stays at `DEFAULT_SUGGESTED_TEAM` for that
     same roster - `lane_parse_output`'s own chain only reads `pending.team` for an
     `OFFER_KINDS` pending (`turn_runtime.py:647`), never a roster, accepted or not.
@@ -526,15 +539,33 @@ def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any])
                 continue
             opt_payload = opt.get("payload")
             opt_payload = opt_payload if isinstance(opt_payload, Mapping) else {}
-            agent = opt_payload.get("agent")
-            if agent or opt_payload.get("hold") is True:
-                return agent or None
-            # A matched option that names neither an agent nor the hold flag (a
-            # MEMBER option) falls through to the pending's own top-level agent
-            # below, rather than returning `None` here.
+            value = opt_payload.get(field)
+            if value or opt_payload.get("hold") is True:
+                return value or None
+            # A matched option that names neither a value for this field nor the
+            # hold flag (a MEMBER option) falls through to the pending's own
+            # top-level value below, rather than returning `None` here.
             break
-    agent = payload.get("agent")
-    return agent or None
+    value = payload.get(field)
+    return value or None
+
+
+def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any]) -> str | None:
+    """The agent half - see `_accepted_pending_field`'s own docstring for the shared
+    gate/accept-check/fall-through this and `_accepted_pending_brand` both share."""
+    return _accepted_pending_field(pending, verdict, "agent")
+
+
+def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any]) -> str | None:
+    """The brand half (round 4, owner-approved, 22 Sep 2026 - "a MOCHA product's
+    escalation goes to Lucas, a SORENTO product's to Jereen"). Read by
+    `lane_parse_output`, not `with_routing_agent_default`: the brand has no access
+    check to sit ahead of (unlike the agent), and it is written onto
+    `out["escalation"]["carried_brand"]` for `escalation_context`'s own new rung to
+    read back, the same "one flag on ctx.parse.output" idiom `preferred_assignee_id`
+    / `company_pick` already use. See `_accepted_pending_field`'s own docstring for
+    the shared gate/accept-check/fall-through."""
+    return _accepted_pending_field(pending, verdict, "brand_code")
 
 
 def with_routing_agent_default(
@@ -732,6 +763,17 @@ def lane_parse_output(
     # fills what the message itself did not say.
     if accepted_company and not (out.get("escalation") or {}).get("company_pick"):
         out["escalation"] = {**(out.get("escalation") or {}), "company_pick": accepted_company}
+    # Round 4 (owner-approved, 22 Sep 2026): the brand half of the SAME acceptance
+    # carry the agent uses - `_accepted_pending_brand` shares `_accepted_pending_
+    # field`'s gate/accept-check with `_accepted_pending_agent`, so an unaccepted
+    # turn carries no brand either. `escalation_context`'s own new `carried_brand`
+    # rung reads this key back (`lanes/escalation.py`), after its picked-member/
+    # company-pick/same-team arms - a SPECIFIC row's own brand there must still
+    # outrank a generic carry, which is why this writes a NEW key rather than
+    # touching `company_pick`/`preferred_assignee_id` at all.
+    carried_brand = _accepted_pending_brand(pending, verdict)
+    if carried_brand:
+        out["escalation"] = {**(out.get("escalation") or {}), "carried_brand": carried_brand}
     # AC-1703's tail, captain's ruling 20 Sep 2026: a decline over a NON-escalation
     # offer (a did-you-mean roster's own attached escalate sentence, a detail offer)
     # finishes on the SAME `escalation_declined` branch kind as an actual escalation

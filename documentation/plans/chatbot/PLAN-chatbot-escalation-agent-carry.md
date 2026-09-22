@@ -1,4 +1,4 @@
-# PLAN - Escalation acceptance carries the AGENT half of routing, not only the team
+# PLAN - Escalation acceptance carries the AGENT (and, round 4, the BRAND) half of routing, not only the team
 
 Status: implemented, awaiting review (small fix track)
 Domain: chatbot
@@ -128,6 +128,47 @@ parser named none THIS turn:
 
 Nothing else moves: `lane_parse_output`'s team chain, `_next_assignee_body`, `_sla_body`,
 the access check and the prompt are untouched.
+
+## Round 4 (owner-approved scope extension, 22 Sep 2026): the BRAND half
+
+Owner ruling, live: a MOCHA product's escalation must go to Lucas, a SORENTO product's
+to Jereen (Packing List tags in prod: Jereen = every brand except mocha, Lucas = mocha).
+`/external/next-assignee` already narrows the round-robin pool by `brand_code`
+(`app/services/user_service.py:1681-1735`, tagged + untagged, normalised lower-case) -
+the escalation lane already SENDS `brand_code = context_item.brand_code`
+(`lanes/escalation.py:1140-1156`), resolved by `escalation_context`'s five-rung ladder
+(`:190-312`: picked-member row -> company pick -> same-team roster arms -> stated_brand
+-> none). The offer turn itself already resolves a brand
+(`lanes/business/gate.py:1633`'s `routing_brand`) - nothing carried it to the
+ACCEPTANCE turn, the SAME gap the agent had before round 1: `same_team` reads
+`session_vars.variables`, a nest the rearch tail never writes, so a bare "yes" after an
+incoming/ETA miss reached `escalation_context` with `brand_code: null` and the whole
+team rotated (confirmed with a failing test first, per the brief).
+
+Two changes, mirroring the agent carry exactly:
+
+1. **Mint.** The SAME nine sites (plus the roster re-arm) that stamp `payload["agent"]`
+   now also stamp `payload["brand_code"]` = the gate's `routing_brand` for THIS turn
+   (`None` when the gate has none). Reached differently per site: `answer_bridge.py::
+   _miss_question` and `apply_silent_company_offer` already take `gate` as a parameter;
+   `engine.py::_question_offered` reads `values["gate"]` (`run_tail`'s own `values` dict,
+   already in scope - no new plumbing needed); `turn/compose.py`'s `_team_pick_question`
+   and the roster re-arm needed a NEW `TurnContext.routing_brand` field, set at
+   construction from the SAME `resolver_payload.get("gate")` the neighbouring
+   `resolver_gate=` kwarg already reads. The roster re-arm reuses round 2's own
+   one-source rule: `"brand_code": carried.payload.get("brand_code") if carried.team
+   else ctx.routing_brand`. `_crossdomain_offer_pending` stays unstamped, same reason as
+   the agent - no gate reachable there at all.
+2. **Accept.** `_accepted_pending_agent` and a new `_accepted_pending_brand` are now
+   both thin wrappers around one shared reader, `_accepted_pending_field(pending,
+   verdict, field)` - the gate, the accept check (round 2's member-pick/undeclined-yes
+   qualifier) and the per-option/top-level fall-through are IDENTICAL for both fields,
+   parameterized only by which payload key is read. `lane_parse_output` writes
+   `out["escalation"]["carried_brand"]` the SAME "one flag on ctx.parse.output" idiom
+   `preferred_assignee_id`/`company_pick` already use. `escalation_context` gets ONE new
+   rung, `elif carried_brand:`, inserted after the roster arms and before
+   `stated_brand` - the picked-member and company-pick arms are UNTOUCHED, because a
+   SPECIFIC row's own brand must keep outranking a generic carry (AC-1806(d) pins this).
 
 ## Non-goals
 

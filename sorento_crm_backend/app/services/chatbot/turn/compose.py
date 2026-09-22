@@ -69,7 +69,13 @@ def _file_key(f: dict[str, Any]) -> Any:
     return f.get("url") or f.get("id") or f.get("filename")
 
 
-def _team_pick_question(missed_domains: list[str], policy: Policy, *, agent: str | None = None):
+def _team_pick_question(
+    missed_domains: list[str],
+    policy: Policy,
+    *,
+    agent: str | None = None,
+    brand: str | None = None,
+):
     """Team pick over the missed domains (contract 106-113, 127; AC-1533). A single
     missed team is yes/no over that one team; two or more become a numbered pick plus
     a "No it's okay" hold option (contract 43).
@@ -83,7 +89,10 @@ def _team_pick_question(missed_domains: list[str], policy: Policy, *, agent: str
     offer's own top-level `payload`, and onto EACH multi-team option beside its own
     `payload.team` - so a bare "yes" acceptance turn, which names no agent of its own,
     can still hand `/external/next-assignee` the `(agent_code, team_code)` pair this
-    turn actually meant, instead of falling to `DEFAULT_SUGGESTED_AGENT`.
+    turn actually meant, instead of falling to `DEFAULT_SUGGESTED_AGENT`. `brand` is
+    the SAME idiom, one axis over (round 4, owner-approved, 22 Sep 2026): this turn's
+    own resolved brand, so a Packing List escalation draws the brand-tagged member
+    instead of rotating the whole team.
     """
     teams: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -102,7 +111,11 @@ def _team_pick_question(missed_domains: list[str], policy: Policy, *, agent: str
         team, label = teams[0]
         options = [{"position": 1, "label": label, "entity_type": "team", "payload": {"team": team}}]
         return pending_ask(
-            "team_pick", options, team=team, expects="yes_no", payload={"agent": agent}
+            "team_pick",
+            options,
+            team=team,
+            expects="yes_no",
+            payload={"agent": agent, "brand_code": brand},
         )
 
     options = [
@@ -110,7 +123,7 @@ def _team_pick_question(missed_domains: list[str], policy: Policy, *, agent: str
             "position": i + 1,
             "label": label,
             "entity_type": "team",
-            "payload": {"team": team, "agent": agent},
+            "payload": {"team": team, "agent": agent, "brand_code": brand},
         }
         for i, (team, label) in enumerate(teams)
     ]
@@ -123,7 +136,7 @@ def _team_pick_question(missed_domains: list[str], policy: Policy, *, agent: str
             # so in its own payload rather than being inferred from a null team - a
             # `company_pick` option carries no team either, and "the customer said no"
             # must not be a thing the reader works out from a missing field.
-            "payload": {"team": None, "agent": None, "hold": True},
+            "payload": {"team": None, "agent": None, "brand_code": None, "hold": True},
         }
     )
     return pending_ask("team_pick", options, team=None, expects="pick")
@@ -420,6 +433,14 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                             if carried.team
                             else getattr(ctx, "suggested_agent", None)
                         ),
+                        # Round 4 (owner-approved, 22 Sep 2026): the SAME one-source
+                        # rule, one axis over - the brand travels with whichever
+                        # source the team came from.
+                        "brand_code": (
+                            carried.payload.get("brand_code")
+                            if carried.team
+                            else getattr(ctx, "routing_brand", None)
+                        ),
                     },
                 )
             else:
@@ -428,9 +449,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 # `engine.py` off the SAME verdict the team half above is read from),
                 # carried onto the fresh offer so a later bare "yes" over it can hand
                 # `/external/next-assignee` the `(agent_code, team_code)` pair this
-                # turn actually meant.
+                # turn actually meant. `ctx.routing_brand` (round 4) is the SAME idiom
+                # for the brand axis.
                 question = _team_pick_question(
-                    missed_domains, policy, agent=getattr(ctx, "suggested_agent", None)
+                    missed_domains,
+                    policy,
+                    agent=getattr(ctx, "suggested_agent", None),
+                    brand=getattr(ctx, "routing_brand", None),
                 )
 
     actions: list[dict[str, Any]] = []

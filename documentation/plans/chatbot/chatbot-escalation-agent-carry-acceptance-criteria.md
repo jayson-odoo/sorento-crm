@@ -120,6 +120,29 @@ All ACs are backend, pytest, `tests/chatbot/`. "Wire body" = the dict
   comes off the cross-domain rung's own render block, not off this turn's routing (the
   function takes no `parser` argument to read one from).
 
+## Round 4 (owner-approved scope extension, 22 Sep 2026): the brand half
+
+"A MOCHA product's escalation goes to Lucas, a SORENTO product's to Jereen" (Packing
+List tags in prod: Jereen = every brand except mocha, Lucas = mocha). Engine replays
+seed `team_member_brands` rows themselves (never read existing data) and run the REAL
+`/external/next-assignee` handler (not the file's usual canned stub), because "the
+drawn assignee is the brand-tagged member" is the actual claim - a mock cannot prove it.
+
+- **AC-1804** Turn 1 is an `incoming` ETA miss for a SORENTO-branded product, turn 2 is
+  `yes`: the wire body has `brand_code == "sorento"` AND the REAL round-robin draw over
+  a seeded Packing List team (Lucas tagged `mocha`, Jereen tagged `sorento`+`cabana`)
+  returns Jereen, not a rotation.
+- **AC-1805** Same two turns, a MOCHA-branded product: `brand_code == "mocha"` and the
+  draw returns Lucas.
+- **AC-1806** Four sub-cases:
+  - (a)/(b) are AC-1804/AC-1805 themselves.
+  - (c) A product with NO brand (`lanes/business/gate.py`'s `routing_brand` stays
+    `None`): `brand_code` is `None` on the wire body, and the draw is not narrowed - both
+    Lucas and Jereen stay eligible, exactly as before this fix ever carried a brand.
+  - (d) Pure test on `escalation_context`: a PICKED-MEMBER row's own `brand_code` still
+    outranks a `carried_brand` that says something else - the picked-member and
+    company-pick arms are untouched by round 4, on purpose.
+
 ## Regression
 
 - **AC-1794** `SLA` body (`_sla_body`) on the acceptance turn carries the same

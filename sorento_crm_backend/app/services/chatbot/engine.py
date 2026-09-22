@@ -1970,6 +1970,15 @@ def _run_stages(  # noqa: PLR0915
                 # suggested_agent` `with_routing_agent_default` already resolved at
                 # L1399, before `compose()` mints a fresh `team_pick` off it.
                 suggested_agent=jsc.get(verdict.get("routing"), "suggested_agent"),
+                # Round 4 (owner-approved, 22 Sep 2026): this turn's own resolved
+                # brand, off the SAME gate dict `resolver_gate=` two lines up already
+                # reads - `lanes/business/gate.py::run_gate`'s own `routing_brand`.
+                # `jsc.get` never raises on a non-dict `gate`, same contract as every
+                # other reader of this payload.
+                routing_brand=jsc.get(
+                    resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
+                    "routing_brand",
+                ),
             )
             # Will `answer_bridge.answer_for` (R4/R5) answer this turn's miss? ONE
             # rule, computed once, read TWICE below: it gates that call, and it is
@@ -3958,11 +3967,18 @@ def _question_offered(
         SRTSC07 review round 1, SHOULD-2: a TEAM option also carries THIS turn's
         `routing.suggested_agent` beside its own `team` - read straight off `ctx`
         (the enclosing function's own parameter) rather than off a locally-assigned
-        variable, so this stays correct regardless of which branch calls it.
+        variable, so this stays correct regardless of which branch calls it. Round 4
+        (owner-approved, 22 Sep 2026): `brand_code` is the SAME idiom, one axis over,
+        read off `values["gate"]` (the enclosing function's own parameter too -
+        `lanes/business/gate.py::run_gate`'s own `routing_brand`).
         """
         if kind == "team":
             routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
-            return {"team": jsc.get(row, "team"), "agent": jsc.get(routing, "suggested_agent")}
+            return {
+                "team": jsc.get(row, "team"),
+                "agent": jsc.get(routing, "suggested_agent"),
+                "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+            }
         if kind == "company":
             return {
                 "company": jsc.get(row, "company_name") or jsc.get(row, "label"),
@@ -3995,7 +4011,11 @@ def _question_offered(
                 # SRTSC07 review round 1, SHOULD-2: same reasoning as `team` above,
                 # one axis over - on the pending's own top-level payload, since a
                 # company clarify's own bare "yes" answers it without a position.
-                payload={"agent": jsc.get(routing, "suggested_agent")},
+                # `brand_code` (round 4) is the SAME idiom, off `values["gate"]`.
+                payload={
+                    "agent": jsc.get(routing, "suggested_agent"),
+                    "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+                },
             )
 
     member = outcome.get("build-cs-member-offer")
@@ -4006,8 +4026,12 @@ def _question_offered(
             _options(jsc.get(member, "cs_last_result_set"), "member"),
             expects="pick",
             # SRTSC07 review round 1, SHOULD-2: picking a member option IS an
-            # escalation acceptance (`turn/apply.py:546`).
-            payload={"agent": jsc.get(routing, "suggested_agent")},
+            # escalation acceptance (`turn/apply.py:546`). `brand_code` (round 4) is
+            # the SAME idiom, off `values["gate"]`.
+            payload={
+                "agent": jsc.get(routing, "suggested_agent"),
+                "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+            },
         )
 
     catalog = outcome.get("escalate-catalog")
@@ -4019,8 +4043,12 @@ def _question_offered(
             team=jsc.get(routing, "suggested_team"),
             expects="yes_no",
             # SRTSC07 review round 1, SHOULD-2: the escalate-catalog twin of
-            # `answer_bridge.py::_miss_question`'s own bare-"Yes" arm.
-            payload={"agent": jsc.get(routing, "suggested_agent")},
+            # `answer_bridge.py::_miss_question`'s own bare-"Yes" arm. `brand_code`
+            # (round 4) is the SAME idiom, off `values["gate"]`.
+            payload={
+                "agent": jsc.get(routing, "suggested_agent"),
+                "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+            },
         )
     return None
 
