@@ -1,0 +1,436 @@
+{
+  "name": "dealer-stock-verdict",
+  "source": "S4 live-verification chain for AC-1780 (UAC 'chatbot-dealer-stock-verdict-acceptance-criteria.md' Journey steps 1-8, rulings D6, D13-D26). Written BEFORE the live pass (tester, S4 part 1) - not yet run. Base b38d19155 (S0-S3 implemented). Run once at the end of the lane per documentation/agents/browser-verification.md / chatbot-verification.md:\n  venv/bin/python scripts/chatbot_journey.py --base http://localhost:<lane-port> --contact 404285551 --chain tests/chatbot/journeys/dealer-stock-verdict.json --sleep 8\n\n=== PREREQUISITE 1: THE DEALER TEST CONTACT ===\nrespond_io_id 404285551 ('Jayden Loo' in the prod copy sorento_ai_automation_rearch, respond_contacts.id ef6744dc-7b9a-4a80-a63b-6c7d16d5977e). Chosen because (grepped 22 Sep 2026, tests/chatbot/journeys/ and tests/chatbot/console_cases/) it is NOT referenced by any existing journey or console case, unlike 437264483 (the owner's own contact, heavily used for stock asks in 'compact' mode elsewhere - repurposing it to 'availability' would break those). Its policy row is already a per-contact override (mode 'compact' today, stock_visibility_policies.id ce7c5ddd-6a49-4ff5-9d76-fff47054c4de), so flipping it touches only this one contact, not the 'dealer' access-type default every other dealer-tagged contact resolves through (D12's go-live step, left untouched here on purpose).\nSETUP SQL (run once against the lane's DATABASE_URL before the pass; BRW=21608757-0065-4ef2-bd05-1397452411eb, MWH=3632e6d8-f398-4f73-8a89-b71988f6f1da, measured 22 Sep 2026 against sorento_ai_automation_rearch - re-verify the ids on the lane stack's own DB before running):\n  UPDATE stock_visibility_policies SET mode = 'availability', warehouse_ids = ARRAY['21608757-0065-4ef2-bd05-1397452411eb','3632e6d8-f398-4f73-8a89-b71988f6f1da']::uuid[], excluded_warehouse_ids = NULL WHERE contact_id = 'ef6744dc-7b9a-4a80-a63b-6c7d16d5977e';\nREVERT after the pass (this contact's own prior state):\n  UPDATE stock_visibility_policies SET mode = 'compact', warehouse_ids = NULL, excluded_warehouse_ids = NULL WHERE contact_id = 'ef6744dc-7b9a-4a80-a63b-6c7d16d5977e';\nCase G below uses an EXISTING detailed-mode contact, 423729473 ('Shahrul Sorento'), read-only - no setup needed.\n\n=== PREREQUISITE 2: THE PARSER PROMPT (D13) ===\nentities[].quantity and proceed_anyway are NEW parser schema keys (AC-1760). Checked 22 Sep 2026 against sorento_ai_automation_rearch:\n  select v.version, v.template ilike '%proceed_anyway%' as has_proceed_anyway from ai_prompt_versions v join ai_prompt_labels l on l.version_id = v.id where v.name = 'chatbot_semantic_parser' and l.label = 'production';\n-> version 42, has_proceed_anyway = false. The production prompt does NOT carry the new schema as of this writing. Until the owner publishes the updated prompt (Prompts screen, production label moved), only a SINGLE product with an explicit quantity in the same turn resolves immediately (the pre-existing demand_qty fallback, D13's 'exactly one product missing' clause, which needs no prompt change) - a turn that must ATTACH a quantity to ONE OF SEVERAL named products in the same message, or that reads 'just proceed' as proceed_anyway, depends on the publish. Every turn below that depends on it carries a '_note' saying so; if the query above still returns false right before the live pass, grade those turns as environment-blocked (not a lane defect) in the evidence table rather than FAIL - case H (the 18-row spot checks) and case G (detailed contact) do NOT depend on it and should be graded strictly.\n\n=== PREREQUISITE 3: SETTINGS ===\nsystem_settings.chatbot_stock_low_threshold_pct must be 50 and default_product_standard_lead_time_days must be 90 for the 'ETA in 90 days' / running-low math below to hold. Both already measured 50 / 90 on sorento_ai_automation_rearch, 22 Sep 2026 (the server defaults) - re-check with 'select chatbot_stock_low_threshold_pct, default_product_standard_lead_time_days from system_settings;' before the pass; if either has drifted, every expected verdict below needs recomputing (app/services/stock_verdict.py:verdict()).\n\n=== PREREQUISITE 4: DATA IS LIVE, NOT A FIXTURE ===\nEvery figure below (on hand, open SO, incoming, purchase at BRW+MWH) was read off sorento_ai_automation_rearch on 22 Sep 2026 with the query below (substitute :code); re-run it before the pass since this is a shared prod copy other lanes also touch, and recompute any row whose numbers moved:\n  WITH wh AS (SELECT id FROM warehouses WHERE warehouse_code IN ('BRW','MWH')), p AS (SELECT id FROM products WHERE product_code = :code AND company_id = '00000000-0000-0000-0000-000000000001') SELECT (SELECT COALESCE(SUM(quantity_on_hand),0) FROM stock WHERE product_id IN (SELECT id FROM p) AND warehouse_id IN (SELECT id FROM wh)) AS onhand, (SELECT COALESCE(SUM(qty_ordered-qty_delivered),0) FROM sales_order_lines WHERE product_id IN (SELECT id FROM p) AND warehouse_id IN (SELECT id FROM wh) AND line_status='open' AND qty_ordered>qty_delivered) AS open_so, (SELECT COALESCE(SUM(sa.allocated_quantity-COALESCE(sa.quantity_received,0)),0) FROM spo_allocations sa LEFT JOIN inbound_shipments ish ON ish.id=sa.inbound_shipment_id WHERE sa.product_id IN (SELECT id FROM p) AND sa.warehouse_id IN (SELECT id FROM wh) AND (ish.id IS NULL OR ish.shipment_status NOT IN ('fully_received','closed','received','completed','cancelled')) AND sa.line_status='open' AND sa.receipt_status NOT IN ('fully_received','received') AND sa.allocated_quantity>COALESCE(sa.quantity_received,0)) AS incoming, (SELECT COALESCE(SUM(pol.qty_ordered-pol.qty_received),0) FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.product_id IN (SELECT id FROM p) AND pol.warehouse_id IN (SELECT id FROM wh) AND po.status IN ('active','received','partial','closed') AND pol.line_status='open' AND pol.qty_ordered>pol.qty_received) AS purchase;\nJourney products (UAC's own literal text, cases A-F): MWT5727SS-CR (id 6a43b9ec-9806-4bcb-9732-eb106bbf2b69, avail 0, incoming 0, purchase 177), MHS1028 (id 98f3418b-6d7a-4e33-bdf2-317ea933c3f8, avail 0, incoming 0, purchase 0), MSK11A-QT (id 3acc5445-c496-42db-acc1-38bc51b8be15, avail 0, incoming 157 eta 2026-09-02 [a PAST date by the 22 Sep 2026 'today' - prints as-is per D10, the book is trusted], purchase 0). ABC123 (UAC step 1's own fourth code) does NOT resolve to a real product on this DB - it is kept verbatim because it is the owner's own journey text, but no case below asserts an exact verdict line for it; treat its presence/absence in the missing-list or the final answer as an eyeball check, not a scored line.\n18-row spot check products (case H; all company_id 00000000-0000-0000-0000-000000000001, verdicts recomputed with the real app.services.stock_verdict.verdict() 22 Sep 2026): FG-SRTGB01-BR (avail 1560), FG-SRTGB02-BL (avail 362), BFAL5061-NL (avail 1, incoming 0, purchase 0), CB313 (avail 161, incoming 2026 eta 2026-08-20 [past date, prints as-is]), SRT392-24 (avail 166, purchase 20), CWC8315-NEW (avail 35, incoming 73 eta 2026-09-02 [past date], purchase 1537). Row-to-(product,ask) map and the exact expected verdict line are inline per turn below.\n\n=== WHAT THE MATCHERS CANNOT CHECK ===\nThe runner has no order-sensitive matcher, so 'one line per product, in the asked order' (journey step 6) is not machine-graded here - use --record to capture the full reply text per case and read the order by eye. It also has no session-state matcher, so 'the task is parked, not lost' (D22) is asserted only by its EFFECT (the detour answers normally and says nothing about the stock check, and the later resume/fill turn still works) - a direct look at chatbot.turns.trace's session_patch is the stronger check if a case looks wrong.",
+  "cases": [
+    {
+      "name": "A-four-products-two-quantities-then-fill",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "UAC Journey steps 1-3, verbatim owner text. Turn 1 needs entities[].quantity to attach 5 to MWT5727SS-CR and 60 to MHS1028 in ONE message while MSK11A-QT/ABC123 carry none - depends on the published prompt (prerequisite 2). ABC123 does not resolve to a real product; do not fail the case solely on ABC123's own wording, eyeball it.",
+      "turns": [
+        {
+          "text": "stock for MWT5727SS-CR 5, MHS1028 60, MSK11A-QT and ABC123?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Noted:",
+              "MWT5727SS-CR x 5",
+              "MHS1028 x 60",
+              "How many units do you need for",
+              "MSK11A-QT"
+            ],
+            "reply_not_contains": [
+              "Yes, available",
+              "Not available",
+              "Yes, we have stock",
+              "Sorry, we do not have enough stock"
+            ]
+          },
+          "_note": "D14: a question, not an answer - no verdict line for ANY product yet, noted or not."
+        },
+        {
+          "text": "MSK11A-QT 110, ABC123 20",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "MWT5727SS-CR x 5: Not available, but there is purchase, ETA in 90 days.",
+              "MHS1028 x 60: Not available.",
+              "MSK11A-QT x 110: Not available, but there is limited incoming, ETA 02/09/2026."
+            ],
+            "reply_not_contains": [
+              "Noted:",
+              "How many units do you need"
+            ]
+          },
+          "_note": "D6/D17: MWT5727SS-CR sources=purchase only (incoming 0), not limited (D=5, T*purchase=88.5). MSK11A-QT sources=incoming, limited (D=110, T*incoming=78.5). MHS1028 no disclaimer at all (avail/incoming/purchase all 0)."
+        }
+      ]
+    },
+    {
+      "name": "B-restated-quantity-replaces-still-asks-the-rest",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "D16. Both turns need entities[].quantity attribution to a NAMED product while another stays open - depends on the published prompt (prerequisite 2).",
+      "turns": [
+        {
+          "text": "stock for MWT5727SS-CR 5, MHS1028 60 and MSK11A-QT?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Noted: MWT5727SS-CR x 5, MHS1028 x 60.",
+              "How many units do you need for MSK11A-QT?"
+            ],
+            "reply_not_contains": [
+              "Yes, available",
+              "Not available"
+            ]
+          }
+        },
+        {
+          "text": "make MHS1028 80",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Noted: MWT5727SS-CR x 5, MHS1028 x 80.",
+              "How many units do you need for MSK11A-QT?"
+            ],
+            "reply_not_contains": [
+              "MHS1028 x 60",
+              "Not available",
+              "Yes, available"
+            ]
+          },
+          "_note": "D16: MHS1028's quantity replaces 60 with 80; MSK11A-QT is still asked, never twice for the already-noted products."
+        }
+      ]
+    },
+    {
+      "name": "C-proceed-answers-noted-and-names-not-checked",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "D15. Turn 1 (two products, no quantities at all) needs no new schema. Turns 2-3 (naming one product's quantity, then 'just proceed') depend on the published prompt (prerequisite 2).",
+      "turns": [
+        {
+          "text": "stock for MHS1028 and MSK11A-QT?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "How many units do you need for MHS1028 and MSK11A-QT?"
+            ],
+            "reply_not_contains": [
+              "Noted:",
+              "Not available",
+              "Yes, available"
+            ]
+          }
+        },
+        {
+          "text": "MHS1028 60",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Noted: MHS1028 x 60.",
+              "How many units do you need for MSK11A-QT?"
+            ],
+            "reply_not_contains": [
+              "Not available",
+              "Yes, available"
+            ]
+          }
+        },
+        {
+          "text": "just proceed",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "MHS1028 x 60: Not available.",
+              "Not checked: MSK11A-QT"
+            ],
+            "reply_not_contains": [
+              "MSK11A-QT x",
+              "How many units do you need",
+              "Noted:"
+            ]
+          },
+          "_note": "D15: only the noted product is answered; MSK11A-QT is named as not checked, never silently dropped."
+        }
+      ]
+    },
+    {
+      "name": "D-detour-promotion-then-eta-then-fill",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "D21-D24 (task parks silently across two unrelated detours). Turn 1 needs no new schema (no quantities named). Turn 4's dual-quantity fill depends on the published prompt (prerequisite 2).",
+      "turns": [
+        {
+          "text": "stock for MHS1028 and MSK11A-QT?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "How many units do you need for MHS1028 and MSK11A-QT?"
+            ]
+          }
+        },
+        {
+          "text": "any promotion on MSK11A-QT?",
+          "expect": {
+            "reply_not_contains": [
+              "How many units do you need",
+              "Noted:",
+              "stock check"
+            ]
+          },
+          "_note": "D22: parked silently - the promotion answer runs as today and says nothing about the stock check."
+        },
+        {
+          "text": "any incoming ETA on MSK11A-QT?",
+          "expect": {
+            "reply_not_contains": [
+              "How many units do you need",
+              "Noted:",
+              "stock check"
+            ]
+          },
+          "_note": "Second, unrelated detour - the task must still be parked, not closed, after TWO detours in a row."
+        },
+        {
+          "text": "MHS1028 60, MSK11A-QT 110",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "MHS1028 x 60: Not available.",
+              "MSK11A-QT x 110: Not available, but there is limited incoming, ETA 02/09/2026."
+            ],
+            "reply_not_contains": [
+              "How many units do you need",
+              "Noted:"
+            ]
+          },
+          "_note": "AC-1771: the parked task fills and answers in one turn, task cleared after."
+        }
+      ]
+    },
+    {
+      "name": "E-resume-by-naming-reasks-only-the-missing",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "AC-1772 (D22 resume). Turn 1 needs entities[].quantity (one product noted, one missing in the SAME message) - depends on the published prompt (prerequisite 2); turns 2-3 (detour, then resume-by-naming) need no new schema.",
+      "turns": [
+        {
+          "text": "stock for MHS1028 60 and MSK11A-QT?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Noted: MHS1028 x 60.",
+              "How many units do you need for MSK11A-QT?"
+            ]
+          }
+        },
+        {
+          "text": "any promotion on MSK11A-QT?",
+          "expect": {
+            "reply_not_contains": [
+              "How many units do you need",
+              "Noted:"
+            ]
+          }
+        },
+        {
+          "text": "back to the stock check",
+          "expect": {
+            "reply_contains": [
+              "Noted: MHS1028 x 60.",
+              "How many units do you need for MSK11A-QT?"
+            ],
+            "reply_not_contains": [
+              "MHS1028 x 60: Not available",
+              "Not checked"
+            ]
+          },
+          "_note": "AC-1772: no tool call, the task just re-asks what is still missing; MHS1028 is NOT re-verdicted."
+        }
+      ]
+    },
+    {
+      "name": "F-never-mind-closes-bare-number-after-is-not-an-answer",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "D23 close. No new schema needed for any turn here (topic_reset is existing parser vocabulary).",
+      "turns": [
+        {
+          "text": "stock for MHS1028 and MSK11A-QT?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "How many units do you need for MHS1028 and MSK11A-QT?"
+            ]
+          }
+        },
+        {
+          "text": "never mind the stock check",
+          "expect": {
+            "reply_not_contains": [
+              "How many units do you need",
+              "Noted:",
+              "Not available",
+              "Yes, available"
+            ]
+          },
+          "_note": "D23: closed by the dealer's own words. No specific closing copy is contracted - only that the task's own question/verdict vocabulary is gone."
+        },
+        {
+          "text": "60",
+          "expect": {
+            "reply_not_contains": [
+              "MHS1028 x 60",
+              "MSK11A-QT x",
+              "Noted:",
+              "How many units do you need"
+            ]
+          },
+          "_note": "A bare number after close must NOT resurrect the closed task (D23: continuous only through the dealer's own words, never a bare follow-on number reopening it)."
+        }
+      ]
+    },
+    {
+      "name": "G-detailed-contact-unchanged-no-loop-no-verdict",
+      "cold": true,
+      "contact": "423729473",
+      "_note": "D19/AC-1767. Contact 423729473 ('Shahrul Sorento') is an EXISTING detailed-mode contact, read only - no setup SQL, no new schema needed. _STOCK_COMPACT_INTRO ('Stock summary for the requested products.') is COMPACT-mode-only copy (sorento_crm_mcp presenters.py _STOCK_MODE_RESULT_TYPE has no 'detailed' entry), so this case asserts the STRUCTURAL absence of the availability vocabulary rather than a specific detailed-mode intro string.",
+      "turns": [
+        {
+          "text": "stock for MWT5727SS-CR 5, MHS1028 60, MSK11A-QT and ABC123?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_not_contains": [
+              "Noted:",
+              "How many units do you need",
+              "Yes, available",
+              "Sorry, we do not have enough stock",
+              "Yes, we have stock"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "H-eighteen-row-verdict-spot-checks",
+      "cold": true,
+      "contact": "404285551",
+      "_note": "AC-1780's 18-row spot check, rows 1,2,4,5,7,9,11,13,14,16 (test_stock_verdict.py ROWS, owner's own matrix). Each turn is a SINGLE product with an explicit quantity in the same message, so none of these depend on the published prompt (D13's pre-existing demand_qty fallback carries them) - grade this case strictly. All ten turns are chained in one cold case since each fully resolves (no task is left open), so nothing carries over between rows.",
+      "turns": [
+        {
+          "text": "stock for FG-SRTGB01-BR 50?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Yes, we have stock.",
+              "FG-SRTGB01-BR x 50: Yes, available."
+            ],
+            "reply_not_contains": [
+              "running low"
+            ]
+          },
+          "_note": "row 1: available 1560, ask 50 <= 0.5*avail -> available, not running low."
+        },
+        {
+          "text": "stock for FG-SRTGB01-BR 800?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Yes, we have stock.",
+              "FG-SRTGB01-BR x 800: Yes, available, but running low."
+            ]
+          },
+          "_note": "row 2: available 1560, ask 800 in [780,1560] -> available, running low."
+        },
+        {
+          "text": "stock for FG-SRTGB02-BL 362?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Yes, we have stock.",
+              "FG-SRTGB02-BL x 362: Yes, available, but running low."
+            ]
+          },
+          "_note": "row 4: available == ask == 362 (boundary, inclusive) -> available, running low."
+        },
+        {
+          "text": "stock for BFAL5061-NL 10?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "BFAL5061-NL x 10: Not available."
+            ]
+          },
+          "_note": "row 5: available 1, ask 10, incoming 0, purchase 0 -> not_available, no disclaimer at all."
+        },
+        {
+          "text": "stock for CB313 1200?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "CB313 x 1200: Not available, but there is limited incoming, ETA 20/08/2026."
+            ],
+            "reply_not_contains": [
+              "purchase"
+            ]
+          },
+          "_note": "row 7: available 161, ask 1200 (D=1039), incoming 2026 >= D, D >= 0.5*incoming -> incoming only, limited. Purchase (0) never named."
+        },
+        {
+          "text": "stock for CB313 361?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "CB313 x 361: Not available, but there is incoming, ETA 20/08/2026."
+            ],
+            "reply_not_contains": [
+              "limited incoming",
+              "purchase"
+            ]
+          },
+          "_note": "row 9: available 161, ask 361 (D=200), incoming 2026 >= D but D < 0.5*incoming -> incoming only, NOT limited."
+        },
+        {
+          "text": "stock for SRT392-24 180?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "SRT392-24 x 180: Not available, but there is limited purchase, ETA in 90 days."
+            ],
+            "reply_not_contains": [
+              "incoming"
+            ]
+          },
+          "_note": "row 11: available 166, ask 180 (D=14), incoming 0, purchase 20 >= D, D >= 0.5*purchase -> purchase only, limited."
+        },
+        {
+          "text": "stock for SRT392-24 171?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "SRT392-24 x 171: Not available, but there is purchase, ETA in 90 days."
+            ],
+            "reply_not_contains": [
+              "limited purchase",
+              "incoming"
+            ]
+          },
+          "_note": "row 13: available 166, ask 171 (D=5), purchase 20 >= D but D < 0.5*purchase -> purchase only, NOT limited."
+        },
+        {
+          "text": "stock for CWC8315-NEW 935?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "CWC8315-NEW x 935: Not available, but there is limited incoming, ETA 02/09/2026 and limited purchase, ETA in 90 days."
+            ]
+          },
+          "_note": "row 14: available 35, ask 935 (D=900), incoming 73 < D, incoming+purchase (1610) >= D, D >= 0.5*(incoming+purchase) -> both, limited."
+        },
+        {
+          "text": "stock for CWC8315-NEW 75?",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": [
+              "Sorry, we do not have enough stock for that quantity.",
+              "CWC8315-NEW x 75: Not available, but there is limited incoming, ETA 02/09/2026."
+            ],
+            "reply_not_contains": [
+              "purchase"
+            ]
+          },
+          "_note": "row 16: available 35, ask 75 (D=40), incoming 73 >= D, D >= 0.5*incoming -> incoming only (purchase 1537 ignored even though present), limited."
+        }
+      ]
+    }
+  ]
+}
