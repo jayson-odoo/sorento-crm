@@ -138,8 +138,28 @@ def test_proceed_anyway_still_fetches_with_a_slot_unanswered():
 
 
 # --------------------------------------------------------------------------- #
-# Finding C (D29): family siblings the resolver expands never join the task
+# Finding C (D29, re-ruled in review round 7): a quantity narrows to the exact code
 # --------------------------------------------------------------------------- #
+
+
+def _family(token="CB313"):
+    """What the resolver hands `apply()` for ONE typed family-grouped code: the code
+    itself plus its siblings, every row carrying the same typed `raw` (the live shape,
+    trace e6459937 - `state_diff.products.after` listed all four)."""
+    codes = ["CB313", "CB313A-NL", "CB313-NL", "CB313-L"]
+    return {
+        "product": [
+            {
+                "raw": token,
+                "hint": "product",
+                "canonical_code": code,
+                "uuid": f"uuid-{code}",
+                "current_message": True,
+                "confident": True,
+            }
+            for code in codes
+        ]
+    }
 
 
 def _entries(*codes, answered=()):
@@ -159,67 +179,122 @@ def _entries(*codes, answered=()):
     ]
 
 
-def test_the_family_siblings_never_become_slots_to_ask_about():
+def test_a_quantity_fetches_the_exact_code_and_not_its_siblings():
     """D29 (finding C, case H rows 5-8, trace e6459937). "stock for CB313 1200?" is one
-    literal code; the resolver expands it to the whole family, and the reply answered
-    for four products, three of which the dealer never mentioned - then asked for THEIR
-    quantities too. The task collects for what was NAMED, so with CB313's own quantity
-    already given there is nothing left owed and no task at all."""
-    from app.services.chatbot.turn.task import tasks_after_reply
+    literal product code with one quantity; the resolver expanded it to the whole family
+    and the reply answered four products, then asked for three quantities the dealer had
+    never mentioned. A quantity is stated ABOUT a product, so the entity that carries one
+    resolves to its exact code alone - one verdict line, nothing owed, no task."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
 
-    block = _entries("CB313", "CB313A-NL", "CB313-NL", "CB313-L", answered=("CB313",))
-
-    tasks = tasks_after_reply(
-        (), [{"stock_availability": block}], turn_no=1, named_codes=("CB313",)
+    v = verdict(
+        domain_hint="inventory",
+        entities=[entity("CB313", hint="product", quantity=1200)],
     )
 
-    assert tasks == (), "the three siblings are not products this dealer asked about"
-
-
-def test_the_named_code_still_opens_its_own_slot_when_no_quantity_was_given():
-    """The same filter, on the ask that gives no quantity: one slot, for the one code
-    the dealer typed."""
-    from app.services.chatbot.turn.task import tasks_after_reply
-
-    block = _entries("CB313", "CB313A-NL", "CB313-NL", "CB313-L")
-
-    tasks = tasks_after_reply(
-        (), [{"stock_availability": block}], turn_no=1, named_codes=("CB313",)
+    _state2, plan = apply(
+        _state(Focus(), turn_no=1), v, build_policy(), candidates=_family()
     )
 
-    assert [s.label for s in tasks[0].slots] == ["CB313"]
+    assert [e["canonical_code"] for e in plan.fetch[0].entities] == ["CB313"]
 
 
-def test_an_existing_slot_survives_even_when_this_message_did_not_name_it():
-    """The other half of the same rule: the task's OWN products are always kept, or a
-    fill turn naming one product would drop the rest of the task."""
+def test_the_same_ask_without_a_quantity_still_lists_the_family():
+    """The other half, unchanged for everybody: "stock for CB313?" names no quantity, so
+    the family stands, the reply answers all of them and the task collects a quantity
+    per product (or the dealer says proceed)."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    v = verdict(domain_hint="inventory", entities=[entity("CB313", hint="product")])
+
+    _state2, plan = apply(
+        _state(Focus(), turn_no=1), v, build_policy(), candidates=_family()
+    )
+
+    assert [e["canonical_code"] for e in plan.fetch[0].entities] == [
+        "CB313",
+        "CB313A-NL",
+        "CB313-NL",
+        "CB313-L",
+    ]
+
+
+def test_a_family_prefix_with_no_exact_match_keeps_the_whole_family():
+    """D29's escape hatch: "CB31" is not a product code of its own, so there is nothing
+    exact to narrow to and the family is what the question was about - quantity or no
+    quantity."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    v = verdict(
+        domain_hint="inventory",
+        entities=[entity("CB31", hint="product", quantity=1200)],
+    )
+
+    _state2, plan = apply(
+        _state(Focus(), turn_no=1), v, build_policy(), candidates=_family(token="CB31")
+    )
+
+    assert len(plan.fetch[0].entities) == 4
+
+
+def test_a_second_product_without_a_quantity_is_untouched_by_the_narrowing():
+    """One sentence can do both: a quantity for one code narrows THAT code only, and a
+    product named beside it with no quantity keeps every row the resolver placed."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus
+
+    candidates = _family()
+    candidates["product"] = candidates["product"] + [
+        {
+            "raw": "MHS1028",
+            "hint": "product",
+            "canonical_code": "MHS1028",
+            "uuid": "uuid-mhs-mocha",
+            "current_message": True,
+            "confident": True,
+        },
+        {
+            "raw": "MHS1028",
+            "hint": "product",
+            "canonical_code": "MHS1028",
+            "uuid": "uuid-mhs-sorento",
+            "current_message": True,
+            "confident": True,
+        },
+    ]
+    v = verdict(
+        domain_hint="inventory",
+        entities=[
+            entity("CB313", hint="product", quantity=1200),
+            entity("MHS1028", hint="product"),
+        ],
+    )
+
+    _state2, plan = apply(
+        _state(Focus(), turn_no=1), v, build_policy(), candidates=candidates
+    )
+
+    assert [e["uuid"] for e in plan.fetch[0].entities] == [
+        "uuid-CB313",
+        "uuid-mhs-mocha",
+        "uuid-mhs-sorento",
+    ], "both company rows of the code with no quantity stay; only the siblings go"
+
+
+def test_the_task_holds_every_entry_the_block_answered():
+    """Review round 7: with the narrowing done at the fetch, the SLOT seam is back to
+    the backend's own rule (D25) - every entry in the reply becomes a slot, including a
+    product this message did not name (the task's own products on a fill turn)."""
     from app.services.chatbot.turn.task import tasks_after_reply
 
-    open_task = _stock_task(
-        slots=[("uuid-MHS1028", "MHS1028", 60), ("uuid-MSK11A-QT", "MSK11A-QT", None)]
-    )
     block = _entries("MHS1028", "MSK11A-QT", answered=("MHS1028",))
 
-    tasks = tasks_after_reply(
-        (open_task,), [{"stock_availability": block}], turn_no=2, named_codes=("MHS1028",)
-    )
+    tasks = tasks_after_reply((), [{"stock_availability": block}], turn_no=1)
 
     assert [s.label for s in tasks[0].slots] == ["MHS1028", "MSK11A-QT"]
-
-
-def test_a_family_prefix_that_matches_no_code_exactly_keeps_every_entry():
-    """D29's escape hatch: the dealer typed something that is not a product code of its
-    own ("CB31"), so there is no exact match to narrow to and today's behaviour stands -
-    the family is what the question was about."""
-    from app.services.chatbot.turn.task import tasks_after_reply
-
-    block = _entries("CB313", "CB313A-NL", "CB313-NL")
-
-    tasks = tasks_after_reply(
-        (), [{"stock_availability": block}], turn_no=1, named_codes=("CB31",)
-    )
-
-    assert [s.label for s in tasks[0].slots] == ["CB313", "CB313A-NL", "CB313-NL"]
 
 
 # --------------------------------------------------------------------------- #

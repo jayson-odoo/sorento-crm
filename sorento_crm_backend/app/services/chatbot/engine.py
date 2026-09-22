@@ -2316,9 +2316,6 @@ def _run_stages(  # noqa: PLR0915
                         for spec in fetch_plan.fetch
                         if spec.domain == "inventory"
                     ),
-                    # D29 (review round 6): the codes this MESSAGE typed, so a family
-                    # sibling the resolver expanded never joins the task.
-                    named_codes=turn_task.message_codes(verdict),
                 )
                 turn_trace.record(
                     "looked_up",

@@ -770,30 +770,12 @@ def opened_for_domains(
 # --------------------------------------------------------------------------- #
 
 
-def message_codes(verdict: dict[str, Any]) -> tuple[str, ...]:
-    """The product codes this MESSAGE actually named (D29, review round 6).
-
-    Read off the parser's own entities, never off the resolved focus: the resolver
-    expands a family-grouped code into its siblings, and the dealer typed one of them.
-    """
-    out: list[str] = []
-    for entity in verdict.get("entities") or []:
-        if not isinstance(entity, dict):
-            continue
-        for name in ("canonical_code", "code", "raw"):
-            value = entity.get(name)
-            if isinstance(value, str) and value.strip():
-                out.append(value.strip())
-    return tuple(out)
-
-
 def tasks_after_reply(
     tasks: tuple[Task, ...],
     envelopes: list[dict[str, Any]],
     *,
     turn_no: int = 0,
     named_products: bool = True,
-    named_codes: tuple[str, ...] = (),
 ) -> tuple[Task, ...]:
     """The stock task, rebuilt from the stock tool's own `stock_availability` block.
 
@@ -818,32 +800,6 @@ def tasks_after_reply(
             block = [row for row in rows if isinstance(row, dict)]
     if block is None:
         return tasks
-
-    # D29 (review round 6, finding C): a code the dealer typed EXACTLY opens a slot for
-    # that product only. "stock for CB313 1200?" is one literal product code; the
-    # resolver expands it to the whole family, so the reply answered for CB313,
-    # CB313A-NL, CB313-NL and CB313-L and the task then asked for three quantities the
-    # dealer had never mentioned. A sibling the resolver added is dropped from the task
-    # silently - it is not what the question was about. The task's OWN slots count as
-    # named (a fill turn names one product and must not drop the rest of the task). If
-    # NOTHING in the reply matches a typed code exactly - the dealer typed a family
-    # prefix that is not a product of its own - there is nothing to narrow to and the
-    # whole block stands, which is today's behaviour.
-    wanted = {code.strip().casefold() for code in named_codes if isinstance(code, str) and code.strip()}
-    for task in tasks:
-        if task.kind != "stock_qty":
-            continue
-        for slot in task.slots:
-            if isinstance(slot.label, str) and slot.label.strip():
-                wanted.add(slot.label.strip().casefold())
-    if wanted:
-        exact = [
-            row
-            for row in block
-            if str(row.get("product_code") or "").strip().casefold() in wanted
-        ]
-        if exact:
-            block = exact
 
     others = tuple(task for task in tasks if task.kind != "stock_qty")
     if not any(row.get("needs_quantity") is True for row in block):

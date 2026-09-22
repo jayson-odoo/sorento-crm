@@ -1147,6 +1147,79 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
 _REFUSES_EMPTY_SUBJECT: frozenset[str] = frozenset({"inventory"})
 
 
+def _stated_quantity(value: Any) -> int | None:
+    """A quantity the message stated, or None. Mirrors `turn/task.py::_number`."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("+").isdigit():
+        return int(value.strip())
+    return None
+
+
+def _row_codes(row: dict[str, Any]) -> set[str]:
+    out = set()
+    for name in ("canonical_code", "code", "raw"):
+        value = row.get(name)
+        if isinstance(value, str) and value.strip():
+            out.add(value.strip().casefold())
+    return out
+
+
+def _row_code(row: dict[str, Any]) -> str | None:
+    for name in ("canonical_code", "code"):
+        value = row.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().casefold()
+    return None
+
+
+def _exact_code_when_a_quantity_is_named(plan: Plan, verdict: dict[str, Any], trace: Trace) -> None:
+    """D29 (review round 6 finding C, re-ruled in round 7): an inventory entity that
+    CARRIES A QUANTITY fetches its exact code and nothing else.
+
+    "stock for CB313 1200?" is one literal product code with one number attached to it.
+    The resolver groups product families, so it placed CB313, CB313A-NL, CB313-NL and
+    CB313-L - the reply then verdicted a product the dealer had asked about and ASKED
+    for quantities on three they had never mentioned (live trace e6459937). A quantity
+    is stated about a product, so it settles which product was meant.
+
+    Deliberately policy-blind, and deliberately not just the dealer's: a staff caller
+    typing a quantity beside a family-grouped code gets the exact code too. That is the
+    cost of one rule instead of two that could disagree, and the caller who wants the
+    family asks for it without a number.
+
+    An entity with NO quantity keeps today's expansion for everybody ("stock for CB313?"
+    still lists the family, and the stock task then collects a quantity per product).
+    When the typed token matches no exact code at all - a family PREFIX that is not a
+    product of its own - there is nothing to narrow to and the family stands.
+    """
+    wanted: set[str] = set()
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict) or _stated_quantity(e.get("quantity")) is None:
+            continue
+        for name in ("canonical_code", "code", "raw"):
+            value = e.get(name)
+            if isinstance(value, str) and value.strip():
+                wanted.add(value.strip().casefold())
+    if not wanted:
+        return
+    for spec in plan.fetch:
+        if spec.domain != "inventory" or spec.filters.get("task") or not spec.entities:
+            continue
+        keep = list(spec.entities)
+        for code in wanted:
+            group = [row for row in keep if _row_codes(row) & {code}]
+            exact = [row for row in group if _row_code(row) == code]
+            if not exact or len(exact) == len(group):
+                continue
+            dropped = {id(row) for row in group if row not in exact}
+            keep = [row for row in keep if id(row) not in dropped]
+            trace.rules_fired.append("quantity_names_its_exact_code")
+        spec.entities = keep
+
+
 def _narrow_and_plan(
     focus: Focus,
     policy: Policy,
@@ -1623,6 +1696,7 @@ def apply(
     plan = _narrow_and_plan(
         focus, policy, domains, new_state, trace, attributes, candidates, unplaced
     )
+    _exact_code_when_a_quantity_is_named(plan, verdict, trace)
 
     if task_locked and plan.ask is None:
         # The narrower built a spec for the task's domain out of whatever THIS message

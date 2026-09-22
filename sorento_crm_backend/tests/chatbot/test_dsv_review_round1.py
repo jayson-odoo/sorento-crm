@@ -257,13 +257,10 @@ def test_engine_named_products_reads_only_the_inventory_specs_own_entities(
     captured: list[bool] = []
     real_tasks_after_reply = engine_mod.turn_task.tasks_after_reply
 
-    def _spy(tasks, envelopes, *, turn_no=0, named_products=True, **extra):
-        # `**extra` so a new keyword on `tasks_after_reply` (review round 6 added
-        # `named_codes`, D29) is forwarded rather than turning this spy into a
-        # TypeError that reads as "the engine never called it".
+    def _spy(tasks, envelopes, *, turn_no=0, named_products=True):
         captured.append(named_products)
         return real_tasks_after_reply(
-            tasks, envelopes, turn_no=turn_no, named_products=named_products, **extra
+            tasks, envelopes, turn_no=turn_no, named_products=named_products
         )
 
     monkeypatch.setattr(engine_mod.turn_task, "tasks_after_reply", _spy)
@@ -464,11 +461,7 @@ def test_an_already_open_task_is_still_updated_when_this_turn_named_nothing():
     updates it."""
     from app.services.chatbot.turn.task import tasks_after_reply
 
-    # Review round 6 (D29): both products are the TASK's own - a reply row for a
-    # product neither this message nor the task named is a resolver-expanded sibling
-    # now, and no longer joins the task. The carve-out this test pins is unchanged:
-    # `named_products=False` must not wipe a task that is already open.
-    task = _stock_task(slots=[("uuid-a", "A", None), ("uuid-b", "B", None)])
+    task = _stock_task(slots=[("uuid-a", "A", None)])
     rows = [
         {"product_id": "uuid-a", "product_code": "A", "needs_quantity": False, "requested_qty": 5},
         {"product_id": "uuid-b", "product_code": "B", "needs_quantity": True, "requested_qty": None},
