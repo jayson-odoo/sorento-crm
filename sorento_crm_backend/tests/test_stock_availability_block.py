@@ -360,7 +360,12 @@ def test_availability_running_low_at_threshold(db):
 def test_availability_incoming_covers_deficit_po_ignored(db):
     """AC-1742. On hand 100, ask 110 (deficit 10); an open allocation of 10 to BRW dated
     2026-10-12 covers the whole deficit, so PO is not consulted at all (D6) even though a
-    PO line of 25 also sits at BRW."""
+    PO line of 25 also sits at BRW.
+
+    SEC-N2 (security review, round 1): `purchase_eta_days` is attached only when
+    "purchase" is one of the named sources, the mirror of `incoming_eta`'s own guard -
+    a lead time printed beside an incoming-only disclaimer is a promise about a purchase
+    nothing consulted. This case is exactly that shape, so it reads null here."""
     brw = _wh(db, "ZZTBRW")
     p = product(db, company_id=DEFAULT_COMPANY_ID)
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
@@ -387,7 +392,7 @@ def test_availability_incoming_covers_deficit_po_ignored(db):
         "sources": ["incoming"],
         "limited": True,
         "incoming_eta": "2026-10-12",
-        "purchase_eta_days": 90,
+        "purchase_eta_days": None,
     }
     _assert_no_quantity_anywhere(result, {100, 10, 25})
 
@@ -671,6 +676,81 @@ def test_availability_received_or_closed_supply_not_counted(db):
     _assert_no_quantity_anywhere(result, {100, 65})
 
 
+# =================================================== review round 1, SEC-S1 (added)
+
+
+def test_availability_supply_at_an_inactive_warehouse_is_not_counted(db):
+    """SEC-S1 (security review, round 1). `warehouse_criterion` is only HALF of what the
+    ON HAND read filters by: that query also carries `Warehouse.is_active`, so a retired
+    location is not somewhere this contact can be supplied from. An allocation and a PO
+    line bound for an INACTIVE warehouse that is nonetheless named in the policy's own
+    include list were counted towards the verdict, and the dealer read a promise the
+    warehouse cannot keep.
+
+    RED before the fix: `disclaimer` came back
+    `{"sources": ["incoming", "purchase"], ...}` off the retired location's 10 + 25."""
+    brw = _wh(db, "ZZTBRW")
+    retired = _wh(db, "ZZTOLD")
+    retired.is_active = False
+    db.flush()
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
+    _allocation(
+        db,
+        product_id=p.id,
+        warehouse_id=retired.id,
+        allocated=10,
+        expected_date=date(2026, 10, 12),
+    )
+    _po_line(db, product_id=p.id, warehouse_id=retired.id, ordered=25)
+    contact = _contact(db)
+    _policy_row(
+        db, mode="availability", warehouse_ids=[brw.id, retired.id], contact=contact
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 110}
+    )
+
+    entry = _entry(result, p.id)
+    assert entry["verdict"] == "not_available"
+    assert entry["disclaimer"] is None, (
+        "supply at a retired warehouse must not be named: the on-hand read this verdict "
+        "is judged against never counts it either"
+    )
+
+
+def test_availability_supply_outside_the_asked_warehouse_is_not_counted(db):
+    """SEC-S1, the second half: the caller's OWN `warehouse_ids=` narrowing ("stock at
+    BRW") narrows the on-hand read, so it has to narrow the supply reads too - otherwise
+    "do you have 110 at BRW?" was answered with an allocation bound for MWH."""
+    brw = _wh(db, "ZZTBRW")
+    mwh = _wh(db, "ZZTMWH")
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
+    _allocation(
+        db,
+        product_id=p.id,
+        warehouse_id=mwh.id,
+        allocated=10,
+        expected_date=date(2026, 10, 12),
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id, mwh.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id],
+        contact_id=contact.id,
+        warehouse_ids=[brw.id],
+        requested_quantities={p.id: 110},
+    )
+
+    entry = _entry(result, p.id)
+    assert entry["disclaimer"] is None
+
+
 # ============================================================ AC-1752, route level
 
 
@@ -724,3 +804,25 @@ def test_route_rejects_bad_requested_quantities_and_declares_keys(client, db):
         },
     )
     assert non_int_value.status_code == 400, non_int_value.text
+
+
+def test_route_answers_a_bad_product_or_warehouse_uuid_with_400_not_500(client, db):
+    """Review round 1 nit. `parse_uuid_list` raises `HTTPException(400)`, but both of
+    its calls sat INSIDE the handler's `except Exception as e: raise
+    handle_internal_error(str(e))` block, which turns every exception alike into a 500 -
+    `HTTPException` included, since it does not look at the type. A caller's malformed
+    UUID is the caller's mistake, and the reply has to say so. Hoisted out of the try
+    the same way `requested_quantities` already was (AC-1752).
+
+    RED before the fix: both calls came back 500."""
+    bad_product = client.get(
+        "/api/v1/inventory/stock/balance",
+        params={"product_ids": "not-a-uuid"},
+    )
+    assert bad_product.status_code == 400, bad_product.text
+
+    bad_warehouse = client.get(
+        "/api/v1/inventory/stock/balance",
+        params={"warehouse_ids": "not-a-uuid"},
+    )
+    assert bad_warehouse.status_code == 400, bad_warehouse.text

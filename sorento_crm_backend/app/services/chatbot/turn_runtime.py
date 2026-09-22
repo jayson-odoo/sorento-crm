@@ -1198,9 +1198,21 @@ def _spec_window(out: dict[str, Any], spec: FetchSpec) -> dict[str, Any]:
 
 
 def _int(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    """A quantity as an int, or None for anything that is not one.
+
+    SEC-N4 (security review, round 1): a digit STRING counts, because a value read back
+    off a session row written by an older build (or by hand) is whatever JSON carried -
+    and `requested_quantities` is validated at the route, where one bad value is a 400
+    that kills the whole fetch rather than one product. `bool` is not a number here:
+    `True` is 1 in Python and a quantity of one is not what a boolean meant.
+    """
+    if isinstance(value, bool) or value is None:
         return None
-    return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
 
 
 def _spec_quantities(
@@ -1218,7 +1230,15 @@ def _spec_quantities(
     """
     carried = spec.filters.get("requested_quantities")
     if isinstance(carried, dict) and carried:
-        return {**out, "requested_quantities": dict(carried)}
+        # SEC-N4: coerced here too, not only in `StockQtyTask.to_fetch` - this is the
+        # LAST seam before the value becomes a query param, and a caller that built the
+        # spec by hand must not be able to 400 the whole fetch with one bad slot.
+        coerced = {
+            str(key): _int(value)
+            for key, value in carried.items()
+            if _int(value) is not None
+        }
+        return {**out, "requested_quantities": coerced} if coerced else out
     by_code: dict[str, int] = {}
     for e in jsc.array(out.get("entities")):
         if not isinstance(e, dict):

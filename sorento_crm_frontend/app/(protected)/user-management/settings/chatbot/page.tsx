@@ -21,7 +21,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { toast } from '@/lib/toast';
 
 import { useChatbotSettings, useSaveChatbotSettings } from './hooks/useChatbotSettings';
 import {
@@ -33,7 +32,7 @@ import {
 import type { ChatbotMemorySettings, ChatbotSettings } from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
 import TierOrderCard from './components/TierOrderCard';
-import StockLowThresholdCard from './StockLowThresholdCard';
+import StockLowThresholdCard from './components/StockLowThresholdCard';
 import CrossDomainLadderCard, {
   DEFAULT_LADDER_DOMAIN,
 } from './components/CrossDomainLadderCard';
@@ -238,10 +237,10 @@ export default function ChatbotSettingsPage() {
           onClick={() => {
             // Re-seed each draft from what came back, not from what was typed: the
             // row the backend returns is what was actually persisted.
-            save.mutate(draft, {
-              onSuccess: (saved) => setDraft(saved),
-              onError: (error: Error) => toast.error(error.message || 'Failed to save settings'),
-            });
+            // No call-site `onError` (R-S1, reviewer round 1): `useSaveChatbotSettings`
+            // already toasts the extracted message, so a second handler here toasted the
+            // same failure twice.
+            save.mutate(draft, { onSuccess: (saved) => setDraft(saved) });
             if (memoryDraft) {
               saveMemory.mutate(memoryDraft, { onSuccess: (saved) => setMemoryDraft(saved) });
             }

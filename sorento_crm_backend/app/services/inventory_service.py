@@ -1016,6 +1016,10 @@ class StockService:
                 requested_product_ids=resolved_input_product_ids,
                 page=page,
                 limit=limit,
+                # SEC-S1: the SAME location narrowing the on-hand query above ran
+                # with ("stock at BRW"), so the supply reads cannot answer from a
+                # warehouse the question itself excluded.
+                warehouse_ids=warehouse_ids,
             )
 
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock
@@ -1199,6 +1203,7 @@ class StockService:
         page: int,
         limit: int,
         requested_quantities: Optional[dict] = None,
+        warehouse_ids: Optional[list[str]] = None,
     ) -> None:
         """Attach the visibility block(s) and, for the two summary modes, empty `data`.
 
@@ -1373,6 +1378,26 @@ class StockService:
         from app.models.user import SystemSetting
         from app.services.stock_verdict import verdict as compute_verdict
 
+        # SEC-S1 (security review, round 1): `warehouse_criterion` is only HALF of what
+        # the on-hand read filters by. That query also carries `Warehouse.is_active`
+        # (a retired location is not somewhere this contact can be supplied from) and
+        # the caller's own `warehouse_ids=` narrowing ("stock at BRW"), and a supply
+        # read that skipped both counted an allocation bound for a retired warehouse,
+        # or bound for MWH under a question that asked only about BRW, towards a
+        # verdict the dealer then read as a promise. Applied to all three reads below,
+        # as one list, so they cannot drift apart from each other again.
+        def _supply_scope(column):
+            scoped = [
+                column.isnot(None),
+                warehouse_criterion(policy, column),
+                column.in_(
+                    self.db.query(Warehouse.id).filter(Warehouse.is_active.is_(True))
+                ),
+            ]
+            if warehouse_ids:
+                scoped.append(column.in_(warehouse_ids))
+            return scoped
+
         # D2: open SO subtracted from on-hand, per the SAME warehouse_criterion as
         # `on hand` itself. A line with no destination is never subtracted - it
         # cannot be placed at any warehouse the policy names, allowed or not.
@@ -1385,8 +1410,7 @@ class StockService:
             )
             .filter(
                 SalesOrderLine.product_id.in_(page_ids),
-                SalesOrderLine.warehouse_id.isnot(None),
-                warehouse_criterion(policy, SalesOrderLine.warehouse_id),
+                *_supply_scope(SalesOrderLine.warehouse_id),
                 SalesOrderLine.line_status == "open",
                 SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
             )
@@ -1421,14 +1445,20 @@ class StockService:
             .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
             .filter(
                 SPOAllocation.product_id.in_(page_ids),
-                SPOAllocation.warehouse_id.isnot(None),
-                warehouse_criterion(policy, SPOAllocation.warehouse_id),
+                *_supply_scope(SPOAllocation.warehouse_id),
                 sa_or(
                     InboundShipment.id.is_(None),
                     InboundShipment.shipment_status.notin_(_RECEIVED_SHIPMENT_STATES),
                 ),
-                SPOAllocation.line_status == "open",
-                SPOAllocation.receipt_status.notin_(("fully_received", "received")),
+                # The view's own COALESCE, which this predicate said it copied
+                # "verbatim" and did not: `NOT IN` over a NULL is NULL, never true, so
+                # an allocation with no `line_status` or no `receipt_status` yet was
+                # silently dropped from a dealer's incoming instead of counted as the
+                # open, unreceived row it is.
+                func.coalesce(SPOAllocation.line_status, "open") == "open",
+                func.coalesce(SPOAllocation.receipt_status, "pending").notin_(
+                    ("fully_received", "received")
+                ),
                 SPOAllocation.allocated_quantity
                 > func.coalesce(SPOAllocation.quantity_received, 0),
             )
@@ -1457,8 +1487,7 @@ class StockService:
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .filter(
                 PurchaseOrderLine.product_id.in_(page_ids),
-                PurchaseOrderLine.warehouse_id.isnot(None),
-                warehouse_criterion(policy, PurchaseOrderLine.warehouse_id),
+                *_supply_scope(PurchaseOrderLine.warehouse_id),
                 PurchaseOrder.status.in_(_PO_BOOK_STATUSES),
                 PurchaseOrderLine.line_status == "open",
                 PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
@@ -1532,7 +1561,13 @@ class StockService:
                             if "incoming" in v.sources and incoming_eta_date
                             else None
                         ),
-                        "purchase_eta_days": lead_time_days,
+                        # SEC-N2: named only when PURCHASE is one of the sources, the
+                        # mirror of `incoming_eta`'s own guard right above. A lead time
+                        # printed beside an incoming-only disclaimer is a promise about
+                        # a purchase that was never consulted.
+                        "purchase_eta_days": (
+                            lead_time_days if "purchase" in v.sources else None
+                        ),
                     }
             entries.append(entry)
 

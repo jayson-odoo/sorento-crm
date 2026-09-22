@@ -50,11 +50,18 @@ from tests.chatbot.test_turn_replay import (
 )
 
 
-def _replay(case_name: str, session_factory, stub_parser, monkeypatch) -> list[dict]:
+def _replay(
+    case_name: str, session_factory, stub_parser, monkeypatch, calls: list | None = None
+) -> list[dict]:
     """Runs every turn of `case_name` (a `console/case-dsv-*` stem) through the real
     `engine.run_turn`, the same way `test_turn_replay.py::test_replay` does, and returns
     the list of `session_patch` dicts, one per turn - the piece that file computes and
-    then throws away after `_compare`."""
+    then throws away after `_compare`.
+
+    `calls` (R-S6, reviewer round 1): when a list is handed in, every turn's REAL tool
+    calls are appended to it, one list per turn, so a test can assert what the tool was
+    actually called WITH and not only what the session kept. `test_turn_replay.py`
+    grades the arg KEY SET; the values are this file's to check."""
     from app.services.chatbot import engine as engine_mod
 
     path = REPLAY_ROOT / "console" / f"{case_name}.json"
@@ -70,10 +77,12 @@ def _replay(case_name: str, session_factory, stub_parser, monkeypatch) -> list[d
     patches: list[dict] = []
     for step_no, turn in enumerate(turns, start=1):
         _apply_switches(session_factory, turn.get("switches"))
-        _install_stubs(monkeypatch, stub_parser, turn=turn)
+        tool_calls = _install_stubs(monkeypatch, stub_parser, turn=turn)
         envelope = _build_envelope(turn, message_id=f"dsv-sess-{case_name}-{step_no}")
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
         patches.append(result.session_patch or {})
+        if calls is not None:
+            calls.append(tool_calls)
         if step_no < len(turns) and result.session_patch is not None:
             _write_session_vars(session_factory, contact_id=contact_id, payload=result.session_patch)
     return patches
@@ -249,7 +258,10 @@ def test_case_09_proceed_anyway_closes_a_parked_task_too(session_factory, stub_p
 
 
 def test_case_10_two_tasks_tie_then_resolve_by_position(session_factory, stub_parser, monkeypatch):
-    patches = _replay("case-dsv-10-tie-asks-which-task", session_factory, stub_parser, monkeypatch)
+    calls: list = []
+    patches = _replay(
+        "case-dsv-10-tie-asks-which-task", session_factory, stub_parser, monkeypatch, calls
+    )
     after_stock_open, after_ideate_open, after_tie, after_resolved = patches
 
     stock1 = _task(after_stock_open, "stock_qty")
@@ -273,6 +285,17 @@ def test_case_10_two_tasks_tie_then_resolve_by_position(session_factory, stub_pa
         "the tie-breaking pick applies the carried quantity to the stock task, whose reply "
         f"answers every product (needs_quantity false), so no stock task remains: {resolved_tasks}"
     )
+    # R-S6 (reviewer, round 1): "no stock task remains" is true of a turn that dropped
+    # the pick on the floor too, so the load-bearing half is asserted here - the number
+    # the tie CARRIED reached the tool, against the product the dealer picked the task
+    # for. Without this the whole D24(b) chain could pass while answering nothing.
+    stock_calls = [
+        call for call in calls[3] if call["tool"] == "crm_inventory_stock_balance_list"
+    ]
+    assert len(stock_calls) == 1, calls[3]
+    assert stock_calls[0]["args"]["requested_quantities"] == {
+        "00000000-0000-0000-0000-0000000000a3": 110
+    }
 
 
 # --------------------------------------------------------------------------- #

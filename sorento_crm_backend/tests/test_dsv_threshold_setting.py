@@ -147,8 +147,16 @@ def _script_directory() -> ScriptDirectory:
 
 def test_dsv_0001_adds_threshold_column_default_50(db):
     """AC-1730: `system_settings.chatbot_stock_low_threshold_pct` is present - integer, not
-    null, server default 50 - chained onto `spec_vocab_close_couple`, with the alembic graph
+    null, server default 50 - chained onto a COMMITTED main head, with the alembic graph
     still a single head.
+
+    The parent is asserted as "there is one", never as a literal: `scripts/alembic-
+    reparent.sh` moves this migration onto whatever main's head is every time the lane
+    merges main (it was `spec_vocab_close_couple`, it is `525_committed_v_orderback`
+    today, and it will move again before the PR merges). What the lane actually owes is
+    that the migration HAS a parent and that the graph still has exactly one head - both
+    asserted below - so pinning the literal only made a green re-parent read as a red
+    test.
 
     `dsv_0001`'s `upgrade()` is still called here so it is exercised, but it is column-existence
     guarded: `blank_session` builds its scratch schema from the MODELS (`Base.metadata.create_
@@ -164,7 +172,9 @@ def test_dsv_0001_adds_threshold_column_default_50(db):
     module = _load_dsv_migration()
 
     assert module.revision == "dsv_0001"
-    assert module.down_revision == "spec_vocab_close_couple"
+    assert module.down_revision is not None, (
+        "dsv_0001 must chain onto a committed main head, not sit at the root of the graph"
+    )
 
     context = MigrationContext.configure(db.connection())
     with Operations.context(context):

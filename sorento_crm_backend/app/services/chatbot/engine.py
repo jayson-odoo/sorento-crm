@@ -2300,7 +2300,13 @@ def _run_stages(  # noqa: PLR0915
                 # `needs_quantity` per product. The engine never decides who must state
                 # a quantity; it reads what the reply stated about it.
                 state_out.focus.tasks = turn_task.tasks_after_reply(
-                    tuple(state_out.focus.tasks or ()), envelopes, turn_no=turn_no
+                    tuple(state_out.focus.tasks or ()),
+                    envelopes,
+                    turn_no=turn_no,
+                    # SEC-S2: did this ask name a product at all? A bare "what stock do
+                    # you have?" fetches a page of the catalogue, and a task must not be
+                    # opened to collect a quantity for every row of it.
+                    named_products=any(spec.entities for spec in fetch_plan.fetch),
                 )
                 turn_trace.record(
                     "looked_up",

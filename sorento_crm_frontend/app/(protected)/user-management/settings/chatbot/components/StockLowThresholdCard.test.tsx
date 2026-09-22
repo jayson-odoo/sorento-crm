@@ -40,6 +40,17 @@ describe('StockLowThresholdCard - renders the value (AC-1732)', () => {
     expect(input).toHaveAttribute('min', '1');
     expect(input).toHaveAttribute('max', '100');
   });
+
+  it('shows the server default when the settings row carries no threshold yet', () => {
+    // R-S1 (reviewer round 1). A row read before this column was ever saved arrives as
+    // `null` and the field rendered BLANK - a required percentage with nothing in it,
+    // which reads as "unset" while the engine is in fact using 50. RED before the fix:
+    // `input.value` was ''.
+    render(<StockLowThresholdCard value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByRole('spinbutton') as HTMLInputElement;
+    expect(input.value).toBe('50');
+  });
 });
 
 describe('StockLowThresholdCard - onChange (AC-1732)', () => {

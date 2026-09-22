@@ -1389,14 +1389,21 @@ def _availability_entries(payload: dict) -> list[dict]:
 
 
 def _is_legacy_availability(entries: list[dict]) -> bool:
-    """S2 (D20): a caller still sending only the scalar `requested_qty` - n8n,
-    until the prompt names `requested_quantities` - gets entries with NO
-    `verdict` key at all, because S1 only ever attaches `verdict` / `running_low`
-    / `disclaimer` (even as `None`) through the NEW contract. Checked once per
-    LIST rather than per entry: a real payload is uniform (S1 sets the three keys
-    on every entry it builds, or the response predates S1 and has none of them),
-    so one entry missing the key is read as the whole list being the old shape -
-    which keeps `_AVAILABILITY_*`'s wording byte-identical for that caller.
+    """Is this payload from a backend that predates S1?
+
+    SEC-N1 (security review, round 1) corrects what this used to claim. It is NOT
+    about which PARAM the caller sent: S1's `_apply_stock_visibility` attaches
+    `verdict` / `running_low` / `disclaimer` to EVERY availability entry it builds,
+    scalar `requested_qty` and n8n included, so against this backend the branch is
+    unreachable and n8n reads the new wording too (which is correct - the verdict is
+    the answer, whoever asked).
+
+    It is kept for the one case that is real: a ROLLING DEPLOY, where this MCP process
+    is already the new build and the backend answering it is still the old one. Those
+    entries carry none of the three keys, and the old `_AVAILABILITY_*` wording is what
+    they can honestly be rendered with. Checked once per LIST rather than per entry: a
+    real payload is uniform, so one entry missing the key is read as the whole list
+    being the old shape.
     """
     return not entries or any("verdict" not in e for e in entries)
 

@@ -14,7 +14,15 @@ import { Label } from '@/components/ui/label';
  * consolidated Save, 16 Sep 2026 browser pass) - this card owns no query, no mutation,
  * no toast and renders no Save button of its own. The existing card layout in this
  * folder (`MemorySettingsCard`, `TierOrderCard`) is reused as-is; no new motion.
+ *
+ * R-S1 (reviewer round 1): a settings row that carries no threshold yet (an install
+ * that has not saved one, a row read before the column was backfilled) arrives as
+ * `null`, and the field rendered BLANK - a required percentage with nothing in it,
+ * which reads as "unset" when the engine is in fact using the server default. The
+ * default is shown instead, so what the screen says and what the bot does agree.
  */
+const DEFAULT_THRESHOLD_PCT = 50;
+
 export default function StockLowThresholdCard({
   value,
   onChange,
@@ -22,6 +30,8 @@ export default function StockLowThresholdCard({
   value: number | null;
   onChange: (value: number) => void;
 }) {
+  const shown = value ?? DEFAULT_THRESHOLD_PCT;
+
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const raw = event.target.value;
     if (raw === '') return;
@@ -48,7 +58,7 @@ export default function StockLowThresholdCard({
           type="number"
           min={1}
           max={100}
-          value={value ?? ''}
+          value={shown}
           onChange={handleChange}
           className="max-w-32"
         />

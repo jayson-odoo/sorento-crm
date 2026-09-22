@@ -1458,35 +1458,28 @@ def apply(
     # D23) are what the task step above already decided. One writer, one answer.
     focus.tasks = task_outcome.tasks
 
-    if task_outcome.fetch is not None:
-        # A task that just took a value re-runs its own domain's fetch over the WHOLE
-        # task - every product it is collecting for, not just the ones this message
-        # named (`apply._set_kind_field` keeps only the latter on `focus.products`, so
-        # the task's own slots are the only honest subject list there is). The domain
-        # is the TASK's, the same lock a pick puts on a turn: a detour left
-        # `focus.domains` pointing somewhere else entirely.
-        domain = task_outcome.fetch_domain or task_outcome.fetch.domain
-        focus.domains = [domain]
-        # The conversation is now about what the task actually ASKED FOR - every
-        # product it still collects for, and only those. A "just proceed" drops the
-        # ones with no quantity (D15), and leaving them on the subject axis had the
-        # cross-domain ladder volunteer an incoming lookup for the very products the
-        # dealer had just said not to check.
+    # A task that just took a value re-runs its own domain's fetch. The domain is the
+    # TASK's, locked the same way a pick locks a turn (contract 121) - a detour left
+    # `focus.domains` pointing somewhere else entirely - and the SUBJECT is the task's
+    # own slots, every product it is still collecting for. `_set_kind_field` keeps only
+    # what THIS message named on `focus.products`, so the task is the one honest record
+    # of what the question is about.
+    #
+    # R-S2 (reviewer, round 1): the fetch is built by the NORMAL path below, never by an
+    # early return of its own. The tail every answering turn runs - the grant and
+    # `row.supported` gate inside `_narrow_and_plan`, the counted-set cursor clear, and
+    # `new_ask_closes_stale_roster` - is not optional for a turn that answers a task,
+    # and an early return skipped all three (a revoked inventory grant still fetched).
+    task_locked = task_outcome.fetch is not None
+    task_domain = (
+        (task_outcome.fetch_domain or task_outcome.fetch.domain) if task_locked else None
+    )
+    if task_locked:
+        focus.domains = [task_domain]
         if task_outcome.fetch.entities:
             _set_kind_field(focus, "product", list(task_outcome.fetch.entities))
-        answered = State(
-            focus=focus,
-            pending=None if task_outcome.clears_pending else pending_after,
-            profile=state.profile,
-            turn_no=state.turn_no,
-        )
-        return answered, Plan(
-            domains=[domain],
-            fetch=[task_outcome.fetch],
-            ask=None,
-            denied=[],
-            trace=trace,
-        )
+    if task_outcome.clears_pending:
+        pending_after = None
 
     if task_outcome.question:
         # A task RESUMED, or one a bare number could not be attributed inside: nothing
@@ -1511,7 +1504,12 @@ def apply(
         )
 
     asks = verdict.get("asks") or []
-    if domain_locked and focus.domains and not asks:
+    if task_locked:
+        # The lock: this turn belongs to the task that just took a value, whatever the
+        # conversation was last about.
+        domains = [task_domain]
+        trace.rules_fired.append("domain_locked_by_task")
+    elif domain_locked and focus.domains and not asks:
         # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
         # put the domain the question was ASKED under onto the focus and `_focus_rules`
         # left it alone, and this is the second half of that: re-reading `asks` or
@@ -1612,6 +1610,19 @@ def apply(
     plan = _narrow_and_plan(
         focus, policy, domains, new_state, trace, attributes, candidates, unplaced
     )
+
+    if task_locked and plan.ask is None:
+        # The narrower built a spec for the task's domain out of whatever THIS message
+        # resolved; the task's own spec replaces it, so the fetch carries every slot and
+        # the quantities the dealer gave on earlier turns. Replaced rather than merged:
+        # the task IS the question. If the narrower raised an ask, or the grant gate
+        # refused the domain (`plan.denied`), there is no spec to replace and the task
+        # simply stays open - which is the point of routing through it.
+        for index, spec in enumerate(plan.fetch):
+            if spec.domain == task_domain:
+                plan.fetch[index] = task_outcome.fetch
+                trace.rules_fired.append("task_drives_the_fetch")
+                break
 
     # D26: the ideation task opens on the turn that routes to the ideate lane - the
     # lane's own state already survives a detour, so the task adds the status and the

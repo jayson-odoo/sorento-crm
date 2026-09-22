@@ -108,9 +108,6 @@ vi.mock('@/lib/toast', () => ({
 
 import ChatbotSettingsPage from './page';
 import type { ChatbotSettings } from './services/chatbotSettingsService';
-// S0, AC-1732: asserted directly in the new "stock low threshold" describe block below -
-// `@/lib/toast` is already mocked above, this just gets a handle on the same mock object.
-import { toast } from '@/lib/toast';
 
 function settings(overrides: Partial<ChatbotSettings> = {}): ChatbotSettings {
   return {
@@ -484,16 +481,13 @@ describe('ChatbotSettingsPage - stock low threshold (S0, AC-1732, D7)', () => {
     expect(payload).toMatchObject({ chatbot_stock_low_threshold_pct: 40 });
   });
 
-  it('an error response toasts the extracted message', () => {
-    // The mocked mutate stands in for the real `useSaveChatbotSettings` mutation, which
-    // already toasts `error.message` on a failed save (`onError` in
-    // `hooks/useChatbotSettings.ts`) - invoking the call-site `onError` option here is how
-    // this file, with the whole hooks module mocked, exercises that same call-site contract
-    // (the existing `onSuccess` callback at the page's call site is exercised the same way by
-    // the "Save payload" test above).
-    const mutate = vi.fn((_payload: unknown, options?: { onError?: (error: Error) => void }) => {
-      options?.onError?.(new Error('Threshold must be between 1 and 100'));
-    });
+  it('Save passes no onError of its own - the hook owns the failure toast', () => {
+    // R-S1 (reviewer round 1): the call site used to pass an `onError` beside the one
+    // `useSaveChatbotSettings` already has, so a single failed save toasted the same
+    // message twice. The toast itself is asserted where it lives, in
+    // `hooks/useChatbotSettings.test.tsx`; what THIS layer owes is not to add a second
+    // one. RED before the fix: `options` carried an `onError` function.
+    const mutate = vi.fn();
     mockMutation.mockReturnValue({ isPending: false, mutate });
     mockSettingsQuery.mockReturnValue({
       data: settingsWithThreshold(50),
@@ -502,12 +496,10 @@ describe('ChatbotSettingsPage - stock low threshold (S0, AC-1732, D7)', () => {
     });
     renderPage();
 
-    const input = screen.getByRole('spinbutton', { name: /stock low threshold/i });
-    fireEvent.change(input, { target: { value: '75' } });
     fireEvent.click(saveButton());
 
-    expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining('Threshold must be between 1 and 100'),
-    );
+    const [, options] = mutate.mock.calls[0];
+    expect(options?.onError).toBeUndefined();
+    expect(options?.onSuccess).toBeTypeOf('function');
   });
 });

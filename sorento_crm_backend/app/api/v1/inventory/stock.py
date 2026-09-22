@@ -312,9 +312,13 @@ def get_stock_balance(
     # AC-1752: parsed OUTSIDE the try/except below on purpose. That block's
     # `except Exception as e: raise handle_internal_error(str(e))` treats every
     # exception alike, HTTPException included, so a 400 raised from inside it comes
-    # back as a 500 - the same trap a bad `product_ids`/`warehouse_ids` UUID would
-    # already hit, undiagnosed until this param's own test went looking for it.
+    # back as a 500. Review round 1: the two pre-existing `parse_uuid_list` calls are
+    # hoisted out with it rather than left in the trap they were already caught by -
+    # a malformed product/warehouse UUID is the caller's mistake (400), never ours
+    # (500), and the two params now answer a bad value exactly the way this one does.
     parsed_requested_quantities = parse_requested_quantities(requested_quantities)
+    parsed_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
+    parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
     try:
         service = StockService(db)
         result = service.list_stock(
@@ -324,9 +328,9 @@ def get_stock_balance(
             sort=sort,
             dir=dir,
             warehouse_id=warehouse_id,
-            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
+            warehouse_ids=parsed_warehouse_ids,
             product_id=product_id,
-            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            product_ids=parsed_product_ids,
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
             status=status,
