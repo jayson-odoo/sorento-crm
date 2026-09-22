@@ -537,6 +537,7 @@ class TestApplyProductsSummaryDistinguishesUnchanged:
         assert summary["created"] == 1, summary
         assert summary["updated"] == 1, summary
         assert summary["unchanged"] == 1, summary
+        assert summary["retryable"] == 0, summary
 
         written = _job_rows(db, job_id)
         outcomes = sorted(w["outcome"] for w in written)

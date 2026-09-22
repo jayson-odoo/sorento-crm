@@ -316,6 +316,13 @@ def resolve_standard_lead_time_days(settings: Any) -> int:
 #: preloaded this at all, run the normal per-record lookup" is a third state,
 #: not the same as "preloaded and confirmed absent".
 _NOT_PRELOADED = object()
+#: Public alias (small fix round): `link_default_supplier`'s own default
+#: parameter value is part of that function's PUBLIC contract - a batch
+#: caller (`MasterIngestService`) needs to pass this exact sentinel as its
+#: own `dict.get` default too, and reaching for a leading-underscore name
+#: across a module boundary is the wrong shape for that, even though Python
+#: allows it. `_NOT_PRELOADED` itself stays the name used inside this file.
+NOT_PRELOADED = _NOT_PRELOADED
 
 
 def link_default_supplier(

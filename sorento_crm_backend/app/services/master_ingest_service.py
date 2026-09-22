@@ -750,7 +750,7 @@ class _ProductBatchPreload:
     #: an actual row for (round-1 review, B2): it never `setdefault`s a "no
     #: link" `None` for a candidate id with none, unlike `origin_by_entity`
     #: above. `_post_write_product_hooks` therefore reads this with `product_
-    #: rules._NOT_PRELOADED` as the `.get` default, never Python's bare
+    #: rules.NOT_PRELOADED` as the `.get` default, never Python's bare
     #: `None` - the two are NOT the same answer here, and reading a miss as
     #: "confirmed no link" is exactly the bug that let a second same-batch
     #: write (an adopt right after a create, or a renamed code resolved via
@@ -867,7 +867,15 @@ class MasterIngestService:
                 # connection until a ROLLBACK - without this, the very first
                 # record's own `self.db.begin_nested()` raises an UNCAUGHT
                 # `PendingRollbackError` and the whole batch dies, not just
-                # this best-effort optimisation.
+                # this best-effort optimisation. This `rollback()` discards
+                # anything else uncommitted on `self.db` too, not only the
+                # failed preload statement - both of today's callers
+                # (`_preview_products`/`_apply_products` in
+                # `autocount_pull_tasks.py`, and the `/api/v1/ingest/*`
+                # external route) only ever READ before reaching `ingest()`,
+                # so there is nothing of the caller's to lose; a future
+                # caller that writes first would need to commit or its own
+                # savepoint before calling in.
                 self.db.rollback()
                 self._preload = None
         else:
@@ -1465,7 +1473,7 @@ class MasterIngestService:
         lead_time` are passed through - but `product_id` MISSING from that
         map is not "confirmed no link" (`_ProductBatchPreload.default_
         supplier_lead_time`'s own docstring has the full reasoning), so the
-        `.get` default is `product_rules._NOT_PRELOADED`, never Python's bare
+        `.get` default is `product_rules.NOT_PRELOADED`, never Python's bare
         `None`; only an id the preload map genuinely covers skips the real
         query. `link_default_supplier` returns the lead time now current for
         `product_id` (created, refreshed, or already matching) whenever a
@@ -1484,7 +1492,7 @@ class MasterIngestService:
                 self.db, product_id, self._system_settings(),
                 default_supplier_id=self._preload.default_supplier_id,
                 existing_lead_time_days=self._preload.default_supplier_lead_time.get(
-                    product_id, product_rules._NOT_PRELOADED
+                    product_id, product_rules.NOT_PRELOADED
                 ),
             )
             if lead_time_days is not None:

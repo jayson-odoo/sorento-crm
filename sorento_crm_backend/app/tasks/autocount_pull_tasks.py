@@ -251,6 +251,7 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
         "updated": 0,
         "unchanged": 0,
         "failed": 0,
+        "retryable": 0,
     }
     for raw, record in zip(rows, result.records):
         item_code = raw.get("code") if isinstance(raw, dict) else None
@@ -277,7 +278,18 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
                 entity_id=record.entity_id,
                 entity_type="product",
             )
-        else:  # FAILED or RETRYABLE - both surface as a failed row on the apply
+        elif record.outcome == IngestOutcome.RETRYABLE:
+            # Small fix round (captain's ruling): kept as its own summary
+            # key rather than folded into `failed` - a sequencing artefact
+            # (AC-AC-16, `MissingReference`) is not a data error, and an
+            # operator reading this summary should be able to tell the two
+            # apart without opening the job rows. The outcome ROW itself is
+            # unchanged: `_write_failed_outcome` writes the same `fail`
+            # outcome for both, since the ESB re-drains a retryable record
+            # automatically either way.
+            summary["retryable"] += 1
+            _write_failed_outcome(outcome_writer, item_code, record)
+        else:  # FAILED
             summary["failed"] += 1
             _write_failed_outcome(outcome_writer, item_code, record)
     outcome_writer.flush()
