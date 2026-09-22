@@ -1,7 +1,6 @@
 # PLAN: AutoCount pull preview - cut the dry-run ingest time
 
-Status: built, review round 1 in progress (fix round applied 22 Sep 2026 - B1/B2 same-batch
-supplier-link races, the real-ingest wire contract kept diff-free, preload robustness, T9-T15).
+Status: built, both reviews READY, draft PR open (22 Sep 2026); merge needs owner go.
 Track: focused lane, backend only, no migration.
 UAC: `autocount-pull-preview-perf-acceptance-criteria.md`.
 Follows: `PLAN-autocount-pull-review.md` (SR1 preview), `PLAN-ingest-products-code-wins.md` (SR0).
