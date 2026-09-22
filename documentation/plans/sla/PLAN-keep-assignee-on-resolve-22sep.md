@@ -1,6 +1,6 @@
 # PLAN: conversation SLA ticket keeps assignee, agent, team set code and message after resolve
 
-Status: small fix track, review READY after fix round 1, awaiting PR (lane `fix/sla-keep-assignee-on-resolve`, worktree `sorento_crm-sla-keep-assignee`)
+Status: review READY, S4 FE done, browser pass owed (lane `fix/sla-keep-assignee-on-resolve`, worktree `sorento_crm-sla-keep-assignee`, PR #1132)
 UAC: `keep-assignee-on-resolve-22sep-acceptance-criteria.md`
 Owner ruling (22 Sep 2026, R5): keep the fields for audit; resolved tickets must not reappear in My Pending / My Team / inbox tabs.
 
@@ -36,7 +36,7 @@ Flip the four that assert the null as correct: `tests/test_conversation_sla_list
 
 ## Known follow-ups
 
-- S4: FE `slaHandler.ts` "Resolved by" swap - pending owner ruling, not applied in this lane.
+- S4: DONE (owner ruling, 23 Sep 2026 = (a)). `lib/slaHandler.ts` no longer swaps to "Resolved by" on a resolved row - it always names the assignee (AC-KA-15). "Resolved by <resolver>" stays in the detail header, now shown alongside "Assigned to" rather than replacing it. The listing's "Assigned To" column no longer shows a resolver name at all (kept simple, per the ruling - the resolver is one click away on the detail page); browser pass still owed.
 - S5: the KPI leaderboard now counts resolved conversation tickets per assignee (previously under-counted, see "Why it is safe" above). Rows resolved before this deploy stay NULL on `assigned_to_id` / `agent_id` / `team_set_code` / `message_id` forever - no backfill is possible, since the pre-fix resolve genuinely discarded that data rather than merely hiding it.
 
 ## Out of scope

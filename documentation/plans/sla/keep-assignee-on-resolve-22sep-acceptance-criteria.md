@@ -16,3 +16,4 @@ Plan: `PLAN-keep-assignee-on-resolve-22sep.md`
 - AC-KA-12 (fix round 1) Same contact/route with an OPEN, assigned tracker → `is_already_assigned` is `true` (pins the other direction, so AC-KA-11's fix cannot regress the still-open case).
 - AC-KA-13 (fix round 1) `ConversationSLATrackingService.get_existing_assignee_for_contact_phone` returns `None` once the contact's only assigned tracker is resolved (it returned that resolver's info before this fix).
 - AC-KA-14 (fix round 1) `POST /{id}/extend/preview` returns 422 "Cannot extend a resolved SLA task." for a resolved tracker, matching the real extend's `is_resolved` gate.
+- AC-KA-15 (owner ruling S4, FE) A resolved conversation SLA row shows the ASSIGNEE in "Assigned To" - on the detail page header, the listing cell, and the collapsed tracking-info section - and "Resolved by <resolver>" remains visible in the detail header, alongside it, exactly where it already was.
