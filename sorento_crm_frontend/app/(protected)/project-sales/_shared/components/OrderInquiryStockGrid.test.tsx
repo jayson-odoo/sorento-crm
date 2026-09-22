@@ -54,7 +54,10 @@ vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseSer
 
 import { OrderInquiryStockGrid } from './OrderInquiryStockGrid';
 
-const PRODUCT_ID = 'prod-b2155-nl-blue';
+// Deliberately NOT a UUID that resembles the item code (`B2155-NL-BLUE`) it stands in
+// for - the whole point of the assertion below is that the hook receives the id, never
+// the item code string, and a product id containing that substring would pass either way.
+const PRODUCT_ID = 'prod-uuid-77f21';
 
 beforeEach(() => {
   vi.clearAllMocks();
