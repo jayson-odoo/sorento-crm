@@ -822,6 +822,27 @@ def _breakdown_gate(gate: Any, raw_fragment: Any) -> Any:
     return gate
 
 
+def _scope_gate(raw_fragment: Any) -> Any:
+    """The FETCH step's own scope refusal, when it made one - otherwise `None`.
+
+    Hotfix 22 Sep 2026 (PLAN-chatbot-stock-no-subject-hotfix-22sep.md): a turn that
+    `turn_runtime.make_tool_runner.runner` refused BEFORE the tool ran, because the
+    domain requires a scoping entity and this fetch carried none, rides its own
+    `run_gate` verdict on the fragment as `scope_gate`. That verdict is what
+    `not_found_error_message`'s `needs_scope` branch keys on (`gate_passed: False`
+    plus a `requires a scoping entity` reason, and the `gate_debug.allowed_lookup`
+    the sentence lists its filters from), and the RESOLVER's own gate cannot supply
+    it: on a bare "stock?" the resolver never ran at all (no entity to resolve), and
+    on the carried-subject turn it placed the carry perfectly well and has no
+    opinion about scope. Read for the miss TEXT only - `run_miss_lane` and the
+    breakdown bullets keep the resolver's gate, exactly as before.
+    """
+    if not isinstance(raw_fragment, Mapping):
+        return None
+    scope_gate = raw_fragment.get("scope_gate")
+    return scope_gate if isinstance(scope_gate, Mapping) else None
+
+
 def _ladder_resolved(resolved: Any, raw_fragment: Any) -> Any:
     """`resolved`, widened the SAME way `_breakdown_gate` widens `gate` - for
     `answer.crossdomain_zeroset`'s own read ONLY (D4, hand pass 9).
@@ -1472,8 +1493,11 @@ def answer_for(
         dry_run=dry_run,
     )
 
+    miss_gate = _scope_gate(raw_fragment)
+    if miss_gate is None:
+        miss_gate = _breakdown_gate(gate, raw_fragment)
     not_found = answer_mod.not_found_error_message(
-        full_payload, parser=parser, resolved=resolved, gate=_breakdown_gate(gate, raw_fragment)
+        full_payload, parser=parser, resolved=resolved, gate=miss_gate
     )
     offer = miss_mod.run_miss_lane(
         not_found,

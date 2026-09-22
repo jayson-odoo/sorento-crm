@@ -1456,6 +1456,7 @@ def make_tool_runner(
     """
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
+    from app.services.chatbot.lanes.business import gate as gate_mod
     from app.services.chatbot.lanes.business import services as business_services
 
     def runner(domain: str, spec: FetchSpec) -> dict[str, Any]:
@@ -1555,6 +1556,43 @@ def make_tool_runner(
             and bool(unplaced)
             and all(_entity_is_unplaced(e, unplaced) for e in entities)
         )
+        # Hotfix 22 Sep 2026 (PLAN-chatbot-stock-no-subject-hotfix-22sep.md, live
+        # contact 423729104 turns 59-60): the guard above needs `bool(unplaced)`, and
+        # the whole-book read that got through carried NOTHING unplaced. Turn 59's
+        # "Srtwc8608-p-rl" resolved only as a `product_set` - a kind
+        # `ALLOWED["inventory"]` does not take - so the carry was parked on
+        # `focus.extra["product_set"]`, handed back to the resolver on turn 60
+        # ("Stock"), left `unplaced` empty either way, and `compatible_entities` came
+        # out empty: `crm_inventory_stock_balance_list` ran with zero filters and
+        # answered with 50 rows of the catalogue. A bare "stock?" on turn 1 is the
+        # same hole from the other side - no entities at all, so the resolver never
+        # even runs and `unplaced` is empty for that reason instead.
+        #
+        # `run_gate` is ASKED the question rather than given a second copy of its
+        # tables: an entity-less ask in this domain is exactly what `ALLOWS_EMPTY` /
+        # `INTENTS_ALLOWING_EMPTY` already rule on (`inventory` is False on purpose -
+        # "a bare 'stock?' must ask which product" - and `low_stock_report` is the one
+        # intent exempted from it, PLAN-low-stock-report S6), and its verdict carries
+        # both the reason string and the `allowed_lookup` production's own miss
+        # composer reads to build the scope-needed sentence. Scoped to `inventory`:
+        # the trigger to widen is a SECOND domain measured dumping unfiltered, not the
+        # fact that other `ALLOWS_EMPTY` rows are False too.
+        #
+        # A predicate block IS a filter (the described-set ask, "which taps have
+        # stock"), so a turn carrying one is never refused here.
+        no_subject_gate: dict[str, Any] | None = None
+        if (
+            domain == "inventory"
+            and block is None
+            and not any(isinstance(e, dict) and e.get("uuid") for e in entities)
+        ):
+            probe_gate = gate_mod.run_gate(
+                {},
+                parser={**lane_out, "domain_hint": domain, "entities": []},
+                resolver={"resolutions": []},
+            )
+            if probe_gate.get("gate_passed") is False:
+                no_subject_gate = probe_gate
         if (
             (
                 spec.filters.get("tier")
@@ -1563,11 +1601,20 @@ def make_tool_runner(
             )
             or (page_predicate is not None and page_predicate.get("entitlement_missing"))
             or would_be_unfiltered
+            or no_subject_gate is not None
         ):
             fragment: dict[str, Any] = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
             }
+            if no_subject_gate is not None:
+                # The refusal's OWN reason, for `answer_bridge.answer_for`'s miss
+                # composer - which otherwise reads the RESOLVER's gate, and the
+                # resolver here either never ran (nothing to resolve) or placed the
+                # carry perfectly well and has no opinion about scope at all. The
+                # words stay `answer.not_found_error_message`'s own `needs_scope`
+                # branch; this carries only the gate verdict that branch keys on.
+                fragment["scope_gate"] = no_subject_gate
         else:
             fragment = business.run_fetch(
                 payload,
