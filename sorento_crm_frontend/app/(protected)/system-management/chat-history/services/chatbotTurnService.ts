@@ -118,6 +118,105 @@ function buildParams(entries: Record<string, string | number | undefined | null>
   return params.toString();
 }
 
+/* =============================================================================
+ * TEMPORARY MOCK (chatbot media-into-turn, S1 only - removed whole in S4)
+ * =============================================================================
+ * The backend does not populate `turn.media` yet (S2 wires the intake step, S4 wires
+ * the projection). This stamps a mock onto a rotating slice of incoming turns so the
+ * Chat History drawer can be built and reviewed against the real shape before the
+ * backend exists, per Phase 1 ("frontend against mocks, no backend code"). Gated
+ * behind an env flag that is never on by default - it must never affect the real
+ * screen for anyone who has not deliberately opted in.
+ */
+const MEDIA_MOCK_ENABLED = process.env.NEXT_PUBLIC_CHATBOT_MEDIA_MOCK === '1';
+
+function stampMediaMock(items: ChatbotTurn[]): ChatbotTurn[] {
+  if (!MEDIA_MOCK_ENABLED) return items;
+  let slot = 0;
+  return items.map((turn) => {
+    if (!turn.message_id) return turn;
+    switch (slot++ % 4) {
+      case 0:
+        return {
+          ...turn,
+          media: {
+            modality: 'image',
+            mime_type: 'image/jpeg',
+            attachment_id: null,
+            url: 'https://picsum.photos/seed/chatbot-media/480/360',
+            transcript_or_rendered_text: 'M486-75-BL, M483-BL, MBF 9902',
+            entities: [
+              { raw: 'M486-75-BL', confident: true },
+              { raw: 'M483-BL', confident: true },
+              { raw: 'MBF 9902', confident: false },
+            ],
+            attributes: [{ kind: 'colour', raw: 'black' }],
+            notes: null,
+            truncated: false,
+            decision: 'accepted',
+          },
+        };
+      case 1:
+        return {
+          ...turn,
+          media: {
+            modality: 'image',
+            mime_type: 'image/jpeg',
+            attachment_id: null,
+            url: 'https://picsum.photos/seed/chatbot-media-2/480/360',
+            transcript_or_rendered_text: 'M486-75-BL, M483-BL, M496-GM, M497-GM',
+            entities: [
+              { raw: 'M486-75-BL', confident: true },
+              { raw: 'M483-BL', confident: true },
+              { raw: 'M496-GM', confident: true },
+              { raw: 'M497-GM', confident: true },
+            ],
+            attributes: [],
+            notes: 'remaining handwritten items omitted',
+            truncated: true,
+            decision: 'accepted',
+          },
+        };
+      case 2:
+        return {
+          ...turn,
+          media: {
+            modality: 'voice' as const,
+            mime_type: 'audio/ogg',
+            attachment_id: null,
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+            transcript_or_rendered_text: 'stock for SRTWB1455',
+            entities: [{ raw: 'SRTWB1455', confident: true }],
+            attributes: [],
+            notes: null,
+            truncated: false,
+            decision: 'accepted',
+          },
+        };
+      case 3:
+        return {
+          ...turn,
+          branch_kind: 'media_denied' as const,
+          media: {
+            modality: 'image' as const,
+            mime_type: 'image/jpeg',
+            attachment_id: null,
+            url: null,
+            transcript_or_rendered_text: null,
+            entities: [],
+            attributes: [],
+            notes: null,
+            truncated: false,
+            decision: 'denied_quota',
+          },
+        };
+      default:
+        return turn;
+    }
+  });
+}
+/* ========================================================================== */
+
 export async function getChatbotTurns(
   filters: ChatbotTurnFilters = {},
 ): Promise<ChatbotTurnListResponse> {
@@ -131,7 +230,8 @@ export async function getChatbotTurns(
   });
   const response = await apiFetch(`/api/v1/system/chatbot/turns?${query}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load turns'));
-  return response.json();
+  const data: ChatbotTurnListResponse = await response.json();
+  return MEDIA_MOCK_ENABLED ? { ...data, items: stampMediaMock(data.items) } : data;
 }
 
 /** AC-255: which contacts have a failed turn in the range, and what stopped last. */

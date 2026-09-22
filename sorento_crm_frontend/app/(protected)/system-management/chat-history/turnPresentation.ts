@@ -13,6 +13,7 @@ import { extractTurnAttachments, type TurnAttachment } from '@/components/chatbo
 import type {
   BranchKind,
   ChatbotTurn,
+  ChatbotTurnMedia,
   TurnStage,
   TurnStageRecord,
   TurnTraceRecord,
@@ -69,6 +70,7 @@ const LANE_WORDS: Record<BranchKind, string> = {
   stock_denied: 'Stock access refused',
   demand_qty: 'Asked for a quantity',
   business_query: 'Business query',
+  media_denied: 'Media refused',
 };
 
 export function laneWords(branchKind: BranchKind | null): string {
@@ -313,4 +315,39 @@ export function canRetry(turn: ChatbotTurn): boolean {
  */
 export function turnAttachments(turn: ChatbotTurn): TurnAttachment[] {
   return extractTurnAttachments(turn.response?.actions);
+}
+
+/**
+ * A `media_denied` turn stops before the parser ever ran (chatbot media-into-turn,
+ * S2), so the transcript bubble renders as a plain reply - no thumbnail, no chip -
+ * even when the turn still carries a `media` block recording what was denied.
+ */
+export function isMediaDenied(turn: ChatbotTurn): boolean {
+  return turn.branch_kind === 'media_denied';
+}
+
+/** The chip on an image bubble ("Read N items"). Voice turns get no count chip - the
+ *  transcript itself is the reveal. */
+export function mediaReadCount(media: ChatbotTurnMedia): number {
+  return media.entities.length;
+}
+
+/** The Turn panel's extra stage title (AC-1847). */
+export function mediaStageTitle(media: ChatbotTurnMedia): string {
+  return media.modality === 'image' ? 'Read the photo' : 'Heard the voice note';
+}
+
+/** Every entity raw, in the order read - never a count, never "+N more" (Q2). */
+export function mediaEntitiesLine(media: ChatbotTurnMedia): string {
+  return media.entities.map((entity) => entity.raw).join(', ');
+}
+
+/** Attribute counts grouped by kind, e.g. "colour: 2, size: 1". */
+export function mediaAttributesByKind(media: ChatbotTurnMedia): string {
+  if (media.attributes.length === 0) return 'None';
+  const counts = new Map<string, number>();
+  for (const attribute of media.attributes) {
+    counts.set(attribute.kind, (counts.get(attribute.kind) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([kind, count]) => `${kind}: ${count}`).join(', ');
 }

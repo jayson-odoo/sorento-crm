@@ -13,6 +13,9 @@ import {
   canRetry,
   formatMs,
   laneWords,
+  mediaAttributesByKind,
+  mediaEntitiesLine,
+  mediaStageTitle,
   memoryChips,
   rememberedRecord,
   shortTurnId,
@@ -20,7 +23,7 @@ import {
   turnHeadline,
   turnNotes,
 } from '../turnPresentation';
-import type { ChatbotTurn, TurnStageRecord } from '../types/chatbotTurn.types';
+import type { ChatbotTurn, ChatbotTurnMedia, TurnStageRecord } from '../types/chatbotTurn.types';
 
 /**
  * The turn trace under one incoming message (AC-251 to AC-256).
@@ -123,6 +126,7 @@ export function TurnPanel({
       {open && (
         <div className="mt-2">
           <ol className="ms-1.5 border-s ps-0 space-y-0">
+            {turn.media && <MediaStageRow media={turn.media} />}
             {rows.map((row, i) =>
               row.kind === 'stage' ? (
                 <StageRow
@@ -211,6 +215,59 @@ function StageRow({
       {failed && (
         <FailedStageActions turn={turn} retryUnavailableReason={retryUnavailableReason} />
       )}
+    </li>
+  );
+}
+
+/**
+ * AC-1847. What the media-intake step read out of a photo or voice note, in the same
+ * shell every other stage row uses (`Dot`, header line, summary paragraph, a facts
+ * `dl`) - no new row primitive, just fed from `turn.media` instead of a trace record.
+ * Absent whenever `turn.media` is null (a text turn never carries one).
+ */
+function MediaStageRow({ media }: { media: ChatbotTurnMedia }) {
+  const entitiesLine = mediaEntitiesLine(media);
+  return (
+    <li className="relative ps-4 pb-2.5">
+      <Dot tone="ok" />
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium">{mediaStageTitle(media)}</span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {entitiesLine || 'Nothing recognised.'}
+      </p>
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-2xs">
+        <div className="contents">
+          <dt className="text-muted-foreground">decision</dt>
+          <dd className="min-w-0 truncate" title={media.decision}>
+            {media.decision}
+          </dd>
+        </div>
+        <div className="contents">
+          <dt className="text-muted-foreground">entities</dt>
+          <dd className="min-w-0 truncate" title={entitiesLine || 'None'}>
+            {media.entities.length} ({entitiesLine || 'none'})
+          </dd>
+        </div>
+        <div className="contents">
+          <dt className="text-muted-foreground">attributes</dt>
+          <dd className="min-w-0 truncate" title={mediaAttributesByKind(media)}>
+            {media.attributes.length} ({mediaAttributesByKind(media)})
+          </dd>
+        </div>
+        <div className="contents">
+          <dt className="text-muted-foreground">truncated</dt>
+          <dd className="min-w-0 truncate">{media.truncated ? 'Yes' : 'No'}</dd>
+        </div>
+        {media.notes && (
+          <div className="contents">
+            <dt className="text-muted-foreground">notes</dt>
+            <dd className="min-w-0 truncate" title={media.notes}>
+              {media.notes}
+            </dd>
+          </div>
+        )}
+      </dl>
     </li>
   );
 }
