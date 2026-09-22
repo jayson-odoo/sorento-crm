@@ -1,6 +1,6 @@
 # PLAN - Chatbot turn engine re-architecture
 
-Status: APPROVED by the owner 15 Sep 2026 23:40 MYT on `.lavish/chatbot-turn-rearch-plan.html`
+Status: SHIPPED 22 Sep 2026 - PR #952 merged (0a335146e) + fresh-migration hotfix #1097 (c1412b1a0), prod deploy run 35660503056, parser prompt v42 promoted by migration chatbot_rearch_s12. Was: APPROVED by the owner 15 Sep 2026 23:40 MYT on `.lavish/chatbot-turn-rearch-plan.html`
 ("approved, slice into tickets"); UAC `chatbot-turn-rearch-acceptance-criteria.md` (AC-1501 to
 AC-1594). Tickets: S0 #935, S1 #936, S2 #937, S3 #938, S4 #939, S5 #940, S6 #941. Lane branch
 `feat/chatbot-turn-rearch` off main; tester branch `test/chatbot-turn-rearch-red`. S0 reds and S1
