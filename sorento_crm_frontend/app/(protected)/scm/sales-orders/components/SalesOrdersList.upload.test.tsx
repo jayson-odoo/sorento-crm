@@ -170,12 +170,12 @@ describe('SalesOrdersList - upload sales orders', () => {
   it('opens the real, unforked outstanding-upload dialog scoped to sales orders', async () => {
     renderList();
 
-    // Upload sales orders lives on the "Start" dropdown now (A1), beside Plan selected - the
-    // two ways a day's work begins - not on "Actions". Radix's dropdown trigger opens on
-    // pointerdown, which jsdom does not synthesise from `fireEvent.click`, so the keyboard
-    // opens it instead.
-    fireEvent.keyDown(screen.getByRole('button', { name: /^Start$/ }), { key: 'Enter' });
-    fireEvent.click(await screen.findByText('Upload sales orders'));
+    // Upload sales orders lives in the "Actions" dropdown (the owner's ruling, 22 Sep 2026:
+    // Plan selected is the toolbar's own primary CTA, and Upload moved into housekeeping
+    // beside it). Radix's dropdown trigger opens on pointerdown, which jsdom does not
+    // synthesise from `fireEvent.click`, so the keyboard opens it instead.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload sales orders' }));
 
     expect(
       await screen.findByRole('heading', { name: /Upload sales orders/i }),
@@ -185,8 +185,8 @@ describe('SalesOrdersList - upload sales orders', () => {
   it('invalidates the sales-orders list and the reorder plan queries once the upload queues', async () => {
     const { invalidateSpy } = renderList();
 
-    fireEvent.keyDown(screen.getByRole('button', { name: /^Start$/ }), { key: 'Enter' });
-    fireEvent.click(await screen.findByText('Upload sales orders'));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload sales orders' }));
     await screen.findByRole('heading', { name: /Upload sales orders/i });
 
     fireEvent.change(screen.getByLabelText('Sales orders file'), {

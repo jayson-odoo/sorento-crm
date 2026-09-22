@@ -3,9 +3,11 @@
  *
  * `SalesOrdersList.*.test.tsx` already pins the reporting-back and row-level behaviour of this
  * same table (it renders `SalesOrdersGrid` with no props). What is scoped here is the shape of
- * the toolbar itself - Start vs Actions membership and order (A1/A2), the `pinnedToAgent` prop
- * that only `SalesOrdersGrid` (not the unpinned `SalesOrdersList` wrapper) can exercise (A3),
- * the Source label (A4), the dropped Customer sub-line (A5), and the Document date column (A6).
+ * the toolbar itself - Plan selected as the primary CTA and Actions membership/order (A1/A2,
+ * reworked per the owner's ruling 22 Sep 2026: Plan selected is the toolbar's own button, not
+ * a "Start" menu item), the `pinnedToAgent` prop that only `SalesOrdersGrid` (not the unpinned
+ * `SalesOrdersList` wrapper) can exercise (A3), the Source label (A4), the dropped Customer
+ * sub-line (A5), and the Document date column (A6).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -173,11 +175,6 @@ function renderGrid(props: { salesAgentId?: string; listingKey?: string } = {}) 
   );
 }
 
-async function openStart() {
-  const trigger = await screen.findByRole('button', { name: /^Start$/ });
-  fireEvent.keyDown(trigger, { key: 'Enter' });
-}
-
 async function openActions() {
   const trigger = await screen.findByRole('button', { name: /^Actions/i });
   fireEvent.keyDown(trigger, { key: 'Enter' });
@@ -189,49 +186,41 @@ beforeEach(() => {
 });
 
 /**
- * A1/A2: primary = Start (Upload sales orders, Plan selected (N)); Actions = Add sales
- * order, Reset planning (N), Refresh - and nothing crosses over between the two.
+ * A1/A2: primary = the "Plan selected (N)" button, the toolbar's own CTA (the owner's ruling,
+ * 22 Sep 2026); Actions = Upload sales orders, Add sales order, Reset planning (N), Refresh -
+ * and Plan selected never crosses into that menu.
  */
-describe('SalesOrdersGrid: Start vs Actions membership and order (A1, A2)', () => {
-  it('Start carries only Upload sales orders and Plan selected, in that order, no heading row', async () => {
+describe('SalesOrdersGrid: Plan selected is the primary CTA, Actions membership and order (A1, A2)', () => {
+  it('Actions carries Upload sales orders, Add sales order, Reset planning, Refresh, in that order', async () => {
     stub([order()]);
     renderGrid();
 
-    await openStart();
+    await openActions();
     const items = screen.getAllByRole('menuitem').map((item) => item.textContent ?? '');
     expect(items[0]).toContain('Upload sales orders');
-    expect(items[1]).toContain('Plan selected');
-    expect(items).toHaveLength(2);
-    expect(screen.queryByText('Start', { selector: '[role="menuitem"], [data-radix-menu-label]' })).not.toBeInTheDocument();
+    expect(items[1]).toContain('Add sales order');
+    expect(items[2]).toContain('Reset planning');
+    expect(items[3]).toBe('Refresh');
   });
 
-  it('Actions carries Add sales order, Reset planning, Refresh, in that order', async () => {
+  it('never offers Plan selected from the Actions menu - it is the toolbar\'s own button', async () => {
     stub([order()]);
     renderGrid();
 
-    await openActions();
-    const items = screen.getAllByRole('menuitem').map((item) => item.textContent ?? '');
-    expect(items[0]).toContain('Add sales order');
-    expect(items[1]).toContain('Reset planning');
-    expect(items[2]).toBe('Refresh');
-  });
-
-  it('never offers Plan selected or Upload from the Actions menu', async () => {
-    stub([order()]);
-    renderGrid();
-
+    // Found BEFORE the menu opens: Radix marks the rest of the toolbar `aria-hidden` while
+    // its own menu is open, so a role query for it made afterwards would time out for a
+    // reason that has nothing to do with what this test is pinning.
+    expect(await screen.findByRole('button', { name: /^Plan selected/ })).toBeInTheDocument();
     await openActions();
     expect(screen.queryByRole('menuitem', { name: /Plan selected/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /Upload sales orders/ })).not.toBeInTheDocument();
   });
 
-  it('never offers Add sales order or Refresh from the Start menu', async () => {
+  it('leaves no "Start" button behind', async () => {
     stub([order()]);
     renderGrid();
 
-    await openStart();
-    expect(screen.queryByRole('menuitem', { name: /Add sales order/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /^Refresh$/ })).not.toBeInTheDocument();
+    await screen.findByText('SO900001');
+    expect(screen.queryByRole('button', { name: /^Start$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -241,9 +230,7 @@ describe('SalesOrdersGrid: Plan selected disabled at 0 and above 50 (A1)', () =>
     stub([order()]);
     renderGrid();
 
-    await openStart();
-    const item = screen.getByRole('menuitem', { name: /^Plan selected \(0\)$/ });
-    expect(item).toHaveAttribute('data-disabled');
+    expect(await screen.findByRole('button', { name: /^Plan selected \(0\)$/ })).toBeDisabled();
   });
 
   it('is disabled once more than 50 are ticked, and names the bound', async () => {
@@ -251,10 +238,12 @@ describe('SalesOrdersGrid: Plan selected disabled at 0 and above 50 (A1)', () =>
     renderGrid();
 
     fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
-    await openStart();
-    const item = screen.getByRole('menuitem', { name: /^Plan selected \(51\)$/ });
-    expect(item).toHaveAttribute('data-disabled');
-    expect(item).toHaveAttribute('title', expect.stringContaining('up to 50'));
+    const button = await screen.findByRole('button', { name: /^Plan selected \(51\)$/ });
+    expect(button).toBeDisabled();
+    // A `title` on a disabled Button never reaches a real browser's hover, so the reason
+    // lives in a Radix Tooltip on the wrapper `<span>` around it instead.
+    fireEvent.focus(screen.getByTestId('plan-selected-trigger'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('up to 50');
   });
 
   it('enables once 1-50 are ticked, and opens the board on them', async () => {
@@ -262,10 +251,9 @@ describe('SalesOrdersGrid: Plan selected disabled at 0 and above 50 (A1)', () =>
     renderGrid();
 
     fireEvent.click(await screen.findByLabelText('Select SO900001'));
-    await openStart();
-    const item = screen.getByRole('menuitem', { name: /^Plan selected \(1\)$/ });
-    expect(item).not.toHaveAttribute('data-disabled');
-    fireEvent.click(item);
+    const button = await screen.findByRole('button', { name: /^Plan selected \(1\)$/ });
+    expect(button).not.toBeDisabled();
+    fireEvent.click(button);
 
     expect(push).toHaveBeenCalledWith('/project-sales/fulfilment-planning?orders=SO900001');
   });
@@ -273,13 +261,14 @@ describe('SalesOrdersGrid: Plan selected disabled at 0 and above 50 (A1)', () =>
 
 /** A3: pinned to an agent hides Add + Upload, but Plan selected still shows. */
 describe('SalesOrdersGrid: pinnedToAgent hides Add + Upload but not Plan selected (A3)', () => {
-  it('drops Upload sales orders from Start, keeping only Plan selected', async () => {
+  it('drops Upload sales orders from Actions, keeping Plan selected as the CTA', async () => {
     stub([order()]);
     renderGrid({ salesAgentId: 'agent-1' });
 
-    await openStart();
+    // Found BEFORE the menu opens, for the same reason as the sibling suite above.
+    expect(await screen.findByRole('button', { name: /^Plan selected/ })).toBeInTheDocument();
+    await openActions();
     expect(screen.queryByRole('menuitem', { name: /Upload sales orders/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /^Plan selected/ })).toBeInTheDocument();
   });
 
   it('drops Add sales order from Actions', async () => {
