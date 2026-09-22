@@ -1,6 +1,6 @@
 # PLAN: Start Plan pre-selects the orders whose inquiries were raised in a window (22 Sep 2026)
 
-Status: PLANNED 22 Sep 2026, tester + coder running. Small feature (one endpoint field, one
+Status: BUILT 22 Sep 2026, review in progress; browser AC-RF-9 queued (no slot). Small feature (one endpoint field, one
 modal field, no migration, no run change).
 UAC: `reorder-plan-raised-filter-acceptance-criteria.md`.
 Lane: worktree `../sorento_crm-plan-raised-filter`, branch `feat/reorder-plan-raised-filter`
