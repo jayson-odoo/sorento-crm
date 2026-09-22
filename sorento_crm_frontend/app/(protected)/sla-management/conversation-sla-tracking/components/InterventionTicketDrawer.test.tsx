@@ -121,12 +121,14 @@ vi.mock('@/components/common/RespondChatList', () => ({
     comments = [],
     focusMessageId = null,
     focusNonce = 0,
+    maxHeightClass,
   }: {
     items: unknown[];
     contactName?: string | null;
     comments?: unknown[];
     focusMessageId?: string | null;
     focusNonce?: number;
+    maxHeightClass?: string;
   }) => (
     <div
       data-testid="chat-list"
@@ -134,6 +136,7 @@ vi.mock('@/components/common/RespondChatList', () => ({
       data-notes={comments.length}
       data-focus-message-id={focusMessageId ?? ''}
       data-focus-nonce={String(focusNonce)}
+      data-max-height={maxHeightClass ?? ''}
     >
       {items.length} message(s)
     </div>
@@ -783,6 +786,72 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       await screen.findByTestId('chat-list');
       expect(screen.queryByTestId('enquiry-quote-jump')).not.toBeInTheDocument();
       expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument();
+    });
+  });
+
+  // R2: the enquiry quote is one truncated line by default, with a Show
+  // more/less toggle that never shrinks the thread panel's flex share.
+  describe('enquiry quote clamp (AC-CP-1..4)', () => {
+    it('AC-CP-1: a short quote renders on one line, with no toggle', async () => {
+      const shortText = 'A'.repeat(40);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: shortText })),
+      );
+      renderDrawer();
+
+      const quote = await screen.findByTestId('enquiry-quote-jump');
+      expect(quote).toHaveTextContent(shortText);
+      expect(quote.className).toContain('truncate');
+      expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
+    });
+
+    it('AC-CP-2: a long quote truncates to one line with the full text as its title, and the toggle expands/collapses it', async () => {
+      const longText = 'B'.repeat(1500);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: longText })),
+      );
+      renderDrawer();
+
+      const quote = await screen.findByTestId('enquiry-quote-jump');
+      expect(quote).toHaveAttribute('title', longText);
+      expect(quote.className).toContain('truncate');
+
+      const toggle = screen.getByTestId('enquiry-quote-toggle');
+      expect(toggle).toHaveTextContent('Show more');
+
+      fireEvent.click(toggle);
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show less');
+      expect(screen.getByTestId('enquiry-quote-jump').className).toContain('max-h-40');
+      expect(screen.getByTestId('enquiry-quote-jump').className).toContain('overflow-y-auto');
+
+      fireEvent.click(screen.getByTestId('enquiry-quote-toggle'));
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show more');
+      expect(screen.getByTestId('enquiry-quote-jump').className).toContain('truncate');
+    });
+
+    it('AC-CP-3: expanding the quote does not change the thread panel props', async () => {
+      const longText = 'C'.repeat(1500);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: longText })),
+      );
+      renderDrawer();
+
+      fireEvent.click(await screen.findByTestId('enquiry-quote-toggle'));
+
+      const panel = await screen.findByTestId('ticket-conversation-panel');
+      expect(panel.className).toContain('min-h-0');
+      expect(panel.className).toContain('flex-1');
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-max-height', 'min-h-40 flex-1');
+    });
+
+    it('AC-CP-4: an empty quote falls back to the neutral label, with no toggle', async () => {
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket({ source_message_text: '  ' })));
+      renderDrawer();
+
+      await waitFor(() =>
+        expect(screen.getByText('No enquiry text captured.')).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
     });
   });
 

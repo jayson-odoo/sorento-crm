@@ -149,3 +149,75 @@ describe('RespondChatList inbound quote rendering (AC-L6)', () => {
     expect(screen.queryByText('the old emulation')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * R4: reply-to jump on a quote whose target is outside the loaded window
+ * reuses the caller's search-jump fetch-back loader, rather than staying
+ * inert or building a second one (UAC AC-CP-8/9/10).
+ */
+describe('RespondChatList reply-to jump beyond the loaded window (AC-CP-8/9/10)', () => {
+  it('AC-CP-8: a message id already in the loaded window is a button that scrolls to it locally, without bothering the fetch-back loader', () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const onJumpToMessage = vi.fn();
+
+    const quoted = msg(1, { message: { type: 'text', text: 'Here is my receipt.' } });
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Thanks!' },
+      replyTo: { messageId: quoted.messageId, message: { type: 'text', text: 'Here is my receipt.' } },
+    });
+    render(<RespondChatList items={[quoted, reply]} onJumpToMessage={onJumpToMessage} />);
+
+    const block = screen.getByTestId('quoted-context');
+    expect(block.tagName).toBe('BUTTON');
+    scrollIntoView.mockClear();
+    fireEvent.click(block);
+
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(onJumpToMessage).not.toHaveBeenCalled();
+  });
+
+  it('AC-CP-9: a message id outside the loaded window is still a button, and clicking it calls the fetch-back loader with that id', () => {
+    const onJumpToMessage = vi.fn();
+    const targetId = String(BASE_US - 999_000_000);
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Still waiting on this' },
+      replyTo: {
+        messageId: BASE_US - 999_000_000,
+        message: { type: 'text', text: 'An old message nobody scrolled back to' },
+      },
+    });
+    render(<RespondChatList items={[reply]} onJumpToMessage={onJumpToMessage} />);
+
+    const block = screen.getByTestId('quoted-context');
+    expect(block.tagName).toBe('BUTTON');
+    fireEvent.click(block);
+
+    expect(onJumpToMessage).toHaveBeenCalledWith(targetId);
+  });
+
+  it('AC-CP-9: without a fetch-back loader supplied, an out-of-window quote stays plain text (no dead button)', () => {
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Still waiting on this' },
+      replyTo: {
+        messageId: BASE_US - 999_000_000,
+        message: { type: 'text', text: 'An old message nobody scrolled back to' },
+      },
+    });
+    render(<RespondChatList items={[reply]} />);
+
+    expect(screen.getByTestId('quoted-context').tagName).not.toBe('BUTTON');
+  });
+
+  it('AC-CP-10: a quote with no message id at all stays inert, even with a fetch-back loader supplied', () => {
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Still waiting' },
+      replyTo: { message: { type: 'text', text: 'no id on this one' } },
+    });
+    render(<RespondChatList items={[reply]} onJumpToMessage={vi.fn()} />);
+
+    const block = screen.getByTestId('quoted-context');
+    expect(block.tagName).not.toBe('BUTTON');
+    expect(block).toHaveTextContent('no id on this one');
+  });
+});

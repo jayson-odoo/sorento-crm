@@ -200,7 +200,7 @@ export default function TicketConversationPanel({
   };
 
   return (
-    <div className={cn('flex min-h-0 flex-col gap-3', className)}>
+    <div data-testid="ticket-conversation-panel" className={cn('flex min-h-0 flex-col gap-3', className)}>
       {threadQuery.isLoading ? (
         <div className="space-y-2" data-testid="chat-records-loading">
           <Skeleton className="h-16 w-full" />
@@ -259,6 +259,10 @@ export default function TicketConversationPanel({
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}
             mediaProxy={mediaProxy}
+            // R4: a "Replying to" quote in the thread reuses this SAME
+            // fetch-back loader when its target is outside the loaded window -
+            // never a second one. Already-loaded quotes keep scrolling locally.
+            onJumpToMessage={thread.jumpToMessage}
           />
         </>
       )}

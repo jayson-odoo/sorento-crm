@@ -172,6 +172,14 @@ interface RespondChatListProps {
    */
   focusMessageId?: string | null;
   focusNonce?: number;
+  /**
+   * R4: reuses the caller's search-jump fetch-back loader (`useConversationThread`'s
+   * `jumpToMessage`) for a "Replying to" quote whose target is OUTSIDE the loaded
+   * window. Passing this is what turns that quote from plain text into a button -
+   * a surface with no scroll-back (no loader supplied) still shows only the
+   * quotes it can actually reach.
+   */
+  onJumpToMessage?: (messageId: string) => void;
 }
 
 /** Message text with the searched term marked. Escaping lives in the helper. */
@@ -487,6 +495,7 @@ export default function RespondChatList({
   mediaProxy,
   focusMessageId = null,
   focusNonce = 0,
+  onJumpToMessage,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -954,7 +963,11 @@ export default function RespondChatList({
           const quotedTarget = quotedContext?.messageId
             ? loadedMessages.get(quotedContext.messageId)
             : undefined;
-          const quotedTargetId = quotedTarget ? (quotedContext?.messageId ?? null) : null;
+          // AC-CP-8/9: a quote with an id is a button whether or not the page is
+          // loaded yet - a loaded target scrolls locally, an out-of-window one
+          // asks the caller's fetch-back loader (below). AC-CP-10: no id at all
+          // (a malformed replyTo) stays inert either way.
+          const quotedTargetId = quotedContext?.messageId ?? null;
 
           return (
             <div
@@ -1000,7 +1013,15 @@ export default function RespondChatList({
                       context={quotedContext}
                       agentLabel={quotedAgentLabel(quotedTarget)}
                       contactLabel={contactName}
-                      onJump={quotedTargetId ? () => jumpToMessage(quotedTargetId) : undefined}
+                      onJump={
+                        !quotedTargetId
+                          ? undefined
+                          : quotedTarget
+                            ? () => jumpToMessage(quotedTargetId)
+                            : onJumpToMessage
+                              ? () => onJumpToMessage(quotedTargetId)
+                              : undefined
+                      }
                     />
                   )}
                   {attachments.map((att, i) => (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { cn } from '@/lib/utils';
 
 import {
   useInterventionTicket,
@@ -54,6 +55,14 @@ import ExtendDueDialog from './ExtendDueDialog';
 import ReassignDialog from './ReassignDialog';
 import TicketConversationPanel, { type TicketJumpRequest } from './TicketConversationPanel';
 import TicketSlaChips from './TicketSlaChips';
+
+/**
+ * R2: the enquiry quote is one truncated line by default - above this many
+ * characters it needs a "Show more" toggle to be read in full. A length
+ * threshold rather than a measured overflow: jsdom (and a resize) cannot
+ * measure real layout, and this keeps the rule simple and deterministic.
+ */
+const ENQUIRY_QUOTE_CLAMP_CHARS = 120;
 
 interface InterventionTicketDrawerProps {
   ticketId: string | null;
@@ -113,6 +122,13 @@ export default function InterventionTicketDrawer({
   const takeoverMutation = useTakeoverSLATracking();
   /** Asks the panel's thread to scroll to the enquiry message (AC-N6). */
   const [jumpRequest, setJumpRequest] = useState<TicketJumpRequest | null>(null);
+  /** R2: local, no persistence - a long enquiry quote starts clamped to one line. */
+  const [enquiryExpanded, setEnquiryExpanded] = useState(false);
+  // A different ticket is a different enquiry: never carry an expanded quote
+  // into someone else's.
+  useEffect(() => {
+    setEnquiryExpanded(false);
+  }, [ticketId]);
 
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
   const ticket = ticketQuery.data;
@@ -160,6 +176,13 @@ export default function InterventionTicketDrawer({
   const showExtend = canExtend && !isResolved && !!ticket?.due_at_resolution;
   const showTakeover =
     canTakeover && !isResolved && ticket?.is_assignee === false && !!ticket?.assignee_team_id;
+
+  // R2: the enquiry quote text, clamped to one line unless expanded.
+  const enquiryText = ticket?.source_message_text?.trim() || 'No enquiry text captured.';
+  const needsQuoteToggle = enquiryText.length > ENQUIRY_QUOTE_CLAMP_CHARS;
+  const quoteClampClass = enquiryExpanded
+    ? 'max-h-40 overflow-y-auto whitespace-pre-wrap break-words'
+    : 'truncate';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -311,36 +334,53 @@ export default function InterventionTicketDrawer({
             </div>
           ) : ticket ? (
             <div className="rounded-md border bg-muted/30 p-3">
-              {/* AC-N6: the quote is the way INTO the thread. Clicking it
-                  scrolls to the message that started this ticket, fetching
-                  the surrounding page first when the reader has scrolled
-                  past it. Only a button when there is a message to reach. */}
-              {ticket.source_message_id ? (
-                <button
-                  type="button"
-                  data-testid="enquiry-quote-jump"
-                  aria-label="Show this message in the conversation"
-                  onClick={() =>
-                    setJumpRequest((prev) => ({
-                      messageId: ticket.source_message_id,
-                      nonce: (prev?.nonce ?? 0) + 1,
-                    }))
-                  }
-                  className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-                >
-                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
-                  </span>
-                </button>
-              ) : (
-                <div className="flex items-start gap-2">
-                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <p className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
-                  </p>
+              {/* AC-N6 / R2: the quote is the way INTO the thread. Clicking the
+                  text scrolls to the message that started this ticket,
+                  fetching the surrounding page first when the reader has
+                  scrolled past it. Only a button when there is a message to
+                  reach. Clamped to one line by default (AC-CP-1/2) so a long
+                  enquiry cannot push the thread below its floor (AC-CP-3) - a
+                  separate "Show more" toggle expands it, height-capped and
+                  scrollable rather than pushing the panel further. */}
+              <div className="flex items-start gap-2">
+                <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  {ticket.source_message_id ? (
+                    <button
+                      type="button"
+                      data-testid="enquiry-quote-jump"
+                      aria-label="Show this message in the conversation"
+                      title={enquiryText}
+                      onClick={() =>
+                        setJumpRequest((prev) => ({
+                          messageId: ticket.source_message_id,
+                          nonce: (prev?.nonce ?? 0) + 1,
+                        }))
+                      }
+                      className={cn(
+                        'block w-full rounded text-start text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/10',
+                        quoteClampClass,
+                      )}
+                    >
+                      {enquiryText}
+                    </button>
+                  ) : (
+                    <p title={enquiryText} className={cn('text-sm', quoteClampClass)}>
+                      {enquiryText}
+                    </p>
+                  )}
+                  {needsQuoteToggle && (
+                    <button
+                      type="button"
+                      data-testid="enquiry-quote-toggle"
+                      className="mt-1 text-xs font-medium text-primary hover:underline"
+                      onClick={() => setEnquiryExpanded((v) => !v)}
+                    >
+                      {enquiryExpanded ? 'Show less' : 'Show more'}
+                    </button>
+                  )}
                 </div>
-              )}
+              </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <Users className="size-3" />
