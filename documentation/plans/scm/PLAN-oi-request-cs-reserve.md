@@ -300,6 +300,27 @@ against `msw`-free stubs in the service layer, swapped for real once S2's endpoi
 4. `dispatch_event` dedupe by `source_id` (handover item 3 found none; re-confirm for two
    triggers sharing `source_kind`).
 
+## 6b. Review round 1 (22 Sep, reviewer + security-reviewer on Opus): NOT READY, one fix round
+
+Blockers: B1 the FE computed remaining from `linked_qty` (which excludes reserve links since
+S2) without subtracting `reserved_qty`, so the second R5 cycle prefilled a qty the server 422s;
+B2 (= SF-4) the reserve-requests GET was gated on acknowledge, locking a reserve-only CS head
+out of her own card. Should-fix taken into the round: SF-1 cancel restricted to requester or
+reserve holder (route + deferred action aligned); SF-2 duplicate `request_row_id` in a reserve
+payload; SF-3 `warehouse_id` must be an active own-company warehouse on both writes; SF-5
+reserve re-checks the row's live remaining; `po_ref` / `spo_ref` derivation skips reserve
+links; act-mode inputs survive a parent re-render (AC-RS-28); no warehouse UUID as Location
+text; duplicate `row_id` in a create payload and malformed body ids are 422 not 500; ordinal
+mint tolerates a collision; migration names its constraints like the ORM; `stock_detail.locations`
+and both templates get tests; dialog and card go through the mutation hooks; `notified_name`
+comes from the service; nits (pill green, dd/mm/yyyy in the dialog, min 1, pool resolution
+page size, downgrade deletes only the seeded automations, note <= 5000 / reason <= 2000).
+
+Recorded, not built: DB-level guard for one open request row per OI row (app check + unique
+per request today; trigger: a real double-open); subject CR/LF collapse belongs in
+`EmailTemplateService.render` for every template (own small fix); admin / superadmin bypass
+the reserve gate by repo convention; request / cancel spam by an authenticated insider.
+
 ## 7. Out of scope (recorded, not built)
 
 - AutoCount stock transfer creation / transfer number on the reserve row. Trigger: the FoundryX
