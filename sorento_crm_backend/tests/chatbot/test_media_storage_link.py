@@ -12,6 +12,8 @@ the same seam `app/api/v1/resources/attachments.py`'s own upload route is built 
 """
 from __future__ import annotations
 
+import importlib.util
+import pathlib
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -210,6 +212,40 @@ class TestStorageFailureDoesNotFailTheExtraction:
         )
 
 
+class TestMissingAttachmentTypeDoesNotFailTheExtraction:
+    """AC-1836/AC-1838: a database that has not run migration 526 yet (the
+    `chatbot_media` row is absent) must fail SOFT the same way a storage outage
+    does - `EntityAttachmentService._attachment_type_id_by_code` 404s, and
+    `_store_media_bytes` (`app/tasks/media_tasks.py`) catches that inside its own
+    broad `except Exception`, same as `TestStorageFailureDoesNotFailTheExtraction`
+    above. Deliberately does NOT call `_seed_chatbot_media_attachment_type`."""
+
+    def test_no_attachment_type_row_still_completes_with_no_attachment_row(
+        self, session_factory, seeded, stub_parser, stub_access, media_pipeline, fake_storage, monkeypatch
+    ):
+        _seed_media_limit(session_factory, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            IMAGE_RESULT, media_bytes=b"fake-image-bytes", media_content_type="image/jpeg"
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_run(session_factory, _image_envelope(caption="Check stock"))
+
+        contact_uuid = _contact_uuid(session_factory)
+        assert not _attachment_rows_for_contact(session_factory, contact_uuid)
+
+        from tests.chatbot.test_media_intake_turn import _trace_of
+
+        trace = _trace_of(session_factory, result.turn_id)
+        stage = next((r for r in trace if r.get("stage") == "media_intake"), None)
+        assert stage is not None, "media_intake stage not implemented yet"
+        assert (stage.get("facts") or {}).get("attachment_error"), (
+            "a missing attachment_types row must be noted on the trace, not silently dropped"
+        )
+
+
 class TestDeniedJobCreatesNoAttachment:
     """AC-1837.
 
@@ -233,24 +269,54 @@ class TestDeniedJobCreatesNoAttachment:
         assert not fake_storage.uploads
 
 
+_MIGRATION_526 = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "alembic"
+    / "versions"
+    / "526_chatbot_media_attach_type.py"
+)
+
+
+def _load_migration_526():
+    spec = importlib.util.spec_from_file_location("migration_526_chatbot_media", _MIGRATION_526)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class TestAttachmentTypeSeed:
-    """AC-1838: `attachment_types.code == 'chatbot_media'` exists exactly once. Read
-    against the REAL (non-blank-schema) database this lane's tests run on - it is
-    already migrated to head, and this migration is not on it yet, so this is a direct
-    read of live migration state rather than the create_all blank schema (which has no
-    seed data at all)."""
+    """AC-1838: the migration's seed is idempotent, and the row it inserts is the
+    SAME one the worker resolves attachments against.
 
-    def test_chatbot_media_attachment_type_seeded(self) -> None:
-        from app.database import engine
+    Run against the blank `create_all` schema via `session_factory`, not the shared
+    database this lane's other tests target: CI builds its test database with
+    `Base.metadata.create_all` and never runs alembic (LESSONS "create_all vs
+    migration seed gap" / CLAUDE.md "CI's database has NO data"), so a read of a
+    real migrated database is red there even when the migration itself is correct.
+    `seed_chatbot_media_attachment_type` is invoked directly, the same way
+    `test_stock_visibility_policy.py` exercises 416's `seed_default_row`.
+    """
 
-        with engine.connect() as connection:
-            rows = connection.execute(
-                text("SELECT id FROM attachment_types WHERE code = 'chatbot_media'")
-            ).fetchall()
+    def test_seed_is_idempotent_and_resolvable_by_code(self, session_factory) -> None:
+        module = _load_migration_526()
+        db = session_factory()
+
+        module.seed_chatbot_media_attachment_type(db.connection())
+        module.seed_chatbot_media_attachment_type(db.connection())
+
+        rows = db.query(AttachmentType).filter(AttachmentType.code == "chatbot_media").all()
         assert len(rows) == 1, (
-            f"expected exactly one attachment_types row with code='chatbot_media', "
-            f"found {len(rows)} - the S4 seed migration has not landed on this DB yet"
+            f"expected exactly one attachment_types row with code='chatbot_media' "
+            f"after seeding twice, found {len(rows)}"
         )
+
+        # The worker's own lookup (`EntityAttachmentService._attachment_type_id_by_code`,
+        # exercised here via its public `get_attachment_type_by_code`) must resolve the
+        # SAME row the seed just inserted.
+        from app.services.entity_attachment_service import EntityAttachmentService
+
+        resolved = EntityAttachmentService(db).get_attachment_type_by_code("chatbot_media")
+        assert resolved.id == rows[0].id
 
 
 def engine_run(session_factory, envelope):
