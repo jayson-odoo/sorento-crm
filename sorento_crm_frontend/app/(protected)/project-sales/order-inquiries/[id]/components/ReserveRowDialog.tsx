@@ -193,6 +193,21 @@ export function ReserveRowDialog({
   const short = reserved < requestedQty;
   const canConfirm = !short || reason.trim().length > 0;
 
+  // Gap fix (round 2 browser evidence, postfix-linescope-above-net-silent.png): a
+  // qty above the row's own net reserved (or 0/blank) used to reach `unreserveControl
+  // .start` unchecked - the deferred action parked, the countdown ran, and the server
+  // refused it at commit with the named limit. Checked here instead, before the park
+  // ever happens, so a bad value never leaves the reader waiting out a window for a
+  // refusal the form could have named immediately.
+  const unreserveQtyNumber = Number(unreserveQty);
+  const unreserveQtyAboveNet =
+    unreserveQty.trim() !== '' && Number.isFinite(unreserveQtyNumber) && unreserveQtyNumber > netReserved;
+  const unreserveQtyInvalid =
+    unreserveQty.trim() === '' ||
+    !Number.isFinite(unreserveQtyNumber) ||
+    unreserveQtyNumber < 1 ||
+    unreserveQtyNumber > netReserved;
+
   async function handleConfirm() {
     if (!openRequest) return;
     setConfirming(true);
@@ -330,6 +345,11 @@ export function ReserveRowDialog({
                             value={unreserveQty}
                             onChange={(event) => setUnreserveQty(event.target.value)}
                           />
+                          {unreserveQtyAboveNet ? (
+                            <p className="text-xs text-destructive">
+                              Up to {netReservedQty} can be released
+                            </p>
+                          ) : null}
                         </div>
                         <div className="space-y-1">
                           <Label htmlFor="reserve-row-unreserve-note">Note</Label>
@@ -349,7 +369,7 @@ export function ReserveRowDialog({
                               !unreserveControl ||
                               unreserveControl.isPending ||
                               unreserveControl.isBlocked ||
-                              !unreserveQty
+                              unreserveQtyInvalid
                             }
                           >
                             Unreserve
