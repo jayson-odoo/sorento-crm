@@ -3970,3 +3970,90 @@ describe('BoardCellBreakdownDialog: own arrival (S5)', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+/**
+ * `board-verdict-actions-chips-acceptance-criteria.md` AC-B1/AC-B11: the grid dialog's own
+ * Decision column carries the SAME Verdict trio the list view does, through the shared
+ * `BoardVerdictActions` component - so the two readings of the board can never drift about
+ * what a Suggested line offers. RED today: the Decision column shows only the pill and (once
+ * drafted) Undo - no Reject, no Change decision, and the Save icon lives outside this column
+ * entirely (the select checkbox's own bulk path).
+ */
+describe('AC-B1/AC-B11: the Decision column carries the same Verdict trio as the list view', () => {
+  it('a Suggested row (no draft) shows Accept, Reject and Change decision', () => {
+    renderDialog([demand()]);
+    openLines();
+
+    expect(
+      screen.getByRole('button', { name: 'Save SO403340 line 1 as suggested' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Reject SO403340 line 1' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO403340 line 1' }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * SF-6 (reviewer, fix round 2): the reject popover lives inside a DIALOG here, which has
+   * its own Escape handler and its own focus scope, and the popover is portalled to the
+   * document root - outside that scope. So the two things worth pinning are that Escape
+   * reaches the popover and stops there (the breakdown a planner is mid-decision in must not
+   * close under them), and that the refusal it submits is addressed to THIS row's key.
+   */
+  it('SF-6: Escape closes the reject popover and leaves the breakdown dialog open', async () => {
+    renderDialog([demand()]);
+    openLines();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject SO403340 line 1' }));
+    const textarea = await screen.findByPlaceholderText('In your own words');
+    fireEvent.keyDown(textarea, { key: 'Escape', code: 'Escape' });
+
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText('In your own words')).not.toBeInTheDocument(),
+    );
+    // The breakdown itself is still up, with its own tabs and its own table.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject SO403340 line 1' })).toBeInTheDocument();
+  });
+
+  it('SF-6: submitting the popover posts the refusal for THIS row key, with the reason and the flag', async () => {
+    const cell = cellOf([demand()]);
+    const key = cell.contributions[0].key;
+    const { onDecide } = renderDialog([demand()]);
+    openLines();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject SO403340 line 1' }));
+    const textarea = await screen.findByPlaceholderText('In your own words');
+    fireEvent.change(textarea, { target: { value: '  Customer put it on hold  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1));
+    expect(onDecide).toHaveBeenCalledWith(key, {
+      verdict: 'rejected',
+      reason: 'Customer put it on hold',
+      suspected_system_issue: false,
+    });
+  });
+
+  it('a Saved row (real draft) shows Undo and Change decision only - no Accept, no Reject', () => {
+    const cell = cellOf([demand()]);
+    const key = cell.contributions[0].key;
+    renderDialog([demand()], {}, { [key]: { verdict: 'approved' } });
+    openLines();
+
+    expect(
+      screen.getByRole('button', { name: 'Undo SO403340 line 1' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO403340 line 1' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Save SO403340 line 1 as suggested' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject SO403340 line 1' }),
+    ).not.toBeInTheDocument();
+  });
+});

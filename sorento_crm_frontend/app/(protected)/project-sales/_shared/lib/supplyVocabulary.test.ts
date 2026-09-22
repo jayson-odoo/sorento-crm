@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COLOURS,
   LABELS,
+  boardOrderInquiryWord,
   cellSupply,
   contributionSupply,
   describe as describeSupply,
@@ -30,6 +31,7 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardLineDecision,
+  BoardLineOrderInquiry,
   BoardSource,
 } from '../types/fulfilmentPlanning.types';
 
@@ -1320,5 +1322,169 @@ describe("step 1's pill names the group whose stock it is (R-M, 3 Sep 2026)", ()
     expect(rows.map((entry) => entry.label)).toEqual([
       'Use IB group and NTC group stock',
     ]);
+  });
+});
+
+/**
+ * `board-verdict-actions-chips-acceptance-criteria.md` section A: the Product cell's chip
+ * ladder, widened from a bare `'received' | 'used' | null` to
+ * `{ word: 'received' | 'used' | 'SPO' | 'PO' | 'OI'; title: string } | null` (AC-A7) so a
+ * planner can tell an OI that has become a PO from one still sitting open, not only the two
+ * states that were already wired (`received` / `used`).
+ *
+ * RED today: `boardOrderInquiryWord` returns the bare word (or `null`), never an object -
+ * every assertion below reading `.word` throws on `undefined` against today's code.
+ */
+describe('boardOrderInquiryWord: the Product cell chip ladder (AC-A1 to AC-A7)', () => {
+  function inquiry(over: Partial<BoardLineOrderInquiry> = {}): BoardLineOrderInquiry {
+    return {
+      inquiry_no: 'OI-000418',
+      state: 'raised',
+      documents: [],
+      redirected: false,
+      ...over,
+    };
+  }
+
+  it('AC-A1: reads "received" when every document behind the line is received', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        documents: [
+          { document: 'SPO-2026/01-0143', kind: 'spo', received: true },
+          { document: '202607-S0105', kind: 'po', received: true },
+        ],
+      }),
+    );
+
+    expect(word?.word).toBe('received');
+  });
+
+  it('AC-A2: reads "used" when the winning row was itself redirected, and it wins over received/SPO/PO/OI', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        redirected: true,
+        documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: false }],
+      }),
+    );
+
+    expect(word?.word).toBe('used');
+  });
+
+  it('AC-A3: reads "SPO" when the documents hold at least one spo, and titles the SPO numbers joined by ", "', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        documents: [
+          { document: 'SPO-2026/01-0143', kind: 'spo', received: false },
+          { document: 'SPO-2026/01-0200', kind: 'spo', received: false },
+          // A PO on the same line must not leak into the SPO title.
+          { document: '202607-S0105', kind: 'po', received: false },
+        ],
+      }),
+    );
+
+    expect(word?.word).toBe('SPO');
+    expect(word?.title).toBe('SPO-2026/01-0143, SPO-2026/01-0200');
+  });
+
+  it('AC-A4: reads "PO" when the documents hold only po (none received, none redirected), titled with the PO number(s)', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        documents: [
+          { document: '202607-S0105', kind: 'po', received: false },
+          { document: '202607-S0106', kind: 'po', received: false },
+        ],
+      }),
+    );
+
+    expect(word?.word).toBe('PO');
+    expect(word?.title).toBe('202607-S0105, 202607-S0106');
+  });
+
+  it('AC-A5: reads "OI" when the inquiry carries no documents and is not cancelled, titled with its own number', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({ inquiry_no: 'OI-000901', documents: [], state: 'raised' }),
+    );
+
+    expect(word?.word).toBe('OI');
+    expect(word?.title).toBe('OI-000901');
+  });
+
+  it('AC-A5: titles an unnumbered inquiry row "Unnumbered inquiry"', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({ inquiry_no: null, documents: [], state: 'raised' }),
+    );
+
+    expect(word?.word).toBe('OI');
+    expect(word?.title).toBe('Unnumbered inquiry');
+  });
+
+  it('AC-A6: renders no chip when there is no order_inquiry at all', () => {
+    expect(boardOrderInquiryWord(null)).toBeNull();
+    expect(boardOrderInquiryWord(undefined)).toBeNull();
+  });
+
+  it('AC-A6: renders no chip for a cancelled inquiry with no documents behind it', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({ state: 'cancelled', documents: [], redirected: false }),
+    );
+
+    expect(word).toBeNull();
+  });
+
+  it('a cancelled inquiry that still carries a document is NOT silenced - only the empty-and-cancelled case is (AC-A6\'s own gate)', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        state: 'cancelled',
+        documents: [{ document: '202607-S0105', kind: 'po', received: false }],
+      }),
+    );
+
+    expect(word?.word).toBe('PO');
+  });
+
+  it('AC-A7: the ladder is used > received > SPO > PO > OI - used wins over received when the row was redirected', () => {
+    // Corrected 22 Sep (owner ruling, fix round 1): AC-RL-10 already ships `used` over
+    // `received`, because `used` says the document that landed was redirected OFF this
+    // line - the goods are somebody else's, so "received" would read as stock in hand.
+    const word = boardOrderInquiryWord(
+      inquiry({
+        redirected: true,
+        documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+      }),
+    );
+
+    expect(word?.word).toBe('used');
+  });
+
+  it('AC-A7: used wins over SPO when the row is redirected but not every document is received', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        redirected: true,
+        documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: false }],
+      }),
+    );
+
+    expect(word?.word).toBe('used');
+  });
+
+  it('AC-A7: SPO wins over PO when both kinds are present', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({
+        documents: [
+          { document: '202607-S0105', kind: 'po', received: false },
+          { document: 'SPO-2026/01-0143', kind: 'spo', received: false },
+        ],
+      }),
+    );
+
+    expect(word?.word).toBe('SPO');
+  });
+
+  it('AC-A7: PO wins over OI - a line with only po documents never reads "OI"', () => {
+    const word = boardOrderInquiryWord(
+      inquiry({ documents: [{ document: '202607-S0105', kind: 'po', received: false }] }),
+    );
+
+    expect(word?.word).toBe('PO');
   });
 });

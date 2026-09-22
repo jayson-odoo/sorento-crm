@@ -3602,7 +3602,10 @@ describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)'
 
     await waitFor(() => expect(deleteLineDraft).toHaveBeenCalledTimes(2));
     expect(toast.success).toHaveBeenCalledTimes(1);
-    expect(toast.success).toHaveBeenCalledWith('2 lines back to suggested');
+    // SF-5 (reviewer, fix round 2): "undone", never "back to suggested" - a line the open
+    // change batch named goes back to `Change proposed` (AC-B13), so the old wording
+    // described the wrong outcome for half the presses this button takes.
+    expect(toast.success).toHaveBeenCalledWith('2 lines undone');
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     for (const pill of screen.getAllByTestId(/^decision-pill-/)) {

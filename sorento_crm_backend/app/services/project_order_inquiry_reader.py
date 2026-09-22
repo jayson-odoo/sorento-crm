@@ -59,13 +59,15 @@ _HEADERS: dict[str, tuple[str, ...]] = {
 #: "nothing placed".
 _NOT_ORDERED = re.compile(r"\bORDER\b", re.I)
 
-#: `ORDER BACK` written where a delivery DATE belongs. CS uses the date cell to say the
-#: quantity is not a fresh purchase at all: it is owed against something already ordered or
-#: already shipped, and the REMARK names the document (`PLAN-scm-purchasing-uat-journey.md`
-#: section 4b; every ORDER BACK row of the three SO381895 forms is shaped this way).
+#: `ORDER BACK` written where a delivery DATE belongs, OR in the REMARK cell (owner ruling
+#: R1, 22 Sep 2026: SO417310 / MKT5529SS-DIY writes it in the remark while the date cell
+#: keeps a real date). CS uses either cell to say the quantity is not a fresh purchase at
+#: all: it is owed against something already ordered or already shipped
+#: (`PLAN-scm-purchasing-uat-journey.md` section 4b; every ORDER BACK row of the three
+#: SO381895 forms writes it in the date cell instead).
 #:
-#: The two words together, and only together. `ORDER` alone in that cell is the sheet's own
-#: "nothing placed yet" and means the opposite.
+#: The two words together, and only together. `ORDER` alone in either cell is the sheet's
+#: own "nothing placed yet" and means the opposite.
 _ORDER_BACK = re.compile(r"\bORDER\s+BACK\b", re.I)
 
 #: A purchase-order number in any family the customer uses: `202510-S0025`, `SPO-2020/01-0001`,
@@ -299,8 +301,14 @@ def read_order_inquiry(file_data: bytes) -> OrderInquiryResult:
             po_numbers, not_ordered = _read_po(values)
             # The delivery-date cell is either a date or the words ORDER BACK. Read from
             # the raw cell, not from `_as_date`, which answers None for both a blank and a
-            # sentence and so cannot tell them apart.
-            order_back = bool(_ORDER_BACK.search(_text(values.get("delivery_date"))))
+            # sentence and so cannot tell them apart. CS also writes "order back" in the
+            # REMARK cell while the date cell still holds a real date (owner ruling R1, 22
+            # Sep 2026, SO417310 / MKT5529SS-DIY) - either cell makes the row an order back,
+            # and `delivery_date` keeps whatever `_as_date` reads regardless of which cell
+            # carried the words.
+            order_back = bool(
+                _ORDER_BACK.search(_text(values.get("delivery_date")))
+            ) or bool(_ORDER_BACK.search(_text(values.get("remark"))))
             result.rows.append(
                 OrderInquiryRow(
                     so_number=so_number,

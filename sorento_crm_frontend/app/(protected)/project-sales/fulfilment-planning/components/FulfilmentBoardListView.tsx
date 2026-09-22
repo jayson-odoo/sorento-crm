@@ -3,12 +3,10 @@
 import * as React from 'react';
 import Link from 'next/link';
 import {
-  Check,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  Undo2,
 } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -20,16 +18,16 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import {
   BoardDecisionPill,
-  isPreMarkOnly,
   VERDICT_SORT_RANK,
   verdictOf,
 } from './BoardDecisionPill';
+import { BoardVerdictActions } from './BoardVerdictActions';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
-import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
+import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { contributionMatchesSearch } from '../../_shared/lib/fulfilmentBoard';
 import {
   boardOrderInquiryWord,
@@ -201,6 +199,21 @@ export function FulfilmentBoardListView({
   }, [selectedKeys, onDecideMany]);
 
   /**
+   * Open this line's decision panel, and only open it (AC-B10): the pencil is not a toggle -
+   * a planner who presses it on a row that is already open asked to see the panel, and
+   * closing it under them would read as the press having missed. `requestRow` still runs the
+   * unsaved-work question on the way (the list opens many at once, so opening a second row
+   * throws nothing away and asks nothing).
+   */
+  const openRow = React.useCallback(
+    (key: string) => {
+      if (openKeys.includes(key)) return;
+      requestRow(key);
+    },
+    [openKeys, requestRow],
+  );
+
+  /**
    * The change icon this row shows in this column, or nothing (AC-C9).
    *
    * The column is read off what MOVED, through the same `changedFieldsOf` the lightbox
@@ -220,21 +233,25 @@ export function FulfilmentBoardListView({
         (lineId ? annotations?.get(lineId) : undefined) ??
         annotations?.get(lineKeyOf(contribution.so_number, contribution.line_no)) ??
         [];
-      return forLine
-        .filter((annotation) => {
-          const keys = changedFieldsOf(annotation).map((field) => field.key);
-          if (column === 'required_date') return keys.includes('date');
-          if (column === 'outstanding') return keys.includes('qty');
-          return !keys.includes('date') && !keys.includes('qty');
-        })
-        .map((annotation) => (
-          <BoardChangeTable
-            key={`${annotation.rowId}-${column}`}
-            annotation={annotation}
-            column={column}
-            compact
-          />
-        ));
+      const filtered = forLine.filter((annotation) => {
+        const keys = changedFieldsOf(annotation).map((field) => field.key);
+        if (column === 'required_date') return keys.includes('date');
+        if (column === 'outstanding') return keys.includes('qty');
+        return !keys.includes('date') && !keys.includes('qty');
+      });
+      if (filtered.length === 0) return null;
+      // ONE icon per column, however many pending batch rows moved it (AC-D5, owner finding
+      // 22 Sep: "why so many warning signs"). Two rows that each moved this line's date used
+      // to draw two identical triangles side by side in one cell, which reads as two
+      // problems; the lightbox behind the single icon lists them all instead.
+      return (
+        <BoardChangeTable
+          key={`${filtered[0].rowId}-${column}`}
+          annotations={filtered}
+          column={column}
+          compact
+        />
+      );
     },
     [annotations],
   );
@@ -401,10 +418,11 @@ export function FulfilmentBoardListView({
         accessorFn: (row) => row.item_code,
         header: 'Product',
         cell: ({ row }) => {
-          // AC-RL-06 amended (17 Sep, "beside the PRODUCT"): the same one-word pill the OI
-          // worklist carries, on every line regardless of verdict, draft or decision - see
-          // `boardOrderInquiryWord`'s own note for why this reads the inquiry directly
-          // rather than through the Decided cell's gated `contributionInquiryDecision`.
+          // AC-RL-06 amended (17 Sep, "beside the PRODUCT"), and the whole ladder since
+          // AC-A1 to AC-A7: ONE word for how far this line's own inquiry has got, on every
+          // line regardless of verdict, draft or decision - see `boardOrderInquiryWord`'s
+          // own note for why this reads the inquiry directly rather than through the
+          // Decided cell's gated `contributionInquiryDecision`.
           const word = boardOrderInquiryWord(row.original.order_inquiry);
           return (
             <span className="flex min-w-0 items-center gap-1.5">
@@ -415,8 +433,17 @@ export function FulfilmentBoardListView({
                 {row.original.item_code}
               </span>
               {word ? (
-                <Badge size="sm" appearance="light" variant="secondary" className="shrink-0">
-                  {word}
+                <Badge
+                  size="sm"
+                  appearance="light"
+                  variant="secondary"
+                  className="shrink-0"
+                  // AC-A3 to AC-A5, R1: the chip is a WORD, and the document number(s) or
+                  // the inquiry's own number ride in the tooltip - there is no room for
+                  // either beside a product code at 375px.
+                  title={word.title}
+                >
+                  {word.word}
                 </Badge>
               ) : null}
             </span>
@@ -559,11 +586,11 @@ export function FulfilmentBoardListView({
             const inquiry = contributionInquiryDecision(contribution);
             if (inquiry) {
               const text = inquiry.inquiry_no ?? 'Unnumbered inquiry';
-              // AC-RL-06 amended (17 Sep review round): the `received`/`used` word moved
-              // beside the PRODUCT (this row's own `product` column, driven by
-              // `boardOrderInquiryWord`) so it reads on every line, not only the ones that
-              // land in this branch - printing it here too would say it twice on a line
-              // that does.
+              // AC-RL-06 amended (17 Sep review round), widened by AC-A7: the stage word -
+              // `received` / `used` / `SPO` / `PO` / `OI` - sits beside the PRODUCT (this
+              // row's own `product` column, driven by `boardOrderInquiryWord`) so it reads
+              // on every line, not only the ones that land in this branch; printing it here
+              // too would say it twice on a line that does.
               return (
                 <span className="flex min-w-0 items-center gap-1 tabular-nums">
                   <span className="block min-w-0 truncate" title={text}>
@@ -619,60 +646,35 @@ export function FulfilmentBoardListView({
         accessorFn: (row) => VERDICT_SORT_RANK[verdictOf(row, draft[row.key] ?? null)],
         enableSorting: true,
         header: ({ column }) => <DataGridColumnHeader title="Verdict" column={column} />,
-        // A PILL, and (D14) an Undo beside it once there is something a saved line can be
-        // undone FROM - the only other way to shed one saved line today is the board-wide
-        // "Undo all", which is not this line's answer to a quick save taken by mistake. D15
-        // adds the OTHER icon, for the line that has not been saved at all: exactly one of
-        // the two ever shows, since `canQuickSave` already requires no draft.
+        // A PILL, and the row's own actions beside it (`BoardVerdictActions`, AC-B11): the
+        // trio on a line the engine or the book still proposes, Undo on one something has
+        // been written for, and Change decision on every line that has one to take. Shared
+        // with the cell breakdown's Decision column so the two cannot drift.
         cell: ({ row }) => {
           const contribution = row.original;
           const key = contribution.key;
-          // No Undo on a bare pre-mark (PLAN-board-change-proposed-pill): nothing has actually
-          // been saved here yet, only the board's own suggestion.
-          const drafted = Boolean(draft[key]) && !isPreMarkOnly(contribution, draft[key] ?? null);
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
-              {canQuickSave(contribution, draft) ? (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  title="Save as suggested"
-                  aria-label={`Save ${contribution.so_number} line ${contribution.line_no} as suggested`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDecide(key, suggestedDecisionFor(contribution));
-                  }}
-                >
-                  <Check className="size-3.5" aria-hidden />
-                </Button>
-              ) : null}
-              {drafted ? (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Undo ${contribution.so_number} line ${contribution.line_no}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDecide(key, null);
-                  }}
-                >
-                  <Undo2 className="size-3.5" aria-hidden />
-                </Button>
-              ) : null}
+              <BoardVerdictActions
+                contribution={contribution}
+                decision={draft[key] ?? null}
+                onDecide={(next) => onDecide(key, next)}
+                onChange={() => openRow(key)}
+              />
             </div>
           );
         },
-        size: 190,
-        minSize: 150,
-        enableResizing: false,
+        // AC-C1/AC-C2: wide enough for the pill and the three icons any one state offers
+        // (Accept + Reject + Change decision, or Undo + Change decision), and RESIZABLE -
+        // the column carried `enableResizing: false` while every other one on this grid
+        // could be dragged, which read as the grid being broken on the one column a planner
+        // acts in.
+        size: 240,
+        minSize: 170,
       },
     ],
-    [changeIcons, dirtySetterFor, draft, onDecide],
+    [changeIcons, dirtySetterFor, draft, onDecide, openRow],
   );
 
   return (

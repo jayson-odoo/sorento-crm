@@ -87,6 +87,7 @@ import type {
   PlanningChangeOrder,
 } from '../../_shared/types/planningChange.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
+import { isPreMarkOnly } from './BoardDecisionPill';
 import { BoardTransfersPanel } from './BoardTransfersPanel';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
@@ -546,6 +547,23 @@ export function FulfilmentBoardPanel({
    * key back once the true survivor turns out to be a different batch.
    */
   const preMarkedBatchIds = React.useRef<Set<string>>(new Set());
+  /**
+   * WHICH keys were pre-marked, not merely which batches did the marking (AC-B13, owner
+   * finding 22 Sep: "it becomes suggested instead of change proposed").
+   *
+   * `decide(key, null)` used to delete the key outright, and the effect above never seeds a
+   * second time (it is guarded per batch id), so undoing a save on a line the open batch
+   * NAMES dropped it back to plain `Suggested` - a line the book had moved reading as though
+   * the book had not. This is the set `decide` puts the pre-mark back over, and the
+   * board-wide discard with it (SF-5).
+   *
+   * IT IS NEVER EMPTIED IN-SESSION, deliberately (N-1): a batch that is applied while this
+   * board is open leaves its lines genuinely changed by the book, so an Undo on one of them
+   * still belongs at `Change proposed` until the board is re-opened on a batch that no
+   * longer names it. Clearing the set on apply would make the SAME Undo mean two different
+   * things depending on when it was pressed.
+   */
+  const preMarkedKeySet = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
     if (allContributions.length === 0) return;
     if (loadedBatches.length < boardBatchIds.length) return;
@@ -560,8 +578,10 @@ export function FulfilmentBoardPanel({
         // tells the pill and the Verdict column this entry is the board's OWN pre-mark, not a
         // decision anybody has actually saved - `decide()` always writes a fresh object over
         // this key, so the flag drops itself the moment a person acts on the line.
-        for (const key of keys)
+        for (const key of keys) {
+          preMarkedKeySet.current.add(key);
           if (!next[key]) next[key] = { verdict: 'approved', preMarked: true };
+        }
         return next;
       });
     }
@@ -701,6 +721,12 @@ export function FulfilmentBoardPanel({
         previousForKey = current[key];
         const next = { ...current };
         if (decision) next[key] = decision;
+        // AC-B13: a line the open change batch NAMED goes back to the board's own pre-mark
+        // rather than to nothing, so its pill reads `Change proposed` again and it is still
+        // counted toward Confirm. The server draft is deleted either way (below); what
+        // differs is only the shape the local entry is left in.
+        else if (preMarkedKeySet.current.has(key))
+          next[key] = { verdict: 'approved', preMarked: true };
         else delete next[key];
         appliedNext = next;
         return next;
@@ -821,7 +847,10 @@ export function FulfilmentBoardPanel({
         );
       }
       if (saved > 0) {
-        toast.success(`${saved} line${saved === 1 ? '' : 's'} back to suggested`);
+        // "UNDONE", not "back to suggested" (SF-5, reviewer, fix round 2): a line the open
+        // change batch named goes back to `Change proposed`, not to `Suggested`, so naming
+        // one of the two outcomes described the other half of the press wrongly.
+        toast.success(`${saved} line${saved === 1 ? '' : 's'} undone`);
       }
       return { saved, failed };
     },
@@ -2054,7 +2083,12 @@ export function FulfilmentBoardPanel({
               }?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Every line goes back to the suggestion. Nothing already confirmed changes.
+              {/* N-8 (reviewer, fix round 3): "Every line goes back to the suggestion"
+                  was true of one kind of line only - a line the open change batch names
+                  goes back to its PROPOSED CHANGE (AC-B13), which is still counted
+                  toward Confirm. */}
+              Every saved decision is discarded, and a line the book changed goes back to
+              its proposed change. Nothing already confirmed changes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2062,6 +2096,19 @@ export function FulfilmentBoardPanel({
             <AlertDialogAction
               onClick={() => {
                 const keys = Object.keys(draft);
+                // A BARE PRE-MARK HAS NOTHING ON THE SERVER (browser pass, 22 Sep 2026:
+                // 17 DELETEs went out and 16 came back 404). It is the board's own
+                // suggestion seeded into this session's draft, never a saved decision, so
+                // there is nothing to delete for it - and it comes straight back as a
+                // pre-mark through `preMarksFor` below either way.
+                const onServer = keys.filter((key) => {
+                  const contribution = allContributions.find(
+                    (entry) => entry.key === key,
+                  );
+                  return (
+                    !contribution || !isPreMarkOnly(contribution, draft[key] ?? null)
+                  );
+                });
                 setUndoAllOpen(false);
                 // S4/AC-4.3: a saved line's draft lives on the server now, so discarding it
                 // has to reach the server too, or it re-seeds right back in off the next
@@ -2076,7 +2123,7 @@ export function FulfilmentBoardPanel({
                 // single-line Undo (C1, code review round 3 batch 2).
                 void (async () => {
                   const outcomes = await Promise.all(
-                    keys.map(async (key) => {
+                    onServer.map(async (key) => {
                       try {
                         await removeDraftKey(key);
                         return { key, ok: true as const };
@@ -2088,12 +2135,40 @@ export function FulfilmentBoardPanel({
                   const failedKeys = outcomes
                     .filter((entry) => !entry.ok)
                     .map((entry) => entry.key);
+                  // AC-B13 applies to the board-wide discard too (SF-5): a key the open
+                  // batch pre-marked comes back as the pre-mark rather than disappearing,
+                  // so a line the book moved still reads `Change proposed` and is still
+                  // counted toward Confirm. `setDraft({})` dropped every one of them.
+                  const preMarksFor = (undone: string[]): BoardDraft => {
+                    const back: BoardDraft = {};
+                    for (const key of undone) {
+                      if (preMarkedKeySet.current.has(key)) {
+                        back[key] = { verdict: 'approved', preMarked: true };
+                      }
+                    }
+                    return back;
+                  };
                   if (failedKeys.length === 0) {
-                    setDraft({});
+                    setDraft(preMarksFor(keys));
+                    // AC-B14 (browser pass, 22 Sep 2026): this path discarded every draft
+                    // on the board and said nothing, while the grid cell's own undo of two
+                    // lines toasted. Counted over the lines that HAD a decision to
+                    // discard - a pre-mark was never saved, so undoing the board did not
+                    // undo it.
+                    if (onServer.length > 0) {
+                      toast.success(
+                        `${onServer.length} line${onServer.length === 1 ? '' : 's'} undone`,
+                      );
+                    }
                     return;
                   }
                   setDraft((current) => {
-                    const kept: BoardDraft = {};
+                    const kept: BoardDraft = preMarksFor(
+                      keys.filter((key) => !failedKeys.includes(key)),
+                    );
+                    // Whatever failed keeps whatever it held; everything else has already
+                    // been answered by `preMarksFor` above.
+
                     for (const key of failedKeys) {
                       if (current[key]) kept[key] = current[key];
                     }

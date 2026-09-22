@@ -578,6 +578,36 @@ describe('the qty cell: one line, an info icon only when there is something to s
     expect(within(table).getByText('10')).toBeInTheDocument();
   });
 
+  /**
+   * SF-2 (reviewer, fix round 2): the board's change lightbox drops a row for a field that
+   * did not move (AC-D2), and the shared `BoardChangeWasNowTable` must NOT take that rule
+   * with it into this dialog. A settled amendment here states what the row now says - a
+   * quantity CS raised from 10 to 25 on the same delivery date still needs its Date row, or
+   * the reader is left to guess whether the date moved too.
+   */
+  it('SF-2/AC-D4: a quantity-only amendment still shows the Date row, unmoved date and all', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-qty-only',
+        qty: '25',
+        ack_state: 'acknowledged',
+        changed_at: '2026-09-01T10:00:00',
+        previous_qty: '10',
+        // The SAME date on both sides: only the quantity moved.
+        previous_delivery_date: '2026-09-20',
+        delivery_date: '2026-09-20',
+      }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('qty-annotation-trigger-row-qty-only'));
+    const table = screen.getByTestId('board-change-row-qty-only');
+
+    expect(within(table).getByText('Qty')).toBeInTheDocument();
+    expect(within(table).getByText('Date')).toBeInTheDocument();
+    // Both sides of the unmoved date are printed, rather than the row vanishing.
+    expect(within(table).getAllByText('20/09/2026')).toHaveLength(2);
+  });
+
   it('AC-A11: a row rejected after once being changed carries BOTH facts in the dialog', () => {
     // The old rule let a rejection hide a row's change history from the reader entirely
     // ("never shows the Was/Now table on a rejected row"). Tucked behind an icon rather

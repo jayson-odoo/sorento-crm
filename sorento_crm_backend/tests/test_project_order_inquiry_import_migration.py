@@ -53,6 +53,7 @@ from app.models.procurement import (
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    INQUIRY_ACTIONED,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -731,6 +732,53 @@ def test_verb_from_date_cell():
 
         assert result["rows_raised"] == 2, result
         assert sorted(row.verb for row in w.rows()) == sorted([IV_ORDER_BACK, IV_ORDER])
+
+
+def test_ac_ob_10_an_order_back_row_against_a_delivered_line_is_never_history_closed():
+    """AC-OB-10 (R3, `PLAN-oi-order-back-not-capped.md`). An ORDER_BACK row is a
+    shortfall against a document already on its way - a delivered borrowing line is the
+    NORMAL case for one, not history. Same shape as AC-S1-29 (a line delivered in full,
+    `line_status` still `open` so it remains an import CANDIDATE, AC-S4-3), except the
+    sheet's date cell reads ORDER BACK: the row must come out `raised`, `actioned_at`
+    NULL, never closed the way `_close_history` closes a plain ORDER."""
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="3", qty_delivered="3")
+        data = sheet([
+            (order.so_number, w.product.product_code, 3, "ORDER BACK",
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert row.verb == IV_ORDER_BACK
+        assert row.state == INQUIRY_RAISED, (
+            "an ORDER_BACK row against a delivered line must never be history-closed"
+        )
+        assert row.actioned_at is None
+        assert row.actioned_by is None
+
+
+def test_ac_ob_11_an_order_row_against_a_delivered_line_still_history_closes():
+    """AC-OB-11, the sibling of AC-OB-10 on the same shape: an ORDER row against a line
+    delivered in full is still history - AC-S1-29 stands unchanged for ORDER."""
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="3", qty_delivered="3")
+        data = sheet([
+            (order.so_number, w.product.product_code, 3, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert row.verb == IV_ORDER
+        assert row.state == INQUIRY_ACTIONED
+        assert row.actioned_at is not None
 
 
 def test_identical_rows_across_tabs_raise_once():
