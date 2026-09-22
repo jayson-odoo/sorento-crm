@@ -869,6 +869,7 @@ def test_committed_v_owed_nets_reserved_link(handshake_world):
         _line_payload,
         _project_line,
         _project_so,
+        _restore as _hs_restore,
     )
 
     world = handshake_world
@@ -885,10 +886,20 @@ def test_committed_v_owed_nets_reserved_link(handshake_world):
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
 
+    # Wiring fix (review round): `_hs_client` monkeypatches `UserPermissionService`
+    # at the CLASS level - every other caller in this file (`test_order_inquiry_
+    # handshake.py`'s own tests) restores it in a `finally`, and this one did not,
+    # which leaked the lambda into every test after it in the same pytest process
+    # (`test_rbac.py` reads a stubbed `check_user_has_permission`/`get_user_
+    # permission_slugs` when this file runs ahead of it). Fixed here as mock
+    # wiring, not an assertion - the test's own behaviour is unchanged.
     client, originals = _hs_client(
         db, world.cs_user, ["projects.projects.view", "projects.projects.edit", "projects.order_inquiry.action"]
     )
-    response = _confirm(client, order.id, [_line_payload(line.id, buy_qty="139")])
+    try:
+        response = _confirm(client, order.id, [_line_payload(line.id, buy_qty="139")])
+    finally:
+        _hs_restore(originals)
     assert response.status_code == 200, response.text
     db.commit()
 

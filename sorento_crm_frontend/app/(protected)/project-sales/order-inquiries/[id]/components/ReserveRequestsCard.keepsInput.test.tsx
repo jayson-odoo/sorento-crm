@@ -24,9 +24,13 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
-const reserveSpy = vi.fn(async () => ({ id: 'rr-1', state: 'reserved' }));
+// Same tsc fix as the sibling suites (`ReserveRequestsCard.test.tsx`): typed
+// `(..._args: unknown[])`, matching the real two-argument
+// `reserveOrderInquiryRequest(requestId, payload)`.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const reserveSpy = vi.fn(async (..._args: unknown[]) => ({ id: 'rr-1', state: 'reserved' }));
 vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
-  reserveOrderInquiryRequest: (...args: unknown[]) => reserveSpy(...(args as [unknown])),
+  reserveOrderInquiryRequest: (...args: unknown[]) => reserveSpy(...args),
 }));
 
 import { ReserveRequestsCard } from './ReserveRequestsCard';

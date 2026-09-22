@@ -82,7 +82,10 @@ export function useReserveRowOptions(
       unresolved.map((code) =>
         getWarehouses({
           pageIndex: 0,
-          pageSize: 5,
+          // Nit (review round): see `OrderInquiryStockGrid.tsx`'s own note - a bare
+          // pool code's text search also matches its own sub-locations, which can
+          // fill a page of 5 before the pool row itself ever appears.
+          pageSize: 50,
           sorting: [],
           searchQuery: code,
           is_active: true,

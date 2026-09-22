@@ -310,9 +310,19 @@ register(
 
 def _cancel_order_inquiry_reserve_request(db: Session, payload: dict):
     from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+    from app.services.user_service import UserPermissionService
 
+    actor_id = payload.get("requested_by_id")
+    # SF-1 (review round): the requester or CS may cancel - recomputed HERE, at commit
+    # time, rather than trusted off whatever was true the moment the countdown started,
+    # since a role change during the window is the actor's CURRENT standing to act on.
+    actor_can_reserve = bool(actor_id) and UserPermissionService(db).check_user_has_permission(
+        str(actor_id), "projects.order_inquiries.reserve"
+    )
     return OrderInquiryReserveService(db).cancel_request(
-        request_id=_entity_id(payload), actor_user_id=payload.get("requested_by_id")
+        request_id=_entity_id(payload),
+        actor_user_id=actor_id,
+        actor_can_reserve=actor_can_reserve,
     )
 
 
@@ -326,6 +336,13 @@ register(
         # a misclick a few seconds to catch itself. No email either way (R9's ONE email
         # is the request itself; a cancel is silent).
         window=WINDOW_REVERSIBLE,
+        # SF-4 (review round): the declared slug the generic registry contract checks
+        # (`test_record_actions_s6b.py`) - the requester's own grant. A RESERVE-only
+        # holder (Eling, who never raises a request) ALSO needs to start this countdown
+        # on a request that is not hers; `_ANY_OF_PERMISSIONS` in `pending_actions.py`
+        # widens the actual PARK-time gate to either grant, since `FormAction.permission`
+        # carries one slug only - the ownership question itself (whose request this is)
+        # stays inside `cancel_request` above, never at the park gate.
         permission="projects.order_inquiries.acknowledge",
         label="Cancel request",
     )

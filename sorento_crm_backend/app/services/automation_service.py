@@ -387,6 +387,12 @@ class AutomationService:
                 "role_ids": [],
                 "include_promotion_owner": False,
                 "include_actor": False,
+                # PLAN-oi-request-cs-reserve.md 3.6 (review round): the falsy-config
+                # branch used to build its own dict from scratch and never mention
+                # either key, so a caller reading `include_raiser` off a freshly-created
+                # automation's default `recipient_config` got `None`, not `False`.
+                "include_raiser": False,
+                "include_requester": False,
                 "one_email": False,
                 "extra_emails": [],
             }

@@ -35,6 +35,11 @@ export interface ReserveRequestsCardRow {
    * Reserved can recompute when Location changes - only while the reader has not
    * touched Reserved yet on this row. */
   available_qty_by_location?: Record<string, number>;
+  /** N-3 (review round, no UUID in the UI): the location CODE this row's request/
+   * reserve actually names, printed as-is in the read-only branch - never resolved
+   * through `location_options`, which is empty whenever the server found no stock-grid
+   * option for the warehouse actually chosen. */
+  location?: string | null;
 }
 
 export interface ReserveRequestsCardRequest {
@@ -78,7 +83,9 @@ export function ReserveRequestsCard({
   onConfirmed?: () => void;
   /** AC-RS-24: present only for the requester (or a reserve-permission holder), and
    * only while the request is still open - the caller decides both, this card only
-   * renders what it is handed. */
+   * renders what it is handed. Rendered whichever `mode` the card is in (reviewer fix
+   * round, browser evidence defect): a reserve-permission holder in ACT mode is one of
+   * AC-RS-24's own two eligible cancellers and must still reach the button. */
   cancelControl?: ReserveRequestsCardCancelControl | null;
 }) {
   const [reserved, setReserved] = React.useState<Record<string, number>>({});
@@ -86,6 +93,16 @@ export function ReserveRequestsCard({
   const [reason, setReason] = React.useState<Record<string, string>>({});
   const [editedReserved, setEditedReserved] = React.useState<Record<string, boolean>>({});
   const [confirming, setConfirming] = React.useState(false);
+
+  // AC-RS-28 (reviewer fix round): keyed off request.id + a VALUE signature of the
+  // rows, never `request.rows` itself - a parent re-render that hands down a brand-new
+  // array of the SAME row values (a refetch landing identical server data, a sibling
+  // state change) used to wipe every typed Reserved/Reason on every such render, since
+  // an array is a new reference every time even when nothing on screen changed. A
+  // genuine value change (or a different request rendered in this slot) still resets.
+  const rowsSignature = request.rows
+    .map((row) => `${row.id}:${row.default_reserved}:${row.default_location}`)
+    .join('|');
 
   React.useEffect(() => {
     setReserved(
@@ -96,7 +113,8 @@ export function ReserveRequestsCard({
     setLocation(Object.fromEntries(request.rows.map((row) => [row.id, row.default_location])));
     setReason({});
     setEditedReserved({});
-  }, [request.id, request.rows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.id, rowsSignature]);
 
   const isActMode = mode === 'act' && canAct;
 
@@ -149,7 +167,7 @@ export function ReserveRequestsCard({
               {request.requested_at ? ` on ${request.requested_at}` : ''}
             </span>
           ) : null}
-          {mode === 'request' && cancelControl && request.state === 'requested' ? (
+          {cancelControl && request.state === 'requested' ? (
             cancelControl.countdown ?? (
               <Button
                 type="button"
@@ -229,8 +247,17 @@ export function ReserveRequestsCard({
             ) : (
               <div className="text-xs text-muted-foreground">
                 Location{' '}
-                {row.location_options.find((option) => option.value === row.default_location)
-                  ?.label ?? row.default_location}
+                {
+                  // N-3 (review round, no UUID in the frontend UI): the location CODE
+                  // the server already named on this row - never a resolve through
+                  // `location_options`, which is empty whenever the server found no
+                  // stock-grid option for the warehouse actually chosen and would
+                  // otherwise fall through to the raw `default_location` id.
+                  row.location ??
+                    row.location_options.find((option) => option.value === row.default_location)
+                      ?.label ??
+                    'unknown'
+                }
                 {row.qty_reserved != null ? ` - reserved ${row.qty_reserved}` : null}
                 {row.reason ? ` (${row.reason})` : null}
               </div>

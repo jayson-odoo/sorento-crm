@@ -34,14 +34,18 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
-const createReserveRequestSpy = vi.fn(async () => ({
+// Reviewer fix round: typed `(..._args: unknown[])`, not `()` - the REAL
+// `createOrderInquiryReserveRequest(inquiryId, payload)` takes two arguments, and a
+// zero-arg inferred mock signature made the spread call below (and the tuple cast at
+// its own read-back further down) a tsc error, never an assertion this suite owns.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const createReserveRequestSpy = vi.fn(async (..._args: unknown[]) => ({
   id: 'rr-1',
   ordinal: 1,
   first_to_name: 'Eling',
 }));
 vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
-  createOrderInquiryReserveRequest: (...args: unknown[]) =>
-    createReserveRequestSpy(...(args as [unknown])),
+  createOrderInquiryReserveRequest: (...args: unknown[]) => createReserveRequestSpy(...args),
 }));
 
 import { toast } from '@/lib/toast';

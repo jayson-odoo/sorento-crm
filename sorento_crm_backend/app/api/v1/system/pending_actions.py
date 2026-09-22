@@ -107,6 +107,21 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
     "project_sales_order.undo_confirm": ("decision_id",),
 }
 
+# A record action whose PARK gate accepts more than one grant (SF-4,
+# `PLAN-oi-request-cs-reserve.md`, review round): `FormAction.permission` stays the ONE
+# slug the generic registry contract checks (`test_record_actions_s6b.py`'s own
+# per-action sweep) - this table is consulted ONLY here, at the click, for an action
+# whose actual gate is "one of many". `order_inquiry_reserve_request.cancel` is started
+# by the requester (`ACKNOWLEDGE`) or by CS (`RESERVE`, who may cancel a request that
+# is not hers - the ownership question itself is `cancel_request`'s own job, not the
+# park gate's).
+_ANY_OF_PERMISSIONS: dict = {
+    "order_inquiry_reserve_request.cancel": (
+        "projects.order_inquiries.acknowledge",
+        "projects.order_inquiries.reserve",
+    ),
+}
+
 
 def _assert_required_payload(action_key: str, payload: dict) -> None:
     for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
@@ -231,7 +246,7 @@ def _assert_undo_not_refused(
         )
 
 
-def _assert_permission(db: Session, user_id: Optional[str], slug: str) -> None:
+def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slug: str) -> None:
     """Enforce the action's own slug at the CLICK.
 
     Not a route dependency, because the slug is not known until the body is read - and
@@ -239,6 +254,10 @@ def _assert_permission(db: Session, user_id: Optional[str], slug: str) -> None:
 
     `OWN_RECORD` is the one action whose grant is ownership: its handler is scoped to
     the requester, so being signed in IS the check (see `record_actions.OWN_RECORD`).
+
+    `_ANY_OF_PERMISSIONS` widens the gate to "any of several grants" for the one action
+    that needs it - `slug` (the action's own DECLARED permission) is what every other
+    action still checks, unchanged.
     """
     from app.services.record_actions import OWN_RECORD
     from app.services.user_service import UserPermissionService
@@ -248,6 +267,17 @@ def _assert_permission(db: Session, user_id: Optional[str], slug: str) -> None:
             raise AppException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 message="Sign in to do that.",
+                code="FORBIDDEN",
+            )
+        return
+
+    any_of = _ANY_OF_PERMISSIONS.get(action_key)
+    if any_of:
+        held = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+        if not held & set(any_of):
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message=f"One of these permissions required: {', '.join(any_of)}",
                 code="FORBIDDEN",
             )
         return
@@ -358,7 +388,7 @@ async def create_pending_action(
             f"Action {body.action_key!r} does not apply to {body.entity_type!r}."
         )
     actor_id = (current_user or {}).get("id")
-    _assert_permission(db, actor_id, action.permission)
+    _assert_permission(db, actor_id, action.key, action.permission)
     _assert_required_payload(body.action_key, body.payload)
     _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 

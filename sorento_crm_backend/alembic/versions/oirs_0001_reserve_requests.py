@@ -176,6 +176,7 @@ def _create_tables(bind) -> None:
                     REFERENCES "{projects}".order_inquiries(id) ON DELETE CASCADE,
                 ordinal INTEGER NOT NULL,
                 state VARCHAR(16) NOT NULL DEFAULT 'requested'
+                    CONSTRAINT ck_order_inquiry_reserve_requests_state
                     CHECK (state IN ('requested', 'reserved', 'cancelled')),
                 requested_by VARCHAR(100) REFERENCES users(id) ON DELETE SET NULL,
                 requested_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -184,7 +185,8 @@ def _create_tables(bind) -> None:
                 reserved_at TIMESTAMP,
                 cancelled_by VARCHAR(100) REFERENCES users(id) ON DELETE SET NULL,
                 cancelled_at TIMESTAMP,
-                UNIQUE (order_inquiry_id, ordinal)
+                CONSTRAINT uq_order_inquiry_reserve_requests_ordinal
+                    UNIQUE (order_inquiry_id, ordinal)
             );
             CREATE INDEX IF NOT EXISTS ix_order_inquiry_reserve_requests_inquiry
                 ON "{projects}".order_inquiry_reserve_requests (order_inquiry_id);
@@ -196,11 +198,13 @@ def _create_tables(bind) -> None:
                     REFERENCES "{projects}".order_inquiry_reserve_requests(id) ON DELETE CASCADE,
                 row_id UUID NOT NULL
                     REFERENCES "{projects}".order_inquiry_rows(id) ON DELETE CASCADE,
-                qty_requested NUMERIC(15, 4) NOT NULL CHECK (qty_requested > 0),
+                qty_requested NUMERIC(15, 4) NOT NULL
+                    CONSTRAINT ck_order_inquiry_reserve_rows_qty_positive CHECK (qty_requested > 0),
                 warehouse_id UUID REFERENCES warehouses(id) ON DELETE SET NULL,
                 qty_reserved NUMERIC(15, 4),
                 reason TEXT,
-                UNIQUE (request_id, row_id)
+                CONSTRAINT uq_order_inquiry_reserve_request_rows_row
+                    UNIQUE (request_id, row_id)
             );
             CREATE INDEX IF NOT EXISTS ix_order_inquiry_reserve_request_rows_request
                 ON "{projects}".order_inquiry_reserve_request_rows (request_id);
@@ -385,11 +389,19 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     projects = _schema(bind, "projects")
+    # Named, not just by trigger_type: an admin could have cloned either seeded
+    # automation onto the SAME trigger with a name of their own, and a bare
+    # `trigger_type IN (...)` would delete that row too (review round nit).
     bind.execute(
         sa.text(
-            "DELETE FROM automations WHERE trigger_type IN (:t1, :t2)"
+            "DELETE FROM automations WHERE trigger_type IN (:t1, :t2) AND name IN (:n1, :n2)"
         ),
-        {"t1": REQUEST_TRIGGER, "t2": RESERVED_TRIGGER},
+        {
+            "t1": REQUEST_TRIGGER,
+            "t2": RESERVED_TRIGGER,
+            "n1": REQUEST_AUTOMATION_NAME,
+            "n2": RESERVED_AUTOMATION_NAME,
+        },
     )
     bind.execute(
         sa.text(

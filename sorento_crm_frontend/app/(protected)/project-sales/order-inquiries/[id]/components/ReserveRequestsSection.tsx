@@ -99,34 +99,51 @@ export function ReserveRequestsSection({
     }
   }, [activeReserveId, openRequest?.id]);
 
+  // AC-RS-28 (reviewer fix round): memoised, and declared ABOVE the early return below
+  // (Rules of Hooks) - an un-memoised map built fresh every render hands
+  // `ReserveRequestsCard` a NEW `rows` array even when nothing here actually changed,
+  // which used to wipe typed Reserved/Reason on every unrelated parent re-render (the
+  // card's own `rowsSignature` guard is the other half of this fix; this half stops
+  // the churn at the source).
+  const cardRows: ReserveRequestsCardRow[] = React.useMemo(
+    () =>
+      (openRequest?.rows ?? []).map((row) => {
+        const own = resolved[row.id];
+        const requestedQty = Number(row.qty_requested || '0');
+        const availableAtDefault =
+          own?.defaultWarehouseId != null
+            ? (own.availableQtyByWarehouseId[own.defaultWarehouseId] ?? 0)
+            : 0;
+        const defaultReserved = Math.max(0, Math.min(requestedQty, availableAtDefault));
+        const fallbackOptions =
+          row.warehouse_id && row.location
+            ? [{ value: row.warehouse_id, label: row.location }]
+            : [];
+        return {
+          id: row.id,
+          item_code: row.item_code,
+          qty_requested: row.qty_requested,
+          default_reserved: String(defaultReserved),
+          // `own?.options` may resolve to an EMPTY array (no stock-grid option matched
+          // the warehouse actually chosen) - `??` alone never falls through THAT case
+          // (only `null`/`undefined` do), which is exactly what let a raw warehouse
+          // UUID reach `ReserveRequestsCard`'s read-only branch (N-3, review round).
+          location_options: own?.options?.length ? own.options : fallbackOptions,
+          default_location: own?.defaultWarehouseId ?? row.warehouse_id ?? '',
+          // N-3: the location CODE this row actually names, threaded straight through
+          // so the card never has to resolve it via `location_options` at all.
+          location: row.location ?? null,
+          qty_reserved: row.qty_reserved,
+          reason: row.reason,
+          available_qty_by_location: own?.availableQtyByWarehouseId,
+        };
+      }),
+    [openRequest, resolved],
+  );
+
   if (!openRequest && history.length === 0) return null;
 
   const actMode = Boolean(activeReserveId && activeReserveId === openRequest?.id) || canReserve;
-
-  const cardRows: ReserveRequestsCardRow[] = (openRequest?.rows ?? []).map((row) => {
-    const own = resolved[row.id];
-    const requestedQty = Number(row.qty_requested || '0');
-    const availableAtDefault =
-      own?.defaultWarehouseId != null
-        ? (own.availableQtyByWarehouseId[own.defaultWarehouseId] ?? 0)
-        : 0;
-    const defaultReserved = Math.max(0, Math.min(requestedQty, availableAtDefault));
-    return {
-      id: row.id,
-      item_code: row.item_code,
-      qty_requested: row.qty_requested,
-      default_reserved: String(defaultReserved),
-      location_options:
-        own?.options ??
-        (row.warehouse_id && row.location
-          ? [{ value: row.warehouse_id, label: row.location }]
-          : []),
-      default_location: own?.defaultWarehouseId ?? row.warehouse_id ?? '',
-      qty_reserved: row.qty_reserved,
-      reason: row.reason,
-      available_qty_by_location: own?.availableQtyByWarehouseId,
-    };
-  });
 
   return (
     <div ref={sectionRef} className="space-y-3">

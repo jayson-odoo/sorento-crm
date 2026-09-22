@@ -73,6 +73,7 @@ from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
 
@@ -1051,45 +1052,6 @@ def _serialize_reserve_request(
     }
 
 
-def _first_recipient_name(db: Session, trigger_type: str, actor_user_id: Optional[str], raiser_user_id: Optional[str]) -> Optional[str]:
-    """Best-effort read of who the request mail's To address names, for the dialog's own
-    toast (plan 3.7: "Request #2 sent to Eling") - never load-bearing: a disabled or
-    not-yet-configured automation simply reads null, and the actual send already
-    happened synchronously inside the write's own commit (`register_order_inquiry_
-    reserve_post_commit_dispatch`'s `after_commit` listener runs before this)."""
-    try:
-        from app.models.automation import Automation
-        from app.services.automation_recipients import resolve_recipients
-        from app.services.automation_service import AutomationService
-        from app.models.user import User
-
-        automation = (
-            db.query(Automation)
-            .filter(Automation.trigger_type == trigger_type, Automation.enabled.is_(True))
-            .order_by(Automation.created_at.asc())
-            .first()
-        )
-        if automation is None:
-            return None
-        config = AutomationService._normalize_recipient_config(automation.recipient_config)
-
-        def _person(user_id: Optional[str]):
-            if not user_id:
-                return None
-            user = db.query(User).filter(User.id == user_id).first()
-            if user is None or not user.email:
-                return None
-            return {"name": user.name or user.email, "email": user.email}
-
-        context = {"actor": _person(actor_user_id), "raiser": _person(raiser_user_id)}
-        recipients = resolve_recipients(db, config, context)
-        if not recipients:
-            return None
-        return recipients[0].get("name")
-    except Exception:  # noqa: BLE001 - a toast name is never load-bearing
-        return None
-
-
 @router.post(
     "/order-inquiries/{inquiry_id}/reserve-requests",
     response_model=OrderInquiryReserveRequestOut,
@@ -1117,11 +1079,10 @@ async def create_order_inquiry_reserve_request(
         inquiry = (
             db.query(OrderInquiry).filter(OrderInquiry.id == request.order_inquiry_id).first()
         )
-        notified_name = _first_recipient_name(
-            db,
-            "order_inquiry_reserve_requested",
-            current_user["id"],
-            inquiry.raised_by if inquiry is not None else None,
+        notified_name = OrderInquiryReserveService(db).notified_name(
+            trigger_type="order_inquiry_reserve_requested",
+            actor_user_id=current_user["id"],
+            raiser_user_id=inquiry.raised_by if inquiry is not None else None,
         )
         return _serialize_reserve_request(db, request, notified_name=notified_name)
     except Exception as exc:
@@ -1140,11 +1101,21 @@ async def cancel_order_inquiry_reserve_request(
 ):
     """The requester's own undo while nothing has been reserved yet (3.2, AC-RS-19) -
     also reachable through the deferred action `order_inquiry_reserve_request.cancel`
-    (`record_actions.py`) for the standard reversible countdown. No email either way."""
+    (`record_actions.py`) for the standard reversible countdown. No email either way.
+
+    SF-1 (review round): the dependency above only proves the actor holds ONE of the
+    two purchasing-side grants - it says nothing about whose request this is. The
+    actor's OWN hold on `RESERVE` is resolved here and handed to the service, which is
+    where the real "requester or CS" ownership check lives (`cancel_request`)."""
     try:
         validate_uuid_path(request_id, resource="Reserve request")
+        actor_can_reserve = UserPermissionService(db).check_user_has_permission(
+            current_user["id"], RESERVE
+        )
         request = OrderInquiryReserveService(db).cancel_request(
-            request_id=request_id, actor_user_id=current_user["id"]
+            request_id=request_id,
+            actor_user_id=current_user["id"],
+            actor_can_reserve=actor_can_reserve,
         )
         db.commit()
         return _serialize_reserve_request(db, request)
@@ -1187,12 +1158,17 @@ async def reserve_order_inquiry_reserve_request(
 )
 async def list_order_inquiry_reserve_requests(
     inquiry_id: str,
-    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
     db: Session = Depends(get_db),
 ):
     """Every reserve request this header has ever raised, newest first - the Lines tab's
     own `ReserveRequestsCard` (3.7/3.8): the open one in act mode for a viewer holding
-    `RESERVE`, the rest collapsed as history."""
+    `RESERVE`, the rest collapsed as history.
+
+    SF-4 (review round): gating on `ACKNOWLEDGE` alone locked a reserve-only CS head
+    (Eling, who never raises a request) out of reading her own worklist's card - `VIEW`/
+    `ACKNOWLEDGE`/`RESERVE` are the three ways to already be allowed to see this
+    inquiry's own Lines tab at all."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
         requests = (

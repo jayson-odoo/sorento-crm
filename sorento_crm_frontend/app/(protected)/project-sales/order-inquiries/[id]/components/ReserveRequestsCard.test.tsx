@@ -33,9 +33,14 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
-const reserveSpy = vi.fn(async () => ({ id: 'rr-1', state: 'reserved' }));
+// Reviewer fix round: typed `(..._args: unknown[])`, not `()` - the REAL
+// `reserveOrderInquiryRequest(requestId, payload)` takes two arguments, and a zero-arg
+// inferred mock signature made the spread call below (and the tuple cast at its own
+// read-back further down) a tsc error, never an assertion this suite owns.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const reserveSpy = vi.fn(async (..._args: unknown[]) => ({ id: 'rr-1', state: 'reserved' }));
 vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
-  reserveOrderInquiryRequest: (...args: unknown[]) => reserveSpy(...(args as [unknown])),
+  reserveOrderInquiryRequest: (...args: unknown[]) => reserveSpy(...args),
 }));
 
 import { ReserveRequestsCard } from './ReserveRequestsCard';

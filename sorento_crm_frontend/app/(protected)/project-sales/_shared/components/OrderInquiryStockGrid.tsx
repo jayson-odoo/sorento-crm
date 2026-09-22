@@ -58,7 +58,12 @@ export function OrderInquiryStockGrid({
     setResolving(true);
     getWarehouses({
       pageIndex: 0,
-      pageSize: 5,
+      // Nit (review round): `getWarehouses` has no exact-code param, and a text
+      // search for a bare pool code (`BRW`) also matches every one of its own
+      // sub-locations (`BRW-AA`..`BRW-EE`) - a page of 5 can fill entirely with
+      // those and never reach the pool row itself. Wide enough to cover a real
+      // site's own sub-location count.
+      pageSize: 50,
       sorting: [],
       searchQuery: location,
       is_active: true,

@@ -138,7 +138,10 @@ export function ReservePill({
   }
   if (reserveState === 'reserved') {
     return (
-      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('approved')}`}>
+      // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
+      // a reserve is a finished outcome, the same reading `done` carries everywhere
+      // else in `lib/status-pill.ts`.
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('done')}`}>
         Reserved {reservedQty ?? ''}
       </span>
     );

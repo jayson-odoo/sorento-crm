@@ -36,6 +36,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import event, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -112,6 +113,27 @@ def _default_warehouse_id(db: Session, stock_location: Optional[str]) -> Optiona
     if warehouse is None:
         return None
     return warehouse.pool_warehouse_id or warehouse.id
+
+
+def _validated_warehouse_id(
+    db: Session, warehouse_id: Optional[str], row_label: str
+) -> Optional[str]:
+    """SF-3 (review round): `warehouse_id` - whichever of the two writers sets it,
+    explicit on the payload or R3's own default - must resolve through the SAME
+    company-scoped ORM query every other reader of `Warehouse` uses, to an ACTIVE row,
+    or 422 naming the row. A foreign-company id is invisible to this query already
+    (`do_orm_execute`'s own company-scope filter), so it reads exactly like a bad id
+    rather than needing a second, explicit tenant check."""
+    if not warehouse_id:
+        return None
+    warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    if warehouse is None or not warehouse.is_active:
+        raise AppException(
+            422,
+            f"{row_label}: choose an active warehouse.",
+            code="reserve_bad_warehouse",
+        )
+    return warehouse.id
 
 
 def _warehouse_code(db: Session, warehouse_id: Optional[str]) -> Optional[str]:
@@ -298,6 +320,7 @@ class OrderInquiryReserveService:
             warehouse_id = entry.get("warehouse_id") or _default_warehouse_id(
                 self.db, row.stock_location
             )
+            warehouse_id = _validated_warehouse_id(self.db, warehouse_id, _row_label(row))
             prepared.append((row, qty_requested, warehouse_id))
 
         ordinal = (
@@ -317,7 +340,23 @@ class OrderInquiryReserveService:
             note=note,
         )
         self.db.add(request)
-        self.db.flush()
+        try:
+            self.db.flush()
+        except IntegrityError:
+            # SF-8 (review round): a genuine race - another session minted this SAME
+            # ordinal between the read above and this INSERT. The partial/unique index
+            # (`uq_order_inquiry_reserve_requests_ordinal`) is what caught it; rolling
+            # back to the savepoint (same shape `form_action_service.py`'s own pending-
+            # action park uses) keeps the session usable for the caller's 409, never an
+            # unhandled 500. Simpler than a re-mint-and-retry: the loser's request is
+            # small enough that "click again" costs nothing, and a blind retry here
+            # cannot tell a genuine collision apart from a real duplicate ordinal bug.
+            self.db.rollback()
+            raise AppException(
+                409,
+                "Another reserve request was just raised for this inquiry. Try again.",
+                code="reserve_request_ordinal_collision",
+            )
 
         pairs = []
         for row, qty_requested, warehouse_id in prepared:
@@ -342,8 +381,21 @@ class OrderInquiryReserveService:
     # ------------------------------------------------------------- 3.2 cancel
 
     def cancel_request(
-        self, *, request_id: str, actor_user_id: Optional[str]
+        self,
+        *,
+        request_id: str,
+        actor_user_id: Optional[str],
+        actor_can_reserve: bool = False,
     ) -> OrderInquiryReserveRequest:
+        """SF-1 (review round): the route/deferred-action gate only proves the actor
+        holds ONE of the two purchasing-side grants (`ACKNOWLEDGE`/`RESERVE`) - it says
+        nothing about whether THIS request is theirs. Ownership is checked HERE: the
+        requester who raised it, or anyone holding the reserve permission (Eling may
+        always withdraw an ask nobody has answered yet), never a colleague who merely
+        also holds `ACKNOWLEDGE`. `actor_can_reserve` is the caller's own fact -
+        computed at the route for an immediate cancel, and recomputed at commit time for
+        the deferred one (`record_actions.py`) - never re-derived here, so this method
+        stays a pure permission-free ownership check."""
         request = (
             self.db.query(OrderInquiryReserveRequest)
             .filter(OrderInquiryReserveRequest.id == request_id)
@@ -360,6 +412,15 @@ class OrderInquiryReserveService:
                 409,
                 "Only an open reserve request can be cancelled.",
                 code="reserve_request_not_cancellable",
+            )
+        is_requester = (
+            actor_user_id is not None and str(actor_user_id) == str(request.requested_by)
+        )
+        if not (is_requester or actor_can_reserve):
+            raise AppException(
+                403,
+                "Only the person who requested this, or CS, may cancel it.",
+                code="reserve_request_cancel_forbidden",
             )
         request.state = RESERVE_CANCELLED
         request.cancelled_by = actor_user_id
@@ -402,8 +463,34 @@ class OrderInquiryReserveService:
             .filter(OrderInquiryReserveRequestRow.request_id == request.id)
             .all()
         }
-        answered = {str(entry["request_row_id"]) for entry in rows}
-        if answered != set(request_rows.keys()):
+
+        # SF-2 (review round): "every row answered in one call" used to compare SETS,
+        # so the SAME `request_row_id` named twice slipped through unnoticed and the
+        # unguarded loop below wrote one link PER ANSWER - two 50-qty links against a
+        # single 50-qty row. Caught here, before anything is written, naming the row.
+        answered_ids: List[str] = []
+        seen_ids: set = set()
+        for entry in rows:
+            request_row_id = str(entry.get("request_row_id"))
+            if request_row_id in seen_ids:
+                rr = request_rows.get(request_row_id)
+                dup_row = (
+                    self.db.query(OrderInquiryRow)
+                    .filter(OrderInquiryRow.id == rr.row_id)
+                    .first()
+                    if rr is not None
+                    else None
+                )
+                label = _row_label(dup_row) if dup_row is not None else request_row_id
+                raise AppException(
+                    422,
+                    f"{label}: named twice in this reserve.",
+                    code="reserve_duplicate_request_row",
+                )
+            seen_ids.add(request_row_id)
+            answered_ids.append(request_row_id)
+
+        if set(answered_ids) != set(request_rows.keys()):
             raise AppException(
                 422,
                 "Every row of this request must be answered in one call.",
@@ -420,16 +507,26 @@ class OrderInquiryReserveService:
                     "One of this request's rows no longer exists.",
                     code="reserve_request_row_missing",
                 )
+            # SF-5: `qty_requested` is frozen at REQUEST time - a PO/SPO link placed on
+            # the row afterwards, and before Eling confirms, lowers what is actually
+            # left. The cap is the SMALLER of the two, never `qty_requested` alone, or
+            # the two links together could exceed the row's own qty.
+            live_remaining = _remaining(self.db, row)
+            cap = min(_dec(rr.qty_requested), live_remaining)
             qty_reserved = _dec(entry.get("qty_reserved"))
-            if qty_reserved < _ZERO or qty_reserved > _dec(rr.qty_requested):
+            if qty_reserved < _ZERO or qty_reserved > cap:
                 raise AppException(
                     422,
                     f"{_row_label(row)}: reserved quantity must be between 0 and "
-                    f"{_qty_str(rr.qty_requested)}.",
+                    f"{_qty_str(cap)}.",
                     code="reserve_qty_out_of_range",
                 )
             reason = (entry.get("reason") or "").strip() or None
-            if qty_reserved < _dec(rr.qty_requested) and not reason:
+            # R2's "short of the request" reads against the row's own LIVE cap, not the
+            # frozen `qty_requested`: reserving everything that is actually still left
+            # (SF-5's own scenario - a PO link already took the rest) is not a choice
+            # Eling made to explain, even though it reads short of what was first asked.
+            if qty_reserved < cap and not reason:
                 raise AppException(
                     422,
                     f"{_row_label(row)}: a reason is required when reserving less than "
@@ -437,6 +534,7 @@ class OrderInquiryReserveService:
                     code="reserve_reason_required",
                 )
             warehouse_id = entry.get("warehouse_id") or rr.warehouse_id
+            warehouse_id = _validated_warehouse_id(self.db, warehouse_id, _row_label(row))
             prepared.append((rr, row, qty_reserved, warehouse_id, reason))
 
         touched_rows: List[OrderInquiryRow] = []
@@ -474,6 +572,49 @@ class OrderInquiryReserveService:
             {"context": context, "source_id": str(request.id)}
         )
         return request
+
+    # --------------------------------------------------------------- toast-only read
+
+    def notified_name(
+        self,
+        *,
+        trigger_type: str,
+        actor_user_id: Optional[str],
+        raiser_user_id: Optional[str],
+    ) -> Optional[str]:
+        """Best-effort read of who the request mail's To address names, for the
+        dialog's own toast (plan 3.7: "Request #2 sent to Eling"). A PUBLIC method
+        here rather than the route reaching across into `AutomationService`'s own
+        private `_normalize_recipient_config` directly (review round, layering) -
+        the route asks its OWN service for this, the same as every other read.
+        Never load-bearing: a disabled or not-yet-configured automation simply reads
+        null, and the actual send already happened synchronously inside the write's
+        own commit (`register_order_inquiry_reserve_post_commit_dispatch`'s
+        `after_commit` listener runs before this)."""
+        try:
+            from app.models.automation import Automation
+            from app.services.automation_recipients import resolve_recipients
+            from app.services.automation_service import AutomationService
+
+            automation = (
+                self.db.query(Automation)
+                .filter(Automation.trigger_type == trigger_type, Automation.enabled.is_(True))
+                .order_by(Automation.created_at.asc())
+                .first()
+            )
+            if automation is None:
+                return None
+            config = AutomationService._normalize_recipient_config(automation.recipient_config)
+            context = {
+                "actor": _person(self.db, actor_user_id),
+                "raiser": _person(self.db, raiser_user_id),
+            }
+            recipients = resolve_recipients(self.db, config, context)
+            if not recipients:
+                return None
+            return recipients[0].get("name")
+        except Exception:  # noqa: BLE001 - a toast name is never load-bearing
+            return None
 
 
 # --------------------------------------------------------------- post-commit dispatch

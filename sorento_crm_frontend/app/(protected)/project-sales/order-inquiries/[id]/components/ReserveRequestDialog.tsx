@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { createOrderInquiryReserveRequest } from '../../../_shared/services/orderInquiryReserveService';
 
 /**
@@ -101,7 +102,9 @@ export function ReserveRequestDialog({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-sm font-medium">{row.item_code}</span>
                   <span className="text-xs text-muted-foreground">
-                    {row.delivery_date ? `Due ${row.delivery_date}` : 'No delivery date'}
+                    {row.delivery_date
+                      ? `Due ${formatDateInMalaysia(row.delivery_date)}`
+                      : 'No delivery date'}
                     {' - '}remaining {row.remaining}
                   </span>
                 </div>
@@ -116,7 +119,10 @@ export function ReserveRequestDialog({
                       value={requested[row.id] ?? remainingQty}
                       onChange={(event) => {
                         const raw = Number(event.target.value);
-                        const capped = Math.min(Math.max(raw || 0, 0), remainingQty);
+                        // Nit (review round): a typed 0 (or a blank field) can never be
+                        // sent - clamped up to 1, `min={1}` above's own floor, rather
+                        // than down to 0.
+                        const capped = Math.min(Math.max(raw || 1, 1), remainingQty);
                         setRequested((prev) => ({ ...prev, [row.id]: capped }));
                       }}
                     />

@@ -69,6 +69,20 @@ const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowled
 /** R1 (`PLAN-oi-request-cs-reserve.md`): only the CS head confirms a reserve. */
 const ORDER_INQUIRY_RESERVE_PERMISSION = 'projects.order_inquiries.reserve';
 
+/** BLOCKER B1 (reviewer fix round): `linked_qty` deliberately EXCLUDES a reserve-kind
+ * link (`links_for_rows`' own filter, `project_order_inquiry_service.py`: "a reserve
+ * link is not a PO or an SPO document ... `reserved_qty` is where it actually
+ * surfaces") - the row's TRUE remaining, the same arithmetic the backend's own
+ * `create_request` caps `qty_requested` against, subtracts BOTH. */
+function rowRemaining(row: OrderInquiryWorklistRow): number {
+  return (
+    Number(row.qty || '0') -
+    Number(row.linked_qty || '0') -
+    Number(row.reserved_qty || '0') -
+    Number(row.bundled_qty || '0')
+  );
+}
+
 /** AC-RS-23: why a selected row cannot be named on a "Request CS to reserve" ask - the
  * SAME rules the backend's own `create_request` enforces (3.2), read client-side off
  * the worklist row so the menu item can be gated and explained before the request is
@@ -80,9 +94,7 @@ function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
   if (!['raised', 'partly_linked'].includes(row.state)) {
     return 'not open for a reserve request';
   }
-  const remaining =
-    Number(row.qty || '0') - Number(row.linked_qty || '0') - Number(row.bundled_qty || '0');
-  if (remaining <= 0) {
+  if (rowRemaining(row) <= 0) {
     return 'has nothing left to request';
   }
   if (row.reserve_state === 'requested') {
@@ -230,8 +242,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     () =>
       selectedLines.map((line) => {
         const own = reserveDialogResolved[line.id];
-        const remaining =
-          Number(line.qty || '0') - Number(line.linked_qty || '0') - Number(line.bundled_qty || '0');
+        const remaining = rowRemaining(line);
         return {
           id: line.id,
           item_code: line.item_code ?? null,

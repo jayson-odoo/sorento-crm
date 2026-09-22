@@ -1220,26 +1220,50 @@ class OrderInquiryRelatedDocumentsOut(BaseModel):
 
 class ReserveRequestRowIn(BaseModel):
     """One order-inquiry row named on a request (3.2). `warehouse_id` omitted means the
-    pool of the row's own `stock_location` (R3)."""
+    pool of the row's own `stock_location` (R3).
 
-    row_id: str
+    N-2 (review round): `row_id`/`warehouse_id` are UUID-PATTERNED - a malformed value
+    reached a raw `.id.in_([...])` downstream and 500'd instead of 422."""
+
+    row_id: str = Field(..., pattern=UUID_PATTERN)
     qty_requested: str
-    warehouse_id: Optional[str] = None
+    warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
 
 
 class CreateReserveRequestIn(BaseModel):
     rows: List[ReserveRequestRowIn]
-    note: Optional[str] = None
+    #: N-4 (review round): an arbitrarily long note lands verbatim in an outgoing email
+    #: body / the worklist chip.
+    note: Optional[str] = Field(None, max_length=5000)
+
+    @model_validator(mode="after")
+    def _no_duplicate_rows(self) -> "CreateReserveRequestIn":
+        """N-2: the SAME `row_id` named twice in one CREATE payload used to write two
+        `OrderInquiryReserveRequestRow`s for one row, together requesting more than the
+        row's own remaining - refused here, before any write, same wording family as
+        the service's own "already has an open reserve request" (`reserve_request_
+        already_open`)."""
+        seen: set = set()
+        for row in self.rows:
+            if row.row_id in seen:
+                raise ValueError(
+                    f"Row {row.row_id} already has an open reserve request on this ask."
+                )
+            seen.add(row.row_id)
+        return self
 
 
 class ReserveAnswerRowIn(BaseModel):
     """Eling's own answer for one request row (3.3) - every row of the request must be
-    named in one call (AC-RS-9)."""
+    named in one call (AC-RS-9).
 
-    request_row_id: str
-    warehouse_id: Optional[str] = None
+    N-2/N-4 (review round): `request_row_id`/`warehouse_id` UUID-patterned; `reason`
+    capped the same way `note` is above, since it too lands in an outgoing email."""
+
+    request_row_id: str = Field(..., pattern=UUID_PATTERN)
+    warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     qty_reserved: str
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(None, max_length=2000)
 
 
 class ReserveRequestIn(BaseModel):

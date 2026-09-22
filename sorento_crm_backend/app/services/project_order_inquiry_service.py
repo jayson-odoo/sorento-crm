@@ -5541,11 +5541,19 @@ class ProjectOrderInquiryService:
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
             row.state = self._coverage_state(_dec(row.qty), linked, _dec(row.bundled_qty))
-            first = links[0] if links else None
-            # The FIRST link's document, by when it was made. `po_ref` has carried a PO
-            # number since section G and several readers still print it; it is a display of
-            # the links now, so it is restated here rather than left holding whatever the
-            # last single-line placement happened to set.
+            # The FIRST REAL document's own link, by when it was made - a reserve link
+            # (`document="Reserved @ BRW"`, `reserve_request_row_id` set) is not a PO or
+            # an SPO (PLAN-oi-request-cs-reserve.md, review round SF-1): skipped here so
+            # a row reserved before it is ever placed on a book does not read a fake
+            # `po_ref`. `po_number` (the worklist's own reader) already gets this right
+            # (`_PO_LINKED_QTY`/`links_for_rows` both filter on the real target column);
+            # this is the SAME rule applied to the row's own stored display.
+            first = next(
+                (link for link in links if link.reserve_request_row_id is None), None
+            )
+            # `po_ref` has carried a PO number since section G and several readers still
+            # print it; it is a display of the links now, so it is restated here rather
+            # than left holding whatever the last single-line placement happened to set.
             row.po_ref = first.document if first is not None else None
             row.po_line_id = first.po_line_id if first is not None else None
             row.spo_ref = (
