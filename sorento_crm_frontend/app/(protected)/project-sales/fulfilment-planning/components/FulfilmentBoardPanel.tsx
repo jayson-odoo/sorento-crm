@@ -135,8 +135,13 @@ const UNDO_REFUSAL_TITLES: Record<string, string> = {
  * there is room for one second line, and the refusal is the more urgent of the two. */
 const RECONSTRUCTED_UNDO_NOTE = 'Saved drafts and row notes are not restored';
 
-/** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
+/**
+ * The calendar control (PLAN 13.3, `date` added S1 PLAN-board-oi-mechanical-22sep.md, owner
+ * ruling 22 Sep 2026): exact date is the default, day/week/month stay available exactly as
+ * before.
+ */
 const GRANULARITY_OPTIONS = [
+  { value: 'date', label: 'By date' },
   { value: 'day', label: 'By day' },
   { value: 'week', label: 'By week' },
   { value: 'month', label: 'By month' },
@@ -146,10 +151,12 @@ const GRANULARITY_OPTIONS = [
  * The granularity a URL may name, and what an unknown one becomes.
  *
  * Guarded the way the server guards it: a link carrying `granularity=fortnightly` opens the
- * week board rather than asking for a cut nothing can produce. A hand-edited or stale link is
- * the normal case for a shareable URL, not an attack.
+ * date board rather than asking for a cut nothing can produce. A hand-edited or stale link is
+ * the normal case for a shareable URL, not an attack. `date` is also what an ABSENT param
+ * resolves to (AC-B1-1) - a link that already names a granularity keeps meaning what it said
+ * (AC-B1-5).
  */
-const GRANULARITIES: BoardGranularity[] = ['day', 'week', 'month'];
+const GRANULARITIES: BoardGranularity[] = ['date', 'day', 'week', 'month'];
 
 /**
  * What the vertical axis can be, and what the reader calls each one.
@@ -181,7 +188,7 @@ function rowAxisFrom(value: string | null): BoardRowAxis {
 function granularityFrom(value: string | null): BoardGranularity {
   return GRANULARITIES.includes(value as BoardGranularity)
     ? (value as BoardGranularity)
-    : 'week';
+    : 'date';
 }
 
 /**
@@ -296,7 +303,7 @@ export function FulfilmentBoardPanel({
   // `push`: turning a dial is not a place in history to go back to.
   React.useEffect(() => {
     const next = new URLSearchParams(searchParams.toString());
-    if (granularity === 'week') next.delete('granularity');
+    if (granularity === 'date') next.delete('granularity');
     else next.set('granularity', granularity);
     // Absent when it is the default, the same idiom as the granularity, so a link carries only
     // what the sender actually changed.

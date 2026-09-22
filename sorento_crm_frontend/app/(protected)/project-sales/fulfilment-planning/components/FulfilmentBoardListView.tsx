@@ -315,10 +315,26 @@ export function FulfilmentBoardListView({
                 : undefined,
         rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
+      // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13): the leftmost column, split out
+      // of the "Sales order" cell's own `(Line N)` suffix below - AutoCount's own line
+      // number, sortable on its own. The rows already ARRIVE in this order (`orderListRows`,
+      // `FulfilmentBoardPanel`'s own `listContributions`), so no `sorting` state is seeded
+      // here - the caller's own order IS the default (`PanelDataGrid`'s own contract).
+      {
+        id: 'line',
+        accessorFn: (row) => row.line_no,
+        header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
+        cell: ({ row }) => (
+          <span className="block tabular-nums">{row.original.line_no}</span>
+        ),
+        size: 70,
+        minSize: 60,
+        enableSorting: true,
+      },
       {
         id: 'so_number',
         accessorFn: (row) => row.so_number,
-        header: 'Sales order',
+        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           const body = (
@@ -336,20 +352,14 @@ export function FulfilmentBoardListView({
                     aria-hidden
                   />
                 )}
-                {/* ONE line, the line number folded in beside the sales order number
-                    (AC-C13, owner feedback 13 September 2026: "SOxxx (Line 1), so each row
-                    is thinner"). Two STACKED lines made every row two text lines tall for a
-                    fact that fits beside the first. Two spans rather than one string: the
-                    order number is what a reader scans for and what a search matches, and
-                    the line is a quieter qualifier of it. */}
+                {/* S6 (AC-B6-13/AC-B6-14): the number ONLY now - the line it carried
+                    (AC-C13) moved into its own leftmost column above, so repeating it here
+                    would say it twice on the same row. */}
                 <span
                   className="truncate text-sm font-medium tabular-nums"
-                  title={`${contribution.so_number} (Line ${contribution.line_no})`}
+                  title={contribution.so_number}
                 >
                   {contribution.so_number}
-                </span>{' '}
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {`(Line ${contribution.line_no})`}
                 </span>
                 {/* The same tick the grid puts on a fully-decided cell, here per row: one
                     row IS one contribution, so it is decided or it is not. */}
@@ -359,9 +369,17 @@ export function FulfilmentBoardListView({
               </div>
             </div>
           );
-          return contribution.sales_order_id ? (
+          // S6 (AC-B6-3/AC-B6-14): lands on this exact line of the sales order's own Lines
+          // tab. `line_id` is already the CORE sales-order line id (its own doc comment,
+          // `fulfilmentPlanning.types.ts`) - no backend change needed for this one.
+          const href = contribution.sales_order_id
+            ? `/scm/sales-orders/${contribution.sales_order_id}${
+                contribution.line_id ? `?tab=lines&line=${contribution.line_id}` : ''
+              }`
+            : null;
+          return href ? (
             <Link
-              href={`/scm/sales-orders/${contribution.sales_order_id}`}
+              href={href}
               onClick={(event) => event.stopPropagation()}
               className="block min-w-0 hover:underline"
             >
@@ -373,9 +391,8 @@ export function FulfilmentBoardListView({
         },
         size: 150,
         minSize: 120,
-        // `sortable` turns on to give the Verdict column below its own sort (AC-7); every
-        // OTHER column opts back out so the reading order nobody asked to change stays put.
-        enableSorting: false,
+        // Owner ruling, 22 Sep 2026: every column on this list sorts.
+        enableSorting: true,
         meta: {
           // The SAME editor the cell breakdown expands, so a decision reads and is taken
           // identically whichever way the planner came at the line - the per-location
@@ -405,7 +422,7 @@ export function FulfilmentBoardListView({
       {
         id: 'agent',
         accessorFn: (row) => row.agent_code ?? '',
-        header: 'Agent',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         cell: ({ row }) =>
           row.original.agent_code ? (
             <span
@@ -419,12 +436,12 @@ export function FulfilmentBoardListView({
           ),
         size: 110,
         minSize: 90,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'customer',
         accessorFn: (row) => row.customer_name ?? '',
-        header: 'Customer',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         cell: ({ row }) =>
           row.original.customer_name ? (
             <span className="block truncate" title={row.original.customer_name}>
@@ -435,12 +452,12 @@ export function FulfilmentBoardListView({
           ),
         size: 180,
         minSize: 130,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'product',
         accessorFn: (row) => row.item_code,
-        header: 'Product',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
           // AC-RL-06 amended (17 Sep, "beside the PRODUCT"), and the whole ladder since
           // AC-A1 to AC-A7: ONE word for how far this line's own inquiry has got, on every
@@ -475,12 +492,51 @@ export function FulfilmentBoardListView({
         },
         size: 140,
         minSize: 110,
-        enableSorting: false,
+        enableSorting: true,
+      },
+      // S6 (AC-B6-15): the live OI row this line raised, linking straight to it. A line
+      // with no live row - nothing raised, or the row it raised has since settled/gone -
+      // reads a plain dash, never a guess.
+      {
+        id: 'order_inquiry',
+        accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
+        cell: ({ row }) => {
+          const inquiry = row.original.order_inquiry;
+          if (!inquiry?.inquiry_no) return <span className="text-muted-foreground">-</span>;
+          // A row whose payload carries neither id - one raised before inquiries were
+          // numbered, or a header the join could not reach - is plain text rather than a
+          // link that lands nowhere in particular.
+          const href =
+            inquiry.inquiry_id && inquiry.row_id
+              ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`
+              : null;
+          if (!href) {
+            return (
+              <span className="block truncate tabular-nums" title={inquiry.inquiry_no}>
+                {inquiry.inquiry_no}
+              </span>
+            );
+          }
+          return (
+            <Link
+              href={href}
+              onClick={(event) => event.stopPropagation()}
+              className="block truncate tabular-nums text-primary hover:underline"
+              title={inquiry.inquiry_no}
+            >
+              {inquiry.inquiry_no}
+            </Link>
+          );
+        },
+        size: 120,
+        minSize: 100,
+        enableSorting: true,
       },
       {
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
-        header: 'Required date',
+        header: ({ column }) => <DataGridColumnHeader title="Required date" column={column} />,
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1">
             {row.original.required_date ? (
@@ -495,11 +551,13 @@ export function FulfilmentBoardListView({
         ),
         size: 130,
         minSize: 110,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'owed_qty',
-        accessorFn: (row) => row.qty_outstanding ?? row.qty,
+        // Numeric, not the raw string `qty_outstanding`/`qty` ride on - a lexicographic
+        // sort would put "20" ahead of "9" (owner ruling, 22 Sep 2026).
+        accessorFn: (row) => Number(row.qty_outstanding ?? row.qty ?? 0),
         // "To plan", not "Outstanding qty" - the 14 Sep 2026 ruling's own word for this
         // figure (the cell dialog's own subtitle already reads "N to plan"), and the word
         // AC-RS-42 names for the figure this column now also opens the Stock dialog from.
@@ -543,7 +601,7 @@ export function FulfilmentBoardListView({
         },
         size: 160,
         minSize: 140,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         // AC-D4: what the ENGINE said, in PLAN section 2's own words. Split off the old
@@ -551,8 +609,11 @@ export function FulfilmentBoardListView({
         // proposal on an undecided one - so the two could never be compared, which is the
         // one thing the planner opens this view to do.
         id: 'suggested',
-        accessorFn: () => '',
-        header: 'Suggested',
+        // Owner ruling, 22 Sep 2026: sorts on the SAME text the cell prints
+        // (`suggestedSortText` below), so the sort order and the words on screen can never
+        // disagree.
+        accessorFn: (row) => suggestedSortText(row),
+        header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           if (contribution.unplannable) {
@@ -586,12 +647,14 @@ export function FulfilmentBoardListView({
         },
         size: 240,
         minSize: 170,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'decided',
-        accessorFn: () => '',
-        header: 'Decided',
+        // Owner ruling, 22 Sep 2026: sorts on the SAME text the cell prints
+        // (`decidedSortText` below).
+        accessorFn: (row) => decidedSortText(row, draft[row.key] ?? null),
+        header: ({ column }) => <DataGridColumnHeader title="Decided" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           const drafted = draft[contribution.key] ?? null;
@@ -638,12 +701,12 @@ export function FulfilmentBoardListView({
         },
         size: 240,
         minSize: 170,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'rank',
         accessorFn: (row) => row.rank_score,
-        header: 'Rank',
+        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
         cell: ({ row }) =>
           row.original.covered || row.original.unplannable ? (
             <span className="text-muted-foreground">-</span>
@@ -654,7 +717,7 @@ export function FulfilmentBoardListView({
           ),
         size: 80,
         minSize: 70,
-        enableSorting: false,
+        enableSorting: true,
       },
       {
         id: 'verdict',
@@ -765,9 +828,7 @@ export function FulfilmentBoardListView({
       onExpandedChange={setExpanded}
       onRowClick={(row) => requestRow(row.key)}
       pageSize={25}
-      // AC-7: turns sorting on for the table so the Verdict column can offer it - every OTHER
-      // column opts back out above (`enableSorting: false`) so this is a change to Verdict
-      // alone, not a live control appearing on eight headers nobody asked to sort.
+      // Owner ruling, 22 Sep 2026: every column on this list sorts.
       sortable
       // AC-5, fix round 1: the banner's link names a ROW, not a page - `PanelDataGrid` jumps
       // to whichever page currently holds it, in its own sorted order, so a left-out line
@@ -799,4 +860,27 @@ export function FulfilmentBoardListView({
 /** Whether a Buy actually contributed to this composition (S3, R-Local). */
 function hasBuy(parts: SupplyPart[] | null): boolean {
   return Boolean(parts?.some((part) => part.kind === 'buy' && Number(part.qty) > 0));
+}
+
+/**
+ * The plain text the Suggested column's cell prints, shared with its own `accessorFn`
+ * (owner ruling, 22 Sep 2026: every column sorts) so the sort order can never disagree with
+ * the words on screen.
+ */
+function suggestedSortText(contribution: BoardContribution): string {
+  if (contribution.unplannable) return 'Needs a location';
+  const parts = contributionSuggestion(contribution);
+  if (!parts) return 'Not recorded';
+  return describeSupply(parts, contribution.fulfilment_location) || 'Nothing proposed';
+}
+
+/** The Decided column's own equivalent of `suggestedSortText` above. */
+function decidedSortText(contribution: BoardContribution, drafted: BoardDecision | null): string {
+  const parts = contributionDecision(contribution, drafted);
+  if (!parts) {
+    const inquiry = contributionInquiryDecision(contribution);
+    if (inquiry) return inquiry.inquiry_no ?? 'Unnumbered inquiry';
+    return 'Not decided';
+  }
+  return describeSupply(parts, contribution.fulfilment_location);
 }

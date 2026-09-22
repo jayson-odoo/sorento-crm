@@ -26,6 +26,11 @@ class SalesOrderLineInquiry(BaseModel):
     #: `OI-000123`. Null only on a row raised before inquiries were numbered.
     inquiry_no: Optional[str] = None
     state: str
+    # AC-B6-8 (`PLAN-board-oi-mechanical-22sep.md`, S6): addressing only, never
+    # rendered - the Order inquiry cell's own deep link resolves to
+    # `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`.
+    inquiry_id: Optional[str] = None
+    row_id: Optional[str] = None
 
 
 class SalesOrderLineSupplyComponent(BaseModel):

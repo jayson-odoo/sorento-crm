@@ -46,6 +46,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/sales-agents/lib/demandClass';
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
@@ -522,10 +523,13 @@ export function SalesOrderDetail({ id }: { id: string }) {
     value: lineSearchInput,
     setValue: setLineSearchInput,
     debouncedValue: lineSearch,
+    reset: resetLineSearch,
   } = useDebouncedSearch();
   // Kept in the URL, not component state (mirrors `ProductDetail`'s own `tab` param), so a
-  // bookmarked or shared link (`?tab=lines`) opens directly on that tab.
-  const tab = searchParams.get('tab') || 'general';
+  // bookmarked or shared link (`?tab=lines`) opens directly on that tab. S6 (AC-B6-3): a
+  // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
+  // line could ever be found on.
+  const tab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
   const handleTabChange = useCallback(
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -1133,14 +1137,29 @@ export function SalesOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => {
           const inquiry = row.original.order_inquiry;
           if (!inquiry) return <span className="text-muted-foreground">-</span>;
+          const reference = inquiry.inquiry_no ?? '-';
+          // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2): lands on this exact row of
+          // the inquiry. Plain text when the payload carries neither id - a row raised
+          // before inquiries were numbered - rather than a link that lands nowhere.
+          const href =
+            inquiry.inquiry_id && inquiry.row_id
+              ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`
+              : null;
           return (
             <div className="flex min-w-0 items-center gap-1.5">
-              <span
-                className="min-w-0 truncate tabular-nums"
-                title={inquiry.inquiry_no ?? ''}
-              >
-                {inquiry.inquiry_no ?? '-'}
-              </span>
+              {href ? (
+                <Link
+                  href={href}
+                  className="min-w-0 truncate tabular-nums font-medium text-primary hover:underline"
+                  title={reference}
+                >
+                  {reference}
+                </Link>
+              ) : (
+                <span className="min-w-0 truncate tabular-nums" title={reference}>
+                  {reference}
+                </span>
+              )}
               <OrderInquiryStatePill state={inquiry.state} />
             </div>
           );
@@ -1311,6 +1330,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
     enableColumnResizing: true,
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
+
+  // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-3/10/11/12): a link from the OI Lines
+  // tab / worklist's own "SO line" cell lands on this exact row (`?line=<id>`) - `row.id`
+  // IS the core sales-order line id `core_line_id` addresses.
+  const lineDeepLink = useTableDeepLinkHighlight(table, {
+    paramName: 'line',
+    rowId: (row: SalesOrderLine) => row.id,
+    currentSearch: lineSearch,
+    clearSearch: () => resetLineSearch(''),
+    enabled: !isLoading,
+  });
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the purchase-order and users screens do it.
@@ -1892,6 +1922,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
             // code change (AC-K1 failed on a live account for exactly this reason). A fresh
             // key means everyone reads R4's own order once, same as a first-time visitor.
             listingKey="scm.dashboard.view::sales-order-lines-v2"
+            rowAttributes={lineDeepLink.rowAttributes}
+            rowClassName={lineDeepLink.rowClassName}
           >
             <Card>
               <CardHeader className="flex-wrap gap-3">

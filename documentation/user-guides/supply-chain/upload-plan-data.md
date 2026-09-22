@@ -137,13 +137,19 @@ you open the page. Page number and the search box always start fresh.
 
 ### Columns
 
-The default column order mirrors the Excel order book: **SO date**, **S/O no**, **Item code**,
-**Qty**, **Delivery date**, **Customer**, **Project**, **Supplier**, **PO**, **SPO**, **Agent**,
-**Location**, **Order inquiry**, then the rest. **Customer** and **Project** sort independently
-of each other. A pre-order shows **PRE-ORDER** in the **Project** cell. Every row of one sales
-order now sits under one order inquiry number, so the **Order inquiry** column is hidden by
-default - open **Columns** in the toolbar and tick it to show it. If you have already
-personalised your own column order or visibility, yours is kept.
+The default column order mirrors the Excel order book: **SO date**, **S/O line**, **Item code**,
+**Qty**, **Taken**, **Remaining**, **Delivery date**, **Customer**, **Project**, **Supplier**,
+**PO**, **SPO**, **Agent**, **Location**, **Order inquiry**, then the rest. **S/O line** prints
+the sales order number and its line together, e.g. `SO402757 · L5`, and is a link straight to
+that exact line on the sales order (this column's own Excel export still heads it **S/O NO**, so
+a sheet you download stays lined up with the original order book). **Taken** is how much of the
+row's own quantity is already on a PO or SPO link; **Remaining** is Qty minus Taken, minus
+anything covered by an **Included with** companion (see below) - both print a dash on a notice
+row, and both read as nothing owed on a row whose sales order line is cancelled. **Customer** and
+**Project** sort independently of each other. A pre-order shows **PRE-ORDER** in the **Project**
+cell. Every row of one sales order now sits under one order inquiry number, so the **Order
+inquiry** column is hidden by default - open **Columns** in the toolbar and tick it to show it.
+If you have already personalised your own column order or visibility, yours is kept.
 
 ### The PO and SPO columns
 
@@ -212,6 +218,14 @@ A row **Included with** another item (a "supplied with" companion, like a seat c
 inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i) lists each of
 those items' own change instead - hover it for one line per item, e.g. "with SRTWCX8605-S-RL-PJ:
 Was 182 on 01/06/2026, now 280 on 01/03/2027".
+
+### A date move on a line already bought
+
+When the book moves a line's delivery date and you have already been asked to buy for that line,
+the row you already know is restated in place - the same row, never a second one. Its **Delivery
+date** carries a **Changed** tag, and its Qty **(i)** reads **Was** the old quantity and date, the
+same as any other changed row. Every PO/SPO link the row already held stays exactly as it was.
+Only a line with nothing bought for it yet gets an ordinary new row instead.
 
 ### A row on a cancelled line
 

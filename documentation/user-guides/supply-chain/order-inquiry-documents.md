@@ -74,12 +74,26 @@ Tabs, in order: **Lines**, **General**, **Related PO**, **Related SPO**. **Lines
 page opens on.
 
 **Lines** - one row per line: **Product** (the product code, nothing else - in Sorento the code
-is the product name), **Qty** (the same **(i)** you know from the worklist when a line's quantity
-or date changed), **Delivery date**, **Supplier**, **PO**, **SPO**, **Location**, **Instruction**,
-**State**. Cancelled lines are hidden, the same as on the worklist. A checkbox column lets you tick
-lines; a search box narrows by product; **Columns** lets you show or hide columns; the footer
-totals **Qty**. Clicking a **PO** or **SPO** number opens the same **Backing documents** lightbox
+is the product name), **SO line** (a link to that exact line on the sales order, e.g.
+`SO402757 · L5`), **Qty** (the same **(i)** you know from the worklist when a line's quantity or
+date changed), **Taken**, **Remaining**, **Delivery date**, **Supplier**, **PO**, **SPO**,
+**Location**, **Instruction**, **State**. Cancelled lines are hidden, the same as on the worklist.
+A checkbox column lets you tick lines; a search box narrows by product; **Columns** lets you show
+or hide columns, Taken and Remaining included; the footer totals **Qty**, **Taken** and
+**Remaining**. Clicking a **PO** or **SPO** number opens the same **Backing documents** lightbox
 as the worklist.
+
+**Taken** is how much of the line's own quantity is already on a PO or SPO link. **Remaining** is
+Qty minus Taken, minus anything already covered by an **Included with** companion (see [Upload
+the data a reorder plan is built from](upload-plan-data.md#the-order-inquiries-page)). Both print
+a dash on a row that is only a notice (not itself a buy), and both read as if nothing were owed -
+Remaining `0` - on a row on a cancelled sales order line or a cancelled row, which the footer
+leaves out entirely.
+
+When CS moves the date on a line you have already been asked to buy, the same row is restated in
+place - never a second row. You see a **Changed** tag beside the **Delivery date**, and the **(i)**
+on **Qty** reads what it was, for example "Was 100 on 01/11/2026". Every PO/SPO link the row
+already carried stays exactly as it was.
 
 **General** - an **Order** card (S/O no as a link, SO date, Agent, Project, Order type), a
 **Customer** card (Customer, Customer code), and a **Raise history** card: one entry per raise,
@@ -94,6 +108,18 @@ to show.
 **Related SPO** - the same, for shipping orders: **SPO no** (a link to that shipping order),
 **Supplier**, **Lines linked**, **Qty linked**, with a footer total. Reads "No SPOs linked yet"
 when there is nothing to show.
+
+### What the State column means
+
+**State** reads what you still need to do with the row, the same word wherever else it shows (the
+worklist, the board):
+
+* **To buy** - nothing bought for it yet.
+* **Partly on PO/SPO** - part of the quantity is on a purchase order or shipping order, part
+  isn't yet.
+* **On PO/SPO** - the whole quantity is on a purchase order or shipping order.
+* **Done** - you've actioned the row; there's nothing left to do.
+* **Cancelled** - the instruction was called off.
 
 ## Confirming
 
@@ -130,6 +156,28 @@ Outstanding order inquiries in that same order.
 
 The order inquiry handover, changed and undone emails, and the "Order inquiries" link on a sales
 order's own page, all now open straight to this order inquiry's detail page.
+
+## Admin: folding old duplicate date-move notices
+
+Read this only if you administer the CRM directly. Before date moves settled in place (see "A
+date change on a line you already asked purchasing to buy restates the same row", above), some
+order inquiries were left with a duplicate: a live buy row sitting beside a separate notice row
+saying the same date had moved. `scripts/fold_oi_date_notices.py` (run from `sorento_crm_backend/`)
+finds and folds every one of those pairs, once.
+
+1. Run it with no flags first - `venv/bin/python scripts/fold_oi_date_notices.py` - a dry run
+   (the default) that only prints what it would do: which order inquiry, which item, and which
+   buy row each notice would fold into. Nothing is written yet.
+2. Run it again with `--apply` to actually fold them: each notice's date moves onto its buy row
+   (with the old date kept as Was), and the notice itself is cancelled with a note saying it was
+   folded.
+3. Run the plain dry run one more time after `--apply`. A line that carried more than one
+   chained notice only shows its next one as fold-able once the one before it has actually been
+   folded, so a single dry-run-then-apply pass can still leave something to fold; a dry run
+   afterwards confirms there's nothing left (or shows what's next).
+
+The script is safe to re-run - a pair it already folded no longer matches, so running it again
+reports nothing for it.
 
 ## How you'll be notified
 
