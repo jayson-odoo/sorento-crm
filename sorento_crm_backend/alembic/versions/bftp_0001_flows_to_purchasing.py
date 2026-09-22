@@ -1,7 +1,7 @@
 """A brand can be marked as not flowing to purchasing
 
 Revision ID: bftp_0001_flows_to_purchasing
-Revises: 525_committed_v_orderback
+Revises: 526_chatbot_media_attach_type
 Create Date: 2026-09-23 00:00:00.000000
 
 `PLAN-brand-flows-to-purchasing.md` (owner ruling 22 Sep 2026, R4-R7). TP Enterprise is
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "bftp_0001_flows_to_purchasing"
-down_revision = "525_committed_v_orderback"
+down_revision = "526_chatbot_media_attach_type"
 branch_labels = None
 depends_on = None
 
