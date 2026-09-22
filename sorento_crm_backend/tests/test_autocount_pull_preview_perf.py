@@ -1053,3 +1053,113 @@ class TestDefaultUomResolvedOncePerBatch:
 
         uom_selects = _select_statements(calls, "units_of_measure")
         assert len(uom_selects) == 1, calls
+
+
+# ============================================== T9b/T15 (Group 4, fix round)
+class TestBulkCodePreloadCoversUnlinkedExistingProducts:
+    """T9 strengthened (reviewer kill test): the round-1 T9 only pins the
+    "already synced, resync" shape, where the origin preload ALSO answers
+    without a query. This is the "ref miss, code hit" shape - a product that
+    exists locally but was never actually linked - which is the one the
+    adopt branch's own code lookup exists for; without the code preload map
+    this costs 1 (batch) + 3 (per record) SELECTs instead of 1."""
+
+    def test_t9b_three_unlinked_existing_products_still_issue_one_code_select(self, db):
+        cat = ProductCategory(
+            category_code=unique_code(MARKER), category_name="cat", company_id=DEFAULT_COMPANY_ID
+        )
+        uom = UnitOfMeasure(
+            uom_code=unique_code(MARKER), uom_name="uom", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add_all([cat, uom])
+        db.flush()
+
+        products = []
+        for _ in range(3):
+            code = unique_code(MARKER)
+            product = Product(
+                product_code=code,
+                product_name=code,
+                description=f"{MARKER} description {code}",
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                list_price=Decimal("5.00"),
+                company_id=DEFAULT_COMPANY_ID,
+            )
+            db.add(product)
+            products.append(product)
+        db.commit()
+
+        rows = [
+            {
+                "source_ref": f"{MARKER}:{uuid.uuid4().hex[:8]}",
+                "code": p.product_code,
+                "name": p.product_code,
+                "description": p.description,
+                "list_price": "5.00",
+            }
+            for p in products
+        ]
+
+        with _capture_sql(db) as calls:
+            result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+                "products", rows
+            )
+
+        assert all(r.outcome is IngestOutcome.UPDATED for r in result.records), result.as_dict()
+        assert len(_code_resolution_selects(calls)) == 1, calls
+
+
+class TestBulkCodePreloadChunking:
+    """T15: with the chunk size forced down to 2, a 5-record batch still
+    preloads EVERY code (3 bulk SELECTs, ceil(5/2)) and issues zero
+    per-record code-resolution fallback queries."""
+
+    def test_t15_chunked_preload_covers_every_code_zero_per_record_selects(self, db, monkeypatch):
+        monkeypatch.setattr(MasterIngestService, "_PRELOAD_CHUNK_SIZE", 2)
+
+        cat = ProductCategory(
+            category_code=unique_code(MARKER), category_name="cat", company_id=DEFAULT_COMPANY_ID
+        )
+        uom = UnitOfMeasure(
+            uom_code=unique_code(MARKER), uom_name="uom", company_id=DEFAULT_COMPANY_ID
+        )
+        db.add_all([cat, uom])
+        db.flush()
+
+        products = []
+        for _ in range(5):
+            code = unique_code(MARKER)
+            product = Product(
+                product_code=code,
+                product_name=code,
+                description=f"{MARKER} description {code}",
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                list_price=Decimal("5.00"),
+                company_id=DEFAULT_COMPANY_ID,
+            )
+            db.add(product)
+            products.append(product)
+        db.commit()
+
+        rows = [
+            {
+                "source_ref": f"{MARKER}:{uuid.uuid4().hex[:8]}",
+                "code": p.product_code,
+                "name": p.product_code,
+                "description": p.description,
+                "list_price": "5.00",
+            }
+            for p in products
+        ]
+
+        with _capture_sql(db) as calls:
+            result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+                "products", rows
+            )
+
+        assert all(r.outcome is IngestOutcome.UPDATED for r in result.records), result.as_dict()
+        # ceil(5/2) = 3 chunked bulk SELECTs, and (the whole point) zero
+        # per-record fallback queries - every code was covered by the preload.
+        assert len(_code_resolution_selects(calls)) == 3, calls
