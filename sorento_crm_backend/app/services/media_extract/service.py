@@ -246,14 +246,29 @@ def build_image_result_body(
 ) -> dict[str, Any]:
     """The PLAN 3.5 result body for an image, including `rendered_text`.
 
-    `rendered_text` is what the far end patches into the queue item upstream of
-    `tf-message`, so it must read like something a customer typed - that is what
-    the parser is tuned on. PLAN 4.5's table, implemented:
+    `rendered_text` is what the engine now hands the parser directly (chatbot
+    media-into-turn, S2 - it used to be what n8n patched into the queue item
+    upstream of `tf-message`, back when a `needs_clarification` reading meant no
+    `/chat/turn` call ran at all and n8n answered blind). It must read like
+    something a customer typed either way - that is what the parser is tuned on.
+    PLAN 4.5's table, AMENDED 23 Sep 2026 (owner ruling, `rendered_text` is now
+    ALWAYS rendered - see below for why):
 
     | caption plus entities        | the caption with the raw strings appended |
-    | no caption                   | null, with `needs_clarification: true`    |
-    | unclear caption intent       | null, with `needs_clarification: true`    |
+    | no caption, entities read    | the raw strings alone                     |
+    | unclear caption intent       | the caption/raws exactly as above         |
     | nothing extracted            | the caption alone - today's behaviour      |
+
+    `needs_clarification` is still reported true in every one of the first three
+    rows - the customer's INTENT is still unclear and `clarification_message` is
+    still the confirmation text a caller may still want - but `rendered_text` no
+    longer goes null on it. Nulling it was right for the OLD n8n reply-arm (send
+    the clarification sentence, stop, no turn ever runs) and wrong once intake
+    moved inside the turn: a bare photo of codes, no caption, must still reach
+    the parser as "A, B" so the engine's `entities_only` arm can resolve them and
+    ask what to do with it (S3) - the alternative is the amnesia bug S2 exists to
+    fix, a photo that reaches `/chat/turn` during the n8n transition window with
+    a null `rendered_text` and nothing for `detect()`'s "_media" shape to carry.
 
     Only ENTITY raws are appended. Attributes have no hint, so `resolve-entity`
     cannot look them up and appending them would be noise in the parser's input;
@@ -284,10 +299,20 @@ def build_image_result_body(
         }
     )
 
+    raws = [entity.raw for entity in extraction.entities]
+    rendered_text = (
+        f"{caption_text}: {', '.join(raws)}"
+        if caption_text and raws
+        else ", ".join(raws)
+        if raws
+        else caption_text
+    )
+
     if needs_clarification:
-        # Nothing is rendered for the parser: guessing the intent on top of an
-        # imperfect reading stacks two silent failure modes, so the system asks.
-        body["rendered_text"] = None
+        # The intent is unclear (no caption, or one the model could not read),
+        # but there is still something to hand the parser whenever entities were
+        # read - never null just because the caller's own words were missing.
+        body["rendered_text"] = rendered_text
         body["clarification_message"] = wording.clarification(
             extraction.entities, extraction.attributes
         )
@@ -299,10 +324,7 @@ def build_image_result_body(
         body["confirmation_message"] = wording.nothing_read()
         return body
 
-    raws = [entity.raw for entity in extraction.entities]
-    body["rendered_text"] = (
-        f"{caption_text}: {', '.join(raws)}" if raws else caption_text
-    )
+    body["rendered_text"] = rendered_text
     confirmation = wording.confirmation(
         extraction.entities, extraction.attributes, extraction.conflicts
     )

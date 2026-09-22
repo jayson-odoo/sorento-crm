@@ -261,7 +261,21 @@ def run(
         )
 
     result = snapshot.get("result") or {}
-    rendered_text = result.get("rendered_text") or result.get("transcript") or ""
+    # `result` is the LIVE extractor's own body (`build_image_result_body` /
+    # `build_voice_result_body`, `media_extract/service.py`), whatever a real
+    # worker or (in a test harness) a stubbed `run_media_extraction` wrote into
+    # `job.result` - never a value this module invents. `rendered_text` should
+    # never be null here after the 23 Sep service.py fix (it is ALWAYS rendered
+    # whenever there is a caption or an entity to join), but the fallback below
+    # still joins the raws directly rather than ever handing the parser an empty
+    # string - belt, not the buckle, for a result shape this module does not own.
+    entities = result.get("entities") or []
+    raws_fallback = ", ".join(
+        e.get("raw") for e in entities if isinstance(e, dict) and e.get("raw")
+    )
+    rendered_text = (
+        result.get("rendered_text") or result.get("transcript") or raws_fallback or ""
+    )
     return MediaIntakeOutcome(
         modality=modality,
         decision=fast.decision,

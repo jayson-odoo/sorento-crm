@@ -98,15 +98,20 @@ def test_caption_plus_confident_entities_renders_caption_with_raws_appended():
     assert body["confirmation_message"] == confirmation(extraction.entities, [], [])
 
 
-def test_no_caption_renders_null_and_asks_even_when_the_model_said_otherwise():
-    """PLAN 4.5 row 2 - and the load-bearing part: `needs_clarification` is
-    forced True by the ABSENCE of a caption regardless of what the model's own
-    `needs_clarification` flag said (S4-08 is enforced in code, not trusted to
-    the prompt)."""
+def test_no_caption_still_renders_the_raws_and_asks_even_when_the_model_said_otherwise():
+    """PLAN 4.5 row 2, AMENDED 23 Sep 2026 (owner ruling, chatbot media-into-turn
+    S2): `rendered_text` is no longer nulled here - the engine now runs the turn
+    itself instead of n8n replying blind off `clarification_message` alone, and
+    a bare photo of codes with no caption must still reach the parser as the
+    raws joined, or the entities-only arm has nothing to resolve.
+    `needs_clarification` is still forced True by the ABSENCE of a caption
+    regardless of what the model's own `needs_clarification` flag said (S4-08 is
+    enforced in code, not trusted to the prompt) - the customer's INTENT is
+    still unclear even though there is now something to answer with."""
     extraction = MediaExtraction(entities=[_entity("SRTKS6647")], needs_clarification=False)
     body = build_image_result_body(extraction, caption=None, max_entities=10)
 
-    assert body["rendered_text"] is None
+    assert body["rendered_text"] == "SRTKS6647"
     assert body["needs_clarification"] is True
     assert body["confirmation_message"] is None
     assert body["clarification_message"] == clarification(extraction.entities, [])
@@ -115,14 +120,17 @@ def test_no_caption_renders_null_and_asks_even_when_the_model_said_otherwise():
     )
 
 
-def test_unclear_caption_intent_renders_null_and_asks():
-    """PLAN 4.5 row 3."""
+def test_unclear_caption_intent_still_renders_caption_and_raws_and_asks():
+    """PLAN 4.5 row 3, amended the same way as row 2 above: `rendered_text` is
+    the caption with the raws appended, same shape row 1's happy path renders -
+    only `needs_clarification`/`clarification_message` say the intent itself is
+    still unclear."""
     extraction = MediaExtraction(entities=[_entity("SRTKS6647")], needs_clarification=True)
     body = build_image_result_body(
         extraction, caption="hmm what is this", max_entities=10
     )
 
-    assert body["rendered_text"] is None
+    assert body["rendered_text"] == "hmm what is this: SRTKS6647"
     assert body["needs_clarification"] is True
     assert body["clarification_message"] is not None
 
