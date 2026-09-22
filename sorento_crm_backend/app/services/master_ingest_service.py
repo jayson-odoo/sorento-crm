@@ -275,8 +275,12 @@ class EntitySpec:
     # canonical payload -> column values (present fields only, D14). May raise
     # MissingReference. The fourth argument is a mutable warnings list the
     # builder may append fixed-vocabulary notices to (`category_created`, ...) -
-    # only `_product_columns` uses it today.
-    to_columns: Callable[[BaseModel, Session, str, list[str]], dict[str, Any]]
+    # only `_product_columns` uses it today. Loosely typed (`Callable[..., ...]`,
+    # not the fixed 4-arg shape every other builder keeps) because
+    # `_product_columns` alone takes a 5th, `ref_cache` (C2,
+    # `PLAN-autocount-pull-preview-perf.md`) - `_apply_scoped` passes it only
+    # for `entity_type == "products"`.
+    to_columns: Callable[..., dict[str, Any]]
     # The ORM model class the D18 writer upserts through, so audit, embedding
     # and CompanyScopedMixin listeners fire on flush.
     model: type
@@ -510,7 +514,7 @@ def _lookup_id(
 
 
 def _product_columns(
-    payload: Any, db: Session, company_id: str, warnings: list[str]
+    payload: Any, db: Session, company_id: str, warnings: list[str], ref_cache: dict
 ) -> dict[str, Any]:
     # D24 (captain 2026-09-06): `product_name` is ALWAYS the AutoCount item
     # code, matching the xlsx import's own convention (product_name = Item
@@ -535,7 +539,7 @@ def _product_columns(
         if not payload.category_code:
             raise MissingReference("category_code", "")
         category_id, created = product_rules.ensure_reference(
-            db, ProductCategory, payload.category_code, company_id
+            db, ProductCategory, payload.category_code, company_id, cache=ref_cache
         )
         if created:
             warnings.append("category_created")
@@ -544,19 +548,21 @@ def _product_columns(
     if "uom_code" in payload.model_fields_set:
         if payload.uom_code:
             uom_id, created = product_rules.ensure_reference(
-                db, UnitOfMeasure, payload.uom_code, company_id
+                db, UnitOfMeasure, payload.uom_code, company_id, cache=ref_cache
             )
             if created:
                 warnings.append("uom_created")
         else:
             # A blank uom_code resolves to the configured default, exactly as
             # `bulk_import_products` does for a row with no uom column value.
-            uom_id = product_rules.resolve_default_uom(db, company_id)
+            uom_id = product_rules.resolve_default_uom(db, company_id, cache=ref_cache)
         if uom_id:
             columns["base_uom_id"] = uom_id
 
     if "brand_code" in payload.model_fields_set and payload.brand_code:
-        brand_id, created = product_rules.ensure_reference(db, Brand, payload.brand_code, company_id)
+        brand_id, created = product_rules.ensure_reference(
+            db, Brand, payload.brand_code, company_id, cache=ref_cache
+        )
         if created:
             warnings.append("brand_created")
         columns["brand_id"] = brand_id
@@ -688,6 +694,12 @@ class MasterIngestService:
         # `_UNSET` (not `None`) distinguishes "never queried yet" from "queried
         # and there is no row" - a real, if unusual, state on a fresh install.
         self._settings_cache: Any = _UNSET
+        # C2 (`PLAN-autocount-pull-preview-perf.md`): `product_rules.
+        # ensure_reference` (category/uom/brand) results for this batch,
+        # keyed `(model, company_id, normalised code)` - see that function's
+        # own docstring for why only a FOUND id is ever cached. Same lifetime
+        # as `_settings_cache` (one instance = one batch), never cleared.
+        self._ref_cache: dict[tuple[type, Optional[str], str], str] = {}
 
     #: B3 (small-fix track, PLAN-autocount-pull-review.md): how often `on_progress` fires
     #: mid-batch. A full-size products preview is thousands of records; calling back on
@@ -861,7 +873,12 @@ class MasterIngestService:
         self, entity_type: str, spec: EntitySpec, payload: Any
     ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
         warnings: list[str] = []
-        columns = spec.to_columns(payload, self.db, self.company_id, warnings)
+        if entity_type == "products":
+            # C2: only the product builder resolves category/uom/brand
+            # references, so only it gets the per-batch cache.
+            columns = spec.to_columns(payload, self.db, self.company_id, warnings, self._ref_cache)
+        else:
+            columns = spec.to_columns(payload, self.db, self.company_id, warnings)
         _apply_not_null_defaults(entity_type, columns)
 
         # BL-056 (D15): `self.refs` is scoped to this anchor company, so a ref
@@ -967,10 +984,50 @@ class MasterIngestService:
         if "category_id" not in columns:
             raise MissingReference("category_code", "")
         if "base_uom_id" not in columns:
-            columns["base_uom_id"] = product_rules.resolve_default_uom(self.db, self.company_id)
+            columns["base_uom_id"] = product_rules.resolve_default_uom(
+                self.db, self.company_id, cache=self._ref_cache
+            )
+
+    #: C3: `_finalize_product_derived`'s own four columns, unioned onto
+    #: whatever `_read_product_row`'s caller already has in `columns` -
+    #: never the full 36-column row (`products` has more than the two callers
+    #: sharing this SELECT ever read - a first cut at this used `SELECT *`
+    #: and the clone measurement showed it costing MORE wall time than the
+    #: narrower two-query version it replaced: an extra ~28 columns'
+    #: worth of UUID/Decimal/timestamp deserialisation per row, paid on
+    #: every one of ~11,800 records, outweighed the one saved round trip on
+    #: localhost's near-zero latency).
+    _DERIVED_PRODUCT_COLUMNS = (
+        "is_discontinued",
+        "dimensions_length",
+        "dimensions_width",
+        "dimensions_height",
+    )
+
+    def _read_product_row(self, product_id: str, columns: dict[str, Any]) -> Optional[Any]:
+        """C3 (`PLAN-autocount-pull-preview-perf.md`, only built because C1+C2
+        alone missed the clone target): the ONE SELECT `_finalize_product_
+        derived` and `_diff` now share for an existing product, in place of
+        one query each - exactly the columns either of them will read
+        (`columns`' own keys, decided by which fields this payload set, plus
+        the four `_finalize_product_derived` always looks at), never wider.
+        """
+        selected = ", ".join(dict.fromkeys((*columns, *self._DERIVED_PRODUCT_COLUMNS)))
+        return (
+            self.db.execute(
+                text(f"SELECT {selected} FROM products WHERE id = :id"), {"id": product_id}
+            )
+            .mappings()
+            .first()
+        )
 
     def _finalize_product_derived(
-        self, payload: Any, columns: dict[str, Any], existing_row_id: Optional[str]
+        self,
+        payload: Any,
+        columns: dict[str, Any],
+        existing_row_id: Optional[str],
+        *,
+        row: Optional[Any] = None,
     ) -> None:
         """D2/D4/D24: `is_discontinued` and `dimensions_*` are both derived
         from `description` ONLY, never `name` - D24 (captain 2026-09-06)

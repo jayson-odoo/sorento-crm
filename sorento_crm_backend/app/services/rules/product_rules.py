@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.procurement import ProductSupplier, Supplier
 from app.services.rules.master_rules import (
     code_name_columns,
+    normalize_code,
     resolve_master_by_code,
     resolve_master_by_name,
 )
@@ -155,6 +156,7 @@ def ensure_reference(
     company_id: Optional[str],
     *,
     name: Optional[str] = None,
+    cache: Optional[dict] = None,
 ) -> tuple[str, bool]:
     """Resolve a master-data value, creating the row when it is unknown (D3).
 
@@ -169,14 +171,28 @@ def ensure_reference(
     when it actually made the row. `name` overrides the `code = name`
     convention on CREATE for the one reference whose human name is known
     (the bootstrapped `EA` / `Each` unit); matching is still by code then name.
+
+    `cache` (C2, `PLAN-autocount-pull-preview-perf.md`): an optional caller-
+    owned dict, keyed `(model, company_id, normalised code)`, that a batch
+    ingest (`MasterIngestService`) passes to skip the two SELECTs for a code
+    it has already resolved earlier in the SAME batch. Only a FOUND id is
+    ever written to it - a CREATE happens inside that record's own SAVEPOINT
+    and is rolled back whole if the record later fails (T6), so caching an id
+    this call just created would hand the next record a dead one. `None`
+    (every caller but the batch ingest) skips the cache entirely, unchanged.
     """
     value = (code or "").strip()
     if not value:
         raise ValueError("ensure_reference requires a non-blank code")
+    cache_key = (model, company_id, normalize_code(value)) if cache is not None else None
+    if cache is not None and cache_key in cache:
+        return cache[cache_key], False
     existing_id = resolve_master_by_code(db, model, value, company_id)
     if existing_id is None:
         existing_id = resolve_master_by_name(db, model, value, company_id)
     if existing_id is not None:
+        if cache is not None:
+            cache[cache_key] = existing_id
         return existing_id, False
     if len(value) > REF_CODE_MAX_LEN:
         raise ReferenceTooLong(
@@ -198,12 +214,23 @@ def ensure_reference(
     return new_id, True
 
 
-def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = None) -> Optional[str]:
+def resolve_default_uom(
+    db: Session,
+    company_id: Optional[str],
+    settings: Any = None,
+    *,
+    cache: Optional[dict] = None,
+) -> Optional[str]:
     """The unit a product takes when nobody states one - `system_settings.
     default_uom_id` when set, else `EA` (auto-created via `ensure_reference`
     when missing). Same fallback `product_service._get_default_uom_id` uses
     for the manual/xlsx channels, generalised for a caller (the ESB) that
-    passes a blank `uom_code` rather than omitting the column."""
+    passes a blank `uom_code` rather than omitting the column.
+
+    `cache` (C2): forwarded to `ensure_reference`'s own per-batch cache -
+    only reached on the `EA` fallback path, since a `configured` default is
+    validated and returned directly, never through `ensure_reference` at all.
+    """
     from app.models.product import UnitOfMeasure
     from app.models.user import SystemSetting
 
@@ -236,7 +263,7 @@ def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = 
         if query.first():
             return configured
     uom_id, _created = ensure_reference(
-        db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id, name=DEFAULT_UOM_NAME
+        db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id, name=DEFAULT_UOM_NAME, cache=cache
     )
     return uom_id
 
