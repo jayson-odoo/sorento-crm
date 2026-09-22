@@ -5,6 +5,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import {
   createReorderRun,
+  getCandidateOrders,
   getCustomerOrders,
   getBuyRecommendationsForCash,
   getCoveredRecommendations,
@@ -375,6 +376,50 @@ describe('reorderRunService - getCustomerOrders (AC-4.1)', () => {
     await expect(
       getCustomerOrders('run-1', 'prod-1', 'wholesale', 'none'),
     ).rejects.toThrow('Unknown segment.');
+  });
+});
+
+describe('reorderRunService - getCandidateOrders (AC-RF-1/7, PLAN-reorder-plan-raised-filter)', () => {
+  it('sends raised_from/raised_to as query params alongside from/to', async () => {
+    apiFetch.mockResolvedValue(ok([]));
+
+    await getCandidateOrders({
+      from: '2026-08-01',
+      to: '2026-10-31',
+      raised_from: '2026-09-17',
+      raised_to: '2026-09-18',
+    });
+
+    const u = calledUrl();
+    expect(u.pathname).toBe('/api/v1/scm/reorder-runs/candidate-orders');
+    expect(u.searchParams.get('from')).toBe('2026-08-01');
+    expect(u.searchParams.get('to')).toBe('2026-10-31');
+    expect(u.searchParams.get('raised_from')).toBe('2026-09-17');
+    expect(u.searchParams.get('raised_to')).toBe('2026-09-18');
+  });
+
+  it('omits raised_from/raised_to entirely when neither is set (unchanged request shape)', async () => {
+    apiFetch.mockResolvedValue(ok([]));
+
+    await getCandidateOrders({});
+
+    const u = calledUrl();
+    expect(u.search).toBe('');
+  });
+
+  it("returns each order's rows_raised_in_window untouched (response_model can silently drop a field)", async () => {
+    apiFetch.mockResolvedValue(
+      ok([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 5, rows_in_range: 5, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-10',
+        },
+      ]),
+    );
+
+    const rows = await getCandidateOrders({});
+    expect(rows[0].rows_raised_in_window).toBe(2);
   });
 });
 

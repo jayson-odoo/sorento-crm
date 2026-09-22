@@ -243,6 +243,10 @@ class CandidateOrder(BaseModel):
     rows_total: int = 0
     rows_in_range: int = 0
     rows_awaiting: int = 0
+    # PLAN-reorder-plan-raised-filter.md, 22 Sep 2026: rows in `raised_from`/`raised_to`
+    # by their first upload day (`order_inquiry_rows.created_at`) - the book carries no
+    # raise date of its own (owner ruling R1).
+    rows_raised_in_window: int = 0
     first_delivery: Optional[str] = None
     last_delivery: Optional[str] = None
 

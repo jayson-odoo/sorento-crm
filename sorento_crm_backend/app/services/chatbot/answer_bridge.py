@@ -292,6 +292,12 @@ def _crossdomain_offer_pending(
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return None
     team = block.get("team")
+    # SRTSC07 review round 2, item 3 (agent) / round 4 (brand, owner-approved, same
+    # reason): deliberately UNSTAMPED, both axes. `team` above comes off the
+    # cross-domain RUNG's own render block, not off this turn's `routing`/`gate` at
+    # all (this function takes neither as a parameter to read one from) - there is
+    # no "this turn's agent" or "this turn's brand" to stamp here, so the carry
+    # falls through to the default chain exactly as it did before either fix.
     return pending.ask(
         "team_pick",
         [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
@@ -420,6 +426,18 @@ def apply_silent_company_offer(
             team=raw_team,
             asked_at_turn=asked_at_turn,
             expects="yes_no",
+            # SRTSC07 review round 2, item 3: `raw_team` is already THIS turn's own
+            # `routing.suggested_team`, so the agent half rides beside it on the
+            # pending's top-level payload, the same as `_miss_question`'s own
+            # bare-"Yes"/company-clarify arms - a bare "yes" over this offer answers
+            # it without a position. `brand_code` (round 4, owner-approved) is the
+            # SAME turn-level idiom, off the `gate` this function already takes as a
+            # parameter - never the option's OWN `brand_code` above, which stays
+            # `None` for the SILENT company (reviewer SF-3, unchanged).
+            payload={
+                "agent": (routing or {}).get("suggested_agent"),
+                "brand_code": gate.get("routing_brand") if isinstance(gate, Mapping) else None,
+            },
         )
         from dataclasses import replace
 
@@ -927,6 +945,15 @@ def _miss_question(
     option` always prefers a row's own `idx` over the position it is called with)."""
     routing = (parser or {}).get("routing") or {}
     team = routing.get("suggested_team")
+    # SRTSC07 (prod transcript, 22 Sep 2026): carried onto the pending beside `team`, so
+    # the acceptance turn's `(agent_code, team_code)` pair reaches `/external/
+    # next-assignee` intact - the pair it resolves a pool by - instead of the acceptance
+    # turn's own null `suggested_agent` falling to `DEFAULT_SUGGESTED_AGENT`.
+    agent = routing.get("suggested_agent")
+    # Round 4 (owner-approved, 22 Sep 2026): this turn's own resolved brand, off the
+    # SAME gate this function already takes as a parameter - `lanes/business/
+    # gate.py::run_gate`'s own `routing_brand`.
+    brand = gate.get("routing_brand") if isinstance(gate, Mapping) else None
 
     # The did-you-mean roster (`build_suggest_offer`'s D1/D2/D3 arms all populate
     # `suggest_last_result_set`). The require-specific PICKER (F6/AC-1701) is a FOURTH
@@ -979,7 +1006,12 @@ def _miss_question(
                 roster_options + member_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+                payload={
+                    "domain": (parser or {}).get("domain_hint"),
+                    "escalate_offered": True,
+                    "agent": agent,
+                    "brand_code": brand,
+                },
             )
 
     member = producers.get("build-cs-member-offer")
@@ -991,7 +1023,15 @@ def _miss_question(
             if option
         ]
         if options:
-            return pending.ask("member_offer", options, asked_at_turn=asked_at_turn)
+            # SRTSC07 review round 1, SHOULD-2: the member roster's own offer needed
+            # the same top-level stamp as the other mint sites in this function -
+            # picking a member option IS an escalation acceptance (`turn/apply.py:546`).
+            return pending.ask(
+                "member_offer",
+                options,
+                asked_at_turn=asked_at_turn,
+                payload={"agent": agent, "brand_code": brand},
+            )
 
     if roster_options:
         # AC-1691's umbrella, "in any domain and for any entity kind" - the SAME guard
@@ -1004,7 +1044,12 @@ def _miss_question(
                 roster_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+                payload={
+                    "domain": (parser or {}).get("domain_hint"),
+                    "escalate_offered": True,
+                    "agent": agent,
+                    "brand_code": brand,
+                },
             )
 
     catalog = producers.get("escalate-catalog")
@@ -1042,6 +1087,13 @@ def _miss_question(
                 team=team,
                 asked_at_turn=asked_at_turn,
                 expects="yes_no",
+                # SRTSC07: the company clarify's own bare "yes" (no numbered pick) is
+                # answered by the generic accept arm, so this offer's top-level
+                # `payload["agent"]` is what the acceptance carry reads. `brand_code`
+                # (round 4) is the SAME turn-level idiom, one axis over - never the
+                # per-option `brand_code` two lines up, which is that SPECIFIC
+                # company's own and stays untouched.
+                payload={"agent": agent, "brand_code": brand},
             )
         return pending.ask(
             "team_pick",
@@ -1049,6 +1101,7 @@ def _miss_question(
             team=team,
             asked_at_turn=asked_at_turn,
             expects="yes_no",
+            payload={"agent": agent, "brand_code": brand},
         )
     return None
 

@@ -346,6 +346,10 @@ export interface CandidateOrder {
   rows_total: number;
   rows_in_range: number;
   rows_awaiting: number;
+  /** Rows raised (first uploaded, `order_inquiry_rows.created_at`) inside
+   *  `raised_from`/`raised_to` (`reorder-plan-raised-filter`, 22 Sep 2026). Equals
+   *  `rows_total` when no raise window is set. */
+  rows_raised_in_window: number;
   first_delivery: string | null;
   last_delivery: string | null;
 }
@@ -354,17 +358,22 @@ export interface CandidateOrder {
  * Every open project sales order with an Order Inquiry row - the option list for Start
  * Plan's Orders field. `from`/`to` narrow `rows_in_range` to the same date rule the run
  * itself applies (an omitted bound is open); omitted entirely returns every open project
- * SO with `rows_in_range === rows_total`.
+ * SO with `rows_in_range === rows_total`. `raised_from`/`raised_to` narrow
+ * `rows_raised_in_window` the same way, by the row's first upload day.
  *
- * GET /api/v1/scm/reorder-runs/candidate-orders?from=&to=
+ * GET /api/v1/scm/reorder-runs/candidate-orders?from=&to=&raised_from=&raised_to=
  */
 export async function getCandidateOrders(params: {
   from?: string;
   to?: string;
+  raised_from?: string;
+  raised_to?: string;
 }): Promise<CandidateOrder[]> {
   const qs = new URLSearchParams();
   if (params.from) qs.set('from', params.from);
   if (params.to) qs.set('to', params.to);
+  if (params.raised_from) qs.set('raised_from', params.raised_from);
+  if (params.raised_to) qs.set('raised_to', params.raised_to);
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   const res = await apiFetch(`/api/v1/scm/reorder-runs/candidate-orders${suffix}`);
   if (!res.ok) {
