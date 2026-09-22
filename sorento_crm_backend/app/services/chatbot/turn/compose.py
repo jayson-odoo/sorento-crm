@@ -605,3 +605,70 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)
+
+
+def _join_words_and(items: list[str]) -> str:
+    """"a", "a and b", "a, b and c" - the same shape `media_extract.wording.join_
+    phrase` uses, copied rather than imported (`turn/` reads no module outside its
+    own package and `contracts.py`). NOT `_join_words` above: that one joins on
+    "or" for the rung-fallback list ("Nothing on X or Y either.") - a distinct
+    word for a distinct grammar, not a formatting variant of the same one."""
+    values = [item for item in items if item]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " and " + values[-1]
+
+
+def entities_only_reply(
+    placed: list[str], unplaced: list[str], *, from_photo: bool, media_prefixed: bool = False
+) -> str:
+    """S3 (PLAN-chatbot-media-into-turn.md): the entities-only arm's own deterministic
+    reply (AC-1824/AC-1825) - never an LLM, never a roster. `placed`/`unplaced` are the
+    raw tokens as typed or read, in the order the message named them.
+
+    `media_prefixed`, true on a photo-sourced turn, drops this function's OWN "I read
+    ..." lead: `engine.py`'s reply-prefix wrapper (AC-1817, the SAME sentence shape,
+    the intake's own raws) already supplies it for every media turn, and printing it
+    twice would violate AC-1820 ("the prefix appears exactly once"). A typed turn
+    carries no such wrapper, so it stays self-contained.
+
+    Review round B1(a): nothing PLACED is its own case, not "I have ." with an empty
+    join - a photo where every code missed says so up front ("I could not match any
+    product code in that photo."); a typed message with nothing placed says try again,
+    since "What would you like me to know?" has nothing left to be about.
+
+    Browser pass follow-up: the "I could not match..." lead is ALSO gated on
+    `media_prefixed`, exactly like the placed branch below - a LIVE photo outcome
+    already told the customer what was read ("I read X from that photo.", via the
+    engine's own reply-prefix wrapper), so this arm claiming "I could not match ANY
+    product code" on top of that would contradict what the wrapper just said. Only
+    the `patched_upstream` case (no live outcome, no wrapper prefix at all) still
+    needs this arm's own lead to say anything was a photo in the first place.
+    """
+    if not placed:
+        parts: list[str] = []
+        if from_photo and not media_prefixed:
+            parts.append("I could not match any product code in that photo.")
+        if unplaced:
+            parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+        parts.append(
+            "What would you like me to do with it?" if from_photo else "Ask again with the correct code."
+        )
+        return " ".join(parts)
+
+    parts = []
+    if not media_prefixed:
+        lead = (
+            f"I read {_join_words_and(placed)} from that photo."
+            if from_photo
+            else f"I have {_join_words_and(placed)}."
+        )
+        parts.append(lead)
+    if unplaced:
+        parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+    parts.append(
+        "What would you like me to do with it?" if from_photo else "What would you like me to know?"
+    )
+    return " ".join(parts)

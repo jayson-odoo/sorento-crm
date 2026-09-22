@@ -211,6 +211,21 @@ function StagesSection({ stages }: { stages: TurnDetail['stages'] }) {
           ) : stage.summary ? (
             <p className="mt-1 text-muted-foreground">{stage.summary}</p>
           ) : null}
+          {/* Browser pass, chatbot media-into-turn: the same flattened facts
+              TurnPanel's own inline StageRow prints - a media turn's `media_intake`
+              stage carries modality/decision/entities/attributes/notes here. */}
+          {Object.keys(stage.facts ?? {}).length > 0 && (
+            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5">
+              {Object.entries(stage.facts ?? {}).map(([key, value]) => (
+                <div key={key} className="contents">
+                  <dt className="text-muted-foreground">{key.replace(/_/g, ' ')}</dt>
+                  <dd className="min-w-0 truncate" title={String(value)}>
+                    {String(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </li>
       ))}
     </ol>
