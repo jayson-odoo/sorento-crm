@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -124,6 +126,52 @@ def test_list_column_config_upsert_and_reset(api_client):
     r4 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
     assert r4.status_code == 200
     assert r4.json()['config'] is None
+
+
+def test_list_column_config_page_size_merges_with_existing_column_order(api_client):
+    """PLAN-listing-page-size-memory Red 7: PUT { pageSize } merges into a row that
+    already carries columnOrder; GET returns both."""
+    client, current_user, db = api_client
+
+    perm_slug = 'test.pagesize.view'
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug=perm_slug, role_id='r1')
+
+    listing_key = f'{perm_slug}::pgsz-{uuid.uuid4().hex[:8]}'
+
+    r1 = client.put(
+        f'/api/v1/list-query/column-config/{listing_key}',
+        json={'version': 1, 'columnOrder': ['name', 'status']},
+    )
+    assert r1.status_code == 200
+    assert r1.json()['config']['columnOrder'] == ['name', 'status']
+
+    r2 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json={'pageSize': 50})
+    assert r2.status_code == 200
+    assert r2.json()['config']['pageSize'] == 50
+    assert r2.json()['config']['columnOrder'] == ['name', 'status']
+
+    r3 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
+    assert r3.status_code == 200
+    assert r3.json()['config']['pageSize'] == 50
+    assert r3.json()['config']['columnOrder'] == ['name', 'status']
+
+
+def test_list_column_config_page_size_rejects_unlisted_value(api_client):
+    """PLAN-listing-page-size-memory Red 8: a pageSize outside 25/50/100 is a 422,
+    and writes nothing."""
+    client, current_user, db = api_client
+
+    perm_slug = 'test.pagesize.view'
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug=perm_slug, role_id='r1')
+
+    listing_key = f'{perm_slug}::pgsz-{uuid.uuid4().hex[:8]}'
+
+    r1 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json={'pageSize': 33})
+    assert r1.status_code == 422
+
+    r2 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
+    assert r2.status_code == 200
+    assert r2.json()['config'] is None
 
 
 def test_list_column_config_denied_without_permission(api_client):
