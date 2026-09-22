@@ -158,13 +158,33 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
   };
 });
 
+const getReserveRequestsMock = vi.fn(async () => [OPEN_REQUEST]);
 vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
   createOrderInquiryReserveRequest: vi.fn(async () => ({
     id: 'rr-2', ordinal: 2, first_to_name: 'Eling',
   })),
-  getOrderInquiryReserveRequests: vi.fn(async () => [OPEN_REQUEST]),
+  getOrderInquiryReserveRequests: (...args: unknown[]) =>
+    getReserveRequestsMock(...(args as [string])),
   reserveOrderInquiryRow: vi.fn(async () => ({ id: 'reqrow-1' })),
   unreserveOrderInquiryRow: vi.fn(async () => ({ id: 'reqrow-1' })),
+}));
+
+// Re-review finding 1 (captain ruling, 23 Sep): `unreserveControl.start` parks a
+// deferred action - mocked here (not exercised in the rest of this file) so the
+// anchor test below can assert the exact `request_id` it parks with.
+const createPendingActionSpy = vi.fn(async ({ entityId }: { entityId: string }) => ({
+  id: `pa-${entityId}`,
+  action_key: 'order_inquiry_reserve_row.unreserve',
+  entity_type: 'order_inquiry_reserve_row',
+  entity_id: entityId,
+  commit_at: new Date(Date.now() + 10_000).toISOString(),
+  window_seconds: 10,
+}));
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) =>
+    createPendingActionSpy(...(args as [{ entityId: string }])),
+  cancelPendingAction: vi.fn(async () => undefined),
+  getCurrentPendingAction: vi.fn(async () => ({ pending: null, last_outcome: null })),
 }));
 
 import { OrderInquiryDetail } from './OrderInquiryDetail';
@@ -183,6 +203,7 @@ function renderDetail() {
 beforeEach(() => {
   vi.clearAllMocks();
   searchParamsValue = '';
+  getReserveRequestsMock.mockResolvedValue([OPEN_REQUEST]);
 });
 
 /** The grid TABLE row for an item code, never a stray match elsewhere on the page (the
@@ -263,5 +284,79 @@ describe('AC-RS-62: ?reserve=<request_id> auto-opens the dialog on the first ope
     await screen.findAllByText('ZZT-REQUESTED');
     const requestedRow = gridRowFor('ZZT-REQUESTED');
     expect(requestedRow.querySelector('[aria-label="Reserve"]')).toBeInTheDocument();
+  });
+});
+
+describe('Re-review finding 1 (captain ruling, 23 Sep): Unreserve is reachable and anchored on the request that still holds the link', () => {
+  const REQUEST_WITH_LINK = {
+    id: 'rr-with-link',
+    order_inquiry_id: 'oi-1',
+    ordinal: 1,
+    state: 'reserved' as const,
+    requested_by: 'user-1',
+    requested_by_name: 'Joey',
+    requested_at: '2026-09-20T09:00:00',
+    note: null,
+    reserved_by_name: 'Eling',
+    reserved_at: '2026-09-20T10:00:00',
+    cancelled_at: null,
+    first_to_name: null,
+    rows: [
+      {
+        id: 'reqrow-with-link',
+        row_id: 'row-reserved',
+        item_code: 'ZZT-RESERVED',
+        qty_requested: '50',
+        warehouse_id: 'wh-1',
+        location: 'BRW',
+        qty_reserved: '50',
+        reason: null,
+      },
+    ],
+  };
+  const REQUEST_ANSWERED_ZERO = {
+    id: 'rr-answered-zero',
+    order_inquiry_id: 'oi-1',
+    ordinal: 2,
+    state: 'reserved' as const,
+    requested_by: 'user-1',
+    requested_by_name: 'Joey',
+    requested_at: '2026-09-21T09:00:00',
+    note: null,
+    reserved_by_name: 'Eling',
+    reserved_at: '2026-09-21T10:00:00',
+    cancelled_at: null,
+    first_to_name: null,
+    rows: [
+      {
+        id: 'reqrow-zero',
+        row_id: 'row-reserved',
+        item_code: 'ZZT-RESERVED',
+        qty_requested: '10',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: '0',
+        reason: 'nothing left',
+      },
+    ],
+  };
+
+  it('is reachable via Unreserve even when the highest-ordinal request was answered 0, and parks against the request that still holds the reserve', async () => {
+    getReserveRequestsMock.mockResolvedValue([REQUEST_WITH_LINK, REQUEST_ANSWERED_ZERO]);
+
+    renderDetail();
+    await screen.findByText('ZZT-RESERVED');
+
+    const reservedRow = gridRowFor('ZZT-RESERVED');
+    fireEvent.click(reservedRow.querySelector('[aria-label="Reserve"]') as Element);
+
+    await screen.findByRole('tab', { name: /reserve/i });
+    fireEvent.click(await screen.findByRole('button', { name: /^unreserve$/i }));
+    fireEvent.change(await screen.findByLabelText(/qty/i), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: /^unreserve$/i }));
+
+    await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
+    const [call] = createPendingActionSpy.mock.calls[0] as [{ payload: { request_id: string } }];
+    expect(call.payload.request_id).toBe('rr-with-link');
   });
 });

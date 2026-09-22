@@ -306,6 +306,54 @@ describe('F5: Unreserve is its own action, offered only once nothing is left ope
     expect(screen.queryByLabelText(/qty/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^unreserve$/i })).not.toBeInTheDocument();
   });
+
+  it('reviewer nit N2: the form does not reappear pre-filled once the countdown clears', async () => {
+    const { rerender } = renderDialog({ openRequest: null, netReservedQty: '50' });
+    const rerenderWith = (unreserveControl: React.ComponentProps<typeof ReserveRowDialog>['unreserveControl']) =>
+      rerender(
+        <ReserveRowDialog
+          open
+          onOpenChange={vi.fn()}
+          rowId="row-1"
+          itemCode="B2155-NL-BLUE"
+          openRequest={null}
+          history={historyFixture() as never}
+          locationOptions={[]}
+          defaultLocationId={null}
+          availableQtyByLocation={{}}
+          netReservedQty="50"
+          canAct
+          onReserve={onReserveSpy as never}
+          onConfirmed={vi.fn()}
+          unreserveControl={unreserveControl}
+        />,
+      );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^unreserve$/i }));
+    fireEvent.change(await screen.findByLabelText(/qty/i), { target: { value: '20' } });
+    fireEvent.change(screen.getByLabelText(/note/i), { target: { value: 'transferred back' } });
+
+    // The countdown starts (the caller's own `start()` parked it) - the SAME shape
+    // the test above already pins, reached here through a prop change rather than a
+    // real click so the qty/note the reader typed is still asserted gone afterwards.
+    rerenderWith({
+      isPending: true,
+      isBlocked: false,
+      countdown: <div data-testid="unreserve-countdown">Unreserving in 5s</div>,
+      start: unreserveStartSpy,
+    });
+    expect(await screen.findByTestId('unreserve-countdown')).toBeInTheDocument();
+
+    // The window lapses - `pending` clears, the caller's own `onCommitted` refetches
+    // (`OrderInquiryDetail.tsx`) and this prop settles back to idle.
+    rerenderWith(idleUnreserveControl());
+
+    const reopened = await screen.findByRole('button', { name: /^unreserve$/i });
+    fireEvent.click(reopened);
+
+    expect((await screen.findByLabelText(/qty/i)) as HTMLInputElement).toHaveValue(null);
+    expect(screen.getByLabelText(/note/i)).toHaveValue('');
+  });
 });
 
 describe('read-only without the reserve permission (AC-RS-62 half)', () => {

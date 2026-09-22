@@ -463,6 +463,248 @@ def test_unreserve_endpoint(reserve_api, monkeypatch):
 
 
 # --------------------------------------------------------------------------------- #
+# Re-review finding 1 (captain ruling, 23 Sep): unreserve is scoped to the LINE,     #
+# not to the one request row named in the URL - a row can hold reserve links from   #
+# several requests (R5), and `{request_id}` is the access anchor only, never the    #
+# release's own scope. Newest request first (ordinal desc), then newest link first  #
+# (created_at desc); the bound named in a 422 is the row's own AGGREGATE net across  #
+# every link it still carries, not the one link tied to the request named in the    #
+# URL.                                                                               #
+# --------------------------------------------------------------------------------- #
+
+
+def test_unreserve_via_one_request_releases_the_newest_link_first_across_requests(reserve_api):
+    """Two requests on ONE row: #1 reserves 30, #2 reserves 20 (#2 is the newer
+    ordinal). Unreserving 35 via #2's own URL must consume #2's own link FIRST (it
+    is the newest) - fully, since it only holds 20 - then fall through to #1's link
+    for the remaining 15, never refuse for want of "35 > #2's own 20"."""
+    client, world = reserve_api
+    row = _open_row(world, qty="60")
+
+    first = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "30"}]}
+    )
+    assert first.status_code == 201, first.text
+    world.db.commit()
+    first_request_id = first.json()["id"]
+    reserved_first = client.post(
+        ROW_RESERVE_URL(first_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "30"},
+    )
+    assert reserved_first.status_code == 200, reserved_first.text
+    world.db.commit()
+
+    second = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "20"}]}
+    )
+    assert second.status_code == 201, second.text
+    world.db.commit()
+    second_request_id = second.json()["id"]
+    reserved_second = client.post(
+        ROW_RESERVE_URL(second_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "20"},
+    )
+    assert reserved_second.status_code == 200, reserved_second.text
+    world.db.commit()
+
+    # A bound above the row's own AGGREGATE (30 + 20 = 50) is refused, naming 50 -
+    # never the 20 sitting on #2's own link alone.
+    over = client.post(ROW_UNRESERVE_URL(second_request_id, row.id), json={"qty": "51"})
+    assert over.status_code == 422, over.text
+    assert "50" in over.text, f"the 422 must name the row's own AGGREGATE, not #2's own 20: {over.text}"
+
+    released = client.post(ROW_UNRESERVE_URL(second_request_id, row.id), json={"qty": "35"})
+    assert released.status_code == 200, released.text
+    world.db.commit()
+
+    from app.models.project_so import OrderInquiryReserveRequestRow
+
+    first_request_row = (
+        world.db.query(OrderInquiryReserveRequestRow)
+        .filter(
+            OrderInquiryReserveRequestRow.request_id == first_request_id,
+            OrderInquiryReserveRequestRow.row_id == row.id,
+        )
+        .one()
+    )
+    second_request_row = (
+        world.db.query(OrderInquiryReserveRequestRow)
+        .filter(
+            OrderInquiryReserveRequestRow.request_id == second_request_id,
+            OrderInquiryReserveRequestRow.row_id == row.id,
+        )
+        .one()
+    )
+    world.db.expire_all()
+
+    assert (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == second_request_row.id)
+        .count()
+        == 0
+    ), "#2's own link (the newest) must be gone - fully consumed first"
+
+    first_link = (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == first_request_row.id)
+        .one()
+    )
+    assert first_link.qty == Decimal("15"), (
+        f"#1's link must carry the REMAINDER (30 - 15 released) = 15: {first_link.qty}"
+    )
+
+    world.db.refresh(first_request_row)
+    world.db.refresh(second_request_row)
+    assert second_request_row.qty_reserved == Decimal("0"), (
+        f"the touched request row's own qty_reserved must be recomputed to the link's "
+        f"own remaining qty (0, deleted): {second_request_row.qty_reserved}"
+    )
+    assert first_request_row.qty_reserved == Decimal("15"), (
+        f"the OTHER touched request row's own qty_reserved must be recomputed too: "
+        f"{first_request_row.qty_reserved}"
+    )
+
+    events = world.db.execute(
+        sa.text(
+            "SELECT qty, reserve_request_row_id FROM order_inquiry_reserve_events "
+            "WHERE kind = 'unreserved' AND reserve_request_row_id IN (:a, :b) "
+            "ORDER BY qty DESC"
+        ),
+        {"a": first_request_row.id, "b": second_request_row.id},
+    ).fetchall()
+    assert [row_[0] for row_ in events] == [Decimal("20"), Decimal("15")], (
+        f"ONE unreserved event PER link touched, its own qty: {events}"
+    )
+    assert {str(row_[1]) for row_ in events} == {
+        str(first_request_row.id),
+        str(second_request_row.id),
+    }, (
+        "each event must be tied to the REQUEST ROW whose own link it came off, not "
+        f"the URL's own anchor: {events}"
+    )
+
+
+def test_unreserve_via_a_request_answered_zero_releases_the_earlier_holders_link(reserve_api):
+    """#1 reserves 50 (a real link). #2 is answered 0 with a reason - no link of its
+    own at all. Unreserving 10 via #2's own URL must still succeed, releasing
+    against #1's link: `{request_id}` is the ACCESS anchor only, never the scope."""
+    client, world = reserve_api
+    row = _open_row(world, qty="60")
+
+    first = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
+    )
+    assert first.status_code == 201, first.text
+    world.db.commit()
+    first_request_id = first.json()["id"]
+    reserved_first = client.post(
+        ROW_RESERVE_URL(first_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
+    )
+    assert reserved_first.status_code == 200, reserved_first.text
+    world.db.commit()
+
+    second = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "10"}]}
+    )
+    assert second.status_code == 201, second.text
+    world.db.commit()
+    second_request_id = second.json()["id"]
+    reserved_second = client.post(
+        ROW_RESERVE_URL(second_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "0", "reason": "nothing left"},
+    )
+    assert reserved_second.status_code == 200, reserved_second.text
+    world.db.commit()
+
+    released = client.post(ROW_UNRESERVE_URL(second_request_id, row.id), json={"qty": "10"})
+    assert released.status_code == 200, released.text
+    world.db.commit()
+
+    from app.models.project_so import OrderInquiryReserveRequestRow
+
+    first_request_row = (
+        world.db.query(OrderInquiryReserveRequestRow)
+        .filter(
+            OrderInquiryReserveRequestRow.request_id == first_request_id,
+            OrderInquiryReserveRequestRow.row_id == row.id,
+        )
+        .one()
+    )
+    world.db.expire_all()
+    first_link = (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == first_request_row.id)
+        .one()
+    )
+    assert first_link.qty == Decimal("40"), first_link.qty
+
+    history = client.get(ROW_HISTORY_URL(second_request_id, row.id))
+    assert history.status_code == 200, history.text
+    unreserved_entries = [e for e in history.json() if e["kind"] == "unreserved"]
+    assert len(unreserved_entries) == 1, unreserved_entries
+    assert unreserved_entries[0]["qty"] == "10", unreserved_entries[0]
+
+
+def test_unreserve_row_commits_at_lapse_is_line_scoped_across_requests(reserve_api):
+    """S2 (the deferred commit calls the SAME `unreserve_row` the direct route
+    calls) + the ruling above: parking against the request answered 0 (no link of
+    its own) and letting the window lapse must release against the OTHER request's
+    link the exact same way the direct route does."""
+    client, world = reserve_api
+    row = _open_row(world, qty="60")
+
+    first = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "50"}]}
+    )
+    assert first.status_code == 201, first.text
+    world.db.commit()
+    first_request_id = first.json()["id"]
+    reserved_first = client.post(
+        ROW_RESERVE_URL(first_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "50"},
+    )
+    assert reserved_first.status_code == 200, reserved_first.text
+    world.db.commit()
+
+    second = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row.id, "qty_requested": "10"}]}
+    )
+    assert second.status_code == 201, second.text
+    world.db.commit()
+    second_request_id = second.json()["id"]
+    reserved_second = client.post(
+        ROW_RESERVE_URL(second_request_id, row.id),
+        json={"warehouse_id": world.site.id, "qty_reserved": "0", "reason": "nothing left"},
+    )
+    assert reserved_second.status_code == 200, reserved_second.text
+    world.db.commit()
+
+    parked = _park_unreserve(
+        client, row_id=row.id, request_id=second_request_id, qty="20", note="line scoped"
+    )
+    assert parked.status_code == 202, parked.text
+    world.db.commit()
+
+    _lapse_pending(world.db, row_id=row.id)
+    body = _poll_current(client, row_id=row.id).json()
+    assert body["last_outcome"]["status"] == "committed", body["last_outcome"]
+
+    world.db.expire_all()
+    link = _reserved_link(world, request_id=first_request_id, row_id=row.id)
+    assert link.qty == Decimal("30"), link.qty
+
+    events = world.db.execute(
+        sa.text(
+            "SELECT count(*) FROM order_inquiry_reserve_events "
+            "WHERE reserve_request_row_id = :rr AND kind = 'unreserved' AND note = :note"
+        ),
+        {"rr": link.reserve_request_row_id, "note": "line scoped"},
+    ).scalar()
+    assert events == 1, "the parked note must reach the LINK's own event even when the anchor holds none"
+
+
+# --------------------------------------------------------------------------------- #
 # AC-RS-59: Unlink skips reserve links entirely                                     #
 # --------------------------------------------------------------------------------- #
 

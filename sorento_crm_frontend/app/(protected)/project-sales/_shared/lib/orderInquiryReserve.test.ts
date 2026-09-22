@@ -5,7 +5,7 @@
  * holding the reserve permission".
  */
 import { describe, expect, it } from 'vitest';
-import { canCancelReserveRequest } from './orderInquiryReserve';
+import { canCancelReserveRequest, resolveReserveRowRequestAnchor } from './orderInquiryReserve';
 
 describe('canCancelReserveRequest', () => {
   it('a CS holder (canReserve) may cancel any open request, whoever raised it', () => {
@@ -25,5 +25,29 @@ describe('canCancelReserveRequest', () => {
     expect(canCancelReserveRequest(null, 'user-b', false)).toBe(false);
     expect(canCancelReserveRequest('user-a', null, false)).toBe(false);
     expect(canCancelReserveRequest(undefined, undefined, false)).toBe(false);
+  });
+});
+
+describe('resolveReserveRowRequestAnchor', () => {
+  it('prefers the highest-ordinal request that still holds a link (qty_reserved > 0)', () => {
+    expect(
+      resolveReserveRowRequestAnchor([
+        { id: 'rr-1', ordinal: 1, rowQtyReserved: '50' },
+        { id: 'rr-2', ordinal: 2, rowQtyReserved: '0' },
+      ]),
+    ).toBe('rr-1');
+  });
+
+  it('falls back to any answered request when NONE still holds a link', () => {
+    expect(
+      resolveReserveRowRequestAnchor([
+        { id: 'rr-1', ordinal: 1, rowQtyReserved: '0' },
+        { id: 'rr-2', ordinal: 2, rowQtyReserved: '0' },
+      ]),
+    ).toBe('rr-2');
+  });
+
+  it('answers null with nothing answered yet', () => {
+    expect(resolveReserveRowRequestAnchor([])).toBeNull();
   });
 });
