@@ -54,7 +54,11 @@ vi.mock('../../../_shared/services/orderInquiryReserveService', () => ({
 
 // AC-RS-63: `formatDateTime` mocked so its OWN call can be asserted, and so the test does
 // not depend on the real implementation's exact string - only that it is what renders.
-const formatDateTimeSpy = vi.fn((input: unknown) => `FORMATTED(${String(input)})`);
+// The formatted output carries NO raw ISO text (fixed date, not derived from `input`), so
+// the "no raw ISO in the document" assertion below tests the COMPONENT (does it render
+// through `formatDateTime` rather than the raw string it was handed), not the mock's own
+// echo of its input.
+const formatDateTimeSpy = vi.fn((_input: unknown) => '22/09/2026 09:00');
 vi.mock('@/lib/helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/helpers')>();
   return { ...actual, formatDateTime: (input: unknown) => formatDateTimeSpy(input) };
@@ -64,6 +68,15 @@ import { ReserveRowDialog } from './ReserveRowDialog';
 
 const WAREHOUSE_UUID = '3e9f9c9e-7c2a-4a3b-9a34-8f6a1c2d3e4f';
 const RAW_ISO_PATTERN = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/;
+
+/** Radix's `Tabs.Trigger` inside a Radix `Dialog` switches on mouse down under jsdom; a
+ * bare `click` leaves the old panel up. Same workaround `PlanRowDialog.test.tsx` and
+ * `SimulationView.test.tsx` already carry for the identical primitive. */
+function switchTab(name: string | RegExp) {
+  const tab = screen.getByRole('tab', { name });
+  fireEvent.mouseDown(tab, { button: 0 });
+  fireEvent.click(tab);
+}
 
 function openRequestFixture(over: Partial<Record<string, unknown>> = {}) {
   return {
@@ -137,7 +150,8 @@ describe('AC-RS-61: two tabs, Reserve and History', () => {
   it('switching to History shows every entry, requested then reserved (as seeded)', async () => {
     renderDialog();
 
-    fireEvent.click(await screen.findByRole('tab', { name: /history/i }));
+    await screen.findByRole('tab', { name: /history/i });
+    switchTab(/history/i);
 
     expect(await screen.findByText(/eling/i)).toBeInTheDocument();
     expect(screen.getByText(/joey/i)).toBeInTheDocument();
@@ -256,7 +270,8 @@ describe('AC-RS-63: every date-time renders through formatDateTime', () => {
   it('every History entry date calls formatDateTime, never raw ISO text', async () => {
     renderDialog();
 
-    fireEvent.click(await screen.findByRole('tab', { name: /history/i }));
+    await screen.findByRole('tab', { name: /history/i });
+    switchTab(/history/i);
     await screen.findByText(/eling/i);
 
     expect(formatDateTimeSpy).toHaveBeenCalledWith('2026-09-22T10:00:00');
