@@ -33,7 +33,11 @@ import {
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { useExportLowStockReport, useExportOrderSheet } from '../hooks/useSummaryOrder';
+import {
+  useExportLowStockReport,
+  useExportOiWorksheet,
+  useExportOrderSheet,
+} from '../hooks/useSummaryOrder';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
@@ -102,9 +106,18 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    * export is pending"), so a second click while one render is queued starts nothing.
    */
   const exportLowStock = useExportLowStockReport(runId);
+  /**
+   * The OI worksheet (Lane C, PLAN-order-sheet-oi-reports-22sep.md, AC-C1/AC-C2): the
+   * run's own Start Plan scope of live OI Buy rows, in the worklist export's own layout -
+   * the sheet purchasing downloads BEFORE the engine decides. Sits directly under the low
+   * stock report; same async My Downloads pipeline, same shared pending flag (AC-1: "all
+   * four disable while any export is pending").
+   */
+  const exportOiWorksheet = useExportOiWorksheet(runId);
 
   const actions = useMemo<ToolbarAction[]>(() => {
-    const exportPending = exportOrderSheet.isPending || exportLowStock.isPending;
+    const exportPending =
+      exportOrderSheet.isPending || exportLowStock.isPending || exportOiWorksheet.isPending;
     return [
       {
         key: 'order_sheet_pdf',
@@ -125,6 +138,13 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         label: 'Low stock report Excel',
         icon: FileSpreadsheet,
         onClick: () => exportLowStock.mutate(),
+        disabled: exportPending,
+      },
+      {
+        key: 'oi_worksheet_xlsx',
+        label: 'OI worksheet Excel',
+        icon: FileSpreadsheet,
+        onClick: () => exportOiWorksheet.mutate(),
         disabled: exportPending,
       },
       {
@@ -152,6 +172,8 @@ export function ReorderPlanView({ runId }: { runId: string }) {
     exportOrderSheet.isPending,
     exportLowStock.mutate,
     exportLowStock.isPending,
+    exportOiWorksheet.mutate,
+    exportOiWorksheet.isPending,
   ]);
 
   const doReset = async () => {

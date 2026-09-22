@@ -985,7 +985,7 @@ GROUP BY product_id
 
 def run_scope_oi_rows(
     db,
-    product_ids: list[str],
+    product_ids: Optional[list[str]],
     *,
     so_numbers: Optional[list[str]] = None,
     horizon_start: Optional[date] = None,
@@ -1042,7 +1042,10 @@ def run_scope_oi_rows(
     `[]` as `= ANY('{}')` (matches nothing), which printed Project qty 0 on precisely the
     runs `_planning_rows` bought for - the bug fix round 4 found. A caller that means
     "match nothing" narrows `product_ids` instead, which this function DOES read as
-    empty-means-nothing (the model's own early `if not product_ids: return []`).
+    empty-means-nothing - `product_ids=[]` returns `[]` immediately (the early
+    `if product_ids is not None and not product_ids: return []`); `product_ids=None`
+    still means no filter at all (Lane C fix round 1), the ONE asymmetry between the two
+    parameters and the reason each is documented on its own terms rather than as a pair.
 
     ``horizon_start``/``horizon`` narrow to `delivery_date` inside `[horizon_start,
     horizon]`; a row with no delivery date is always in scope, whatever either bound is.
@@ -1055,7 +1058,7 @@ def run_scope_oi_rows(
     `OrderInquiryRow` is company-scoped but a raw `text()` bypasses the ORM's own isolation
     listener.
     """
-    if not product_ids:
+    if product_ids is not None and not product_ids:
         return []
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="rsoi")
     so_clause = "AND so.so_number = ANY(:so_numbers)\n          " if so_numbers else ""
@@ -1083,14 +1086,14 @@ def run_scope_oi_rows(
           AND oir.ack_state IN ({_PLANNED_ACK_SQL})
           AND oir.qty > 0
           AND ({_OWED_SQL}) > 0
-          AND sol.product_id::text = ANY(:pids)
+          AND (CAST(:pids AS text[]) IS NULL OR sol.product_id::text = ANY(:pids))
           {so_clause}AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
                OR oir.delivery_date >= CAST(:horizon_start AS date))
           AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
                OR oir.delivery_date <= CAST(:horizon AS date))
           {("AND " + co) if co else ""}
     """), {
-        "pids": [str(p) for p in product_ids],
+        "pids": [str(p) for p in product_ids] if product_ids is not None else None,
         "so_numbers": list(so_numbers) if so_numbers else [],
         "horizon_start": horizon_start,
         "horizon": horizon,
