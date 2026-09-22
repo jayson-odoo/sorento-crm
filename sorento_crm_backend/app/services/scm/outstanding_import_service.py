@@ -1864,17 +1864,20 @@ def _money_differs(held: dict, extra: dict, bind: _Binding) -> bool:
     return False
 
 
-#: The currency a PURCHASE document is in when the export states none (captain, 28 Aug
-#: 2026: "our upload should take CNY also for now"). The AutoCount PO export that landed
-#: 4,050 headers and 65,204 lines without a currency column is a China book, and the
-#: detail page printed every one of them as RM. A FILL, never an overwrite: a stated
+#: The currency a PURCHASE document's HEADER is in when the export states none for the
+#: document at all (captain, 28 Aug 2026: "our upload should take CNY also for now").
+#: This is a HEADER-level fill only - PLAN-po-line-currency-follows-header-22sep.md
+#: (owner ruling 22 Sep 2026, "we shouldn't assume CNY") retired the same literal on the
+#: LINE path: an unstated line now takes its own header's currency (see
+#: `_refresh_money` and the new-line insert below), which is this default only when the
+#: header itself had nothing to state either. A FILL, never an overwrite: a stated
 #: currency always wins, and a document that already holds one keeps it
 #: (`test_a_file_without_a_po_date_column_does_not_blank_the_issue_date`). The sales book
 #: is untouched - a customer invoice's currency is not this rule's to guess.
 DEFAULT_PO_CURRENCY = "CNY"
 
 
-def _refresh_money(line, extra: dict, bind: _Binding) -> None:
+def _refresh_money(line, extra: dict, bind: _Binding, *, header_currency: Optional[str]) -> None:
     """Bring the line's money columns up to what this extract says.
 
     Applied on update, not on insert only: cost is what the cash co-pilot ranks and budgets
@@ -1883,15 +1886,16 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
     ranked as if it were free. A value the file does NOT state leaves the column alone rather
     than blanking a cost we already know.
 
-    The one exception is a purchase line's CURRENCY, which is filled with
-    `DEFAULT_PO_CURRENCY` when neither the file nor the row states one.
+    The one exception is a purchase line's CURRENCY, which is filled with its own
+    HEADER's currency (`header_currency`, the `PurchaseOrder` row this line belongs to,
+    already header-filled by the caller) when neither the file nor the row states one.
     """
     for col, key in bind.money_cols:
         value = extra.get(key)
         if value is not None:
             setattr(line, col, value)
     if bind.header is PurchaseOrder and not getattr(line, "currency", None):
-        line.currency = DEFAULT_PO_CURRENCY
+        line.currency = header_currency
 
 
 def _settled_quantities(after: Line, extra: dict) -> tuple[float, float]:
@@ -1920,7 +1924,7 @@ def _settled_qty_differs(line, ordered: float, fulfilled: float, bind: _Binding)
 
 
 def _write_settled(line, after: Line, extra: dict, bind: _Binding,
-                   fallback_date: Optional[date]) -> None:
+                   fallback_date: Optional[date], *, header_currency: Optional[str]) -> None:
     """Bring a line the file states as settled up to what the row says, and close it.
 
     The quantities, the date and the money together: a completed line is a record of what
@@ -1930,7 +1934,7 @@ def _write_settled(line, after: Line, extra: dict, bind: _Binding,
     line.qty_ordered = ordered
     setattr(line, bind.fulfilled, fulfilled)
     setattr(line, bind.date, _write_date(after, fallback_date))
-    _refresh_money(line, extra, bind)
+    _refresh_money(line, extra, bind, header_currency=header_currency)
     line.line_status = "closed"
 
 
@@ -2201,6 +2205,11 @@ def _write_header(db: Session, bind: _Binding, doc_type: str, plan: _Plan, lift:
         })
         db.add(header)
         db.flush()
+        # So a batch that CREATES a document can still look its own header's
+        # currency back up later in the SAME batch (`_write_change`'s
+        # `header_currency`, PLAN-po-line-currency-follows-header-22sep.md) - this
+        # dict otherwise only ever held PRE-EXISTING headers.
+        existing_headers[number] = header
     else:
         if number in plan.complete:
             # Nothing is owed on it any more. The header follows its lines: left
@@ -2284,8 +2293,14 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
                   resolved: _Resolved, read: ReadResult, outcome: ImportOutcome,
                   applied: dict, applied_line_ids: dict[int, str],
                   settled_line_ids: set[str], closed_candidates: dict,
-                  lines_by_id: dict, money_differs_by_c: dict[int, bool], c) -> None:
+                  lines_by_id: dict, money_differs_by_c: dict[int, bool], c,
+                  *, header_currency: Optional[str]) -> None:
     """Write ONE diff change - CLOSED, ADDED, unchanged, or a real qty/date change.
+
+    `header_currency` (PLAN-po-line-currency-follows-header-22sep.md): this change's
+    OWN document's header currency, already resolved by `_write_header` before any
+    change is written - the fallback a purchase line with no stated currency takes,
+    on every path below that used to reach for `DEFAULT_PO_CURRENCY` directly.
 
     Extracted out of `apply`'s batch loop (review round 1b, C7) so the per-document body is
     flat again - behaviour-preserving, the exact logic the inline loop body ran (every
@@ -2315,7 +2330,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
                 # this system will ever have.
                 _write_settled(line, c.after,
                                read.extras.get(str(c.after.row_ref), {}), bind,
-                               c.before.required_date)
+                               c.before.required_date, header_currency=header_currency)
             applied["closed"] += 1
             # `source_row` is None for the absence half - there is no row in the
             # upload to point at - and the row number itself for a stated
@@ -2361,7 +2376,8 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
             ordered, fulfilled = _settled_quantities(c.after, extra)
             moved = (_settled_qty_differs(revived, ordered, fulfilled, bind)
                      or _money_differs(held, extra, bind))
-            _write_settled(revived, c.after, extra, bind, getattr(revived, bind.date))
+            _write_settled(revived, c.after, extra, bind, getattr(revived, bind.date),
+                           header_currency=header_currency)
             settled_line_ids.add(str(revived.id))
             applied_line_ids[id(c)] = str(revived.id)
             if moved:
@@ -2385,7 +2401,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
             revived.qty_ordered = already + c.after.qty
             setattr(revived, bind.date,
                     _write_date(c.after, getattr(revived, bind.date)))
-            _refresh_money(revived, extra, bind)
+            _refresh_money(revived, extra, bind, header_currency=header_currency)
             applied["added"] += 1
             applied_line_ids[id(c)] = str(revived.id)
             outcome.success(row=source_row, code=oc.CREATED, identity=identity,
@@ -2416,11 +2432,10 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
         }
         for col, key in bind.money_cols:
             fields[col] = extra.get(key)
-        # A new purchase line with no stated currency is CNY
-        # (`DEFAULT_PO_CURRENCY`), the same fill `_refresh_money` applies to a
-        # line that already exists.
+        # A new purchase line with no stated currency takes its header's currency, the
+        # same fallback `_refresh_money` applies to a line that already exists.
         if bind.header is PurchaseOrder and not fields.get("currency"):
-            fields["currency"] = DEFAULT_PO_CURRENCY
+            fields["currency"] = header_currency
         db.add(bind.line(**fields))
         if settled:
             # Claimed for this run, so a second identical row of the same
@@ -2446,7 +2461,7 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
         if money_differs_by_c.get(id(c), False):
             line = lines_by_id.get(str(c.before.row_ref))
             if line is not None:
-                _refresh_money(line, extra, bind)
+                _refresh_money(line, extra, bind, header_currency=header_currency)
                 applied["updated"] += 1
                 outcome.updated(row=source_row, identity=identity, value=c.doc_number,
                                 entity_type="order_line", entity_id=line.id)
@@ -2477,7 +2492,8 @@ def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
     # was built to avoid. `_write_date` keeps the line's own stored date in that
     # case.
     setattr(line, bind.date, _write_date(c.after, c.before.required_date))
-    _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
+    _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind,
+                   header_currency=header_currency)
     applied["updated"] += 1
     applied_line_ids[id(c)] = str(line.id)
     outcome.updated(row=source_row, identity=identity, value=c.doc_number,
@@ -2843,10 +2859,16 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         lines_by_id = _preload_lines_by_id(db, bind, line_ids)
 
         for number in doc_batch:
+            # This document's own header currency, already resolved by `_write_header`
+            # above (`existing_headers` now holds every header the batch touched,
+            # created or pre-existing alike) - the fallback `_write_change` gives an
+            # unstated purchase line, in place of the old `DEFAULT_PO_CURRENCY` literal.
+            header_currency = getattr(existing_headers.get(number), "currency", None)
             for c in changes_by_doc.get(number, ()):
                 _write_change(db, bind, order_ids, resolved, read, outcome, applied,
                              applied_line_ids, settled_line_ids, closed_candidates,
-                             lines_by_id, money_differs_by_c, c)
+                             lines_by_id, money_differs_by_c, c,
+                             header_currency=header_currency)
             # Self-heal (issue #969): the book upload writes its ADDED lines straight in
             # `_write_change` (`db.add(bind.line(**fields))`), bypassing `_upsert_lines`'s
             # own self-heal, which only sees the manual FE edit. Per order rather than per
