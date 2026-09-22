@@ -1,6 +1,6 @@
 # PLAN: ticket chat panel - one-line enquiry quote, thread fills the sheet, reply-to jump fetches back
 
-Status: review READY, browser B3 PASS, fix round 6 (one floor not two) pushed, 375 re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
+Status: small fix track, review READY (5 rounds), browser PASS B1/B2/B3 at 375 + 1280, PR #1133 awaiting merge go (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
 UAC: `chat-panel-layout-22sep-acceptance-criteria.md`
 Owner rulings (22 Sep 2026): R2 enquiry quote is one line, chat window takes the most space; R3 Chat Records popup thread flex-fills; R4 reply-to jump reuses the search-jump fetch.
 
@@ -76,3 +76,11 @@ agent-browser on a lane stack (slot :3083/:8083 currently free, confirm with `ls
 ## Out of scope
 
 Backend `source_message_text` content (chatbot lane), keep-assignee (SLA backend lane).
+
+## Follow-ups (not this lane)
+
+Found while diagnosing this lane's defects; none fixed here - each needs its own lane.
+
+1. **Backend: `conversation_thread_service.persist_messages` reads the wrong replyTo key too.** Same bug as fix round 3's frontend fix (`lib/respondIoChatRender.ts`), on the WRITE side: `persist_messages` (`sorento_crm_backend/app/services/conversation_thread_service.py:~560`) does `reply_to.get("messageId")` when persisting a Respond message into the local `chat_histories` mirror (the search-cache write path) - the live relay's `replyTo` carries the id as `id`, never `messageId`. Every quote persisted through this path gets `reply_to_message_id = NULL`, so the LOCAL mirror lane (used for scroll-back search) silently drops quote context that the LIVE "respond" lane (now fixed) renders correctly.
+2. **Three feature services each maintain their own local message-item type instead of importing the shared one.** `complaintService.ts`, `stockInquiryService.ts` and `purchaseRequestService.ts` (Complaint / Stock Inquiry / Purchase Request `RespondChatList` mounts) each declare their own `RespondMessageItem` interface rather than reusing `RespondMessageRenderable` from `lib/respondIoChatRender.ts`. `stockInquiryService.ts`'s copy already carries `replyTo.messageId` only (line ~347) - the exact shape fix round 3 fixed in the shared type - so Stock Inquiry's quote blocks likely have the SAME live-relay bug right now. Complaint's and Purchase Request's copies do not declare a `replyTo` field at all yet (no quote capability there today), but the next person to add it will reach for the sibling file's `messageId`-only convention unless these three are pointed at the shared type first.
+3. **Five other `SheetContent` mounts pass their own `overflow-y-auto` on top of the primitive's default, alongside a `SheetBody` child.** Same double-scroll-container shape fix round 4 fixed for this lane's two Sheets (`InterventionTicketDrawer.tsx`, `ConversationSLATrackingDetail.tsx`'s Chat Records): `ComplaintDetail.tsx:1378`, `StockInquiryDetail.tsx:1236`, `PurchaseRequestDetail.tsx:1527`, `scm/reorder/components/PlanMethodologySheet.tsx:303`, `project-sales/fulfilment-planning/components/FulfilmentPlanningSheet.tsx:270`. Each is latent until a flex-fill thread (or similarly tall content) is added inside their `SheetBody` at a narrow viewport - not a live defect today, but the same 375px overlap this lane spent five rounds on is one flex-fill change away in any of them.
