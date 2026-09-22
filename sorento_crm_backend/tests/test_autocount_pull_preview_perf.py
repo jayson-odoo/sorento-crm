@@ -871,3 +871,34 @@ class TestRenamedCodeResolvedViaRefKeepsOneSupplierLink:
             {"pid": str(product.id)},
         ).mappings().all()
         assert len(supplier_rows) == 1, supplier_rows
+
+
+# ==================================================== Group 2 (fix round)
+class TestAsDictDiffOnlyOnDryRun:
+    """PP-10 (captain's contract ruling, fix round): `RecordResult.diff` is
+    now populated on a REAL run too (T2/T3), but `IngestResult.as_dict()` -
+    the shape `/api/v1/ingest/*` actually returns - must serialize it ONLY
+    for a dry run, so a real push's wire response stays byte-identical to
+    main."""
+
+    def test_real_run_as_dict_carries_no_diff_key_dry_run_does(self, db):
+        row = _row()
+        MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest("products", [row])
+        db.commit()
+
+        changed_row = dict(row)
+        changed_row["list_price"] = "77.00"
+        real = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+            "products", [changed_row]
+        )
+        assert real.dry_run is False
+        assert real.records[0].diff, real.records[0].diff  # populated in-process
+        assert "diff" not in real.as_dict()["records"][0], real.as_dict()
+
+        preview_row = dict(changed_row)
+        preview_row["list_price"] = "88.00"
+        preview = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest(
+            "products", [preview_row], dry_run=True
+        )
+        assert preview.dry_run is True
+        assert "diff" in preview.as_dict()["records"][0], preview.as_dict()
