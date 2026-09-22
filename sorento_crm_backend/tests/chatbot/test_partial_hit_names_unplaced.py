@@ -58,7 +58,20 @@ def _entity(raw: str) -> dict[str, Any]:
 
 class TestTwoUnplacedTokensAreBothNamed:
     """AC-1850/AC-1852: the kill test's shape - a real answer for the placed code, PLUS
-    a single line naming every unplaceable token, verbatim as typed."""
+    a single line naming every unplaceable token, verbatim as typed.
+
+    HELD, coordinator ruling 22 Sep 2026: the rearch engine's existing miss line
+    (`turn/compose.py:371`, "I could not find X or Y.") ALREADY names both
+    zero-neighbour tokens through this exact seam chain - measured, not assumed,
+    by running this test against the unmodified engine. That contradicts the
+    plan's own Evidence 3 (the owner's 14:34 turn silently dropped two codes), so
+    the real cause of that drop is not this branch and the owner is pasting the
+    turn's Technical details to find it. Per the ruling: do NOT rewrite the
+    existing "I could not find X or Y." wording to the plan's target "Couldn't
+    find: X, Y." just to turn this test green - the assertion below is loosened
+    to the CURRENT sentence shape (still naming both tokens, still the kill
+    test's real guard) until the trace arrives and the actual seam is found.
+    """
 
     def test_couldnt_find_line_names_every_unplaced_token(self, session_factory, monkeypatch) -> None:
         _seed_products(session_factory, [PLACED_CODE])
@@ -83,8 +96,10 @@ class TestTwoUnplacedTokensAreBothNamed:
         assert f"Product: {PLACED_CODE}" in reply, (
             f"expected a real answer for the placed code before the miss line: {reply!r}"
         )
-        assert f"Couldn't find: {UNPLACED_1}, {UNPLACED_2}." in reply, (
-            f"expected the plan's exact miss-line wording naming both unplaced tokens: {reply!r}"
+        # HELD (see class docstring): the CURRENT wording, not the plan's target -
+        # still a hard requirement that BOTH unplaced tokens are named, verbatim.
+        assert f"I could not find {UNPLACED_1} or {UNPLACED_2}." in reply, (
+            f"expected the existing miss-line wording naming both unplaced tokens: {reply!r}"
         )
 
     def test_kill_test_mutation_documented(self) -> None:
