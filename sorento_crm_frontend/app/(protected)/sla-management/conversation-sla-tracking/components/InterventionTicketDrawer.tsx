@@ -483,11 +483,18 @@ export default function InterventionTicketDrawer({
           {/* The thread takes whatever height the header and the enquiry card
               leave, and the composer stays on screen: a viewport-capped list
               inside a scrolling sheet put the toolbar on the bottom edge on
-              every laptop. min-h keeps a readable strip on a short phone. */}
+              every laptop. min-h keeps a readable strip on a short phone.
+              Fix round 5: `min-h-40`, not `min-h-0`, on the PANEL's own root
+              too - the panel forwards this same className to
+              RespondChatList's root as well, so the floor sits on every flex
+              item in the chain, not only the innermost scroll box (AC-CP-B1
+              375px overlap: a floor-less ancestor could still be squeezed to
+              near-zero by the outer flex algorithm, and the scroll box's own
+              min-height does not enlarge it back). */}
           <TicketConversationPanel
             ticketId={ticketId}
             enabled={open}
-            className="min-h-0 flex-1"
+            className="min-h-40 flex-1"
             maxHeightClass="min-h-40 flex-1"
             jumpRequest={jumpRequest}
             onSent={onSent}

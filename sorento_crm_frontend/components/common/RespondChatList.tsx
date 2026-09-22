@@ -42,6 +42,7 @@ import {
 } from '@/lib/respondIoOutgoingMessage';
 import { linkifySegments } from '@/lib/linkifySegments';
 import { parseWhatsAppText, stripWhatsAppMarkup } from '@/lib/whatsappText';
+import { cn } from '@/lib/utils';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -100,6 +101,19 @@ interface RespondChatListProps {
   emptyHint?: string;
   /** Caps message-list scroll height; chat header sits above. */
   maxHeightClass?: string;
+  /**
+   * Fix round 5: the SAME floor `maxHeightClass` puts on the inner scroll box
+   * (e.g. `min-h-40 flex-1`) has to ALSO sit on this component's OWN root -
+   * otherwise the root is a bare `min-h-0 flex-1` flex item with no floor of
+   * its own, the outer flex algorithm can still squeeze IT to near-zero, and
+   * the scroll box's `min-h-40` (a per-element CSS min-height, which does not
+   * enlarge an ancestor's computed flex size) overflows that squeezed root
+   * and paints over whatever comes after it in the column (the drawer's
+   * composer, at 375px - AC-CP-B1). Callers that flex-fill a Sheet pass the
+   * same value here that they pass as `maxHeightClass`; a caller with a fixed
+   * `max-h-[...]` cap (no flex-fill) passes nothing, unchanged.
+   */
+  className?: string;
   /**
    * If set, the bubble whose `messageId` matches gets a highlight ring + a
    * "Ticket based on this message" badge, and the list scrolls to it on mount
@@ -496,6 +510,7 @@ export default function RespondChatList({
   focusMessageId = null,
   focusNonce = 0,
   onJumpToMessage,
+  className,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -841,7 +856,7 @@ export default function RespondChatList({
   let lastDateKey = '';
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div className="flex items-center gap-3 rounded-t-md border border-b-0 bg-[#f0f2f5] dark:bg-[#202c33] px-3 py-2">
         <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white">
           {contactInitial}

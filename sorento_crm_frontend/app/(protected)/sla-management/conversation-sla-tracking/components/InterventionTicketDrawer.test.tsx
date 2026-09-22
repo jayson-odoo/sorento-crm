@@ -122,6 +122,7 @@ vi.mock('@/components/common/RespondChatList', () => ({
     focusMessageId = null,
     focusNonce = 0,
     maxHeightClass,
+    className,
   }: {
     items: unknown[];
     contactName?: string | null;
@@ -129,6 +130,7 @@ vi.mock('@/components/common/RespondChatList', () => ({
     focusMessageId?: string | null;
     focusNonce?: number;
     maxHeightClass?: string;
+    className?: string;
   }) => (
     <div
       data-testid="chat-list"
@@ -137,6 +139,7 @@ vi.mock('@/components/common/RespondChatList', () => ({
       data-focus-message-id={focusMessageId ?? ''}
       data-focus-nonce={String(focusNonce)}
       data-max-height={maxHeightClass ?? ''}
+      data-class-name={className ?? ''}
     >
       {items.length} message(s)
     </div>
@@ -923,7 +926,9 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       fireEvent.click(await screen.findByTestId('enquiry-quote-toggle'));
 
       const panel = await screen.findByTestId('ticket-conversation-panel');
-      expect(panel.className).toContain('min-h-0');
+      // Fix round 5: `min-h-40`, not `min-h-0` - see the dedicated "fix round
+      // 5" describe block below for why the floor has to sit on this root too.
+      expect(panel.className).toContain('min-h-40');
       expect(panel.className).toContain('flex-1');
       expect(screen.getByTestId('chat-list')).toHaveAttribute('data-max-height', 'min-h-40 flex-1');
     });
@@ -1253,5 +1258,41 @@ describe('InterventionTicketDrawer sheet layout (fix round 4, 375px overlap)', (
 
     const tab = await screen.findByTestId('composer-mode-reply');
     expect(tab.closest('[role="tablist"]')?.className).toContain('shrink-0');
+  });
+});
+
+/**
+ * Fix round 5: round 4's fix did not actually stop the overlap - re-verify at
+ * 375x812 still failed. Measured rects showed the thread's inner scroll box
+ * correctly floored at 160px (`min-h-40`, RespondChatList.tsx), but its
+ * ANCESTORS (RespondChatList's own root, and TicketConversationPanel's root)
+ * carried no floor of their own (`min-h-0 flex-1`) - a per-element CSS
+ * `min-height` on a deeply nested child does not enlarge an ancestor's
+ * computed flex size, so the outer flex algorithm squeezed those ancestors to
+ * near-zero under pressure, and the floored scroll box overflowed them,
+ * painting over the composer laid out after the squeezed parent. Both
+ * `TicketConversationPanel` and `RespondChatList`'s roots now carry the SAME
+ * `min-h-40 flex-1` floor `maxHeightClass` already puts on the inner box.
+ */
+describe('InterventionTicketDrawer sheet layout (fix round 5, floor on every flex item)', () => {
+  it('the panel forwards the min-h-40 floor to RespondChatList\'s own root, not only to its inner scroll box', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const chatList = await screen.findByTestId('chat-list');
+    // maxHeightClass already reaches the inner scroll box (round 1/2); this
+    // pins that the SAME floor also reaches the component's own root via the
+    // new `className` prop - the actual defect round 4 missed.
+    expect(chatList).toHaveAttribute('data-max-height', 'min-h-40 flex-1');
+    expect(chatList).toHaveAttribute('data-class-name', 'min-h-40 flex-1');
+  });
+
+  it('the thread panel itself (TicketConversationPanel root) also carries the floor, not just min-h-0', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const panel = await screen.findByTestId('ticket-conversation-panel');
+    expect(panel.className).toContain('min-h-40');
+    expect(panel.className).not.toContain('min-h-0');
   });
 });

@@ -263,6 +263,14 @@ export default function TicketConversationPanel({
             // fetch-back loader when its target is outside the loaded window -
             // never a second one. Already-loaded quotes keep scrolling locally.
             onJumpToMessage={thread.jumpToMessage}
+            // Fix round 5: the SAME floor this panel's own root carries (via
+            // `className` below) has to reach RespondChatList's root too - a
+            // bare `min-h-0 flex-1` root with no floor of its own can still be
+            // squeezed under it by the outer flex algorithm, and the inner
+            // scroll box's `min-h-40` (a per-element min-height) does not
+            // enlarge an ancestor's computed size, so it overflows that
+            // squeezed root and paints over the composer below (AC-CP-B1).
+            className={className}
           />
         </>
       )}

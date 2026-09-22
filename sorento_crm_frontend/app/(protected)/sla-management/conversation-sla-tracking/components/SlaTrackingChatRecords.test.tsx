@@ -272,7 +272,9 @@ describe('SlaTrackingChatRecords (AC-N8)', () => {
     render(<SlaTrackingChatRecords trackingId="t1" respondInboxUrl="https://respond.io/x" showAsPopup />);
 
     const panel = screen.getByTestId('ticket-conversation-panel');
-    expect(panel.className).toContain('min-h-0');
+    // Fix round 5: `min-h-40`, not `min-h-0` - the floor has to sit on this
+    // root too, not only the inner scroll box (AC-CP-B1 375px overlap).
+    expect(panel.className).toContain('min-h-40');
     expect(panel.className).toContain('flex-1');
 
     const maxHeight = screen.getByTestId('chat-list').getAttribute('data-max-height') ?? '';

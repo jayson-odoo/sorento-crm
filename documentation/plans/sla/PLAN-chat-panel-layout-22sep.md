@@ -1,6 +1,6 @@
 # PLAN: ticket chat panel - one-line enquiry quote, thread fills the sheet, reply-to jump fetches back
 
-Status: review READY, browser B3 PASS, 375 overlap fix pushed, re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
+Status: review READY, browser B3 PASS, fix round 5 (floor on every flex item) pushed, 375 re-verify owed (lane `fix/sla-chat-panel-layout`, worktree `sorento_crm-chat-panel-layout`)
 UAC: `chat-panel-layout-22sep-acceptance-criteria.md`
 Owner rulings (22 Sep 2026): R2 enquiry quote is one line, chat window takes the most space; R3 Chat Records popup thread flex-fills; R4 reply-to jump reuses the search-jump fetch.
 
@@ -41,6 +41,21 @@ Fixed at the smallest seam, in the two files this lane already owns:
 2. `TicketConversationPanel.tsx` (shared by both surfaces): the Reply/Comment mode-switch bar gets `shrink-0` directly; `InternalCommentComposer` and `SharedConversationComposer` (neither accepts a `className`) are each wrapped in a `<div className="shrink-0">` - neither carried a shrink floor before, on main or here, so a squeeze anywhere upstream had nowhere safe to land.
 
 Vitest cannot measure real layout (jsdom's `scrollWidth`/`clientHeight` are always 0), so the new tests pin the STRUCTURE: `SheetContent`'s rendered className never contains `overflow-y-auto`, and the composer / mode-switch DOM carries a `.shrink-0` ancestor. Confirmed red before the fix, green after.
+
+**Round 4's fix did not actually stop the overlap** - see Fix round 5 below.
+
+## Fix round 5 (375 re-verify still FAILS on af6c7f0ca; round 4 was incomplete)
+
+Measured rects on a fresh load, drawer at 375x812: tablist `{top 350.9, bottom 392.9}`, thread scroll box `{top 358, bottom 518}` (height 160 = `min-h-40`, `scrollHeight 12793`), composer `shrink-0` wrapper `{top 404.9, bottom 772}`. The composer's rect did not move on scroll - this is a layout defect, not a scroll one.
+
+The floored inner scroll box (`RespondChatList.tsx`'s `chat-scroll-container`, `min-h-40` via `maxHeightClass`) was never the problem - its OWN box correctly renders at 160px, per round 4's own measurement. The actual defect: its ANCESTORS carry no floor of their own - `RespondChatList`'s root (`relative flex min-h-0 flex-1 flex-col`) and `TicketConversationPanel`'s root (`min-h-0 flex-1`, as passed by the caller). A per-element CSS `min-height` on a deeply nested child does NOT enlarge an ancestor's computed flex size - so under pressure the outer flex algorithm squeezes those floor-less ancestors to near-zero (~35-42px, matching the gap between `tablist.top` and where the panel's own box would start), and the floored 160px scroll box overflows that squeezed ancestor, painting over the tablist and composer laid out after it in the column.
+
+Fixed by putting the SAME floor on every flex item in the chain, not only the innermost box:
+1. `RespondChatList.tsx`: new optional `className` prop, applied to the component's own root via `cn('relative flex min-h-0 flex-1 flex-col', className)`. Every OTHER caller (Complaint/StockInquiry/PurchaseRequest panels, the Conversations inbox, the portal ticket-draft page) passes nothing, so this is a no-op for them.
+2. `TicketConversationPanel.tsx`: forwards its own `className` prop down to `RespondChatList`'s new `className` too, so both roots always carry the identical value.
+3. `InterventionTicketDrawer.tsx` and `SlaTrackingChatRecords.tsx` (popup mode): the `className` passed to `TicketConversationPanel` changed from `"min-h-0 flex-1"` to `"min-h-40 flex-1"` - the SAME value already passed as `maxHeightClass`. The inline (non-popup) mount passes no `className` at all, unaffected (fixed `max-h-[400px]`, not a flex-fill scenario).
+
+AC-CP-3 and AC-CP-5 updated to match (the panel's `className` is now `"min-h-40 flex-1"`, not `"min-h-0 flex-1"`). New vitest in `InterventionTicketDrawer.test.tsx` pins that `RespondChatList` receives the floor via its own `className` prop (not only `maxHeightClass`), and that `TicketConversationPanel`'s root carries `min-h-40` rather than `min-h-0`. Confirmed red before the fix (reverted the drawer's `className` back to `min-h-0 flex-1`), green after. Also added an assertion in `ConversationSLATrackingDetail.gear.test.tsx` pinning the Chat Records `Sheet`'s own `SheetContent` className (round 4's fix there had no test pinning it at all - a prepared, separately-verified addition).
 
 ## Browser verification
 

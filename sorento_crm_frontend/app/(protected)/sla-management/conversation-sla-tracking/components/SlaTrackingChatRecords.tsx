@@ -91,7 +91,10 @@ export default function SlaTrackingChatRecords({
       <CardContent className={cn(showAsPopup && 'flex min-h-0 flex-1 flex-col')}>
         <TicketConversationPanel
           ticketId={trackingId}
-          className={showAsPopup ? 'min-h-0 flex-1' : undefined}
+          // Fix round 5: `min-h-40`, not `min-h-0` - the SAME floor as
+          // `maxHeightClass` below, forwarded through to RespondChatList's
+          // root too. See InterventionTicketDrawer.tsx's identical comment.
+          className={showAsPopup ? 'min-h-40 flex-1' : undefined}
           maxHeightClass={showAsPopup ? 'min-h-40 flex-1' : 'max-h-[400px]'}
           // No ticket detail (a form-scope tracker, or a viewer outside the
           // ticket's act-scope): a linked Respond conversation is still enough
