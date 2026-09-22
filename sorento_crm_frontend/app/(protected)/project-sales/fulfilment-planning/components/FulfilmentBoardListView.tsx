@@ -558,10 +558,11 @@ export function FulfilmentBoardListView({
         // Numeric, not the raw string `qty_outstanding`/`qty` ride on - a lexicographic
         // sort would put "20" ahead of "9" (owner ruling, 22 Sep 2026).
         accessorFn: (row) => Number(row.qty_outstanding ?? row.qty ?? 0),
-        // "To plan", not "Outstanding qty" - the 14 Sep 2026 ruling's own word for this
-        // figure (the cell dialog's own subtitle already reads "N to plan"), and the word
-        // AC-RS-42 names for the figure this column now also opens the Stock dialog from.
-        header: 'To plan',
+        // #1119 (owner ruling, 22 Sep 2026): the sortable `DataGridColumnHeader`, titled
+        // "Outstanding qty" - every column header carries a sort control, this one included.
+        // AC-RS-42 names the clickable figure inside the cell "the To plan figure"; that is
+        // the qty button below, not the column's own title.
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding qty" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
           return (
