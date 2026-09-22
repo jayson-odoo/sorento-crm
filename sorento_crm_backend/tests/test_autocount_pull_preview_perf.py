@@ -917,16 +917,25 @@ class TestPreloadFailureRecoversViaRollback:
     def test_preload_db_error_recovers_and_the_batch_still_ingests(self, db, monkeypatch):
         rows = [_row() for _ in range(2)]
 
-        def _broken_resolve_default_supplier_id(db, settings):
-            # A genuine Postgres error (division by zero), not a Python one -
-            # exactly what actually aborts a transaction; a bare `raise
-            # ValueError(...)` would not reproduce the bug this pins.
-            db.execute(text("SELECT 1/0"))
-            return None
+        real_resolve = product_rules.resolve_default_supplier_id
+        calls = {"n": 0}
 
-        monkeypatch.setattr(
-            product_rules, "resolve_default_supplier_id", _broken_resolve_default_supplier_id
-        )
+        def _broken_once_then_real(db, settings):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # A genuine Postgres error (division by zero), not a Python
+                # one - exactly what actually aborts a transaction; a bare
+                # `raise ValueError(...)` would not reproduce the bug this
+                # pins. Only the FIRST call (inside the preload build) fails
+                # - `_post_write_product_hooks`'s own per-record fallback
+                # call to this same function must succeed normally, or this
+                # test would be pinning ITS OWN monkeypatch, not the preload
+                # recovery.
+                db.execute(text("SELECT 1/0"))
+                return None
+            return real_resolve(db, settings)
+
+        monkeypatch.setattr(product_rules, "resolve_default_supplier_id", _broken_once_then_real)
 
         result = MasterIngestService(db, company_id=DEFAULT_COMPANY_ID).ingest("products", rows)
         assert result.created == 2, result.as_dict()

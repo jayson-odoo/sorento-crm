@@ -289,9 +289,9 @@ class EntitySpec:
     # builder may append fixed-vocabulary notices to (`category_created`, ...) -
     # only `_product_columns` uses it today. Loosely typed (`Callable[..., ...]`,
     # not the fixed 4-arg shape every other builder keeps) because
-    # `_product_columns` alone takes a 5th, `ref_cache` (C2,
-    # `PLAN-autocount-pull-preview-perf.md`) - `_apply_scoped` passes it only
-    # for `entity_type == "products"`.
+    # `_product_columns` alone takes a 5th and 6th, `ref_cache` (C2,
+    # `PLAN-autocount-pull-preview-perf.md`) and `settings` (Group 3, same
+    # plan) - `_apply_scoped` passes both only for `entity_type == "products"`.
     to_columns: Callable[..., dict[str, Any]]
     # The ORM model class the D18 writer upserts through, so audit, embedding
     # and CompanyScopedMixin listeners fire on flush.
@@ -526,7 +526,8 @@ def _lookup_id(
 
 
 def _product_columns(
-    payload: Any, db: Session, company_id: str, warnings: list[str], ref_cache: dict
+    payload: Any, db: Session, company_id: str, warnings: list[str], ref_cache: dict,
+    settings: Any = None,
 ) -> dict[str, Any]:
     # D24 (captain 2026-09-06): `product_name` is ALWAYS the AutoCount item
     # code, matching the xlsx import's own convention (product_name = Item
@@ -567,7 +568,11 @@ def _product_columns(
         else:
             # A blank uom_code resolves to the configured default, exactly as
             # `bulk_import_products` does for a row with no uom column value.
-            uom_id = product_rules.resolve_default_uom(db, company_id, cache=ref_cache)
+            # `settings` (Group 3): the batch's own already-cached
+            # `system_settings` row, so this never re-queries it per record.
+            uom_id = product_rules.resolve_default_uom(
+                db, company_id, settings, cache=ref_cache
+            )
         if uom_id:
             columns["base_uom_id"] = uom_id
 
@@ -842,6 +847,13 @@ class MasterIngestService:
                 f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
             )
 
+        # Fix round (Group 3): a fresh dict per `ingest()` call, not just per
+        # `MasterIngestService()` construction - every real caller already
+        # builds one instance per batch, but a stale id surviving into an
+        # unrelated later batch on the SAME instance would be silently wrong
+        # rather than merely slow, so the reset lives here rather than
+        # trusting that convention alone.
+        self._ref_cache = {}
         if entity_type == "products":
             try:
                 with company_scope(self.db, frozenset({self.company_id})):
@@ -850,6 +862,13 @@ class MasterIngestService:
                 # never fail the whole batch, only cost it the per-record
                 # fallback queries a miss already costs.
                 logger.warning("ingest.product_preload_failed", exc_info=True)
+                # Fix round (Group 3): a REAL DB error (not a Python one)
+                # leaves Postgres refusing every further statement on this
+                # connection until a ROLLBACK - without this, the very first
+                # record's own `self.db.begin_nested()` raises an UNCAUGHT
+                # `PendingRollbackError` and the whole batch dies, not just
+                # this best-effort optimisation.
+                self.db.rollback()
                 self._preload = None
         else:
             self._preload = None
@@ -913,6 +932,13 @@ class MasterIngestService:
         preload = _ProductBatchPreload()
 
         # (a) code -> id, D17's exact matching rule (`resolve_master_by_code`).
+        # Fix round (Group 3): `ORDER BY created_at, id` + `setdefault` (not
+        # `=`) - two DIFFERENT products can normalize to the same code (the
+        # unique constraint is on the exact stored string, not the
+        # normalized one), and without an order a Postgres-chosen row order
+        # picked whichever one happened to come back LAST; this instead
+        # picks the OLDEST, the same answer `resolve_master_by_code`'s own
+        # now-ordered `.first()` fallback would give for the same code.
         for chunk in self._chunked(sorted(codes)):
             rows = (
                 self.db.query(Product.id, Product.product_code)
@@ -920,10 +946,11 @@ class MasterIngestService:
                     func.upper(func.btrim(Product.product_code)).in_(chunk),
                     Product.company_id == self.company_id,
                 )
+                .order_by(Product.created_at, Product.id)
                 .all()
             )
             for product_id, product_code in rows:
-                preload.code_to_id[normalize_code(product_code)] = str(product_id)
+                preload.code_to_id.setdefault(normalize_code(product_code), str(product_id))
 
         # (b) source_ref -> entity_id, joined against `products` so an
         # ORPHANED reference (target row deleted) is simply absent here -
@@ -948,7 +975,10 @@ class MasterIngestService:
         # (c) entity_id -> origin, for every id (a) found - the adopt branch's
         # own next query after a code hit. Same raw-SQL reasoning as (b); a
         # lightweight stand-in (not the full ORM row) since
-        # `is_unclaimed_or_same_source` reads only `.source_system`.
+        # `is_unclaimed_or_same_source` reads only `.source_system`. `entity_
+        # id` is unique here (`uq_integration_ref_entity`), so no collision
+        # is actually reachable - `ORDER BY` added anyway (Group 3) for the
+        # same defensive determinism as (a)'s.
         candidate_ids = list(preload.code_to_id.values())
         for entity_id in candidate_ids:
             preload.origin_by_entity.setdefault(entity_id, None)
@@ -956,7 +986,8 @@ class MasterIngestService:
             rows = self.db.execute(
                 text(
                     "SELECT entity_id, source_system FROM integration_references "
-                    "WHERE entity_type = 'products' AND entity_id = ANY(:ids)"
+                    "WHERE entity_type = 'products' AND entity_id = ANY(:ids) "
+                    "ORDER BY created_at, id"
                 ),
                 {"ids": chunk},
             ).mappings().all()
@@ -1134,8 +1165,14 @@ class MasterIngestService:
         warnings: list[str] = []
         if entity_type == "products":
             # C2: only the product builder resolves category/uom/brand
-            # references, so only it gets the per-batch cache.
-            columns = spec.to_columns(payload, self.db, self.company_id, warnings, self._ref_cache)
+            # references, so only it gets the per-batch cache. `self.
+            # _system_settings()` (Group 3): the batch's own already-cached
+            # row, so `resolve_default_uom`'s configured-default branch
+            # never re-queries `system_settings` per record either.
+            columns = spec.to_columns(
+                payload, self.db, self.company_id, warnings, self._ref_cache,
+                self._system_settings(),
+            )
         else:
             columns = spec.to_columns(payload, self.db, self.company_id, warnings)
         _apply_not_null_defaults(entity_type, columns)
@@ -1271,7 +1308,7 @@ class MasterIngestService:
             raise MissingReference("category_code", "")
         if "base_uom_id" not in columns:
             columns["base_uom_id"] = product_rules.resolve_default_uom(
-                self.db, self.company_id, cache=self._ref_cache
+                self.db, self.company_id, self._system_settings(), cache=self._ref_cache
             )
 
     #: C3: `_finalize_product_derived`'s own four columns, unioned onto
@@ -1283,11 +1320,23 @@ class MasterIngestService:
     #: worth of UUID/Decimal/timestamp deserialisation per row, paid on
     #: every one of ~11,800 records, outweighed the one saved round trip on
     #: localhost's near-zero latency).
+    #: Fix round (Group 3, both reviewers): `discontinued_notified_at` /
+    #: `discontinued_notify_batch_id` joined the set - `_finalize_product_
+    #: derived` writes both to `columns` on a True->False transition, but
+    #: without them here `_diff` compared `row.get(column)` for a column
+    #: `row` never selected, i.e. always `None`, against the SAME `None`
+    #: `_finalize_product_derived` just wrote - looked unchanged regardless
+    #: of the row's REAL stored value, so a discontinued -> live product's
+    #: preview silently dropped the watermark reset from its own diff (the
+    #: real `_update` wrote it correctly either way; this was a preview-
+    #: fidelity bug, not a data one).
     _DERIVED_PRODUCT_COLUMNS = (
         "is_discontinued",
         "dimensions_length",
         "dimensions_width",
         "dimensions_height",
+        "discontinued_notified_at",
+        "discontinued_notify_batch_id",
     )
 
     def _read_product_row(self, product_id: str, columns: dict[str, Any]) -> Optional[Any]:

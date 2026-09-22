@@ -229,10 +229,23 @@ def resolve_default_uom(
 
     `cache` (C2): forwarded to `ensure_reference`'s own per-batch cache -
     only reached on the `EA` fallback path, since a `configured` default is
-    validated and returned directly, never through `ensure_reference` at all.
+    validated and returned directly, never through `ensure_reference` at
+    all. The CONFIGURED-default branch gets its own cache entry too (fix
+    round, Group 3) keyed `(UnitOfMeasure, company_id, "")` - `""` never
+    collides with a real code (`ensure_reference` rejects a blank one
+    outright) - so a batch of records with a blank `uom_code` validates the
+    configured id against `units_of_measure` ONCE, not once per record.
+    Every caller SHOULD also pass its own already-resolved `settings` (the
+    batch ingest passes `self._system_settings()`) so this never re-queries
+    `system_settings` per record either - `settings=None` (every other
+    caller) still resolves it itself, unchanged.
     """
     from app.models.product import UnitOfMeasure
     from app.models.user import SystemSetting
+
+    cache_key = (UnitOfMeasure, company_id, "") if cache is not None else None
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
 
     if settings is None:
         settings = db.query(SystemSetting).first()
@@ -261,10 +274,14 @@ def resolve_default_uom(
                 or_(UnitOfMeasure.company_id == company_id, UnitOfMeasure.company_id.is_(None))
             )
         if query.first():
+            if cache is not None:
+                cache[cache_key] = configured
             return configured
     uom_id, _created = ensure_reference(
         db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id, name=DEFAULT_UOM_NAME, cache=cache
     )
+    if cache is not None and uom_id:
+        cache[cache_key] = uom_id
     return uom_id
 
 
