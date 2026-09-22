@@ -1,0 +1,318 @@
+# PLAN - Order inquiry: Request CS to reserve stock (+ stock grid on OI lines and board list)
+
+Status: **APPROVED 22 Sep 2026 ("ok cool, go" in Lavish), building.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
+Track: full three-phase lane (migration, new permission, email). One lane, one PR (R-E).
+Lavish marks folded: same `CellStockTable` component; reserved mail carries BALANCE; board list view
+opens the grid view's dialog from the row (Q3 accepted with the go). Branch `feat/oi-request-cs-reserve`.
+
+## 0. Why
+
+Today the post-inquiry path is rigid: CS raises ORDER rows, purchasing buys. Purchasing often
+wants CS to cover part of a row from own or pool stock first (BRW has some, buy only the
+balance). That happens by email today (Joey -> Eling, CC the raiser; Eling transfers in AutoCount
+what she can, mails back; Joey buys the rest) and the system never learns the reserved quantity,
+so Taken / Remaining lie until the next stock upload. Two smaller gaps ride along: the OI side has
+no stock-by-location grid (purchasing opens the board to check BRW), and the fulfilment board's
+LIST view lacks the grid its GRID view has.
+
+## 1. Rulings (owner, 22 Sep 2026)
+
+| # | Ruling |
+| --- | --- |
+| R1 | Only Eling (CS head) reserves. The person mailed is configured (Automation recipients); the person allowed to act is gated by a new permission `projects.order_inquiries.reserve`. |
+| R2 | Eling enters a reserved qty per row; a reason is required on every row reserved short of the request, including zero. |
+| R3 | Default location = the row location's pool warehouse (`BRW-BB` -> `BRW`, via `Warehouse.pool_warehouse_id`); Eling may change it to any location shown in the stock grid. |
+| R4 | Reserved qty counts as Taken immediately on Eling's confirm. No transfer number captured now; AutoCount transfer automation is a later lane. |
+| R5 | States: `Request to reserve` -> `Reserved`. The cycle repeats on the remaining qty (a row can be reserved 50, requested again on 89). No amend after confirm; repeat instead. Reversal = the existing Unlink. |
+| R6 | Email both ways: request mail to Eling CC raiser + requester; reserved mail to the requester CC raiser. |
+| R7 | Links require login; the OI detail page is the acting page. No token page. |
+| R8 | No double count with the board's own-location cover: the reserved qty lowers the row's owed demand exactly as a PO link does, so the board plans the balance only. |
+| R9 | ONE email per request, however many rows (never one per row). |
+| R10 | Requested qty defaults to the row's remaining, editable down, never above. |
+| R11 | Purchasing sees the board's stock grid on the OI Lines tab; the board LIST view gets the same grid. Both are slices of this lane, built first. |
+
+## 2. What exists (measured 22 Sep on main 2280975f9)
+
+- Rows `projects.order_inquiry_rows` (`app/models/project_so.py:987`) carry `stock_location`,
+  `verb`, `state` (raised / partly_linked / placed / actioned / cancelled), `bundled_qty`.
+- Cover source `OrderInquiryLink` (`project_so.py:1128`): `po_line_id` XOR `spo_allocation_id`,
+  CHECK `ck_order_inquiry_links_one_target` (`:1204`), `document`, `qty`, `linked_by/at`, `auto`.
+- Taken is never stored. `refresh_link_state` (`project_order_inquiry_service.py:5504`) is the one
+  writer of row `state` from `sum(link.qty)`; worklist `_quantity_flow_by_so_line`
+  (`order_inquiry_worklist_service.py:1678-1753`) sums links by `row_id` with no target filter;
+  `_UNLINKED_QTY` (`:415`) likewise. Only `_PO_LINKED_QTY` / `_SPO_LINKED_QTY` (`:381-382`) filter
+  on the target column.
+- Demand view `scm.committed_v` (`app/services/scm/demand.py:531-534, 599-602`) nets
+  `SUM(l.qty) ... WHERE l.row_id = oir.id`, no target filter. `scm.on_order_v` never reads links.
+- Board `qty_free_remaining` etc. are supply-side only; the board reads the line's owed demand
+  from `committed_v`, so a link on the row lowers what the board has to plan (R8 holds by
+  construction; AC-RS-30 proves it).
+- Stock grid: `CellStockTable.tsx` + `StockDocumentsPanel.tsx` under
+  `project-sales/fulfilment-planning/components/`, fed by `useStockDetail(productId, warehouseId,
+  lineIds, group)` (`_shared/hooks/useFulfilmentPlanning.ts:341`) ->
+  `GET /api/v1/project-sales/fulfilment-planning/stock-detail?product_id&group|warehouse_id&line_ids`.
+  Props: `locations`, `taken`, `lineIds`, `showGroupSubtotal`; no board object required.
+  `FulfilmentBoardListView.tsx` has no reference to it.
+- Group suffix: `group_of_warehouse_code` (`scm/sales_agent_service.py:311`, `BRW-BB` -> `BB`,
+  bare pool code -> `None`). Pool of a location: `Warehouse.pool_warehouse_id`
+  (`models/inventory.py:52`), resolver shape `_pool_code_for_core_line`
+  (`planning_change_service.py:2975`).
+- OI detail `OrderInquiryDetail.tsx` (`order-inquiries/[id]/components/`): tabs Lines / General /
+  Related PO / Related SPO; `DetailActionsMenu` (`:328-392`) with Auto link, Choose document, Link
+  selected, Unlink selected (deferred action `order_inquiry_row.unlink`), Reject selected,
+  Unconfirm, Export. Row pills in `_shared/components/OrderInquiryVerbPill.tsx` (`STATE_LABEL`
+  `:88`). Permission gate pattern `useHasPermission` (`OrderInquiryDetail.tsx:61-82`).
+- Permissions: `app/rbac/permission_registry.py:584-601` (`projects.order_inquiry.action`,
+  `projects.order_inquiries.acknowledge`); `sync_permissions` seeds on startup, no migration.
+- Email: Automation rows. `dispatch_event(trigger_type, context, source_kind, source_id)`
+  (`automation_service.py:272`); `recipient_config` keys `user_ids, role_ids, include_actor,
+  one_email, extra_emails` (`:389-410`); with `one_email` the resolved list goes out as ONE
+  outbox row, first address To, rest Cc (`notification_tasks.py:251-281`). Trigger catalog
+  `automation_triggers.py:506` (handover precedent). Seed precedent
+  `alembic/versions/212_seed_pr_sponsorship_approved_automation.py`; template + row seeded by
+  `PLAN-scm-oi-handover-email.md` 3.6. Post-commit drain precedent `_fire_pending_handover`
+  (`project_order_inquiry_service.py:9494`, root commit only).
+- OI number mint `next_inquiry_no` (`project_so.py:890`). Reserve requests get NO number: they
+  are addressed as `OI-2609-0678 request #2` (ordinal within the inquiry, by `requested_at`).
+
+## 3. Design (simplest thing that works)
+
+Two tables, one new link target, one permission, two Automation rows, one reusable grid.
+
+### 3.1 Schema (one migration, `<next>_oi_reserve_requests`, id <= 32 chars)
+
+```
+projects.order_inquiry_reserve_requests
+  id uuid pk, order_inquiry_id fk, ordinal int (1..n within the inquiry),
+  state text check in ('requested','reserved','cancelled'),
+  requested_by fk users, requested_at tz, note text null,
+  reserved_by fk users null, reserved_at tz null,
+  cancelled_by fk users null, cancelled_at tz null
+  unique (order_inquiry_id, ordinal)
+
+projects.order_inquiry_reserve_request_rows
+  id uuid pk, request_id fk (cascade), row_id fk order_inquiry_rows,
+  qty_requested numeric > 0, warehouse_id fk warehouses (default = pool, R3),
+  qty_reserved numeric null (>= 0, <= qty_requested), reason text null
+  unique (request_id, row_id)
+  partial unique index: one OPEN request row per OI row
+    (row_id) where qty_reserved is null  -- enforced via state on the parent, see 3.3
+
+projects.order_inquiry_links
+  + reserve_request_row_id fk order_inquiry_reserve_request_rows null
+  CHECK ck_order_inquiry_links_one_target widened to
+    (po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int
+      + (reserve_request_row_id IS NOT NULL)::int = 1
+```
+
+Downgrade drops the column, restores the two-target CHECK (deleting reserve links first), drops
+both tables, removes the two seeded templates + automations.
+
+### 3.2 Request (purchasing)
+
+`POST /api/v1/project-sales/order-inquiries/{inquiry_id}/reserve-requests`
+`{ rows: [{ row_id, qty_requested, warehouse_id? }], note? }` -> 201 request.
+
+Rules (service `OrderInquiryReserveService`, new file, `app/services/order_inquiry_reserve_service.py`):
+
+- Rows must belong to the inquiry, verb ORDER or ORDER_BACK, state raised / partly_linked,
+  remaining > 0 (`row.qty - sum(links) - bundled_qty`), and have no open request row. Any
+  violation -> 409 `AppException` naming the row.
+- `qty_requested` <= remaining (R10) else 422 naming the row.
+- `warehouse_id` defaults to the pool of `row.stock_location` (R3). When the location has no pool
+  (it IS a pool, `group_of_warehouse_code` -> None) the default is the location itself.
+- `ordinal` = max + 1 within the inquiry.
+- Permission: same gate as the other purchasing actions on the page (`projects.order_inquiries.acknowledge`).
+- Post-commit (root commit only, the handover drain pattern): ONE
+  `dispatch_event("order_inquiry_reserve_requested", context, source_kind="order_inquiry_reserve_request", source_id=request.id)` (R9).
+
+`POST .../reserve-requests/{id}/cancel` by the requester or anyone with the reserve permission,
+only while `requested`. Exposed as the deferred action `order_inquiry_reserve_request.cancel`
+(5 s reversible, `record_actions.py` registry) so the UI follows the standard countdown. No mail.
+
+### 3.3 Reserve (Eling)
+
+`POST .../reserve-requests/{id}/reserve`
+`{ rows: [{ request_row_id, warehouse_id, qty_reserved, reason? }] }` -> 200 request.
+
+- Gate: `projects.order_inquiries.reserve` (new registry entry, R1).
+- Only while `requested`; every request row must be answered in the one call (all-or-nothing;
+  partial answers are not a state).
+- `0 <= qty_reserved <= qty_requested`; `reason` required (non-blank) when
+  `qty_reserved < qty_requested` (R2) else 422 naming the row.
+- `warehouse_id` must be an active warehouse. Eling's change is stored on the request row.
+- For each row with `qty_reserved > 0`: insert `OrderInquiryLink(row_id, reserve_request_row_id,
+  document="Reserved @ <warehouse_code>", qty=qty_reserved, linked_by=actor, auto=False)`,
+  then `refresh_link_state(row)` (the existing writer moves the row to partly_linked / placed).
+- Request -> `reserved`, `reserved_by/at`.
+- Post-commit ONE `dispatch_event("order_inquiry_reserved", ...)`.
+- Reversal: the existing Unlink (bulk deferred action, per-row action) deletes the link like any
+  other; the request stays `reserved` as history. AC-RS-22.
+
+### 3.4 Taken / Remaining / breakdown
+
+Nothing to change in `refresh_link_state`, `_quantity_flow_by_so_line`, `_UNLINKED_QTY`,
+`committed_v`: they sum by `row_id`. Add `_RESERVED_LINKED_QTY = _linked_qty(OrderInquiryLink.reserve_request_row_id.isnot(None))`
+beside the PO / SPO twins and surface it as `reserved_qty` on the worklist row schema and the OI
+header-lines schema, so the FE can print `Reserved 50` without a second query. Existing serializers
+that print the first link's document (`po_ref` / `spo_ref` derivation) skip reserve links; the FE
+reads `reserved_qty` instead.
+
+### 3.5 Row chip
+
+Derived per row, no new column: `reserve_state` in the lines serializer =
+`requested` when an open request row exists, else `reserved` when `reserved_qty > 0`, else null.
+`OrderInquiryVerbPill.tsx` gains `ReservePill` (`Request to reserve` amber, `Reserved N` green),
+rendered beside the state pill in `orderInquiryHeaderLinesColumns.tsx` and the worklist columns.
+
+### 3.6 Emails (two Automation rows, seeded in the same migration)
+
+Context, both triggers:
+
+```
+{ "reserve": { "inquiry_no", "ordinal", "so_number", "customer", "project",
+               "requested_by": {name, email}, "requested_at",
+               "rows": [{ item_code, delivery_date, qty, remaining, qty_requested, location,
+                          qty_reserved, reason }],
+               "row_count", "state", "link" },
+  "actor": {name, email}, "raiser": {name, email}, "requester": {name, email}, "today" }
+```
+
+`link` = `<FRONTEND_BASE_URL>/project-sales/order-inquiries/<id>?reserve=<request_id>` (login
+required, R7). `raiser` = inquiry `raised_by`; `requester` = `requested_by`.
+
+Recipient config gains two bools beside `include_actor`: `include_raiser` and `include_requester`
+(context keys `raiser.email` / `requester.email`), one checkbox each in `RecipientPicker.tsx`
+("Cc the person who raised the inquiry", "Cc the person who requested"). Same
+`_normalize_recipient_config` / `resolve_recipients` mechanism; dedupe applies.
+
+| trigger | seeded name | recipient_config | subject |
+| --- | --- | --- | --- |
+| `order_inquiry_reserve_requested` | `Order inquiry: request CS to reserve` | `user_ids: []` (owner adds Eling after deploy), `include_actor: true` (= requester), `include_raiser: true`, `one_email: true` | `Reserve request: {{ reserve.inquiry_no }} #{{ reserve.ordinal }} - {{ reserve.so_number }}` |
+| `order_inquiry_reserved` | `Order inquiry: reserved by CS` | `include_requester: true`, `include_raiser: true`, `one_email: true` | `Reserved: {{ reserve.inquiry_no }} #{{ reserve.ordinal }} - {{ reserve.so_number }}` |
+
+Because `one_email` puts the FIRST resolved address in To: for the request mail `user_ids`
+resolve first (Eling To, requester + raiser Cc); for the reserved mail `include_requester`
+resolves before `include_raiser` (requester To, raiser Cc). AC-RS-16 pins the order.
+
+Bodies: one table. Request mail: ITEM CODE, DELIVERY DATE, QTY, REMAINING, REQUESTED, LOCATION.
+Reserved mail: ITEM CODE, QTY, REQUESTED, RESERVED, BALANCE (row remaining after this reserve =
+what purchasing still buys, owner mark 22 Sep), LOCATION, REASON. Footer with the acting person and
+the link. `rows[].balance` joins the context for the reserved trigger. Inline
+`border` / `padding` on every cell (mail clients have no stylesheet).
+
+### 3.7 Purchasing UI (OI detail, Lines tab)
+
+- Row selection -> `DetailActionsMenu` gains **Request CS to reserve** (enabled when every
+  selected row is requestable; disabled items keep a tooltip naming the first reason).
+- `ReserveRequestDialog`: one line per selected row: item code, delivery date, remaining, **Requested**
+  (number input, default remaining, max remaining), **Location** (`SearchableSelect`, default the
+  pool, options = the row's stock-grid locations), a chevron opening the stock grid for that row
+  (3.9), optional note. Primary **Send request**. Toast `Request #2 sent to <name>` (name of the
+  first To recipient, from the response).
+- Lines tab header area: `ReserveRequestsCard` above the grid: the open request (rows, requested,
+  location, who / when, **Cancel request** countdown for the requester), and a collapsed history of
+  reserved / cancelled ones (rows with reserved qty + reason). Empty when none (card hidden, not an
+  empty state, since the grid is the page's content).
+
+### 3.8 Reserving UI (same page, Eling)
+
+- With `?reserve=<id>` or when an open request exists and the viewer holds the reserve
+  permission, `ReserveRequestsCard` renders the open request in **act mode**: per row **Location**
+  (`SearchableSelect`, prefilled), **Reserved** (number input, default `min(requested, available at
+  the chosen location, 0 floor)`, max requested), **Reason** (required when short, shown inline
+  as soon as the value drops below requested), stock-grid chevron (3.9). Primary **Confirm
+  reserved** (disabled until every short row has a reason). Toast `Reserved, <requester> notified`.
+- A viewer without the permission sees the same card read-only.
+- Detail header gets a `Request to reserve` badge while a request is open.
+
+### 3.9 Stock grid (slice 1, no backend)
+
+`OrderInquiryStockGrid({ productId, location })` in `_shared/components/`: resolves
+`group = group_of(location)` (client twin of `group_of_warehouse_code`, split on first hyphen;
+no hyphen -> `warehouse_id` lookup by code via the existing warehouse select service), calls
+`useStockDetail(productId, undefined, [], group)` (or `warehouseId` for a pool), renders
+`CellStockTable` with `showGroupSubtotal` and the expandable `StockDocumentsPanel`, exactly as
+`BoardCellBreakdownDialog`'s Stock tab. Used in:
+
+- OI Lines tab: row expander column (chevron) -> grid inline under the row.
+- `ReserveRequestDialog` and `ReserveRequestsCard` rows (3.7 / 3.8).
+- `FulfilmentBoardListView.tsx`: the expanded decision panel already holds buy / borrow /
+  reasoning (owner mark 3, 22 Sep), so the grid is NOT lifted into it. The list row opens the
+  grid view's own `BoardCellBreakdownDialog`, unchanged, from a `Stock` icon-button on the row
+  and from the "To plan" figure. Pending owner answer Q3 on the Lavish page (dialog vs inline
+  below the decision block).
+
+No new endpoint: `stock-detail` already accepts `product_id` + `group` / `warehouse_id`. The OI row
+needs `product_id` in its serializer if absent (verify item 1 in section 6).
+
+## 4. Slices (one lane, one PR)
+
+| slice | content | phase |
+| --- | --- | --- |
+| S1 | 3.9 grid on OI Lines tab + board list view | Phase 1 FE against the live endpoint (no mock needed, endpoint exists); vitest |
+| S2 | 3.1 migration, 3.2 request endpoint + cancel, 3.4 reserved figure, 3.5 chip, 3.7 dialog + card, 3.6 request mail | Phase 1 mock of dialog + card, then Phase 2 tester-first |
+| S3 | 3.3 reserve endpoint, 3.8 act mode, 3.6 reserved mail, permission | Phase 2 tester-first |
+| S4 | guide, journey evidence, Phase 3 review (reviewer + security-reviewer on Opus: new permission + link CHECK) | Phase 3 |
+
+Phase 1 mock for S2 / S3 goes on the Lavish page first (owner markup), then the coder builds it
+against `msw`-free stubs in the service layer, swapped for real once S2's endpoint lands.
+
+## 5. Captain's test list (for the tester)
+
+| AC | test | assertion in words |
+| --- | --- | --- |
+| RS-1 | `test_request_creates_request_and_rows_one_dispatch` | 3 rows, one call: one request `ordinal 1`, 3 request rows, `dispatch_event` mocked called ONCE after commit with `row_count 3` |
+| RS-2 | `test_request_default_location_is_pool` | row at `BRW-BB` -> request row `warehouse_id` = BRW's id; row at a pool code -> itself |
+| RS-3 | `test_request_qty_capped_at_remaining` | qty 100, link 40 -> requested 61 rejected 422, 60 accepted |
+| RS-4 | `test_request_rejects_open_duplicate_and_wrong_state` | second open request on a row 409; actioned / cancelled / DELAY row 409 |
+| RS-5 | `test_second_request_after_reserved_allowed` | reserve 50 of 139, new request on 89 -> ordinal 2, allowed |
+| RS-6 | `test_reserve_writes_links_and_refreshes_state` | reserved 50 -> one link with `reserve_request_row_id`, `document "Reserved @ BRW"`, row `partly_linked`; reserved full -> `placed` |
+| RS-7 | `test_reserve_zero_needs_reason` | 0 without reason 422; with reason ok, no link written |
+| RS-8 | `test_reserve_short_needs_reason_full_does_not` | 30 of 50 without reason 422; 50 of 50 no reason ok |
+| RS-9 | `test_reserve_all_rows_or_422` | missing one request row -> 422, nothing written |
+| RS-10 | `test_reserve_requires_permission` | user without `projects.order_inquiries.reserve` -> 403; requester without it 403 |
+| RS-11 | `test_reserve_only_once` | second reserve on a reserved request 409 |
+| RS-12 | `test_taken_remaining_include_reserved` | worklist `_quantity_flow_by_so_line`: taken = PO 40 + reserved 50, remaining 49; `reserved_qty` 50; PO card 40, SPO card 0 |
+| RS-13 | `test_committed_v_owed_nets_reserved_link` | owed for the row drops by the reserved qty (R8) |
+| RS-14 | `test_unlink_reserve_link_restores_remaining` | unlink -> remaining back, request stays `reserved`, chip clears |
+| RS-15 | `test_request_context_shape_and_link` | keys per 3.6, `link` ends `?reserve=<id>`, dates dd/mm/yyyy |
+| RS-16 | `test_recipient_order_request_and_reserved` | request: Eling first then requester, raiser; reserved: requester first then raiser; `include_raiser` / `include_requester` resolve + dedupe |
+| RS-17 | `test_seed_migration_idempotent` | two templates, two automations, `one_email`, downgrade removes; CHECK widened and restored |
+| RS-18 | `test_link_check_exactly_one_target` | link with two targets or none raises IntegrityError |
+| RS-19 | `test_cancel_request_only_while_requested` | cancel open ok (`cancelled`), cancel reserved 409, deferred action registered |
+| RS-20 | `test_reserve_state_derived` | serializer: open -> `requested`; reserved link -> `reserved`; none -> null; reserved then requested again -> `requested` |
+| RS-21 | `test_rollback_discards_pending_dispatch` | request inside a rolled-back transaction dispatches nothing |
+| RS-22 | vitest `ReserveRequestDialog.test.tsx` | defaults = remaining + pool, cannot exceed remaining, Send posts the contract shape |
+| RS-23 | vitest `ReserveRequestsCard.test.tsx` | act mode: reason input appears when reserved < requested, Confirm disabled until filled; read-only without permission |
+| RS-24 | vitest `OrderInquiryStockGrid.test.tsx` | `BRW-BB` -> `group=BB`; pool code -> `warehouse_id`; renders `CellStockTable` with subtotal |
+| RS-25 | vitest `FulfilmentBoardListView.stock.test.tsx` | expanded row shows Stock tab with the grid |
+| RS-26 | vitest `RecipientPicker.include_raiser.test.tsx` | both new checkboxes round-trip |
+
+## 6. Verify while building (coder reports, does not guess)
+
+1. Whether the OI lines serializer already carries `product_id` (the grid needs it; item code
+   alone is not a key). If not, add it in the header-lines schema and the worklist row.
+2. Whether `stock-detail` with `group=<suffix>` includes the pool row for that site (the dialog
+   shows it under `Where = site_pool`). If not, a second call with the pool `warehouse_id`.
+3. Whether `BoardLineDecisionPanel` already knows the cell's `productId` + `warehouseId`; the
+   list-view Stock tab needs the same inputs the dialog gets.
+4. `dispatch_event` dedupe by `source_id` (handover item 3 found none; re-confirm for two
+   triggers sharing `source_kind`).
+
+## 7. Out of scope (recorded, not built)
+
+- AutoCount stock transfer creation / transfer number on the reserve row. Trigger: the FoundryX
+  gateway gains a write path.
+- Partial answers to one request (answer some rows now, others later). Trigger: Eling asks.
+- Amend a reserved qty. Reversal is Unlink; top-up is a new request.
+- A `StockTransfer` paper row for the reserve. Trigger: the warehouse asks for the paper trail on
+  OI-driven reserves like it has for board decisions.
+- Taken / Remaining columns on the OI Lines tab + worklist with footer sums: already ruled in
+  `PLAN-board-oi-mechanical-22sep.md`; this lane only adds `reserved_qty` to those figures.
+
+## 8. After merge
+
+Owner adds Eling to the request automation's users, ticks nothing else (seed already sets the Cc
+options). Guide: "Ask CS to reserve stock" section in the purchasing OI guide + "Reserve for
+purchasing" in the CS guide; Outline push by the owner.

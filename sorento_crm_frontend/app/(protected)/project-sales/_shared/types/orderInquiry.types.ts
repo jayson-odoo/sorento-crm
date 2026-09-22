@@ -365,6 +365,9 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   so_date?: string | null;
   so_number?: string | null;
   item_code?: string | null;
+  /** Addressing only, never rendered - two products share one item code on the live
+   * book, so the stock grid (`OrderInquiryStockGrid`) keys on this, never `item_code`. */
+  product_id?: string | null;
   product_name?: string | null;
   qty: string;
   delivery_date?: string | null;

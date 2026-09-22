@@ -1,11 +1,14 @@
 'use client';
 
 import * as React from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ColumnDef } from '@tanstack/react-table';
+import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { OrderInquiryStatePill } from '../../../_shared/components/OrderInquiryVerbPill';
+import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import {
   DeliveryDateCell,
@@ -46,6 +49,57 @@ function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' 
 export function useOrderInquiryHeaderLinesColumns(): ColumnDef<OrderInquiryWorklistRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
     () => [
+      // `PLAN-oi-request-cs-reserve.md` 3.9 (AC-RS-40): the board's own stock grid, a
+      // chevron away - purchasing used to open the fulfilment board just to check BRW.
+      {
+        id: 'expand',
+        header: () => <span className="sr-only">Expand</span>,
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            className="size-6"
+            aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} stock for ${
+              row.original.item_code ?? 'this line'
+            }`}
+            aria-expanded={row.getIsExpanded()}
+            onClick={(event) => {
+              event.stopPropagation();
+              row.toggleExpanded();
+            }}
+          >
+            {row.getIsExpanded() ? (
+              <ChevronDown className="size-3.5" aria-hidden />
+            ) : (
+              <ChevronRight className="size-3.5" aria-hidden />
+            )}
+          </Button>
+        ),
+        size: 44,
+        minSize: 44,
+        enableSorting: false,
+        enableResizing: false,
+        enableHiding: false,
+        meta: {
+          headerTitle: 'Expand',
+          expandedContent: (line: OrderInquiryWorklistRow) => (
+            <div className="px-3 py-2">
+              {line.product_id ? (
+                <OrderInquiryStockGrid
+                  productId={line.product_id}
+                  location={line.location ?? null}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No product resolved for this line yet.
+                </p>
+              )}
+            </div>
+          ),
+        },
+      },
       buildSelectColumn<OrderInquiryWorklistRow>({
         rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
       }),

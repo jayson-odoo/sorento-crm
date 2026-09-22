@@ -210,6 +210,10 @@ export function locationOf(part: SupplyPart): string | null {
  * (`app/services/scm/sales_agent_service.group_of_warehouse_code`) spelled the same way here so
  * the two cannot drift. A plain site code (`BRW`, `MWH`, `DC1`, `WH3`, `RSW`) has no hyphen and
  * therefore no group: it is a POOL, not anyone's ownership group.
+ *
+ * Exported as `groupOfWarehouseCode` too (`PLAN-oi-request-cs-reserve.md` 3.9): the OI stock
+ * grid needs the identical rule to decide `group=` vs `warehouse_id=` on `stock-detail`, and a
+ * second copy of six lines of hyphen-splitting is how the two come to disagree.
  */
 function groupOf(code: string | null | undefined): string | null {
   if (!code) return null;
@@ -222,6 +226,11 @@ function groupOf(code: string | null | undefined): string | null {
       .trim()
       .toUpperCase() || null
   );
+}
+
+/** Public name for `groupOf`, for a caller outside this module (`OrderInquiryStockGrid`). */
+export function groupOfWarehouseCode(code: string | null | undefined): string | null {
+  return groupOf(code);
 }
 
 /**

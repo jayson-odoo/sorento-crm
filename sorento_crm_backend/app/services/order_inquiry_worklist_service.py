@@ -1974,6 +1974,11 @@ class OrderInquiryWorklistService:
             "so_date": row.so_date,
             "so_number": row.so_number,
             "item_code": row.item_code,
+            # PLAN-oi-request-cs-reserve.md section 6 item 1: the stock grid keys on the
+            # product's id, never the item code string - two products share one code on
+            # the live book. Already on `row` (`_COLUMNS` selects `Product.id`);
+            # `response_model` drops what it is not told about.
+            "product_id": row.product_id,
             "product_name": row.product_name,
             "qty": _qty_str(_dec(row.qty)),
             "delivery_date": row.delivery_date,

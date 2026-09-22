@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import {
+  ExpandedState,
   PaginationState,
   RowSelectionState,
   SortingState,
   getCoreRowModel,
+  getExpandedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
@@ -43,6 +45,7 @@ export function OrderInquiryLinesTab({
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<ExpandedState>({});
   const columns = useOrderInquiryHeaderLinesColumns();
 
   // Cancelled lines are hidden here, same as the worklist (S5) - they carry no
@@ -53,9 +56,10 @@ export function OrderInquiryLinesTab({
     columns,
     data: rows,
     getRowId: (row) => row.id,
-    state: { pagination, sorting, rowSelection, globalFilter: search },
+    state: { pagination, sorting, rowSelection, globalFilter: search, expanded },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onExpandedChange: setExpanded,
     onRowSelectionChange: (updater) =>
       onRowSelectionChange(
         typeof updater === 'function' ? updater(rowSelection) : updater,
@@ -67,6 +71,7 @@ export function OrderInquiryLinesTab({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });

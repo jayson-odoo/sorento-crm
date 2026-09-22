@@ -295,6 +295,12 @@ class OrderInquiryWorklistRow(BaseModel):
     so_date: Optional[date] = None
     so_number: Optional[str] = None
     item_code: Optional[str] = None
+    #: Addressing only, never rendered - two products on the live book share one item
+    #: code, so a caller that keys a stock lookup off `item_code` risks the wrong one
+    #: (`PLAN-oi-request-cs-reserve.md` section 6 item 1). Already selected by `_COLUMNS`
+    #: (`Product.id.label("product_id")`); declared here because `response_model` drops
+    #: what it is not told about.
+    product_id: Optional[str] = None
     product_name: Optional[str] = None
     qty: str
     delivery_date: Optional[date] = None
