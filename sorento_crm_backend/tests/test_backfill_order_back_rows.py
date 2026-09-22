@@ -24,8 +24,10 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 
+import pytest
 from sqlalchemy import text
 
+from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.project_so import (
@@ -322,20 +324,27 @@ def test_ac_ob_15d_outside_both_clock_windows_is_skipped(tmp_path):
         assert world["row"].verb == IV_ORDER
 
 
-def test_ac_ob_4_blank_location_cell_matches_the_core_lines_own_location_and_flips(tmp_path):
-    """Point 4 fix round: the sheet's STOCK LOCATION cell is blank today, but the DB row
-    carries the CORE LINE's own warehouse code - exactly what the importer's own
-    `raise_row` fallback (`stock_location=location or match.line_location`) would have
-    written when the sheet was first uploaded with that same blank cell. The match must
-    fall back the same way, or a legitimately-imported row can never be found again."""
+def test_ac_ob_14b_blank_location_cell_matches_the_core_lines_own_location_and_flips(tmp_path):
+    """Point 4/N2/N5 fix round (AC-OB-14 territory - AC-OB-4 is the view test, not this
+    script). The sheet's STOCK LOCATION cell is blank today, but the DB row carries the
+    CORE LINE's own warehouse code - exactly what the importer's own `raise_row` fallback
+    (`stock_location=location or match.line_location`) would have written when the sheet
+    was first uploaded with that same blank cell. The match must fall back the same way,
+    or a legitimately-imported row can never be found again.
+
+    The WAREHOUSE's own `warehouse_code` is stored in a DIFFERENT case from the row's
+    `stock_location` (which `raise_row` always upper-cases) - N5's own case, proving the
+    match's `func.upper(Warehouse.warehouse_code)` normalises the side that carries no
+    such guarantee rather than relying on both already agreeing.
+    """
     with pg_session() as db:
         company_id = _sorento(db)
         uploader = _uploader(db)
         so_number = f"{MARKER}-SO7-{_uid()[:6]}"
 
-        warehouse_code = f"{MARKER}-WH-{_uid()[:6]}"
+        warehouse_code = f"{MARKER}-WH-{_uid()[:6]}".upper()
         warehouse = Warehouse(
-            id=_uid(), company_id=company_id, warehouse_code=warehouse_code,
+            id=_uid(), company_id=company_id, warehouse_code=warehouse_code.lower(),
             warehouse_name=warehouse_code, is_active=True,
         )
         db.add(warehouse)
@@ -424,3 +433,243 @@ def test_ac_ob_16_a_sheet_row_with_no_matching_inquiry_row_is_reported_unmatched
             .count()
         )
         assert created == 0, "a sheet row with nothing to match must never be created"
+
+
+def test_n1_a_duplicated_sheet_row_dedupes_on_both_dry_run_and_apply(tmp_path):
+    """N1 fix round. The SAME sheet row twice (identical SO/item/qty/date/location): a
+    dry run reports the candidate ONCE, and `--apply` reports it twice - `flipped` then
+    `already_flipped` - never re-entering the mutation branch and never mislabelling the
+    repeat as `skipped_person_actioned` or `unmatched` (the flush-then-requery race N1
+    fixed). The row itself is flipped exactly once."""
+    with pg_session() as db:
+        company_id = _sorento(db)
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SO8-{_uid()[:6]}"
+        world = _order_back_candidate(db, company_id, uploader, so_number=so_number)
+        db.commit()
+
+        path = tmp_path / "sheet.xlsx"
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+        ]))
+
+        dry = backfill.run(db, [str(path)], apply=False)
+        dry_actions = [r["action"] for r in dry if r["so_number"] == so_number]
+        assert dry_actions == ["flipped"], dry
+
+        applied = backfill.run(db, [str(path)], apply=True)
+        db.commit()
+        applied_actions = [r["action"] for r in applied if r["so_number"] == so_number]
+        assert applied_actions == ["flipped", "already_flipped"], applied
+
+        db.refresh(world["row"])
+        assert world["row"].verb == IV_ORDER_BACK
+        assert world["row"].state == INQUIRY_RAISED
+
+
+def test_n3_a_blank_delivery_date_cell_matches_the_core_lines_required_date_and_flips(
+    tmp_path,
+):
+    """Point 3 fix round: the sheet's DELIVERY DATE cell is blank today, but the DB row
+    carries the CORE LINE's own `required_date` - exactly what `raise_row`'s own fallback
+    (`delivery_date=row.delivery_date or match.core_line.required_date`) would have
+    written when the sheet was first uploaded with that same blank cell."""
+    with pg_session() as db:
+        company_id = _sorento(db)
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SO9-{_uid()[:6]}"
+
+        cat_id, uom_id, product_id = _uid(), _uid(), _uid()
+        db.execute(text(
+            "INSERT INTO product_categories (id, category_code, category_name) "
+            "VALUES (:i, :c, :c)"), {"i": cat_id, "c": f"{MARKER}-CAT-{cat_id[:6]}"})
+        db.execute(text(
+            "INSERT INTO units_of_measure (id, uom_code, uom_name) VALUES (:i, :c, :c)"),
+            {"i": uom_id, "c": f"{MARKER}-U-{uom_id[:6]}"})
+        db.execute(text(
+            "INSERT INTO products (id, company_id, product_code, product_name, "
+            "category_id, base_uom_id, list_price) "
+            "VALUES (:i, :c, :code, :code, :cat, :uom, 0)"),
+            {"i": product_id, "c": company_id, "code": f"{MARKER}-P-{product_id[:6]}",
+             "cat": cat_id, "uom": uom_id})
+        db.flush()
+        required_date = date(2026, 10, 5)
+        core = SalesOrder(id=_uid(), company_id=company_id, so_number=so_number, status="open")
+        db.add(core)
+        db.flush()
+        core_line = SalesOrderLine(
+            id=_uid(), sales_order_id=core.id, product_id=product_id,
+            required_date=required_date, qty_ordered=Decimal("3"),
+            qty_delivered=Decimal("0"), line_status="open", company_id=company_id,
+        )
+        db.add(core_line)
+        db.flush()
+        pso = ProjectSalesOrder(
+            id=_uid(), company_id=company_id, provisional_ref=f"{MARKER}-PSO-{_uid()[:8]}",
+            so_id=core.id, status="published",
+        )
+        db.add(pso)
+        db.flush()
+        mirror = ProjectSalesOrderLine(
+            id=_uid(), company_id=company_id, project_sales_order_id=pso.id, line_no=1,
+            product_id=product_id, qty=Decimal("3"), unit_price=Decimal("0"),
+            amount=Decimal("0"), core_sales_order_line_id=core_line.id,
+        )
+        db.add(mirror)
+        db.flush()
+
+        world = _order_back_candidate(
+            db, company_id, uploader, so_number=so_number, pso=pso,
+            # The row itself carries the FALLBACK value, the core line's own required_date.
+            delivery_date=required_date, so_line_id=mirror.id,
+        )
+        db.commit()
+
+        path = tmp_path / "sheet.xlsx"
+        # DELIVERY DATE blank on today's re-read.
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, "", "BRW-BB", "order back"),
+        ]))
+
+        result = backfill.run(db, [str(path)], apply=True)
+        db.commit()
+
+        flips = [r for r in result if r["so_number"] == so_number]
+        assert flips and flips[0]["action"] == "flipped", result
+
+        db.refresh(world["row"])
+        assert world["row"].verb == IV_ORDER_BACK
+
+
+def _two_company_candidates(db, uploader, so_number):
+    """The SAME SO number, and the SAME importer-closed ORDER row shape, in TWO different
+    companies - the ambiguity `--apply` must refuse without `--company`.
+
+    `tests/conftest.py`'s own session-start listener defaults every test session's
+    company scope to SRT alone (`_default_company_scope_for_tests`) - fail-closed is the
+    right default, but it would also scope the SECOND company's row out of every read a
+    caller of this helper makes THROUGH THIS SESSION, same as `backfill.main()` itself
+    widens it (`set_company_scope(db, None)`) for the very reason a script has no request
+    and no principal to scope by.
+    """
+    set_company_scope(db, None)
+    srt = _sorento(db)
+    other = db.execute(text(
+        "INSERT INTO companies (id, name, code, is_active, created_at) "
+        "VALUES (:i, :n, :c, true, now()) RETURNING id"
+    ), {"i": _uid(), "n": f"{MARKER} co", "c": f"{MARKER[:8]}{_uid()[:6]}".replace("-", "")}
+    ).scalar()
+    world_a = _order_back_candidate(db, srt, uploader, so_number=so_number)
+    world_b = _order_back_candidate(db, other, uploader, so_number=so_number)
+    db.commit()
+    return {"srt": srt, "other": other, "a": world_a, "b": world_b}
+
+
+def test_n2_ambiguous_so_number_refuses_apply_and_writes_nothing(tmp_path):
+    with pg_session() as db:
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SOA-{_uid()[:6]}"
+        world = _two_company_candidates(db, uploader, so_number)
+
+        path = tmp_path / "sheet.xlsx"
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+        ]))
+
+        # No rollback needed: the ambiguity check runs BEFORE any query that could
+        # match a row, let alone mutate one, so there is nothing to undo - the same
+        # reason `run()` itself never rolls back a dry run (see SAFETY / IDEMPOTENCY).
+        with pytest.raises(backfill.AmbiguousCompanyError):
+            backfill.run(db, [str(path)], apply=True)
+
+        db.refresh(world["a"]["row"])
+        db.refresh(world["b"]["row"])
+        assert world["a"]["row"].verb == IV_ORDER
+        assert world["b"]["row"].verb == IV_ORDER
+
+
+def test_n2_ambiguous_so_number_with_company_flips_only_that_company(tmp_path):
+    with pg_session() as db:
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SOB-{_uid()[:6]}"
+        world = _two_company_candidates(db, uploader, so_number)
+
+        path = tmp_path / "sheet.xlsx"
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+        ]))
+
+        result = backfill.run(db, [str(path)], apply=True, company_code="SRT")
+        db.commit()
+
+        flips = [r for r in result if r["so_number"] == so_number]
+        assert flips and flips[0]["action"] == "flipped", result
+        assert flips[0]["company_code"] == "SRT"
+
+        db.refresh(world["a"]["row"])
+        db.refresh(world["b"]["row"])
+        assert world["a"]["row"].verb == IV_ORDER_BACK
+        assert world["b"]["row"].verb == IV_ORDER, "the OTHER company's row must never move"
+
+
+def test_n2_ambiguous_so_number_dry_run_lists_both_companies(tmp_path):
+    with pg_session() as db:
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SOC-{_uid()[:6]}"
+        _two_company_candidates(db, uploader, so_number)
+
+        path = tmp_path / "sheet.xlsx"
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+        ]))
+
+        result = backfill.run(db, [str(path)], apply=False)
+        rows = [r for r in result if r["so_number"] == so_number]
+        assert len(rows) == 2, rows
+        codes = {r["company_code"] for r in rows}
+        assert len(codes) == 2, "both companies must be listed, distinctly"
+        assert all(r["action"] == "flipped" for r in rows)
+
+
+def test_n2_main_returns_2_on_ambiguous_company(tmp_path, capsys):
+    with pg_session() as db:
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SOD-{_uid()[:6]}"
+        _two_company_candidates(db, uploader, so_number)
+
+        path = tmp_path / "sheet.xlsx"
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+        ]))
+
+        code = backfill.main(["--apply", str(path)], db=db)
+        db.rollback()
+
+        assert code == 2
+        out = capsys.readouterr().out
+        assert "REFUSING" in out
+
+
+def test_n4_main_returns_2_on_unknown_company_code(tmp_path, capsys):
+    with pg_session() as db:
+        company_id = _sorento(db)
+        uploader = _uploader(db)
+        so_number = f"{MARKER}-SOE-{_uid()[:6]}"
+        _order_back_candidate(db, company_id, uploader, so_number=so_number)
+        db.commit()
+
+        path = tmp_path / "sheet.xlsx"
+        path.write_bytes(_sheet_bytes([
+            (so_number, "ZZT-ITEM", 3, date(2026, 9, 20), "BRW-BB", "order back"),
+        ]))
+
+        code = backfill.main(
+            ["--apply", "--company", "ZZT-NOPE-CODE", str(path)], db=db,
+        )
+        db.rollback()
+
+        assert code == 2
+        out = capsys.readouterr().out
+        assert "REFUSING" in out
+        assert "ZZT-NOPE-CODE" in out

@@ -33,10 +33,13 @@ TWO signals together, both narrower than either alone:
   so the window ALSO accepts `raised_at + 8h`. Measured on PROD TODAY (22 Sep 2026), row
   bee581f3 (SO417310 / MKT5529SS-DIY) is `raised_at` 2026-09-20 03:19:03 UTC,
   `actioned_at` 11:19:23 - the 8h skew, not the exact match. (A reviewer measurement
-  against the `0921` dev copy read `raised_at == actioned_at` for the same row; that copy
-  had `raised_at` REWRITTEN by migration 523's monthly-number backfill, which is why it
-  disagrees with prod. Prod is the source of truth for this script.) Anything outside
-  both windows is a person's own later action and is never touched (R4).
+  against the `0921` dev copy read `raised_at == actioned_at` for the same row; migration
+  523's own backfill only moves a header's `raised_at` EARLIER - `LEAST(raised_at,
+  min(row created_at))` - never later, so it cannot be what produced an equal reading on
+  that copy. The likelier explanation is that the 0921 copy's `raised_at` was re-stamped
+  by a LATER reconfirm sometime after 523 ran there. Prod is the source of truth for this
+  script either way.) Anything outside both windows is a person's own later action and is
+  never touched (R4).
 * The PRINCIPAL - the importer stamps `actioned_by` with the SAME uploader it stamps the
   header's own `raised_by` with (one upload, one actor, both writes in the same
   transaction). So an importer-closed row also has `actioned_by == raised_by`; a
@@ -67,15 +70,19 @@ human can see the ambiguity before choosing - but `--apply` REFUSES outright the
 any sheet row's SO number resolves to more than one company, printing the ambiguous
 numbers and exiting 2, rather than guessing which company's row to flip.
 
-DRY-RUN DEDUPE
----------------
-Two sheet rows that both resolve to the SAME `order_inquiry_rows` id (a duplicated line on
-the sheet, or two books repeating one row) are reported ONCE on a dry run - a reviewer
-reading the printed list is asking "which rows will move", not "how many sheet cells named
-one". `--apply` does not dedupe: the first sheet row flips the DB row, which is why the
-SECOND identical sheet row then reports `unmatched` (the query only ever matches
-`verb = 'ORDER'`, and the row it would have matched no longer is) - two lines in the
-printed report, exactly what happened underneath.
+DEDUPE
+-------
+Two sheet rows that both resolve to the SAME `order_inquiry_rows` identity (a duplicated
+line on the sheet, or two books repeating one row) dedupe on BOTH a dry run and `--apply`,
+keyed on the row's own matching identity (company, SO number, item, qty, delivery date,
+location) rather than re-querying a second time - a second `_match()` call after a flip
+would see the row's now-`ORDER_BACK` verb and answer `unmatched`, which is a true
+statement about the query but a misleading one about what happened, and the row is never
+re-entered into the mutation branch either way. On a dry run the repeat is reported ONCE -
+a reviewer reading the printed list is asking "which rows will move", not "how many sheet
+cells named one". On `--apply` the repeat IS reported, labelled `already_flipped` when the
+first occurrence flipped the row (so the printed count of sheet rows still matches the
+uploaded file), or the same label the first occurrence got otherwise.
 
 SAFETY / IDEMPOTENCY
 ---------------------
@@ -103,7 +110,7 @@ from typing import Any, Dict, List, Optional, Sequence
 # Allow `from app.*` imports when invoked from the backend directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app.models.base import set_company_scope
 from app.models.company import Company
@@ -206,10 +213,16 @@ def _match(db, entry, company_id: str) -> Optional[tuple]:
         # Blank location cell today - match the row as the importer itself would have
         # left it: no location at all, or the core line's own warehouse code
         # (`raise_row`, ~:2772: `stock_location=location or match.line_location`).
+        # `func.upper()` on the WAREHOUSE side: `raise_row` always writes
+        # `OrderInquiryRow.stock_location` upper-cased (`location.strip().upper()`, and
+        # the reader itself upper-cases a non-blank sheet cell the same way), but
+        # `warehouses.warehouse_code` carries no such guarantee, so the comparison
+        # normalises the side that might not already be upper rather than assuming both
+        # are.
         q = q.filter(
             or_(
                 OrderInquiryRow.stock_location.is_(None),
-                OrderInquiryRow.stock_location == Warehouse.warehouse_code,
+                OrderInquiryRow.stock_location == func.upper(Warehouse.warehouse_code),
             )
         )
     if entry.delivery_date is not None:
@@ -230,16 +243,17 @@ def run(
     db, xlsx_paths: Sequence[str], apply: bool, company_code: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """One dict per sheet row that reads ORDER BACK, across every book given (deduped by
-    matched row id on a dry run - see DRY-RUN DEDUPE). Never raises on a bad file - a row
-    from a file that could not be read is simply absent, the same as the upload path's own
-    `problems` list. Raises `AmbiguousCompanyError` - before touching the database at all -
-    when `apply` is set, no `company_code` is given, and some sheet row's SO number
-    resolves to more than one company (see COMPANY SCOPE)."""
+    matching identity - see DEDUPE). Never raises on a bad file - a row from a file that
+    could not be read is simply absent, the same as the upload path's own `problems` list.
+    Raises `AmbiguousCompanyError` - before touching the database at all - when `apply` is
+    set, no `company_code` is given, and some sheet row's SO number resolves to more than
+    one company (see COMPANY SCOPE). Raises `ValueError` when `company_code` is given but
+    names no company."""
     company_id: Optional[str] = None
     if company_code is not None:
         company_id = db.query(Company.id).filter(Company.code == company_code).scalar()
         if company_id is None:
-            raise ValueError(f"no company with code {company_code!r}")
+            raise ValueError(f"no company with code {company_code}")
         company_id = str(company_id)
 
     entries = []
@@ -263,8 +277,21 @@ def run(
     if apply and ambiguous:
         raise AmbiguousCompanyError(ambiguous)
 
+    # Every company this run will ever report against, resolved to its code ONCE rather
+    # than once per entry (point 5/N3) - the explicit `--company`, plus every company any
+    # SO number in the file resolves to.
+    all_company_ids = {company_id} if company_id is not None else {
+        cid for ids in companies_by_so.values() for cid in ids
+    }
+    company_codes = {cid: _company_code(db, cid) for cid in all_company_ids}
+
     results: List[Dict[str, Any]] = []
-    seen_matched_ids: set = set()
+    # Keyed on the row's own MATCHING IDENTITY, not on a fresh `_match()` re-query: once
+    # `--apply` has flushed a flip, a second identical sheet row's query would see the
+    # row's now-`ORDER_BACK` verb and answer `unmatched` - a true statement about the SQL,
+    # a misleading one about what happened (see DEDUPE). `(row_id, action)` from the FIRST
+    # occurrence, so a repeat can relabel without touching the database again.
+    seen: Dict[tuple, tuple] = {}
     for entry in entries:
         target_ids = [company_id] if company_id is not None else companies_by_so[entry.so_number]
         common = {
@@ -278,33 +305,44 @@ def run(
             results.append({**common, "company_code": None, "action": "unmatched"})
             continue
         for company in target_ids:
+            row_common = {**common, "company_code": company_codes.get(company)}
+            identity = (
+                company, entry.so_number, entry.item_code, _dec(entry.qty),
+                entry.delivery_date, entry.location,
+            )
+            if identity in seen:
+                _row_id, prior_action = seen[identity]
+                if not apply:
+                    # Dry run: reported ONCE (see DEDUPE).
+                    continue
+                action = "already_flipped" if prior_action == "flipped" else prior_action
+                results.append({**row_common, "action": action})
+                continue
+
             match = _match(db, entry, company)
-            row_common = {**common, "company_code": _company_code(db, company)}
             if match is None:
                 results.append({**row_common, "action": "unmatched"})
                 continue
             row, inquiry = match
-            if not apply:
-                # Dry-run dedupe (point 5): two sheet rows landing on the SAME DB row are
-                # one candidate to a reviewer, not two - `--apply` does not dedupe, so the
-                # second identical row there reports `unmatched` on its own once the first
-                # has flipped (see DRY-RUN DEDUPE).
-                if row.id in seen_matched_ids:
-                    continue
-                seen_matched_ids.add(row.id)
             if (
                 _is_importer_closed(row.actioned_at, inquiry.raised_at)
                 and row.actioned_by == inquiry.raised_by
             ):
+                action = "flipped"
                 if apply:
                     row.verb = IV_ORDER_BACK
                     row.state = INQUIRY_RAISED
                     row.actioned_by = None
                     row.actioned_at = None
                     inquiry.state = INQUIRY_RAISED
-                results.append({**row_common, "action": "flipped"})
+                    # Flushed so a LATER query in this same run (another sheet row, or
+                    # another company's own match) reads this row's post-flip state
+                    # rather than a stale pre-flip one.
+                    db.flush()
             else:
-                results.append({**row_common, "action": "skipped_person_actioned"})
+                action = "skipped_person_actioned"
+            seen[identity] = (row.id, action)
+            results.append({**row_common, "action": action})
     # A dry run mutates nothing above (`if apply:` gates every write), so there is
     # nothing to roll back - and rolling back anyway would discard the CALLER's own
     # uncommitted work too, which is exactly the transaction this session is on.
@@ -354,6 +392,10 @@ def main(argv: Optional[Sequence[str]] = None, db=None) -> int:
             print(f"\nREFUSING to apply: {exc}")
             db.rollback()
             return 2
+        except ValueError as exc:
+            print(f"\nREFUSING: {exc}")
+            db.rollback()
+            return 2
 
         counts: Dict[str, int] = {}
         for entry in results:
@@ -369,6 +411,7 @@ def main(argv: Optional[Sequence[str]] = None, db=None) -> int:
         print(f"mode:                    {'APPLIED' if apply else 'DRY-RUN (no writes)'}")
         print(f"rows read as ORDER BACK: {len(results)}")
         print(f"flipped:                 {counts.get('flipped', 0)}")
+        print(f"already flipped (dupe):  {counts.get('already_flipped', 0)}")
         print(f"skipped (person actioned): {counts.get('skipped_person_actioned', 0)}")
         print(f"unmatched:               {counts.get('unmatched', 0)}")
         if not apply and counts.get("flipped"):
