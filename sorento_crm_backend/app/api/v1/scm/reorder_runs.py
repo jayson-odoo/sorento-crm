@@ -504,6 +504,8 @@ def get_location_stock(
 def get_candidate_orders(
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
+    raised_from: Optional[date] = Query(None),
+    raised_to: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
@@ -521,7 +523,11 @@ def get_candidate_orders(
     rule the run itself applies to `:horizon`/`:horizon_start` (an omitted bound is open; a
     NULL `delivery_date` always counts, G2). Not scoped to confirmed rows alone - a row
     still awaiting a supply decision (the form leg) belongs to its SO the same way a
-    confirmed one does.
+    confirmed one does. `raised_from`/`raised_to` (PLAN-reorder-plan-raised-filter.md, 22
+    Sep 2026) drive `rows_raised_in_window`: the count of an SO's candidate rows whose
+    FIRST upload day (`order_inquiry_rows.created_at` - the closest thing the book has to
+    a raise date, since it carries none, owner ruling R1) falls in the window, same
+    open-bound rule as `rows_in_range`, and it never removes an order from the list (R2).
 
     No paging (~321 rows measured on the prod copy) - the FE filters/searches client-side.
     """
@@ -535,7 +541,8 @@ def get_candidate_orders(
                    so.customer_id AS customer_id,
                    so.company_id AS company_id,
                    oir.delivery_date AS delivery_date,
-                   oir.ack_state AS ack_state
+                   oir.ack_state AS ack_state,
+                   oir.created_at AS created_at
             FROM projects.order_inquiry_rows oir
             JOIN projects.so_supply_decisions d
               ON d.id = oir.supply_decision_id AND d.state = 'active'
@@ -569,7 +576,8 @@ def get_candidate_orders(
                    so.customer_id AS customer_id,
                    so.company_id AS company_id,
                    oir.delivery_date AS delivery_date,
-                   oir.ack_state AS ack_state
+                   oir.ack_state AS ack_state,
+                   oir.created_at AS created_at
             FROM projects.order_inquiry_rows oir
             JOIN projects.order_inquiries oi ON oi.id = oir.order_inquiry_id
             JOIN projects.sales_orders spso ON spso.id = oi.project_sales_order_id
@@ -615,6 +623,17 @@ def get_candidate_orders(
                count(*) FILTER (
                    WHERE NOT (cr.ack_state = ANY(:planned_ack_states))
                ) AS rows_awaiting,
+               -- created_at is stored naive UTC by every writer; a header raised 17 Sep
+               -- 23:00 UTC is 18 Sep in Kuala Lumpur (app-wide convention, see
+               -- reorder_run_service.py:460, models/project_so.py:881).
+               count(*) FILTER (
+                   WHERE (CAST(:raised_from AS date) IS NULL
+                          OR ((cr.created_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+                             >= CAST(:raised_from AS date))
+                     AND (CAST(:raised_to AS date) IS NULL
+                          OR ((cr.created_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+                             <= CAST(:raised_to AS date))
+               ) AS rows_raised_in_window,
                MIN(cr.delivery_date) AS first_delivery,
                MAX(cr.delivery_date) AS last_delivery
         FROM candidate_rows cr
@@ -625,6 +644,7 @@ def get_candidate_orders(
         ORDER BY cr.so_number
     """), {
         "from_date": from_date, "to_date": to_date,
+        "raised_from": raised_from, "raised_to": raised_to,
         "planned_ack_states": list(demand.PLANNED_ACK_STATES),
         **co_params,
     }).mappings().all()
@@ -636,6 +656,7 @@ def get_candidate_orders(
             "rows_total": int(r["rows_total"] or 0),
             "rows_in_range": int(r["rows_in_range"] or 0),
             "rows_awaiting": int(r["rows_awaiting"] or 0),
+            "rows_raised_in_window": int(r["rows_raised_in_window"] or 0),
             "first_delivery": r["first_delivery"].isoformat() if r["first_delivery"] else None,
             "last_delivery": r["last_delivery"].isoformat() if r["last_delivery"] else None,
         }

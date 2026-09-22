@@ -116,6 +116,12 @@ export function RunPlanningModal({
   const [products, setProducts] = useState<string[]>([]);
   const [horizonStart, setHorizonStart] = useState('');
   const [horizon, setHorizon] = useState('');
+  /** "Inquiries raised" From/To (`reorder-plan-raised-filter`, 22 Sep 2026) - narrows the
+   *  Orders pre-selection to the rows raised in this window (R1: a row's first upload
+   *  day, since the book carries no raise date of its own). Shown only while
+   *  Demand = Project. */
+  const [raisedFrom, setRaisedFrom] = useState('');
+  const [raisedTo, setRaisedTo] = useState('');
   const [error, setError] = useState<string | null>(null);
   /** Labels of every product this modal has seen come back from the server, so a chip for a
    *  code that is not on the page currently loaded still reads as its name. */
@@ -160,6 +166,8 @@ export function RunPlanningModal({
     setProducts([]);
     setHorizonStart('');
     setHorizon('');
+    setRaisedFrom('');
+    setRaisedTo('');
     setError(null);
     setProductLabels({});
     setDemand('');
@@ -168,24 +176,37 @@ export function RunPlanningModal({
   }, [open]);
 
   /** Every open project SO with an OI row, for the Orders picker - fetched only while
-   *  Demand = Project, and re-fetched as the range changes (the range narrows
-   *  `rows_in_range`, which is what drives the pre-selection below). */
+   *  Demand = Project, and re-fetched as either range changes (the delivery range narrows
+   *  `rows_in_range`, the raise window narrows `rows_raised_in_window`; either drives the
+   *  pre-selection below). */
   const {
     data: candidateOrders,
     isLoading: candidatesLoading,
     isError: candidatesError,
   } = useQuery({
-    queryKey: ['reorder', 'candidate-orders', horizonStart, horizon],
-    queryFn: () => getCandidateOrders({ from: horizonStart || undefined, to: horizon || undefined }),
+    queryKey: ['reorder', 'candidate-orders', horizonStart, horizon, raisedFrom, raisedTo],
+    queryFn: () =>
+      getCandidateOrders({
+        from: horizonStart || undefined,
+        to: horizon || undefined,
+        raised_from: raisedFrom || undefined,
+        raised_to: raisedTo || undefined,
+      }),
     enabled: open && demand === 'project',
   });
 
-  // Pre-select every SO with a line in range (J1), re-derived on every fresh result UNTIL
-  // the buyer has touched the list by hand (V4) - a range edit before that point still
-  // updates the pick; one after keeps whatever they chose.
+  // Pre-select every SO with a line in range AND a row raised in the window (J1 + R2),
+  // re-derived on every fresh result UNTIL the buyer has touched the list by hand (V4) -
+  // a range or raise-window edit before that point still updates the pick; one after
+  // keeps whatever they chose. With no raise window `rows_raised_in_window` equals
+  // `rows_total`, so this is unchanged from before the raise window existed.
   useEffect(() => {
     if (demand !== 'project' || touchedOrdersRef.current || !candidateOrders) return;
-    setSoNumbers(candidateOrders.filter((o) => o.rows_in_range > 0).map((o) => o.so_number));
+    setSoNumbers(
+      candidateOrders
+        .filter((o) => o.rows_in_range > 0 && o.rows_raised_in_window > 0)
+        .map((o) => o.so_number),
+    );
   }, [candidateOrders, demand]);
 
   const handleSoNumbersChange = (next: string[]) => {
@@ -193,18 +214,24 @@ export function RunPlanningModal({
     setSoNumbers(next);
   };
 
-  /** `so_number - project label or customer name`, trimmed when neither is on file. */
+  /** `so_number - project label or customer name`, trimmed when neither is on file. The
+   *  LABEL is the option's accessible name and stays as-is; the raised count joins the
+   *  description instead, appended only while a raise window is set. */
+  const raiseWindowSet = Boolean(raisedFrom || raisedTo);
   const orderOptions = useMemo(
     () =>
       (candidateOrders ?? []).map((o) => {
         const suffix = o.project_label ?? o.customer_name ?? '';
+        const description = raiseWindowSet
+          ? `${o.rows_in_range} lines in range · raised ${o.rows_raised_in_window}`
+          : `${o.rows_in_range} lines in range`;
         return {
           value: o.so_number,
           label: suffix ? `${o.so_number} - ${suffix}` : o.so_number,
-          description: `${o.rows_in_range} lines in range`,
+          description,
         };
       }),
-    [candidateOrders],
+    [candidateOrders, raiseWindowSet],
   );
 
   /** Awaiting-ack counts, kept apart from `orderOptions` so `renderOption` can colour just
@@ -316,38 +343,72 @@ export function RunPlanningModal({
           </div>
 
           {demand === 'project' ? (
-            <div>
-              <Label className="mb-1 block">Orders</Label>
-              <SearchableMultiSelect
-                value={soNumbers}
-                onChange={handleSoNumbersChange}
-                options={orderOptions}
-                disabled={candidatesLoading}
-                placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
-                emptyMessage={
-                  candidatesError ? 'Could not load orders.' : 'No project orders found.'
-                }
-                renderOption={(opt) => {
-                  const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
-                  return (
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="break-words">{opt.label}</span>
-                      <span className="break-words text-xs text-muted-foreground">
-                        {opt.description}
-                        {awaiting > 0 ? (
-                          <span className="text-warning">
-                            {`, ${awaiting} awaiting ack`}
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-                  );
-                }}
-              />
-              <p className="mt-1 text-2xs text-muted-foreground">
-                Empty = every project order in range.
-              </p>
-            </div>
+            <>
+              <div>
+                <Label className="mb-1 block">Inquiries raised</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="plan-raised-from" className="mb-1 block text-2xs text-muted-foreground">
+                      Raised from
+                    </Label>
+                    <Input
+                      id="plan-raised-from"
+                      type="date"
+                      value={raisedFrom}
+                      onChange={(e) => setRaisedFrom(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="plan-raised-to" className="mb-1 block text-2xs text-muted-foreground">
+                      Raised to
+                    </Label>
+                    <Input
+                      id="plan-raised-to"
+                      type="date"
+                      value={raisedTo}
+                      onChange={(e) => setRaisedTo(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  Empty = any raise date. Pre-selects the matching orders; the list still
+                  shows them all.
+                </p>
+              </div>
+
+              <div>
+                <Label className="mb-1 block">Orders</Label>
+                <SearchableMultiSelect
+                  value={soNumbers}
+                  onChange={handleSoNumbersChange}
+                  options={orderOptions}
+                  disabled={candidatesLoading}
+                  placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
+                  emptyMessage={
+                    candidatesError ? 'Could not load orders.' : 'No project orders found.'
+                  }
+                  renderOption={(opt) => {
+                    const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
+                    return (
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="break-words">{opt.label}</span>
+                        <span className="break-words text-xs text-muted-foreground">
+                          {opt.description}
+                          {awaiting > 0 ? (
+                            <span className="text-warning">
+                              {`, ${awaiting} awaiting ack`}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    );
+                  }}
+                />
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  Empty = every project order in range.
+                </p>
+              </div>
+            </>
           ) : null}
 
           <div>

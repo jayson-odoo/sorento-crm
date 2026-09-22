@@ -86,3 +86,6 @@ sorento_crm_backend/scripts/container_status_trial_snapshot.json
 # It was committed by accident on this lane and is per-machine, never shipped.
 sorento_crm_mcp/*.egg-info/
 .env.*.bak
+
+# per-lane private test DB env, never committed
+.env.ci-tests
