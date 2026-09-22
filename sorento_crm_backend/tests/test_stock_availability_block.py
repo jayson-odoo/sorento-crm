@@ -58,7 +58,7 @@ from app.services.company_scope_resolver import apply_company_scope
 from app.services.inventory_service import StockService
 from app.services.user_service import UserPermissionService
 
-from tests._mc_lookup_seed import product, stock, warehouse
+from tests._mc_lookup_seed import MOCHA_ID, product, seed_mocha, stock, warehouse
 from tests._pg_fixture import blank_session, unique_code
 
 READ_PERM = "inventory.stock.view"
@@ -135,11 +135,20 @@ def _policy_row(db, *, mode: str, warehouse_ids=None, contact=None) -> StockVisi
     return row
 
 
-def _so_line(db, *, product_id, warehouse_id, ordered, delivered=0, status="open"):
+def _so_line(
+    db,
+    *,
+    product_id,
+    warehouse_id,
+    ordered,
+    delivered=0,
+    status="open",
+    company_id=DEFAULT_COMPANY_ID,
+):
     so = SalesOrder(
         id=str(uuid.uuid4()),
         so_number=unique_code("SO")[:100],
-        company_id=DEFAULT_COMPANY_ID,
+        company_id=company_id,
     )
     db.add(so)
     db.flush()
@@ -151,7 +160,7 @@ def _so_line(db, *, product_id, warehouse_id, ordered, delivered=0, status="open
         qty_ordered=ordered,
         qty_delivered=delivered,
         line_status=status,
-        company_id=DEFAULT_COMPANY_ID,
+        company_id=company_id,
     )
     db.add(line)
     db.flush()
@@ -169,6 +178,7 @@ def _allocation(
     line_status="open",
     receipt_status="pending",
     inbound_shipment_id=None,
+    company_id=DEFAULT_COMPANY_ID,
 ) -> SPOAllocation:
     row = SPOAllocation(
         id=str(uuid.uuid4()),
@@ -180,7 +190,7 @@ def _allocation(
         line_status=line_status,
         receipt_status=receipt_status,
         inbound_shipment_id=inbound_shipment_id,
-        company_id=DEFAULT_COMPANY_ID,
+        company_id=company_id,
     )
     db.add(row)
     db.flush()
@@ -208,12 +218,13 @@ def _po_line(
     received=0,
     line_status="open",
     po_status="active",
+    company_id=DEFAULT_COMPANY_ID,
 ) -> PurchaseOrderLine:
     po = PurchaseOrder(
         id=str(uuid.uuid4()),
         po_number=unique_code("PO")[:100],
         status=po_status,
-        company_id=DEFAULT_COMPANY_ID,
+        company_id=company_id,
     )
     db.add(po)
     db.flush()
@@ -225,7 +236,7 @@ def _po_line(
         qty_ordered=ordered,
         qty_received=received,
         line_status=line_status,
-        company_id=DEFAULT_COMPANY_ID,
+        company_id=company_id,
     )
     db.add(line)
     db.flush()
@@ -860,3 +871,167 @@ def test_route_answers_a_bad_product_or_warehouse_uuid_with_400_not_500(client, 
         params={"warehouse_ids": "not-a-uuid"},
     )
     assert bad_warehouse.status_code == 400, bad_warehouse.text
+
+
+# ============================== review round 5, one entry per product code (added)
+#
+# Live evidence (`tests/chatbot/journeys/dealer-stock-verdict.EVIDENCE.md`, Run 2, case D
+# turn 1): the dealer contact spans two companies that both carry product code MHS1028, so
+# the block returned two entries for the one code and the question read "How many units do
+# you need for MHS1028, MHS1028 and MSK11A-QT?". A full answer would then print two verdict
+# lines for one code, and the task would hold two slots the dealer sees as one product.
+#
+# Ruling (owner, review round 5): a dealer sees ONE product per code. The merge happens in
+# the backend block, where the figures live - entries whose `product_code` matches
+# case-insensitively inside the one response collapse into one, summing on hand, open SO,
+# incoming and purchase BEFORE `verdict()` runs, taking the earliest incoming ETA, keeping
+# the first row's `product_id` in page order, and honouring `requested_quantities` keyed on
+# ANY of the merged ids. `detailed` and `compact` are untouched.
+
+
+def test_same_product_code_in_two_companies_is_one_entry_judged_on_the_sum(db):
+    """The ruling's own scenario. Sorento holds 10 with 4 on open SO (net 6), Mocha holds 9
+    with 3 on open SO (net 6). Ask 10.
+
+    Merged, the dealer is judged on 12 and the answer is yes. Unmerged, each company's own
+    6 is short of 10 and BOTH entries answer no - which is the defect, twice over: two
+    lines for one code, and both of them wrong. `product_id` is the first id in page order
+    (`product_code` asc, then `id` asc - identical codes here, so the lower uuid), which is
+    the id the task's slot then carries and the next fetch sends a quantity back for."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    sorento_wh = _wh(db, unique_code("ZZTSRW")[:50])
+    mocha_wh = warehouse(db, company_id=MOCHA_ID, code=unique_code("ZZTMCW")[:50])
+    code = unique_code("ZZTDUP")[:50]
+    sorento_p = product(db, company_id=DEFAULT_COMPANY_ID, code=code)
+    mocha_p = product(db, company_id=MOCHA_ID, code=code)
+    stock(
+        db,
+        company_id=DEFAULT_COMPANY_ID,
+        product_id=sorento_p.id,
+        warehouse_id=sorento_wh.id,
+        on_hand=10,
+    )
+    stock(
+        db, company_id=MOCHA_ID, product_id=mocha_p.id, warehouse_id=mocha_wh.id, on_hand=9
+    )
+    _so_line(db, product_id=sorento_p.id, warehouse_id=sorento_wh.id, ordered=4)
+    _so_line(
+        db,
+        product_id=mocha_p.id,
+        warehouse_id=mocha_wh.id,
+        ordered=3,
+        company_id=MOCHA_ID,
+    )
+    contact = _contact(db)
+    _policy_row(
+        db,
+        mode="availability",
+        warehouse_ids=[sorento_wh.id, mocha_wh.id],
+        contact=contact,
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[sorento_p.id, mocha_p.id],
+        contact_id=contact.id,
+        requested_quantities={sorento_p.id: 10},
+    )
+
+    assert len(result["stock_availability"]) == 1, result["stock_availability"]
+    assert result["stock_availability"][0] == {
+        "product_id": min(sorento_p.id, mocha_p.id),
+        "product_code": code,
+        "product_name": code,
+        "needs_quantity": False,
+        "requested_qty": 10,
+        "available": True,
+        "verdict": "available",
+        # 10 of 12 is at or over the 50% default threshold, so the yes still says
+        # "running low" - the same rule a single-company entry follows.
+        "running_low": True,
+        "disclaimer": None,
+    }
+    # `pagination.total` still counts PRODUCTS (2 here) - the merge is about what the
+    # dealer is told, not about how the page was walked - so 2 is not a forbidden number.
+    _assert_no_quantity_anywhere(result, {10, 9, 4, 3, 12, 6})
+
+
+def test_merged_entry_sums_supply_takes_the_earliest_eta_and_matches_code_case_blind(db):
+    """The rest of the ruling, in one scenario. The two codes differ only in CASE, so a
+    case-sensitive match would leave them apart. Nothing on hand anywhere; incoming 3 (ETA
+    March) in Sorento and 4 (ETA February) in Mocha; open PO 5 and 4.
+
+    Merged: deficit 10, incoming 7, purchase 9 - both sources named, earliest ETA
+    February. Unmerged, neither side can cover its own 10 from 3 + 5 or 4 + 4, so the
+    entry would carry NO disclaimer at all. The ask is keyed on the MOCHA id here, the
+    one that is not necessarily first in page order, because a quantity given for any of
+    the merged ids is a quantity for the merged entry."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    sorento_wh = _wh(db, unique_code("ZZTSRW")[:50])
+    mocha_wh = warehouse(db, company_id=MOCHA_ID, code=unique_code("ZZTMCW")[:50])
+    stem = unique_code("ZZTCASE")[:50]
+    sorento_p = product(db, company_id=DEFAULT_COMPANY_ID, code=stem.upper())
+    mocha_p = product(db, company_id=MOCHA_ID, code=stem.lower())
+    stock(
+        db,
+        company_id=DEFAULT_COMPANY_ID,
+        product_id=sorento_p.id,
+        warehouse_id=sorento_wh.id,
+        on_hand=0,
+    )
+    stock(
+        db, company_id=MOCHA_ID, product_id=mocha_p.id, warehouse_id=mocha_wh.id, on_hand=0
+    )
+    _allocation(
+        db,
+        product_id=sorento_p.id,
+        warehouse_id=sorento_wh.id,
+        allocated=3,
+        expected_date=date(2026, 3, 1),
+    )
+    _allocation(
+        db,
+        product_id=mocha_p.id,
+        warehouse_id=mocha_wh.id,
+        allocated=4,
+        expected_date=date(2026, 2, 1),
+        company_id=MOCHA_ID,
+    )
+    _po_line(db, product_id=sorento_p.id, warehouse_id=sorento_wh.id, ordered=5)
+    _po_line(
+        db,
+        product_id=mocha_p.id,
+        warehouse_id=mocha_wh.id,
+        ordered=4,
+        company_id=MOCHA_ID,
+    )
+    contact = _contact(db)
+    _policy_row(
+        db,
+        mode="availability",
+        warehouse_ids=[sorento_wh.id, mocha_wh.id],
+        contact=contact,
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[sorento_p.id, mocha_p.id],
+        contact_id=contact.id,
+        requested_quantities={mocha_p.id: 10},
+    )
+
+    assert len(result["stock_availability"]) == 1, result["stock_availability"]
+    entry = result["stock_availability"][0]
+    assert entry["product_code"] in {stem.upper(), stem.lower()}
+    assert entry["requested_qty"] == 10
+    assert entry["verdict"] == "not_available"
+    assert entry["disclaimer"] == {
+        "sources": ["incoming", "purchase"],
+        # 10 of the 16 both sources together can find is at or over the 50% default.
+        "limited": True,
+        "incoming_eta": "2026-02-01",
+        "purchase_eta_days": 90,
+    }
+    _assert_no_quantity_anywhere(result, {3, 4, 5, 7, 9, 16})

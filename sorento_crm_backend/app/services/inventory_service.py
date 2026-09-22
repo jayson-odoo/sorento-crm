@@ -1529,9 +1529,40 @@ class StockService:
                 ask = None
             return ask
 
-        entries = []
+        # Review round 5: ONE entry per product CODE. A dealer contact whose companies
+        # both carry the same code resolves it to two products, and the block answered
+        # for each: the question read "MHS1028, MHS1028 and MSK11A-QT", a full answer
+        # would print two verdict lines for the one code, and the task would hold two
+        # slots the dealer sees as one product. A dealer sees one product per code, so
+        # the rows collapse HERE, where the figures are - every number is summed across
+        # the merged ids BEFORE `verdict()` judges them, so the answer is about what
+        # Sorento can actually supply, not about what one company alone holds.
+        #
+        # A row with no `product_code` merges with nothing (the sentinel key): "unnamed"
+        # is not an identity, and two of them are not the same product. `detailed` and
+        # `compact` return above and are untouched - they name locations and quantities
+        # per row, and a merged row has no one location to name.
+        merged_ids: dict[str, list[str]] = {}
         for pid in ordered_ids:
-            ask = _resolve_ask(pid)
+            code = getattr(products_by_id.get(pid), "product_code", None)
+            # A NUL cannot appear in a product code, so a codeless row's key is
+            # unique to that row and merges with nothing.
+            key = code.strip().lower() if code else "\x00" + pid
+            merged_ids.setdefault(key, []).append(pid)
+
+        entries = []
+        for group_ids in merged_ids.values():
+            # `ordered_ids` is already in page order, so the first id of a group is the
+            # first row of it on this page. That id is what the entry, the task's slot
+            # and the next fetch's `requested_quantities` key all carry.
+            pid = group_ids[0]
+            # D20, across the merge: a quantity given for ANY of the merged ids is a
+            # quantity for the merged product. The scalar `requested_qty` fallback
+            # resolves the same for every id, so the first answer found is the answer.
+            ask = next(
+                (a for a in (_resolve_ask(gid) for gid in group_ids) if a is not None),
+                None,
+            )
             entry = {
                 "product_id": pid,
                 "product_code": getattr(products_by_id.get(pid), "product_code", None),
@@ -1544,10 +1575,21 @@ class StockService:
                 "disclaimer": None,
             }
             if ask is not None:
-                on_hand_total = sum(int(r.on_hand or 0) for r in per_product[pid])
-                net_available = on_hand_total - int(open_so_by_product.get(pid, 0))
-                incoming_qty, incoming_eta_date = incoming_by_product.get(pid, (0, None))
-                purchase_qty = purchase_by_product.get(pid, 0)
+                on_hand_total = sum(
+                    int(r.on_hand or 0) for gid in group_ids for r in per_product[gid]
+                )
+                net_available = on_hand_total - int(
+                    sum(open_so_by_product.get(gid, 0) for gid in group_ids)
+                )
+                incoming_pairs = [
+                    incoming_by_product.get(gid, (0, None)) for gid in group_ids
+                ]
+                incoming_qty = sum(qty for qty, _ in incoming_pairs)
+                # D10 across the merge: the earliest date any of them is due, because
+                # that is when the first of them can be supplied from.
+                incoming_etas = [eta for _, eta in incoming_pairs if eta is not None]
+                incoming_eta_date = min(incoming_etas) if incoming_etas else None
+                purchase_qty = sum(purchase_by_product.get(gid, 0) for gid in group_ids)
                 v = compute_verdict(
                     available=net_available,
                     ask=ask,
