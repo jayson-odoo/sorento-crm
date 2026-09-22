@@ -188,3 +188,242 @@ No uncaught console errors during any turn. `network requests --filter /api/v1/`
   brief or discovered here, not defects:** the Chat History LIST's media bubble (needs a real
   `chat_histories` row, which only n8n ingest writes, and the API key for that path is not on
   this DB), and the final stock NUMBER (needs the MCP tool server, not part of this lane's stack).
+
+## Rerun 2 (same day) - updated stack: BE :8000 pid 21925 restarted with B1/B2 fixes, MCP now on :8767
+
+Same console contact "Chua Chin Long", Reset before every turn, same test PNG. Logged back in
+first (session had been invalidated by the BE restart; contact selector had reverted to the
+default "Katherine Loo" and was re-set to "Chua Chin Long" for every scenario below).
+
+### NEW blocker found, reported live to the coordinator mid-run, confirmed by them independently
+
+**J1 photo-only is currently un-testable: every media job (photo AND presumably voice, same
+worker task) now fails in the WORKER, not in the turn logic.** Steps: Reset, attach the test PNG,
+no caption. Console shows "The extraction task failed before it could record a result." /
+"I could not read anything from that photo. Type the codes and I will look them up straight
+away." (`media_denied`). Worker log (`/tmp/media-into-turn-worker.log`):
+
+```
+TypeError: Object of type bytes is not JSON serializable
+when serializing dict item '_media_bytes'
+...
+File ".../app/tasks/media_tasks.py", line 276, in process_media_extraction
+    finalized = db.execute(update(MediaExtractionJob) ...)
+[SQL: UPDATE media_extraction_job SET status=%(status)s, result=%(result)s::JSONB, ...]
+```
+
+100% reproducible: hit on the first attempt (job `aeab4ef3-...`) and again identically on a
+manual Retry (job `4504b1ab-...`). A `_media_bytes` key (raw bytes, presumably the S4
+store-the-media work) is landing inside the `result` dict that gets written to the JSONB
+`result` column without being stripped/serialized first. Screenshot:
+`rerun2-BLOCKER-media-bytes-worker-error.png`. **This is the coordinator's own finding, reported
+to me mid-run as a known worker-side defect the coder is already fixing** - not something to
+re-litigate, just confirming the observed symptom matches exactly. J1/J2/J3's PHOTO steps and
+J4 (voice, same `process_media_extraction` task) are BLOCKED pending the worker fix + restart;
+not attempted further this session per the coordinator's pause instruction.
+
+### Text-only checks (proceeded per the coordinator's instruction)
+
+**Typed "BRBC22293W-1, SRTWT1506, SRTWT1805" with empty focus.** Requested expectation: "I have
+BRBC22293W-1, SRTWT1506 and SRTWT1805. What would you like me to know?" (the `entities_only`
+lane). **Observed, 7/7 attempts** (3 with a comma separator, 1 with spaces, 3 more retries; plus
+one with a single bare code "SRTWT1506" and one with the codes in a different order): the parser
+now assigns a domain hint directly (`domain_hint: "inventory"` most times, `domain_hint: "order"`
+for the single-code and reordered attempts) instead of leaving it null, so the turn never reaches
+`entities_only` at all - it goes straight through the ordinary business/fetch lane. Reply
+observed: "Here's what you want: - product: BRBC22293W-1, SRTWT1506, SRTWT1805. But no inventory
+matched these. No stock, no incoming and nothing on order... Would you like me to escalate to
+purchasing team?" Screenshot: `rerun2-typed-bare-codes-resolves-via-inventory.png`.
+
+**The underlying Rerun-1 defect (zero matches for real codes) is FIXED**, verified via the trace
+on this exact turn (turn id `dfe7e9c8-eb08-407f-9c71-8b1deac6e4b9`, `Apply` tab): `domain_hint:
+"inventory"`, `intent_hint: "check_stock"`, and the state diff now reads
+`products [] -> [{"raw":"BRBC22293W-1","hint":"product","uuid":"152047ec-928f-4829-aa75-
+80483520fc2e","company_name":"Sorento","canonical_code":"BRBC22293W-1"}, ...]` - all THREE codes
+resolved with real uuids and the correct canonical code, company-scoped correctly ("Sorento").
+"No inventory matched these" is therefore the CORRECT, honest answer (these three products
+genuinely have zero stock/incoming/on-order rows on this DB) now that MCP is reachable, not a
+resolution failure. **I could not reproduce the specific `entities_only`-lane reply text in 7
+attempts** because the parser no longer routes this exact input into that lane at all post-fix -
+flagging as an open question for the coordinator/coder rather than a pass or fail, since the
+underlying capability (correct resolution, no false "Couldn't find") is demonstrably working,
+just via a different lane than the plan named.
+
+**Typed "Hanlim" alone.** Requested expectation: the old `casual` LLM clarifier, not the entities
+arm. **Observed:** confirmed NOT captured by `entities_only` (trace: `"Understood as business
+query about order (Hanlim)"`, `routed: Business query: order` - `entities_only`'s own
+`allowed_entity_types` is `["product"]` only, so a customer-name token was never going to reach
+it). It also did not reach the `casual` clarifier though - "Hanlim" resolved as a customer
+(`HANLIM TRADING SDN BHD [A/C II] (+5 more)`) and went through the pre-existing business_query
+`order` path directly, found no matching orders, and offered escalation. This looks like a
+pre-existing, unrelated customer-name-resolution behavior (not something this PR's diff touches),
+so reporting as an FYI rather than a defect against this lane. Screenshot:
+`rerun2-hanlim-order-domain.png`, turn id `d406c5a7-34d6-4232-afcd-f70abcf110d0`.
+
+**TurnPanel media_intake stage showing entities/attributes/notes/decision inline, no UUIDs.**
+BLOCKED - could not check on a fresh turn (every new media job fails per the blocker above). Only
+re-checked the OLD Rerun-1 turn (`8a40702f-...`, unchanged since the FE dev server was not
+restarted): its Stages tab still shows only the compact `media_intake 6225ms "Read the photo."`
+line, no inline entities/attributes/notes/decision - unchanged from Rerun 1. Whether this is
+because the FE piece of this change hasn't landed yet, or because it only renders on a NEWLY
+completed turn's trace shape, is unknown until a fresh successful media turn exists post worker-fix.
+
+### Rerun 2 summary
+
+| Item | Result |
+|---|---|
+| J1 photo-only -> every code listed, no "Couldn't find" | BLOCKED (new worker `_media_bytes` JSON bug, confirmed 2/2, coordinator already aware) |
+| J1 turn 2 "check stock" -> real stock table | BLOCKED (depends on turn 1) |
+| J2, J3 to the stock number | BLOCKED (same worker bug for the photo half) |
+| Typed bare codes -> "I have A, B and C..." | **Underlying resolver defect FIXED** (real uuids, correct company scope, correct "no stock" answer) but the SPECIFIC `entities_only` reply text was not observed in 7/7 tries - parser now routes this input through inventory/order domains directly instead. Not a fail on resolution; open question on lane choice. |
+| Typed "Hanlim" -> old casual clarifier | PARTIAL - confirmed NOT entities_only (correct), but also not the `casual` clarifier; hit a pre-existing customer/order path instead. Likely unrelated to this PR. |
+| TurnPanel media_intake inline entities/attributes/notes/decision, no UUIDs | BLOCKED - no fresh successful media turn to check against; old turn unchanged |
+
+**Waiting on the coordinator's signal that the worker is restarted with the `_media_bytes` fix
+before redoing J1/J2/J3's photo steps and the voice check.**
+
+## Rerun 3 (same day) - stack back on af3d4aceb: worker pid 32895 (bytes fix), BE pid 33481, MCP :8767, FE :3000
+
+Logged back in (BE restart invalidated the session again). Used a FRESH console contact per
+journey this time (Jayden Loo for J2, Kay for J3, Yu Mong Huei for J4) after noticing Chua Chin
+Long's own conversation history from earlier tests was leaking into new "fresh" turns' PARSING
+even after Reset + a full page reload + `session_vars` confirmed `{before: {}, after: {}}` on the
+Session tab - the parser apparently reads back recent real turn text for that contact regardless
+of the per-turn session reset. Noting this as a console-testing gotcha, not a lane defect (worth
+a mention to whoever owns the console harness, since it makes "click Reset" alone insufficient
+for a genuinely clean re-test of the SAME contact).
+
+### J1 - PASS on the specific ask, blocked further down by a NEW, separate MCP/backend auth issue
+
+Photo-only, no caption, contact Chua Chin Long, turn `767e0472-2388-47f8-9b40-efef429b45a8`:
+**"I read BRBC22293W-1, SRTWT1506 and SRTWT1805 from that photo."** - every code listed, NO
+"Couldn't find" for any of the three real codes. Exactly what was asked. Screenshot
+`rerun3-J1-turn1-photo-prefix-correct.png`.
+
+The turn's OWN domain guess this time was `master_products` (LLM non-determinism - it was
+`inventory` in the earlier reruns, `order` for other inputs), and `master_products`' own
+resolution still shows `canonical_code: null` for all three even though they are real products -
+a domain-specific resolution gap, separate from the `entities_only` arm, not chased further
+(out of scope of tonight's asks and no `master_products` AC in the UAC).
+
+Second turn, same conversation, "check stock" (turn `d6d7fc95-f359-4317-814f-dff722d34f0d`):
+domain correctly carries `master_products -> inventory` (no re-ask), and THIS TIME the state
+diff shows all three codes resolved with real uuids: `{"raw":"BRBC22293W-1","uuid":"152047ec-
+928f-4829-aa75-80483520fc2e","canonical_code":"BRBC22293W-1","company_name":"Sorento"}` etc.
+Reply: "No stock, no incoming and nothing on order for BRBC22293W-1, SRTWT1506, SRTWT1805." -
+**not a stock table**, because (new finding below) the MCP round-trip to the backend's own REST
+API is failing auth, not because these codes are unresolved. Screenshot
+`rerun3-J1-full-conversation.png`.
+
+### NEW blocker - MCP reaches the backend, but the backend rejects its OWN configured API key
+
+Picked a product that genuinely has stock on this DB (`SRTPTFE1207`, `sum(quantity_on_hand) =
+270300` in `public.stock`) and asked "check stock for SRTPTFE1207" directly (domain-first, no
+media) to separate "no data" from "broken fetch". Same "no inventory matched" answer. Backend
+log for that turn:
+
+```
+POST http://localhost:8767/mcp "HTTP/1.1 200 OK"
+GET /api/v1/inventory/stock/balance?product_ids=...&contact_id=477071885&space_id=364817 - Status: 401
+integration.auth_refused code=invalid_key
+(repeats for /incoming-stock/list and /procurement/purchase-orders/placed)
+```
+
+MCP itself answers 200 - it is the MCP tool's own call BACK into this backend's REST API that
+gets refused. Confirmed this is not a request-shape issue: `curl` directly against
+`http://localhost:8000/api/v1/inventory/stock/balance` with `X-API-Key` set to the EXACT value
+in this backend's own running `.env` (`EXTERNAL_API_KEY=test`) gets the same
+`{"code":"invalid_key"}` 401 - i.e. the RUNNING backend process (pid 33481) is not honouring the
+key its own `.env` file currently states, which points at an env-loading mismatch (stale env var,
+wrong `SORENTO_ENV_FILE`, or the file was edited after the process started) rather than anything
+in this PR's diff. This blocks the final stock/PO/incoming NUMBER for every journey below
+regardless of how well the codes resolve. Screenshot:
+`rerun3-BLOCKER-mcp-backend-apikey-401.png`.
+
+### J2 - PASS (routing/prefix/resolution); final number blocked by the same MCP/backend auth issue
+
+Fresh contact Jayden Loo. "check stock" alone -> clean needs-scope reply (no contamination this
+time, fresh contact). Same conversation, photo (no caption) -> "I read BRBC22293W-1, SRTWT1506
+and SRTWT1805 from that photo." then carries straight into `inventory` (no re-ask), state diff on
+the final turn (`b055e2cd-d248-4219-8a24-70056c6cf55e`) shows all three with real uuids again.
+"No stock..." for the same MCP/auth reason above. Screenshot `rerun3-J2-full-conversation.png`.
+
+### J3 - PASS (routing/prefix/resolution, one turn); final number blocked by the same issue
+
+Fresh contact Kay. Caption "Check stock" + photo, ONE turn (`754b9118-8e56-464a-923c-
+e3d1d9c72066`): `rendered_text` = "Check stock: BRBC22293W-1, SRTWT1506, SRTWT1805" (AC-1807
+exact match), prefix "I read BRBC22293W-1, SRTWT1506 and SRTWT1805 from that photo." correct,
+domain `inventory` directly, state diff shows all three with real uuids. Screenshot
+`rerun3-J3-full-conversation.png`.
+
+### J4 (voice, bare code) - PASS on the specific ask, but reveals the `entities_only` resolver ITSELF is still unfixed
+
+Fresh contact Yu Mong Huei. Synthesized voice saying "SRTWT1506" (no domain word at all). Reply:
+**"I heard: SRTWT1506.\nWhat would you like me to know?"** - exactly one "I heard: ..." line, NO
+second "I have" lead. Matches the specific ask. Screenshot `rerun3-J4-voice-I-heard-no-double-
+lead.png`.
+
+**However**, the trace (turn `f68e75a2-096b-4575-b937-297889709de1`) shows this turn DID land in
+`lane: "entities_only"` (the parser left it domain-less this time, unlike every text/photo case
+above where it guessed a domain directly and thereby routed around `entities_only`), and inside
+that lane the code is STILL unresolved: `products [] -> [{"raw":"SRTWT1506","hint":"product",
+"confident":true,"canonical_code":null, ...}]` - `canonical_code` stays null for a real,
+confirmed-existing product, the same shape as the original Rerun-1 defect. Screenshot
+`rerun3-J4-trace-entities-only-resolver-still-null.png`.
+
+**Read together with J1/J2/J3, this pins the fix precisely: the B1/B2 work fixed the ORDINARY
+domain-first resolver (`narrow_decide`/the business-lane fetch path) but did NOT touch
+`_run_entities_only_arm`'s own `resolve_entity` call, which is the one place the plan's UAC
+Section C (AC-1822-1832) actually targets.** The reason J1/J2/J3 all look healthy now is that the
+parser has started reliably guessing SOME domain for a bare code list (inventory / order /
+master_products), which routes around `entities_only` entirely rather than through it - so the
+one lane this PR's own Slice 3 built is the one still unverified as working, precisely because it
+is now rare for the parser to route into it at all.
+
+Also worth a flag: the reply for this failed-to-resolve voice turn names NEITHER "I have" NOR
+"Couldn't find SRTWT1506" - it silently drops the one unplaced token. That is a second, smaller
+gap against the plan's own stated rule ("a token nobody could place is named, never dropped") -
+better than Rerun 2's stray "I have ." wording, but not the "Couldn't find" sentence AC-1825
+calls for either.
+
+### TurnPanel media_intake stage: entities/attributes/notes/decision inline, no UUIDs - checked on TWO fresh turns, still not implemented
+
+Checked the Stages tab DOM directly (not just the rendered text) on both J1's turn 1
+(`767e0472-...`) and J3's turn (`754b9118-...`), both fresh media turns from tonight's run. Both
+render identically to Rerun 1/2:
+
+```html
+<li class="text-xs">
+  <div class="flex items-center gap-2">
+    <span data-slot="badge" ...>media_intake</span>
+    <span class="text-muted-foreground tabular-nums">2635ms</span>
+  </div>
+  <p class="mt-1 text-muted-foreground">Read the photo.</p>
+</li>
+```
+
+No entities, attributes, notes or decision anywhere near this stage row, no expand affordance in
+the DOM. The voice turn's own stage correctly reads "Heard the voice note." (a distinct summary
+per modality, which IS working) but is the same flat shape otherwise. Screenshot:
+`rerun3-turnpanel-media-intake-still-no-inline.png`. **Unchanged from Rerun 1/2 - this FE piece
+has not landed.**
+
+### Rerun 3 summary
+
+| Item | Result | Turn id(s) |
+|---|---|---|
+| J1 photo-only -> every code listed, no "Couldn't find" | **PASS** | `767e0472-2388-47f8-9b40-efef429b45a8` |
+| J1 turn 2 "check stock" -> resolution with real uuids | **PASS** (carry + resolution correct) | `d6d7fc95-f359-4317-814f-dff722d34f0d` |
+| J1/J2/J3 final stock TABLE/number | **BLOCKED** - new finding: MCP's callback into this backend's own REST API gets 401 `invalid_key` even with the backend's own `.env` value, an env-loading mismatch on the restarted BE process, not a lane defect | see MCP/backend blocker above |
+| J2 to the stock number | **PASS** on routing/prefix/resolution; final number blocked as above | `b055e2cd-d248-4219-8a24-70056c6cf55e` |
+| J3 to the stock number | **PASS** on routing/prefix/resolution, one turn; final number blocked as above | `754b9118-8e56-464a-923c-e3d1d9c72066` |
+| J4 voice bare code -> "I heard: ..." no second "I have" lead | **PASS** on the specific wording ask | `f68e75a2-096b-4575-b937-297889709de1` |
+| J4's underlying resolution (entities_only lane) | **FAIL - still the Rerun-1 defect**, unresolved (`canonical_code: null`) for a real product; `entities_only` is simply rarer to reach now, not fixed | same |
+| TurnPanel media_intake inline entities/attributes/notes/decision, no UUIDs | **FAIL - not implemented**, identical flat shape on two fresh turns | `767e0472-...`, `754b9118-...` |
+
+**Net for the coordinator:** the wording-level asks (J1/J2 prefix, J4's single "I heard" lead) all
+pass, and the ordinary resolver is genuinely fixed for the paths J1/J2/J3 happen to take now. But
+the ORIGINAL, specifically-targeted defect - `_run_entities_only_arm`'s own resolver - is
+unchanged, confirmed by J4's own trace, and the TurnPanel inline-detail ask is not yet built. A
+third, new, backend-config issue (MCP-to-backend 401) is blocking the actual stock numbers
+end-to-end regardless of the above.
