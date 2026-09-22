@@ -25,7 +25,7 @@ import {
   movedNoteOf,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
-import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
+import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
   flowExclusionLabel,
@@ -1086,7 +1086,21 @@ export function useOrderInquiryWorklistColumns({
         // moves behind the info icon rather than sitting inline under the pill.
         // Qty already has its own column; repeating it here duplicated the number rather
         // than adding to it.
-        cell: ({ row }) => <InstructionCell row={row.original} />,
+        //
+        // `PLAN-oi-request-cs-reserve.md` 3.5: the reserve chip sits beside it here,
+        // OUTSIDE the shared `InstructionCell` (which the Lines tab also calls, in ITS
+        // OWN "Instruction" column, separate from where its "State" column already
+        // carries this same pill) - adding it to `InstructionCell` itself would show it
+        // twice on that other screen.
+        cell: ({ row }) => (
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
+            <InstructionCell row={row.original} />
+            <ReservePill
+              reserveState={row.original.reserve_state}
+              reservedQty={row.original.reserved_qty}
+            />
+          </div>
+        ),
       },
       {
         // WHO pushed this to purchasing. Sorted server-side on the person's name, which

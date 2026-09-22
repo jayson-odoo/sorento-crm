@@ -20,6 +20,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
+import { ReserveRequestsSection } from './ReserveRequestsSection';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 /** `PLAN-oi-header-list-detail.md`, AC-DP-03. */
@@ -32,15 +33,21 @@ function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
 }
 
 export function OrderInquiryLinesTab({
+  inquiryId,
   lines,
   isLoading,
   rowSelection,
   onRowSelectionChange,
+  canRequestReserve,
+  canReserve,
 }: {
+  inquiryId: string;
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
+  canRequestReserve: boolean;
+  canReserve: boolean;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -77,39 +84,47 @@ export function OrderInquiryLinesTab({
   });
 
   return (
-    <DataGrid
-      table={table}
-      recordCount={table.getFilteredRowModel().rows.length}
-      isLoading={isLoading}
-      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyMessage={
-        lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
-      }
-      listingKey={LISTING_KEY}
-    >
-      <Card>
-        <CardHeader className="block">
-          <DataGridListToolbar
-            table={table}
-            searchSlot={
-              <ListSearchInput
-                value={search}
-                onChange={setSearch}
-                placeholder="Search product..."
-                className="w-56"
-              />
-            }
-            exportConfig={false}
-          />
-        </CardHeader>
-        <CardTable>
-          <DataGridTable />
-        </CardTable>
-        <CardFooter>
-          <DataGridPagination sizes={[10, 25, 50]} />
-        </CardFooter>
-      </Card>
-    </DataGrid>
+    <div className="space-y-4">
+      <ReserveRequestsSection
+        inquiryId={inquiryId}
+        lines={lines}
+        canRequest={canRequestReserve}
+        canReserve={canReserve}
+      />
+      <DataGrid
+        table={table}
+        recordCount={table.getFilteredRowModel().rows.length}
+        isLoading={isLoading}
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyMessage={
+          lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
+        }
+        listingKey={LISTING_KEY}
+      >
+        <Card>
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  placeholder="Search product..."
+                  className="w-56"
+                />
+              }
+              exportConfig={false}
+            />
+          </CardHeader>
+          <CardTable>
+            <DataGridTable />
+          </CardTable>
+          <CardFooter>
+            <DataGridPagination sizes={[10, 25, 50]} />
+          </CardFooter>
+        </Card>
+      </DataGrid>
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Ban,
+  Bookmark,
   Download,
   FileText,
   Link2,
@@ -22,6 +23,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
@@ -40,7 +42,9 @@ import {
   useOrderInquiryHeaderDetail,
   useOrderInquiryHeaderLines,
   useOrderInquiryHeaderRelatedDocuments,
+  useOrderInquiryReserveRequests,
 } from '../../../_shared/hooks/useOrderInquiry';
+import { useReserveRowOptions } from '../../../_shared/hooks/useReserveRowOptions';
 import { ackStateOf } from '../../../_shared/lib/orderInquiryAck';
 import {
   orderInquiryHeaderStatusLabel,
@@ -51,6 +55,7 @@ import { downloadOrderInquiryWorklistXlsx } from '../../../_shared/services/orde
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
+import { ReserveRequestDialog } from './ReserveRequestDialog';
 import {
   OrderInquiryRelatedPurchaseOrdersTab,
   OrderInquiryRelatedSposTab,
@@ -61,6 +66,30 @@ import {
 const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
 /** Same grant Confirm is gated on everywhere else in this module. */
 const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
+/** R1 (`PLAN-oi-request-cs-reserve.md`): only the CS head confirms a reserve. */
+const ORDER_INQUIRY_RESERVE_PERMISSION = 'projects.order_inquiries.reserve';
+
+/** AC-RS-23: why a selected row cannot be named on a "Request CS to reserve" ask - the
+ * SAME rules the backend's own `create_request` enforces (3.2), read client-side off
+ * the worklist row so the menu item can be gated and explained before the request is
+ * even sent. `null` means the row is requestable. */
+function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
+  if (!['ORDER', 'ORDER_BACK'].includes(row.verb)) {
+    return 'not an ORDER or ORDER BACK row';
+  }
+  if (!['raised', 'partly_linked'].includes(row.state)) {
+    return 'not open for a reserve request';
+  }
+  const remaining =
+    Number(row.qty || '0') - Number(row.linked_qty || '0') - Number(row.bundled_qty || '0');
+  if (remaining <= 0) {
+    return 'has nothing left to request';
+  }
+  if (row.reserve_state === 'requested') {
+    return 'already has an open reserve request';
+  }
+  return null;
+}
 
 /** A ticked line still owed a document (mirrors `OrderInquiriesClient.tsx`'s own
  * `isLinkable`, kept smaller here on purpose: a single header's lines carry none of the
@@ -80,16 +109,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
+  const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
 
   const headerQuery = useOrderInquiryHeaderDetail(id);
   const linesQuery = useOrderInquiryHeaderLines(id);
   const relatedQuery = useOrderInquiryHeaderRelatedDocuments(id);
+  const reserveRequestsQuery = useOrderInquiryReserveRequests(id);
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
 
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [reserveDialogOpen, setReserveDialogOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -173,6 +205,53 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   );
   const chooseDocumentLine =
     selectedIds.length === 1 ? (activeLines.find((l) => l.id === selectedIds[0]) ?? null) : null;
+
+  // AC-RS-23: enabled only when EVERY selected row is requestable; disabled otherwise,
+  // with a tooltip naming the FIRST reason (not a tally of every one).
+  const reserveIneligibleReasons = useMemo(
+    () => selectedLines.map(reserveIneligibleReason).filter((reason): reason is string => Boolean(reason)),
+    [selectedLines],
+  );
+  const canRequestReserve = selectedLines.length > 0 && reserveIneligibleReasons.length === 0;
+  const reserveDisabledReason =
+    selectedLines.length === 0 ? 'Select at least one row' : reserveIneligibleReasons[0];
+
+  const reserveDialogEntries = useMemo(
+    () =>
+      selectedLines.map((line) => ({
+        key: line.id,
+        productId: line.product_id ?? null,
+        location: line.location ?? null,
+      })),
+    [selectedLines],
+  );
+  const reserveDialogResolved = useReserveRowOptions(reserveDialogOpen ? reserveDialogEntries : []);
+  const reserveDialogRows = useMemo(
+    () =>
+      selectedLines.map((line) => {
+        const own = reserveDialogResolved[line.id];
+        const remaining =
+          Number(line.qty || '0') - Number(line.linked_qty || '0') - Number(line.bundled_qty || '0');
+        return {
+          id: line.id,
+          item_code: line.item_code ?? null,
+          delivery_date: line.delivery_date ?? null,
+          remaining: String(Math.max(0, remaining)),
+          defaultLocation: own?.defaultWarehouseId ?? '',
+          locationOptions: own?.options ?? [],
+        };
+      }),
+    [selectedLines, reserveDialogResolved],
+  );
+
+  function invalidateReserveQueries() {
+    // The dialog / card already toast their own success (AC-RS-22/AC-RS-26); this is
+    // only the read-side refresh so the pill, the header badge and the card itself move.
+    linesQuery.refetch();
+    reserveRequestsQuery.refetch();
+  }
+
+  const openReserveRequest = reserveRequestsQuery.data?.find((r) => r.state === 'requested');
 
   const header = headerQuery.data;
 
@@ -312,6 +391,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 >
                   {orderInquiryHeaderStatusLabel(header.status)}
                 </Badge>
+                {openReserveRequest ? (
+                  <Badge variant="warning" appearance="light" size="md">
+                    Request to reserve
+                  </Badge>
+                ) : null}
               </div>
               <span className="text-sm text-muted-foreground">
                 Raised by {header.raised_by_name ?? 'Not recorded'}
@@ -385,6 +469,31 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       <DropdownMenuSeparator />
                     </>
                   ) : null}
+                  {canAcknowledge ? (
+                    canRequestReserve ? (
+                      <DropdownMenuItem
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          setReserveDialogOpen(true);
+                        }}
+                      >
+                        <Bookmark className="size-4" aria-hidden />
+                        Request CS to reserve
+                      </DropdownMenuItem>
+                    ) : (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="block">
+                            <DropdownMenuItem disabled>
+                              <Bookmark className="size-4" aria-hidden />
+                              Request CS to reserve
+                            </DropdownMenuItem>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{reserveDisabledReason}</TooltipContent>
+                      </Tooltip>
+                    )
+                  ) : null}
                   <DropdownMenuItem disabled={exporting} onSelect={exporting ? undefined : handleExport}>
                     <Download className="size-4" aria-hidden />
                     Export Excel
@@ -432,10 +541,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
         <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
           <OrderInquiryLinesTab
+            inquiryId={id}
             lines={lines}
             isLoading={linesQuery.isLoading}
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}
+            canRequestReserve={canAcknowledge}
+            canReserve={canReserve}
           />
         </TabsContent>
 
@@ -480,6 +592,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         onOpenChange={setRejectOpen}
         onRejected={() => setRowSelection({})}
       />
+
+      {reserveDialogOpen ? (
+        <ReserveRequestDialog
+          open={reserveDialogOpen}
+          onOpenChange={setReserveDialogOpen}
+          inquiryId={id}
+          rows={reserveDialogRows}
+          onSent={() => {
+            setRowSelection({});
+            invalidateReserveQueries();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -31,6 +31,10 @@ export interface ReserveRequestsCardRow {
   default_location: string;
   qty_reserved?: string | null;
   reason?: string | null;
+  /** AC-RS-28: `available_qty` per warehouse id this row's own stock grid carries, so
+   * Reserved can recompute when Location changes - only while the reader has not
+   * touched Reserved yet on this row. */
+  available_qty_by_location?: Record<string, number>;
 }
 
 export interface ReserveRequestsCardRequest {
@@ -40,6 +44,19 @@ export interface ReserveRequestsCardRequest {
   requested_by_name: string | null;
   requested_at: string | null;
   rows: ReserveRequestsCardRow[];
+}
+
+/**
+ * The Cancel button's own countdown, built by the CALLER (`useDeferredAction` needs a
+ * `QueryClientProvider` this card is deliberately kept free of, so its own vitest suite
+ * can render it with no providers at all) - AC-RS-24's "Cancel request" becomes the
+ * standard reversible countdown once `start()` is pressed.
+ */
+export interface ReserveRequestsCardCancelControl {
+  isPending: boolean;
+  isBlocked: boolean;
+  countdown: React.ReactNode;
+  start: () => void;
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -53,15 +70,21 @@ export function ReserveRequestsCard({
   mode,
   canAct,
   onConfirmed,
+  cancelControl,
 }: {
   request: ReserveRequestsCardRequest;
   mode: 'request' | 'act';
   canAct: boolean;
   onConfirmed?: () => void;
+  /** AC-RS-24: present only for the requester (or a reserve-permission holder), and
+   * only while the request is still open - the caller decides both, this card only
+   * renders what it is handed. */
+  cancelControl?: ReserveRequestsCardCancelControl | null;
 }) {
   const [reserved, setReserved] = React.useState<Record<string, number>>({});
   const [location, setLocation] = React.useState<Record<string, string>>({});
   const [reason, setReason] = React.useState<Record<string, string>>({});
+  const [editedReserved, setEditedReserved] = React.useState<Record<string, boolean>>({});
   const [confirming, setConfirming] = React.useState(false);
 
   React.useEffect(() => {
@@ -72,6 +95,7 @@ export function ReserveRequestsCard({
     );
     setLocation(Object.fromEntries(request.rows.map((row) => [row.id, row.default_location])));
     setReason({});
+    setEditedReserved({});
   }, [request.id, request.rows]);
 
   const isActMode = mode === 'act' && canAct;
@@ -118,12 +142,27 @@ export function ReserveRequestsCard({
             {STATE_LABEL[request.state] ?? request.state}
           </Badge>
         </CardTitle>
-        {request.requested_by_name ? (
-          <span className="text-xs text-muted-foreground">
-            Requested by {request.requested_by_name}
-            {request.requested_at ? ` on ${request.requested_at}` : ''}
-          </span>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {request.requested_by_name ? (
+            <span className="text-xs text-muted-foreground">
+              Requested by {request.requested_by_name}
+              {request.requested_at ? ` on ${request.requested_at}` : ''}
+            </span>
+          ) : null}
+          {mode === 'request' && cancelControl && request.state === 'requested' ? (
+            cancelControl.countdown ?? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={cancelControl.isPending || cancelControl.isBlocked}
+                onClick={() => cancelControl.start()}
+              >
+                Cancel request
+              </Button>
+            )
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {rowsWithComputed.map(({ row, requestedQty, reservedQty, short }) => (
@@ -140,9 +179,20 @@ export function ReserveRequestsCard({
                     <SearchableSelect
                       id={`reserve-act-location-${row.id}`}
                       value={location[row.id] ?? row.default_location}
-                      onChange={(value) =>
-                        setLocation((prev) => ({ ...prev, [row.id]: value }))
-                      }
+                      onChange={(value) => {
+                        setLocation((prev) => ({ ...prev, [row.id]: value }));
+                        // AC-RS-28: Reserved recomputes from the NEW location's own
+                        // availability, but only while the reader has not touched
+                        // Reserved on this row yet - an edit they made stands.
+                        if (!editedReserved[row.id]) {
+                          const available = row.available_qty_by_location?.[value];
+                          const next =
+                            available == null
+                              ? requestedQty
+                              : Math.max(0, Math.min(requestedQty, available));
+                          setReserved((prev) => ({ ...prev, [row.id]: next }));
+                        }
+                      }}
                       options={row.location_options}
                     />
                   </div>
@@ -157,6 +207,7 @@ export function ReserveRequestsCard({
                       onChange={(event) => {
                         const raw = Number(event.target.value);
                         const capped = Math.min(Math.max(raw || 0, 0), requestedQty);
+                        setEditedReserved((prev) => ({ ...prev, [row.id]: true }));
                         setReserved((prev) => ({ ...prev, [row.id]: capped }));
                       }}
                     />
