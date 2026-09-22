@@ -61,7 +61,7 @@ from sqlalchemy.orm import Session
 from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer
-from app.models.procurement import Supplier
+from app.models.procurement import ProductSupplier, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.models.user import SystemSetting
@@ -76,6 +76,7 @@ from app.schemas.canonical_masters import (
     CanonicalWarehouse,
 )
 from app.services.integration_reference_service import (
+    DEFAULT_SOURCE_SYSTEM,
     SHARED_TABLES,
     IntegrationReferenceService,
     ReferenceConflict,
@@ -85,7 +86,7 @@ from app.services.integration_reference_service import (
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
 from app.services.rules.customer_rules import customer_identity
-from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
+from app.services.rules.master_rules import clean_supplier_name, normalize_code, resolve_master_by_code
 # The agent code's one normalisation, imported rather than restated: the master
 # screen, the outstanding-SO import and this ingest all have to agree on what
 # `sean i` is, or the captain's demand class lands on one of three rows.
@@ -670,6 +671,73 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
 }
 
 
+@dataclass(frozen=True)
+class _PreloadedOrigin:
+    """Round 2: stands in for `origin_of()`'s own `IntegrationReference` ORM
+    row inside `_ProductBatchPreload.origin_by_entity`, carrying only what
+    `is_unclaimed_or_same_source` (the one reader) actually looks at - the
+    real row's other columns are never needed for this call site, and
+    fetching a full ORM instance per candidate id would cost the very
+    `do_orm_execute` tax this preload exists to avoid."""
+
+    source_system: str
+
+
+@dataclass
+class _ProductBatchPreload:
+    """Round 2 (`PLAN-autocount-pull-preview-perf.md`): one bulk pass over
+    the batch's own codes/refs, built once in `ingest()` before the
+    per-record loop, instead of the same three per-record queries
+    (`resolve_master_by_code`, `IntegrationReferenceService.resolve`/
+    `origin_of`) - a cProfile pass on the clone (after C1-C3, still missing
+    the <=90s target) found these three responsible for most of the wall
+    time, via a `company_scope.py` `do_orm_execute` quirk: a query against a
+    table that is NOT `CompanyScopedMixin` (`integration_references`, which
+    manages its own company anchor instead) reports no top-level scoped
+    mapper and falls back to injecting `with_loader_criteria` for EVERY
+    scoped model in the app (~134 of them) - see the PR body for the numbers.
+    Products only; every other entity keeps its per-record path untouched.
+
+    Every lookup here is a courtesy: a miss falls back to the exact same
+    per-record query this batch would have run without a preload at all
+    (`MasterIngestService._resolve_ref`/`_origin_of`/the adopt branch's own
+    code lookup), so a gap in the preload costs a query, never correctness.
+    `_insert`/`_link` maintain `code_to_id`/`ref_to_entity` as the batch
+    runs (a later record can adopt one this batch itself just created); a
+    record's own savepoint rollback drops whatever IT added
+    (`MasterIngestService._pending_preload_additions`,
+    `_revert_pending_preload_additions`) - the same shape T6 already pins
+    for `product_rules.ensure_reference`'s own cache, applied to this map.
+    """
+
+    #: `normalize_code(code) -> product id`, D17's own matching rule
+    #: (`master_rules.resolve_master_by_code`).
+    code_to_id: dict[str, str] = field(default_factory=dict)
+    #: `source_ref -> entity_id`, matching `IntegrationReferenceService.
+    #: resolve`'s own (source_system=autocount, entity_type=products,
+    #: this company) filter - excludes a ref whose target row no longer
+    #: exists (an explicit JOIN against `products`), so an orphaned mapping
+    #: is simply absent here and falls through to the real `resolve()` call,
+    #: which is what actually self-heals it (unchanged from today).
+    ref_to_entity: dict[str, str] = field(default_factory=dict)
+    #: `entity_id -> origin` (a lightweight stand-in exposing `.source_system`
+    #: only - the one attribute `is_unclaimed_or_same_source` reads), for
+    #: every id `code_to_id` found. A key PRESENT with value `None` is a
+    #: real "confirmed no origin"; a key ABSENT means "not preloaded, ask
+    #: `origin_of` for real" (an id resolved via the per-record fallback,
+    #: or one this batch created after the preload ran).
+    origin_by_entity: dict[str, Optional[Any]] = field(default_factory=dict)
+    #: The batch's one default-supplier id (`product_rules.
+    #: resolve_default_supplier_id`, resolved once) - `None` when none is
+    #: configured and no supplier exists to fall back to either.
+    default_supplier_id: Optional[str] = None
+    #: `product_id -> its EXISTING product_suppliers.standard_lead_time_days`
+    #: for that supplier. Absent means "confirmed no existing link" for ANY
+    #: id this preload covers - including one `_insert` just created, since
+    #: a brand-new id cannot possibly have a pre-existing one.
+    default_supplier_lead_time: dict[str, int] = field(default_factory=dict)
+
+
 class MasterIngestService:
     def __init__(
         self, db: Session, integration_id: Optional[str] = None, *, company_id: str,
@@ -703,6 +771,17 @@ class MasterIngestService:
         # own docstring for why only a FOUND id is ever cached. Same lifetime
         # as `_settings_cache` (one instance = one batch), never cleared.
         self._ref_cache: dict[tuple[type, Optional[str], str], str] = {}
+        # Round 2: built once per batch by `ingest()`, products only - see
+        # `_ProductBatchPreload`'s own docstring. `None` for every other
+        # entity type, or if the preload itself fails (best-effort: a bug in
+        # this optimisation must never fail the whole batch).
+        self._preload: Optional[_ProductBatchPreload] = None
+        # `(map_name, key)` pairs THIS record's own `_insert`/`_link` added to
+        # `self._preload` - reset at the start of every `_ingest_one` call,
+        # walked back by `_revert_pending_preload_additions` in each of its
+        # except branches so a rolled-back record's additions never leak to
+        # the next one (T11; T6's own shape for the C2 cache).
+        self._pending_preload_additions: list[tuple[str, Any]] = []
 
     #: B3 (small-fix track, PLAN-autocount-pull-review.md): how often `on_progress` fires
     #: mid-batch. A full-size products preview is thousands of records; calling back on
@@ -742,6 +821,18 @@ class MasterIngestService:
                 f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
             )
 
+        if entity_type == "products":
+            try:
+                with company_scope(self.db, frozenset({self.company_id})):
+                    self._preload = self._build_product_preload(records)
+            except Exception:  # noqa: BLE001 - best-effort: a preload bug must
+                # never fail the whole batch, only cost it the per-record
+                # fallback queries a miss already costs.
+                logger.warning("ingest.product_preload_failed", exc_info=True)
+                self._preload = None
+        else:
+            self._preload = None
+
         total = len(records)
         result = IngestResult(dry_run=dry_run)
         self._dry_run = dry_run
@@ -770,8 +861,148 @@ class MasterIngestService:
         except Exception:  # pragma: no cover - defensive by design
             logger.warning("ingest progress callback failed", exc_info=True)
 
+    #: Round 2: `IN (...)` chunk size for every bulk preload query - 1,000,
+    #: same as the plan's own number, comfortably under Postgres' bind-
+    #: parameter ceiling.
+    _PRELOAD_CHUNK_SIZE = 1000
+
+    @classmethod
+    def _chunked(cls, values):
+        values = list(values)
+        for i in range(0, len(values), cls._PRELOAD_CHUNK_SIZE):
+            yield values[i : i + cls._PRELOAD_CHUNK_SIZE]
+
+    def _build_product_preload(self, records: list[dict]) -> _ProductBatchPreload:
+        """T9/T10 (round 2): one pass over the batch's own codes/refs -
+        `_ProductBatchPreload`'s own docstring has the full "why"."""
+        codes: set[str] = set()
+        refs: set[str] = set()
+        for raw in records:
+            if not isinstance(raw, dict):
+                continue
+            code = raw.get("code")
+            if code:
+                normalized = normalize_code(str(code))
+                if normalized:
+                    codes.add(normalized)
+            ref = raw.get("source_ref")
+            if ref:
+                refs.add(str(ref))
+
+        preload = _ProductBatchPreload()
+
+        # (a) code -> id, D17's exact matching rule (`resolve_master_by_code`).
+        for chunk in self._chunked(sorted(codes)):
+            rows = (
+                self.db.query(Product.id, Product.product_code)
+                .filter(
+                    func.upper(func.btrim(Product.product_code)).in_(chunk),
+                    Product.company_id == self.company_id,
+                )
+                .all()
+            )
+            for product_id, product_code in rows:
+                preload.code_to_id[normalize_code(product_code)] = str(product_id)
+
+        # (b) source_ref -> entity_id, joined against `products` so an
+        # ORPHANED reference (target row deleted) is simply absent here -
+        # raw SQL, not the ORM: `IntegrationReference` is not
+        # `CompanyScopedMixin` (it manages its own anchor), and an ORM query
+        # against it is exactly the query shape the profile found paying the
+        # `do_orm_execute` "no scoped mapper -> inject every scoped class's
+        # criteria" tax (see this class's own docstring).
+        for chunk in self._chunked(sorted(refs)):
+            rows = self.db.execute(
+                text(
+                    "SELECT ir.source_ref, ir.entity_id FROM integration_references ir "
+                    "JOIN products p ON p.id::text = ir.entity_id "
+                    "WHERE ir.source_system = :source_system AND ir.entity_type = 'products' "
+                    "AND ir.company_id = :cid AND ir.source_ref = ANY(:refs)"
+                ),
+                {"source_system": DEFAULT_SOURCE_SYSTEM, "cid": self.company_id, "refs": chunk},
+            ).mappings().all()
+            for row in rows:
+                preload.ref_to_entity[row["source_ref"]] = str(row["entity_id"])
+
+        # (c) entity_id -> origin, for every id (a) found - the adopt branch's
+        # own next query after a code hit. Same raw-SQL reasoning as (b); a
+        # lightweight stand-in (not the full ORM row) since
+        # `is_unclaimed_or_same_source` reads only `.source_system`.
+        candidate_ids = list(preload.code_to_id.values())
+        for entity_id in candidate_ids:
+            preload.origin_by_entity.setdefault(entity_id, None)
+        for chunk in self._chunked(candidate_ids):
+            rows = self.db.execute(
+                text(
+                    "SELECT entity_id, source_system FROM integration_references "
+                    "WHERE entity_type = 'products' AND entity_id = ANY(:ids)"
+                ),
+                {"ids": chunk},
+            ).mappings().all()
+            for row in rows:
+                preload.origin_by_entity[row["entity_id"]] = _PreloadedOrigin(
+                    source_system=row["source_system"]
+                )
+
+        # (d) the batch's one default-supplier link set - `link_default_
+        # supplier`'s own two settings-driven lookups, resolved ONCE instead
+        # of once per record (`ProductSupplier` IS `CompanyScopedMixin`, so
+        # this was never part of the do_orm_execute tax - still a real
+        # per-record SELECT this batch no longer pays for a candidate id).
+        settings = self._system_settings()
+        preload.default_supplier_id = product_rules.resolve_default_supplier_id(self.db, settings)
+        if preload.default_supplier_id and candidate_ids:
+            for chunk in self._chunked(candidate_ids):
+                rows = (
+                    self.db.query(ProductSupplier.product_id, ProductSupplier.standard_lead_time_days)
+                    .filter(
+                        ProductSupplier.supplier_id == preload.default_supplier_id,
+                        ProductSupplier.product_id.in_(chunk),
+                    )
+                    .all()
+                )
+                for product_id, lead_time_days in rows:
+                    preload.default_supplier_lead_time[str(product_id)] = lead_time_days
+
+        return preload
+
+    def _resolve_ref(self, entity_type: str, source_ref: str) -> Optional[str]:
+        """`self.refs.resolve()`, consulting the batch preload first
+        (products only) - a miss falls back to the exact query `resolve()`
+        would run anyway, so a preload gap costs a query, never correctness.
+        """
+        if entity_type == "products" and self._preload is not None:
+            hit = self._preload.ref_to_entity.get(source_ref)
+            if hit is not None:
+                return hit
+        return self.refs.resolve(entity_type=entity_type, source_ref=source_ref)
+
+    def _origin_of(self, entity_type: str, entity_id: str) -> Optional[Any]:
+        """`self.refs.origin_of()`, consulting the batch preload first
+        (products only) - same shape as `_resolve_ref`, except a preloaded
+        `None` (a KEY present with that value) is itself a trusted answer -
+        see `_ProductBatchPreload.origin_by_entity`'s own docstring."""
+        if entity_type == "products" and self._preload is not None:
+            if entity_id in self._preload.origin_by_entity:
+                return self._preload.origin_by_entity[entity_id]
+        return self.refs.origin_of(entity_type=entity_type, entity_id=entity_id)
+
+    def _revert_pending_preload_additions(self) -> None:
+        """T11: a record's own savepoint rollback must undo whatever IT added
+        to `self._preload` too - `_insert`/`_link` both append to
+        `self._pending_preload_additions` right after the write that made
+        the addition valid; called from every `_ingest_one` except branch."""
+        if self._preload is not None:
+            for map_name, key in self._pending_preload_additions:
+                getattr(self._preload, map_name).pop(key, None)
+        self._pending_preload_additions = []
+
     def _ingest_one(self, entity_type: str, spec: EntitySpec, raw: dict) -> RecordResult:
         source_ref = raw.get("source_ref") if isinstance(raw, dict) else None
+        # Round 2: this record's own scratch pad for `_insert`/`_link`'s
+        # preload-map additions - reset per record, walked back on any of
+        # this method's own except branches below (T11).
+        self._pending_preload_additions = []
 
         try:
             payload = spec.schema(**raw)
@@ -812,6 +1043,7 @@ class MasterIngestService:
             )
         except MissingReference as exc:
             savepoint.rollback()
+            self._revert_pending_preload_additions()
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.RETRYABLE,
@@ -819,6 +1051,7 @@ class MasterIngestService:
             )
         except ReferenceConflict as exc:
             savepoint.rollback()
+            self._revert_pending_preload_additions()
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
@@ -829,6 +1062,7 @@ class MasterIngestService:
             # concurrent push of the same code) - named by constraint, never by
             # `str(exc)`'s full SQL statement.
             savepoint.rollback()
+            self._revert_pending_preload_additions()
             logger.warning(
                 "ingest.integrity_conflict entity=%s source_ref=%s",
                 entity_type,
@@ -842,6 +1076,7 @@ class MasterIngestService:
             )
         except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             savepoint.rollback()
+            self._revert_pending_preload_additions()
             # SEC3 (fix-round-2): never echo a non-domain exception's own
             # message - it routinely quotes SQL, a table/column name or a raw
             # UUID. Logged with exc_info=True instead.
@@ -889,7 +1124,7 @@ class MasterIngestService:
         # same answer as one that was never linked at all. The cross-company
         # refusal this used to need (`_require_same_company`) is unreachable
         # through refs now and has been removed.
-        existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
+        existing_id = self._resolve_ref(entity_type, payload.source_ref)
         if existing_id is not None:
             product_row = None
             if entity_type == "products":
@@ -923,10 +1158,17 @@ class MasterIngestService:
             adopted = _lookup_id(
                 self.db, spec.table, spec.code_column, payload.code, self.company_id, normalized=True
             )
+        elif entity_type == "products" and self._preload is not None:
+            # Round 2: the batch preload's own code_to_id map first - a miss
+            # (this code is genuinely new, or the preload failed/didn't run)
+            # falls back to the exact query the `else` branch below runs.
+            adopted = self._preload.code_to_id.get(normalize_code(payload.code))
+            if adopted is None:
+                adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         else:
             adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         if adopted is not None:
-            origin = self.refs.origin_of(entity_type=entity_type, entity_id=adopted)
+            origin = self._origin_of(entity_type, adopted)
             if origin is not None:
                 if entity_type == "products" and is_unclaimed_or_same_source(origin):
                     # Code-wins (ingest-products-code-wins, SR0): the same
@@ -1146,10 +1388,25 @@ class MasterIngestService:
         update - exactly as the Excel import applies it, moved to
         `product_rules.link_default_supplier` so this and the manual
         create/edit path (`ProductService._ensure_default_supplier_lead_time`)
-        share the one body."""
+        share the one body.
+
+        Round 2: when the batch preload ran, its own already-resolved
+        `default_supplier_id` and per-product `default_supplier_lead_time`
+        are passed straight through - `product_id` not being a preload key
+        is itself a trusted "no existing link" answer (`.get` defaulting to
+        `None`), true whether `product_id` came from the preload's own
+        candidates or was minted by THIS record's own `_insert`.
+        """
         if entity_type != "products":
             return
-        product_rules.link_default_supplier(self.db, product_id, self._system_settings())
+        if self._preload is not None:
+            product_rules.link_default_supplier(
+                self.db, product_id, self._system_settings(),
+                default_supplier_id=self._preload.default_supplier_id,
+                existing_lead_time_days=self._preload.default_supplier_lead_time.get(product_id),
+            )
+        else:
+            product_rules.link_default_supplier(self.db, product_id, self._system_settings())
 
     def _insert(self, entity_type: str, spec: EntitySpec, columns: dict[str, Any]) -> str:
         """D18: the ORM insert, so `before_insert` company-stamping, the audit
@@ -1200,7 +1457,17 @@ class MasterIngestService:
                     row.updated_by = self.stamp_user_id
             self.db.add(row)
             self.db.flush()
-            return str(row.id)
+            new_id = str(row.id)
+            if entity_type == "products" and self._preload is not None:
+                # Round 2 (T10): so a LATER record in this same batch sharing
+                # this code adopts THIS row through the map, never a second
+                # per-record query - and (T11) reverted if this record's own
+                # savepoint later rolls back.
+                normalized = normalize_code(insert_columns.get("product_code"))
+                if normalized:
+                    self._preload.code_to_id[normalized] = new_id
+                    self._pending_preload_additions.append(("code_to_id", normalized))
+            return new_id
 
     def _diff(
         self,
@@ -1284,6 +1551,13 @@ class MasterIngestService:
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
+        if entity_type == "products" and self._preload is not None and payload.source_ref:
+            # Round 2 (T10/T11): same reasoning as `_insert`'s own map update
+            # - a later same-batch record sharing this source_ref (a genuine
+            # duplicate push) resolves it via the map, and a rollback undoes
+            # this addition along with the row it named.
+            self._preload.ref_to_entity[payload.source_ref] = entity_id
+            self._pending_preload_additions.append(("ref_to_entity", payload.source_ref))
 
 
 def _value_changed(current: Any, incoming: Any) -> bool:

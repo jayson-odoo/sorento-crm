@@ -293,30 +293,73 @@ def resolve_standard_lead_time_days(settings: Any) -> int:
     return max(0, days)
 
 
-def link_default_supplier(db: Session, product_id: str, settings: Any) -> None:
+#: Bulk-preload round (`PLAN-autocount-pull-preview-perf.md`): distinct from
+#: `None` (a real, valid "no existing link" answer) the same way `_UNSET`
+#: distinguishes itself in `master_ingest_service.py` - "the caller never
+#: preloaded this at all, run the normal per-record lookup" is a third state,
+#: not the same as "preloaded and confirmed absent".
+_NOT_PRELOADED = object()
+
+
+def link_default_supplier(
+    db: Session,
+    product_id: str,
+    settings: Any,
+    *,
+    default_supplier_id: Any = _NOT_PRELOADED,
+    existing_lead_time_days: Any = _NOT_PRELOADED,
+) -> None:
     """Upsert the tenant's default-supplier `product_suppliers` row with the
     configured standard lead time (D5) - create-time link, or the lead time
     refreshed on update, exactly as the Excel import's own
     `link_default_supplier` closure does. `settings` is the (possibly `None`)
     `system_settings` row; a no-op when no default supplier can be resolved.
+
+    `default_supplier_id` / `existing_lead_time_days` (bulk-preload round):
+    a batch caller (`MasterIngestService`) that already resolved these once
+    for the whole batch passes them in - `default_supplier_id` skips
+    `resolve_default_supplier_id`'s own `suppliers` SELECT, and a non-sentinel
+    `existing_lead_time_days` (an int, or `None` for "confirmed no existing
+    link") skips the `product_suppliers` SELECT below entirely, EXCEPT when
+    the preloaded lead time turns out to differ from the current setting -
+    that one rare case still needs the real row to mutate it. Neither
+    sentinel is ever passed by the other two callers (bulk Excel import,
+    manual create/edit), which keep today's per-call behaviour unchanged.
     """
-    default_supplier_id = resolve_default_supplier_id(db, settings)
+    if default_supplier_id is _NOT_PRELOADED:
+        default_supplier_id = resolve_default_supplier_id(db, settings)
     if not default_supplier_id:
         return
     lead_time_days = resolve_standard_lead_time_days(settings)
-    existing = (
-        db.query(ProductSupplier)
-        .filter(
-            ProductSupplier.product_id == product_id,
-            ProductSupplier.supplier_id == default_supplier_id,
+
+    existing: Optional[ProductSupplier] = None
+    if existing_lead_time_days is _NOT_PRELOADED:
+        existing = (
+            db.query(ProductSupplier)
+            .filter(
+                ProductSupplier.product_id == product_id,
+                ProductSupplier.supplier_id == default_supplier_id,
+            )
+            .first()
         )
-        .first()
-    )
-    if existing is not None:
-        if existing.standard_lead_time_days != lead_time_days:
-            existing.standard_lead_time_days = lead_time_days
-            db.flush()
+        existing_lead_time_days = existing.standard_lead_time_days if existing is not None else None
+
+    if existing_lead_time_days is not None:
+        if existing_lead_time_days != lead_time_days:
+            if existing is None:
+                existing = (
+                    db.query(ProductSupplier)
+                    .filter(
+                        ProductSupplier.product_id == product_id,
+                        ProductSupplier.supplier_id == default_supplier_id,
+                    )
+                    .first()
+                )
+            if existing is not None:
+                existing.standard_lead_time_days = lead_time_days
+                db.flush()
         return
+
     db.add(
         ProductSupplier(
             product_id=product_id,
