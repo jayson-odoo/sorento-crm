@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
@@ -43,6 +43,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { cn } from '@/lib/utils';
+import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 import {
   useInterventionTicket,
@@ -113,6 +115,31 @@ export default function InterventionTicketDrawer({
   const takeoverMutation = useTakeoverSLATracking();
   /** Asks the panel's thread to scroll to the enquiry message (AC-N6). */
   const [jumpRequest, setJumpRequest] = useState<TicketJumpRequest | null>(null);
+  /** R2: local, no persistence - a long enquiry quote starts clamped to one line. */
+  const [enquiryExpanded, setEnquiryExpanded] = useState(false);
+  // A different ticket is a different enquiry: never carry an expanded quote
+  // into someone else's.
+  useEffect(() => {
+    setEnquiryExpanded(false);
+  }, [ticketId]);
+
+  // S1: whether the collapsed quote actually overflows its line - MEASURED,
+  // not a length guess, so a short-but-wide string (no spaces, a long link) or
+  // a font/zoom/column-width difference is not silently left with no way to
+  // read it in full. Only meaningful while collapsed: expanded text wraps
+  // instead of overflowing, so there is nothing to measure against.
+  //
+  // The node lives in `useState`, set by a CALLBACK ref, not a plain
+  // `useRef` read from a `useLayoutEffect` keyed on unrelated deps: the quote
+  // renders inside the Sheet's Radix portal, which mounts its children on a
+  // SEPARATE commit (its own internal "mounted" flag, flipped from ITS OWN
+  // effect) that never re-renders this component - a `useRef` would stay
+  // null through that commit and never get another chance to measure. A
+  // callback ref fires exactly when React attaches the node, on whichever
+  // commit that turns out to be, and setting state from it is what gives the
+  // measurement effect below a fresh dependency to re-run against.
+  const [isQuoteClamped, setIsQuoteClamped] = useState(false);
+  const [quoteTextNode, setQuoteTextNode] = useState<HTMLElement | null>(null);
 
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
   const ticket = ticketQuery.data;
@@ -161,11 +188,47 @@ export default function InterventionTicketDrawer({
   const showTakeover =
     canTakeover && !isResolved && ticket?.is_assignee === false && !!ticket?.assignee_team_id;
 
+  // R2: the enquiry quote text, clamped to one line unless expanded.
+  const enquiryText = ticket?.source_message_text?.trim() || 'No enquiry text captured.';
+  const quoteClampClass = enquiryExpanded
+    ? 'max-h-40 overflow-y-auto whitespace-pre-wrap break-words'
+    : 'truncate';
+  /** aria-controls target: the toggle names the exact node it expands/collapses. */
+  const quoteTextId = useId();
+  /** AC-N6: scrolls the thread to the message this ticket started from. */
+  const handleQuoteJump = () => {
+    if (!ticket?.source_message_id) return;
+    setJumpRequest((prev) => ({
+      messageId: ticket.source_message_id,
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+  };
+
+  // S1: measure the collapsed line for real overflow, once the node exists,
+  // whenever the ticket or its text changes, and on a resize - a length guess
+  // missed the 45-120 char band that renders on one CSS line at 1280px but
+  // wraps to (invisibly) more than one at 375px. Skipped while expanded: a
+  // wrapped, multi-line box has nothing to measure against, and re-armed once
+  // the reader collapses it again.
+  useLayoutEffect(() => {
+    if (enquiryExpanded || !quoteTextNode) return;
+    const measure = () => setIsQuoteClamped(quoteTextNode.scrollWidth > quoteTextNode.clientWidth);
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [quoteTextNode, ticketId, enquiryText, enquiryExpanded]);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-2xl sm:p-6 lg:max-w-4xl"
+        // Fix round 4: `overflow-hidden`, not `-y-auto` (the base primitive's
+        // default) - `SheetBody` below is the ONE scroll container (it has
+        // its own `overflow-y-auto`, on purpose). Two independently
+        // scrollable ancestors around the same flex-fill thread fought each
+        // other at 375x812 and the thread's text rendered on top of the
+        // composer's (AC-CP-B1 375 overlap defect).
+        className="flex w-full flex-col gap-3 overflow-hidden p-4 sm:max-w-2xl sm:p-6 lg:max-w-4xl"
       >
         <SheetHeader className="border-b pb-3 pe-8">
           <div className="flex flex-wrap items-center gap-2">
@@ -311,35 +374,82 @@ export default function InterventionTicketDrawer({
             </div>
           ) : ticket ? (
             <div className="rounded-md border bg-muted/30 p-3">
-              {/* AC-N6: the quote is the way INTO the thread. Clicking it
-                  scrolls to the message that started this ticket, fetching
-                  the surrounding page first when the reader has scrolled
-                  past it. Only a button when there is a message to reach. */}
-              {ticket.source_message_id ? (
+              {/* AC-N6 / R2: the quote is the way INTO the thread. Collapsed,
+                  the whole one-line row (icon + text) IS the jump control
+                  again, same as main - a bare 16x16 icon is a worse hit area
+                  than the text it sits beside, and there is nothing yet to
+                  protect from an accidental drag-select. Expanded, the
+                  scrollable box is a plain, non-interactive paragraph and the
+                  icon becomes its own (coarse-hit-target) button instead: a
+                  text-select drag inside the expanded box must not risk
+                  firing the jump on mouseup (fix round 1 nit), but the reader
+                  still needs a way to jump while it is open. Only ever a
+                  button when there is a message to reach. Clamped to one line
+                  by default (AC-CP-1/2) so a long enquiry cannot push the
+                  thread below its floor (AC-CP-3) - the "Show more" toggle
+                  expands it instead. */}
+              {!enquiryExpanded && ticket.source_message_id ? (
                 <button
                   type="button"
                   data-testid="enquiry-quote-jump"
                   aria-label="Show this message in the conversation"
-                  onClick={() =>
-                    setJumpRequest((prev) => ({
-                      messageId: ticket.source_message_id,
-                      nonce: (prev?.nonce ?? 0) + 1,
-                    }))
-                  }
+                  onClick={handleQuoteJump}
                   className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
                 >
                   <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
+                  <span
+                    ref={setQuoteTextNode}
+                    id={quoteTextId}
+                    data-testid="enquiry-quote-text"
+                    title={enquiryText}
+                    className={cn('min-w-0 flex-1 text-sm', quoteClampClass)}
+                  >
+                    {enquiryText}
                   </span>
                 </button>
               ) : (
                 <div className="flex items-start gap-2">
-                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <p className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
+                  {ticket.source_message_id ? (
+                    <button
+                      type="button"
+                      data-testid="enquiry-quote-jump"
+                      aria-label="Show this message in the conversation"
+                      onClick={handleQuoteJump}
+                      className={cn(
+                        '-m-1.5 shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground',
+                        COARSE_HIT_TARGET_CLASS,
+                        PRESSED_CLASS,
+                      )}
+                    >
+                      <MessageSquareQuote className="size-4" />
+                    </button>
+                  ) : (
+                    <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <p
+                    ref={setQuoteTextNode}
+                    id={quoteTextId}
+                    data-testid="enquiry-quote-text"
+                    // S1 nit: only useful while collapsed - a `title` on an
+                    // already-expanded, fully-readable box is dead weight.
+                    title={enquiryExpanded ? undefined : enquiryText}
+                    className={cn('min-w-0 flex-1 text-sm', quoteClampClass)}
+                  >
+                    {enquiryText}
                   </p>
                 </div>
+              )}
+              {(isQuoteClamped || enquiryExpanded) && (
+                <button
+                  type="button"
+                  data-testid="enquiry-quote-toggle"
+                  aria-expanded={enquiryExpanded}
+                  aria-controls={quoteTextId}
+                  className="ms-6 mt-1 text-xs font-medium text-primary hover:underline"
+                  onClick={() => setEnquiryExpanded((v) => !v)}
+                >
+                  {enquiryExpanded ? 'Show less' : 'Show more'}
+                </button>
               )}
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
@@ -373,12 +483,28 @@ export default function InterventionTicketDrawer({
           {/* The thread takes whatever height the header and the enquiry card
               leave, and the composer stays on screen: a viewport-capped list
               inside a scrolling sheet put the toolbar on the bottom edge on
-              every laptop. min-h keeps a readable strip on a short phone. */}
+              every laptop. min-h keeps a readable strip on a short phone.
+              Fix round 5: `min-h-40`, not `min-h-0`, on the PANEL's own root
+              too - the panel forwards this same className to
+              RespondChatList's root as well, so the floor sits on every flex
+              item in the chain, not only the innermost scroll box (AC-CP-B1
+              375px overlap: a floor-less ancestor could still be squeezed to
+              near-zero by the outer flex algorithm, and the scroll box's own
+              min-height does not enlarge it back).
+              Fix round 6: `maxHeightClass` (the INNER scroll box) no longer
+              carries its own `min-h-40` - the root already does, and
+              RespondChatList's own header/search chrome sits ABOVE the
+              scroll box, inside that same rooted floor. A second, EQUAL
+              floor on the inner box demanded chrome-height MORE than the
+              root actually has room for, so the inner box overflowed the
+              root's own bottom edge by exactly the chrome's height and
+              painted over the tablist. One floor, on the root; the inner
+              box only needs `flex-1` to take whatever the root leaves it. */}
           <TicketConversationPanel
             ticketId={ticketId}
             enabled={open}
-            className="min-h-0 flex-1"
-            maxHeightClass="min-h-40 flex-1"
+            className="min-h-40 flex-1"
+            maxHeightClass="min-h-0 flex-1"
             jumpRequest={jumpRequest}
             onSent={onSent}
           />

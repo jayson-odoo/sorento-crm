@@ -203,6 +203,10 @@ export default function ConversationThreadPane({
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}
             mediaProxy={mediaProxy}
+            // S2 / R4: the same fetch-back reuse as the SLA ticket panel - a
+            // "Replying to" quote whose target scrolled out of the loaded
+            // window still jumps, on this surface too.
+            onJumpToMessage={thread.jumpToMessage}
           />
         </>
       )}

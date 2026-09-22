@@ -52,7 +52,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
 import { toast } from '@/lib/toast';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingChatRecords from './SlaTrackingChatRecords';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 import { humanName, slaHandler } from '../lib/slaHandler';
@@ -1081,17 +1081,24 @@ export default function ConversationSLATrackingDetail({
 
       {respondInboxUrl && (
         <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
-          <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
+          {/* Fix round 4: `overflow-hidden`, not `-y-auto` - `SheetBody`
+              below is the ONE scroll container. Same shape as the ticket
+              drawer's Sheet (InterventionTicketDrawer.tsx), same fix -
+              see its comment for why two scrollable ancestors around a
+              flex-fill thread is the defect. */}
+          <SheetContent side="right" className="flex w-full flex-col overflow-hidden sm:max-w-lg">
             <SheetHeader className="sr-only">
               <SheetTitle>Chat Records</SheetTitle>
             </SheetHeader>
-            <div className="flex-1 min-h-0 pt-2">
+            {/* R3: the thread flex-fills the sheet like the worklist drawer's
+                SheetBody already does, instead of stopping at a fixed cap. */}
+            <SheetBody className="flex min-h-0 flex-1 flex-col pt-2">
               <SlaTrackingChatRecords
                 trackingId={trackingId}
                 respondInboxUrl={respondInboxUrl}
                 showAsPopup
               />
-            </div>
+            </SheetBody>
           </SheetContent>
         </Sheet>
       )}
