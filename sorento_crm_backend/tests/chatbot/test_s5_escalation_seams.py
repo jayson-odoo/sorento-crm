@@ -203,6 +203,81 @@ class TestInputMessageChain:
         assert body["source_message_id"] == str(MESSAGE_ID)
 
 
+class TestACEQQuoteFallback:
+    """PLAN-escalation-quote-title-and-stock-team-22sep.md, owner ruling R1: the quoted
+    body is `text` if truthy, else `title` (Respond.io's quick-reply quote shape carries
+    only `title`), else the whole ` reply to: ...` suffix is dropped - never JS's own
+    `undefined`."""
+
+    def test_ac_eq_1_quoted_message_with_text_is_appended(self) -> None:
+        ctx = _ctx(
+            message_body={"type": "text", "text": "Yes"},
+            reply_to={"message": {"text": "Would you like me to escalate?"}},
+        )
+        assert _source_message_text(ctx) == "Yes reply to: Would you like me to escalate?"
+
+    def test_ac_eq_2_quoted_message_with_only_a_title_falls_back_to_it(self) -> None:
+        ctx = _ctx(
+            message_body={"type": "text", "text": "Yes"},
+            reply_to={"message": {"title": "Would you like me to escalate?"}},
+        )
+        assert _source_message_text(ctx) == "Yes reply to: Would you like me to escalate?"
+
+    def test_ac_eq_3_quoted_message_with_neither_appends_nothing(self) -> None:
+        ctx = _ctx(
+            message_body={"type": "text", "text": "Yes"},
+            reply_to={"message": {"type": "image"}},
+        )
+        result = _source_message_text(ctx)
+        assert result == "Yes"
+        assert "undefined" not in result
+
+
+class TestACEQ4SlaCommentDatetimeFields:
+    """PLAN-escalation-quote-title-and-stock-team-22sep.md defect 2: `_sla_create` used to
+    hand back raw `datetime` objects, and `_malaysia` (`jsc.js_string` on whatever it is
+    given) renders one as JS's own `[object Object]` - the internal Respond.io comment read
+    `routed to you at [object Object]`."""
+
+    def test_ac_eq_4_datetime_fields_become_iso_strings_the_comment_can_render(
+        self, monkeypatch
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from app.services.chatbot.lanes import escalation_services
+        from app.services.sla_service import ConversationSLATrackingService
+
+        class _Created:
+            id = "sla-row-1"
+            initiated_at = datetime(2026, 9, 22, 6, 34, 0, tzinfo=timezone.utc)
+            due_at = datetime(2026, 9, 22, 10, 34, 0, tzinfo=timezone.utc)
+            due_at_resolution = datetime(2026, 9, 23, 6, 34, 0, tzinfo=timezone.utc)
+
+        monkeypatch.setattr(
+            ConversationSLATrackingService, "create_tracking", lambda self, payload: _Created()
+        )
+
+        call = escalation_services._sla_create(db=object())
+        sla = call(
+            {
+                "agent_code": "general_enquiries",
+                "team_set_code": "CS",
+                "contact_phone_number": "+60123450099",
+            }
+        )
+
+        assert isinstance(sla["initiated_at"], str)
+        assert isinstance(sla["due_at"], str)
+        assert isinstance(sla["due_at_resolution"], str)
+        assert sla["initiated_at"] == "2026-09-22T06:34:00+00:00"
+
+        comment = escalation_mod._comment_text(
+            _ctx(message_body={"type": "text", "text": "hi"}), "warehouse", sla
+        )
+        assert "[object Object]" not in comment
+        assert "routed to you at 2026-09-22 14:34:00" in comment
+
+
 # --------------------------------------------------------------------------- #
 # 2. `escalation_services` - the production wiring, and its session's lifecycle
 # --------------------------------------------------------------------------- #

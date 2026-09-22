@@ -1245,13 +1245,16 @@ def _input_message(ctx: dict[str, Any]) -> str:
     `source_message_text` came out blank and the person picking the case up saw no trace
     of what the customer sent. Live falls back to the attachment's description and then to
     a `[image message]` style placeholder naming the type, and appends the quoted message
-    when the customer replied to one. Reproduced here rather than improved on: the SLA row
-    is read beside rows n8n wrote, and two spellings of the same message would be worse
-    than the placeholder.
+    when the customer replied to one.
 
     `replyTo` hangs off the WEBHOOK body (`ctx.text.message`), one level above the message
     body the first chain reads - copying its path from the wrong level is the easy mistake
     here, so both are spelled out above.
+
+    Owner ruling 22 Sep 2026, R1 (AC-EQ-1..3): the quoted body is `text` if truthy, else
+    `title` (Respond.io's quick-reply quote shape carries only `title`), else the whole
+    " reply to: ..." suffix is dropped - never n8n's `undefined`, which is what reading
+    `.text` unguarded used to render for a quoted message with neither.
     """
     envelope = jsc.get(jsc.get(ctx, "text"), "message")
     body = jsc.get(envelope, "message")
@@ -1265,12 +1268,14 @@ def _input_message(ctx: dict[str, Any]) -> str:
 
     text = jsc.js_string(value)
 
-    # `replyTo?.message` is the TRUTH TEST, and the text is read off it unguarded - so a
-    # quoted message with no text renders JS's own `undefined`, which is what n8n stores
-    # today. Faithful, not tidied.
     quoted = jsc.get(jsc.get(envelope, "replyTo"), "message", jsc.UNDEFINED)
     if jsc.truthy(quoted):
-        text += " reply to: " + jsc.js_string(jsc.get(quoted, "text", jsc.UNDEFINED))
+        quoted_text = jsc.get(quoted, "text", jsc.UNDEFINED)
+        quoted_body = (
+            quoted_text if jsc.truthy(quoted_text) else jsc.get(quoted, "title", jsc.UNDEFINED)
+        )
+        if jsc.truthy(quoted_body):
+            text += " reply to: " + jsc.js_string(quoted_body)
     return text
 
 

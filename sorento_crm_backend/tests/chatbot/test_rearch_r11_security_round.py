@@ -61,7 +61,7 @@ no company/team named in the customer's own words) reaches the escalation lane b
 the company/team the OFFER promised lost - `escalation_context`'s own `company_name`
 comes back `None` (not Sorento) for the multi-company case, and `team` comes back the
 carried-forward default `"customer_service"` (not `"warehouse"`) for the zero-stock
-ladder case, where the offer's own team ("warehouse", `_CROSSDOMAIN_RUNG_TEAM`) never
+ladder case, where the offer's own team ("warehouse", from `crossdomain_zeroset`) never
 reached the persisted routing state a plain "yes" carries forward from.
 """
 from __future__ import annotations
