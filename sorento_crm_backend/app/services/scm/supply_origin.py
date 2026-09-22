@@ -18,6 +18,15 @@ purchasing's job) independently of the switch above - R4, the two rules do not g
 other. A product on a blocked brand answers `"local"` whatever the toggle state and whatever
 its supplier's country: the brand read runs FIRST, in ONE statement for the whole call, and
 its answer wins over the supplier-country chain when the toggle is on.
+
+Company scope polarity on the brand read (review fix round, 23 Sep 2026): an UNSET scope
+renders `company_sql_predicate` as `1=0` (fail-closed - see that helper's own docstring), so
+`_blocked_brand_product_ids` returns nothing for a caller with no scope resolved, and a
+blocked-brand Buy is answered as if unblocked and IS raised to Order Inquiries. That is the
+unsafe direction for THIS rule (a blocked brand skipping is the safety property, not the
+other way round), but the scope predicate is shared with the supplier-country statement
+below, which has the same polarity for the same reason - a single helper, one behaviour, not
+a special case for this one caller.
 """
 from __future__ import annotations
 
@@ -30,6 +39,18 @@ from app.models.user import SystemSetting
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.money import HOME_COUNTRY_CODE
 
+# Module-level so a test can EXPLAIN the exact statement this function runs without
+# duplicating it (review fix round, 23 Sep 2026: the WHERE clause must cast :pids to
+# uuid[] rather than casting the column, or `products_pkey` is unusable and every call
+# falls back to a Seq Scan over the whole table).
+BLOCKED_BRAND_PRODUCT_IDS_SQL = """
+    SELECT p.id::text AS pid
+    FROM products p
+    JOIN brands b ON b.id = p.brand_id
+    WHERE p.id = ANY(CAST(:pids AS uuid[])) AND b.flows_to_purchasing = false
+      {company_predicate}
+    """
+
 
 def _blocked_brand_product_ids(db: Session, ids: list[str]) -> set[str]:
     """Product ids whose brand has `flows_to_purchasing = false`, in ONE statement for
@@ -38,19 +59,20 @@ def _blocked_brand_product_ids(db: Session, ids: list[str]) -> set[str]:
     rather than a per-product read. Company-scoped on `products`, the owned side of the
     join; `brands` needs no predicate of its own since a product's brand is always read
     through the product it is scoped by.
+
+    `:pids` is cast to `uuid[]` rather than casting `p.id` to text: `p.id::text = ANY(...)`
+    forces a per-row cast of the primary key, which makes `products_pkey` unusable and
+    turns every call into a Seq Scan (measured: ~4.2ms/call over 15k rows vs ~0.8ms
+    indexed). Casting the bind parameter instead lets Postgres use the index.
     """
     co_products, co_products_params = company_sql_predicate(
         db, "p.company_id", param_prefix="originbrand"
     )
     rows = db.execute(
         text(
-            f"""
-            SELECT p.id::text AS pid
-            FROM products p
-            JOIN brands b ON b.id = p.brand_id
-            WHERE p.id::text = ANY(:pids) AND b.flows_to_purchasing = false
-              {("AND " + co_products) if co_products else ""}
-            """
+            BLOCKED_BRAND_PRODUCT_IDS_SQL.format(
+                company_predicate=("AND " + co_products) if co_products else ""
+            )
         ),
         {"pids": ids, **co_products_params},
     ).fetchall()

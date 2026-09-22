@@ -38,7 +38,7 @@ from app.models.project_so import (
 )
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-from tests._pg_fixture import blank_session
+from tests._pg_fixture import blank_session, pg_session
 from tests.scm.test_project_supply_service_ladder import _seed_line, _world
 
 MARKER = "zzt-local-oi"
@@ -535,11 +535,20 @@ def test_scm_demand_sees_no_local_buy():
 
 def test_confirm_blocked_brand_buy_mints_no_oi_header_toggle_off():
     """AC-9: a Buy on a blocked-brand product, the order's only Buy, mints no header
-    and raises no ORDER row."""
+    and raises no ORDER row.
+
+    AC-12, strengthened (review fix round, 23 Sep 2026): also proves the demand side -
+    a blocked-brand Buy never became an OI row, so `scm.committed_v` shows no project
+    demand for it, exactly the same shape `test_scm_demand_sees_no_local_buy` pins for
+    a local Buy. `pg_session` (the real database) rather than `blank_session`'s
+    schema-translated scratch copy, because `committed_v` is a migration-created VIEW,
+    not part of `Base.metadata`, so it does not exist in a `blank_session` schema at
+    all - `test_scm_demand_sees_no_local_buy` already established this is real-DB-only.
+    """
     from app.services.scm.supply_origin import buy_origin_by_product
     from tests.scm.test_supply_origin import _brand
 
-    with blank_session() as db:
+    with pg_session() as db:
         company_id, owner, project, product = _world(db)
         from tests.scm.test_project_supply_service_ladder import _group_sites
 
@@ -572,6 +581,18 @@ def test_confirm_blocked_brand_buy_mints_no_oi_header_toggle_off():
             .count()
             == 0
         )
+
+        # AC-12: `project_committed` is the view's own exposed column
+        # (498_committed_v_bundled_qty.py); `project_qty` is internal to the view's
+        # CTE and not selectable from the outside.
+        project_committed = db.execute(
+            text(
+                "SELECT COALESCE(SUM(project_committed), 0) FROM scm.committed_v "
+                "WHERE product_id = :p AND warehouse_id = :w"
+            ),
+            {"p": str(product.id), "w": str(own.id)},
+        ).scalar()
+        assert float(project_committed or 0) == 0.0
 
 
 def test_confirm_mixed_order_raises_only_the_default_brand_line_toggle_off():

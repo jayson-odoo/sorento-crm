@@ -6,13 +6,18 @@ Owner rulings: 22 Sep 2026, R4 to R7
 ## Column and API
 
 - AC-1 `brands.flows_to_purchasing` exists, boolean, not null, server default true.
-  Migration `bftp_0001_brand_flows_to_purchasing` adds it; downgrade drops it. Every
-  existing brand reads true after upgrade.
+  Migration `bftp_0001_flows_to_purchasing` adds it (shortened from the plan's
+  original `bftp_0001_brand_flows_to_purchasing`, which is 35 characters, over the
+  32-char alembic revision-id limit); downgrade drops it. Every existing brand reads
+  true after upgrade.
 - AC-2 POST `/api/v1/master-data/brands` without the field creates a brand with
   `flows_to_purchasing: true`; with `false` it stores false. Response carries the field.
 - AC-3 PUT `/api/v1/master-data/brands/{id}` with `{ "flows_to_purchasing": false }`
   persists it; GET list and GET by id read it back. PUT without the field leaves it alone.
-- AC-4 `GET /brands/select` is unchanged (no new field required there).
+- AC-4 `GET /brands/select` needs no CODE change - it already answers with
+  `response_model=List[BrandResponse]`, and `BrandResponse` inherits `BrandBase`, so
+  the field rides along in the response without a route edit. No caller of that
+  endpoint is required to read it.
 
 ## Resolver (`buy_origin_by_product`)
 

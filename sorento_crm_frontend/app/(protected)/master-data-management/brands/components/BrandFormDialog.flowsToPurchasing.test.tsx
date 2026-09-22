@@ -1,20 +1,14 @@
 /**
- * AC-14/AC-15 (PLAN-brand-flows-to-purchasing.md) - the brand create/edit form gets one
- * `Switch` labelled exactly "Flows to purchasing", on by default for a new brand, and it
- * round-trips `flows_to_purchasing: false` on submit after a toggle.
- *
- * RED for Phase 2: `BrandForm` renders no such switch yet, and `BrandFormData` / the
- * submit payload carry no `flows_to_purchasing` field - every assertion below fails
- * against TODAY's code.
+ * AC-14/AC-15 (PLAN-brand-flows-to-purchasing.md) - the SAME assertions as
+ * `BrandForm.flowsToPurchasing.test.tsx`, run against `BrandFormDialog` instead: it is
+ * the component `BrandsList` actually mounts for create/edit (S3, review fix round, 23
+ * Sep 2026) - `BrandForm` is a dedicated-page variant nothing on the Brands screen
+ * renders, so a defect in `BrandFormDialog`'s own copy of this switch/reset logic
+ * would ship unnoticed if only `BrandForm` were covered.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-
-const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushMock, back: vi.fn() }),
-}));
 
 const createMutateAsync = vi.fn().mockResolvedValue({});
 const updateMutateAsync = vi.fn().mockResolvedValue({});
@@ -29,7 +23,7 @@ vi.mock('@/app/(protected)/user-management/contact-access-types/hooks/useContact
   useContactAccessTypes: () => ({ data: [] }),
 }));
 
-import BrandForm from './BrandForm';
+import BrandFormDialog from './BrandFormDialog';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -41,9 +35,9 @@ function fillRequiredFields() {
   fireEvent.change(screen.getByLabelText(/Brand Name/i), { target: { value: 'ZZT Test Brand' } });
 }
 
-describe('BrandForm - Flows to purchasing switch (AC-14)', () => {
-  it('renders on by default for a new brand, with no description text', () => {
-    render(<BrandForm />);
+describe('BrandFormDialog - Flows to purchasing switch (AC-14)', () => {
+  it('renders on by default for a new brand', () => {
+    render(<BrandFormDialog open onOpenChange={() => {}} />);
 
     const toggle = screen.getByLabelText('Flows to purchasing');
     expect(toggle).toBeInTheDocument();
@@ -51,11 +45,11 @@ describe('BrandForm - Flows to purchasing switch (AC-14)', () => {
   });
 
   it('AC-15: round-trips flows_to_purchasing: false into the create payload after a toggle', async () => {
-    render(<BrandForm />);
+    render(<BrandFormDialog open onOpenChange={() => {}} />);
     fillRequiredFields();
 
     fireEvent.click(screen.getByLabelText('Flows to purchasing'));
-    fireEvent.click(screen.getByRole('button', { name: /Create Brand/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
 
     await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
     const [payload] = createMutateAsync.mock.calls[0];
@@ -68,6 +62,7 @@ describe('BrandForm - Flows to purchasing switch (AC-14)', () => {
         id: 'brand-1',
         brand_code: 'ZZTX-001',
         brand_name: 'ZZT Blocked Brand',
+        description: null,
         is_active: true,
         access_levels: [],
         flows_to_purchasing: false,
@@ -75,12 +70,12 @@ describe('BrandForm - Flows to purchasing switch (AC-14)', () => {
       isLoading: false,
     });
 
-    render(<BrandForm brandId="brand-1" />);
+    render(<BrandFormDialog open onOpenChange={() => {}} brandId="brand-1" />);
 
     const toggle = await screen.findByLabelText('Flows to purchasing');
     await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
 
-    fireEvent.click(screen.getByRole('button', { name: /Update Brand/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Update$/i }));
 
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
     const [{ data: payload }] = updateMutateAsync.mock.calls[0];

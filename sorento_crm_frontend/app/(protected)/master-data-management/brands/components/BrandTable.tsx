@@ -91,9 +91,14 @@ export function buildBrandColumns(handlers: {
       enableSorting: false,
       meta: { headerTitle: 'Purchasing' },
       cell: ({ row }) => (
-        <span className="truncate block" title={row.original.flows_to_purchasing ? 'Yes' : 'No'}>
+        <Badge
+          variant={row.original.flows_to_purchasing ? 'success' : 'secondary'}
+          size="sm"
+          className="shrink-0"
+        >
+          <BadgeDot />
           {row.original.flows_to_purchasing ? 'Yes' : 'No'}
-        </span>
+        </Badge>
       ),
     },
     {

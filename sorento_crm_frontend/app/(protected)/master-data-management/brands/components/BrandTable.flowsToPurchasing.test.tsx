@@ -55,13 +55,17 @@ describe('AC-16: the Purchasing column', () => {
     expect(purchasing).toBeDefined();
   });
 
-  it('reads "No" for a blocked brand', () => {
+  it('reads "No" for a blocked brand, through the same Badge pattern as Active', () => {
     render(<Table rows={[brand({ flows_to_purchasing: false })]} />);
-    expect(screen.getByTestId('cell-purchasing')).toHaveTextContent('No');
+    const cell = screen.getByTestId('cell-purchasing');
+    expect(cell).toHaveTextContent('No');
+    expect(cell.querySelector('[data-slot="badge"]')).toBeInTheDocument();
   });
 
-  it('reads "Yes" for a brand that flows to purchasing', () => {
+  it('reads "Yes" for a brand that flows to purchasing, through a Badge', () => {
     render(<Table rows={[brand({ flows_to_purchasing: true })]} />);
-    expect(screen.getByTestId('cell-purchasing')).toHaveTextContent('Yes');
+    const cell = screen.getByTestId('cell-purchasing');
+    expect(cell).toHaveTextContent('Yes');
+    expect(cell.querySelector('[data-slot="badge"]')).toBeInTheDocument();
   });
 });
