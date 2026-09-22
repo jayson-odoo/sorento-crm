@@ -40,14 +40,25 @@ the mirror `project_line_id`s of covered lines carrying a `rejected` draft.
   line(s) were the ONLY covered ones, retires the revision with no successor - the order
   has no active decision afterwards.
 - AC-B4 The withdrawn line's raised supply OI row (`ORDER` / `ORDER_BACK` on the order's
-  inquiry) is no longer `raised` after Confirm. Its note carries the SAME "Line \<no\>
-  rejected: \<reason\>" sentence Confirm read off the staged draft.
+  inquiry) is no longer `raised` after Confirm. **REWORDED, fix round, 23 Sep 2026**: its
+  note carries the row's OWN BARE reason - "Taken out of the confirmation: \<reason\>" -
+  on BOTH the path that carries the withdrawal through `confirm()`'s own
+  `uncover_line_ids` (AC-B2's own mixed press) and the path that reaches `uncover_lines`
+  directly (AC-B3's withdrawal-only press). The JOINED "Line \<no\> rejected: \<reason\>;
+  ..." sentence, one clause per withdrawn line, is `superseded_reason`'s alone (AC-B2
+  above) - never the row's own note, on either path.
 - AC-B9 The withdrawn line's DRAFT is kept, never deleted by Confirm - only a line NAMED in
   `lines` has its draft deleted (the existing promote-and-delete rule), same as an ordinary
   uncovered rejection keeps its draft today.
 - AC-B10 `rejected_line_ids` naming a line whose own draft is not a `rejected` one with a
   reason (a stale client) is refused 422 `board_line_reject_reason_required`; nothing is
   written.
+- AC-B10b **NEW, fix round, 23 Sep 2026 (B1, review):** `rejected_line_ids` naming a line
+  the ACTIVE decision does not (or no longer) COVER - a stale tab, or a line another
+  mechanism (purchasing's own refusal, a planning-change apply) already dropped out of
+  coverage since the reject was staged - is refused 422
+  `board_line_withdrawal_not_covered`, "This line is not confirmed any more. Reload the
+  board."; nothing is written, on both the mixed and the withdrawal-only path.
 - AC-B11 A body naming NEITHER `lines` NOR `rejected_line_ids` is refused (the existing
   `supply_nothing_to_confirm` refusal, now read as "no lines and no withdrawals").
 - AC-B12 `rejected_line_ids` alongside `batch_id` (a pending planning change) is refused
@@ -60,6 +71,14 @@ the mirror `project_line_id`s of covered lines carrying a `rejected` draft.
   - not undoable. A press that carries the withdrawal through `confirm()`'s own
   `uncover_line_ids` (because `lines` was also non-empty) is journalled exactly as an
   ordinary reconfirm is - undoable.
+- AC-B15 **NEW, fix round, 23 Sep 2026 (S4, review):** a covered line's staged reject on
+  an order that ALSO carries a pending planning-change batch (AC-B12's own refusal, so it
+  cannot ride along regardless of which line the batch's rows themselves name) is EXCLUDED
+  from the board's "Confirm (N)" count - the X stays enabled and the reject stays staged,
+  but the counter must never promise a withdrawal this press cannot carry out. The
+  confirm-all press still runs the rest of the order normally and names the held-back
+  line in the results panel ("Line N: rejection is staged; it commits after the pending
+  change is applied.").
 
 ## Row actions (`BoardVerdictActions`, beside the pill)
 

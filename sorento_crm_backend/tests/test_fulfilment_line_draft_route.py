@@ -1333,9 +1333,13 @@ def test_rejecting_a_covered_line_retires_its_raised_order_row(api):
     properly cancelled one - the state IS the fact under test, so it is pinned exactly,
     along with the note purchasing reads (this row is retired through `uncover_lines`'
     ORDINARY carry-forward branch, since the sibling line stays covered and a fresh
-    revision is written - the same "Superseded by revision N" a reconfirm stamps, never
-    the `only_line_ids` mode's own "Taken out of the confirmation" - that mode only runs
-    when NOTHING else is left covered, the single-line tests below)."""
+    revision is written).
+
+    S2/S3 (rework fix round): the note reads the row's OWN BARE reason, "Taken out of
+    the confirmation: <reason>" - the SAME shape the `only_line_ids` mode's single-line
+    case below stamps, never `_write_decision`'s own "Superseded by revision N" a plain
+    reconfirm leaves. The JOINED "Line N rejected: ..." sentence lives on
+    `superseded_reason` alone, asserted separately below."""
     from app.models.project_so import (
         DECISION_ACTIVE,
         INQUIRY_CANCELLED,
@@ -1374,7 +1378,7 @@ def test_rejecting_a_covered_line_retires_its_raised_order_row(api):
         )
         .one()
     )
-    assert oi_row.note == f"Superseded by revision {active.revision_no}"
+    assert oi_row.note == "Taken out of the confirmation: wrong site"
     # AND the superseded revision's own `superseded_reason` (S3, owner ruling 23 Sep 2026)
     # carries what CS actually said, never `_write_decision`'s own "Reconfirmed by CS." -
     # the same trade `uncover_lines` already made for its own whole-revision branch.
@@ -1404,10 +1408,14 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_row(api):
 
     S4 (fix round 3, review): pinned exactly, not `!= raised` - this row goes through the
     `only_line_ids` mode (the whole revision retires, so there is no successor to diff
-    against), whose own note is `"Taken out of the confirmation: <reason>"` - `<reason>`
-    is now the SAME sentence Confirm reads off the staged draft and stamps on
-    `superseded_reason` elsewhere in this file, "Line 10 rejected: wrong site", not a bare
-    reason fragment - purchasing reads the same `note` column for both events."""
+    against), whose own note is `"Taken out of the confirmation: <reason>"`.
+
+    S2/S3 (rework fix round): `<reason>` is the row's OWN BARE reason, "wrong site" -
+    never the JOINED "Line 10 rejected: wrong site" sentence, which is reserved for
+    `superseded_reason` alone (the sibling test above,
+    `test_rejecting_a_covered_line_retires_its_raised_order_row`, is what pins that
+    half; there is no successor revision here to carry it, so only the note is under
+    test)."""
     from app.models.project_so import IV_ORDER, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiryRow
 
     client, world, core_so, core_line, order, line = _world(api)
@@ -1426,7 +1434,7 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_row(api):
 
     db.refresh(oi_row)
     assert oi_row.state == INQUIRY_CANCELLED
-    assert oi_row.note == "Taken out of the confirmation: Line 10 rejected: wrong site"
+    assert oi_row.note == "Taken out of the confirmation: wrong site"
     assert (
         db.query(OrderInquiryRow)
         .filter(
@@ -1471,7 +1479,7 @@ def test_rejecting_the_only_covered_line_retires_its_raised_order_back_row(api):
 
     db.refresh(oi_row)
     assert oi_row.state == INQUIRY_CANCELLED
-    assert oi_row.note == "Taken out of the confirmation: Line 10 rejected: wrong site"
+    assert oi_row.note == "Taken out of the confirmation: wrong site"
 
 
 def test_rejecting_a_covered_line_does_not_retire_a_book_change_row_on_the_same_line(api):
@@ -1652,6 +1660,99 @@ def test_confirming_a_new_composition_alongside_a_staged_reject_withdraws_both(a
         .count()
         == 1
     )
+    # Superseded revision's own `superseded_reason` (AC-B2) - the JOINED sentence, even
+    # though only ONE line was withdrawn: this pins the shape for the day a second line
+    # joins it, and guards against `_restamp_superseded_reason` ever being fed the bare
+    # per-line reason instead of the sentence built for the revision as a whole.
+    superseded = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.id != active.id,
+        )
+        .order_by(SOSupplyDecision.revision_no.desc())
+        .first()
+    )
+    assert superseded.superseded_reason == "Line 10 rejected: wrong site"
+
+
+def test_confirming_a_new_composition_for_two_lines_alongside_one_staged_reject_counts_rejected_count_apart_from_lines(
+    api,
+):
+    """Strengthens (a) (fix round, review): every earlier test on this seam happened to
+    have `len(lines) == rejected_count == 1`, so nothing pinned `rejected_count` as its
+    OWN figure rather than a stand-in for `len(payload.lines)`. Three covered lines: line
+    1 is rejected, lines 2 AND 3 are both re-amended in the SAME press -
+    `len(payload["lines"]) == 2`, `rejected_count` must still read 1."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    product_2 = _product(db)
+    product_3 = _product(db)
+    _stock(db, product_2, world.pool_wh, on_hand=100)
+    _stock(db, product_3, world.pool_wh, on_hand=100)
+    core_line_2 = _core_line(db, core_so, product_2, world.own_wh, qty_ordered="6")
+    core_line_3 = _core_line(db, core_so, product_3, world.own_wh, qty_ordered="4")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line_1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=20, product=product_2, core_line=core_line_2)
+    line_3 = _project_line(db, order, line_no=30, product=product_3, core_line=core_line_3)
+    db.commit()
+    confirm = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line_1.id, buy_qty="10"),
+                _line_payload(
+                    line_2.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}]
+                ),
+                _line_payload(
+                    line_3.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "4"}]
+                ),
+            ]
+        },
+    )
+    assert confirm.status_code == 200, confirm.text
+    db.commit()
+    key_1 = next(
+        contribution["key"]
+        for contribution in _board(client, core_so)["contributions"]
+        if contribution["item_code"] == world.product.product_code
+    )
+    _stage_reject(client, key_1)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_2.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}]
+                ),
+                _line_payload(
+                    line_3.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "4"}]
+                ),
+            ],
+            "rejected_line_ids": [str(line_1.id)],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["rejected_count"] == 1, "not len(lines), which is 2 here"
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+    )
+    covered_lines = {
+        (snapshot or {}).get("core_line_id") for snapshot in active.line_snapshots or []
+    }
+    assert covered_lines == {str(core_line_2.id), str(core_line_3.id)}
 
 
 def test_confirming_with_only_a_rejection_and_nothing_else_covered_leaves_no_active_decision(api):
@@ -1773,6 +1874,197 @@ def test_an_outsider_confirming_only_a_rejection_is_still_refused_with_403(api):
         .count()
         == 1
     ), "still covered - the refusal must change nothing"
+
+
+# --------------------------------------------------------------------------- #
+# B1 (fix round, review): `rejected_line_ids` naming a line the ACTIVE decision #
+# does not (or no longer) cover - a stale tab, or a line another mechanism    #
+# already dropped from coverage.                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_withdrawal_naming_a_line_with_no_active_decision_at_all_is_refused(api):
+    """B1, red (i): the WITHDRAWAL-ONLY path (`lines` empty) with NO active decision on
+    the order at all - the line was never confirmed, so there is nothing for
+    `rejected_line_ids` to name. A stale reject draft can exist on an uncovered line
+    (`save_draft` never required coverage to save one), so the route must not trust the
+    id on its own. Refused 422 `board_line_withdrawal_not_covered`, nothing written -
+    NOT the 200 `_withdrawal_only_result` used to answer while `uncover_lines`' own
+    `False` return went unchecked."""
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _stage_reject(client, key)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [], "rejected_line_ids": [str(line.id)]},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_line_withdrawal_not_covered"
+    from app.models.project_so import SOSupplyDecision
+
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .count()
+        == 0
+    ), "nothing was written"
+
+
+def test_a_mixed_confirm_naming_a_rejected_id_no_longer_covered_is_refused(api):
+    """B1, red (ii): the MIXED path (`lines` non-empty) naming a `rejected_line_ids` id
+    for a line the ACTIVE decision no longer covers - here, because another mechanism
+    (purchasing refusing the OI row, `uncover_lines`' own OTHER caller) already dropped
+    it from coverage, standing in for a planning-change apply doing the same (both reach
+    the identical `line_snapshots` fact this check reads, so the guard is mechanism-
+    agnostic by construction). The client's stale reject draft on line 1 must not be
+    trusted - refused 422 `board_line_withdrawal_not_covered`, the active decision
+    (covering line 2 alone, from the out-of-band drop) UNCHANGED, no restamp."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    client, world, core_so, order, core_line_1, line_1, core_line_2, line_2 = (
+        _covered_two_line_world(api)
+    )
+    db = world.db
+    key_1 = next(
+        contribution["key"]
+        for contribution in _board(client, core_so)["contributions"]
+        if contribution["item_code"] == world.product.product_code
+    )
+    _stage_reject(client, key_1)
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    dropped = ProjectSupplyService(db).uncover_lines(
+        order,
+        [str(line_1.id)],
+        actor_user_id=world.eling,
+        reason="Purchasing rejected the order inquiry row for this line.",
+    )
+    db.commit()
+    assert dropped, "sanity: line 1 is now uncovered by a mechanism other than Confirm"
+    before = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+    )
+    assert before.superseded_reason != "Line 10 rejected: wrong site"
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_2.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}]
+                )
+            ],
+            "rejected_line_ids": [str(line_1.id)],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_line_withdrawal_not_covered"
+    after = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+    )
+    assert after.id == before.id, "the same decision the out-of-band drop left active"
+    assert after.superseded_reason == before.superseded_reason, "no restamp"
+
+
+def test_a_line_named_in_both_lines_and_rejected_line_ids_is_refused(api):
+    """AC-B2's own refusal, named explicitly (missing test, fix round): a line cannot be
+    REPLACED (`lines`) and DROPPED (`rejected_line_ids`) by the same press. Refused 422
+    `board_reject_line_named_twice`, the active decision unchanged."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    _confirm_as_buy(client, world, order, line)
+    before_id = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+        .id
+    )
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [_line_payload(line.id, buy_qty="10")],
+            "rejected_line_ids": [str(line.id)],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_reject_line_named_twice"
+    after_id = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+        .id
+    )
+    assert after_id == before_id, "nothing was written"
+
+
+def test_rejected_line_ids_alongside_a_batch_id_is_refused(api):
+    """AC-B12: a pending planning change has no shape for a withdrawal riding beside it -
+    refused 422 `board_reject_not_supported_in_batch` the instant BOTH are named, before
+    either branch runs. `batch_id` here need not resolve to a real batch: the refusal is
+    ahead of any lookup, on the two fields alone."""
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    _confirm_as_buy(client, world, order, line)
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _stage_reject(client, key)
+    before_id = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+        .id
+    )
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [],
+            "rejected_line_ids": [str(line.id)],
+            "batch_id": str(uuid.uuid4()),
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_reject_not_supported_in_batch"
+    after_id = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+        .id
+    )
+    assert after_id == before_id, "nothing was written"
 
 
 def test_an_amendment_on_a_confirmed_line_still_saves(api):

@@ -4659,6 +4659,7 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
         uncover_line_ids: Sequence[str] = (),
+        uncover_reason_by_line: Optional[Mapping[str, str]] = None,
         settle_in_place_line_ids: Sequence[str] = (),
         defer_auto_place: bool = False,
     ) -> Dict[str, Any]:
@@ -4696,6 +4697,13 @@ class ProjectSupplyService:
         remains a material change superseding the whole revision
         (`supersede_for_material_change`, which carries nothing at all) or a drift
         challenging it.
+
+        `uncover_reason_by_line` (S2/S3, `PLAN-board-reject-on-confirmed-line.md`, rework
+        fix round): the bare per-line reason for EACH id in `uncover_line_ids`, threaded
+        to `refresh_for_decision` so a withdrawn line's raised row reads "Taken out of
+        the confirmation: <its own reason>" rather than the ordinary carry-forward's
+        "Superseded by revision N". `None`/absent (an ordinary planning-change release,
+        which names no reason of its own) keeps that ordinary default.
 
         **The settle-in-place seam** (`PLAN-scm-cs-planning-uat.md` part 3, AC-P3-5): a
         line named in `settle_in_place_line_ids` has its existing order inquiry row
@@ -4909,6 +4917,7 @@ class ProjectSupplyService:
             # inquiry row is UPDATED rather than superseded and re-raised.
             settle_in_place_line_ids=settle_in_place_line_ids,
             defer_auto_place=defer_auto_place,
+            uncover_reason_by_line=uncover_reason_by_line,
             # The day the planner was deciding on (the board's own dial), so the proposal
             # frozen beside the decision is the one they were shown. Absent means today.
             as_of=getattr(payload, "as_of", None),
@@ -6374,6 +6383,7 @@ class ProjectSupplyService:
         as_of: Optional[date] = None,
         settle_in_place_line_ids: Sequence[str] = (),
         defer_auto_place: bool = False,
+        uncover_reason_by_line: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
         if previous is not None:
@@ -6555,6 +6565,7 @@ class ProjectSupplyService:
                 list(checked) + [(entry.line, entry, entry.fact) for entry in carried],
             ),
             settle_in_place_line_ids=settle_in_place_line_ids,
+            uncover_reason_by_line=uncover_reason_by_line,
         )
         # LADDER V7.1 STEP 3'S OTHER HALF (PLAN 3.3, R8): the placement MOVES. Run after
         # the handoff, because it needs the inquiry header the handoff mints and because the
@@ -6912,6 +6923,7 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
         reason: str,
+        reason_by_line: Optional[Mapping[str, str]] = None,
     ) -> bool:
         """Take these lines OUT of the active revision and leave the rest exactly as it is.
 
@@ -6934,6 +6946,14 @@ class ProjectSupplyService:
         buyer who rejected a row: this is CS's own decision minus one line, and stamping
         purchasing on it would make every order inquiry row of the order read as raised by
         the person who refused one of them.
+
+        `reason_by_line` (S2/S3, `PLAN-board-reject-on-confirmed-line.md`, rework fix
+        round): the BARE reason for EACH line in `line_ids`, keyed by id - the purchasing-
+        refusal caller (`reject_row`/`reject_rows`) still passes none, so its own single
+        row keeps stamping `reason` bare exactly as it always has (its `reason` IS already
+        bare - there is no "Line N rejected:" join on that path). The board's own reject
+        caller (`fulfilment_planning.py`) passes both: `reason` is the joined sentence for
+        `superseded_reason`, `reason_by_line` is what each row's own note reads instead.
         """
         from app.schemas.project_supply import ConfirmSupplyBody
 
@@ -6965,6 +6985,7 @@ class ProjectSupplyService:
                 ConfirmSupplyBody(lines=[]),
                 actor_user_id=str(active.confirmed_by or actor_user_id),
                 uncover_line_ids=sorted(wanted),
+                uncover_reason_by_line=reason_by_line,
             )
             # WHY the revision this call just retired was retired. `confirm` stamps its
             # own "Reconfirmed by CS.", which is not what happened here - nobody
@@ -6984,7 +7005,7 @@ class ProjectSupplyService:
             # this is its own raised-instruction twin.
             ProjectOrderInquiryService(self.db).retire_rows_for_dropped_lines(
                 str(order.id), active, sorted(wanted), reason=reason,
-                actor_user_id=actor_user_id,
+                actor_user_id=actor_user_id, reason_by_line=reason_by_line,
             )
             self.supersede_for_material_change(order, reason)
         return True

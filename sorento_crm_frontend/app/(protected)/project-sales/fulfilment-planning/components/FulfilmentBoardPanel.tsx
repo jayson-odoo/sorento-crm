@@ -469,6 +469,28 @@ export function FulfilmentBoardPanel({
   const boardRefreshing = board.isFetching;
 
   /**
+   * Orders a PENDING planning-change batch currently covers (S4, fix round,
+   * `PLAN-board-reject-on-confirmed-line.md`) - the SAME predicate `runConfirmAll`
+   * resolves each order's own `orderBatchId` with below, read here so the "Confirm
+   * (N)" counter (and the per-decision toast, which reads the identical function)
+   * never promises a covered-rejected line's withdrawal a press cannot actually
+   * carry out: AC-B12 refuses `rejected_line_ids` alongside `batch_id` outright, so
+   * that line rides along as nothing and a counter that still named it read
+   * "Confirm (1)" for a press that then confirmed nothing at all.
+   */
+  const pendingBatchSalesOrderIds = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const order of board.data?.orders ?? []) {
+      const batchId =
+        (order.so_number ? batchIdBySoNumber.get(order.so_number) : undefined) ??
+        order.pending_change_batch_id ??
+        null;
+      if (batchId) out.add(order.sales_order_id);
+    }
+    return out;
+  }, [board.data, batchIdBySoNumber]);
+
+  /**
    * Move the day window by a whole window at a time.
    *
    * The FIRST window is the server's: it opens on the earliest date still to come, falling
@@ -760,7 +782,11 @@ export function FulfilmentBoardPanel({
         return false;
       }
       if (!options?.quiet && decision) {
-        const { toConfirm, rejected } = confirmSummaryFor(allContributions, appliedNext);
+        const { toConfirm, rejected } = confirmSummaryFor(
+          allContributions,
+          appliedNext,
+          pendingBatchSalesOrderIds,
+        );
         toast.success(
           decision.verdict === 'rejected'
             ? `Line ${contribution?.line_no ?? ''} rejected · ${toConfirm} to confirm · ${rejected} rejected`
@@ -769,7 +795,7 @@ export function FulfilmentBoardPanel({
       }
       return true;
     },
-    [allContributions, saveLineDraft, removeDraftKey],
+    [allContributions, saveLineDraft, removeDraftKey, pendingBatchSalesOrderIds],
   );
 
   /**
@@ -815,14 +841,18 @@ export function FulfilmentBoardPanel({
         );
       }
       if (saved > 0) {
-        const { toConfirm } = confirmSummaryFor(allContributions, appliedNext);
+        const { toConfirm } = confirmSummaryFor(
+          allContributions,
+          appliedNext,
+          pendingBatchSalesOrderIds,
+        );
         toast.success(
           `${saved} line${saved === 1 ? '' : 's'} saved · ${toConfirm} to confirm`,
         );
       }
       return { saved, failed };
     },
-    [allContributions, decide, draft],
+    [allContributions, decide, draft, pendingBatchSalesOrderIds],
   );
 
   /**
@@ -889,8 +919,8 @@ export function FulfilmentBoardPanel({
    * it, so the reduction lives in one place rather than being kept in step by hand in two.
    */
   const confirmSummary = React.useMemo(
-    () => confirmSummaryFor(allContributions, draft),
-    [allContributions, draft],
+    () => confirmSummaryFor(allContributions, draft, pendingBatchSalesOrderIds),
+    [allContributions, draft, pendingBatchSalesOrderIds],
   );
 
   /**
@@ -1151,6 +1181,39 @@ export function FulfilmentBoardPanel({
         const rejectedLineIds = orderBatchId
           ? []
           : rejectedCoveredLineIdsFor(contributions, salesOrderId, draft);
+        // S4 (fix round, review): the covered-rejected lines THIS order's own batch just
+        // zeroed out of `rejectedLineIds` above, so the planner is told what did not ride
+        // along rather than the counter simply promising it and the press posting nothing
+        // for it (`plannedLineCount`'s own batch exclusion is the OTHER half of this fix -
+        // see `pendingBatchSalesOrderIds`). Computed straight off the contributions, never
+        // off `rejectedCoveredLineIdsFor`'s own (deliberately empty, on a batched order)
+        // result.
+        const heldBackByBatch = orderBatchId
+          ? contributions.filter(
+              (contribution) =>
+                contribution.sales_order_id === salesOrderId &&
+                contribution.covered &&
+                draft[contribution.key]?.verdict === 'rejected',
+            )
+          : [];
+        // S4: said OUT LOUD, named per line THROUGH `failing_lines` (the same shape a
+        // server refusal already renders), rather than the counter simply promising a
+        // withdrawal this press cannot carry out and the planner finding out only when
+        // nothing changed. Reported even when the order ALSO has other lines going
+        // through below (a second `batchResults` entry beside its own `ok: true` one,
+        // told apart by `so_number` - a server result never carries one) - this order's
+        // withdrawal not riding along is worth saying regardless of what else it did.
+        if (heldBackByBatch.length > 0) {
+          skipped.push({
+            pso_id: psoId,
+            so_number: soNumber,
+            ok: false,
+            failing_lines: heldBackByBatch.map((contribution) => ({
+              line_no: contribution.line_no,
+              reason: 'rejection is staged; it commits after the pending change is applied.',
+            })),
+          } as BoardBatchResult);
+        }
         // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT, AND NOTHING TO WITHDRAW EITHER.
         // Every line was left out for a reason `unpostableDecidedFor` already knows (no
         // mirror on the planning record, a Reserve at a warehouse the board cannot address,
@@ -1159,6 +1222,9 @@ export function FulfilmentBoardPanel({
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.
         if (lines.length === 0 && rejectedLineIds.length === 0) {
+          // The held-back note above already said why, when that is the whole reason -
+          // the generic "had no line..." sentence would only repeat it more vaguely.
+          if (heldBackByBatch.length > 0) continue;
           const blocked = unpostableDecidedFor(contributions, salesOrderId, draft);
           const everyLineOffTheRecord =
             blocked.length > 0 && blocked.every((entry) => entry.reason === 'no_mirror');

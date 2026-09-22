@@ -1798,6 +1798,33 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   it('rejectedCoveredLineIdsFor is empty when nothing is rejected', () => {
     expect(rejectedCoveredLineIdsFor(contributions, 'so-a', {})).toEqual([]);
   });
+
+  /**
+   * S4 (fix round, review): a pending planning-change batch has no shape for a
+   * withdrawal riding beside it (AC-B12, server refuses `rejected_line_ids` alongside
+   * `batch_id` outright) - so a covered line's staged reject on a BATCHED order must
+   * not count toward `plannedLineCount`/`toConfirm` either, or the "Confirm (N)" button
+   * promises a withdrawal the press cannot actually carry out ("Confirm (1) then
+   * nothing").
+   */
+  it('plannedLineCount excludes a covered rejected line when its order is in batchBlockedSalesOrderIds', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    // Unblocked: counts, exactly as `test_confirming_a_new_composition...` above pins.
+    expect(plannedLineCount(contributions, 'so-a', draft)).toBe(1);
+    // Blocked: the batch on so-a's own order holds it back.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-a']))).toBe(0);
+    // A DIFFERENT order's own batch block never reaches so-a's line.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-b']))).toBe(1);
+  });
+
+  it('confirmSummaryFor still counts the withdrawal as rejected, but not toward toConfirm, once batch-blocked', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    const blocked = confirmSummaryFor(contributions, draft, new Set(['so-a']));
+    expect(blocked.rejected).toBe(1);
+    expect(blocked.toConfirm).toBe(0);
+    const unblocked = confirmSummaryFor(contributions, draft);
+    expect(unblocked.toConfirm).toBe(1);
+  });
 });
 
 /**

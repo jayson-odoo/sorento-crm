@@ -439,6 +439,11 @@ class ConfirmSupplyBody(BaseModel):
     #: ordinary Confirm; a batch Confirm (`batch_id` set) may not carry this - the two are
     #: refused together (422), because a pending planning change has no shape for a
     #: withdrawal alongside it.
+    #:
+    #: DEDUPED, not refused (nit, fix round, review): the route drops a repeated id
+    #: rather than 422ing over it - a line named twice is one withdrawal either way, and
+    #: nothing about a duplicate is a stale-client signal worth refusing over the way a
+    #: line named in BOTH `lines` and here is.
     rejected_line_ids: List[str] = Field(default_factory=list)
 
 

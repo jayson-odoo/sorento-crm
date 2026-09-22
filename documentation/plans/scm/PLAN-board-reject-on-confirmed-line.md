@@ -23,7 +23,7 @@ revision-semantics decision. That decision is now taken (R3 below).
 | fact | where |
 | --- | --- |
 | Server guard: any verdict but `amended` on a covered line -> 409 `board_line_already_confirmed` | `app/services/project_line_draft_service.py:247-255` (`save_draft`) |
-| Covered = an ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots[].core_line_id` names the line, unless in an open planning-change batch | `project_line_draft_service.py:406-430` (`_covered_by_active_decision`) |
+| Covered = an ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots[].core_line_id` names the line, unless in an open planning-change batch | `project_line_draft_service.py:406-430` (`_covered_by_active_decision`) - **corrected, fix round, 23 Sep 2026**: the function is `_active_coverage`, currently at `project_line_draft_service.py:440-476`; the name above was never real, an artifact of an earlier draft of this plan. |
 | FE: Amend only flips `locked`; Reject on a covered line is `disabled` with no expression, wrapped in a Tooltip carrying `CONFIRMED_LINE_TITLE` | `BoardLineDecisionPanel.tsx:134-136,897-906,959-984` |
 | FE `reject()` posts `{ verdict: 'rejected', reason, suspected_system_issue }` through `onDecide` -> `useLineDraftMutation().save` -> `PUT /project-sales/fulfilment-planning/lines/{key}/draft` | `BoardLineDecisionPanel.tsx:457-464`, `useFulfilmentPlanning.ts:476-523`, `fulfilmentPlanningService.ts:621-637` |
 | The list-view Undo icon beside the pill removes the DRAFT (`onDecide(key, null)`), it does not undo a confirmation | `FulfilmentBoardListView.tsx:594-609` |
@@ -296,6 +296,77 @@ vitest, `BoardLineDecisionPanel.test.tsx` (flip AC-F1, add):
   `FulfilmentBoardListView.test.tsx` gains one test pinning Undo on a covered rejected row
   (AC-E4): `onDecide(key, null)`, same as any other Undo, and the pill reads `Confirmed`
   again afterwards (`verdictOf`'s existing `covered && !decision` rule, no code change).
+
+**Fix round (review), 23 Sep 2026, all against `8ea848d8d`:**
+
+- B1 (blocker): `_reasons_for_rejected_lines` never checked that a `rejected_line_ids` id
+  was COVERED by the ACTIVE decision - a stale tab could Confirm a withdrawal for a line
+  no longer confirmed, and `uncover_lines`' own `False` return (nothing to uncover) went
+  unchecked in the withdrawal-only branch. Fixed: the active decision is loaded ONCE in
+  `_reasons_for_rejected_lines`, and every id is checked against its `line_snapshots[].
+  project_line_id` before anything else - 422 `board_line_withdrawal_not_covered`,
+  "This line is not confirmed any more. Reload the board.", when not. The withdrawal-only
+  branch also asserts `uncover_lines`' own return, belt and braces. Reds:
+  `test_a_withdrawal_naming_a_line_with_no_active_decision_at_all_is_refused`,
+  `test_a_mixed_confirm_naming_a_rejected_id_no_longer_covered_is_refused` (the latter
+  drops coverage through the SAME `uncover_lines` a purchasing refusal uses, standing in
+  for a planning-change apply doing the same - both reach the identical fact this check
+  reads).
+- S2/S3 (row note vs `superseded_reason`): the BARE reason now goes on the OI row's own
+  `note` ("Taken out of the confirmation: wrong site") on BOTH the mixed path (through
+  `confirm()`'s own `uncover_line_ids`) and the withdrawal-only path (`uncover_lines`
+  directly) - the joined "Line N rejected: ..." sentence is reserved for
+  `superseded_reason` alone. `_retire_uncovered_rows` gained `reason_by_line`, threaded
+  through `retire_rows_for_dropped_lines` and `refresh_for_decision`/`confirm`/
+  `uncover_lines` (`uncover_reason_by_line`). Flipped
+  `test_rejecting_a_covered_line_retires_its_raised_order_row` (was asserting "Superseded
+  by revision N") and the two single-line whole-revision tests (were asserting the
+  JOINED sentence on the note, double-prefixed). Found live by this same fix: restamping
+  `superseded_reason` OUTSIDE the `UndoJournal`'s `with` block left the journal's own
+  recorded value ("Reconfirmed by CS.") disagreeing with the live column the moment
+  `_restamp_superseded_reason` ran - `undo_last_confirm`'s `_changed_refusal` compares
+  exactly those two, so undo of a mixed reject+reconfirm 409'd "changed" on a row nothing
+  but this confirm itself had touched. Moved the restamp INSIDE the `with UndoJournal`
+  block - see AC-B14 below.
+- Missing tests, added: `test_a_line_named_in_both_lines_and_rejected_line_ids_is_refused`
+  (422 `board_reject_line_named_twice`); `test_rejected_line_ids_alongside_a_batch_id_is_
+  refused` (AC-B12, `board_reject_not_supported_in_batch`); AC-B14 undo test
+  (`test_undo_of_a_mixed_confirm_restores_the_withdrawn_lines_row_and_the_superseded_
+  revision`, `tests/test_board_undo_last_confirm.py`, reusing that file's own `_snapshot`
+  exact-restore seam, plus `_board`/`_stage_reject` imported from
+  `tests/test_fulfilment_line_draft_route.py`) - this is the test that found the
+  restamp-ordering bug above. Strengthened (a):
+  `test_confirming_a_new_composition_for_two_lines_alongside_one_staged_reject_counts_
+  rejected_count_apart_from_lines` (three covered lines, two re-amended, one rejected -
+  `rejected_count == 1` while `len(lines) == 2`, so the two can no longer be confused).
+- S1 (FE wiring, previously unguarded): `FulfilmentBoardPanel`'s `wantedOrders`, the
+  confirm-all body's `rejected_line_ids`, and the toast's `withdrawn` clause were already
+  implemented (this same commit) but had NO test - a kill test proved reverting the three
+  together left every test in this repo green. Three reds added to
+  `FulfilmentBoardPanel.test.tsx`: a board whose only staged decision is a covered reject
+  puts the order in the press and reads `Confirm (1)`; the `confirmMany` body carries
+  `rejected_line_ids: [<mirror id>]` with `lines: []`; a `rejected_count: 1` result renders
+  "· 1 withdrawn" in the toast.
+- S4 (batch board): `plannedLineCount`/`confirmSummaryFor` gained
+  `batchBlockedSalesOrderIds` - a covered-rejected line on an order carrying a pending
+  planning-change batch no longer counts toward `toConfirm` (the server refuses
+  `rejected_line_ids` alongside `batch_id` outright, AC-B12), closing the "Confirm (1)
+  then nothing" gap: the X is NOT disabled, but the counter no longer promises a
+  withdrawal the press cannot carry out. `FulfilmentBoardPanel` computes
+  `pendingBatchSalesOrderIds` (the same `orderBatchId` predicate `runConfirmAll` already
+  resolved per order, read once for the counter) and also pushes a `batchResults` entry
+  naming each held-back withdrawal through `failing_lines` ("Line N: rejection is staged;
+  it commits after the pending change is applied.") - reported even when the order ALSO
+  has other lines going through in the same press. Reds: two pure-function unit tests in
+  `fulfilmentBoard.test.ts` (`plannedLineCount excludes...`, `confirmSummaryFor still
+  counts the withdrawal as rejected, but not toward toConfirm...`), and two integration
+  tests in `FulfilmentBoardPanel.autobatch.test.tsx`.
+- Nits: `ConfirmSupplyBody.rejected_line_ids` DEDUPED rather than refused on a repeat id
+  (`_confirm_with_possible_rejects` now builds it via `dict.fromkeys`, schema comment
+  updated); `_withdrawal_only_result`'s `review_state` documented as a fixed literal
+  (the same convention `_write_decision`'s own `ConfirmResult` already follows), not read
+  off the order - it states the PRESS committed, not an order-level workflow state that
+  does not exist at this granularity.
 
 ## Verification
 

@@ -639,7 +639,20 @@ export function plannedLineCount(
   contributions: BoardContribution[],
   salesOrderId: string,
   draft: BoardDraft,
+  /**
+   * Orders a PENDING planning-change batch currently covers (S4, fix round,
+   * `PLAN-board-reject-on-confirmed-line.md`): a batch apply has no shape for a
+   * withdrawal riding beside it, so the server refuses `rejected_line_ids` alongside
+   * `batch_id` (AC-B12) and the caller sends `[]` for such an order instead
+   * (`rejectedCoveredLineIdsFor`'s own result, zeroed). A covered-rejected line on one
+   * of these orders must not count here either, or the counter promises a withdrawal
+   * this press cannot actually carry out - the "Confirm (1)" that then posts nothing
+   * for it. Empty by default: every OTHER caller (the panel's own per-decision toast,
+   * every test that does not name a batch) is unaffected.
+   */
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
 ): number {
+  const batchBlocked = batchBlockedSalesOrderIds.has(salesOrderId);
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (contribution.unplannable) return false;
@@ -648,8 +661,11 @@ export function plannedLineCount(
     if (contribution.cancelled) return true;
     // A COVERED line with a staged reject posts nothing either (`rejected_line_ids` carries
     // it, not `lines`), and is still one of the lines THIS press acts on - Confirm is what
-    // withdraws it (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`).
-    if (contribution.covered && draft[contribution.key]?.verdict === 'rejected') return true;
+    // withdraws it (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`) -
+    // UNLESS a pending batch is holding it back (see `batchBlockedSalesOrderIds` above).
+    if (contribution.covered && draft[contribution.key]?.verdict === 'rejected') {
+      return !batchBlocked;
+    }
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
@@ -676,6 +692,8 @@ export function plannedLineCount(
 export function confirmSummaryFor(
   contributions: BoardContribution[],
   draft: BoardDraft,
+  /** Threaded straight through to `plannedLineCount` (S4, fix round) - see its own doc. */
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
 ): { toConfirm: number; rejected: number; orderCount: number; changed: number } {
   // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
   // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
@@ -723,7 +741,8 @@ export function confirmSummaryFor(
     orderIds.add(contribution.sales_order_id);
   }
   const toConfirm = [...orderIds].reduce(
-    (total, salesOrderId) => total + plannedLineCount(contributions, salesOrderId, draft),
+    (total, salesOrderId) =>
+      total + plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds),
     0,
   );
   return { toConfirm, rejected, orderCount: orderIds.size, changed };
