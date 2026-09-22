@@ -690,6 +690,18 @@ def _reasons_for_rejected_lines(
     Loaded ONCE for the whole call: every id in `rejected_line_ids` is checked against
     the SAME active decision, never a fresh read per id.
 
+    N4 (nit, fix round): `covered_ids` above is deliberately a bare "does the active
+    decision's own `line_snapshots` name this id" - unlike `_active_coverage`
+    (`project_line_draft_service.py`), it carries NO `_in_open_planning_change` exemption
+    for a line sitting in a batch nobody has applied yet. That is safe here, not an
+    oversight: this function is only ever reached from `confirm_supply` /
+    `confirm_all`'s shared seam, which already refuses `rejected_line_ids` alongside a
+    `batch_id` outright (422 `board_reject_not_supported_in_batch`, AC-B12) BEFORE this
+    function is called - a withdrawal never reaches a batched line in the first place, so
+    there is nothing for the exemption to do here. `_active_coverage` still needs its own
+    exemption because `save_draft` (a batched line's OTHER verdicts - amend, approve) is
+    reached with no such upstream refusal.
+
     Returns the reasons keyed by `project_line_id`, and the ONE sentence the superseded
     revision is stamped with instead of `_write_decision`'s own "Reconfirmed by CS." -
     every rejected line named, in order: "Line 2 rejected: wrong site; Line 5 rejected:

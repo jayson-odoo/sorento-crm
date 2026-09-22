@@ -102,7 +102,15 @@ export function BoardVerdictActions({
   // rejecting a covered line is now a real action, not a dead button, so the X joins the
   // pencil beside a `confirmed` pill too. Accept stays proposed-only - there is nothing to
   // "accept" on a line already confirmed.
-  const rejectable = proposed || verdict === 'confirmed';
+  //
+  // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): a `confirmed` pill also covers
+  // an INQUIRY-DECIDED line - a live order-inquiry row names it with no active decision at
+  // all (#875, migrated sheet lines) - and `Confirm` has nothing to withdraw there: no
+  // `SOSupplyDecision`, so no `line_snapshots` entry `rejected_line_ids` could ever name.
+  // The X is offered only where an ACTIVE decision covers the line (`contribution.decision`
+  // is the frozen decision object, non-null exactly then), not merely where the pill reads
+  // Confirmed.
+  const rejectable = proposed || (verdict === 'confirmed' && Boolean(contribution.decision));
 
   return (
     <>

@@ -368,6 +368,51 @@ vitest, `BoardLineDecisionPanel.test.tsx` (flip AC-F1, add):
   off the order - it states the PRESS committed, not an order-level workflow state that
   does not exist at this granularity.
 
+**Fix round 2 (review), 23 Sep 2026, against `aaa84c30a`:**
+
+- N1 (must): `covered` spans TWO kinds of line (`project_fulfilment_board_service.py`'s
+  own `covered` property, unchanged by this round) - an ACTIVE `SOSupplyDecision`, or a
+  LIVE order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet
+  lines, #875). Only the first has a `line_snapshots` entry Confirm's
+  `rejected_line_ids` could ever name, and `rejectedCoveredLineIdsFor`,
+  `plannedLineCount`/`confirmSummaryFor`'s covered-rejected branch, and
+  `BoardVerdictActions`' `rejectable` all read `contribution.covered` where they meant
+  the first kind alone - offering the X, and promising a withdrawal, on a line Confirm
+  has no seam to withdraw. Gated on `contribution.decision != null` instead in all four
+  places; the panel's own Reject-after-Amend keeps the #989 disabled-with-
+  `CONFIRMED_LINE_TITLE` shape for the inquiry-only case, via a new `activelyCovered`
+  predicate. Reds: `fulfilmentBoard.test.ts` (`rejectedCoveredLineIdsFor and
+  plannedLineCount exclude an INQUIRY-ONLY covered line...`, `counts an inquiry-only
+  covered rejected line as rejected, but NOT toward toConfirm`),
+  `BoardVerdictActions.test.tsx` ("an INQUIRY-ONLY covered line... renders Change
+  decision only - no X, no Undo, no Accept"), `BoardLineDecisionPanel.test.tsx` ("an
+  INQUIRY-ONLY covered line keeps Reject disabled").
+- N2 (must): the held-back withdrawal entry (`heldBackByBatch`,
+  `FulfilmentBoardPanel.tsx`'s `runConfirmAll`) rendered through the results panel as
+  `${label}: refused` in red and counted against the header's `X of Y orders confirmed`
+  denominator, so an order that confirmed everything else this press read as a failure
+  beside its own success. `BoardBatchResult` gains `heldBack: true`, and the pushed entry
+  its own `error` sentence - "was confirmed, but its staged rejection could not ride
+  along with the pending change; it commits after the change is applied." when the SAME
+  press also posted something else for the order, else "has a staged rejection that
+  commits after the pending change is applied." - so it never falls through to the
+  generic "refused". The header's ratio and the row's colour both key on `heldBack`
+  rather than `ok` alone. Red: `FulfilmentBoardPanel.autobatch.test.tsx` ("the held-back
+  order does not count against the header, and renders neutral, not destructive").
+- N3 (nit): `pendingBatchSalesOrderIds` reads `board.data` while the confirm loop reads
+  `liveBoard` - noted in a comment as a display-lag-only gap (self-corrects on the next
+  render), not fixed.
+- N4 (nit, docstring): `_reasons_for_rejected_lines`' `covered_ids` check has no
+  `_in_open_planning_change` exemption, unlike `_active_coverage` - documented as safe
+  because `_confirm_with_possible_rejects` already refuses `batch_id` alongside
+  `rejected_line_ids` (AC-B12) before this function is ever called.
+- N5 (nit, test docstring): documented that
+  `test_a_withdrawal_naming_a_line_with_no_active_decision_at_all_is_refused` is
+  satisfied by either guard (the coverage check or `uncover_lines`' own bare return), and
+  that `test_a_mixed_confirm_naming_a_rejected_id_no_longer_covered_is_refused` is the one
+  that actually pins the coverage predicate (an active decision exists there, covering a
+  different line).
+
 ## Verification
 
 Browser (agent-browser, via sidebar), REWORKED for the staged/Confirm-carries shape: board

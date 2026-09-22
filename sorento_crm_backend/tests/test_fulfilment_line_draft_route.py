@@ -1890,7 +1890,16 @@ def test_a_withdrawal_naming_a_line_with_no_active_decision_at_all_is_refused(ap
     (`save_draft` never required coverage to save one), so the route must not trust the
     id on its own. Refused 422 `board_line_withdrawal_not_covered`, nothing written -
     NOT the 200 `_withdrawal_only_result` used to answer while `uncover_lines`' own
-    `False` return went unchecked."""
+    `False` return went unchecked.
+
+    N5 (nit, fix round): with NO active decision on the order at all, this case is
+    satisfied by EITHER guard on its own - `_reasons_for_rejected_lines`' own
+    `covered_ids` check (nothing to be a member of) or the withdrawal-only branch's
+    belt-and-braces assertion on `uncover_lines`' `False` return (nothing to uncover) -
+    so it does not, alone, pin the coverage-predicate fix specifically. That is
+    `test_a_mixed_confirm_naming_a_rejected_id_no_longer_covered_is_refused` below: an
+    active decision EXISTS there, covering a DIFFERENT line, so only the coverage check
+    catches it - `uncover_lines` is never even reached."""
     client, world, core_so, core_line, order, line = _world(api)
     db = world.db
     key = _contribution(_board(client, core_so), core_so.so_number)["key"]

@@ -676,4 +676,41 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
       ),
     ).toBeInTheDocument();
   });
+
+  /**
+   * N2 (fix round, `PLAN-board-reject-on-confirmed-line.md`): the held-back entry above is
+   * NOT a refusal - A posted nothing else this press (its only line's withdrawal was the
+   * held-back one), so it must not count against the header's denominator (B alone
+   * confirmed, so "1 of 1", never "1 of 2") and its row must not render destructive.
+   */
+  it('the held-back order does not count against the header, and renders neutral, not destructive', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithBatchBlockedReject());
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381896', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    // A posted nothing else this press: the ONLY-a-withdrawal sentence, not the "was
+    // confirmed, but..." one reserved for an order that ALSO posted something else.
+    const heldBackRow = await screen.findByText(
+      'SO381895: has a staged rejection that commits after the pending change is applied.',
+    );
+    expect(heldBackRow.className).not.toContain('text-destructive');
+
+    const results = screen.getByTestId('board-confirm-results');
+    // Only B counts: A's held-back entry is excluded from BOTH sides of the ratio.
+    expect(results).toHaveTextContent('1 of 1 orders confirmed');
+  });
 });

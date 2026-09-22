@@ -1250,6 +1250,39 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
 });
 
 /**
+ * N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds of
+ * line - an ACTIVE decision (the describe block above, `decision: frozen`), or a LIVE
+ * order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet lines,
+ * #875) - `covered: true, decision: null` here. Confirm's `rejected_line_ids` reads an
+ * active decision's `line_snapshots`, which the second kind has none of, so Reject keeps
+ * the ORIGINAL #989 shape for it: disabled outright, with `CONFIRMED_LINE_TITLE`, same as
+ * Save - never the uncovered branch's "reason non-blank" rule the ACTIVE-decision case now
+ * follows.
+ */
+describe('BoardLineDecisionPanel: an INQUIRY-ONLY covered line keeps Reject disabled (N1, fix round)', () => {
+  const REFUSAL =
+    'This line is already confirmed. Amend it to change the decision, reject it with a ' +
+    'reason, or undo the confirmation.';
+
+  it('after Amend, Reject stays disabled with CONFIRMED_LINE_TITLE even once a reason is typed', async () => {
+    renderPanel({ covered: true, decision: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const reject = screen.getByRole('button', { name: 'Reject' });
+    expect(reject).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Wrong site' },
+    });
+    // UNLIKE the active-decision case (AC-F3), typing a reason does not unlock Reject here.
+    expect(reject).toBeDisabled();
+
+    fireEvent.focus(screen.getByTestId(`reject-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
+  });
+});
+
+/**
  * The saved amendment overlays the engine's suggestion on reopen: collapsing an amended row
  * and opening it again must not show the engine's numbers under a pill reading Amended.
  */

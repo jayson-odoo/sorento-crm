@@ -1779,6 +1779,24 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     expect(summary.toConfirm).toBe(1);
   });
 
+  /**
+   * N1 (fix round): an INQUIRY-ONLY covered line's own staged reject still counts as the
+   * planner's `rejected` decision, but adds nothing to `toConfirm` - Confirm has no active
+   * decision to withdraw it from, unlike line 1's ACTIVE-decision reject above.
+   */
+  it('counts an inquiry-only covered rejected line as rejected, but NOT toward toConfirm', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const summary = confirmSummaryFor([inquiryOnly], {
+      [inquiryOnly.key]: { verdict: 'rejected', reason: 'Not needed.' },
+    });
+    expect(summary.rejected).toBe(1);
+    expect(summary.toConfirm).toBe(0);
+  });
+
   it('rejectedCoveredLineIdsFor names the covered line’s own project_line_id', () => {
     expect(
       rejectedCoveredLineIdsFor(contributions, 'so-a', {
@@ -1797,6 +1815,27 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
 
   it('rejectedCoveredLineIdsFor is empty when nothing is rejected', () => {
     expect(rejectedCoveredLineIdsFor(contributions, 'so-a', {})).toEqual([]);
+  });
+
+  /**
+   * N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds of
+   * line - an ACTIVE decision (this describe block's line 1, `decision: frozen`), or a LIVE
+   * order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet lines,
+   * #875). Only the first has a `line_snapshots` entry Confirm's `rejected_line_ids` could
+   * ever name, so a staged reject on the SECOND kind must contribute no id and no count -
+   * built here by overriding line 2 (uncovered by default) to the inquiry-only shape,
+   * since the board fixture's own `covered` is `Boolean(line.decision)` and has no
+   * `inquiry_decided` knob of its own.
+   */
+  it('rejectedCoveredLineIdsFor and plannedLineCount exclude an INQUIRY-ONLY covered line - no active decision to withdraw', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const draft = { [inquiryOnly.key]: { verdict: 'rejected' as const, reason: 'Not needed.' } };
+    expect(rejectedCoveredLineIdsFor([inquiryOnly], 'so-a', draft)).toEqual([]);
+    expect(plannedLineCount([inquiryOnly], 'so-a', draft)).toBe(0);
   });
 
   /**

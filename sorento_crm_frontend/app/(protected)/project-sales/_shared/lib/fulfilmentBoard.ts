@@ -298,7 +298,12 @@ export function rejectedCoveredLineIdsFor(
   const ids: string[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
-    if (!contribution.covered) continue;
+    // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds
+    // of line - an ACTIVE decision, or a live order-inquiry row naming it with none
+    // (`inquiry_decided`, #875). Only the first has a `line_snapshots` entry Confirm's
+    // `rejected_line_ids` could ever name, so this reads `decision` (non-null exactly
+    // then), not `covered`.
+    if (!contribution.decision) continue;
     if (draft[contribution.key]?.verdict !== 'rejected') continue;
     if (contribution.project_line_id) ids.push(contribution.project_line_id);
   }
@@ -659,11 +664,14 @@ export function plannedLineCount(
     // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
     // its apply is the retire path, which needs no composition to build.
     if (contribution.cancelled) return true;
-    // A COVERED line with a staged reject posts nothing either (`rejected_line_ids` carries
-    // it, not `lines`), and is still one of the lines THIS press acts on - Confirm is what
-    // withdraws it (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`) -
-    // UNLESS a pending batch is holding it back (see `batchBlockedSalesOrderIds` above).
-    if (contribution.covered && draft[contribution.key]?.verdict === 'rejected') {
+    // An ACTIVELY covered line (an active decision, not merely a live order-inquiry row -
+    // N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) with a staged reject posts
+    // nothing either (`rejected_line_ids` carries it, not `lines`), and is still one of the
+    // lines THIS press acts on - Confirm is what withdraws it (owner ruling 23 Sep 2026) -
+    // UNLESS a pending batch is holding it back (see `batchBlockedSalesOrderIds` above). An
+    // inquiry-only covered line has no active decision for Confirm to withdraw, so it falls
+    // through to `lineFor` below, which already reads it as nothing to post (not counted).
+    if (contribution.decision && draft[contribution.key]?.verdict === 'rejected') {
       return !batchBlocked;
     }
     const built = lineFor(contribution, draft[contribution.key]);
@@ -726,11 +734,13 @@ export function confirmSummaryFor(
     if (!contribution.covered && !decision) continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;
-      // A COVERED reject is a WITHDRAWAL Confirm carries out this same press - its order
-      // belongs in the confirmable set, same as an amendment does, so `toConfirm` counts it
-      // (`plannedLineCount`'s own new branch is what actually adds the +1 for this line). An
-      // UNCOVERED reject has nothing active to withdraw and stays excluded, as it always was.
-      if (contribution.covered) orderIds.add(contribution.sales_order_id);
+      // An ACTIVELY covered reject (an active decision, not merely a live order-inquiry row
+      // - N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) is a WITHDRAWAL Confirm
+      // carries out this same press - its order belongs in the confirmable set, same as an
+      // amendment does, so `toConfirm` counts it (`plannedLineCount`'s own new branch is
+      // what actually adds the +1 for this line). An UNCOVERED reject, or an inquiry-only
+      // one with no active decision to withdraw, stays excluded, as it always was.
+      if (contribution.decision) orderIds.add(contribution.sales_order_id);
       continue;
     }
     if (contribution.covered && decision?.verdict !== 'amended') continue;

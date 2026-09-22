@@ -224,6 +224,25 @@ describe('AC-R1 (`board-reject-on-confirmed-line-acceptance-criteria.md`, replac
   });
 });
 
+describe('N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): an INQUIRY-ONLY covered line - no active decision, so no withdrawal seam', () => {
+  it('renders Change decision only - no X, no Undo, no Accept', () => {
+    // `covered: true` with `decision: null` is the SECOND kind `covered` spans: a live
+    // order-inquiry row names the line with no `SOSupplyDecision` at all (#875, migrated
+    // sheet lines). Confirm's `rejected_line_ids` reads an active decision's
+    // `line_snapshots`, which this line has none of, so the X must not be offered.
+    renderActions({ contribution: coveredContribution({ decision: null }) });
+
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO397450 line 10' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Reject/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Undo/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /as suggested$/ }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe('AC-R2/AC-R3 (`board-reject-on-confirmed-line-acceptance-criteria.md`): the X on a covered line opens the same reject popover', () => {
   it('AC-R2: opens on the X with the reason textarea, the checkbox and a Reject button disabled while blank', async () => {
     const user = userEvent.setup();
