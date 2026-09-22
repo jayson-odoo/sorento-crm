@@ -334,7 +334,10 @@ describe('OrderInquiriesClient: reading the page', () => {
       'SPO',
       'Agent',
       'Location',
-      'Taken by PO/SPO',
+      // S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1): renamed from the retired
+      // line-scoped "Taken by PO/SPO" pair to the shared, row-level Taken/Remaining
+      // columns the Lines tab and this worklist both use now.
+      'Taken',
       'Remaining',
       'Instruction',
       'Raised by',

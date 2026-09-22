@@ -199,6 +199,13 @@ EXPORT_HEADINGS = (
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
+    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
+    # row-level Taken/Remaining the grid has shown since S3, never the retired
+    # LINE-scoped `taken_from_po`/`remaining_open` pair. Between LOCATION and
+    # ACKNOWLEDGED, the grid's own relative order (Location, then Taken/Remaining, then
+    # the instruction/handshake column).
+    "Taken",
+    "Remaining",
     # APPENDED, never inserted: their own filters and habits are keyed on the columns
     # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
     "ACKNOWLEDGED",
@@ -742,6 +749,30 @@ def _dec(value: Any) -> Decimal:
 def _qty_str(value: Decimal) -> str:
     """`600`, not `600.0000`. ``normalize()`` alone turns 100 into `1E+2`."""
     return format(_dec(value).normalize(), "f")
+
+
+#: Fix round (22 Sep, AC-D15 parity): the export's own Taken/Remaining, read off the SAME
+#: serialized row dict the grid's own `linked_qty`/`qty`/`bundled_qty` come from - so the
+#: file and the screen can never print two different numbers for one row. Mirrors the FE's
+#: `inquiryRowTaken`/`inquiryRowRemaining` (`orderInquiryWorklist.ts`) exactly, including
+#: the buy-verb gate (`_SUGGESTION_LINKABLE_VERBS`, the same set the FE's
+#: `TAKEN_REMAINING_VERBS` names): `-` on a notice row (it never carries a link of its
+#: own), `0` on a row or line already cancelled.
+def _export_taken(row: Dict[str, Any]) -> str:
+    if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
+        return "-"
+    return _qty_str(_dec(row.get("linked_qty")))
+
+
+def _export_remaining(row: Dict[str, Any]) -> str:
+    if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
+        return "-"
+    if row.get("state") == "cancelled" or row.get("line_cancelled"):
+        return "0"
+    remaining = (
+        _dec(row.get("qty")) - _dec(row.get("linked_qty")) - _dec(row.get("bundled_qty"))
+    )
+    return _qty_str(max(remaining, _ZERO))
 
 
 def ack_label(row: Dict[str, Any]) -> str:
@@ -2974,7 +3005,14 @@ class OrderInquiryWorklistService:
             .all()
         )
         bundle_map = self._bundle_map_for_rows(rows)
-        return [self._serialize(row, bundle_map=bundle_map) for row in rows]
+        # Fix round (22 Sep, AC-D15 parity): the SAME per-row links the paged list reads
+        # (`list_rows` above) - without this, `_serialize`'s own `linked_qty` sums an
+        # empty `links` dict for every row, and the export's new Taken/Remaining columns
+        # would print "0"/the bare qty regardless of what is actually linked.
+        links = ProjectOrderInquiryService(self.db).links_for_rows([row.id for row in rows])
+        return [
+            self._serialize(row, bundle_map=bundle_map, links=links) for row in rows
+        ]
 
     def _write_sheet(
         self, workbook, title: str, rows: Sequence[Dict[str, Any]]
@@ -3017,6 +3055,8 @@ class OrderInquiryWorklistService:
                         row.get("supplier") or "",
                         row.get("po_number") or "",
                         row.get("location") or "",
+                        _export_taken(row),
+                        _export_remaining(row),
                         ack_label(row),
                     ]
                 )

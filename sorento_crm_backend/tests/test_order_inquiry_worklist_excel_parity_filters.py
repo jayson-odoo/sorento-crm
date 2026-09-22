@@ -565,6 +565,40 @@ def test_export_honours_the_location_filter(api):
     assert seeded["row_agent_y_loc_b"].item_code not in item_codes
 
 
+def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
+    """Fix round (22 Sep, `PLAN-board-oi-mechanical-22sep.md`, AC-D15 parity): the export
+    prints the SAME row-level Taken/Remaining the grid has shown since S3
+    (`inquiryRowTaken`/`inquiryRowRemaining`), never the retired line-scoped
+    `taken_from_po`/`remaining_open` pair. `row_po_match` (S1 seed above) is a plain
+    `ORDER` row, qty 10, with one PO link for the full 10 - fully taken, nothing left."""
+    client, _db, _company_id, seeded = api
+
+    response = client.get(EXPORT)
+    book = openpyxl.load_workbook(io.BytesIO(response.content))
+
+    headers = None
+    target_row = None
+    for sheet in book.worksheets:
+        sheet_headers = next(
+            sheet.iter_rows(min_row=2, max_row=2, values_only=True), None
+        )
+        if sheet_headers is None:
+            continue
+        for values in sheet.iter_rows(min_row=3, values_only=True):
+            if values[2] == seeded["row_po_match"].item_code:
+                headers = sheet_headers
+                target_row = values
+                break
+        if target_row is not None:
+            break
+
+    assert target_row is not None, "row_po_match not found in any export sheet"
+    assert headers[10] == "Taken", headers
+    assert headers[11] == "Remaining", headers
+    assert target_row[10] == "10", target_row
+    assert target_row[11] == "0", target_row
+
+
 # --------------------------------------------------------------- delivery range
 
 
