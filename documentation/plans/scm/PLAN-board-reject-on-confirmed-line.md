@@ -1,6 +1,6 @@
 # PLAN: Reject on a confirmed board line takes the line out of the confirmation and rejects it, in one step
 
-Status: planned (22 Sep 2026). Track: small fix.
+Status: implemented, awaiting review (22 Sep 2026). Track: small fix.
 UAC: `board-reject-on-confirmed-line-acceptance-criteria.md`
 Domain: scm / fulfilment planning board
 Supersedes in part: `PLAN-board-draft-on-confirmed-line.md` R1 and R2 (PR #989), whose
