@@ -536,3 +536,85 @@ correctly, just via a different lane) - happy to keep trying with different phra
 still needed, or this can be confirmed instead by a pytest case that calls the arm directly with
 a controlled parser verdict rather than depending on live ASR + LLM classification landing a
 particular way.
+
+## Rerun 5 (same day) - stack on the lane's BE :8000 pid 51661 / worker 32895 / MCP :8767, API key `test` confirmed working
+
+### (a) Console, fresh contact, photo-only -> a REAL stock table with numbers - PASS
+
+Built a new test PNG (`stock-codes.png`: "Product List / SRTPTFE1207 / SRTPTFE1315 /
+SRTFT203-NEW" - all three confirmed to have real stock in `public.stock`, unlike the original
+3-code fixture which has none) since the standard fixture's codes cannot produce numbers
+regardless of how well the pipeline works. Contact Jayden Loo, fresh Reset, uploaded with no
+caption. The parser assigned `domain: inventory` directly (no separate "check stock" step
+needed - one photo turn was enough), and the reply came back as a full, real stock table:
+
+```
+I read SRTPTFE1207, SRTPTFE1315 and SRTFT203-NEW from that photo.
+Stock summary for the requested products.
+
+1. *Product Code:* SRTFT203-NEW
+*Total:* 28631 (O/S: 55)
+*BRW:* 4426 (O/S: 40)
+...
+3. *Product Code:* SRTPTFE1207
+*Total:* 270300 (O/S: 0)
+*BRW:* 206300 (O/S: 0)
+*DC1:* 64000 (O/S: 0)
+...
+_Data last updated: 21/09/2026 11:25:59_
+```
+
+Turn `3b0d9cf2-b5ec-4dbc-8a36-64bb060417cf`. Screenshot `rerun5a-console-real-stock-table.png`.
+**This confirms the MCP + API-key fix works end-to-end: prefix correct, resolution correct, and
+now a genuine numbers table, not "no stock" or a 401.**
+
+### (b) Real WhatsApp path via curl - INVALIDATED by an active port collision with a different lane, not a finding about this PR
+
+Copied a real historical envelope for contact `437264483` (Jayson) from `chatbot.turns`, swapped
+`message.message.message` for an `attachment` (`type: image`, a freshly minted signed URL for
+the classic 3-code PNG via `console_service._upload_console_media`, called directly from a
+script since the FE was mid-restart), and `POST`ed to `/api/v1/external/chat/turn` with
+`X-API-Key: test`, `is_test` left false (a genuine live turn, required since attachments/
+entity_attachment_links only write on a live turn per D14).
+
+**Result was wrong and initially looked like a serious regression:** `branch_kind:
+business_query`, reply was a stale "sales order outstanding" report for an unrelated customer
+("SK ONE STOP HOME CENTRE SDN BHD") with zero image-related content, turn `00836ec6-e9e0-4eb2-
+9e39-c6056581e597`. The trace had NO `media_intake` stage at all (`received, understood, access,
+routed, looked_up, replied, remembered, sent` only), and the `understood` stage's parser input
+shows `entities: [], message_type: "casual"` - the image was never read.
+
+**Root-caused, not a code defect:** `lsof` on the port shows `:8000` and `:3000` are CURRENTLY
+served by a completely different lane's processes -
+`/Users/tehjayson/Documents/foundryx/sorento_crm-oi-export-async/sorento_crm_backend` (pid 86536)
+and `.../sorento_crm-oi-export-async/sorento_crm_frontend` (pid 88664) - not this lane's checkout
+at all. This lane's own backend (pid 51661) shut down gracefully mid-Rerun (its last log line is
+literally `Finished server process [51661]` at 05:17:51, right after finishing part (a)'s "check
+stock" console request), and another lane's stack took the now-free ports before this lane's was
+restarted. My curl POST (05:22:51) landed on `oi-export-async`'s own checkout, which - being a
+different, unrelated branch - has none of this PR's media-into-turn code, so the attachment
+was silently ignored and the turn fell back to whatever `oi-export-async`'s own pre-existing
+business_query/order lane does with an attachment-shaped, caption-less message against a contact
+with a real pending "outstanding_detail" question in memory. Confirmed no `attachments` or
+`entity_attachment_links` row was written for this turn (checked both tables, nothing newer than
+my earlier Rerun 1 console tests). This lane's own worker (pid 32895) is still correctly running
+from `sorento_crm-media-into-turn`, only the two HTTP-facing processes were swapped out from
+under the test. Evidence: `rerun5-PORT-COLLISION-evidence.txt` (not copied into the evidence
+folder as an image - it is a plain `lsof`/`ps` capture, pasted below for the record):
+
+```
+Python  86536 ... cwd DIR ... /Users/tehjayson/Documents/foundryx/sorento_crm-oi-export-async/sorento_crm_backend
+node    88664 ... cwd DIR ... /Users/tehjayson/Documents/foundryx/sorento_crm-oi-export-async/sorento_crm_frontend
+Python  32895 ... cwd DIR ... /Users/tehjayson/Documents/foundryx/sorento_crm-media-into-turn/sorento_crm_backend   (worker, still correct)
+```
+
+**Part (b) needs a full redo once this lane's own FE/BE are confirmed back on :3000/:8000** (or
+on dedicated ports the coordinator names) - I did not keep hammering the wrong lane's stack once
+this was discovered, and did not touch the other lane's processes myself (not mine to kill).
+
+### Rerun 5 summary
+
+| Item | Result | Turn id |
+|---|---|---|
+| (a) Console photo-only -> real stock table with numbers | **PASS - full numbers table, MCP+key fix confirmed end-to-end** | `3b0d9cf2-b5ec-4dbc-8a36-64bb060417cf` |
+| (b) Real WhatsApp path via curl: media_intake stage, attachments+entity_attachment_links rows, `check stock` follow-up, `media` block on GET /turns/{id} | **INVALIDATED - request landed on a different lane's backend (`sorento_crm-oi-export-async`) due to a port collision after this lane's own BE shut down mid-Rerun**, not evidence about this PR either way; needs a clean redo once :3000/:8000 are confirmed back on this lane | `00836ec6-e9e0-4eb2-9e39-c6056581e597` (wrong-lane turn, kept only as collision evidence) |
