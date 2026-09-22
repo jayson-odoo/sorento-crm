@@ -1012,7 +1012,7 @@ export default function Page() {
                         placeholder="Select pool"
                         clearable
                         options={[
-                          { value: NO_DEFAULT_RESERVE_POOL_VALUE, label: 'Row’s own site pool' },
+                          { value: NO_DEFAULT_RESERVE_POOL_VALUE, label: "Row's own site pool" },
                           ...poolWarehouseOptions.map((w) => ({
                             value: w.id,
                             label: w.warehouse_code,
@@ -1020,10 +1020,6 @@ export default function Page() {
                         ]}
                       />
                     </FormControl>
-                    <FormDescription>
-                      The location "Request CS to reserve" defaults to. Cleared, it
-                      falls back to the row&apos;s own site pool.
-                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

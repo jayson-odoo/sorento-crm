@@ -92,43 +92,43 @@ export function OrderInquiryLinesTab({
   });
 
   return (
-    <div className="space-y-4">
-      <DataGrid
-        table={table}
-        recordCount={table.getFilteredRowModel().rows.length}
-        isLoading={isLoading}
-        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyMessage={
-          lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
-        }
-        listingKey={LISTING_KEY}
-        rowAttributes={deepLink.rowAttributes}
-        rowClassName={deepLink.rowClassName}
-      >
-        <Card>
-          <CardHeader className="block">
-            <DataGridListToolbar
-              table={table}
-              searchSlot={
-                <ListSearchInput
-                  value={search}
-                  onChange={setSearch}
-                  placeholder="Search product..."
-                  className="w-56"
-                />
-              }
-              exportConfig={false}
-            />
-          </CardHeader>
-          <CardTable>
-            <DataGridTable />
-          </CardTable>
-          <CardFooter>
-            <DataGridPagination sizes={[10, 25, 50]} />
-          </CardFooter>
-        </Card>
-      </DataGrid>
-    </div>
+    // N3 (reviewer round): this used to be wrapped in an orphan `<div
+    // className="space-y-4">` - one child, so the spacing utility did nothing.
+    <DataGrid
+      table={table}
+      recordCount={table.getFilteredRowModel().rows.length}
+      isLoading={isLoading}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyMessage={
+        lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
+      }
+      listingKey={LISTING_KEY}
+      rowAttributes={deepLink.rowAttributes}
+      rowClassName={deepLink.rowClassName}
+    >
+      <Card>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <ListSearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="Search product..."
+                className="w-56"
+              />
+            }
+            exportConfig={false}
+          />
+        </CardHeader>
+        <CardTable>
+          <DataGridTable />
+        </CardTable>
+        <CardFooter>
+          <DataGridPagination sizes={[10, 25, 50]} />
+        </CardFooter>
+      </Card>
+    </DataGrid>
   );
 }
 

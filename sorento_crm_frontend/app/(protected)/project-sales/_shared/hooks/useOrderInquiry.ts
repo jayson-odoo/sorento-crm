@@ -210,9 +210,12 @@ export function useReserveOrderInquiryRow(inquiryId: string | undefined) {
       requestId: string;
       rowId: string;
       payload: ReserveRowPayload;
+      /** N1 (reviewer round, AC-RS-26 "toast wording kept"): the requester's own name,
+       * for the toast alone - never read by `mutationFn` itself. */
+      requestedByName?: string | null;
     }) => reserveOrderInquiryRow(requestId, rowId, payload),
-    onSuccess: () => {
-      toast.success('Reserved');
+    onSuccess: (_data, variables) => {
+      toast.success(`Reserved, ${variables.requestedByName ?? 'the requester'} notified`);
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
     },
     onError: (error: Error) => toast.error(error.message),

@@ -94,19 +94,24 @@ function rowRemaining(row: OrderInquiryWorklistRow): number {
 /** AC-RS-23: why a selected row cannot be named on a "Request CS to reserve" ask - the
  * SAME rules the backend's own `create_request` enforces (3.2), read client-side off
  * the worklist row so the menu item can be gated and explained before the request is
- * even sent. `null` means the row is requestable. */
+ * even sent. `null` means the row is requestable.
+ *
+ * N9 (reviewer round): names the OFFENDING row - several rows can be ticked at once,
+ * and a tooltip reading "already has an open reserve request" with no indication of
+ * WHICH of them left the reader guessing. */
 function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
+  const item = row.item_code ?? 'This row';
   if (!['ORDER', 'ORDER_BACK'].includes(row.verb)) {
-    return 'not an ORDER or ORDER BACK row';
+    return `${item}: not an ORDER or ORDER BACK row`;
   }
   if (!['raised', 'partly_linked'].includes(row.state)) {
-    return 'not open for a reserve request';
+    return `${item}: not open for a reserve request`;
   }
   if (rowRemaining(row) <= 0) {
-    return 'has nothing left to request';
+    return `${item}: has nothing left to request`;
   }
   if (row.reserve_state === 'requested') {
-    return 'already has an open reserve request';
+    return `${item}: already has an open reserve request`;
   }
   return null;
 }
@@ -790,7 +795,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           netReservedQty={reserveRowDialogRow.reserved_qty ?? '0'}
           canAct={canReserve}
           onReserve={(requestId, rowId, payload) =>
-            reserveRowMutation.mutateAsync({ requestId, rowId, payload })
+            reserveRowMutation.mutateAsync({
+              requestId,
+              rowId,
+              payload,
+              // N1 (AC-RS-26 "toast wording kept"): "Reserved, <requester> notified" -
+              // the parent already resolves the requester's name for the panel above
+              // the form, so the mutation's own toast reads the same one.
+              requestedByName: reserveRowOpenRequest?.requestedByName ?? null,
+            })
           }
           cancelControl={
             canCancelReserveRequest(currentUserId, reserveRowOpenRequest?.requestedBy, canReserve)

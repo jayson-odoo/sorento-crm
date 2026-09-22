@@ -357,7 +357,12 @@ export function ReserveRowDialog({
                   <p className="text-sm text-muted-foreground">No history yet.</p>
                 ) : (
                   history.map((entry, index) => (
-                    <div key={index} className="rounded-md border border-border p-2 text-xs">
+                    // N4 (reviewer round): the entry's own identity - kind + when it
+                    // happened - never the array index, which reorders on refetch.
+                    <div
+                      key={`${entry.kind}-${entry.createdAt ?? index}`}
+                      className="rounded-md border border-border p-2 text-xs"
+                    >
                       <div className="font-medium">
                         {HISTORY_KIND_LABEL[entry.kind] ?? entry.kind}
                         {entry.qty ? ` ${entry.qty}` : ''}
