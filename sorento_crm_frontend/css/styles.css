@@ -92,19 +92,14 @@
    row - the SAME `jumpFlash` keyframe and colour token `.jump-flash` uses, its own class
    so this landing's own ~2s fade (kept in step with the JS timeout that also strips the
    URL param, `hooks/useTableDeepLinkHighlight.ts`) can differ from `.jump-flash`'s 1.5s.
-   Reduced motion reads DIFFERENTLY from `.jump-flash`'s own rule below on purpose
-   (AC-B6-6): `.jump-flash`'s callers already show the landed row selected some other way,
-   so swallowing its pulse outright costs nothing; THIS highlight is the only signal a
+   Reduced motion reads DIFFERENTLY from `.jump-flash`'s own rule (in the shared
+   `prefers-reduced-motion` block below, beside `.jump-flash`) on purpose (AC-B6-6):
+   `.jump-flash`'s callers already show the landed row selected some other way, so
+   swallowing its pulse outright costs nothing; THIS highlight is the only signal a
    deep-link landing gives, so under reduced motion it still shows - instantly, with no
    transition - for the same ~2s the JS timer holds it, rather than not showing at all. */
 .deep-link-highlight {
   animation: jumpFlash 2s ease-out 1;
-}
-@media (prefers-reduced-motion: reduce) {
-  .deep-link-highlight {
-    animation: none;
-    background-color: color-mix(in oklab, var(--primary) 22%, transparent);
-  }
 }
 
 /**
@@ -186,6 +181,16 @@
   .takeover-flash,
   .jump-flash {
     animation: none !important;
+  }
+
+  /* S6 deep-link landing (AC-B6-6): unlike `.jump-flash` above, this highlight is the
+     ONLY signal a deep-link arrival gives - swallowing it outright would leave the
+     landed row with no visible marker at all - so instead of just stopping the
+     animation, it shows a static tint for the same ~2s the JS timer already holds it
+     (`hooks/useTableDeepLinkHighlight.ts`), with no transition. */
+  .deep-link-highlight {
+    animation: none;
+    background-color: color-mix(in oklab, var(--primary) 22%, transparent);
   }
 
   /* M3-04 (`ui-motion-round2`): the reduced-motion block above only reaches
