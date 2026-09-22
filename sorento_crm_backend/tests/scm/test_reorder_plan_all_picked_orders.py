@@ -473,12 +473,24 @@ def test_demand_drill_on_all_run_lists_only_the_picked_sos_rows_and_ties_to_froz
     confirmed (13) and form (3) rows must not leak in, exactly like T8 pins for a Project
     run. The retail (7) and unlocated (9) lines are listed too (an All run's own book
     leg, untouched by the SO scope) and `committed_total` must equal the run's own frozen
-    `inputs.committed` (32.0, matching `test_ac_d2_service_level_committed_already_
-    scoped_on_all_run_bypassing_http` above) - not a live recomputation that disagrees
-    with it.
+    `inputs.committed` (matching `test_ac_d2_service_level_committed_already_scoped_on_
+    all_run_bypassing_http` above) - not a live recomputation that disagrees with it.
+
+    Fix round 4 nit: ONE more retail line (20), due AFTER the run's own To date, so this
+    test also guards `_committed_total`'s OWN `retail_windowed` argument
+    (`demand_breakdown_service.py`, fix round 2/3) - not just `_planning_rows`' already-
+    proven one. This run is All + so_numbers, so the retail leg is unwindowed (round 3
+    ruling): the far line counts toward BOTH the frozen figure (52 = 32 + 20) and the
+    drill's own recomputed `committed_total` - deleting `_committed_total`'s
+    `retail_windowed` arg (silently defaulting it back to windowed) would recompute 32
+    against a frozen 52 and fail the tie-out assertion below, even though the far line
+    stays correctly excluded from the LISTED lines either way (the book leg's line-listing
+    query has its own unconditional horizon predicate, untouched by this lane).
     """
     _, db, _, _ = scm_app
     u = _seed_scope_universe(db)
+    _retail_row(db, product_id=u["pid"], warehouse_id=u["wid"], qty=20,
+                so_number=_code("SOFAR"), required_date=date(2026, 12, 1))
 
     created = svc.create_run(
         db, [], enqueue=False,
@@ -489,7 +501,7 @@ def test_demand_drill_on_all_run_lists_only_the_picked_sos_rows_and_ties_to_froz
 
     row = _inputs_for(db, created["run_id"], u["pid"])
     frozen = float((row["inputs"] or {}).get("committed"))
-    assert frozen == 32.0
+    assert frozen == 52.0, "the far retail line (20) must count too - the run's own leg is unwindowed"
 
     out = dbs.demand_for_recommendation(db, row["id"])
 
@@ -501,12 +513,15 @@ def test_demand_drill_on_all_run_lists_only_the_picked_sos_rows_and_ties_to_froz
     qtys = sorted(float(line["qty"]) for line in out["lines"])
     # SO A's own rows (this is the `so_filter` half of the fix): confirmed acked (11),
     # confirmed awaiting (50, listed not counted), form (5) - plus the All run's own book
-    # leg, unaffected by the SO scope: retail (7) and unlocated (9).
-    assert sum(qtys) == 82.0, (
-        f"expected retail(7)+unlocated(9)+SO A confirmed(11)+awaiting(50)+form(5)=82, "
-        f"got {sum(qtys)} from {qtys}"
+    # leg, unaffected by the SO scope: retail in-range (7), unlocated (9), and the FAR
+    # retail line (20) - listed here too (fix round 4 nit), since an unwindowed run's
+    # book leg is unwindowed for the LISTING the same as for the TOTAL, or the sum of
+    # these lines would stop equalling `committed_total` (the module's own invariant).
+    assert sum(qtys) == 102.0, (
+        f"expected retail(7)+unlocated(9)+SO A confirmed(11)+awaiting(50)+form(5)+far "
+        f"retail(20)=102, got {sum(qtys)} from {qtys}"
     )
-    for expected in (7.0, 9.0, 11.0, 50.0, 5.0):
+    for expected in (7.0, 9.0, 11.0, 50.0, 5.0, 20.0):
         assert expected in qtys, f"{expected} missing from {qtys}"
     # SO B's rows (confirmed 13, form 3) must not leak in - the drill's own SO-scope join,
     # on BOTH the confirmed and form legs.

@@ -217,9 +217,13 @@ export function RunPlanningModal({
   };
 
   /** `so_number - customer_name`, trimmed when neither is on file - the option's
-   *  accessible name AND search text, kept IDENTICAL to the menu row's own printed text
-   *  (fix round 3: the row and the label must agree, so `project_label` is dropped here
-   *  too - a buyer searching the label for what the row shows must find it). */
+   *  accessible name, kept IDENTICAL to the menu row's own printed text (fix round 3:
+   *  the row and the label must agree, so `project_label` is dropped from the LABEL
+   *  too - a buyer searching for what the row shows must find it). `project_label`
+   *  still has to be FINDABLE, though (fix round 4 nit) - it rides `searchText`
+   *  instead, the fuzzy index `SearchableMultiSelect`'s static mode reads in
+   *  preference to `label`, so typing a project word still finds the order without
+   *  printing it anywhere. */
   const orderOptions = useMemo(
     () =>
       (candidateOrders ?? []).map((o) => {
@@ -227,6 +231,7 @@ export function RunPlanningModal({
         return {
           value: o.so_number,
           label: customer ? `${o.so_number} - ${customer}` : o.so_number,
+          searchText: `${o.so_number} ${o.customer_name ?? ''} ${o.project_label ?? ''}`,
         };
       }),
     [candidateOrders],
@@ -251,11 +256,11 @@ export function RunPlanningModal({
       const shown = soNumbers.slice(0, 2).join(', ');
       const rest = soNumbers.length - 2;
       const text = rest > 0 ? `${shown} +${rest}` : shown;
-      // `truncate` + `title` (fix round 3 item 2): every selected SO number, not just
-      // the two shown, so a hover/long-press at 375px still reads the full pick - the
-      // ADR-PRODUCT-STANDARDS truncate+title pattern every other long-text cell uses.
+      // `block truncate` + `title` (fix round 4 nit: inline `truncate` never ellipsises
+      // - it needs a block/inline-block box to clip against) - every selected SO number,
+      // not just the two shown, so a hover/long-press at 375px still reads the full pick.
       return (
-        <span className="truncate" title={soNumbers.join(', ')}>
+        <span className="block truncate" title={soNumbers.join(', ')}>
           {text}
         </span>
       );

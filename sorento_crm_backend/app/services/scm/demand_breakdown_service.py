@@ -323,6 +323,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
         "AND so.so_number = ANY(:so_numbers) AND so.company_id = oir.company_id"
         if (run_demand_class != "retail" and run_so_numbers) else ""
     )
+    # AC-D1b / fix round 3 ruling: the retail (book) leg drops "Plan until" only when
+    # the run is BOTH unscoped (All) AND has a picked Orders list - the SAME expression
+    # `_planning_rows`/`_committed_total` below apply, computed ONCE here so the book
+    # leg's own LISTING/TOTAL predicate (`horizon_pred`, fix round 4 nit) and the scope
+    # test's recomputed total (`_committed_total`) can never disagree about it.
+    retail_windowed = not (run_demand_class is None and run_so_scoped)
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
@@ -338,12 +344,19 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # Same horizon rule as `demand.horizon_committed_select_sql` / `reorder_run_service`'s
     # own horizon predicates: a stated `required_date` past the cutoff is excluded, no
     # date at all is always in. A NULL `:horizon` reproduces the unhorizoned query.
+    # Fix round 4 nit: dropped to `TRUE` when `retail_windowed` is False, or the book
+    # leg's own LISTING and TOTAL (`totals["committed"]`, which `committed_total` is
+    # built from) would stay windowed even though `horizon_committed_select_sql`'s
+    # retail leg - what `inputs.committed` was actually frozen from - is not; the drill
+    # would then show a total that disagrees with the frozen figure, and a far-dated
+    # line that silently contributes to the sum without ever being listed (breaking the
+    # module's own "the sum of these lines IS the committed figure" invariant).
     horizon_pred = (
         "(CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL "
         "OR sol.required_date <= CAST(:horizon AS date)) "
         "AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL "
         "OR sol.required_date >= CAST(:horizon_start AS date))"
-    )
+    ) if retail_windowed else "TRUE"
 
     def _committed_total(candidate: list[str], include_unloc: bool) -> float:
         """What this candidate location set commits for this product, by the SAME
@@ -373,16 +386,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
         }
         if run_so_scoped:
             cv_params["so_numbers"] = list(run_so_numbers)
-        # Lane D fix round 2 (security review) / round 3 (ruling narrowed): `_planning_
-        # rows` passes `retail_windowed = not (demand_class is None and bool(so_numbers))`
-        # - the book leg drops "Plan until" only on an unscoped (All) run that ALSO has a
-        # picked Orders list (AC-D1b); an All run with nothing picked (the chatbot's own
-        # date-range plan among others) keeps windowing it. This drill has to pass the
-        # SAME expression, or a product carrying a retail line due after the range
-        # recomputes a `committed_total` that disagrees with the frozen `inputs.committed`.
+        # Lane D fix round 2 (security review) / round 3 (ruling narrowed) - `retail_
+        # windowed`, computed once above beside `so_filter`/`horizon_pred` so this scope
+        # test and the book leg's own listing/total can never disagree about it.
         cv_sql = horizon_committed_select_sql(
             demand_class=run_demand_class, so_scoped=run_so_scoped,
-            retail_windowed=not (run_demand_class is None and run_so_scoped),
+            retail_windowed=retail_windowed,
         )
         return float(db.execute(
             text(f"""

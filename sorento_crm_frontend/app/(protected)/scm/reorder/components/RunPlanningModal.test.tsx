@@ -22,7 +22,7 @@ if (!window.matchMedia) {
   });
 }
 
-type StubOption = { value: string; label: string; description?: string };
+type StubOption = { value: string; label: string; description?: string; searchText?: string };
 
 // Stub the multi-select as a group of checkboxes so selection is deterministic. There
 // are now TWO of them on this modal, so the group is labelled by its placeholder
@@ -67,8 +67,21 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     const rows = fetchOptions ? fetched : (options ?? []);
     // The trigger's own closed-state label (D1: ONE line, "SO1, SO2 +12" rather than a
     // chip wall) - `chosen` is the same set the real component would pass, options
-    // filtered to the current `value`.
+    // filtered to the current `value`. Built off `rows` UNFILTERED by the static
+    // search box below, so a selection stays in the trigger label even while a query
+    // narrows which rows are drawn - the real component keeps `chosen` off every
+    // option it has ever seen, not just the currently visible page.
     const chosen = rows.filter((o) => value.includes(o.value));
+    // Static mode (fix round 4 nit): a fuzzy-filter search box too, mirroring the real
+    // component's own `opt.searchText ?? label` read (`SearchableMultiSelect.tsx` ~
+    // L191) - so a static field (Orders, Warehouses) can be searched by a term that is
+    // in `searchText` but never printed in `label`.
+    const [staticQuery, setStaticQuery] = React.useState('');
+    const visibleRows = fetchOptions
+      ? rows
+      : rows.filter((o) =>
+          (o.searchText ?? o.label).toLowerCase().includes(staticQuery.toLowerCase()),
+        );
     return (
       <div aria-label={placeholder ?? 'multi-select'}>
         {renderTriggerLabel ? (
@@ -80,8 +93,14 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-        ) : null}
-        {rows.map((o) => (
+        ) : (
+          <input
+            aria-label={`Search ${placeholder ?? 'multi-select'}`}
+            value={staticQuery}
+            onChange={(e) => setStaticQuery(e.target.value)}
+          />
+        )}
+        {visibleRows.map((o) => (
           <label key={o.value}>
             <input
               type="checkbox"
@@ -985,6 +1004,30 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // line when non-zero - only the old "N lines in range" description is gone.
       expect(body.textContent).toBe('SO1 - C1, 3 awaiting ack');
       expect(body.textContent).not.toContain('lines in range');
+    });
+
+    it('fix round 4 nit: the project label is still searchable, though it is no longer printed', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'ARC RESIDENCE TOWER B', customer_name: 'C1',
+          rows_total: 1, rows_in_range: 1, rows_raised_in_window: 1, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+        {
+          so_number: 'SO2', project_label: 'OTM GROUP', customer_name: 'C2',
+          rows_total: 1, rows_in_range: 1, rows_raised_in_window: 1, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      await screen.findByLabelText('SO1 - C1');
+
+      // The row/label print NEITHER project label - typing one still finds its order.
+      fireEvent.change(screen.getByLabelText('Search Every project order in range'), {
+        target: { value: 'RESIDENCE TOWER' },
+      });
+      expect(await screen.findByLabelText('SO1 - C1')).toBeInTheDocument();
+      expect(screen.queryByLabelText('SO2 - C2')).not.toBeInTheDocument();
     });
   });
 });
