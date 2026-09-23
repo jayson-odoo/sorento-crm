@@ -149,10 +149,14 @@ def _project_so_with_lines(db, *, lines: list[dict], company_id: str = SORENTO_C
 
     built = []
     for n, spec in enumerate(lines, start=1):
+        # AC-OU-6 (`PLAN-oi-order-rows-uncapped.md`) widens this: a caller may now name a
+        # line already delivered/closed - `qty_delivered`/`line_status` default to the
+        # ORIGINAL open/undelivered shape, so every existing caller is unaffected.
         core_line = SalesOrderLine(
             id=_u(), sales_order_id=so.id, product_id=spec["product_id"],
-            warehouse_id=spec["warehouse_id"], qty_ordered=spec["qty"], qty_delivered=0,
-            line_status="open", company_id=company_id,
+            warehouse_id=spec["warehouse_id"], qty_ordered=spec["qty"],
+            qty_delivered=spec.get("qty_delivered", 0),
+            line_status=spec.get("line_status", "open"), company_id=company_id,
         )
         db.add(core_line)
         db.flush()
@@ -670,8 +674,13 @@ def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app
 def test_ac_ob_7_horizon_select_reads_the_order_back_row_uncapped(scm_app):
     """AC-OB-7. An ORDER_BACK row on a core line delivered in full still counts its own
     qty at the DONOR warehouse through `horizon_committed_select_sql` - the plan's own
-    committed figure - exactly as `scm.committed_v` does (AC-OB-4); the sibling ORDER row
-    on the SAME line stays capped at 0 (AC-OB-5), unchanged."""
+    committed figure - exactly as `scm.committed_v` does (AC-OB-4).
+
+    REWRITTEN second half (R1, owner 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`,
+    SO421985), found by this lane's own test run, not enumerated in its test list: the
+    sibling ORDER row on the SAME line no longer stays capped at 0 (AC-OB-5's own
+    premise, retired) - it now counts its own qty too, at the line's OWN warehouse,
+    through this same SQL - the horizon-select twin of AC-OU-1."""
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, _code("WH"))
     donor_wid = _mk_warehouse(db, _code("DONOR"))
@@ -697,7 +706,140 @@ def test_ac_ob_7_horizon_select_reads_the_order_back_row_uncapped(scm_app):
     }
 
     assert by_warehouse.get(donor_wid) == 3.0, by_warehouse
-    assert by_warehouse.get(wid, 0.0) == 0.0, by_warehouse
+    assert by_warehouse.get(wid) == 3.0, by_warehouse
+
+
+# =============================================================================
+# AC-OU-4 (`PLAN-oi-order-rows-uncapped.md`, R1, 23 Sep 2026) - `horizon_committed_
+# select_sql` must never disagree with `scm.committed_v` about AC-OU-1/2's own rows: an
+# ORDER row is owed in full, whatever the core line's outstanding reads.
+# =============================================================================
+
+
+def _project_so_single_order_row(
+    db, *, product_id, warehouse_id, line_ordered, line_delivered, row_qty,
+    line_status="closed", company_id: str = SORENTO_COMPANY_ID,
+):
+    """AC-OU-4's own seed: ONE project SO, ONE core line at whatever ordered/delivered/
+    line_status the caller names, and a SINGLE confirmed-leg ORDER row of `row_qty` on
+    it - so this pins the SAME shapes AC-OU-1/2 pin against `scm.committed_v`, through
+    the plan's own `horizon_committed_select_sql`."""
+    so_number = _code("SO")
+    so = SalesOrder(
+        id=_u(), so_number=so_number, status="open", demand_class="project",
+        company_id=company_id,
+    )
+    db.add(so)
+    db.flush()
+    core_line = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=product_id, warehouse_id=warehouse_id,
+        qty_ordered=Decimal(str(line_ordered)), qty_delivered=Decimal(str(line_delivered)),
+        line_status=line_status, company_id=company_id,
+    )
+    db.add(core_line)
+    db.flush()
+
+    owner_id = _u()
+    db.add(User(id=owner_id, email=f"{owner_id}@{MARKER.lower()}.test", name=f"{MARKER} CS"))
+    db.flush()
+    _project_numbering_rule(db)
+    project = register_project(
+        db, company_id=company_id, actor_user_id=owner_id,
+        developer_party_id=None, title=f"{MARKER} project {_u()[:8]}",
+    )
+    pso = ProjectSalesOrder(
+        id=_u(), company_id=company_id, project_id=project.id,
+        provisional_ref=_code("PSO"), so_id=so.id,
+    )
+    db.add(pso)
+    db.flush()
+    pso_line = ProjectSalesOrderLine(
+        id=_u(), company_id=company_id, project_sales_order_id=pso.id,
+        line_no=1, product_id=product_id, qty=Decimal(str(row_qty)),
+        core_sales_order_line_id=core_line.id,
+    )
+    db.add(pso_line)
+    db.flush()
+    inquiry = OrderInquiry(id=_u(), company_id=company_id, project_sales_order_id=pso.id)
+    db.add(inquiry)
+    db.flush()
+    decision = SOSupplyDecision(
+        id=_u(), company_id=company_id, project_sales_order_id=pso.id,
+        revision_no=1, state="active",
+        line_snapshots=[{
+            "line_no": 1, "project_line_id": str(pso_line.id),
+            "core_line_id": str(core_line.id), "buy_qty": str(row_qty),
+        }],
+        confirmed_at=datetime.utcnow(),
+    )
+    db.add(decision)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=pso_line.id, qty=Decimal(str(row_qty)), verb=IV_ORDER,
+        state=INQUIRY_RAISED, supply_decision_id=decision.id, ack_state=ACK_ACKNOWLEDGED,
+    )
+    db.add(row)
+    db.flush()
+    return {"so_number": so_number, "row": row}
+
+
+@requires_pg
+def test_ac_ou_4a_horizon_select_reads_an_order_row_uncapped_on_a_delivered_closed_line(
+    scm_app,
+):
+    """AC-OU-4 (AC-OU-1's own read through `horizon_committed_select_sql`). An ORDER row
+    of 493 on a core line delivered 493/493 and closed counts 493 through the plan's own
+    committed figure too - the two must never disagree."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    _project_so_single_order_row(
+        db, product_id=pid, warehouse_id=wid, line_ordered=493, line_delivered=493,
+        row_qty=493, line_status="closed",
+    )
+
+    sql = demand.horizon_committed_select_sql(demand_class="project", so_scoped=False)
+    rows = db.execute(
+        text(sql), {"horizon": None, "horizon_start": None}
+    ).mappings().all()
+    by_warehouse = {
+        str(r["warehouse_id"]): float(r["project_committed"])
+        for r in rows if str(r["product_id"]) == pid
+    }
+
+    assert by_warehouse.get(wid) == 493.0, by_warehouse
+
+
+@requires_pg
+def test_ac_ou_4b_horizon_select_reads_an_order_row_uncapped_on_an_open_line_with_outstanding(
+    scm_app,
+):
+    """AC-OU-4 (AC-OU-2's own read). An ORDER row of 314 on a line with 12 outstanding
+    (364 ordered, 352 delivered - the SO368872 / SRTWC286-SH shape) counts 314 through
+    the plan's own committed figure, not 12 - the 14 Sep cap is retired here too."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    _project_so_single_order_row(
+        db, product_id=pid, warehouse_id=wid, line_ordered=364, line_delivered=352,
+        row_qty=314, line_status="open",
+    )
+
+    sql = demand.horizon_committed_select_sql(demand_class="project", so_scoped=False)
+    rows = db.execute(
+        text(sql), {"horizon": None, "horizon_start": None}
+    ).mappings().all()
+    by_warehouse = {
+        str(r["warehouse_id"]): float(r["project_committed"])
+        for r in rows if str(r["product_id"]) == pid
+    }
+
+    assert by_warehouse.get(wid) == 314.0, by_warehouse
 
 
 # =============================================================================
@@ -1013,6 +1155,41 @@ def test_ac_ob_9_candidate_orders_lists_an_so_whose_only_open_row_is_order_back_
         "an ORDER_BACK row on a delivered line must still make its SO a candidate"
     )
     assert by_so[seeded["so_number"]]["rows_total"] == 1
+
+
+@requires_pg
+def test_ac_ou_6_candidate_orders_lists_an_so_whose_only_rows_are_order_on_delivered_lines(
+    scm_app,
+):
+    """AC-OU-6 (`PLAN-oi-order-rows-uncapped.md`, R1, 23 Sep 2026). The SO421985 shape
+    itself: three ORDER rows on three lines the AutoCount pull later marked delivered in
+    full and closed. Once `{demand._OWED_SQL} > 0` stops capping a plain ORDER row too,
+    the SO surfaces here with `rows_total` equal to the row count, exactly as it would
+    for any other open row."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    seeded = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 493, "delivery_date": date(2026, 9, 1),
+         "qty_delivered": 493, "line_status": "closed"},
+        {"product_id": pid, "warehouse_id": wid, "qty": 493, "delivery_date": date(2026, 9, 1),
+         "qty_delivered": 493, "line_status": "closed"},
+        {"product_id": pid, "warehouse_id": wid, "qty": 493, "delivery_date": date(2026, 9, 1),
+         "qty_delivered": 493, "line_status": "closed"},
+    ])
+
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/scm/reorder-runs/candidate-orders",
+                      params={"from": "2026-01-01", "to": "2026-12-31"})
+
+    assert resp.status_code == 200, resp.text
+    by_so = {row["so_number"]: row for row in resp.json()}
+    assert seeded["so_number"] in by_so, (
+        "an SO whose only rows are ORDER on delivered lines must still be a candidate"
+    )
+    assert by_so[seeded["so_number"]]["rows_total"] == 3
 
 
 # =============================================================================

@@ -190,6 +190,7 @@ def test_migration_bodies_are_frozen_not_imported():
         "511_committed_v_line_owed",
         "512_committed_v_redirect_exclude",
         "525_committed_v_orderback",
+        "527_committed_v_uncapped",
     ):
         imported = app_imports(_VERSIONS / f"{name}.py")
         assert imported == [], (
@@ -202,17 +203,18 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is `525_committed_v_orderback` (owner ruling 22 Sep 2026, SO417310 /
-    MKT5529SS-DIY: an ORDER_BACK row is never capped by its borrowing line's outstanding),
-    which replaces the body `512_committed_v_redirect_exclude` installed. Every superseded
-    freeze stays exactly as it shipped, which is the whole point of the guard, so 512's,
-    511's, 498's, 428's, 426's, 424's, 423's, 422's, 384's, 376's and 374's are checked
-    below rather than updated here.
+    The newest one is `527_committed_v_uncapped` (owner ruling R1, 23 Sep 2026,
+    `PLAN-oi-order-rows-uncapped.md`, SO421985: an ORDER row is never capped by its
+    line's outstanding either, the 14 Sep cap retired for every verb), which replaces the
+    body `525_committed_v_orderback` installed. Every superseded freeze stays exactly as
+    it shipped, which is the whole point of the guard, so 525's, 512's, 511's, 498's,
+    428's, 426's, 424's, 423's, 422's, 384's, 376's and 374's are checked below rather
+    than updated here.
     """
-    m525 = _load("525_committed_v_orderback")
-    assert _normalize(m525._AS_OF_525) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 525; "
-        "add a new migration that freezes the new body (525's pattern), so a from-zero "
+    m527 = _load("527_committed_v_uncapped")
+    assert _normalize(m527._AS_OF_527) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 527; "
+        "add a new migration that freezes the new body (527's pattern), so a from-zero "
         "replay stays true to history."
     )
 
@@ -281,12 +283,12 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
 
     Each view migration keeps its own frozen copy of the body it replaced, so the copies
     have to be pinned equal to the originals or a downgrade quietly installs a body nobody
-    wrote. Seven links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
+    wrote. Eight links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
     puts 374 directly beneath it, so 346 would be a step too far back), 384 restores
     376 for the same reason, 422 restores 384, 423 restores 422, 424 restores 423, 426
-    restores 424, 428 restores 426, 498 restores 428, 511 restores 498, 512 restores 511
-    and 525 restores 512 (425, 427 and everything from 499 to 510 touch no view, so none
-    of them is a link in this chain).
+    restores 424, 428 restores 426, 498 restores 428, 511 restores 498, 512 restores 511,
+    525 restores 512 and 527 restores 525 (425, 427 and everything from 499 to 510 touch
+    no view, so none of them is a link in this chain).
     """
     m346 = _load("346_scm_demand_origin_split")
     m374 = _load("374_so_supply_decisions")
@@ -301,6 +303,7 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     m511 = _load("511_committed_v_line_owed")
     m512 = _load("512_committed_v_redirect_exclude")
     m525 = _load("525_committed_v_orderback")
+    m527 = _load("527_committed_v_uncapped")
 
     assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
     assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
@@ -314,6 +317,7 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     assert _normalize(m511._AS_OF_498) == _normalize(m498._AS_OF_498)
     assert _normalize(m512._AS_OF_511) == _normalize(m511._AS_OF_511)
     assert _normalize(m525._AS_OF_512) == _normalize(m512._AS_OF_512)
+    assert _normalize(m527._AS_OF_525) == _normalize(m525._AS_OF_525)
 
 
 @requires_pg
@@ -477,6 +481,46 @@ def test_525_replaces_512_in_place_and_changes_no_column_type():
         db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
         restored = _view_body(db, scm_schema)
         assert restored and tell not in restored
+
+
+@requires_pg
+def test_527_replaces_525_in_place_and_changes_no_column_type():
+    """AC-OU-9. 527's own version of `test_525_replaces_512_in_place_and_changes_no_
+    column_type`, same reason: an in-place `CREATE OR REPLACE` over an ALREADY-INSTALLED
+    525 is the only replay that would catch 527 making 424's mistake (a bare `0::numeric`
+    leg turning into a bare `0`, which Postgres refuses on a view already installed).
+
+    No DROP between 525 and 527: this is the exact statement the captain runs on a
+    database that already carries 525's body. Column list and types must come out
+    unchanged, and the view stays selectable throughout.
+    """
+    with blank_session() as db:
+        scm_schema, projects = _scratch_op(db)
+        m525 = _load("525_committed_v_orderback")
+        m527 = _load("527_committed_v_uncapped")
+        db.execute(text(_rebind(m525._AS_OF_525, scm_schema, projects)))
+        before = _column_types(db, scm_schema)
+        db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
+
+        # The tell of the new body: 525's cap survives as `ELSE LEAST(oir.qty, ...)` for a
+        # plain ORDER row (reprinted with Postgres's own casts/parens); 527 collapses the
+        # whole CASE (R1, 23 Sep 2026) so no `LEAST(` over `oir.qty` remains at all.
+        tell = "LEAST(oir.qty,"
+
+        # No DROP in between: this is the statement the captain runs.
+        m527.upgrade()
+        assert _column_types(db, scm_schema) == before, "527 changed a column type"
+        db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
+        definition = _view_body(db, scm_schema)
+        assert definition and tell not in definition, (
+            "527 must drop the 14 Sep cap for every verb, not only ORDER_BACK"
+        )
+
+        m527.downgrade()
+        assert _column_types(db, scm_schema) == before, "the downgrade changed a column type"
+        db.execute(text(f'SELECT * FROM "{scm_schema}".committed_v LIMIT 0'))
+        restored = _view_body(db, scm_schema)
+        assert restored and tell in restored, "the downgrade must put 525's cap back"
 
 
 @requires_pg
@@ -842,9 +886,13 @@ def test_ac_ob_4_an_order_back_row_counts_in_full_at_its_donor_warehouse():
 
 @requires_pg
 def test_ac_ob_5_an_order_row_on_the_same_delivered_line_stays_capped_at_zero():
-    """AC-OB-5, the sibling of AC-OB-4 on the SAME delivered line: the 14 Sep cap
-    (SO368872 / SRTWC286-SH) is unchanged for a plain ORDER row, and it counts at the
-    line's OWN warehouse, never the donor."""
+    """REWRITTEN (R1, owner 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`, SO421985): the
+    14 Sep cap this test used to pin (SO368872 / SRTWC286-SH) is retired for EVERY verb,
+    not only ORDER_BACK. A plain ORDER row on the SAME delivered line as AC-OB-4's
+    ORDER_BACK sibling now counts its own qty in full too - `qty - linked - bundled`,
+    never capped by the line's outstanding - and still at the line's OWN warehouse, never
+    the donor (that stays ORDER_BACK-only, AC-OB-4). Name kept (do not delete, the plan
+    says so); the assertion and its reason are the opposite of what it originally pinned."""
     with blank_session() as db:
         scm_schema, projects = _scratch_schemas(db)
         db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
@@ -853,7 +901,7 @@ def test_ac_ob_5_an_order_row_on_the_same_delivered_line_stays_capped_at_zero():
         world = _ob_confirmed_leg_world(db, projects)
         by_wh = _ob_committed_by_warehouse(db, scm_schema, world["product"])
 
-        assert by_wh.get(world["own_code"], 0.0) == 0.0, by_wh
+        assert by_wh.get(world["own_code"]) == 3.0, by_wh
 
 
 @requires_pg
@@ -870,3 +918,193 @@ def test_ac_ob_6_an_order_back_row_nets_its_own_linked_and_bundled_quantity():
         by_wh = _ob_committed_by_warehouse(db, scm_schema, world["product"])
 
         assert by_wh.get(world["donor_code"]) == 1.0, by_wh
+
+
+# =============================================================================
+# AC-OU-1/2/3 (`PLAN-oi-order-rows-uncapped.md`, R1, 23 Sep 2026) - the CONFIRMED leg's
+# own arithmetic for a plain ORDER row: owed in FULL, `qty - linked - bundled`, never
+# capped by the core line's outstanding - the 14 Sep cap retired for every verb, not only
+# ORDER_BACK (AC-OB-4/6 above). Live `COMMITTED_V_SQL`, installed fresh into a scratch
+# schema the same way the AC-OB tests above do.
+# =============================================================================
+
+
+def _order_row_world(
+    db, projects: str, *, row_qty, line_ordered, line_delivered, line_status="closed",
+    bundled_qty=0, link_qty=None,
+):
+    """ONE ORDER row (no ORDER_BACK sibling) hung off one core sales-order line, at the
+    line's OWN warehouse - the SO421985 shape (plan section 1): three ORDER rows, raised,
+    linked 0, against lines the AutoCount pull later marked delivered in full and closed.
+    """
+    import json
+
+    company = db.execute(text("select id from companies where code = 'SRT'")).scalar()
+    ids = {n: str(uuid.uuid4()) for n in (
+        "cat", "uom", "product", "warehouse", "core_so", "core_line", "pso", "mirror",
+        "inquiry", "decision", "row",
+    )}
+    warehouse_code = f"ZZTOU-WH-{ids['warehouse'][:6]}"
+    item_code = f"ZZTOU-P-{ids['product'][:6]}"
+
+    db.execute(text(
+        "INSERT INTO product_categories (id, category_code, category_name) "
+        "VALUES (:i, :c, :c)"), {"i": ids["cat"], "c": f"ZZTOU-CAT-{ids['cat'][:6]}"})
+    db.execute(text(
+        "INSERT INTO units_of_measure (id, uom_code, uom_name) VALUES (:i, :c, :c)"),
+        {"i": ids["uom"], "c": f"ZZTOU-U-{ids['uom'][:6]}"})
+    db.execute(text(
+        "INSERT INTO products (id, company_id, product_code, product_name, category_id, "
+        "base_uom_id, list_price) VALUES (:i, :c, :code, :code, :cat, :uom, 0)"),
+        {"i": ids["product"], "c": company, "code": item_code, "cat": ids["cat"],
+         "uom": ids["uom"]})
+    db.execute(text(
+        "INSERT INTO warehouses (id, company_id, warehouse_code, warehouse_name, "
+        "is_active) VALUES (:i, :c, :code, :code, true)"),
+        {"i": ids["warehouse"], "c": company, "code": warehouse_code})
+    db.execute(text(
+        "INSERT INTO sales_orders (id, company_id, so_number, status, demand_class) "
+        "VALUES (:i, :c, :n, 'open', 'project')"),
+        {"i": ids["core_so"], "c": company, "n": f"ZZTOU-SO-{ids['core_so'][:8]}"})
+    db.execute(text(
+        "INSERT INTO sales_order_lines (id, company_id, sales_order_id, product_id, "
+        "warehouse_id, qty_ordered, qty_delivered, unit_price, line_status) "
+        "VALUES (:i, :c, :so, :p, :w, :ordered, :delivered, 0, :status)"),
+        {"i": ids["core_line"], "c": company, "so": ids["core_so"], "p": ids["product"],
+         "w": ids["warehouse"], "ordered": line_ordered, "delivered": line_delivered,
+         "status": line_status})
+    db.execute(text(
+        "INSERT INTO " + projects + ".sales_orders (id, company_id, provisional_ref, "
+        "so_id, status, created_at, updated_at) "
+        "VALUES (:i, :c, :ref, :so, 'published', now(), now())"),
+        {"i": ids["pso"], "c": company, "ref": f"ZZTOU-PSO-{ids['pso'][:8]}",
+         "so": ids["core_so"]})
+    db.execute(text(
+        "INSERT INTO " + projects + ".sales_order_lines (id, company_id, "
+        "project_sales_order_id, line_no, product_id, qty, unit_price, amount, "
+        "core_sales_order_line_id, created_at) "
+        "VALUES (:i, :c, :p, 1, :prod, :ordered, 0, 0, :core, now())"),
+        {"i": ids["mirror"], "c": company, "p": ids["pso"], "prod": ids["product"],
+         "ordered": line_ordered, "core": ids["core_line"]})
+    db.execute(text(
+        "INSERT INTO " + projects + ".order_inquiries (id, company_id, inquiry_no, "
+        "project_sales_order_id, state, raised_at) "
+        "VALUES (:i, :c, :no, :p, 'raised', now())"),
+        {"i": ids["inquiry"], "c": company, "no": f"OI-ZZTOU-{ids['inquiry'][:6]}",
+         "p": ids["pso"]})
+    db.execute(text(
+        "INSERT INTO " + projects + ".so_supply_decisions (id, company_id, "
+        "project_sales_order_id, revision_no, state, line_snapshots, confirmed_at) "
+        "VALUES (:i, :c, :p, 1, 'active', CAST(:snap AS jsonb), now())"),
+        {"i": ids["decision"], "c": company, "p": ids["pso"],
+         "snap": json.dumps([{"line_no": 1}])})
+    db.execute(text(
+        "INSERT INTO " + projects + ".order_inquiry_rows (id, company_id, "
+        "order_inquiry_id, so_line_id, item_code, qty, verb, state, ack_state, "
+        "supply_decision_id, bundled_qty, redirected_to_pool, created_at) "
+        "VALUES (:i, :c, :inq, :l, :code, :qty, 'ORDER', 'raised', 'acknowledged', :d, "
+        ":bundled, false, now())"),
+        {"i": ids["row"], "c": company, "inq": ids["inquiry"], "l": ids["mirror"],
+         "code": item_code, "qty": row_qty, "d": ids["decision"], "bundled": bundled_qty})
+    db.flush()
+
+    if link_qty is not None:
+        supplier, po, po_line = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+        db.execute(text(
+            "INSERT INTO suppliers (id, company_id, supplier_code, supplier_name, "
+            "is_active) VALUES (:i, :c, :code, :code, true)"),
+            {"i": supplier, "c": company, "code": f"ZZTOU-S-{supplier[:6]}"})
+        db.execute(text(
+            "INSERT INTO purchase_orders (id, company_id, po_number, supplier_id, "
+            "issue_date, status) VALUES (:i, :c, :n, :s, current_date, 'active')"),
+            {"i": po, "c": company, "n": f"ZZTOU-PO-{po[:8]}", "s": supplier})
+        db.execute(text(
+            "INSERT INTO purchase_order_lines (id, company_id, purchase_order_id, "
+            "product_id, warehouse_id, qty_ordered, qty_received, line_status, "
+            "expected_date) VALUES (:i, :c, :po, :p, :w, :q, 0, 'open', current_date)"),
+            {"i": po_line, "c": company, "po": po, "p": ids["product"],
+             "w": ids["warehouse"], "q": link_qty})
+        db.execute(text(
+            "INSERT INTO " + projects + ".order_inquiry_links (id, company_id, "
+            "row_id, po_line_id, document, qty, auto, created_at) "
+            "VALUES (:i, :c, :r, :pl, 'ZZTOU-LINKED', :q, false, now())"),
+            {"i": str(uuid.uuid4()), "c": company, "r": ids["row"], "pl": po_line,
+             "q": link_qty})
+        db.flush()
+
+    return {"product": ids["product"], "warehouse_code": warehouse_code}
+
+
+@requires_pg
+def test_ac_ou_1_an_order_row_counts_in_full_on_a_delivered_closed_line():
+    """AC-OU-1. `scm.committed_v` counts an ORDER row of qty 493 whose core line is
+    delivered 493/493 and closed as project demand 493 at the line's warehouse - the 14
+    Sep cap is retired for every verb (R1, SO421985)."""
+    with blank_session() as db:
+        scm_schema, projects = _scratch_schemas(db)
+        db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
+        db.execute(text(_rebind(COMMITTED_V_SQL, scm_schema, projects)))
+
+        world = _order_row_world(
+            db, projects, row_qty=493, line_ordered=493, line_delivered=493,
+            line_status="closed",
+        )
+        by_wh = _ob_committed_by_warehouse(db, scm_schema, world["product"])
+
+        assert by_wh.get(world["warehouse_code"]) == 493.0, by_wh
+
+
+@requires_pg
+def test_ac_ou_2_an_order_row_on_an_open_line_counts_its_own_qty_not_the_outstanding():
+    """AC-OU-2. An ORDER row of 314 on a line with 12 outstanding (364 ordered, 352
+    delivered - the SO368872 / SRTWC286-SH shape the 14 Sep cap used to pin) counts 314,
+    not 12 (R1, 23 Sep 2026 - "Known consequence: the SO368872 shape buys the row
+    quantity again")."""
+    with blank_session() as db:
+        scm_schema, projects = _scratch_schemas(db)
+        db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
+        db.execute(text(_rebind(COMMITTED_V_SQL, scm_schema, projects)))
+
+        world = _order_row_world(
+            db, projects, row_qty=314, line_ordered=364, line_delivered=352,
+            line_status="open",
+        )
+        by_wh = _ob_committed_by_warehouse(db, scm_schema, world["product"])
+
+        assert by_wh.get(world["warehouse_code"]) == 314.0, by_wh
+
+
+@requires_pg
+def test_ac_ou_3_an_order_row_nets_its_own_linked_and_bundled_quantity():
+    """AC-OU-3. Linked and bundled quantities still reduce an ORDER row's owed figure:
+    493 with 100 linked and 10 bundled counts 383."""
+    with blank_session() as db:
+        scm_schema, projects = _scratch_schemas(db)
+        db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
+        db.execute(text(_rebind(COMMITTED_V_SQL, scm_schema, projects)))
+
+        world = _order_row_world(
+            db, projects, row_qty=493, line_ordered=493, line_delivered=493,
+            line_status="closed", bundled_qty=10, link_qty=100,
+        )
+        by_wh = _ob_committed_by_warehouse(db, scm_schema, world["product"])
+
+        assert by_wh.get(world["warehouse_code"]) == 383.0, by_wh
+
+
+@requires_pg
+def test_ac_ou_3b_a_fully_linked_order_row_counts_zero():
+    """AC-OU-3, the other half: a fully linked ORDER row (493 linked of 493) counts 0 -
+    the leg's own `{_OWED_SQL} > 0` predicate drops it from the view entirely."""
+    with blank_session() as db:
+        scm_schema, projects = _scratch_schemas(db)
+        db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
+        db.execute(text(_rebind(COMMITTED_V_SQL, scm_schema, projects)))
+
+        world = _order_row_world(
+            db, projects, row_qty=493, line_ordered=493, line_delivered=493,
+            line_status="closed", link_qty=493,
+        )
+        by_wh = _ob_committed_by_warehouse(db, scm_schema, world["product"])
+
+        assert by_wh.get(world["warehouse_code"], 0.0) == 0.0, by_wh

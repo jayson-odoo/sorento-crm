@@ -762,8 +762,34 @@ def test_ac_ob_10_an_order_back_row_against_a_delivered_line_is_never_history_cl
 
 
 def test_ac_ob_11_an_order_row_against_a_delivered_line_still_history_closes():
-    """AC-OB-11, the sibling of AC-OB-10 on the same shape: an ORDER row against a line
-    delivered in full is still history - AC-S1-29 stands unchanged for ORDER."""
+    """REWRITTEN (R2, owner 23 Sep 2026, implied by R1, `PLAN-oi-order-rows-uncapped.md`
+    SO421985): a delivered line is no longer a reason to history-close an ORDER row at
+    all - AC-OU-7 below is what AC-S1-29 now reads for ORDER against a delivered line.
+    This name is kept (do not delete) for AC-OU-8, its own new sibling: the importer
+    keeps closing history on a CANCELLED line only, narrowed from "not open demand"."""
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="3", qty_delivered="3", line_status="cancelled")
+        data = sheet([
+            (order.so_number, w.product.product_code, 3, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert row.verb == IV_ORDER
+        assert row.state == INQUIRY_ACTIONED
+        assert row.actioned_at is not None
+
+
+def test_ac_ou_7_an_order_row_against_a_delivered_closed_line_stays_raised():
+    """AC-OU-7 (R1/R2, 23 Sep 2026). Uploading an ORDER row against a line delivered in
+    full - `line_status` still `open` so it remains an import CANDIDATE (AC-S1-29,
+    AC-S4-3), the same shape AC-OB-10 pins for ORDER_BACK - stores state `raised`, never
+    `actioned`, for ORDER too now. `_close_history` no longer tests `_is_open_demand`,
+    only whether the core line is CANCELLED (R2)."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="3", qty_delivered="3")
@@ -777,8 +803,11 @@ def test_ac_ob_11_an_order_row_against_a_delivered_line_still_history_closes():
         assert result["rows_raised"] == 1, result
         row = w.one_row()
         assert row.verb == IV_ORDER
-        assert row.state == INQUIRY_ACTIONED
-        assert row.actioned_at is not None
+        assert row.state == INQUIRY_RAISED, (
+            "a delivered, closed line is no longer a reason to history-close an ORDER row"
+        )
+        assert row.actioned_at is None
+        assert row.actioned_by is None
 
 
 def test_identical_rows_across_tabs_raise_once():
@@ -1393,22 +1422,25 @@ def test_row_note_carries_migration_stamp():
 
 
 def test_closed_line_row_not_open_demand():
-    """AC-S1-29. A row against a CLOSED line is not demand: `scm.committed_v` counts the
-    LINE, and a closed line is not owed.
+    """REWRITTEN (R1, owner 23 Sep 2026, implied, `PLAN-oi-order-rows-uncapped.md`,
+    SO421985) - found by this lane's own test run, not enumerated in its test list: a row
+    against a CLOSED line IS now demand, in full, exactly the ruling this lane's AC-OU-1
+    pins against a scratch schema. AC-S1-29's original point (the view ignores a closed
+    line's row) is retired for the SAME reason AC-OB-5/AC-R-36 above are: "whatever
+    AutoCount says about the line" now includes "closed".
 
     Rewritten under R4 (21 Sep 2026, `PLAN-board-received-stock-own-arrival.md` S4): the
     sheet importer no longer raises ANY row against a closed line (AC-S4-3, a closed or
     cancelled core line is never a candidate, superseding D8's "closed lines migrate too"
-    this test used to exercise the row through). AC-S1-29's own point - the VIEW ignores a
-    closed line's row regardless of how it got there - is unrelated to the importer's line
-    pick, so the row is written directly the way the board's own writer does
-    (`World.board_row`, already used elsewhere in this file for "already raised" fixtures),
-    against a mirror `adopt_for_migration` creates for the closed order exactly as the
-    importer itself would have (`ProjectSOAdoptionService.adopt_for_migration`, AC-S1-26).
+    this test used to exercise the row through). The row is written directly the way the
+    board's own writer does (`World.board_row`, already used elsewhere in this file for
+    "already raised" fixtures), against a mirror `adopt_for_migration` creates for the
+    closed order exactly as the importer itself would have
+    (`ProjectSOAdoptionService.adopt_for_migration`, AC-S1-26).
 
     On the real database, because the view is installed by a migration rather than by
-    `create_all`. A retail order at the same product and location is seeded beside it so the
-    snapshot has something in it to be identical about.
+    `create_all`. A retail order at the same product and location is seeded beside it so
+    the snapshot has something known to compare against.
     """
     with world(pg_session) as w:
         order = w.order(status="closed")
@@ -1429,6 +1461,7 @@ def test_closed_line_row_not_open_demand():
 
         before = snapshot()
         assert before, "the retail neighbour must be counted before the sheet is applied"
+        before_committed = before[0][2]
 
         ProjectSOAdoptionService(w.db).adopt_for_migration(str(order.id), w.actor)
         mirror = w.mirror_of(closed_line)
@@ -1436,7 +1469,15 @@ def test_closed_line_row_not_open_demand():
         w.board_row(mirror, qty="40")
         w.db.flush()
 
-        assert snapshot() == before
+        after = snapshot()
+        assert after, "the row must still surface at this product/warehouse"
+        assert after[0][3] == Decimal("40"), (
+            "the closed-line board row is now owed in full (R1) - project_committed must "
+            "carry its own qty, not 0"
+        )
+        assert after[0][2] == before_committed + Decimal("40"), (
+            "committed rises by exactly the row's own qty; the retail neighbour is untouched"
+        )
         # Read by THIS test's own item code rather than through `one_row()`. This is the one
         # case on the real database (`pg_session`, for the view), where the tables are not
         # empty - a browser run against the same lane database leaves rows of its own, and an

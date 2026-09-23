@@ -1088,19 +1088,14 @@ def _row_on_a_core_line(world, product_key: str, qty, *, ordered, delivered):
 
 
 def test_ac_r_36_buy_is_capped_by_what_the_core_line_still_owes(world):
-    """AC-R-36. Buy stops at what the sales order line still OWES (plan 7.3).
-
-    `Buy = row qty - linked - bundled` never looked at delivery. SO368872 / SRTWC286-SH on
-    prod: the line ordered 364 and delivered 352, so twelve are outstanding - and the row
-    read Buy 240, which is purchasing being told to buy 240 of something the customer has
-    already had. (240 rather than 302 there because the same row was double counted across a
-    PO line and its own ship; that half is AC-R-34. Here the row carries one link of 62, so
-    the unfixed reading is 302.)
-
-    Capping by the line's outstanding moves the whole copy's Buy total only from 154,618 to
-    153,124 - 138 rows sit on a partly delivered line - so this is a correctness fix rather
-    than a big number, and it is the reading the cards, the `kind=buy` filter and the matrix
-    all share.
+    """REWRITTEN (R1, owner 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`, SO421985): the
+    14 Sep cap (plan 7.3) this test used to pin is RETIRED - `Buy = row qty - linked -
+    bundled` never looks at delivery again, for any verb. SO368872 / SRTWC286-SH on prod:
+    the line ordered 364 and delivered 352, twelve outstanding, the row carries one link
+    of 62 - Buy now reads 302 (the row's own qty less the link), the "known consequence"
+    the ruling names: the SO368872 shape buys the row quantity again. Name kept (do not
+    delete, same rule the AC-OB-5 rewrite in `test_committed_v_migration_chain.py`
+    follows); the assertion and its reason are the opposite of what it originally pinned.
     """
     row = _row_on_a_core_line(world, "CKS1050", 364, ordered=364, delivered=352)
     line = world.purchase_order("CKS1050", f"{MARKER}-PO-R36", "S1", 62)
@@ -1112,17 +1107,20 @@ def test_ac_r_36_buy_is_capped_by_what_the_core_line_still_owes(world):
     kinds = _worklist(world)._kinds({})
 
     assert Decimal(kinds["po"]) == Decimal("62")
-    assert Decimal(kinds["buy"]) == Decimal("0"), (
-        "twelve of the 364 are still owed and 62 are already on a purchase order, so there "
-        "is nothing left to buy"
+    assert Decimal(kinds["buy"]) == Decimal("302"), (
+        "twelve of the 364 are still outstanding, but the cap is retired (R1) - Buy is "
+        "the row's own qty (364) less what is already linked (62), not the outstanding"
     )
     ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
-    assert row.id not in ids, "a row with nothing to buy was listed under Buy"
+    assert row.id in ids, "a row that still owes 302 must be listed under Buy"
 
 
-def test_ac_r_36_buy_counts_the_outstanding_that_is_left(world):
-    """AC-R-36, second half: 300 delivered of 364 leaves 64 owed, 62 of them on a purchase
-    order, so Buy is 2 - the cap is a cap, not a switch that zeroes the card."""
+def test_ac_r_36_buy_ignores_delivery_entirely_now(world):
+    """REWRITTEN (R1, 23 Sep 2026), sibling of the rewrite above: with the same row qty
+    and the same link, a DIFFERENT delivered figure (300 instead of 352 - 64 outstanding
+    instead of 12) must read the SAME Buy, because delivery no longer has any say in it
+    at all. Was `test_ac_r_36_buy_counts_the_outstanding_that_is_left`, which pinned the
+    cap narrowing Buy from 302 to 2; that narrowing is gone."""
     row = _row_on_a_core_line(world, "CKS1050", 364, ordered=364, delivered=300)
     line = world.purchase_order("CKS1050", f"{MARKER}-PO-R36B", "S1", 62)
     world.svc.place_on_po_allocations(
@@ -1132,7 +1130,9 @@ def test_ac_r_36_buy_counts_the_outstanding_that_is_left(world):
 
     kinds = _worklist(world)._kinds({})
 
-    assert Decimal(kinds["buy"]) == Decimal("2")
+    assert Decimal(kinds["buy"]) == Decimal("302"), (
+        "same row qty, same link, a different delivered figure - Buy must not move"
+    )
     ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
     assert row.id in ids
 
@@ -1172,6 +1172,23 @@ def test_ac_ob_8_an_order_back_row_ignores_the_core_lines_cap(world):
     assert Decimal(kinds["buy"]) == Decimal("3"), (
         "the core line owes nothing more, but an ORDER_BACK row is owed in full - the "
         "14 Sep cap (7.3) must never touch it"
+    )
+    ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
+    assert row.id in ids
+
+
+def test_ac_ou_5_an_order_rows_remaining_is_uncapped_on_a_delivered_line(world):
+    """AC-OU-5 (R1, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`, SO421985). The
+    worklist Remaining for a plain ORDER row (not ORDER_BACK) on a core line delivered in
+    full is now the row's own qty, not 0 - the 14 Sep cap (7.3) is retired for EVERY
+    verb, not only ORDER_BACK (AC-OB-8's sibling, above)."""
+    row = _row_on_a_core_line(world, "CKS1050", 493, ordered=493, delivered=493)
+
+    kinds = _worklist(world)._kinds({})
+
+    assert Decimal(kinds["buy"]) == Decimal("493"), (
+        "the core line owes nothing more, but a raised, unlinked ORDER row is owed in "
+        "full - the 14 Sep cap must never touch it any more"
     )
     ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
     assert row.id in ids
