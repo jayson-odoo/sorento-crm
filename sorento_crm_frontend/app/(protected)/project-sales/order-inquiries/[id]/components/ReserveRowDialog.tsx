@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -25,6 +26,15 @@ import type {
  * Replaces round 1's `ReserveRequestsCard`/`ReserveRequestsSection` (the open-request
  * card above the grid): the Reserve tab is that card's own act-mode form, narrowed to
  * one row; the History tab (F3) is new.
+ *
+ * Round 3 (section 6d G1, AC-RS-65..67): the email deep link (`?reserve=<request_id>`)
+ * used to open this dialog for ONE row - the request's own first open row - and now
+ * opens EVERY still-open row of that request at once, one section each with its own
+ * Confirm reserved, no History tab (history lives on the line). `rows: ReserveRowDialogRow[]`
+ * is the new, primary shape (length 1..N); the OLD scalar `rowId`/`itemCode`/
+ * `openRequest`/`history`/`netReservedQty` props stay as a fallback for the single-row,
+ * line-click path, which keeps its own Reserve/History tabs exactly as before -
+ * `rows` with one entry renders identically, whichever way the caller reaches it.
  *
  * Kept free of `QueryClientProvider`/react-query entirely on purpose, the same reason
  * `ReserveRequestsCard` was: its own vitest suite renders it with no providers at all.
@@ -52,6 +62,20 @@ export interface ReserveRowDialogHistoryEntry {
   reason: string | null;
   actorName: string | null;
   createdAt: string | null;
+}
+
+/** Round 3 (AC-RS-65/AC-RS-66): one entry per row the dialog carries a section for. */
+export interface ReserveRowDialogRow {
+  rowId: string;
+  itemCode: string | null;
+  /** The row's own OPEN (unanswered) request row - null once it has been answered
+   * (or none was ever raised). Reserve/Reason inputs render only while this is set. */
+  openRequest: ReserveRowDialogOpenRequest | null;
+  /** Newest first (F3) - already resolved by the caller. */
+  history: ReserveRowDialogHistoryEntry[];
+  /** The row's own NET reserved (sum reserved - sum unreserved) - read straight off
+   * the worklist row (`reserved_qty`), never recomputed here. */
+  netReservedQty: string;
 }
 
 export interface ReserveRowDialogCancelControl {
@@ -82,52 +106,68 @@ const HISTORY_KIND_LABEL: Record<string, string> = {
   cancelled: 'Request cancelled',
 };
 
-export function ReserveRowDialog({
-  open,
-  onOpenChange,
-  rowId,
-  itemCode,
-  openRequest,
-  history,
+function HistoryPanel({ history }: { history: ReserveRowDialogHistoryEntry[] }) {
+  return (
+    <div className="space-y-2">
+      {history.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No history yet.</p>
+      ) : (
+        history.map((entry, index) => (
+          // N4 (reviewer round): the entry's own identity - kind + when it
+          // happened - never the array index, which reorders on refetch.
+          <div
+            key={`${entry.kind}-${entry.createdAt ?? index}`}
+            className="rounded-md border border-border p-2 text-xs"
+          >
+            <div className="font-medium">
+              {HISTORY_KIND_LABEL[entry.kind] ?? entry.kind}
+              {entry.qty ? ` ${entry.qty}` : ''}
+              {entry.location ? ` @ ${entry.location}` : ''}
+            </div>
+            <div className="text-muted-foreground">
+              {entry.actorName ?? 'Unknown'}
+              {entry.createdAt ? ` on ${formatDateTime(entry.createdAt)}` : ''}
+              {entry.reason ? ` - ${entry.reason}` : ''}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** ONE row's own Reserve form - the per-row state this dialog used to hold at its top
+ * level, now scoped to whichever row's section it belongs to (each section is its own
+ * component instance, so React hooks per row work naturally). */
+function ReserveRowSection({
+  row,
   locationOptions,
   defaultLocationId,
   availableQtyByLocation,
-  netReservedQty,
   canAct,
   onReserve,
-  onConfirmed,
+  onRowConfirmed,
   unreserveControl,
-  cancelControl,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  rowId: string;
-  itemCode: string | null;
-  /** The row's own OPEN (unanswered) request row - null once it has been answered
-   * (or none was ever raised). Reserve/Reason inputs render only while this is set. */
-  openRequest: ReserveRowDialogOpenRequest | null;
-  /** Newest first (F3) - already resolved by the caller. */
-  history: ReserveRowDialogHistoryEntry[];
-  /** F1: every active pool for this row's own product, `<code>  available N`. */
+  row: ReserveRowDialogRow;
   locationOptions: SearchableSelectOption[];
   defaultLocationId: string | null;
   availableQtyByLocation: Record<string, number>;
-  /** The row's own NET reserved (sum reserved - sum unreserved) - read straight off
-   * the worklist row (`reserved_qty`), never recomputed here. */
-  netReservedQty: string;
   canAct: boolean;
-  /** S5: the caller's own `useReserveOrderInquiryRow` mutation. */
   onReserve: (
     requestId: string,
     rowId: string,
     payload: ReserveRowPayload,
   ) => Promise<OrderInquiryReserveRequestRow>;
-  onConfirmed?: () => void;
-  /** S2: null while nothing offers Unreserve yet (canAct false, or nothing reserved). */
+  /** Round 3: replaces the old top-level `onConfirmed` - names WHICH row confirmed and
+   * with what qty, so a multi-row dialog can flip that one section read-only. */
+  onRowConfirmed: (rowId: string, qty: number) => void;
+  /** Absent in the multi-row (email-link) path: every row it carries is still open by
+   * construction (`OrderInquiryDetail`'s own filter), so the "already reserved, offer
+   * Unreserve" branch below never renders there in practice. */
   unreserveControl?: ReserveRowDialogUnreserveControl | null;
-  /** F2 header "Cancel request" - optional, absent renders nothing (plan 6c). */
-  cancelControl?: ReserveRowDialogCancelControl | null;
 }) {
+  const { rowId, openRequest, history, netReservedQty } = row;
   const requestedQty = openRequest ? Number(openRequest.qtyRequested || '0') : 0;
   const netReserved = Number(netReservedQty || '0');
 
@@ -217,7 +257,7 @@ export function ReserveRowDialog({
         qty_reserved: reserved,
         reason: reason.trim() ? reason.trim() : null,
       });
-      onConfirmed?.();
+      onRowConfirmed(rowId, reserved);
     } catch {
       // The caller's own mutation hook already toasted the error (S5).
     } finally {
@@ -242,12 +282,237 @@ export function ReserveRowDialog({
   const lastReservedEntry = history.find((entry) => entry.kind === 'reserved');
   const showUnreserveOffer = !openRequest && netReserved > 0 && canAct;
 
+  if (!openRequest) {
+    return netReserved > 0 ? (
+      <div className="space-y-3">
+        <div className="text-sm">
+          Reserved {netReservedQty}
+          {lastReservedEntry?.location ? ` @ ${lastReservedEntry.location}` : ''}
+        </div>
+        {showUnreserveOffer && unreserveControl?.countdown ? (
+          // S2: the SAME countdown shape `cancelControl` renders in the
+          // header - no confirm step, Escape does not cancel it
+          // (`DeferredCountdown` owns both already), and the server
+          // commits even if this dialog closes mid-window.
+          unreserveControl.countdown
+        ) : showUnreserveOffer ? (
+          unreserveOpen ? (
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <div className="space-y-1">
+                <Label htmlFor={`reserve-row-unreserve-qty-${rowId}`}>Qty</Label>
+                <Input
+                  id={`reserve-row-unreserve-qty-${rowId}`}
+                  type="number"
+                  min={1}
+                  max={netReserved}
+                  step="any"
+                  value={unreserveQty}
+                  onChange={(event) => setUnreserveQty(event.target.value)}
+                />
+                {unreserveQtyAboveNet ? (
+                  <p className="text-xs text-destructive">
+                    Up to {netReservedQty} can be released
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`reserve-row-unreserve-note-${rowId}`}>Note</Label>
+                <Input
+                  id={`reserve-row-unreserve-note-${rowId}`}
+                  value={unreserveNote}
+                  onChange={(event) => setUnreserveNote(event.target.value)}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setUnreserveOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleUnreserveStart}
+                  disabled={
+                    !unreserveControl ||
+                    unreserveControl.isPending ||
+                    unreserveControl.isBlocked ||
+                    unreserveQtyInvalid
+                  }
+                >
+                  Unreserve
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button type="button" variant="outline" onClick={() => setUnreserveOpen(true)}>
+              Unreserve
+            </Button>
+          )
+        ) : null}
+      </div>
+    ) : (
+      <p className="text-sm text-muted-foreground">Nothing reserved on this row.</p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="text-sm text-muted-foreground">
+        Request #{openRequest.ordinal} - requested {openRequest.qtyRequested}
+        {openRequest.requestedByName ? ` by ${openRequest.requestedByName}` : ''}
+        {openRequest.requestedAt ? ` on ${formatDateTime(openRequest.requestedAt)}` : ''}
+      </div>
+      {canAct ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor={`reserve-row-location-${rowId}`}>Location</Label>
+              <SearchableSelect
+                id={`reserve-row-location-${rowId}`}
+                value={location}
+                onChange={handleLocationChange}
+                options={locationOptions}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`reserve-row-qty-${rowId}`}>Reserved</Label>
+              <Input
+                id={`reserve-row-qty-${rowId}`}
+                type="number"
+                min={0}
+                max={requestedQty}
+                step="any"
+                value={reserved}
+                onChange={handleReservedChange}
+              />
+            </div>
+          </div>
+          {short ? (
+            <div className="space-y-1">
+              <Label htmlFor={`reserve-row-reason-${rowId}`}>Reason</Label>
+              <Input
+                id={`reserve-row-reason-${rowId}`}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </div>
+          ) : null}
+          <div className="flex justify-end">
+            <Button onClick={handleConfirm} disabled={!canConfirm || confirming}>
+              Confirm reserved
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+export function ReserveRowDialog({
+  open,
+  onOpenChange,
+  rows,
+  rowId,
+  itemCode,
+  openRequest,
+  history,
+  locationOptions,
+  defaultLocationId,
+  availableQtyByLocation,
+  netReservedQty,
+  canAct,
+  onReserve,
+  onConfirmed,
+  unreserveControl,
+  cancelControl,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Round 3 (AC-RS-65/AC-RS-66): the primary shape, one section per row, length 1..N.
+   * A length of 1 renders exactly like the old single-row dialog (Reserve/History
+   * tabs); more than one drops the History tab (history lives on the line) and closes
+   * itself once the last open section confirms. */
+  rows?: ReserveRowDialogRow[];
+  /** Single-row fallback (the line-click path), kept for a caller that has not moved
+   * to `rows` - functionally identical to `rows: [{ rowId, itemCode, openRequest,
+   * history, netReservedQty }]`. */
+  rowId?: string;
+  itemCode?: string | null;
+  openRequest?: ReserveRowDialogOpenRequest | null;
+  /** Newest first (F3) - already resolved by the caller. */
+  history?: ReserveRowDialogHistoryEntry[];
+  /** F1: every active pool for this row's own product, `<code>  available N`. */
+  locationOptions: SearchableSelectOption[];
+  defaultLocationId: string | null;
+  availableQtyByLocation: Record<string, number>;
+  /** The row's own NET reserved (sum reserved - sum unreserved) - read straight off
+   * the worklist row (`reserved_qty`), never recomputed here. */
+  netReservedQty?: string;
+  canAct: boolean;
+  /** S5: the caller's own `useReserveOrderInquiryRow` mutation. */
+  onReserve: (
+    requestId: string,
+    rowId: string,
+    payload: ReserveRowPayload,
+  ) => Promise<OrderInquiryReserveRequestRow>;
+  onConfirmed?: () => void;
+  /** S2: null while nothing offers Unreserve yet (canAct false, or nothing reserved).
+   * Only meaningful on the single-row path - a multi-row (email-link) dialog carries
+   * only still-open rows, which never offer Unreserve. */
+  unreserveControl?: ReserveRowDialogUnreserveControl | null;
+  /** Header "Cancel request" (plan 6c/6d) - applies to the WHOLE request, so it
+   * renders whenever ANY row this dialog carries still has an open request answer. */
+  cancelControl?: ReserveRowDialogCancelControl | null;
+}) {
+  const effectiveRows: ReserveRowDialogRow[] = React.useMemo(() => {
+    if (rows && rows.length > 0) return rows;
+    if (rowId) {
+      return [
+        {
+          rowId,
+          itemCode: itemCode ?? null,
+          openRequest: openRequest ?? null,
+          history: history ?? [],
+          netReservedQty: netReservedQty ?? '0',
+        },
+      ];
+    }
+    return [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, rowId, itemCode, openRequest, history, netReservedQty]);
+
+  const showTabs = effectiveRows.length === 1;
+  const anyOpenRequest = effectiveRows.some((row) => Boolean(row.openRequest));
+
+  // Round 3: which rows this dialog session has already confirmed, and with what qty -
+  // flips that row's own section to a read-only "Reserved N" line, and closes the
+  // dialog once every open row has one.
+  const [confirmedRows, setConfirmedRows] = React.useState<Record<string, number>>({});
+  const rowsSignature = effectiveRows.map((row) => row.rowId).join(',');
+  React.useEffect(() => {
+    setConfirmedRows({});
+  }, [rowsSignature]);
+
+  function handleRowConfirmed(confirmedRowId: string, qty: number) {
+    setConfirmedRows((prev) => {
+      const next = { ...prev, [confirmedRowId]: qty };
+      // Multi-row only: the tabs (single-row) path keeps the dialog open after a
+      // Confirm, exactly as it always has.
+      if (!showTabs && Object.keys(next).length >= effectiveRows.length) {
+        onOpenChange(false);
+      }
+      return next;
+    });
+    onConfirmed?.();
+  }
+
+  const soleRow = effectiveRows[0];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <DialogTitle>Reserve{itemCode ? ` - ${itemCode}` : ''}</DialogTitle>
-          {cancelControl && openRequest ? (
+          <DialogTitle>
+            Reserve{showTabs && soleRow?.itemCode ? ` - ${soleRow.itemCode}` : ''}
+          </DialogTitle>
+          {cancelControl && anyOpenRequest ? (
             cancelControl.countdown ?? (
               <Button
                 type="button"
@@ -262,160 +527,71 @@ export function ReserveRowDialog({
           ) : null}
         </DialogHeader>
         <DialogBody>
-          <Tabs defaultValue="reserve" className="w-full">
-            <TabsList variant="line" className="mb-3 w-full justify-start">
-              <TabsTrigger value="reserve">Reserve</TabsTrigger>
-              <TabsTrigger value="history">History</TabsTrigger>
-            </TabsList>
+          {showTabs ? (
+            <Tabs defaultValue="reserve" className="w-full">
+              <TabsList variant="line" className="mb-3 w-full justify-start">
+                <TabsTrigger value="reserve">Reserve</TabsTrigger>
+                <TabsTrigger value="history">History</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="reserve" className="mt-0 focus-visible:outline-none">
-              {openRequest ? (
-                <div className="space-y-3">
-                  <div className="text-sm text-muted-foreground">
-                    Request #{openRequest.ordinal} - requested {openRequest.qtyRequested}
-                    {openRequest.requestedByName ? ` by ${openRequest.requestedByName}` : ''}
-                    {openRequest.requestedAt ? ` on ${formatDateTime(openRequest.requestedAt)}` : ''}
-                  </div>
-                  {canAct ? (
-                    <>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <Label htmlFor="reserve-row-location">Location</Label>
-                          <SearchableSelect
-                            id="reserve-row-location"
-                            value={location}
-                            onChange={handleLocationChange}
-                            options={locationOptions}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="reserve-row-qty">Reserved</Label>
-                          <Input
-                            id="reserve-row-qty"
-                            type="number"
-                            min={0}
-                            max={requestedQty}
-                            step="any"
-                            value={reserved}
-                            onChange={handleReservedChange}
-                          />
-                        </div>
-                      </div>
-                      {short ? (
-                        <div className="space-y-1">
-                          <Label htmlFor="reserve-row-reason">Reason</Label>
-                          <Input
-                            id="reserve-row-reason"
-                            value={reason}
-                            onChange={(event) => setReason(event.target.value)}
-                          />
-                        </div>
-                      ) : null}
-                      <div className="flex justify-end">
-                        <Button onClick={handleConfirm} disabled={!canConfirm || confirming}>
-                          Confirm reserved
-                        </Button>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : netReserved > 0 ? (
-                <div className="space-y-3">
-                  <div className="text-sm">
-                    Reserved {netReservedQty}
-                    {lastReservedEntry?.location ? ` @ ${lastReservedEntry.location}` : ''}
-                  </div>
-                  {showUnreserveOffer && unreserveControl?.countdown ? (
-                    // S2: the SAME countdown shape `cancelControl` renders in the
-                    // header - no confirm step, Escape does not cancel it
-                    // (`DeferredCountdown` owns both already), and the server
-                    // commits even if this dialog closes mid-window.
-                    unreserveControl.countdown
-                  ) : showUnreserveOffer ? (
-                    unreserveOpen ? (
-                      <div className="space-y-2 rounded-lg border border-border p-3">
-                        <div className="space-y-1">
-                          <Label htmlFor="reserve-row-unreserve-qty">Qty</Label>
-                          <Input
-                            id="reserve-row-unreserve-qty"
-                            type="number"
-                            min={1}
-                            max={netReserved}
-                            step="any"
-                            value={unreserveQty}
-                            onChange={(event) => setUnreserveQty(event.target.value)}
-                          />
-                          {unreserveQtyAboveNet ? (
-                            <p className="text-xs text-destructive">
-                              Up to {netReservedQty} can be released
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="reserve-row-unreserve-note">Note</Label>
-                          <Input
-                            id="reserve-row-unreserve-note"
-                            value={unreserveNote}
-                            onChange={(event) => setUnreserveNote(event.target.value)}
-                          />
-                        </div>
-                        <div className="flex justify-end gap-2">
-                          <Button type="button" variant="outline" onClick={() => setUnreserveOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={handleUnreserveStart}
-                            disabled={
-                              !unreserveControl ||
-                              unreserveControl.isPending ||
-                              unreserveControl.isBlocked ||
-                              unreserveQtyInvalid
-                            }
-                          >
-                            Unreserve
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button type="button" variant="outline" onClick={() => setUnreserveOpen(true)}>
-                        Unreserve
-                      </Button>
-                    )
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Nothing reserved on this row.</p>
-              )}
-            </TabsContent>
+              <TabsContent value="reserve" className="mt-0 focus-visible:outline-none">
+                {soleRow ? (
+                  <ReserveRowSection
+                    row={soleRow}
+                    locationOptions={locationOptions}
+                    defaultLocationId={defaultLocationId}
+                    availableQtyByLocation={availableQtyByLocation}
+                    canAct={canAct}
+                    onReserve={onReserve}
+                    onRowConfirmed={handleRowConfirmed}
+                    unreserveControl={unreserveControl}
+                  />
+                ) : null}
+              </TabsContent>
 
-            <TabsContent value="history" className="mt-0 focus-visible:outline-none">
-              <div className="space-y-2">
-                {history.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No history yet.</p>
-                ) : (
-                  history.map((entry, index) => (
-                    // N4 (reviewer round): the entry's own identity - kind + when it
-                    // happened - never the array index, which reorders on refetch.
+              <TabsContent value="history" className="mt-0 focus-visible:outline-none">
+                <HistoryPanel history={soleRow?.history ?? []} />
+              </TabsContent>
+            </Tabs>
+          ) : (
+            // Round 3 (AC-RS-65/AC-RS-66): no tabs - one section per row, each with its
+            // own item-code heading and its own Confirm reserved. History does not
+            // render here; it lives on the line (single-row path above).
+            <div className="space-y-4">
+              {effectiveRows.map((row) => {
+                const confirmedQty = confirmedRows[row.rowId];
+                if (confirmedQty != null) {
+                  return (
                     <div
-                      key={`${entry.kind}-${entry.createdAt ?? index}`}
-                      className="rounded-md border border-border p-2 text-xs"
+                      key={row.rowId}
+                      className="flex items-center gap-2 rounded-lg border border-border p-3"
                     >
-                      <div className="font-medium">
-                        {HISTORY_KIND_LABEL[entry.kind] ?? entry.kind}
-                        {entry.qty ? ` ${entry.qty}` : ''}
-                        {entry.location ? ` @ ${entry.location}` : ''}
-                      </div>
-                      <div className="text-muted-foreground">
-                        {entry.actorName ?? 'Unknown'}
-                        {entry.createdAt ? ` on ${formatDateTime(entry.createdAt)}` : ''}
-                        {entry.reason ? ` - ${entry.reason}` : ''}
-                      </div>
+                      <Check className="size-4 text-emerald-600" aria-hidden />
+                      <span className="text-sm font-medium">{row.itemCode}</span>
+                      <span className="text-sm text-muted-foreground">
+                        Reserved {confirmedQty}
+                      </span>
                     </div>
-                  ))
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
+                  );
+                }
+                return (
+                  <div key={row.rowId} className="space-y-2 rounded-lg border border-border p-3">
+                    <div className="text-sm font-medium">{row.itemCode}</div>
+                    <ReserveRowSection
+                      row={row}
+                      locationOptions={locationOptions}
+                      defaultLocationId={defaultLocationId}
+                      availableQtyByLocation={availableQtyByLocation}
+                      canAct={canAct}
+                      onReserve={onReserve}
+                      onRowConfirmed={handleRowConfirmed}
+                      unreserveControl={undefined}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </DialogBody>
       </DialogContent>
     </Dialog>
