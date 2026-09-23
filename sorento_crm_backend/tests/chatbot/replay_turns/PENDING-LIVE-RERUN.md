@@ -252,3 +252,33 @@ plain "no" over a `team_pick` pending falls through to `business_query` instead 
 `escalation_declined` - step 3 `branch_kind`, the opposite direction from the "no" fix
 signed on `case-069`). Neither is listed in any list-paragraph above, and neither
 should be - this heading is a marker for the next tester, not a pending entry.
+
+## Not currently a failure, staleness owed: case-038, case-039 and case-025 turn 0 only (coder, fix rounds 2-5, 23 Sep 2026)
+
+`console/case-038-a7-no-stock-no-incoming-but-po-is-placed.json` and `console/case-039-
+a7-nothing-on-any-rung-says-so-and-offers-to-escalate.json` both recorded `escalate to
+purchasing team?` as their turn's escalate offer; owner ruling R6 (22 Sep 2026,
+`PLAN-escalation-quote-title-and-stock-team-22sep.md`) now renders `escalate to
+warehouse team?` for the same stock-origin (`domain_hint: inventory`) shape. Neither
+case is a live `pytest` failure today - their `expected.text` carries no `_pin_text`
+flag, so `test_turn_replay.py`'s own text comparison never runs for them (measured:
+`pytest tests/chatbot/test_turn_replay.py -k "case-038 or case-039"` passes clean on
+both R6 commits). Listed here rather than left silent so a future `_pin_text: true`
+re-capture of either file records `warehouse`, not the now-superseded `purchasing` -
+re-record owed, not urgent.
+
+`console/case-025-d7-an-incoming-ask-on-a-zero-stock-code-climbs-to-the-po-rung.json`
+(2 turns; added to this note in fix round 3, corrected in fix round 4, resolved in
+fix round 5 once owner ruling R9 landed, re-measured against S10 in fix round 6):
+**turn 0** (`domain_hint: inventory`, a plain stock ask) recorded `escalate to
+purchasing team?` - under R6/R7 this turn says `escalate to warehouse team?`, stale
+the same way case-038/039 are; still stale, R9/S10 do not touch turn 0 (no open
+offer precedes it). **Turn 1** (`domain_hint: incoming`, D7's own climb, NOT an
+acceptance of turn 0's offer) is UNCHANGED, not stale: measured directly on HEAD,
+turn 1 renders `escalate to purchasing team?`, exactly the recorded value - turn 1
+is a fresh question (no `is_affirmative`, no escalation confirmation, no pick
+landing on turn 0's open offer), so `apply()` never calls it an acceptance and
+`engine.py` passes `accepted_team=None` into `lane_parse_output`, which falls
+through to the domain fill (`incoming` -> `purchasing`) - the same shape the UAC's
+AC-EQ-20 pins directly. Neither turn is a live `pytest` failure today (`_pin_text`
+absent on both, measured); re-record owed for turn 0's own text only, not urgent.

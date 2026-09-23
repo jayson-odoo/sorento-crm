@@ -1228,7 +1228,10 @@ def _numeric_message_id(message_id: Any) -> int | None:
 
 
 def _input_message(ctx: dict[str, Any]) -> str:
-    """`Call 'sub-human-intervention'`'s `input_message`, expression for expression.
+    """`Call 'sub-human-intervention'`'s `input_message` - expression for expression on
+    every branch except the quoted-message fallback, where R1 below deliberately
+    improves on the raw n8n expression rather than porting its `undefined` (see that
+    ruling's own note).
 
     Live, from the node's `workflowInputs.value.input_message` (two adjacent `{{ }}`
     blocks, concatenated with no separator by the template):
@@ -1245,13 +1248,20 @@ def _input_message(ctx: dict[str, Any]) -> str:
     `source_message_text` came out blank and the person picking the case up saw no trace
     of what the customer sent. Live falls back to the attachment's description and then to
     a `[image message]` style placeholder naming the type, and appends the quoted message
-    when the customer replied to one. Reproduced here rather than improved on: the SLA row
-    is read beside rows n8n wrote, and two spellings of the same message would be worse
-    than the placeholder.
+    when the customer replied to one.
 
     `replyTo` hangs off the WEBHOOK body (`ctx.text.message`), one level above the message
     body the first chain reads - copying its path from the wrong level is the easy mistake
     here, so both are spelled out above.
+
+    Owner ruling 22 Sep 2026, R1 (AC-EQ-1..3): the quoted body is `text` if truthy, else
+    `title` (Respond.io's quick-reply quote shape carries only `title`), else the whole
+    " reply to: ..." suffix is dropped - never n8n's `undefined`, which is what reading
+    `.text` unguarded renders for a quoted message with neither, per the n8n expression
+    quoted above. R1 is a deliberate divergence from that expression for this one
+    branch, not a port of it, at the time of this port (22 Sep 2026) - no claim is made
+    here about whether n8n's own node has since been fixed; a fresh capture that still
+    shows `undefined` for this shape is not a regression in this file.
     """
     envelope = jsc.get(jsc.get(ctx, "text"), "message")
     body = jsc.get(envelope, "message")
@@ -1265,12 +1275,14 @@ def _input_message(ctx: dict[str, Any]) -> str:
 
     text = jsc.js_string(value)
 
-    # `replyTo?.message` is the TRUTH TEST, and the text is read off it unguarded - so a
-    # quoted message with no text renders JS's own `undefined`, which is what n8n stores
-    # today. Faithful, not tidied.
     quoted = jsc.get(jsc.get(envelope, "replyTo"), "message", jsc.UNDEFINED)
     if jsc.truthy(quoted):
-        text += " reply to: " + jsc.js_string(jsc.get(quoted, "text", jsc.UNDEFINED))
+        quoted_text = jsc.get(quoted, "text", jsc.UNDEFINED)
+        quoted_body = (
+            quoted_text if jsc.truthy(quoted_text) else jsc.get(quoted, "title", jsc.UNDEFINED)
+        )
+        if jsc.truthy(quoted_body):
+            text += " reply to: " + jsc.js_string(quoted_body)
     return text
 
 

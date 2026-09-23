@@ -845,6 +845,17 @@ class TestErrorArmRendersTheMissLane:
         fragments = captured["fragments"]
         assert "not_found" in fragments, "the error arm must render the miss lane"
         assert "SRTWC8517" in fragments["not_found"]["escalate_message"]
+        # Owner ruling 22 Sep 2026, R6 - `ctx.parse.output` above carries NO `routing`
+        # key at all (a bare `parser` dict, the shape `not_found_error_message`'s own
+        # belt-and-braces fallback exists for): `domain_hint = "inventory"` must still
+        # reach the customer as "warehouse", never the generic "customer_service"
+        # literal. Deleting `answer.py`'s own `default_policy()` fallback (kept
+        # alongside `turn_runtime.lane_parse_output`'s domain-aware fill, which this
+        # direct `complete_answer` call bypasses entirely - no `engine.run_turn`, no
+        # `policy` in the loop) turns this assertion red.
+        assert "escalate to warehouse team?" in fragments["not_found"]["escalate_message"], (
+            fragments["not_found"]["escalate_message"]
+        )
 
     def test_pre_fetch_not_found_arm_still_offers_the_sibling_family(self, monkeypatch) -> None:
         """Owner console defect item 3: `_run_miss_half`'s call site for the PRE-FETCH

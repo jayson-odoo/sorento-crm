@@ -481,9 +481,17 @@ def _accepted_pending_field(
     itself reads at `turn/decide.py:571-575` (a bare "yes"/escalation-confirmation
     flag, vetoed by a decline or a negation) plus a numbered pick that actually
     lands on one of the roster's own options. A proper `OFFER_KINDS` pending
-    (`team_pick`/`company_pick`/`member_offer`) keeps round 1's behaviour
-    unconditionally - its team is ALSO read unconditionally at that same
-    `lane_parse_output` line, so the two halves stay in step either way.
+    (`team_pick`/`company_pick`/`member_offer`) kept round 1's behaviour
+    unconditionally at the time - its team was ALSO read unconditionally at that
+    same `lane_parse_output` line, so the two halves stayed in step either way.
+
+    Historical note (S10, fix round 6, 23 Sep 2026): `lane_parse_output` no longer
+    has an `OFFER_KINDS` pending arm at all - `turn/apply.py::_answer_pending`
+    already makes the acceptance judgement this paragraph describes and stamps it
+    onto `trace.team`, which reaches `lane_parse_output` as `accepted_team` (the
+    chain's own first read). The paragraph above is kept as the design history for
+    THIS function's own accept-check, not a claim about `lane_parse_output`'s
+    current shape.
 
     SRTSC07 review round 2 NITs: (A) a numbered pick only counts as landing on the
     roster's OWN escalation offer when the matched option is MEMBER-typed - the
@@ -671,6 +679,7 @@ def lane_parse_output(
     accepted_company: str | None = None,
     declined_offer_copy: bool = False,
     prior_session: Any = None,
+    policy: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
 
@@ -690,17 +699,41 @@ def lane_parse_output(
       `test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing`
       both call `escalation.run()` directly with a hand-built ctx and pin a null/inherited
       team flowing through UNGUARDED - the default belongs to the layer that builds
-      `ctx.parse.output`, not to the lane that reads it). Chain, in order: the team an
-      ACCEPTED offer just named (`apply`'s `trace.team`, the option the customer picked
-      off the roster - it outranks the rest because they picked it THIS turn, and a
-      multi-team offer's own `pending.team` stays null until they do); a NAMED team
-      (this turn's own); an OFFER's carried team (`pending.team`, contract 108, an
-      acceptance names no team of its own); a PREVIOUS turn's own carried routing
-      (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
-      turn had one, else the table's default", never the default unconditionally); the
-      hard default, last. The parser's own answer stays untouched on `_parser_raw`, which
-      is what `escalation._parser_team` reads to tell "this turn named a team" from "this
-      turn accepted one".
+      `ctx.parse.output`, not to the lane that reads it). Chain, in order (owner ruling
+      23 Sep 2026, R9, satisfied here by `accepted_team` alone - see the S10 note
+      below): the team an ACCEPTED offer just named (`apply`'s `trace.team`, the
+      option the customer picked off the roster - it outranks the rest because they
+      picked it THIS turn, and a multi-team offer's own `pending.team` stays null
+      until they do); a NAMED team (this turn's own, read straight off the verdict);
+      THIS TURN's own domain (`policy.domain(domain_hint).escalation_team_code`,
+      R6/R7 - a parser emission naming no team gets the domain's real escalation
+      team, a deterministic fact about the question just asked, read before a stale
+      carry from a PREVIOUS turn, AC-EQ-16/17/20); a PREVIOUS turn's own carried
+      routing (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team
+      when a previous turn had one, else the table's default" - still applies when
+      THIS turn names no resolvable domain at all, AC-EQ-19); the hard default
+      (`DEFAULT_SUGGESTED_TEAM`), last of all, for a domain `policy` cannot resolve
+      (no `policy` in scope, or a domain with no escalation row) and no prior carry
+      either. The parser's own answer stays untouched on `_parser_raw`, which is
+      what `escalation._parser_team` reads to tell "this turn named a team" from
+      "this turn accepted one".
+
+      **S10 (fix round 6, "simplest thing that works"): there is no separate OPEN-
+      OFFER arm here any more.** R9 (23 Sep 2026) ruled that an open offer's team
+      wins only on an actual acceptance - but `turn/apply.py`'s own `_answer_pending`
+      (:285, :675) ALREADY computes exactly that judgement and stamps it onto
+      `trace.team` the moment `decide()` calls a turn an acceptance
+      (`answer_pending_accept`), and `engine.py` already hands `trace.team` in here
+      as `accepted_team` (the very first read above). A `pending.team` arm gated by
+      its own copy of the same accept signal (`_pending_offer_answered`, added in
+      fix round 5, deleted here) was judging the SAME fact TWICE - reviewer kill
+      test, fix round 6: deleting both the arm and the helper left the full suite
+      green except two unit tests (AC-EQ-21/22) that called this function directly
+      with `pending=` but no `accepted_team=`, a shape `engine.run_turn` never
+      actually produces (a real acceptance always sets `accepted_team`). Those two
+      tests are re-pointed to pass `accepted_team`, the production shape, instead.
+      AC-EQ-18 (a fresh, unaccepted question over an open offer) is byte-identical
+      to AC-EQ-20 once the arm is gone - folded into it, not duplicated.
     """
     out = dict(verdict)
     if domain:
@@ -738,11 +771,35 @@ def lane_parse_output(
 
     routing = dict(out.get("routing") or {})
     if accepted_team:
+        # R9 is satisfied here: `accepted_team` IS the open offer's team whenever
+        # THIS turn genuinely accepted one - `turn/apply.py::_answer_pending` only
+        # stamps `trace.team` (what `engine.py` passes in as `accepted_team`) on the
+        # `answer_pending_accept` rule, the acceptance judgement itself. A turn that
+        # did not accept anything passes `accepted_team=None` and falls straight
+        # through to the domain fill below - see S10 in this function's own
+        # docstring for the fix round 6 history (a redundant second arm, judging the
+        # SAME fact off `pending` directly, used to sit here and was deleted).
         routing["suggested_team"] = accepted_team
-    if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
-        routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
-        routing["suggested_team"] = _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
+        # Owner ruling 23 Sep 2026, R7 (AC-EQ-16/17/19), supersedes R6's own
+        # ordering (22 Sep 2026). Chain, in order: an ACCEPTED offer's team (above);
+        # THIS TURN's domain (`policy.domain(domain_hint).escalation_team_code`,
+        # `turn/policy_rows.py`) - a deterministic fact about the QUESTION the
+        # parser was just asked, read before the prior-turn carry because a turn
+        # that named a real domain is a fresher fact than whatever team a stale
+        # session happened to be carrying (AC-EQ-16/17: an incoming ask carrying
+        # "purchasing" forward must not paint the NEXT turn's plain stock question
+        # "purchasing" too - AC-EQ-20 is the same shape for an unanswered open
+        # offer, which reaches this same fallback since it named no `accepted_team`
+        # either); a PREVIOUS turn's own carried routing (`_prior_suggested_team`,
+        # test_pass4_item5's B3) - still applies when THIS turn names no resolvable
+        # domain at all (AC-EQ-19, `policy.domain(None)` is `None`); the hard
+        # default (`DEFAULT_SUGGESTED_TEAM`), last of all.
+        domain_row = policy.domain(out.get("domain_hint")) if policy else None
+        domain_team = domain_row.escalation_team_code if domain_row else None
+        routing["suggested_team"] = (
+            domain_team or _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
+        )
     # `suggested_agent`'s default is applied once, upstream, by `with_routing_agent_default`
     # (finding 2b) - the access read and the lanes see the same value.
     out["routing"] = routing
@@ -1604,6 +1661,7 @@ def make_tool_runner(
     resolver_gate: dict[str, Any] | None = None,
     resolver_tier_gate: dict[str, Any] | None = None,
     resolved_kinds: dict[str, dict[str, int]] | None = None,
+    policy: Any = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1652,7 +1710,21 @@ def make_tool_runner(
             # under), never off this turn's verdict - a bare "more" states no tier, and
             # an empty list is read downstream as "no tier filter at all".
             page_predicate, page_ids = page_the_set(db, carry)
-        lane_out = lane_parse_output(verdict, focus=focus, domain=domain)
+        # R6 (fix round 2), corrected in fix round 4: `policy` is threaded through
+        # so a null `routing.suggested_team` gets a domain-aware fill here too,
+        # rather than the flat `DEFAULT_SUGGESTED_TEAM` literal - but this is the
+        # DOMAIN RUNG ONLY. Unlike `engine.py`'s own `lane_parse_output` call, this
+        # one passes no `pending`/`prior_session`, so the fetch context's own
+        # `routing.suggested_team` can never come from an open offer or a carried
+        # prior-turn team the way the turn's real `ctx.parse.output` can (measured,
+        # fix round 4: case-025 turn 1's fetch context reads "purchasing" off the
+        # domain rung while its parse output reads "warehouse" off the open offer -
+        # the two genuinely disagree). Not a bug worth chasing today: nothing reads
+        # this fetch context's own `routing.suggested_team` - `lane_out` feeds tool
+        # ARGS (access levels, date filters, entities), never an escalate sentence
+        # or a pending write, both of which read the turn's real `ctx.parse.output`
+        # instead. Flagged here so the next reader does not assume parity.
+        lane_out = lane_parse_output(verdict, focus=focus, domain=domain, policy=policy)
         lane_out = _spec_window(lane_out, spec)
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):
