@@ -807,6 +807,17 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
     warehouses (reuses the dashboard focus predicate).
 
+    LANE E (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep): a discontinued
+    product is normally hard-excluded, but the admission WHERE widens to also admit one
+    with a CONFIRMED project OI line inside this run's own scope (``cv_all``'s
+    ``project_confirmed_committed > 0`` - the SAME committed-demand CTE, already scoped to
+    ``demand_class``/``so_numbers``/horizon below) - still owed to a customer, discontinued
+    or not. ``is_active`` and ``exclude_from_planning`` stay hard; leg 2 (below level,
+    moved in 180 d, further down this function) never admits a discontinued product on its
+    own, and a Dealer run's ``cv_all`` carries no project leg at all so it never admits one
+    either. Every row admitted only this way is stamped ``discontinued_project_only`` and
+    sized project-only downstream - see ``_project_only_cell``.
+
     BOTH scopes use the same three-state convention, and the two must not drift or empty
     means one thing for products and the opposite for locations. ``None`` => no scope was
     asked for, so plan everything (the daily run). A LIST narrows to it. An EMPTY list
@@ -1926,6 +1937,15 @@ def _project_only_cell(c: dict) -> dict:
     still buys 20. This is a deliberate, Project-run-only exception to the 11 Sep
     one-formula ruling (`PLAN-reorder-one-formula.md`) that nets every OTHER run's demand
     against on-hand before sizing - not a regression back to it.
+
+    LANE E (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026): every
+    caller of this swap - the single-member cell branch below, `_emit_pool`, `_emit_product`
+    - also fires for a discontinued product admitted only through `_planning_rows`' own
+    confirmed-OI OR (`row.get("discontinued_project_only")`), on EVERY run kind that can
+    admit one at all, not just a Project run: nobody restocks a discontinued line for the
+    shelf, so there is no retail sizing to fall back to. R1a's "read raw, never netted"
+    rule applies to it identically - a discontinued product sitting on 500 units with a
+    confirmed row for 8 still buys 8, on an All run exactly as on a Project run.
     """
     c = dict(c)
     project_need = float(c.get("project_need") or 0.0)

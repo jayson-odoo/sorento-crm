@@ -253,15 +253,24 @@ admit discontinued product".
   or level top-up - it is discontinued, nobody restocks it for the shelf. `_planning_rows`
   stamps `discontinued_project_only = True` on its rows; `_emit_cell` / `_emit_pool` /
   `_emit_product` read `project_only = demand_class == "project" or row.discontinued_project_only`.
-  A Dealer run has no project leg, so it never admits one.
+  A Dealer run has no project leg, so it never admits one. G10 (a product named in
+  `product_ids` at Start Plan, buyer intent, normally exempt from the committed-demand
+  gate) does not restore a discontinued product's retail sizing: `discontinued_project_only`
+  sits in the same `or` as G10's `committed_gate_exempt` check and wins outright, because a
+  discontinued product never gets its retail sizing back, named or not (review round 1, 23
+  Sep). On an All run the discontinued product's project need is bought IN FULL, not netted
+  against on hand (R1a applies here too) - a location holding 500 units with a confirmed
+  row for 8 still buys 8.
 - E3 The plan grid shows the row like any other; the sheet's Project qty and the OI worksheet
   already carry the line (`run_scope_oi_rows` has no discontinued filter).
 
 Tests: pytest `_planning_rows` admits a discontinued product with a confirmed OI row in
 scope, not one outside the window / on an un-picked SO / awaiting ack; not admitted on a
 Dealer run; not admitted by leg 2 (below level, no OI); sizing = project need only on an All
-run even when below level; `test_reorder_plan_project_only.py` and `test_reorder_window_start.py`
-unchanged. No FE change.
+run even when below level, on the pooled (`_emit_pool`) and PROD-shape product-grain
+(`_emit_product`) bases too, and even when the product is named in `product_ids` (G10);
+`test_reorder_plan_project_only.py` and `test_reorder_window_start.py` unchanged. No FE
+change.
 
 Branch: from `fix/order-sheet-cells` (= #1144's head, same `_planning_rows` region); PR base
 retargeted to main by the captain right after #1144 merges and BEFORE the owner merges it.

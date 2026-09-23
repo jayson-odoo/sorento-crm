@@ -34,6 +34,21 @@ ORDER-row builder: project + PSO + inquiry + one ACTIVE decision + row). Postgre
 `tests/scm/conftest.py::scm_app` - a live TestClient over a rolled-back SAVEPOINT. CI's
 database starts empty: every test seeds its own full chain, nothing borrowed off the shared
 local database.
+
+Review round 1 (reviewer should-fixes, 23 Sep): AC-E1/AC-E4's own fixture is a single,
+non-pooled location, which only exercises the `project_only` swap in the single-member
+cell branch (`reorder_run_service.py`'s per-warehouse loop). Two more `project_only`
+computations exist beside it - `_emit_pool` (2+ pooled members) and `_emit_product` (the
+PROD SHAPE `policy_type='reorder_level'` basis, `tests/scm/test_reorder_plan_project_
+only.py`'s own "PROD SHAPE" section) - and neither was exercised by this file, so a coder
+who guarded only the single-member branch would still ship a defect the AC-E1..E7 suite
+could not catch. `test_pool_...`/`test_reorder_level_basis_...` below close that gap, each
+confirmed red against `reorder_run_service.py` with its own `discontinued_project_only`
+disjunct in `_emit_pool`/`_emit_product` reverted. `test_named_discontinued_product_...`
+pins the G10 precedent the fix already gives: `discontinued_project_only` sits in the SAME
+`or` as `committed_gate_exempt`'s negation in every `project_only` computation, so it wins
+outright rather than needing its own precedence check - a discontinued product never gets
+its retail sizing back, named or not.
 """
 from __future__ import annotations
 
@@ -43,11 +58,16 @@ from datetime import date
 from sqlalchemy import text
 
 from app.models.project_so import ACK_ACKNOWLEDGED, ACK_AWAITING
+from app.models.scm import ReorderRun
 from app.services.scm import demand
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import summary_order_service as sos
 from tests.scm.conftest import requires_pg, scm_app  # noqa: F401
-from tests.scm.test_reorder_plan_project_only import _seed_single_below_level
+from tests.scm.test_reorder_plan_project_only import (
+    _seed_pool_below_level,
+    _seed_single_below_level,
+    _use_reorder_level_policy,
+)
 from tests.test_reorder_plan_demand_scope import _project_so_with_lines
 
 pytestmark = requires_pg
@@ -85,6 +105,21 @@ def _discontinued_below_level(db, *, level=150, demand_add=0.0, lead=30, moq=1, 
     false`, and neither it nor `_seed_single_below_level` above it takes the flag)."""
     u = _seed_single_below_level(db, level=level, lead=lead, moq=moq, mult=mult,
                                   demand_add=demand_add)
+    db.execute(text("UPDATE products SET is_discontinued = true WHERE id = :id"),
+               {"id": u["pid"]})
+    db.flush()
+    return u
+
+
+def _discontinued_pool_below_level(db, *, level=150, demand_add=5.0, lead=30, moq=1, mult=1):
+    """Two pooled dealer locations (leg 2's `_emit_pool` shape - `_seed_pool_below_level`,
+    copied from `tests/scm/test_reorder_plan_project_only.py`), flipped discontinued after
+    seeding, the SAME way `_discontinued_below_level` does for the single-location shape.
+    `demand_add`/`lead` default to values whose retail pool sizing is well over the OI
+    row's 8 (`_seed_pool_below_level`'s own docstring), so a coder who drops `_emit_pool`'s
+    `discontinued_project_only` disjunct is caught, not coincidentally matched."""
+    u = _seed_pool_below_level(db, level=level, demand_add=demand_add, lead=lead,
+                                moq=moq, mult=mult)
     db.execute(text("UPDATE products SET is_discontinued = true WHERE id = :id"),
                {"id": u["pid"]})
     db.flush()
@@ -379,4 +414,100 @@ def test_ac_e7_write_rows_freezes_project_customers_and_worksheet_scope_returns_
     assert any(float(r["qty"]) == 8.0 for r in scope_rows), (
         f"expected the OI worksheet's own row scope to carry the discontinued product's "
         f"line too, got {scope_rows}"
+    )
+
+
+# =============================================================================
+# Review round 1 - the two other `project_only` sizing paths AC-E1..E7 never exercised:
+# `_emit_pool` (2+ pooled members) and `_emit_product` (the PROD SHAPE
+# `policy_type='reorder_level'` basis). Both below-level, discontinued, with a confirmed
+# OI row in scope, on an All run.
+# =============================================================================
+
+def test_pool_admits_discontinued_product_with_confirmed_oi_row_sized_project_only(scm_app):
+    _, db, _, _ = scm_app
+    u = _discontinued_pool_below_level(db)
+    so = _oi_row(db, pid=u["pid"], wid=u["child_wid"], qty=8)
+
+    created = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        so_numbers=[so["so_number"]],
+    )
+    svc.run_reorder(created["run_id"], db=db)
+
+    buys = _buy_rows(db, created["run_id"], u["pid"])
+    assert buys, (
+        f"expected a pooled discontinued product with confirmed OI demand to buy, got "
+        f"{_recs_for(db, created['run_id'], u['pid'])}"
+    )
+    total = sum(float(b["rounded_qty"]) for b in buys)
+    assert total == 8.0, (
+        f"expected the owed qty alone (8), no pool retail top-up, got {total}"
+    )
+
+
+def test_reorder_level_basis_admits_discontinued_product_with_confirmed_oi_row_sized_project_only(scm_app):
+    _, db, _, _ = scm_app
+    u = _discontinued_below_level(db, demand_add=5.0, lead=30)
+    _use_reorder_level_policy(db)
+    so = _oi_row(db, pid=u["pid"], wid=u["wid"], qty=8)
+
+    created = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        so_numbers=[so["so_number"]],
+    )
+    svc.run_reorder(created["run_id"], db=db)
+
+    buys = _buy_rows(db, created["run_id"], u["pid"])
+    assert buys, (
+        f"expected a discontinued product on the reorder_level (product-grain) basis "
+        f"with confirmed OI demand to buy, got {_recs_for(db, created['run_id'], u['pid'])}"
+    )
+    total = sum(float(b["rounded_qty"]) for b in buys)
+    assert total == 8.0, (
+        f"expected the owed qty alone (8), NOT the level top-up (150), got {total}"
+    )
+
+
+# =============================================================================
+# Review round 1 - G10 precedence: a discontinued product NAMED in `product_ids` (buyer
+# intent, normally `committed_gate_exempt`) still sizes project-only. Reads off the SAME
+# `or` every `project_only` computation already has - `discontinued_project_only` wins
+# outright rather than needing a second precedence check, because a discontinued product
+# never gets its retail sizing back, named or not.
+# =============================================================================
+
+def test_named_discontinued_product_sizes_project_only_despite_g10(scm_app):
+    _, db, _, _ = scm_app
+    u = _discontinued_below_level(db, demand_add=5.0, lead=30)
+    so = _oi_row(db, pid=u["pid"], wid=u["wid"], qty=8)
+
+    created = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        so_numbers=[so["so_number"]],
+    )
+    # G10 stamps `committed_gate_exempt` only for a run scoped to `product_ids` -
+    # `_planning_rows` reads `run.product_ids` directly (same pattern
+    # `test_named_product_under_project_keeps_buyer_intent` in
+    # `test_reorder_plan_project_only.py` uses).
+    run = db.get(ReorderRun, created["run_id"])
+    run.product_ids = [u["pid"]]
+    db.add(run)
+    db.flush()
+
+    result = svc.run_reorder(created["run_id"], db=db)
+    assert result["status"] == "completed", result
+
+    buys = _buy_rows(db, created["run_id"], u["pid"])
+    assert buys, (
+        f"expected a buy despite G10 naming the product, got "
+        f"{_recs_for(db, created['run_id'], u['pid'])}"
+    )
+    total = sum(float(b["rounded_qty"]) for b in buys)
+    assert total == 8.0, (
+        f"expected the owed qty alone (8) - a discontinued product's retail sizing is "
+        f"never restored by G10, got {total}"
     )
