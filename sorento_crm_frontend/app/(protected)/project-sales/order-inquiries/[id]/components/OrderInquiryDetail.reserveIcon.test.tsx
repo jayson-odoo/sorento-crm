@@ -56,6 +56,18 @@ vi.mock('@/components/ui/tooltip', async () => {
   };
 });
 
+// Nits (fix round 2): asserted directly - the requestedByName / completes toast
+// wording (AC-RS-56) is otherwise invisible to this suite.
+const toastSuccessSpy = vi.fn();
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    success: (...args: unknown[]) => toastSuccessSpy(...args),
+    error: vi.fn(),
+    warning: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
 const HEADER: OrderInquiryHeaderDetail = {
   id: 'oi-1',
   inquiry_no: 'OI-2609-0001',
@@ -208,6 +220,9 @@ import { OrderInquiryDetail } from './OrderInquiryDetail';
 // module-level mock's resolved lines per test, the same way `getReserveRequestsMock`
 // already does for the reserve-requests read.
 import { getOrderInquiryHeaderLines } from '../../../_shared/services/orderInquiryService';
+// Nits (fix round 2): the query key a forced `invalidateQueries` targets, in the
+// "reads the requester off the REQUEST" test.
+import { ORDER_INQUIRY_RESERVE_REQUESTS_KEY } from '../../../_shared/hooks/useOrderInquiry';
 
 function renderDetail() {
   const client = new QueryClient({
@@ -304,6 +319,55 @@ describe('AC-RS-62: ?reserve=<request_id> auto-opens the dialog on the first ope
     await screen.findAllByText('ZZT-REQUESTED');
     const requestedRow = gridRowFor('ZZT-REQUESTED');
     expect(requestedRow.querySelector('[aria-label="Reserve"]')).toBeInTheDocument();
+  });
+});
+
+/**
+ * S5 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2 review finding). Today
+ * `router.replace` dropping `?reserve=` off the URL is async (a real `next/navigation`
+ * round trip) - `searchParamsValue`/`replaceSpy` here stand in for that lag exactly:
+ * `replaceSpy` is a no-op mock, so the module-level `searchParamsValue` string this
+ * suite's own `useSearchParams` mock reads from never actually changes on Close. A
+ * reserve-requests refetch landing (or any other re-render) after Close therefore
+ * still sees `?reserve=rr-1` AND the row it names still open - without a latch on the
+ * ALREADY-HANDLED param, the effect that auto-opens the dialog fires again and
+ * reopens the very dialog Close just closed.
+ *
+ * TEST-FIRST (fix round 2): today closing does not remember the param it just
+ * handled - a red here is "the Reserve tab is back after a rerender with the exact
+ * same search params", never a fixture bug.
+ */
+describe('S5 (fix round 2): closing latches against a stale refetch reopening the dialog', () => {
+  it('close, then a rerender with the SAME search params + refetched data - the dialog stays closed', async () => {
+    searchParamsValue = 'reserve=rr-1';
+    const { rerender } = renderDetail();
+
+    await screen.findByRole('tab', { name: /reserve/i });
+    const closeButtons = screen.getAllByRole('button', { name: /close/i });
+    fireEvent.click(closeButtons[closeButtons.length - 1]);
+
+    await waitFor(() => expect(replaceSpy).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: /reserve/i })).not.toBeInTheDocument(),
+    );
+
+    // The "refetch" - a fresh resolved value off the SAME mock, `searchParamsValue`
+    // deliberately left untouched (the async URL update this test stands in for has
+    // not landed yet either).
+    getReserveRequestsMock.mockResolvedValue([{ ...OPEN_REQUEST }]);
+
+    // Import (a fresh `QueryClientProvider` tree, same `id`) so `useSearchParams()`
+    // is called again and the effect's own dependency array sees a NEW object - the
+    // exact shape a real re-render carries in this mocked environment (every call to
+    // the mock returns a new `URLSearchParams` instance).
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <OrderInquiryDetail id="oi-1" />
+      </QueryClientProvider>,
+    );
+
+    await screen.findAllByText('ZZT-REQUESTED');
+    expect(screen.queryByRole('tab', { name: /reserve/i })).not.toBeInTheDocument();
   });
 });
 
@@ -465,6 +529,86 @@ describe('AC-RS-65: ?reserve=<request_id> opens ONE dialog with a section per st
     // lives on the line now (`ReserveRowDialog.test.tsx` AC-RS-67), never inside a
     // multi-row deep link.
     expect(screen.queryByRole('tab', { name: /history/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Nits (fix round 2, AC-RS-56). Two, exercised together because the second only
+   * shows up once the first row is answered:
+   *
+   * 1. The toast reads plain "Reserved" on a non-final confirm, and "Reserved, <name>
+   *    notified" only on the confirm that COMPLETES the request (every carried row
+   *    now confirmed, tracked client-side) - the mail itself dispatches server-side
+   *    on completion; this only decides what the toast claims.
+   * 2. `requestedByName` is resolved off the REQUEST `onReserve` is actually called
+   *    for, not the PRIMARY row's own `openRequest` - which goes null the moment
+   *    that row itself is answered (its own request-row entry no longer carries
+   *    `qty_reserved: null`), leaving the LAST section's own confirm with no name to
+   *    read under the old code.
+   *
+   * TEST-FIRST (fix round 2): today the first confirm's own toast already reads
+   * "Reserved, Joey notified" (no `completes` gate) - a red on the FIRST assertion.
+   * After that fix lands, the second (final) confirm's toast reads "Reserved, the
+   * requester notified" once row-a's own request-row entry is answered in the
+   * refetched data - a red on the SECOND assertion, never a fixture bug.
+   */
+  it('nits: toast completes only once, and reads the requester off the REQUEST even after the primary row is answered', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_A, ROW_B]);
+    getReserveRequestsMock.mockResolvedValue([MULTI_ROW_REQUEST]);
+    searchParamsValue = 'reserve=rr-multi';
+
+    // A LOCAL client (rather than the shared `renderDetail` helper) so the test can
+    // force the SAME `invalidateQueries` a real confirm triggers and await it
+    // settling BEFORE the second click - `reserveRequestsQuery.data` otherwise never
+    // actually reflects row-a's own answer in time for the assertion below to mean
+    // anything.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryDetail id="oi-1" />
+      </QueryClientProvider>,
+    );
+
+    const confirmButtons = await screen.findAllByRole('button', { name: /confirm reserved/i });
+    expect(confirmButtons).toHaveLength(2);
+
+    fireEvent.click(confirmButtons[0]);
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalledTimes(1));
+    expect(toastSuccessSpy).toHaveBeenNthCalledWith(1, 'Reserved');
+
+    // The refetch a real confirm triggers (`invalidateQueries`) - row-a (the
+    // PRIMARY row, first in `reserveDialogRowIds`) is now answered, row-b stays
+    // open. `openRequestForRow('row-a')` - and so the OLD primary-row-derived
+    // `requestedByName` - can no longer find this request once this lands.
+    getReserveRequestsMock.mockResolvedValue([
+      {
+        ...MULTI_ROW_REQUEST,
+        rows: [
+          { ...MULTI_ROW_REQUEST.rows[0], qty_reserved: '20' },
+          MULTI_ROW_REQUEST.rows[1],
+        ],
+      },
+    ]);
+    await client.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, 'oi-1'] });
+    // Waits for the QUERY CACHE itself to carry the updated shape, rather than a
+    // call count - `invalidateQueries` after the first confirm's own `onSuccess`
+    // already triggered one refetch before this explicit one lands.
+    await waitFor(() => {
+      const cached = client.getQueryData([ORDER_INQUIRY_RESERVE_REQUESTS_KEY, 'oi-1']) as
+        | Array<{ rows: Array<{ row_id: string; qty_reserved: string | null }> }>
+        | undefined;
+      const rowA = cached?.[0]?.rows.find((r) => r.row_id === 'row-a');
+      expect(rowA?.qty_reserved).toBe('20');
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /confirm reserved/i })).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm reserved/i }));
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalledTimes(2));
+    expect(toastSuccessSpy).toHaveBeenNthCalledWith(2, 'Reserved, Joey notified');
   });
 });
 

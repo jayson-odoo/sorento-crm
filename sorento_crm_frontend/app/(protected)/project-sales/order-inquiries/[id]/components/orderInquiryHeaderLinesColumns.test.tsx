@@ -219,4 +219,32 @@ describe('AC-RS-68: the State cell carries the reserve state; no separate Reserv
     expect(screen.queryByRole('button', { name: 'Reserve' })).not.toBeInTheDocument();
     expect(screen.getByText('On PO/SPO')).toBeInTheDocument();
   });
+
+  /**
+   * Nit (fix round 2): the Reserve pill sits inside a grid row that may carry its own
+   * click handler (a `rowHref` navigate). Clicking Reserve must never also fire it.
+   *
+   * TEST-FIRST (fix round 2): today the call site's own `onClick` ignores the event
+   * entirely (`() => onReserveClick(row.original)`) - a red here is "the wrapper's own
+   * onClick fired too", never a fixture bug.
+   */
+  it('nit: clicking the Reserve pill stops the click reaching a wrapping row click handler', () => {
+    const onReserveClick = vi.fn();
+    const rowClick = vi.fn();
+    const requestedRow = linesRow({
+      id: 'row-req',
+      state: 'raised',
+      reserve_state: 'requested',
+    });
+
+    render(
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+      <div onClick={rowClick}>{stateColumnCell(requestedRow, onReserveClick)}</div>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reserve' }));
+
+    expect(onReserveClick).toHaveBeenCalledWith(requestedRow);
+    expect(rowClick).not.toHaveBeenCalled();
+  });
 });

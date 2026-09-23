@@ -157,6 +157,7 @@ function ReserveRowSection({
   onReserve,
   onRowConfirmed,
   unreserveControl,
+  showRequestLine = true,
 }: {
   row: ReserveRowDialogRow;
   locationOptions: SearchableSelectOption[];
@@ -175,6 +176,11 @@ function ReserveRowSection({
    * construction (`OrderInquiryDetail`'s own filter), so the "already reserved, offer
    * Unreserve" branch below never renders there in practice. */
   unreserveControl?: ReserveRowDialogUnreserveControl | null;
+  /** Nit (fix round 2): every row in a multi-row dialog shares ONE request, so the
+   * "Request #N - requested N by X on <date>" line is redundant printed once per
+   * section - the multi-row caller renders it ONCE in the dialog header instead and
+   * passes `false` here; the single-row (tabs) path is unchanged (AC-RS-61). */
+  showRequestLine?: boolean;
 }) {
   const { rowId, openRequest, history, netReservedQty } = row;
   const requestedQty = openRequest ? Number(openRequest.qtyRequested || '0') : 0;
@@ -363,11 +369,13 @@ function ReserveRowSection({
 
   return (
     <div className="space-y-3">
-      <div className="text-sm text-muted-foreground">
-        Request #{openRequest.ordinal} - requested {openRequest.qtyRequested}
-        {openRequest.requestedByName ? ` by ${openRequest.requestedByName}` : ''}
-        {openRequest.requestedAt ? ` on ${formatDateTime(openRequest.requestedAt)}` : ''}
-      </div>
+      {showRequestLine ? (
+        <div className="text-sm text-muted-foreground">
+          Request #{openRequest.ordinal} - requested {openRequest.qtyRequested}
+          {openRequest.requestedByName ? ` by ${openRequest.requestedByName}` : ''}
+          {openRequest.requestedAt ? ` on ${formatDateTime(openRequest.requestedAt)}` : ''}
+        </div>
+      ) : null}
       {canAct ? (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -498,40 +506,67 @@ export function ReserveRowDialog({
     setConfirmedRows({});
   }, [rowsSignature]);
 
+  // Nit (fix round 2): the next state is computed OUTSIDE the updater, and
+  // `onOpenChange` is called from the handler body, never from inside a `setState`
+  // updater - React may invoke an updater more than once (Strict Mode, a bail-out
+  // replay), and a side effect living inside it would then fire that many times too.
   function handleRowConfirmed(confirmedRowId: string, qty: number) {
-    setConfirmedRows((prev) => {
-      const next = { ...prev, [confirmedRowId]: qty };
-      // Multi-row only: the tabs (single-row) path keeps the dialog open after a
-      // Confirm, exactly as it always has.
-      if (!showTabs && Object.keys(next).length >= effectiveRows.length) {
-        onOpenChange(false);
-      }
-      return next;
-    });
+    const next = { ...confirmedRows, [confirmedRowId]: qty };
+    setConfirmedRows(next);
+    // Multi-row only: the tabs (single-row) path keeps the dialog open after a
+    // Confirm, exactly as it always has.
+    if (!showTabs && Object.keys(next).length >= effectiveRows.length) {
+      onOpenChange(false);
+    }
     onConfirmed?.();
   }
 
   const soleRow = effectiveRows[0];
+  // Nit (fix round 2): every row in a multi-row dialog shares ONE request - the
+  // "Request #N - requested by X on <date>" line renders ONCE, here in the header,
+  // rather than once per section. No per-row qty in it (each row's own requested qty
+  // differs, and stays with that row's own Reserved input) - unlike the single-row
+  // (tabs) path's own line, which keeps its qty exactly as before (AC-RS-61).
+  const multiRowOpenRequest = !showTabs
+    ? (effectiveRows.find((row) => row.openRequest)?.openRequest ?? null)
+    : null;
+  // Nit (fix round 2): a multi-row dialog with nothing actionable left - every row
+  // already confirmed this session, or `canAct` is false - renders one short empty
+  // line instead of N sections with nothing in them.
+  const hasActionableSection = effectiveRows.some(
+    (row) => canAct && confirmedRows[row.rowId] == null,
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
-        <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <DialogTitle>
-            Reserve{showTabs && soleRow?.itemCode ? ` - ${soleRow.itemCode}` : ''}
-          </DialogTitle>
-          {cancelControl && anyOpenRequest ? (
-            cancelControl.countdown ?? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={cancelControl.isPending || cancelControl.isBlocked}
-                onClick={() => cancelControl.start()}
-              >
-                Cancel request
-              </Button>
-            )
+        <DialogHeader className="pe-10">
+          <div className="flex flex-row flex-wrap items-center justify-between gap-2">
+            <DialogTitle>
+              Reserve{showTabs && soleRow?.itemCode ? ` - ${soleRow.itemCode}` : ''}
+            </DialogTitle>
+            {cancelControl && anyOpenRequest ? (
+              cancelControl.countdown ?? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={cancelControl.isPending || cancelControl.isBlocked}
+                  onClick={() => cancelControl.start()}
+                >
+                  Cancel request
+                </Button>
+              )
+            ) : null}
+          </div>
+          {multiRowOpenRequest ? (
+            <p className="text-sm text-muted-foreground">
+              Request #{multiRowOpenRequest.ordinal} - requested
+              {multiRowOpenRequest.requestedByName ? ` by ${multiRowOpenRequest.requestedByName}` : ''}
+              {multiRowOpenRequest.requestedAt
+                ? ` on ${formatDateTime(multiRowOpenRequest.requestedAt)}`
+                : ''}
+            </p>
           ) : null}
         </DialogHeader>
         <DialogBody>
@@ -544,16 +579,30 @@ export function ReserveRowDialog({
 
               <TabsContent value="reserve" className="mt-0 focus-visible:outline-none">
                 {soleRow ? (
-                  <ReserveRowSection
-                    row={soleRow}
-                    locationOptions={soleRow.locationOptions ?? locationOptions}
-                    defaultLocationId={soleRow.defaultLocationId ?? defaultLocationId}
-                    availableQtyByLocation={soleRow.availableQtyByLocation ?? availableQtyByLocation}
-                    canAct={canAct}
-                    onReserve={onReserve}
-                    onRowConfirmed={handleRowConfirmed}
-                    unreserveControl={unreserveControl}
-                  />
+                  // S4 (fix round 2): the SAME `confirmedRows` this dialog session
+                  // already tracks for the multi-row path - a stale re-render (the
+                  // caller's own props not yet refetched) must not leave a
+                  // re-submittable Confirm reserved button up after Confirm has
+                  // already been clicked once.
+                  confirmedRows[soleRow.rowId] != null ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-border p-3">
+                      <Check className="size-4 text-emerald-600" aria-hidden />
+                      <span className="text-sm text-muted-foreground">
+                        Reserved {confirmedRows[soleRow.rowId]}
+                      </span>
+                    </div>
+                  ) : (
+                    <ReserveRowSection
+                      row={soleRow}
+                      locationOptions={soleRow.locationOptions ?? locationOptions}
+                      defaultLocationId={soleRow.defaultLocationId ?? defaultLocationId}
+                      availableQtyByLocation={soleRow.availableQtyByLocation ?? availableQtyByLocation}
+                      canAct={canAct}
+                      onReserve={onReserve}
+                      onRowConfirmed={handleRowConfirmed}
+                      unreserveControl={unreserveControl}
+                    />
+                  )
                 ) : null}
               </TabsContent>
 
@@ -561,10 +610,19 @@ export function ReserveRowDialog({
                 <HistoryPanel history={soleRow?.history ?? []} />
               </TabsContent>
             </Tabs>
+          ) : !hasActionableSection ? (
+            // Nit (fix round 2): nothing left to act on - every row already confirmed
+            // this session (which also closes the dialog, so this is reached mainly
+            // by `canAct` false), or the dialog opened with no rows at all.
+            <p className="text-sm text-muted-foreground">
+              Nothing left to reserve on this request.
+            </p>
           ) : (
             // Round 3 (AC-RS-65/AC-RS-66): no tabs - one section per row, each with its
             // own item-code heading and its own Confirm reserved. History does not
-            // render here; it lives on the line (single-row path above).
+            // render here; it lives on the line (single-row path above). The shared
+            // request line moved to the header (nit, fix round 2) - each section keeps
+            // only its own item code + inputs.
             <div className="space-y-4">
               {effectiveRows.map((row) => {
                 const confirmedQty = confirmedRows[row.rowId];
@@ -594,6 +652,7 @@ export function ReserveRowDialog({
                       onReserve={onReserve}
                       onRowConfirmed={handleRowConfirmed}
                       unreserveControl={undefined}
+                      showRequestLine={false}
                     />
                   </div>
                 );

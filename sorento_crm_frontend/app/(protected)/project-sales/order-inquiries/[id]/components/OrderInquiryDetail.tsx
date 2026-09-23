@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
@@ -163,6 +163,12 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // .tsx`) opens exactly one; `?reserve=<request_id>` (AC-RS-65) opens every still-open
   // row of that request at once. Empty = closed.
   const [reserveDialogRowIds, setReserveDialogRowIds] = useState<string[]>([]);
+  // Nit (fix round 2, AC-RS-56): which of THIS dialog session's own rows have already
+  // confirmed - reset every time a dialog session opens (below), so the confirm that
+  // completes the request (every carried row now answered) can be told apart from one
+  // that does not, for the toast wording alone (the mail itself dispatches server-side
+  // on completion; this never decides that, only what the toast claims).
+  const reserveConfirmedRowIdsRef = useRef<Set<string>>(new Set());
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -468,12 +474,25 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   });
 
   const openReserveRowDialog = useCallback((row: OrderInquiryWorklistRow) => {
+    reserveConfirmedRowIdsRef.current = new Set();
     setReserveDialogRowIds([row.id]);
   }, []);
 
+  // S5 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2 review finding): which
+  // `?reserve=<request_id>` this dialog has already opened-and-closed for - set the
+  // moment the effect below opens it, cleared the moment the param itself changes to a
+  // DIFFERENT request. `router.replace` dropping the param off the URL is async (a
+  // `next/navigation` round trip), so a reserve-requests refetch landing BEFORE that
+  // update reaches `searchParams` would otherwise still see the old param and the
+  // still-open row it named, and reopen the very dialog Close just closed. The ref
+  // survives that race because it does not depend on the URL having caught up yet.
+  const handledReserveParamRef = useRef<string | null>(null);
+
   function closeReserveRowDialog() {
     setReserveDialogRowIds([]);
-    if (searchParams.get('reserve')) {
+    const reserveParam = searchParams.get('reserve');
+    if (reserveParam) {
+      handledReserveParamRef.current = reserveParam;
       const params = new URLSearchParams(searchParams.toString());
       params.delete('reserve');
       const qs = params.toString();
@@ -485,12 +504,24 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // of that request - once, and only while nothing else is already open.
   useEffect(() => {
     const reserveParam = searchParams.get('reserve');
-    if (!reserveParam || reserveDialogRowIds.length > 0) return;
+    if (!reserveParam) {
+      handledReserveParamRef.current = null;
+      return;
+    }
+    if (reserveDialogRowIds.length > 0) return;
+    // S5: already opened (and closed) for THIS param - a stale refetch must not
+    // reopen it. A DIFFERENT param (a fresh request mailed after this one) still
+    // opens normally, since it never matches the ref.
+    if (handledReserveParamRef.current === reserveParam) return;
     const request = (reserveRequestsQuery.data ?? []).find((r) => r.id === reserveParam);
     const openRowIds = (request?.rows ?? [])
       .filter((row) => row.qty_reserved == null)
       .map((row) => row.row_id);
-    if (openRowIds.length > 0) setReserveDialogRowIds(openRowIds);
+    if (openRowIds.length > 0) {
+      reserveConfirmedRowIdsRef.current = new Set();
+      setReserveDialogRowIds(openRowIds);
+      handledReserveParamRef.current = reserveParam;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, reserveRequestsQuery.data]);
 
@@ -855,17 +886,31 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           defaultLocationId={reserveRowOptions?.defaultWarehouseId ?? null}
           availableQtyByLocation={reserveRowOptions?.availableQtyByWarehouseId ?? {}}
           canAct={canReserve}
-          onReserve={(requestId, rowId, payload) =>
-            reserveRowMutation.mutateAsync({
+          onReserve={(requestId, rowId, payload) => {
+            // Nit (fix round 2): resolved off the REQUEST `onReserve` was actually
+            // called for (`requestId`, every row this dialog carries shares one, but
+            // reading it here rather than trusting that holds keeps the two things a
+            // section can never disagree with each other) - not off the PRIMARY row's
+            // own open request, which goes null the moment that row itself is
+            // answered, leaving the LAST section's own confirm (on a multi-row
+            // dialog) with no name to read (N1, AC-RS-26 "toast wording kept").
+            const requestedByName =
+              reserveRequestsQuery.data?.find((r) => r.id === requestId)?.requested_by_name ?? null;
+            // Nit (fix round 2, AC-RS-56): "completes" = every row this dialog
+            // session carries a section for is now confirmed - the mail itself
+            // dispatches server-side on completion; this only decides what the
+            // toast claims, never the send itself.
+            const completes =
+              reserveConfirmedRowIdsRef.current.size + 1 >= reserveRowDialogRows.length;
+            reserveConfirmedRowIdsRef.current.add(rowId);
+            return reserveRowMutation.mutateAsync({
               requestId,
               rowId,
               payload,
-              // N1 (AC-RS-26 "toast wording kept"): "Reserved, <requester> notified" -
-              // the parent already resolves the requester's name for the panel above
-              // the form, so the mutation's own toast reads the same one.
-              requestedByName: reserveRowOpenRequest?.requestedByName ?? null,
-            })
-          }
+              requestedByName,
+              completes,
+            });
+          }}
           cancelControl={
             canCancelReserveRequest(currentUserId, reserveRowOpenRequest?.requestedBy, canReserve)
               ? {

@@ -405,6 +405,41 @@ describe('read-only without the reserve permission (AC-RS-62 half)', () => {
 });
 
 /**
+ * S4 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2 review finding). The
+ * multi-row path already flips a confirmed section to a read-only "Reserved N" line
+ * off its own `confirmedRows` session state (AC-RS-66) - the single-row (tabs) path
+ * did not, and kept rendering `ReserveRowSection`'s own Confirm form until the
+ * CALLER's props actually refetched, so a stray second click before that refetch
+ * landed could re-submit.
+ *
+ * TEST-FIRST (fix round 2): today the tabs branch renders `ReserveRowSection`
+ * unconditionally off `soleRow` - a red here is "the Confirm reserved button is still
+ * there after one confirm" / "onReserve fired more than once", never a fixture bug.
+ */
+describe('S4 (fix round 2): the single-row (tabs) path honours confirmedRows, same as the multi-row path', () => {
+  it('confirming once removes Confirm reserved - a second click attempt never reaches onReserve again', async () => {
+    renderDialog();
+
+    // The default fixture reserves short of the request (90 of 139) - a Reason is
+    // required before Confirm reserved enables at all.
+    fireEvent.change(await screen.findByLabelText(/reason/i), {
+      target: { value: 'BRW only has 90 today' },
+    });
+    const confirmButton = await screen.findByRole('button', { name: /confirm reserved/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument(),
+    );
+
+    // No button left to click a second time - the whole point of flipping the
+    // section read-only rather than leaving the form (and its Confirm button) up.
+    expect(onReserveSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
  * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, `oi-request-cs-reserve-
  * acceptance-criteria.md` AC-RS-66/AC-RS-67). The email deep link used to open this
  * dialog for ONE row (`rowId`/`itemCode`/`openRequest`/`history`/`netReservedQty` as
@@ -582,5 +617,88 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
     fireEvent.click(locationSelects[0]);
     const options = await screen.findAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual(['BRW']);
+  });
+
+  /**
+   * Nit (fix round 2): every row in a multi-row dialog shares ONE request - the
+   * "Request #N - requested by X on <date>" line used to print once PER SECTION
+   * (`ReserveRowSection`'s own unconditional line), which repeats identical text N
+   * times for N rows. It renders ONCE now, in the dialog header; each section keeps
+   * only its own item code and inputs.
+   *
+   * TEST-FIRST (fix round 2): today "Request #" appears once per open row - a red
+   * here is "Request #3 appears more than once", never a fixture bug.
+   */
+  it('nit: the shared request line renders ONCE in the header, not once per section', async () => {
+    renderMultiRowDialog([
+      rowFixture({
+        rowId: 'row-1',
+        itemCode: 'B2155-NL-BLUE',
+        openRequest: openRequestFixture({ requestId: 'rr-1', ordinal: 3, qtyRequested: '20' }),
+      }),
+      rowFixture({
+        rowId: 'row-2',
+        itemCode: 'B2155-NL-RED',
+        openRequest: openRequestFixture({ requestId: 'rr-1', ordinal: 3, qtyRequested: '15' }),
+      }),
+    ]);
+
+    await screen.findAllByRole('button', { name: /confirm reserved/i });
+    expect(screen.getAllByText(/Request #3/)).toHaveLength(1);
+  });
+
+  /**
+   * Nit (fix round 2): the Radix close X sits `absolute end-5 top-5` over the header -
+   * `pe-10` keeps the title row (and the new request line above) clear of it, the same
+   * convention `StockDebtCellDialog`/`BoardCellBreakdownDialog` already carry.
+   */
+  it('nit: the dialog header carries pe-10 so the close X does not overlap it', async () => {
+    renderMultiRowDialog([
+      rowFixture({
+        rowId: 'row-1',
+        itemCode: 'B2155-NL-BLUE',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+      }),
+      rowFixture({
+        rowId: 'row-2',
+        itemCode: 'B2155-NL-RED',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+      }),
+    ]);
+
+    const header = (await screen.findByRole('heading', { name: 'Reserve' })).closest(
+      '[data-slot="dialog-header"]',
+    ) as HTMLElement;
+    expect(header.className).toMatch(/\bpe-10\b/);
+  });
+
+  /**
+   * Nit (fix round 2): a multi-row dialog with nothing actionable - here, `canAct`
+   * false - used to render N sections each showing only an item code and nothing
+   * else (the request line's own removal above leaves them fully blank). One short
+   * empty-state line replaces that.
+   */
+  it('nit: zero actionable sections (canAct false) renders one empty-state line, no blank per-row boxes', async () => {
+    renderMultiRowDialog(
+      [
+        rowFixture({
+          rowId: 'row-1',
+          itemCode: 'B2155-NL-BLUE',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        }),
+        rowFixture({
+          rowId: 'row-2',
+          itemCode: 'B2155-NL-RED',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        }),
+      ],
+      { canAct: false },
+    );
+
+    expect(
+      await screen.findByText('Nothing left to reserve on this request.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('B2155-NL-BLUE')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
   });
 });

@@ -215,9 +215,19 @@ export function useReserveOrderInquiryRow(inquiryId: string | undefined) {
       /** N1 (reviewer round, AC-RS-26 "toast wording kept"): the requester's own name,
        * for the toast alone - never read by `mutationFn` itself. */
       requestedByName?: string | null;
+      /** Nit (fix round 2, AC-RS-56): true only on the confirm that COMPLETES the
+       * request - the mail dispatches on completion (server side), so a non-final
+       * row's own toast must not claim the requester was already notified.
+       * Undefined behaves as `true` (every caller before this fix, and any that has
+       * not moved to per-confirm completion tracking, keeps today's wording). */
+      completes?: boolean;
     }) => reserveOrderInquiryRow(requestId, rowId, payload),
     onSuccess: (_data, variables) => {
-      toast.success(`Reserved, ${variables.requestedByName ?? 'the requester'} notified`);
+      toast.success(
+        variables.completes === false
+          ? 'Reserved'
+          : `Reserved, ${variables.requestedByName ?? 'the requester'} notified`,
+      );
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
     },
     onError: (error: Error) => toast.error(error.message),

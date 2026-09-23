@@ -214,7 +214,17 @@ export function useOrderInquiryHeaderLinesColumns({
               <ReservePill
                 reserveState={reserveState}
                 reservedQty={row.original.reserved_qty}
-                onClick={onReserveClick ? () => onReserveClick(row.original) : undefined}
+                onClick={
+                  onReserveClick
+                    ? (event) => {
+                        // Nit (fix round 2): the row itself may carry its own click
+                        // handler (a `rowHref` navigate) - the pill's own click must
+                        // never also trigger it.
+                        event.stopPropagation();
+                        onReserveClick(row.original);
+                      }
+                    : undefined
+                }
               />
             );
           }

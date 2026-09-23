@@ -8,9 +8,9 @@
  * the board chips (`BoardCellBreakdownDialog` renders this same pill) - has to share.
  */
 import { readFileSync } from 'node:fs';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { OrderInquiryStatePill, STATE_LABEL } from './OrderInquiryVerbPill';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { OrderInquiryStatePill, ReservePill, STATE_LABEL } from './OrderInquiryVerbPill';
 
 describe('AC-B5-1: the State pill reads the plain words', () => {
   it('the label map pins the owner’s exact pick for every stored state', () => {
@@ -86,5 +86,58 @@ describe('AC-B5-2: no second spelling of the state word - one map, everywhere it
       const source = readFileSync(require.resolve(relative), 'utf8');
       expect(source).toContain('OrderInquiryStatePill');
     }
+  });
+});
+
+/**
+ * Nit (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2 review finding). The
+ * interactive `ReservePill` (a `role=button` pill that otherwise renders IDENTICAL
+ * markup to the read-only span the worklist uses) carried no hover/focus affordance
+ * at all - nothing on screen told a reader it was clickable, or showed keyboard focus.
+ *
+ * TEST-FIRST (fix round 2): today neither button variant carries `cursor-pointer` -
+ * a red here is "the button's own className is missing it", never a fixture bug.
+ */
+describe('nit (fix round 2): the interactive ReservePill carries hover/focus affordance classes', () => {
+  it('the "requested" button carries cursor-pointer, hover and focus-visible classes', () => {
+    render(<ReservePill reserveState="requested" onClick={vi.fn()} />);
+
+    const button = screen.getByRole('button', { name: 'Reserve' });
+    expect(button.className).toMatch(/\bcursor-pointer\b/);
+    expect(button.className).toMatch(/\bhover:opacity-90\b/);
+    expect(button.className).toMatch(/\bfocus-visible:ring-2\b/);
+  });
+
+  it('the "reserved" button carries the same affordance classes', () => {
+    render(<ReservePill reserveState="reserved" reservedQty="3" onClick={vi.fn()} />);
+
+    const button = screen.getByRole('button', { name: 'Reserve' });
+    expect(button.className).toMatch(/\bcursor-pointer\b/);
+    expect(button.className).toMatch(/\bhover:opacity-90\b/);
+    expect(button.className).toMatch(/\bfocus-visible:ring-2\b/);
+  });
+
+  it('the read-only (no onClick) span carries none of it', () => {
+    render(<ReservePill reserveState="requested" />);
+
+    const span = screen.getByText('Request to reserve');
+    expect(span.className).not.toMatch(/cursor-pointer/);
+  });
+});
+
+/**
+ * Nit (fix round 2): `onClick` now receives the click EVENT, so the grid column call
+ * site can `stopPropagation()` before a `rowHref` (or any other row-level click
+ * handler) also fires.
+ */
+describe('nit (fix round 2): onClick receives the click event', () => {
+  it('the handler is called with a MouseEvent', () => {
+    const onClick = vi.fn();
+    render(<ReservePill reserveState="requested" onClick={onClick} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reserve' }));
+
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onClick.mock.calls[0][0]).toMatchObject({ type: 'click' });
   });
 });

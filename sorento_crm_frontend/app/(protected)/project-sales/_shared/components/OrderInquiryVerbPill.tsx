@@ -1,5 +1,6 @@
 'use client';
 
+import type { MouseEvent } from 'react';
 import { Check } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
@@ -128,6 +129,12 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
  * the Lines grid's own "State" cell click target - `onClick` set turns it into a
  * `role=button` `aria-label="Reserve"`, and `reserved` gains the owner's own tick.
  */
+/** Nit (fix round 2): the interactive pill's own affordance classes - a `role=button`
+ * pill that looks exactly like the read-only one it replaces otherwise gives no visual
+ * hint it is clickable. */
+const RESERVE_PILL_INTERACTIVE_CLASS =
+  'cursor-pointer hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
 export function ReservePill({
   reserveState,
   reservedQty,
@@ -136,8 +143,10 @@ export function ReservePill({
   reserveState: 'requested' | 'reserved' | string | null | undefined;
   reservedQty?: string | null;
   /** AC-RS-68: opens `ReserveRowDialog` for this row - absent renders a plain span, the
-   * worklist's own read-only usage. */
-  onClick?: () => void;
+   * worklist's own read-only usage. Nit (fix round 2): receives the click EVENT, so a
+   * grid cell call site can `stopPropagation()` before the row's own click handler
+   * (a `rowHref` navigate, say) also fires. */
+  onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   if (!reserveState) return null;
   const interactive = Boolean(onClick);
@@ -148,7 +157,7 @@ export function ReservePill({
         type="button"
         aria-label="Reserve"
         onClick={onClick}
-        className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
+        className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')} ${RESERVE_PILL_INTERACTIVE_CLASS}`}
       >
         {content}
       </button>
@@ -175,7 +184,7 @@ export function ReservePill({
         type="button"
         aria-label="Reserve"
         onClick={onClick}
-        className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}
+        className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')} ${RESERVE_PILL_INTERACTIVE_CLASS}`}
       >
         {content}
       </button>
