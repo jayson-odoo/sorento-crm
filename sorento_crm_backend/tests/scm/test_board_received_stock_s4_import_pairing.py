@@ -413,6 +413,77 @@ def test_r4_an_open_line_outranks_a_closed_one_even_with_a_later_required_date()
         )
 
 
+def test_r4b_overflow_row_still_lands_on_the_last_open_line_when_a_closed_line_exists():
+    """R4, the `last_id` guard (captain ruling round 4, 23 Sep 2026,
+    `PLAN-oi-order-rows-uncapped.md`). AC-S4-2's "the overflow row lands on the LAST
+    open line as a second row" preference (`_rank`'s `line_id == last_id` tier) reads
+    `last_id` off `candidates[-1]`, and `candidates` is sorted by `_line_pick_key` - a
+    PLAIN date sort with no open/closed distinction. When a CLOSED line's own required
+    date sorts AFTER both open lines, `candidates[-1]` is the closed line, not the
+    last open one - the overflow preference then points at a line an open row can
+    never win (the closed tier always loses to open in `_rank`, `test_r4_...` above),
+    so the third row falls back to whichever OTHER tier decides and lands a SECOND
+    row on line A instead of line C.
+
+    Fix: scope `last_id` to the OPEN candidates alone - a closed line, however it
+    sorts by date, must never steal the overflow preference from the last open line.
+
+    Two orders side by side: a CONTROL with only the two open lines (already green
+    today, the split this fix must not disturb) and the WITH-CLOSED block (RED today:
+    A gets two rows, C gets one, until the coder's `last_id` fix lands)."""
+    d_a, d_c, d_closed = date(2026, 3, 1), date(2026, 6, 1), date(2026, 9, 1)
+
+    def _landing_counts(w, rows):
+        counts: dict = {}
+        for r in rows:
+            counts[str(r.so_line_id)] = counts.get(str(r.so_line_id), 0) + 1
+        return counts
+
+    with world() as w:
+        order = w.order()
+        line_a = w.line(order, qty_ordered="100", required_date=d_a)
+        line_c = w.line(order, qty_ordered="100", required_date=d_c)
+
+        data = book_of(w, order, [(10, d_a), (10, d_c), (10, d_c)])
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 3, result
+        rows = w.rows()
+        assert len(rows) == 3, rows
+        assert _landing_counts(w, rows) == {
+            str(w.mirror_of(line_a).id): 1,
+            str(w.mirror_of(line_c).id): 2,
+        }, ("control (no closed line): A=[10], C=[10, 10] - already true today", rows)
+
+    with world() as w:
+        order = w.order()
+        line_a = w.line(order, qty_ordered="100", required_date=d_a)
+        line_c = w.line(order, qty_ordered="100", required_date=d_c)
+        closed_line = w.line(
+            order, qty_ordered="100", qty_delivered="100",
+            required_date=d_closed, line_status="closed",
+        )
+
+        data = book_of(w, order, [(10, d_a), (10, d_c), (10, d_c)])
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 3, result
+        rows = w.rows()
+        assert len(rows) == 3, rows
+        assert _landing_counts(w, rows) == {
+            str(w.mirror_of(line_a).id): 1,
+            str(w.mirror_of(line_c).id): 2,
+        }, (
+            "the overflow row must still land on the LAST OPEN line (C), not spill a "
+            "second row onto A because a later-dated CLOSED line hijacked last_id",
+            rows,
+        )
+        assert w.mirror_of(closed_line) is None, (
+            "the closed line must take no row at all while both open lines remain "
+            "candidates"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # AC-S4-7 (R10, added 21 Sep) - a sheet row larger than the open line it       #
 # pairs to by date order still lands there, capped only by the ORDER's own    #
