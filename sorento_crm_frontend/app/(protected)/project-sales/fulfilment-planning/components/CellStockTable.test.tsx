@@ -1383,4 +1383,53 @@ describe('AC-RS-71: the Location column is resizable and remembered per browser 
 
     spy.mockRestore();
   });
+
+  /**
+   * Nit (fix round 2 review finding). A drag that never reaches `pointerup` -
+   * `pointercancel` (a browser/OS gesture interrupting it) or a lost pointer capture
+   * some other way - used to leave the drag armed: the NEXT pointer move anywhere on
+   * the header would resume resizing from the stale baseline instead of starting a
+   * fresh drag.
+   *
+   * TEST-FIRST (fix round 2): today only `onPointerUp` ends the drag - a red here is
+   * "the width kept changing after pointercancel/lostpointercapture", never a
+   * fixture bug.
+   */
+  it('pointercancel ends the drag - a later pointermove with no new pointerdown does not resume it', () => {
+    window.localStorage.setItem(STORAGE_KEY, '200');
+    renderTable([position()]);
+
+    const handle = screen.getByTestId('cell-stock-location-resize');
+    const th = locationHeader();
+
+    fireEvent.pointerDown(handle, { clientX: 300 });
+    fireEvent.pointerMove(handle, { clientX: 350 });
+    expect(th.style.width).toBe('250px');
+
+    fireEvent.pointerCancel(handle);
+    // Persisted at the point of cancel, same as pointerup.
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('250');
+
+    // No new pointerdown - a stray move must not move the width any further.
+    fireEvent.pointerMove(handle, { clientX: 500 });
+    expect(th.style.width).toBe('250px');
+  });
+
+  it('losing pointer capture ends the drag the same way', () => {
+    window.localStorage.setItem(STORAGE_KEY, '200');
+    renderTable([position()]);
+
+    const handle = screen.getByTestId('cell-stock-location-resize');
+    const th = locationHeader();
+
+    fireEvent.pointerDown(handle, { clientX: 300 });
+    fireEvent.pointerMove(handle, { clientX: 340 });
+    expect(th.style.width).toBe('240px');
+
+    fireEvent(handle, new Event('lostpointercapture', { bubbles: true }));
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('240');
+
+    fireEvent.pointerMove(handle, { clientX: 600 });
+    expect(th.style.width).toBe('240px');
+  });
 });

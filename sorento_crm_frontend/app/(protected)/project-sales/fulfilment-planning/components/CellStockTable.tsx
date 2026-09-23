@@ -533,6 +533,15 @@ export const CellStockTable = React.forwardRef<
                     (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
                     endLocationResize();
                   }}
+                  // Nit (fix round 2): a drag that never reaches `pointerup` - the
+                  // browser cancels the gesture (an OS/browser drag-and-drop kicking
+                  // in, a touch interrupted by a system gesture) or capture is lost
+                  // some other way - used to leave `locationDragRef` armed, so the
+                  // NEXT pointer move anywhere on the header would resume resizing
+                  // from a stale baseline. Both end the drag the same way `pointerup`
+                  // does.
+                  onPointerCancel={() => endLocationResize()}
+                  onLostPointerCapture={() => endLocationResize()}
                 />
               </th>
               <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
