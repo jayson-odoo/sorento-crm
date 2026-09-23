@@ -103,6 +103,23 @@ describe('usePull polling (AC-BD-6)', () => {
   );
 });
 
+describe('usePull keeps polling while the tab is hidden (D27, AC-BV-1)', () => {
+  it('F1: passes refetchIntervalInBackground true, so a hidden tab is at most 10s stale', async () => {
+    getPull.mockResolvedValue(pullWithPhase('building'));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function localWrapper({ children }: { children: React.ReactNode }) {
+      return React.createElement(QueryClientProvider, { client }, children);
+    }
+    renderHook(() => usePull('job-1'), { wrapper: localWrapper });
+
+    await vi.waitFor(() => expect(getPull).toHaveBeenCalledTimes(1));
+
+    const observer = client.getQueryCache().find({ queryKey: ['autocount-pull', 'job-1'] })
+      ?.observers[0];
+    expect(observer?.options.refetchIntervalInBackground).toBe(true);
+  });
+});
+
 describe('usePull polling while confirmed (fix round 3, item 2)', () => {
   it.each(['queued', 'started'])(
     'H1d: keeps refetching every 10s while phase is confirmed and apply_status is %s',
