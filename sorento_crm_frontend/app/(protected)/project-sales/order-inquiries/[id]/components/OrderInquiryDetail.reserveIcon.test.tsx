@@ -33,8 +33,16 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(searchParamsValue),
 }));
 
+// F2 (fix round 3 review finding): a per-permission override, so a single test can
+// simulate a requester who holds `acknowledge` (can raise a request) but not
+// `reserve` (cannot confirm one) - every OTHER test leaves this `null` and gets the
+// old blanket `true`.
+let reservePermissionOverride: boolean | null = null;
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => true,
+  useHasPermission: (permission: string) =>
+    permission === 'projects.order_inquiries.reserve' && reservePermissionOverride !== null
+      ? reservePermissionOverride
+      : true,
 }));
 
 // S1 (reviewer round): `OrderInquiryDetail` reads `useSession` directly now.
@@ -238,6 +246,7 @@ function renderDetail() {
 beforeEach(() => {
   vi.clearAllMocks();
   searchParamsValue = '';
+  reservePermissionOverride = null;
   getReserveRequestsMock.mockResolvedValue([OPEN_REQUEST]);
 });
 
@@ -704,5 +713,199 @@ describe('AC-RS-65b: a multi-row dialog resolves pool options PER ROW, off each 
       expect.arrayContaining([expect.stringContaining('BRW')]),
     );
     expect(options.some((option) => (option.textContent ?? '').includes('DC1'))).toBe(false);
+  });
+});
+
+/**
+ * F1 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 3 review finding). The
+ * round-2 "completes" counter (`reserveConfirmedRowIdsRef.current.size + 1 >=
+ * reserveRowDialogRows.length`) read wrong on every axis a SINGLE-ROW dialog exposes:
+ * `reserveRowDialogRows.length` is the DIALOG's own row count (1, for a line-click
+ * dialog), not the REQUEST's - so a single-row confirm always counted as "completing"
+ * even while the SAME request's other rows (never carried by this dialog at all)
+ * stayed open. The fix reads the REQUEST's own full `rows` list off
+ * `reserveRequestsQuery.data` at the moment `onReserve` is called, server truth
+ * regardless of who answered what or when.
+ *
+ * TEST-FIRST (fix round 3): today EVERY one of these three confirms (single-row
+ * dialogs, in a request naming rows never carried by the dialog itself) reads
+ * "Reserved, Joey notified" - a red here is exactly that wording where "Reserved"
+ * alone (or vice versa) is correct, never a fixture bug.
+ */
+describe('F1 (fix round 3): completes is SERVER TRUTH off the request, not a dialog-row counter', () => {
+  const ROW_X = row({ id: 'row-x', item_code: 'ZZT-X', reserve_state: 'requested' });
+
+  function requestFixture(rowsOverride: Array<Record<string, unknown>>) {
+    return {
+      id: 'rr-f1',
+      order_inquiry_id: 'oi-1',
+      ordinal: 5,
+      state: 'requested' as const,
+      requested_by: 'user-1',
+      requested_by_name: 'Joey',
+      requested_at: '2026-09-23T09:00:00',
+      note: null,
+      reserved_by_name: null,
+      reserved_at: null,
+      cancelled_at: null,
+      first_to_name: null,
+      rows: rowsOverride,
+    };
+  }
+
+  async function openAndConfirmRowX() {
+    renderDetail();
+    await screen.findByText('ZZT-X');
+    const rowXGrid = gridRowFor('ZZT-X');
+    fireEvent.click(rowXGrid.querySelector('[aria-label="Reserve"]') as Element);
+
+    const confirmButton = await screen.findByRole('button', { name: /confirm reserved/i });
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalledTimes(1));
+  }
+
+  it('3-row open request, confirming ONE row: toast reads plain "Reserved" - the other two rows (never carried by this dialog) stay open', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_X]);
+    getReserveRequestsMock.mockResolvedValue([
+      requestFixture([
+        { id: 'rr-x', row_id: 'row-x', item_code: 'ZZT-X', qty_requested: '10', warehouse_id: null, location: null, qty_reserved: null, reason: null },
+        { id: 'rr-y', row_id: 'row-y', item_code: 'ZZT-Y', qty_requested: '5', warehouse_id: null, location: null, qty_reserved: null, reason: null },
+        { id: 'rr-z', row_id: 'row-z', item_code: 'ZZT-Z', qty_requested: '8', warehouse_id: null, location: null, qty_reserved: null, reason: null },
+      ]),
+    ]);
+
+    await openAndConfirmRowX();
+
+    expect(toastSuccessSpy).toHaveBeenCalledWith('Reserved');
+  });
+
+  it('the LAST open row of a 3-row request: toast reads "Reserved, <name> notified"', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_X]);
+    getReserveRequestsMock.mockResolvedValue([
+      requestFixture([
+        { id: 'rr-x', row_id: 'row-x', item_code: 'ZZT-X', qty_requested: '10', warehouse_id: null, location: null, qty_reserved: null, reason: null },
+        { id: 'rr-y', row_id: 'row-y', item_code: 'ZZT-Y', qty_requested: '5', warehouse_id: null, location: null, qty_reserved: '5', reason: null },
+        { id: 'rr-z', row_id: 'row-z', item_code: 'ZZT-Z', qty_requested: '8', warehouse_id: null, location: null, qty_reserved: '8', reason: null },
+      ]),
+    ]);
+
+    await openAndConfirmRowX();
+
+    expect(toastSuccessSpy).toHaveBeenCalledWith('Reserved, Joey notified');
+  });
+
+  it('one row already answered SERVER-SIDE by someone else, confirming the other: notified', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_X]);
+    getReserveRequestsMock.mockResolvedValue([
+      requestFixture([
+        { id: 'rr-x', row_id: 'row-x', item_code: 'ZZT-X', qty_requested: '10', warehouse_id: null, location: null, qty_reserved: null, reason: null },
+        // Answered by a DIFFERENT session/user entirely - this test never confirms it.
+        { id: 'rr-w', row_id: 'row-w', item_code: 'ZZT-W', qty_requested: '3', warehouse_id: null, location: null, qty_reserved: '3', reason: null },
+      ]),
+    ]);
+
+    await openAndConfirmRowX();
+
+    expect(toastSuccessSpy).toHaveBeenCalledWith('Reserved, Joey notified');
+  });
+});
+
+/**
+ * F2 (fix round 3 review finding). `cancelControl` used to resolve `requestedBy` off
+ * the PRIMARY row's own open request (`reserveRowOpenRequest`) - once the primary row
+ * itself was answered (by anyone, at any time - here, someone else entirely, off this
+ * session), that lookup went null even while ANOTHER row the SAME multi-row dialog
+ * still carries stayed open, so `canCancelReserveRequest` was handed `undefined` and
+ * "Cancel request" silently disappeared from a dialog that still had an open request
+ * to cancel. The fix resolves `requestedBy` off `reserveDialogOpenRequest` - ANY
+ * carried row still open, same identity across all of them since they share one
+ * request.
+ *
+ * TEST-FIRST (fix round 3): today "Cancel request" disappears the moment row-1 (the
+ * PRIMARY, first-listed row) is answered - a red here is "no such button" once that
+ * lands, never a fixture bug.
+ */
+describe('F2 (fix round 3): Cancel request survives the PRIMARY row being answered first, for the requester without the reserve permission', () => {
+  const ROW_CANCEL_A = row({ id: 'row-cancel-a', item_code: 'ZZT-CANCEL-A', reserve_state: 'requested' });
+  const ROW_CANCEL_B = row({ id: 'row-cancel-b', item_code: 'ZZT-CANCEL-B', reserve_state: 'requested' });
+
+  function twoRowRequest(rowARowReserved: string | null) {
+    return {
+      id: 'rr-cancel',
+      order_inquiry_id: 'oi-1',
+      ordinal: 6,
+      state: 'requested' as const,
+      // The CURRENT test user IS the requester - `canCancelReserveRequest` grants
+      // Cancel to them even without the reserve permission (S1,
+      // `orderInquiryReserve.ts`).
+      requested_by: 'test-current-user',
+      requested_by_name: 'Teh Jayson',
+      requested_at: '2026-09-23T09:00:00',
+      note: null,
+      reserved_by_name: null,
+      reserved_at: null,
+      cancelled_at: null,
+      first_to_name: null,
+      rows: [
+        {
+          id: 'reqrow-cancel-a',
+          row_id: 'row-cancel-a',
+          item_code: 'ZZT-CANCEL-A',
+          qty_requested: '10',
+          warehouse_id: null,
+          location: null,
+          qty_reserved: rowARowReserved,
+          reason: null,
+        },
+        {
+          id: 'reqrow-cancel-b',
+          row_id: 'row-cancel-b',
+          item_code: 'ZZT-CANCEL-B',
+          qty_requested: '5',
+          warehouse_id: null,
+          location: null,
+          qty_reserved: null,
+          reason: null,
+        },
+      ],
+    };
+  }
+
+  it('Cancel request stays visible after row-cancel-a (primary) is answered by someone else, row-cancel-b still open', async () => {
+    reservePermissionOverride = false;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_CANCEL_A, ROW_CANCEL_B]);
+    getReserveRequestsMock.mockResolvedValue([twoRowRequest(null)]);
+    searchParamsValue = 'reserve=rr-cancel';
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryDetail id="oi-1" />
+      </QueryClientProvider>,
+    );
+
+    // Both rows open, no reserve permission - read-only sections (F2), no Confirm
+    // reserved anywhere, but the requester's own Cancel request is offered.
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
+    expect((await screen.findAllByText('ZZT-CANCEL-A')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('ZZT-CANCEL-B').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cancel request/i })).toBeInTheDocument();
+
+    // row-cancel-a (the PRIMARY row) gets answered off this session entirely.
+    getReserveRequestsMock.mockResolvedValue([twoRowRequest('10')]);
+    await client.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, 'oi-1'] });
+    await waitFor(() => {
+      const cached = client.getQueryData([ORDER_INQUIRY_RESERVE_REQUESTS_KEY, 'oi-1']) as
+        | Array<{ rows: Array<{ row_id: string; qty_reserved: string | null }> }>
+        | undefined;
+      const rowA = cached?.[0]?.rows.find((r) => r.row_id === 'row-cancel-a');
+      expect(rowA?.qty_reserved).toBe('10');
+    });
+
+    // row-cancel-b is still open - Cancel request must still be offered.
+    expect(screen.getByRole('button', { name: /cancel request/i })).toBeInTheDocument();
   });
 });

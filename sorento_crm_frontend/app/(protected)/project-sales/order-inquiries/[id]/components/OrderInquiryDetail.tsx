@@ -163,12 +163,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // .tsx`) opens exactly one; `?reserve=<request_id>` (AC-RS-65) opens every still-open
   // row of that request at once. Empty = closed.
   const [reserveDialogRowIds, setReserveDialogRowIds] = useState<string[]>([]);
-  // Nit (fix round 2, AC-RS-56): which of THIS dialog session's own rows have already
-  // confirmed - reset every time a dialog session opens (below), so the confirm that
-  // completes the request (every carried row now answered) can be told apart from one
-  // that does not, for the toast wording alone (the mail itself dispatches server-side
-  // on completion; this never decides that, only what the toast claims).
-  const reserveConfirmedRowIdsRef = useRef<Set<string>>(new Set());
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -339,6 +333,21 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     () => openRequestForRow(primaryReserveRowId),
     [openRequestForRow, primaryReserveRowId],
   );
+  // F2 (fix round 3 review finding): the request identity ANY row this dialog still
+  // carries open names - every row shares ONE request, so the first one found is
+  // enough. Distinct from `reserveRowOpenRequest` above (PRIMARY row only - correct
+  // for History/Unreserve, which are genuinely single-row-scoped): the CANCEL
+  // machinery below applies to the WHOLE request, so scoping it to the primary row
+  // alone made "Cancel request" (and the permission check gating it) disappear the
+  // moment JUST the primary row was answered, even while other rows in the same
+  // multi-row dialog stayed open.
+  const reserveDialogOpenRequest = useMemo(() => {
+    for (const rowId of reserveDialogRowIds) {
+      const found = openRequestForRow(rowId);
+      if (found) return found;
+    }
+    return null;
+  }, [reserveDialogRowIds, openRequestForRow]);
   const reserveRowLastRequestId = useMemo(() => {
     if (!primaryReserveRowId) return null;
     const answered = (reserveRequestsQuery.data ?? [])
@@ -432,16 +441,17 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // F2 header "Cancel request" (plan 6c): the same countdown pattern round 1's own
   // `ReserveRequestsCard` used, now built here and handed down as a prop - the dialog
   // stays free of react-query so its own vitest suite can render it with no providers.
-  // Round 3: applies to the WHOLE request (1..N rows), so it stays keyed off the
-  // primary row's own open request - every row this dialog carries shares one request.
+  // Round 3: applies to the WHOLE request (1..N rows) - fix round 3 keys it off
+  // `reserveDialogOpenRequest` (ANY carried row still open), not the primary row
+  // alone, so it survives the primary row being answered first.
   const reserveRowCancelAction = useDeferredAction({
     actionKey: 'order_inquiry_reserve_request.cancel',
     entityType: 'order_inquiry_reserve_request',
-    entityId: reserveRowOpenRequest?.requestId ?? null,
+    entityId: reserveDialogOpenRequest?.requestId ?? null,
     verb: 'Cancelling',
-    subject: reserveRowOpenRequest ? `Request #${reserveRowOpenRequest.ordinal}` : '',
+    subject: reserveDialogOpenRequest ? `Request #${reserveDialogOpenRequest.ordinal}` : '',
     surface: 'inline',
-    watchFromMount: Boolean(reserveRowOpenRequest),
+    watchFromMount: Boolean(reserveDialogOpenRequest),
     successMessage: 'Reserve request cancelled',
     invalidateKeys: [
       [ORDER_INQUIRY_HEADER_LINES_KEY, id],
@@ -474,7 +484,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   });
 
   const openReserveRowDialog = useCallback((row: OrderInquiryWorklistRow) => {
-    reserveConfirmedRowIdsRef.current = new Set();
     setReserveDialogRowIds([row.id]);
   }, []);
 
@@ -518,7 +527,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       .filter((row) => row.qty_reserved == null)
       .map((row) => row.row_id);
     if (openRowIds.length > 0) {
-      reserveConfirmedRowIdsRef.current = new Set();
       setReserveDialogRowIds(openRowIds);
       handledReserveParamRef.current = reserveParam;
     }
@@ -894,15 +902,22 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             // own open request, which goes null the moment that row itself is
             // answered, leaving the LAST section's own confirm (on a multi-row
             // dialog) with no name to read (N1, AC-RS-26 "toast wording kept").
-            const requestedByName =
-              reserveRequestsQuery.data?.find((r) => r.id === requestId)?.requested_by_name ?? null;
-            // Nit (fix round 2, AC-RS-56): "completes" = every row this dialog
-            // session carries a section for is now confirmed - the mail itself
-            // dispatches server-side on completion; this only decides what the
-            // toast claims, never the send itself.
-            const completes =
-              reserveConfirmedRowIdsRef.current.size + 1 >= reserveRowDialogRows.length;
-            reserveConfirmedRowIdsRef.current.add(rowId);
+            const request = reserveRequestsQuery.data?.find((r) => r.id === requestId);
+            const requestedByName = request?.requested_by_name ?? null;
+            // F1 (fix round 3 review finding): "completes" is SERVER TRUTH off the
+            // REQUEST's own full row list, not a counter of this dialog's own rows -
+            // a dialog-row counter reads wrong on every axis: a single-row dialog
+            // (length 1) always "completed" even while the request's OTHER rows
+            // (never carried by this dialog at all) stayed open; a cancelled OI line
+            // named by the request but filtered out of `activeLines` never counted;
+            // another user's own answer (landed via refetch, not this session)
+            // wasn't credited; a failed confirm still incremented the ref. The
+            // request row THIS call is answering (`rowId`) is treated as answered
+            // regardless of what `qty_reserved` still reads in the not-yet-refetched
+            // cache - every OTHER row must already carry a non-null `qty_reserved`.
+            const completes = (request?.rows ?? []).every(
+              (r) => r.row_id === rowId || r.qty_reserved != null,
+            );
             return reserveRowMutation.mutateAsync({
               requestId,
               rowId,
@@ -912,7 +927,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             });
           }}
           cancelControl={
-            canCancelReserveRequest(currentUserId, reserveRowOpenRequest?.requestedBy, canReserve)
+            canCancelReserveRequest(currentUserId, reserveDialogOpenRequest?.requestedBy, canReserve)
               ? {
                   isPending: reserveRowCancelAction.isPending,
                   isBlocked: reserveRowCancelAction.isBlocked,
