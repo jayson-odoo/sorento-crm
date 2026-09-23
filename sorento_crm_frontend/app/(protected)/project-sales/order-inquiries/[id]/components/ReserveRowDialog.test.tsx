@@ -440,6 +440,65 @@ describe('S4 (fix round 2): the single-row (tabs) path honours confirmedRows, sa
 });
 
 /**
+ * R1 (fix round 3 review finding). S4's own gate (`confirmedRows[soleRow.rowId] !=
+ * null`) hides `ReserveRowSection` for the WHOLE dialog session once confirmed, with
+ * no way back - but `ReserveRowSection` is also where the real "Reserved N @ Location"
+ * + Unreserve branch lives (the `!openRequest && netReserved > 0 && canAct` branch),
+ * which only ever renders once the CALLER's own props catch up (`openRequest` goes
+ * null after a refetch). S4's gate blocked that branch from ever being reached again
+ * until the dialog was closed and reopened. The fix narrows the gate to `confirmedRows
+ * [...] != null && soleRow.openRequest` - true only while props are STALE (echo shown),
+ * false the moment `openRequest` itself goes null (falls through to the real branch).
+ * The stale echo also names the location now ("Reserved 90 @ BRW"), matching what the
+ * real branch would show for the same row.
+ *
+ * TEST-FIRST (fix round 3): today the gate never releases - a red here is "Unreserve
+ * never appears even after openRequest goes null", never a fixture bug.
+ */
+describe('R1 (fix round 3): confirming does not permanently hide ReserveRowSection - Unreserve becomes reachable once props catch up', () => {
+  it('confirm (echo names the location) - then a rerender with openRequest: null shows Unreserve, no Confirm button', async () => {
+    const { rerender } = renderDialog();
+
+    fireEvent.change(await screen.findByLabelText(/reason/i), {
+      target: { value: 'BRW only has 90 today' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /confirm reserved/i }));
+    await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(1));
+
+    // Stale-props echo: qty AND location, the same shape the real branch uses.
+    expect(await screen.findByText(/Reserved 90 @ BRW/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^unreserve$/i })).not.toBeInTheDocument();
+
+    rerender(
+      <ReserveRowDialog
+        open
+        onOpenChange={vi.fn()}
+        rowId="row-1"
+        itemCode="B2155-NL-BLUE"
+        openRequest={null}
+        history={historyFixture() as never}
+        locationOptions={[
+          { value: 'brw-id', label: 'BRW' },
+          { value: 'dc1-id', label: 'DC1' },
+          { value: 'wh3-id', label: 'WH3' },
+        ]}
+        defaultLocationId="brw-id"
+        availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
+        netReservedQty="90"
+        canAct
+        onReserve={onReserveSpy as never}
+        onConfirmed={vi.fn()}
+        unreserveControl={idleUnreserveControl()}
+      />,
+    );
+
+    expect(await screen.findByRole('button', { name: /^unreserve$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
  * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, `oi-request-cs-reserve-
  * acceptance-criteria.md` AC-RS-66/AC-RS-67). The email deep link used to open this
  * dialog for ONE row (`rowId`/`itemCode`/`openRequest`/`history`/`netReservedQty` as
@@ -572,6 +631,69 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
   });
 
   /**
+   * R2 (fix round 3 review finding). `handleRowConfirmed` used to compute `next = {
+   * ...confirmedRows, [id]: qty }` off the CLOSURE value of `confirmedRows` - if both
+   * sections' own `handleConfirm` resolve close enough together that React batches
+   * the two resulting `setConfirmedRows` calls (both promise continuations, both read
+   * the SAME stale closure captured before either had run), the SECOND call's plain
+   * object silently overwrites the first's, so only one row ever flips read-only and
+   * the "every row confirmed" count never reaches `effectiveRows.length` - the dialog
+   * never closes. The fix uses the functional updater form and reads a ref (mirrored
+   * inside the handler) rather than the closure for the close decision.
+   *
+   * TEST-FIRST (fix round 3): today, resolving both confirms before either's own
+   * continuation has run drops one flip - a red here is "still one Confirm reserved
+   * button left" / "onOpenChange never called", never a fixture bug or a flake.
+   */
+  it('R2: two confirms resolving in the same tick both flip read-only, and onOpenChange(false) fires exactly once', async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    let resolveSecond: (value: unknown) => void = () => {};
+    const deferredOnReserve = vi.fn((_requestId: string, rowId: string) => {
+      return new Promise((resolve) => {
+        if (rowId === 'row-1') resolveFirst = resolve;
+        else resolveSecond = resolve;
+      });
+    });
+    const onOpenChangeSpy = vi.fn();
+
+    renderMultiRowDialog(
+      [
+        rowFixture({
+          rowId: 'row-1',
+          itemCode: 'B2155-NL-BLUE',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        }),
+        rowFixture({
+          rowId: 'row-2',
+          itemCode: 'B2155-NL-RED',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        }),
+      ],
+      { onOpenChange: onOpenChangeSpy, onReserve: deferredOnReserve as never },
+    );
+
+    const confirmButtons = await screen.findAllByRole('button', { name: /confirm reserved/i });
+    expect(confirmButtons).toHaveLength(2);
+
+    // Both clicks BEFORE either promise resolves - each section is its own component
+    // instance, so row-2's own button stays enabled while row-1's own `handleConfirm`
+    // is still awaiting.
+    fireEvent.click(confirmButtons[0]);
+    fireEvent.click(confirmButtons[1]);
+    await waitFor(() => expect(deferredOnReserve).toHaveBeenCalledTimes(2));
+
+    // Resolved together, in the same tick - the race window R2 fixes.
+    resolveFirst({ id: 'rr-1', state: 'requested' });
+    resolveSecond({ id: 'rr-1', state: 'reserved' });
+
+    await waitFor(() =>
+      expect(screen.queryAllByRole('button', { name: /confirm reserved/i })).toHaveLength(0),
+    );
+    await waitFor(() => expect(onOpenChangeSpy).toHaveBeenCalledTimes(1));
+    expect(onOpenChangeSpy).toHaveBeenCalledWith(false);
+  });
+
+  /**
    * Fix round 1 (`PLAN-oi-request-cs-reserve.md` 6d "Fix round 1", `oi-request-cs-
    * reserve-acceptance-criteria.md` AC-RS-66b). TEST-FIRST: today `ReserveRowSection`
    * only ever reads the dialog's own TOP-LEVEL `locationOptions`/`availableQtyByLocation`
@@ -673,12 +795,18 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
   });
 
   /**
-   * Nit (fix round 2): a multi-row dialog with nothing actionable - here, `canAct`
-   * false - used to render N sections each showing only an item code and nothing
-   * else (the request line's own removal above leaves them fully blank). One short
-   * empty-state line replaces that.
+   * F2 (fix round 3 review finding). This test used to pin the WRONG behaviour: it
+   * asserted that `canAct: false` alone - with both rows still genuinely OPEN -
+   * collapsed the whole dialog to the empty-state line. AC-RS-62 says a viewer
+   * without the reserve permission gets a READ-ONLY tab, not an emptied one -
+   * folding `canAct` into the "nothing left" check hid rows a requester (or anyone
+   * else without the permission) still needed to SEE, even though they could not
+   * act on them. The corrected behaviour: `!canAct` renders every section, each one
+   * read-only (`ReserveRowSection`'s own `canAct` gate already suppresses its
+   * inputs/Confirm button); the empty line renders only once no carried row is
+   * still open at all (`nit: rows: [] ...` below covers that case).
    */
-  it('nit: zero actionable sections (canAct false) renders one empty-state line, no blank per-row boxes', async () => {
+  it('canAct false with open rows: every section still renders (item code visible), read-only - no empty-state line', async () => {
     renderMultiRowDialog(
       [
         rowFixture({
@@ -695,10 +823,26 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
       { canAct: false },
     );
 
+    expect(await screen.findByText('B2155-NL-BLUE')).toBeInTheDocument();
+    expect(screen.getByText('B2155-NL-RED')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Nothing left to reserve on this request.'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Reserved')).not.toBeInTheDocument();
+  });
+
+  /**
+   * F2: the empty-state line itself, now reachable only when NO carried row is
+   * still open - here, a dialog handed zero rows at all (the one way this is
+   * actually reachable through `effectiveRows`, since every row the real caller
+   * hands the multi-row path is open by construction).
+   */
+  it('nit: rows: [] renders the empty-state line', async () => {
+    renderMultiRowDialog([]);
+
     expect(
       await screen.findByText('Nothing left to reserve on this request.'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('B2155-NL-BLUE')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
   });
 });

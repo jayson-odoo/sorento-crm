@@ -169,9 +169,12 @@ function ReserveRowSection({
     rowId: string,
     payload: ReserveRowPayload,
   ) => Promise<OrderInquiryReserveRequestRow>;
-  /** Round 3: replaces the old top-level `onConfirmed` - names WHICH row confirmed and
-   * with what qty, so a multi-row dialog can flip that one section read-only. */
-  onRowConfirmed: (rowId: string, qty: number) => void;
+  /** Round 3: replaces the old top-level `onConfirmed` - names WHICH row confirmed,
+   * with what qty and at which location (R1, fix round 3: the CODE, resolved off
+   * `locationOptions` - never the raw id `location` state holds), so a multi-row
+   * dialog can flip that one section read-only with the same "Reserved N @ Location"
+   * shape the real (props-caught-up) branch below renders. */
+  onRowConfirmed: (rowId: string, qty: number, locationLabel: string) => void;
   /** Absent in the multi-row (email-link) path: every row it carries is still open by
    * construction (`OrderInquiryDetail`'s own filter), so the "already reserved, offer
    * Unreserve" branch below never renders there in practice. */
@@ -272,7 +275,11 @@ function ReserveRowSection({
         qty_reserved: reserved,
         reason: reason.trim() ? reason.trim() : null,
       });
-      onRowConfirmed(rowId, reserved);
+      // R1: the CODE, not the raw warehouse id `location` itself holds (no UUID in
+      // the frontend UI) - the same resolution the real "already reserved" branch
+      // below reads off `history`'s own most recent `reserved` entry.
+      const locationLabel = locationOptions.find((option) => option.value === location)?.label ?? '';
+      onRowConfirmed(rowId, reserved, locationLabel);
     } catch {
       // The caller's own mutation hook already toasted the error (S5).
     } finally {
@@ -497,29 +504,50 @@ export function ReserveRowDialog({
   const showTabs = effectiveRows.length === 1;
   const anyOpenRequest = effectiveRows.some((row) => Boolean(row.openRequest));
 
-  // Round 3: which rows this dialog session has already confirmed, and with what qty -
-  // flips that row's own section to a read-only "Reserved N" line, and closes the
-  // dialog once every open row has one.
-  const [confirmedRows, setConfirmedRows] = React.useState<Record<string, number>>({});
+  // Round 3: which rows this dialog session has already confirmed, and with what qty
+  // + location - flips that row's own section to a read-only "Reserved N @ Location"
+  // line, and closes the dialog once every open row has one.
+  const [confirmedRows, setConfirmedRows] = React.useState<
+    Record<string, { qty: number; location: string }>
+  >({});
+  // R2 (fix round 3 review finding): mirrors `confirmedRows`' own keys, updated
+  // SYNCHRONOUSLY inside the handler (a ref write is immediate, unlike a `setState`
+  // whose merged result is only visible once React re-renders) - two confirms
+  // resolving close enough together that React batches their state updates both
+  // still land here before the close-effect below ever runs, so the effect always
+  // sees the TRUE count rather than whichever state snapshot happened to commit.
+  const confirmedRowIdsRef = React.useRef<Set<string>>(new Set());
   const rowsSignature = effectiveRows.map((row) => row.rowId).join(',');
   React.useEffect(() => {
     setConfirmedRows({});
+    confirmedRowIdsRef.current = new Set();
   }, [rowsSignature]);
 
-  // Nit (fix round 2): the next state is computed OUTSIDE the updater, and
-  // `onOpenChange` is called from the handler body, never from inside a `setState`
-  // updater - React may invoke an updater more than once (Strict Mode, a bail-out
-  // replay), and a side effect living inside it would then fire that many times too.
-  function handleRowConfirmed(confirmedRowId: string, qty: number) {
-    const next = { ...confirmedRows, [confirmedRowId]: qty };
-    setConfirmedRows(next);
-    // Multi-row only: the tabs (single-row) path keeps the dialog open after a
-    // Confirm, exactly as it always has.
-    if (!showTabs && Object.keys(next).length >= effectiveRows.length) {
-      onOpenChange(false);
-    }
+  // R2: the next state is computed via the FUNCTIONAL updater form, never off the
+  // `confirmedRows` closure - two sections' own `handleConfirm` resolving close
+  // enough together that React batches the resulting state updates both read the
+  // SAME stale closure under the old plain-object form, and the second silently
+  // overwrote the first's flip. `onOpenChange` never runs from inside the updater
+  // (React may invoke it more than once) - the close decision moves to its own
+  // effect below, keyed on `confirmedRows` itself.
+  function handleRowConfirmed(confirmedRowId: string, qty: number, locationLabel: string) {
+    confirmedRowIdsRef.current.add(confirmedRowId);
+    setConfirmedRows((prev) => ({ ...prev, [confirmedRowId]: { qty, location: locationLabel } }));
     onConfirmed?.();
   }
+
+  // R2: multi-row only (the tabs/single-row path keeps the dialog open after a
+  // Confirm, exactly as it always has) - fires once every carried row has confirmed,
+  // reading the REF (always current the instant the handler above ran) rather than
+  // the `confirmedRows` state this effect is merely keyed on.
+  React.useEffect(() => {
+    if (showTabs) return;
+    if (effectiveRows.length === 0) return;
+    if (confirmedRowIdsRef.current.size >= effectiveRows.length) {
+      onOpenChange(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedRows]);
 
   const soleRow = effectiveRows[0];
   // Nit (fix round 2): every row in a multi-row dialog shares ONE request - the
@@ -530,12 +558,14 @@ export function ReserveRowDialog({
   const multiRowOpenRequest = !showTabs
     ? (effectiveRows.find((row) => row.openRequest)?.openRequest ?? null)
     : null;
-  // Nit (fix round 2): a multi-row dialog with nothing actionable left - every row
-  // already confirmed this session, or `canAct` is false - renders one short empty
-  // line instead of N sections with nothing in them.
-  const hasActionableSection = effectiveRows.some(
-    (row) => canAct && confirmedRows[row.rowId] == null,
-  );
+  // F2 (fix round 3 review finding): whether ANY carried row is still open THIS
+  // session - `canAct` used to be folded into this check, so a viewer without the
+  // reserve permission saw the empty line while rows were genuinely still open
+  // (AC-RS-62 says read-only, not emptied). The empty line now renders only once
+  // nothing is left open at all; `!canAct` alone renders every section READ-ONLY
+  // instead (each `ReserveRowSection` already gates its own inputs/Confirm on its
+  // own `canAct` prop).
+  const hasOpenSection = effectiveRows.some((row) => confirmedRows[row.rowId] == null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -579,16 +609,22 @@ export function ReserveRowDialog({
 
               <TabsContent value="reserve" className="mt-0 focus-visible:outline-none">
                 {soleRow ? (
-                  // S4 (fix round 2): the SAME `confirmedRows` this dialog session
-                  // already tracks for the multi-row path - a stale re-render (the
-                  // caller's own props not yet refetched) must not leave a
-                  // re-submittable Confirm reserved button up after Confirm has
-                  // already been clicked once.
-                  confirmedRows[soleRow.rowId] != null ? (
+                  // R1 (fix round 3): the read-only echo shows ONLY while props are
+                  // still STALE (`soleRow.openRequest` truthy) - the moment the
+                  // caller's own props catch up (a refetch lands `openRequest: null`),
+                  // this falls through to `ReserveRowSection` itself, which is where
+                  // the REAL "Reserved N @ Location" + Unreserve branch lives. The old
+                  // gate (`confirmedRows[...] != null` alone) hid that branch for the
+                  // WHOLE session, so Unreserve stayed unreachable until the dialog
+                  // was closed and reopened.
+                  confirmedRows[soleRow.rowId] != null && soleRow.openRequest ? (
                     <div className="flex items-center gap-2 rounded-lg border border-border p-3">
                       <Check className="size-4 text-emerald-600" aria-hidden />
                       <span className="text-sm text-muted-foreground">
-                        Reserved {confirmedRows[soleRow.rowId]}
+                        Reserved {confirmedRows[soleRow.rowId].qty}
+                        {confirmedRows[soleRow.rowId].location
+                          ? ` @ ${confirmedRows[soleRow.rowId].location}`
+                          : ''}
                       </span>
                     </div>
                   ) : (
@@ -610,10 +646,12 @@ export function ReserveRowDialog({
                 <HistoryPanel history={soleRow?.history ?? []} />
               </TabsContent>
             </Tabs>
-          ) : !hasActionableSection ? (
-            // Nit (fix round 2): nothing left to act on - every row already confirmed
-            // this session (which also closes the dialog, so this is reached mainly
-            // by `canAct` false), or the dialog opened with no rows at all.
+          ) : !hasOpenSection ? (
+            // F2 (fix round 3): nothing left OPEN at all - every carried row already
+            // confirmed this session (which also closes the dialog, so this is
+            // reached mainly by a caller handing the dialog zero rows), never by
+            // `canAct` alone (a viewer without the permission still sees every
+            // section, read-only, below).
             <p className="text-sm text-muted-foreground">
               Nothing left to reserve on this request.
             </p>
@@ -625,8 +663,8 @@ export function ReserveRowDialog({
             // only its own item code + inputs.
             <div className="space-y-4">
               {effectiveRows.map((row) => {
-                const confirmedQty = confirmedRows[row.rowId];
-                if (confirmedQty != null) {
+                const confirmedEntry = confirmedRows[row.rowId];
+                if (confirmedEntry != null) {
                   return (
                     <div
                       key={row.rowId}
@@ -635,7 +673,7 @@ export function ReserveRowDialog({
                       <Check className="size-4 text-emerald-600" aria-hidden />
                       <span className="text-sm font-medium">{row.itemCode}</span>
                       <span className="text-sm text-muted-foreground">
-                        Reserved {confirmedQty}
+                        Reserved {confirmedEntry.qty}
                       </span>
                     </div>
                   );
