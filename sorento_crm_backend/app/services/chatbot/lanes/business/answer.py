@@ -3587,39 +3587,62 @@ def not_found_error_message(
                 )
                 found_summary = _outstanding_report_text(item)
             else:
-                # status-filter-aware: a SPECIFIC order resolved (the DO exists) but the
-                # delivered / outstanding filter returned nothing, so the order is not a miss,
-                # it is just not in that status.
-                order_match = jsc.find(
-                    all_matches,
-                    lambda m: jsc.truthy(m)
-                    and jsc.get(m, "uuid") in compat_uuids
-                    and jsc.get(m, "entity_type") in _ORDER_TYPES,
-                )
-                if jsc.truthy(order_match) and order_status in ("delivered", "outstanding"):
-                    display = jsc.get(order_match, "display") or {}
-                    customer = jsc.get(display, "customer_name")
-                    label = jsc.js_string(jsc.get(order_match, "canonical_code")) + (
-                        f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
+                # status-filter-aware: one or more SPECIFIC orders resolved (the DO exists)
+                # but the delivered / outstanding filter returned nothing, so the order is
+                # not a miss, it is just not in that status. AC-1860/AC-1861/AC-1862: a
+                # status-filtered ask can name several orders (`STATUS DELIVERY / A / B / C`)
+                # and every resolved one must be named, not just the first - in
+                # `gate.compatible_entities` order (the order the customer typed), deduped
+                # by uuid since `all_matches` carries `intersection` + `by_entity_type` +
+                # `resolutions`, so the same uuid can appear up to three times.
+                order_uuids_in_order: list[Any] = []
+                seen_order_uuids: set[Any] = set()
+                for c in compat:
+                    if jsc.get(c, "entity_type") not in _ORDER_TYPES:
+                        continue
+                    c_uuid = jsc.get(c, "uuid")
+                    if c_uuid not in seen_order_uuids:
+                        seen_order_uuids.add(c_uuid)
+                        order_uuids_in_order.append(c_uuid)
+                order_matches: list[Any] = []
+                for order_uuid in order_uuids_in_order:
+                    match = jsc.find(
+                        all_matches,
+                        lambda m, order_uuid=order_uuid: jsc.truthy(m)
+                        and jsc.get(m, "uuid") == order_uuid
+                        and jsc.get(m, "entity_type") in _ORDER_TYPES,
                     )
-                    if order_status == "delivered":
-                        status = jsc.get(display, "status")
-                        status_text = f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
-                        # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
-                        # `orders.estimated_delivery_date` is not a real promise - the
-                        # import stamps it as order_date + 2 business days
-                        # (`order_service.py` ~2824). The CRM UI may keep showing it, but
-                        # the chatbot / turn output must not state it.
-                        escalate_message = (
-                            f"Order {label} hasn't been delivered yet{status_text}. "
-                            f"Would you like me to escalate to {team} team?"
+                    if jsc.truthy(match):
+                        order_matches.append(match)
+                if order_matches and order_status in ("delivered", "outstanding"):
+                    order_lines: list[Any] = []
+                    for order_match in order_matches:
+                        display = jsc.get(order_match, "display") or {}
+                        customer = jsc.get(display, "customer_name")
+                        label = jsc.js_string(jsc.get(order_match, "canonical_code")) + (
+                            f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
                         )
-                    else:
-                        escalate_message = (
-                            f"Order {label} has no outstanding items - it looks already "
-                            f"delivered or closed. "
-                            f"Would you like me to escalate to {team} team?"
-                        )
+                        if order_status == "delivered":
+                            status = jsc.get(display, "status")
+                            status_text = (
+                                f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
+                            )
+                            # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
+                            # `orders.estimated_delivery_date` is not a real promise - the
+                            # import stamps it as order_date + 2 business days
+                            # (`order_service.py` ~2824). The CRM UI may keep showing it, but
+                            # the chatbot / turn output must not state it.
+                            order_lines.append(f"Order {label} hasn't been delivered yet{status_text}.")
+                        else:
+                            order_lines.append(
+                                f"Order {label} has no outstanding items - it looks already "
+                                f"delivered or closed."
+                            )
+                    # AC-1863: one order must stay byte-identical to before this fix, so the
+                    # escalate question is appended to the LAST line (a space, not a newline)
+                    # and only the order lines themselves are newline-joined.
+                    order_lines[-1] = f"{order_lines[-1]} Would you like me to escalate to {team} team?"
+                    escalate_message = "\n".join(order_lines)
                 elif use_breakdown:
                     escalate_message = build_breakdown_msg(
                         f"{status_label}{jsc.js_string(domain_hint)}"

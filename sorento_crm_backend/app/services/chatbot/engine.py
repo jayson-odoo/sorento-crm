@@ -2782,9 +2782,7 @@ def _run_answer(
     """
     stage[0] = "replied"
     reply = {
-        "text": getattr(answer, "text", "") or None,
-        "quick_replies": _quick_replies_of(answer),
-        "result_set": list(answer.question.options) if answer.question is not None else [],
+        **_reply_of(answer),
         "attachments_src": answer.files or None,
     }
     turn_trace.record(
@@ -3035,9 +3033,7 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         built.append(
             {
                 "kind": "send_message",
-                "text": words,
-                "quick_replies": _quick_replies_of(answer),
-                "result_set": list(answer.question.options) if answer.question is not None else [],
+                **_reply_of(answer),
                 "dry_run": dry_run,
             }
         )
@@ -3049,11 +3045,34 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
 
 
 def _quick_replies_of(answer: Any) -> str | None:
-    """n8n's own shape: a comma-joined string or null, never a list (AC-507)."""
+    """n8n's own shape: a comma-joined string or null, never a list (AC-507).
+
+    Owner ruling 23 Sep 2026 (AC-1866): a `member_offer`'s own numbered text list is
+    the offer - `turn_pending.quick_replies_suppressed` withholds ITS options from
+    this string; `result_set` (the roster a numbered reply resolves through) is a
+    separate read and is untouched here.
+    """
     if answer.question is None:
+        return None
+    if turn_pending.quick_replies_suppressed(getattr(answer.question, "kind", None)):
         return None
     labels = [str(o.get("label")) for o in answer.question.options if o.get("label")]
     return ", ".join(labels) if labels else None
+
+
+def _reply_of(answer: Any) -> dict[str, Any]:
+    """The three fields every `Answer`-shaped reply derives the same way: the text,
+    the quick replies (through `_quick_replies_of`, so a suppressed kind stays
+    suppressed at every caller), and the roster a numbered follow-up resolves
+    against. Shared by `_run_answer`'s persisted reply and `_answer_actions`'s own
+    `send_message` action, which each add their own remaining key(s) on top
+    (`attachments_src` vs `kind`/`dry_run`) - one seam, so a fix here reaches both.
+    """
+    return {
+        "text": getattr(answer, "text", "") or None,
+        "quick_replies": _quick_replies_of(answer),
+        "result_set": list(answer.question.options) if answer.question is not None else [],
+    }
 
 
 def _pending_option_labels(pending: Any) -> list[str] | None:
