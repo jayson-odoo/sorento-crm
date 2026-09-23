@@ -1,6 +1,6 @@
 # PLAN: order sheet fixes, OI worksheet for a plan run, async OI export
 
-Status: APPROVED 22 Sep 2026 (owner "ok" after six grill rounds). Lane A IN PROGRESS - worktree `../sorento_crm-order-sheet-cells`, branch `fix/order-sheet-cells`, tests on `sorento_osc_ci`. B, C queued; D after #1122.
+Status: Lanes A-D BUILT (A + B merged; C + D re-land in #1144). Lane E (discontinued admission) IN PROGRESS 23 Sep. Earlier: four PRs ready for review, awaiting owner go: #1134 (A), #1136 (B), #1138 (C, stacked on A), #1140 (D, stacked on A). Merge order A, C, D; B independent. Lane stack :3000/:8000 serves Lane D for hand-testing.
 UAC: `order-sheet-oi-reports-22sep-acceptance-criteria.md`.
 
 ## What the owner asked (22 Sep 2026, order sheet screenshot + OI report sample)
@@ -232,6 +232,39 @@ Tests: pytest on `_planning_rows` for an All run with `so_numbers` (project row 
 un-picked SO absent from `committed`; retail-only product still admitted by leg 2 and
 sized by level; picked SO's project need bought in full on top). Vitest: picker visible
 under All, payload carries `so_numbers` with `demand_class` absent.
+
+## Lane E - a discontinued product with a confirmed OI line enters the plan (owner ruling 23 Sep)
+
+Measured 23 Sep (0921 copy): OI-001332 / prod OI-2609-0228, SO420946 line 16, SRTWC193 x 8 due
+31/10/2026, raised, acknowledged, reconciled, no decision. The engine's own committed select
+(`demand.horizon_committed_select_sql`) returns `project_confirmed_committed = 8` for it, yet the
+plan of 23/09 10:25 (01/09 to 16/11, All) has no line: `_planning_rows`' admission WHERE
+(`reorder_run_service.py` ~873) is `p.is_active = true AND p.is_discontinued = false AND
+p.exclude_from_planning = false`, and SRTWC193 is `is_discontinued = true`. Owner: "we need to
+admit discontinued product".
+
+- E1 Admission: the `is_discontinued = false` predicate becomes `(p.is_discontinued = false OR
+  EXISTS (SELECT 1 FROM cv_all c WHERE c.product_id = p.id AND c.project_confirmed_committed
+  > 0))` - a discontinued product is admitted only by CONFIRMED project OI demand inside the
+  run's scope (picked orders, window). `is_active` and `exclude_from_planning` stay hard.
+  Leg 2 (below level, moved in 180 d) never admits a discontinued product.
+- E2 Sizing: a product admitted this way is sized PROJECT-ONLY on every run kind (the
+  `_project_only_cell` / `project_only` branches #1122 built), never a retail reorder-point
+  or level top-up - it is discontinued, nobody restocks it for the shelf. `_planning_rows`
+  stamps `discontinued_project_only = True` on its rows; `_emit_cell` / `_emit_pool` /
+  `_emit_product` read `project_only = demand_class == "project" or row.discontinued_project_only`.
+  A Dealer run has no project leg, so it never admits one.
+- E3 The plan grid shows the row like any other; the sheet's Project qty and the OI worksheet
+  already carry the line (`run_scope_oi_rows` has no discontinued filter).
+
+Tests: pytest `_planning_rows` admits a discontinued product with a confirmed OI row in
+scope, not one outside the window / on an un-picked SO / awaiting ack; not admitted on a
+Dealer run; not admitted by leg 2 (below level, no OI); sizing = project need only on an All
+run even when below level; `test_reorder_plan_project_only.py` and `test_reorder_window_start.py`
+unchanged. No FE change.
+
+Branch: from `fix/order-sheet-cells` (= #1144's head, same `_planning_rows` region); PR base
+retargeted to main by the captain right after #1144 merges and BEFORE the owner merges it.
 
 ## Sequencing
 

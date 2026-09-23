@@ -100,3 +100,19 @@ Plan: `PLAN-order-sheet-oi-reports-22sep.md`. Status: DRAFT, rulings R1-R4 appli
   window for that run.
 - AC-D6 Demand = Dealer shows no picker and behaves as today; Demand = Project behaves as
   PR #1122 left it.
+
+## Lane E - discontinued product with confirmed OI demand
+
+- AC-E1 A discontinued (active, not excluded) product with a confirmed OI Buy line inside the
+  run's scope gets a plan line whose Project need equals the line's owed qty.
+- AC-E2 The same product with its only OI line outside the window, on an un-picked SO, or
+  awaiting ack gets no line.
+- AC-E3 A discontinued product below its reorder level with no OI line gets no line on an
+  All or Dealer run (leg 2 never admits it).
+- AC-E4 On an All run the admitted discontinued product's Suggested qty is the project need
+  only, even when it sits below its level; Retail contributes nothing.
+- AC-E5 A Dealer run never admits a discontinued product.
+- AC-E6 `is_active = false` or `exclude_from_planning = true` still keeps a product out,
+  confirmed OI line or not.
+- AC-E7 The product's line appears on the order sheet (Project qty) and the OI worksheet for
+  that run.
