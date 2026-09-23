@@ -68,6 +68,10 @@ export function mapSettingsFromApi(
     // A new settings column reaches the FE only if it is in this manual mapper too.
     defaultUomId: (raw.default_uom_id as string | null) ?? null,
     defaultUomCode: (raw.default_uom_code as string | null) ?? null,
+    // A new settings column reaches the FE only if it is in this manual mapper too
+    // (PLAN-oi-request-cs-reserve.md section 6c F1).
+    oiReserveDefaultPoolWarehouseId:
+      (raw.oi_reserve_default_pool_warehouse_id as string | null) ?? null,
     takeoverCooldownSeconds:
       typeof raw.takeover_cooldown_seconds === 'number'
         ? raw.takeover_cooldown_seconds
@@ -205,6 +209,7 @@ function createDefaultSettings(): SystemSetting {
     defaultProductStandardLeadTimeDays: 90,
     defaultUomId: null,
     defaultUomCode: null,
+    oiReserveDefaultPoolWarehouseId: null,
     takeoverCooldownSeconds: 60,
     formSlaGraceSeconds: 0,
     deferredDeleteSeconds: 10,

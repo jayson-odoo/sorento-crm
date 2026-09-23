@@ -458,6 +458,17 @@ class SystemSetting(Base):
         nullable=True,
     )
 
+    # PLAN-oi-request-cs-reserve.md section 6c, F1: the reserve dialog's own default
+    # Location, owner-configurable ("list all the site pool with this BRW (configurable
+    # as default)"). Seeded to the BRW pool by code in `oirs_0002_reserve_round2`; NULL
+    # means "no configured default", and the dialog falls back to the row's own site
+    # pool (R3) exactly as it did before this column existed.
+    oi_reserve_default_pool_warehouse_id = Column(
+        PG_UUID(as_uuid=False),
+        ForeignKey("warehouses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # n8n integration (optional; attachment URL falls back to N8N_WEBHOOK_URL env if unset)
     n8n_attachment_webhook_url = Column(Text, nullable=True)
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)

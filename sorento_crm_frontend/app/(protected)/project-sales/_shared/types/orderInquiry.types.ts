@@ -365,6 +365,9 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   so_date?: string | null;
   so_number?: string | null;
   item_code?: string | null;
+  /** Addressing only, never rendered - two products share one item code on the live
+   * book, so the stock grid (`OrderInquiryStockGrid`) keys on this, never `item_code`. */
+  product_id?: string | null;
   product_name?: string | null;
   qty: string;
   delivery_date?: string | null;
@@ -442,6 +445,13 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
+   * request row exists, `reserved` once CS has actually reserved something (and no open
+   * request), else null. */
+  reserve_state?: 'requested' | 'reserved' | string | null;
+  /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
+   * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
+  reserved_qty?: string;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */

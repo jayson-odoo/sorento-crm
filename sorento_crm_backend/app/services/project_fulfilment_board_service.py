@@ -1132,6 +1132,50 @@ class FulfilmentBoardService:
         spo_qty = sum((ref.qty for _bid, ref in incoming_rows), _ZERO)
         free = sum((frees.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
         held = sum((helds.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
+        # PLAN-oi-request-cs-reserve.md 3.9 (section 6, verify item 2): the OI stock grid
+        # reuses `CellStockTable`, the SAME per-location matrix the board's cell dialog
+        # renders, so this read states its rows in that shape rather than the FE inventing
+        # a second one from `bins` alone. Aggregated from the documents already listed
+        # above - never a second query. `where` is `group` for every member of a GROUP
+        # read (a bare product+group carries no asking line, so this endpoint cannot say
+        # which one bin is "its own") and `own` for a plain one-bin read; `net`/`net_of`
+        # are stated on a GROUP read only, off the SAME aggregate this method already sums
+        # so the table's own subtotal can never disagree with it.
+        so_by_wid: Dict[str, Decimal] = {}
+        for row in rows:
+            wid = str(row.warehouse_id)
+            so_by_wid[wid] = so_by_wid.get(wid, _ZERO) + _dec(row.owed)
+        spo_by_wid: Dict[str, Decimal] = {}
+        for bin_id, ref in incoming_rows:
+            spo_by_wid[bin_id] = spo_by_wid.get(bin_id, _ZERO) + _dec(ref.qty)
+        locations = [
+            {
+                "location": codes.get(bin_id) or "",
+                "where": "group" if group else "own",
+                "product_id": str(product.id),
+                "warehouse_id": bin_id,
+                # No demand context at this endpoint (no cell, no asking line) - never
+                # rendered, `CellStockTable` carries no Demand column.
+                "qty": "0",
+                "qty_demand": "0",
+                "qty_on_hand": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                ),
+                "so_qty": qty_text(so_by_wid.get(bin_id, _ZERO)),
+                "spo_qty": qty_text(spo_by_wid.get(bin_id, _ZERO)),
+                "available_qty": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                    - so_by_wid.get(bin_id, _ZERO)
+                    + spo_by_wid.get(bin_id, _ZERO)
+                ),
+                **(
+                    {"net": qty_text(on_hand - so_qty + spo_qty), "net_of": group}
+                    if group
+                    else {}
+                ),
+            }
+            for bin_id in sorted(target_ids, key=lambda bid: codes.get(bid) or "")
+        ]
         return {
             "product_id": str(product.id),
             "item_code": product.product_code,
@@ -1142,6 +1186,7 @@ class FulfilmentBoardService:
             "location": warehouse.warehouse_code if warehouse is not None else None,
             "group": group or None,
             "bins": bins,
+            "locations": locations,
             "qty_on_hand": qty_text(on_hand),
             "so_qty": qty_text(so_qty),
             "spo_qty": qty_text(spo_qty),

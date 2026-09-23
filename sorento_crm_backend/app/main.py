@@ -323,6 +323,17 @@ async def startup_event():
             exc_info=True,
         )
     try:
+        from app.services.order_inquiry_reserve_service import (
+            register_order_inquiry_reserve_post_commit_dispatch,
+        )
+        register_order_inquiry_reserve_post_commit_dispatch()
+        logging.info("Order inquiry reserve post-commit dispatch registered")
+    except Exception as e:
+        logging.error(
+            f"Failed to register order inquiry reserve post-commit dispatch: {str(e)}",
+            exc_info=True,
+        )
+    try:
         # The status engine ships with an empty registry; every entity arrives from
         # a module. `inbound_shipment` is the first adopter in this repo, and it
         # registers a CHECKPOINT TIMELINE rather than a single-status graph - see

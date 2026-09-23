@@ -8,6 +8,11 @@ export interface RecipientConfig {
   /** When set, also email the actor who raised the triggering event
    * (`context.actor.email`), when the trigger provides one. */
   include_actor?: boolean;
+  /** `PLAN-oi-request-cs-reserve.md` 3.6: Cc the person who raised the order inquiry
+   * (`context.raiser.email`). Reusable wherever a trigger's context puts `raiser`. */
+  include_raiser?: boolean;
+  /** Cc the person who requested the reserve (`context.requester.email`). */
+  include_requester?: boolean;
   /** When set, sends one email for the whole match (every resolved address on it,
    * the actor's address last) instead of one email per recipient. */
   one_email?: boolean;
