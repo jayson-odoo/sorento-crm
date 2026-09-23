@@ -38,6 +38,21 @@ import { CSS } from '@dnd-kit/utilities';
 import { Cell, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-table';
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { GripVertical } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+
+/**
+ * AC-RS-69 (`PLAN-oi-request-cs-reserve.md` section 6d G3): the ONE predicate for "this
+ * column is chrome, not a reader's own column" - a fixed utility column
+ * (`meta.draggable === false`, e.g. the shared select column) or one carrying an
+ * expanded row's own content (`meta.expandedContent`, e.g. the OI Lines "expand"
+ * chevron). Exported so the header, the body cell and the `orderedIds` drop-target
+ * filter all read the SAME check - S1 (fix round 2): the body cell used to run
+ * `useSortable` with no `disabled` at all, which could drift from what the header
+ * decided the moment either predicate changed on one side only.
+ */
+export function isFixedUtilityColumn<TData>(columnDef: ColumnDef<TData>): boolean {
+  return columnDef.meta?.draggable === false || Boolean(columnDef.meta?.expandedContent);
+}
 
 function DataGridTableDndHeader<TData>({
   header,
@@ -55,14 +70,11 @@ function DataGridTableDndHeader<TData>({
   // in for is not rendered), so it stays draggable and each id registers exactly once.
   // Grids without column groups never take either branch.
   const isGroupHeader = !header.isPlaceholder && header.subHeaders.length > 0;
-  // AC-RS-69 (`PLAN-oi-request-cs-reserve.md` section 6d G3): a fixed utility column
-  // (`meta.draggable === false`, e.g. the shared select column) or one carrying an
-  // expanded row's own content (`meta.expandedContent`, e.g. the OI Lines "expand"
-  // chevron) offers no grip and no drag affordance - it is not a column a reader
-  // reorders, it is part of the grid's own chrome.
-  const noDrag =
-    header.column.columnDef.meta?.draggable === false ||
-    Boolean(header.column.columnDef.meta?.expandedContent);
+  // AC-RS-69: a fixed utility column or one carrying an expanded row's own content
+  // offers no grip and no drag affordance - it is not a column a reader reorders, it is
+  // part of the grid's own chrome. `isFixedUtilityColumn` is the ONE predicate, shared
+  // with the body cell below and the `orderedIds` drop-target filter.
+  const noDrag = isFixedUtilityColumn(header.column.columnDef);
 
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
     id: header.column.id,
@@ -124,8 +136,13 @@ function DataGridTableDndHeader<TData>({
 }
 
 function DataGridTableDndCell<TData>({ cell }: { cell: Cell<TData, unknown> }) {
+  // S1 (fix round 2): the SAME predicate the header disables `useSortable` under - a
+  // fixed-utility column's body cell must not register as sortable either, so it never
+  // carries the drag attributes a reorder-enabled cell does.
+  const sortableDisabled = isFixedUtilityColumn(cell.column.columnDef);
   const { isDragging, setNodeRef, transform, transition } = useSortable({
     id: cell.column.id,
+    disabled: sortableDisabled,
   });
 
   const style: CSSProperties = {
@@ -143,6 +160,7 @@ function DataGridTableDndCell<TData>({ cell }: { cell: Cell<TData, unknown> }) {
       dndStyle={style}
       dndDragging={isDragging}
       dndRef={setNodeRef}
+      dndSortableDisabled={sortableDisabled}
     >
       {flexRender(cell.column.columnDef.cell, cell.getContext())}
     </DataGridTableBodyRowCell>
@@ -174,13 +192,12 @@ function DataGridTableDnd<TData>({
       : leafIds;
   // AC-RS-69: a fixed utility / expanded-content column never registers as a drop
   // target either - dragging another column past it must not offer to land there.
+  // Same `isFixedUtilityColumn` predicate the header and the body cell disable
+  // `useSortable` under, so the three cannot drift apart.
   const nonDraggableIds = new Set(
     table
       .getAllLeafColumns()
-      .filter(
-        (c) =>
-          c.columnDef.meta?.draggable === false || Boolean(c.columnDef.meta?.expandedContent),
-      )
+      .filter((c) => isFixedUtilityColumn(c.columnDef))
       .map((c) => c.id),
   );
   const orderedIds = mergeColumnOrderWithLeafColumns(rawOrder, leafIds).filter(

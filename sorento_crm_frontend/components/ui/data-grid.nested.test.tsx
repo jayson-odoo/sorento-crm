@@ -258,6 +258,11 @@ describe('AC-RS-70: the expanded row stays inside the viewport (round 3)', () =>
         wrapper.className.includes('max-w-[var(--dg-viewport-w') ||
         (wrapper.style.maxWidth ?? '').includes('var(--dg-viewport-w');
       expect(carriesMaxWidthVar).toBe(true);
+      // S2 (fix round 2 review finding): capping the width is not the same as making it
+      // REACHABLE - content still wider than the cap (a `SpoPlannerTable`
+      // `LocationSplitPanel` at `min-w-[30rem]` on a 375px viewport) needs its own
+      // scrollbar rather than being clipped silently.
+      expect(wrapper.className).toMatch(/\boverflow-x-auto\b/);
 
       // The scroll container states the variable every `expandedContent` site reads -
       // set from its own `clientWidth` on mount (a ResizeObserver keeps it live).

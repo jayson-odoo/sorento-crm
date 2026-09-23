@@ -975,8 +975,12 @@ function DataGridTableBodyRowExpandded<TData>({ row }: { row: Row<TData> }) {
             pins the wrapper to the viewport's own left edge and `max-w-[var(--dg-
             viewport-w)]` caps it at the scroller's own clientWidth - the CSS
             variable `DataGridScroller` keeps live off a `ResizeObserver` on itself,
-            so every `expandedContent` site benefits with no change of its own. */}
-        <div className="sticky left-0 max-w-[var(--dg-viewport-w)]">
+            so every `expandedContent` site benefits with no change of its own.
+            S2 (fix round 2): `overflow-x-auto` too - capping the width is not the
+            same as making it reachable, and content still wider than that cap (a
+            `SpoPlannerTable` `LocationSplitPanel` at `min-w-[30rem]` on a 375px
+            viewport) needs its OWN scrollbar rather than being clipped silently. */}
+        <div className="sticky left-0 max-w-[var(--dg-viewport-w)] overflow-x-auto">
           {table
             .getAllColumns()
             .find((column) => column.columnDef.meta?.expandedContent)
@@ -993,6 +997,7 @@ function DataGridTableBodyRowCell<TData>({
   dndRef,
   dndStyle,
   dndDragging,
+  dndSortableDisabled,
 }: {
   children: ReactNode;
   cell: Cell<TData, unknown>;
@@ -1000,6 +1005,12 @@ function DataGridTableBodyRowCell<TData>({
   dndStyle?: CSSProperties;
   /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
   dndDragging?: boolean;
+  /** S1 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2): true for a fixed-
+   * utility / expanded-content column's own cell (`isFixedUtilityColumn`) - the SAME
+   * value `useSortable`'s own `disabled` was handed, surfaced as `aria-disabled` so a
+   * plain column's cell and a fixed one's are told apart in the DOM the way the
+   * header's grip already is. Undefined (no attribute) for an ordinary sortable cell. */
+  dndSortableDisabled?: boolean;
 }) {
   const { props } = useDataGrid();
 
@@ -1025,6 +1036,7 @@ function DataGridTableBodyRowCell<TData>({
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
+      aria-disabled={dndSortableDisabled || undefined}
       className={cn(
         'align-middle',
         bodyCellSpacing,
