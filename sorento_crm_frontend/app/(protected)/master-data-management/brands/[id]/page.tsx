@@ -40,6 +40,7 @@ interface Draft {
   description: string;
   is_active: boolean;
   access_levels: string[];
+  flows_to_purchasing: boolean;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -137,6 +138,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       description: brand.description ?? '',
       is_active: brand.is_active,
       access_levels: brand.access_levels ?? [],
+      flows_to_purchasing: brand.flows_to_purchasing,
     });
     setEditing(true);
   };
@@ -156,6 +158,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         description: draft.description.trim() || undefined,
         is_active: draft.is_active,
         access_levels: draft.access_levels,
+        flows_to_purchasing: draft.flows_to_purchasing,
       },
     });
     cancelEdit();
@@ -292,6 +295,22 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                     <Badge variant={brand.is_active ? 'success' : 'secondary'}>
                       {brand.is_active ? 'Active' : 'Inactive'}
                     </Badge>
+                  )}
+                </Field>
+
+                <Field label="Flows to purchasing" htmlFor="brand-flows-to-purchasing">
+                  {editing && draft ? (
+                    <Switch
+                      id="brand-flows-to-purchasing"
+                      checked={draft.flows_to_purchasing}
+                      onCheckedChange={(value) =>
+                        setDraft({ ...draft, flows_to_purchasing: value })
+                      }
+                    />
+                  ) : brand.flows_to_purchasing ? (
+                    'Yes'
+                  ) : (
+                    'No'
                   )}
                 </Field>
               </CardContent>

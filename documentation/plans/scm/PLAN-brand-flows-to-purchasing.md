@@ -102,6 +102,10 @@ behaviour). No backfill.
 - Changing `local_buy_routing_enabled` or its supplier-country chain (R4).
 - Reorder-plan demand: a brand-blocked Buy is excluded the same way a local Buy was under
   #814 (it never becomes an OI row), no separate rule.
+- `/master-data-management/brands/new` and `/brands/<id>/edit` render `BrandForm` but
+  nothing links to them; the edit route's zod schema also rejects brand codes
+  containing spaces (real data has them). Cleanup trigger: remove or reconcile both
+  routes.
 
 ## Tests
 

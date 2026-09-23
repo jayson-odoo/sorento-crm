@@ -47,9 +47,15 @@ Owner rulings: 22 Sep 2026, R4 to R7
 
 ## Brands screen
 
-- AC-14 Brand form (create and edit) shows one `Switch` with the accessible name
-  `Flows to purchasing`, on by default for a new brand, reflecting the stored value on
-  edit. No description text under it.
+- AC-14 The brand DETAIL page (`/master-data-management/brands/{id}`, the page users
+  actually edit a brand from - its own inline view/edit layout, not `BrandForm` /
+  `BrandFormDialog`) shows a `Flows to purchasing` value directly under Status in
+  "Basic information": read-only `Yes` / `No` in view mode, a `Switch` labelled exactly
+  `Flows to purchasing` on by default for a new brand in edit mode, reflecting the
+  stored value on an existing one (not reset back to true). No description text under
+  it. `BrandForm` (`/brands/new`, `/brands/{id}/edit`) and `BrandFormDialog` carry the
+  same switch for the same reason, though neither route is currently linked from any
+  nav or in-app link (AC-14 does not require that to change).
 - AC-15 Saving with the switch off sends `flows_to_purchasing: false`.
 - AC-16 Brand table shows a `Purchasing` column reading `Yes` / `No`.
 - AC-17 The form and the table stay usable and non-clipped at 375px and 1280px.
