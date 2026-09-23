@@ -333,6 +333,15 @@ def advance_building_pulls(db: Session) -> int:
     for job in jobs:
         try:
             refresh_pull_status(db, job)
+        except FoundryxPullError as exc:
+            # FoundryX's own refusal - expected often enough (a stale key, a company
+            # code it cannot see) that a full traceback is noise; the code + message
+            # already say what happened.
+            logger.warning(
+                "advance_building_pulls: FoundryX refused pull job %s (%s: %s)",
+                job.id, exc.code, exc.message,
+            )
+            db.rollback()
         except Exception:
             logger.warning(
                 "advance_building_pulls: refresh failed for pull job %s", job.id, exc_info=True

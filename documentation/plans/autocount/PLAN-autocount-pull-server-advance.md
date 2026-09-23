@@ -1,6 +1,6 @@
 # PLAN: AutoCount pull advances on the server, not on an open browser tab
 
-Status: in progress (small fix track, owner go 23 Sep 2026)
+Status: review passed (opus, 23 Sep), PR pending
 Branch: `fix/autocount-pull-server-advance` (worktree `sorento_crm-pull-advance`, off `7c2c8e342`)
 UAC: `autocount-pull-server-advance-acceptance-criteria.md`
 Principle: `PRINCIPLES.md` Design mandates, D27 (added in this lane)
@@ -45,8 +45,9 @@ def advance_building_pulls(db: Session) -> int:
   already owns expiry (`BUILD_EXPIRY`) and FoundryX `failed`.
 - `_claim_and_enqueue_preview`'s conditional UPDATE (`status == pending`) is the exactly-once
   guard, unchanged. A browser poll and the tick racing each other enqueue one preview.
-- `FoundryxAutocountClient(db)` is constructed once per tick, only when at least one row
-  exists (it raises when not configured; constructing it with no rows to advance is waste).
+- `refresh_pull_status` is reused unchanged, so a client is constructed per building pull per
+  tick (one integrations SELECT + one decrypt; nothing at this scale). With zero building pulls
+  no client is constructed.
 
 `app/scheduler/task_scheduler.py`: `_autocount_pull_advance_tick()` next to
 `_chatbot_delegated_sweep_tick` (same shape: own session, never raises), registered in
