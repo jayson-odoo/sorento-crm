@@ -38,6 +38,35 @@ const CHEVRON_COL = 'w-[36px] min-w-[36px] max-w-[36px]';
 const LOCATION_COL = 'w-full min-w-[120px]';
 /** A floor, not a fixed width: the numbers keep their room and never overlap. */
 const NUMBER_COL = 'min-w-[100px]';
+
+/**
+ * AC-RS-71 (`PLAN-oi-request-cs-reserve.md` section 6d G5, round 3): the Location
+ * column is resizable, remembered per browser - one column, one `localStorage` key, no
+ * column-config API row. Floor matches `LOCATION_COL`'s own `min-w-[120px]`.
+ */
+const LOCATION_WIDTH_STORAGE_KEY = 'cellStockTable.locationWidth';
+const LOCATION_WIDTH_FLOOR = 120;
+
+/** Every `localStorage` touch is wrapped: a browser with storage disabled (or a test
+ * that makes it throw) still renders the table, just with today's slack column. */
+function readStoredLocationWidth(): number | null {
+  try {
+    const raw = window.localStorage.getItem(LOCATION_WIDTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? Math.max(LOCATION_WIDTH_FLOOR, parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredLocationWidth(px: number) {
+  try {
+    window.localStorage.setItem(LOCATION_WIDTH_STORAGE_KEY, String(px));
+  } catch {
+    // localStorage disabled - the width still applies for this session.
+  }
+}
 /** Wide enough for "Own location", which is the longest of the four tags. */
 const WHERE_COL = 'min-w-[104px]';
 
@@ -230,6 +259,48 @@ export const CellStockTable = React.forwardRef<
 ) {
   const drawn = taken ?? EMPTY_TAKEN;
   const drawnKinds = takenKinds ?? EMPTY_TAKEN_KINDS;
+  /**
+   * AC-RS-71: the Location column's own width, in px - `null` while nothing is stored
+   * (today's `w-full` slack behaviour). Read once, synchronously, off `localStorage` so
+   * the very first render already carries a remembered width rather than flashing the
+   * default first.
+   */
+  const [locationWidth, setLocationWidth] = React.useState<number | null>(
+    readStoredLocationWidth,
+  );
+  const locationThRef = React.useRef<HTMLTableCellElement | null>(null);
+  const locationDragRef = React.useRef<{
+    startX: number;
+    baseline: number;
+    lastWidth: number;
+  } | null>(null);
+
+  const locationColStyle: React.CSSProperties | undefined =
+    locationWidth != null
+      ? { width: locationWidth, minWidth: locationWidth, maxWidth: locationWidth }
+      : undefined;
+  // Today's slack class only while nothing is remembered - a stored width drives the
+  // column through `style` instead, so the two never fight over which one wins.
+  const locationColClassName = locationWidth != null ? 'min-w-[120px]' : LOCATION_COL;
+
+  function startLocationResize(clientX: number) {
+    const baseline = locationWidth ?? locationThRef.current?.offsetWidth ?? LOCATION_WIDTH_FLOOR;
+    locationDragRef.current = { startX: clientX, baseline, lastWidth: baseline };
+  }
+  function moveLocationResize(clientX: number) {
+    const drag = locationDragRef.current;
+    if (!drag) return;
+    const next = Math.max(LOCATION_WIDTH_FLOOR, drag.baseline + (clientX - drag.startX));
+    drag.lastWidth = next;
+    setLocationWidth(next);
+  }
+  function endLocationResize() {
+    const drag = locationDragRef.current;
+    locationDragRef.current = null;
+    if (!drag) return;
+    writeStoredLocationWidth(drag.lastWidth);
+  }
+
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
    * location and on the shared pool is opened precisely to compare the two, and an accordion
@@ -440,8 +511,29 @@ export const CellStockTable = React.forwardRef<
           <thead>
             <tr>
               <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />
-              <th scope="col" className={cn(LOCATION_COL, HEAD_CELL)}>
+              <th
+                ref={locationThRef}
+                scope="col"
+                className={cn(locationColClassName, HEAD_CELL, 'relative')}
+                style={locationColStyle}
+              >
                 Location
+                {/* AC-RS-71: mirrors `DataGridTableHeadRowCellResize`'s own affordance -
+                    drag to set a width, remembered in `localStorage` on release. */}
+                <span
+                  data-testid="cell-stock-location-resize"
+                  className="absolute top-0 -end-2 z-10 h-full w-4 cursor-col-resize select-none"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+                    startLocationResize(event.clientX);
+                  }}
+                  onPointerMove={(event) => moveLocationResize(event.clientX)}
+                  onPointerUp={(event) => {
+                    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+                    endLocationResize();
+                  }}
+                />
               </th>
               <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
                 Where
@@ -515,7 +607,7 @@ export const CellStockTable = React.forwardRef<
                           />
                         )}
                       </td>
-                      <td className={cn(LOCATION_COL, BODY_CELL)}>
+                      <td className={cn(locationColClassName, BODY_CELL)} style={locationColStyle}>
                         <div className="flex items-start gap-2">
                           {selectable && entry.warehouse_id ? (
                             <input
@@ -691,10 +783,11 @@ export const CellStockTable = React.forwardRef<
                       </td>
                       <td
                         className={cn(
-                          LOCATION_COL,
+                          locationColClassName,
                           FOOT_CELL,
                           'text-muted-foreground',
                         )}
+                        style={locationColStyle}
                       >
                         {section.label}
                       </td>
@@ -797,10 +890,11 @@ export const CellStockTable = React.forwardRef<
                 <td className={cn(CHEVRON_COL, FOOT_CELL)} />
                 <td
                   className={cn(
-                    LOCATION_COL,
+                    locationColClassName,
                     FOOT_CELL,
                     'text-muted-foreground',
                   )}
+                  style={locationColStyle}
                 >
                   Total
                 </td>

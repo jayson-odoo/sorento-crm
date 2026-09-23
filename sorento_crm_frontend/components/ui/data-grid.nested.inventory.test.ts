@@ -95,6 +95,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'renders it (DataGridTableBodyRowExpandded)',
   ],
   ['components/common/PanelDataGrid.tsx', 'forwards expanded/onExpandedChange'],
+  [
+    'components/ui/data-grid-table-dnd.tsx',
+    'AC-RS-69 (PLAN-oi-request-cs-reserve.md section 6d G3): reads meta.expandedContent to skip the drag grip on an expanded-row column - does not render the expansion itself, not a nesting site',
+  ],
 ]);
 
 /**

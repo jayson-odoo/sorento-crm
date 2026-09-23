@@ -76,7 +76,7 @@ export function buildSelectColumn<TData>(options?: {
     enableResizing: false,
     size,
     // AC-RS-69: the select column never drags - it is a fixed utility column, the
-    // same reason the expand chevron opts out via `meta.expandedContent`.
+    // same reason the expand chevron (an expanded-row column) opts out too.
     meta: { draggable: false },
     ...(options?.enableRow ? { enableRowSelection: options.enableRow } : {}),
   };

@@ -475,7 +475,6 @@ export function ReserveRowDialog({
       ];
     }
     return [];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, rowId, itemCode, openRequest, history, netReservedQty]);
 
   const showTabs = effectiveRows.length === 1;
