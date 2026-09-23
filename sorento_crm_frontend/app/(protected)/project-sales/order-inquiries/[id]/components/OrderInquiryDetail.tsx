@@ -488,6 +488,26 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     setReserveDialogRowIds([row.id]);
   }, []);
 
+  // AC-RS-73: every still-open (unanswered) row of a request, in the request's own row
+  // order - the set both the `?reserve=` deep-link effect below AND the header badge's
+  // own reopen click carry into `ReserveRowDialog`. One function so the two paths never
+  // drift on what "still open" means.
+  const openReserveDialogForRequest = useCallback(
+    (
+      request: { rows: { row_id: string; qty_reserved: string | null }[] } | null | undefined,
+    ): boolean => {
+      const openRowIds = (request?.rows ?? [])
+        .filter((row) => row.qty_reserved == null)
+        .map((row) => row.row_id);
+      if (openRowIds.length > 0) {
+        setReserveDialogRowIds(openRowIds);
+        return true;
+      }
+      return false;
+    },
+    [],
+  );
+
   // S5 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2 review finding): which
   // `?reserve=<request_id>` this dialog has already opened-and-closed for - set the
   // moment the effect below opens it, cleared the moment the param itself changes to a
@@ -524,11 +544,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     // opens normally, since it never matches the ref.
     if (handledReserveParamRef.current === reserveParam) return;
     const request = (reserveRequestsQuery.data ?? []).find((r) => r.id === reserveParam);
-    const openRowIds = (request?.rows ?? [])
-      .filter((row) => row.qty_reserved == null)
-      .map((row) => row.row_id);
-    if (openRowIds.length > 0) {
-      setReserveDialogRowIds(openRowIds);
+    if (openReserveDialogForRequest(request)) {
       handledReserveParamRef.current = reserveParam;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -658,9 +674,21 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                   {orderInquiryHeaderStatusLabel(header.status)}
                 </Badge>
                 {openReserveRequest ? (
-                  <Badge variant="warning" appearance="light" size="md">
-                    Request to reserve
-                  </Badge>
+                  // AC-RS-73 (owner ask 23 Sep: "after I close the dialog, how do I
+                  // reopen it back?"): the badge is the reopen control - it never
+                  // writes `?reserve=` (that stays the email link's own path,
+                  // `handledReserveParamRef` untouched here), it just calls the same
+                  // "open every still-open row" logic the deep-link effect uses.
+                  <button
+                    type="button"
+                    aria-label="Open reserve request"
+                    onClick={() => openReserveDialogForRequest(openReserveRequest)}
+                    className="cursor-pointer rounded-full hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Badge variant="warning" appearance="light" size="md">
+                      Request to reserve
+                    </Badge>
+                  </button>
                 ) : null}
               </div>
               <span className="text-sm text-muted-foreground">

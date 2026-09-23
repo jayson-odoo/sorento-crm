@@ -909,3 +909,112 @@ describe('F2 (fix round 3): Cancel request survives the PRIMARY row being answer
     expect(screen.getByRole('button', { name: /cancel request/i })).toBeInTheDocument();
   });
 });
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` section 6d G1, `oi-request-cs-reserve-acceptance-
+ * criteria.md` AC-RS-73. Owner ask 23 Sep: "after I close the dialog, how do I reopen
+ * it back?" - the header `Request to reserve` badge is itself the reopen control, no
+ * `?reserve=` param involved (that stays the email link's own path).
+ */
+describe('AC-RS-73: the header "Request to reserve" badge reopens the multi-row dialog', () => {
+  const ROW_BADGE_A = row({ id: 'row-badge-a', item_code: 'ZZT-BADGE-A', reserve_state: 'requested' });
+  const ROW_BADGE_B = row({ id: 'row-badge-b', item_code: 'ZZT-BADGE-B', reserve_state: 'requested' });
+  const ROW_BADGE_C = row({
+    id: 'row-badge-c',
+    item_code: 'ZZT-BADGE-C',
+    reserve_state: 'reserved',
+    reserved_qty: '10',
+  });
+
+  const BADGE_REQUEST = {
+    id: 'rr-badge',
+    order_inquiry_id: 'oi-1',
+    ordinal: 4,
+    state: 'requested' as const,
+    requested_by: 'user-1',
+    requested_by_name: 'Joey',
+    requested_at: '2026-09-23T09:00:00',
+    note: null,
+    reserved_by_name: null,
+    reserved_at: null,
+    cancelled_at: null,
+    first_to_name: null,
+    rows: [
+      {
+        id: 'reqrow-badge-a',
+        row_id: 'row-badge-a',
+        item_code: 'ZZT-BADGE-A',
+        qty_requested: '20',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: null,
+        reason: null,
+      },
+      {
+        id: 'reqrow-badge-b',
+        row_id: 'row-badge-b',
+        item_code: 'ZZT-BADGE-B',
+        qty_requested: '15',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: null,
+        reason: null,
+      },
+      {
+        id: 'reqrow-badge-c',
+        row_id: 'row-badge-c',
+        item_code: 'ZZT-BADGE-C',
+        qty_requested: '10',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: '10',
+        reason: null,
+      },
+    ],
+  };
+
+  it('click opens the multi-row dialog (two open sections); close then click again reopens it - never writes ?reserve=', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([
+      PLAIN_ROW,
+      ROW_BADGE_A,
+      ROW_BADGE_B,
+      ROW_BADGE_C,
+    ]);
+    getReserveRequestsMock.mockResolvedValue([BADGE_REQUEST]);
+    // Deliberately left empty - the badge must open the dialog on its own, never via
+    // the `?reserve=` deep-link path.
+    searchParamsValue = '';
+
+    renderDetail();
+
+    const badgeButton = await screen.findByRole('button', { name: /open reserve request/i });
+    fireEvent.click(badgeButton);
+
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
+    expect(await screen.findAllByRole('button', { name: /confirm reserved/i })).toHaveLength(2);
+    // AC-RS-73: no URL param written by the badge's own click path.
+    expect(replaceSpy).not.toHaveBeenCalled();
+
+    const closeButtons = screen.getAllByRole('button', { name: /close/i });
+    fireEvent.click(closeButtons[closeButtons.length - 1]);
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    );
+    // Closing a badge-opened dialog never touches the URL either.
+    expect(replaceSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /open reserve request/i }));
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
+    expect(await screen.findAllByRole('button', { name: /confirm reserved/i })).toHaveLength(2);
+  });
+
+  it('with no open request, the badge is absent', async () => {
+    getReserveRequestsMock.mockResolvedValue([]);
+    renderDetail();
+
+    await screen.findByText('ZZT-PLAIN');
+    expect(
+      screen.queryByRole('button', { name: /open reserve request/i }),
+    ).not.toBeInTheDocument();
+  });
+});

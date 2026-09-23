@@ -108,3 +108,17 @@ unrelated to this fix.
 Not cleaned up: request #4 is now FULLY answered (`B2155-NL-BLUE` reserved 12, `CB2807-DIY`
 already reserved from round 2); request #5 (`CWCY604-SH`/`C-FH16`) is also fully answered - both
 left on `OI-000750` in this worktree's own dev database, test data only.
+
+## Round 3 fix (AC-RS-73, 23 Sep) - the header badge reopens the dialog
+
+Owner ask: "after I close the dialog, how do I reopen it back?" Session `oireserve-r3-badge`,
+1280 viewport, logged in as the E2E test user, navigated fresh from `/` via the sidebar
+(Procurement -> Supply Chain -> Order Inquiries -> search `OI-000750`, same id as above, which
+carries a new open request #4 on `CB2807-DIY`, qty 4, raised by Teh Jayson).
+
+| AC | What was checked | Evidence | Result |
+| --- | --- | --- | --- |
+| AC-RS-73 | The header `Request to reserve` pill is now `button[aria-label="Open reserve request"]`. Clicked it: the `ReserveRowDialog` opened (`Reserve - CB2807-DIY`, Location/Reserved/Confirm reserved) and `get url` showed NO `?reserve=` param added. Clicked the dialog's own Close (X): dialog gone, `get url` still carried no `reserve=` param (the badge's own open/close never touches the URL, unlike the email deep-link path). Clicked the badge again: the SAME dialog reopened, same request/row. | `badge-reopen.png` (dialog open after the second click) | PASS |
+
+`errors`/`console` clean throughout this run. No write made (Confirm reserved was never clicked) -
+no data left behind by this pass.
