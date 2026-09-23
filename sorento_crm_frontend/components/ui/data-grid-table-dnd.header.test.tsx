@@ -128,35 +128,37 @@ describe('AC-RS-69: the shared select column opts itself out of dragging', () =>
  * `disabled` at all, unconditionally - the same fixed-utility / expanded-content columns
  * whose HEADER opts out of dragging above still had their own BODY cell register as an
  * ordinary sortable participant, which could drift the moment either predicate changed on
- * one side only. The fix hoists both checks onto one exported `isFixedUtilityColumn` and
- * hands its result to the cell's own `useSortable({ disabled })` too - surfaced here as
- * `aria-disabled` on the `<td>` (the attribute dnd-kit's own `useDraggable` sets from that
- * same `disabled` flag), so a fixed cell and a plain one are told apart in the DOM the
- * way the header's own grip already is.
+ * one side only. The fix hoists both checks onto one `isFixedUtilityColumn` and hands its
+ * result to the cell's own `useSortable({ disabled })` too - surfaced here as
+ * `data-dnd-disabled` on the `<td>` (F3, fix round 3: the house convention next to
+ * `data-pinned`/`data-last-col`, not `aria-disabled` - this cell is not itself a disabled
+ * WIDGET, so an `aria-*` attribute misdescribed it to assistive tech), so a fixed cell and
+ * a plain one are told apart in the DOM the way the header's own grip already is.
  *
- * TEST-FIRST (fix round 2): before this fix EVERY body cell - fixed-utility, expanded-
- * content or plain - carried no `aria-disabled` at all, so a red here is "the Fixed/Expand
- * cell's own `aria-disabled` is missing", never a fixture bug.
+ * TEST-FIRST (fix round 2, `data-dnd-disabled` rename fix round 3): before this fix EVERY
+ * body cell - fixed-utility, expanded-content or plain - carried no `data-dnd-disabled` at
+ * all, so a red here is "the Fixed/Expand cell's own `data-dnd-disabled` is missing", never
+ * a fixture bug.
  */
 describe('S1: the body cell honours the SAME fixed-utility predicate as its header', () => {
-  it('a draggable: false column\'s body cell carries aria-disabled, no sortable listeners', () => {
+  it('a draggable: false column\'s body cell carries data-dnd-disabled, no sortable listeners', () => {
     render(<Harness />);
 
     const [fixedCell] = bodyCells();
-    expect(fixedCell.getAttribute('aria-disabled')).toBe('true');
+    expect(fixedCell.getAttribute('data-dnd-disabled')).toBe('true');
   });
 
-  it('a column carrying meta.expandedContent also carries aria-disabled on its body cell', () => {
+  it('a column carrying meta.expandedContent also carries data-dnd-disabled on its body cell', () => {
     render(<Harness />);
 
     const [, expandCell] = bodyCells();
-    expect(expandCell.getAttribute('aria-disabled')).toBe('true');
+    expect(expandCell.getAttribute('data-dnd-disabled')).toBe('true');
   });
 
-  it('a plain column\'s body cell keeps no aria-disabled - sorting stays enabled', () => {
+  it('a plain column\'s body cell keeps no data-dnd-disabled - sorting stays enabled', () => {
     render(<Harness />);
 
     const [, , nameCell] = bodyCells();
-    expect(nameCell.getAttribute('aria-disabled')).toBeNull();
+    expect(nameCell.getAttribute('data-dnd-disabled')).toBeNull();
   });
 });

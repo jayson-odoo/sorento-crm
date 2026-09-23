@@ -1007,9 +1007,12 @@ function DataGridTableBodyRowCell<TData>({
   dndDragging?: boolean;
   /** S1 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2): true for a fixed-
    * utility / expanded-content column's own cell (`isFixedUtilityColumn`) - the SAME
-   * value `useSortable`'s own `disabled` was handed, surfaced as `aria-disabled` so a
-   * plain column's cell and a fixed one's are told apart in the DOM the way the
-   * header's grip already is. Undefined (no attribute) for an ordinary sortable cell. */
+   * value `useSortable`'s own `disabled` was handed, surfaced as `data-dnd-disabled`
+   * (F3, fix round 3: the house convention next to `data-pinned`/`data-last-col` -
+   * `aria-disabled` misdescribed a plain `<td>` as a disabled WIDGET to assistive
+   * tech) so a plain column's cell and a fixed one's are told apart in the DOM the
+   * way the header's grip already is. Undefined (no attribute) for an ordinary
+   * sortable cell. */
   dndSortableDisabled?: boolean;
 }) {
   const { props } = useDataGrid();
@@ -1036,7 +1039,7 @@ function DataGridTableBodyRowCell<TData>({
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
-      aria-disabled={dndSortableDisabled || undefined}
+      data-dnd-disabled={dndSortableDisabled || undefined}
       className={cn(
         'align-middle',
         bodyCellSpacing,
