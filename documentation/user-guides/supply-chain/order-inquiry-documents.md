@@ -279,3 +279,6 @@ and the reserve actions need the **Order Inquiries** view permission and a signe
   behind Ask CS to reserve stock / Reserve for purchasing, the default pool setting, and the
   permission needed to reserve.
 * [Plan a sales order nobody decided](plan-undecided-lines.md)
+* [Print the order summary](print-the-order-summary.md#oi-worksheet-excel) (a reorder plan's
+  own "OI worksheet Excel", the order inquiry rows inside that plan's scope, in this page's own
+  ORDER INQUIRY layout)

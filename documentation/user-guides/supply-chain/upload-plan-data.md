@@ -627,7 +627,8 @@ and load by hand.
 
 * [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md)
 * [Run a reorder plan](run-a-reorder-plan.md)
-* [Print the order summary](print-the-order-summary.md)
+* [Print the order summary](print-the-order-summary.md) (its "OI worksheet Excel" prints this
+  worklist's own ORDER INQUIRY layout, scoped to a reorder plan instead of this page's filters)
 * [Upload SPO allocations](../purchasing/upload-spo.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Plan a sales order nobody decided](plan-undecided-lines.md) (raises a Buy onto Order

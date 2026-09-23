@@ -650,7 +650,9 @@ GROUP BY product_id, warehouse_id;
 
 
 def horizon_committed_select_sql(
-    demand_class: Optional[str] = None, so_scoped: bool = False
+    demand_class: Optional[str] = None,
+    so_scoped: bool = False,
+    retail_windowed: bool = True,
 ) -> str:
     """THE PLAN'S committed figure: `COMMITTED_V_SQL`'s body as a bare SELECT (no
     `CREATE VIEW`), with a `:horizon` bind narrowing both legs to demand due at or before
@@ -696,8 +698,27 @@ def horizon_committed_select_sql(
     unacknowledged is still excluded even when its SO is named). False (the default) adds
     no join and binds no `:so_numbers`, so a caller that never asks for this - every OTHER
     caller of this function today - keeps compiling/binding exactly as it always has.
+
+    ``retail_windowed`` (Lane D, AC-D1b, owner ruling: "this order range only is for
+    project") gates the SO-book leg's own `:horizon`/`:horizon_start` predicates. True (the
+    default, and every caller before this lane) keeps them, so the book leg is windowed
+    exactly like the two project legs always have been. False drops both predicates from
+    THIS leg only - the project legs stay windowed either way - so an unscoped (All) run's
+    retail side plans every open book line regardless of "Plan until", the same reading an
+    unhorizoned run has always given it. `_planning_rows` is the only caller that ever
+    passes False, and only when `demand_class is None`.
     """
     so_join = _SO_SCOPE_JOIN_SQL if so_scoped else ""
+    retail_horizon_sql = f"""
+      -- Planning horizon, book leg: a stated required_date past the cutoff is excluded;
+      -- no date at all is always in.
+      AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+           OR sol.required_date <= CAST(:horizon AS date))
+      -- Planning window START (S4, 9 Sep): the same rule, other side. G2 ruling - a
+      -- required_date before the start is excluded; no date at all is always in, the same
+      -- reading the end date already gives it.
+      AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+           OR sol.required_date >= CAST(:horizon_start AS date))""" if retail_windowed else ""
 
     retail_leg = f"""
     SELECT sol.product_id,
@@ -714,16 +735,7 @@ def horizon_committed_select_sql(
       AND sol.purchasing_status <> 'covered'
       AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                  - COALESCE(sol.qty_delivered, 0), 0) > 0
-      AND so.demand_class IS DISTINCT FROM 'project'
-      -- Planning horizon, book leg: a stated required_date past the cutoff is excluded;
-      -- no date at all is always in.
-      AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
-           OR sol.required_date <= CAST(:horizon AS date))
-      -- Planning window START (S4, 9 Sep): the same rule, other side. G2 ruling - a
-      -- required_date before the start is excluded; no date at all is always in, the same
-      -- reading the end date already gives it.
-      AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
-           OR sol.required_date >= CAST(:horizon_start AS date))"""
+      AND so.demand_class IS DISTINCT FROM 'project'{retail_horizon_sql}"""
 
     confirmed_leg = f"""
     SELECT sol.product_id,
@@ -973,7 +985,7 @@ GROUP BY product_id
 
 def run_scope_oi_rows(
     db,
-    product_ids: list[str],
+    product_ids: Optional[list[str]],
     *,
     so_numbers: Optional[list[str]] = None,
     horizon_start: Optional[date] = None,
@@ -1030,7 +1042,10 @@ def run_scope_oi_rows(
     `[]` as `= ANY('{}')` (matches nothing), which printed Project qty 0 on precisely the
     runs `_planning_rows` bought for - the bug fix round 4 found. A caller that means
     "match nothing" narrows `product_ids` instead, which this function DOES read as
-    empty-means-nothing (the model's own early `if not product_ids: return []`).
+    empty-means-nothing - `product_ids=[]` returns `[]` immediately (the early
+    `if product_ids is not None and not product_ids: return []`); `product_ids=None`
+    still means no filter at all (Lane C fix round 1), the ONE asymmetry between the two
+    parameters and the reason each is documented on its own terms rather than as a pair.
 
     ``horizon_start``/``horizon`` narrow to `delivery_date` inside `[horizon_start,
     horizon]`; a row with no delivery date is always in scope, whatever either bound is.
@@ -1043,7 +1058,7 @@ def run_scope_oi_rows(
     `OrderInquiryRow` is company-scoped but a raw `text()` bypasses the ORM's own isolation
     listener.
     """
-    if not product_ids:
+    if product_ids is not None and not product_ids:
         return []
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="rsoi")
     so_clause = "AND so.so_number = ANY(:so_numbers)\n          " if so_numbers else ""
@@ -1071,14 +1086,14 @@ def run_scope_oi_rows(
           AND oir.ack_state IN ({_PLANNED_ACK_SQL})
           AND oir.qty > 0
           AND ({_OWED_SQL}) > 0
-          AND sol.product_id::text = ANY(:pids)
+          AND (CAST(:pids AS text[]) IS NULL OR sol.product_id::text = ANY(:pids))
           {so_clause}AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
                OR oir.delivery_date >= CAST(:horizon_start AS date))
           AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
                OR oir.delivery_date <= CAST(:horizon AS date))
           {("AND " + co) if co else ""}
     """), {
-        "pids": [str(p) for p in product_ids],
+        "pids": [str(p) for p in product_ids] if product_ids is not None else None,
         "so_numbers": list(so_numbers) if so_numbers else [],
         "horizon_start": horizon_start,
         "horizon": horizon,

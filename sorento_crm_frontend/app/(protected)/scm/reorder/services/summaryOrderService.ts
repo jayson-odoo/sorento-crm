@@ -273,3 +273,24 @@ export async function exportLowStockReport(runId: string): Promise<MyDownload> {
   }
   return (await res.json()) as MyDownload;
 }
+
+/**
+ * Starts the OI worksheet export through My Downloads (Lane C, PLAN-order-sheet-oi-
+ * reports-22sep.md, AC-C1/AC-C2). Same endpoint, same pipeline, a third `format` - the
+ * run's OWN Start Plan scope of live OI Buy rows, not the order sheet's rows. No mock
+ * branch, for the same reason `exportOrderSheet`/`exportLowStockReport` have none: a
+ * fixture cannot usefully stand in for a workbook the worker renders. Returns the created
+ * `MyDownload` row (`status: 'pending'`); the file is fetched later from the drawer, once
+ * the worker marks it ready.
+ */
+export async function exportOiWorksheet(runId: string): Promise<MyDownload> {
+  const res = await apiFetch('/api/v1/scm/order-summary/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: runId, format: 'oi_worksheet' }),
+  });
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to start the OI worksheet export'));
+  }
+  return (await res.json()) as MyDownload;
+}

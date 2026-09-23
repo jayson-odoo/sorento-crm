@@ -292,12 +292,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # Demand scope (21 Sep 2026): the run's own stamped scope, so this drill lists exactly
     # the leg(s) `inputs.committed` was netted from - a Project run's book leg contributes
     # nothing, a Retail run's confirmed/form legs contribute nothing, and an SO-scoped
-    # Project run's confirmed/form legs see only the named orders (T8).
+    # Project OR All run's confirmed/form legs see only the named orders (T8, and Lane D's
+    # own All-run twin, `PLAN-order-sheet-oi-reports-22sep.md`).
     run_demand_class = horizon_row.get("demand_class")
     run_so_numbers = horizon_row.get("so_numbers") or []
     # Mirrors `_planning_rows`' own `so_scoped = bool(so_numbers)` exactly - `so_numbers` is
-    # only ever non-empty when `demand_class == 'project'` (the stamping rule in
-    # `create_run`), so this alone is the same test.
+    # non-empty under Project OR an unscoped (All) run (Lane D, 23 Sep 2026 - a picked
+    # order narrows an All run's own project legs too), never under Retail, so this alone
+    # is the same test.
     run_so_scoped = bool(run_so_numbers)
     # Both project legs read `so.so_number` off a core sales order already joined into each
     # of their own queries below - no new join needed, unlike `demand.py`'s bare SQL. The
@@ -311,10 +313,22 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # `co` predicate already scopes `so`, but the FORM leg's does not (its `so` is reached
     # through a LEFT JOIN with no company guard of its own) - stated once, here, so a
     # same-numbered SO in another company can never satisfy either leg's filter.
+    # Lane D fix round 2 (security review): gated on `run_demand_class == "project"`,
+    # which left an All run's SO scope entirely unapplied here - `_committed_total` below
+    # already narrows by `so_numbers` on an All run (it reads `run_so_scoped` alone), so
+    # the two disagreed: a picked SO's confirmed/form rows summed correctly into
+    # `committed_total` but the LINES listed every OTHER SO's rows too. `!= "retail"`
+    # matches `_apply_project_supply_reduction`'s own gate (`reorder_run_service.py`).
     so_filter = (
         "AND so.so_number = ANY(:so_numbers) AND so.company_id = oir.company_id"
-        if (run_demand_class == "project" and run_so_numbers) else ""
+        if (run_demand_class != "retail" and run_so_numbers) else ""
     )
+    # AC-D1b / fix round 3 ruling: the retail (book) leg drops "Plan until" only when
+    # the run is BOTH unscoped (All) AND has a picked Orders list - the SAME expression
+    # `_planning_rows`/`_committed_total` below apply, computed ONCE here so the book
+    # leg's own LISTING/TOTAL predicate (`horizon_pred`, fix round 4 nit) and the scope
+    # test's recomputed total (`_committed_total`) can never disagree about it.
+    retail_windowed = not (run_demand_class is None and run_so_scoped)
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
@@ -330,12 +344,19 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # Same horizon rule as `demand.horizon_committed_select_sql` / `reorder_run_service`'s
     # own horizon predicates: a stated `required_date` past the cutoff is excluded, no
     # date at all is always in. A NULL `:horizon` reproduces the unhorizoned query.
+    # Fix round 4 nit: dropped to `TRUE` when `retail_windowed` is False, or the book
+    # leg's own LISTING and TOTAL (`totals["committed"]`, which `committed_total` is
+    # built from) would stay windowed even though `horizon_committed_select_sql`'s
+    # retail leg - what `inputs.committed` was actually frozen from - is not; the drill
+    # would then show a total that disagrees with the frozen figure, and a far-dated
+    # line that silently contributes to the sum without ever being listed (breaking the
+    # module's own "the sum of these lines IS the committed figure" invariant).
     horizon_pred = (
         "(CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL "
         "OR sol.required_date <= CAST(:horizon AS date)) "
         "AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL "
         "OR sol.required_date >= CAST(:horizon_start AS date))"
-    )
+    ) if retail_windowed else "TRUE"
 
     def _committed_total(candidate: list[str], include_unloc: bool) -> float:
         """What this candidate location set commits for this product, by the SAME
@@ -365,8 +386,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
         }
         if run_so_scoped:
             cv_params["so_numbers"] = list(run_so_numbers)
+        # Lane D fix round 2 (security review) / round 3 (ruling narrowed) - `retail_
+        # windowed`, computed once above beside `so_filter`/`horizon_pred` so this scope
+        # test and the book leg's own listing/total can never disagree about it.
         cv_sql = horizon_committed_select_sql(
-            demand_class=run_demand_class, so_scoped=run_so_scoped
+            demand_class=run_demand_class, so_scoped=run_so_scoped,
+            retail_windowed=retail_windowed,
         )
         return float(db.execute(
             text(f"""

@@ -14,15 +14,38 @@ page is titled **Reorder Planning**.
 
 Click **Start Plan** in the list toolbar. The dialog is titled **Start Plan**:
 
-* **Sales orders needed** - **From** and **To** dates, both optional. The helper text reads
+* **Demand** - optional, reads **All** when left blank. Pick **Project** to plan only the
+  project side of demand, **Dealer** to plan only the retail side, or leave it on **All** to
+  plan both together.
+* **Project delivery range** - **From** and **To** dates, both optional. The helper text reads
   "Empty = every open order counts." A sales order with no date of its own always counts,
-  whichever dates you set. Leaving both blank plans every open order, same as today.
+  whichever dates you set.
+  * With **Demand** on **All** and one or more orders ticked in **Orders** (below), this range
+    limits the project rows only - the retail lines are planned whatever their date.
+  * With no orders ticked, or with **Demand** on **Project** or **Dealer**, the range works as
+    it always has: it limits the whole run.
+* **Inquiries raised** - **Raised from** and **Raised to** dates, shown only when **Demand** is
+  **Project**. The helper text reads "Empty = any raise date. Pre-selects the matching orders;
+  the list still shows them all."
+* **Orders** - shown whenever **Demand** is **Project** or **All** (**Dealer** has no picker,
+  since there is nothing to narrow against a retail run). Search and tick the sales orders to
+  plan the project side against; every order in the delivery range (and, under **Project**, the
+  raised window too) is ticked by default - untick what you do not want. Typing a project name
+  still finds its order even though the name is not printed on the row. Each row in the list
+  reads "*SO number* - *customer*", with ", *N* awaiting ack" added only when that order has
+  lines still awaiting acknowledgement. The closed field shows the first two SO numbers then
+  "+*N*" for the rest (for example "SO418869, SO419517 +12"); hover over it to see the full
+  list. The helper text reads "Empty = every project order in range."
 * **Warehouses** - optional; leave empty to plan every warehouse.
 * **Products** - optional; leave empty to plan every product.
 
 Click **Start Plan** to launch. A product with **Exclude from reorder planning** switched on
 (see [Manage products](../product/manage-products.md#exclude-a-product-from-reorder-planning))
 never appears in the run, even when you name it directly in Products.
+
+With **Demand** on **All**, the plan sizes the retail side as before - reorder levels and
+dealer outstanding - and, on the project side, buys only against the orders ticked in
+**Orders**. The order sheet's **Project qty** column follows the same ticked orders.
 
 ## The Header tab
 

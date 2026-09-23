@@ -86,9 +86,10 @@ Plan: `PLAN-order-sheet-oi-reports-22sep.md`. Status: DRAFT, rulings R1-R4 appli
   range; the buyer can untick. The closed trigger is ONE line: the first two SO numbers
   then `+x` for the rest (`SO418869, SO419517 +12`); menu rows are one line each. Same
   trigger under Demand = Project. Not clipped at 375px.
-- AC-D1b On an All run the From / To range narrows only the project OI rows; a retail SO
-  line due after the To date is still planned. On a Dealer or Project run the range
-  behaves as today.
+- AC-D1b On an All run WITH picked orders the From / To range narrows only the project OI
+  rows; a retail SO line due after the To date is still planned. On an All run with no
+  picked orders, and on a Dealer or Project run, the range behaves as today (retail leg
+  windowed); `test_reorder_window_start.py` stays green unchanged.
 - AC-D2 The run request carries `so_numbers` with no `demand_class`; the run row stores
   both as sent.
 - AC-D3 On that run, a product whose only project demand sits on an un-picked SO carries no

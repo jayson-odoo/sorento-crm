@@ -203,10 +203,14 @@ project-need-only.
   `SO number - customer`, with the awaiting count as a small suffix only when non-zero.
   Wire: `so_numbers` may accompany an All run (`demand_class` absent). Dealer keeps no
   picker.
-- D1b The From / To range is labelled "Project delivery range" and, on an All run, windows
-  the PROJECT legs only - owner: "this order range only is for project". The retail book
-  leg on an All run plans every open line, as an unhorizoned run does today. A Dealer run
-  and a Project run keep today's reading of the range.
+- D1b The From / To range is labelled "Project delivery range" and, on an All run WITH
+  picked orders, windows the PROJECT legs only - owner: "this order range only is for
+  project" (said of the picker). The retail book leg on such a run plans every open line.
+  Captain ruling 23 Sep after review: the switch is `demand_class is None and so_numbers`
+  (truthy), NOT "no demand class" - an unscoped ranged run with no picked orders (the
+  chatbot's "plan for <from>..<to>", `tests/scm/test_reorder_window_start.py`) keeps
+  today's windowed retail leg, and Dealer / Project runs keep today's reading too.
+  `replan_run` derives the same switch from the stored run, so a re-run agrees.
 - D2 Backend: `so_numbers` scopes the PROJECT legs of an All run - `horizon_committed_
   select_sql(demand_class=None, so_scoped=True)` narrows only the two OI legs; the SO-book
   retail leg and leg-2 admission (below level, moved in 180 d) are untouched, so the retail

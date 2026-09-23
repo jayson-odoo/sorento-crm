@@ -884,6 +884,12 @@ def _as_day(value: str, code: str = "invalid_raised_date") -> date:
 class OrderInquiryWorklistService:
     """Reads, totals and exports every raised instruction, whoever it belongs to."""
 
+    #: Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C6): the OI worksheet's OWN cap,
+    #: separate from `summary_order_service.MAX_EXPORT_ROWS` - the worksheet's row set is
+    #: OI rows, not order-sheet rows, and the two must never share a limit that happens
+    #: to describe a different population.
+    MAX_WORKSHEET_ROWS = 5000
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -1057,6 +1063,12 @@ class OrderInquiryWorklistService:
         # the whole-OI Confirm (`AcknowledgeFilter.inquiry_id`) and gear > Auto link
         # (`AutoPlaceRequest.filter.inquiry_id`).
         inquiry_id: Optional[str] = None,
+        # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
+        # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
+        # rather than as a new set of filter clauses. `None` (the default) means "every
+        # filter above decides", unchanged for the list page's own export; an EMPTY list
+        # means "no rows" (AC-C5), not "no filter".
+        row_ids: Optional[Sequence[str]] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -1146,6 +1158,8 @@ class OrderInquiryWorklistService:
             base = base.filter(_PROJECT_TITLE == project)
         if inquiry_id:
             base = base.filter(OrderInquiry.id == inquiry_id)
+        if row_ids is not None:
+            base = base.filter(OrderInquiryRow.id.in_(list(row_ids)))
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
@@ -2996,7 +3010,9 @@ class OrderInquiryWorklistService:
 
     # ----------------------------------------------------------------- export
 
-    def export_xlsx(self, **filters) -> Tuple[str, bytes]:
+    def export_xlsx(
+        self, *, columns: Sequence[str] = EXPORT_HEADINGS, **filters
+    ) -> Tuple[str, bytes]:
         """The filtered set as their own workbook: one sheet per delivery month.
 
         Within a sheet the rows go SUPPLIER then ITEM CODE, which is the order their own
@@ -3010,6 +3026,11 @@ class OrderInquiryWorklistService:
         Generated per request rather than stored, exactly as the per-project export is: a
         stored file goes stale the moment supply is reconfirmed, and a stale instruction
         is the thing this replaces.
+
+        `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the full
+        `EXPORT_HEADINGS` so the list page's own export is unchanged. The OI worksheet
+        passes `EXPORT_HEADINGS[:10]` (no ACKNOWLEDGED / TAKEN / REMAINING) - a prefix,
+        so the row values below can be cut to the same length.
         """
         import openpyxl
 
@@ -3033,13 +3054,15 @@ class OrderInquiryWorklistService:
         # Dated months in order, undated last: a row with no date is still an instruction
         # and is never dropped from the file.
         for key in sorted(month for month in grouped if month):
-            self._write_sheet(workbook, month_label(key), grouped[key])
+            self._write_sheet(workbook, month_label(key), grouped[key], columns=columns)
         if "" in grouped:
-            self._write_sheet(workbook, EXPORT_UNDATED_SHEET, grouped[""])
+            self._write_sheet(
+                workbook, EXPORT_UNDATED_SHEET, grouped[""], columns=columns
+            )
         if not workbook.sheetnames:
             # An empty result is still a workbook a person can open and see the headings
             # of, rather than a file their spreadsheet refuses.
-            self._write_sheet(workbook, EXPORT_TITLE, [])
+            self._write_sheet(workbook, EXPORT_TITLE, [], columns=columns)
 
         buffer = io.BytesIO()
         workbook.save(buffer)
@@ -3075,11 +3098,16 @@ class OrderInquiryWorklistService:
         ]
 
     def _write_sheet(
-        self, workbook, title: str, rows: Sequence[Dict[str, Any]]
+        self,
+        workbook,
+        title: str,
+        rows: Sequence[Dict[str, Any]],
+        *,
+        columns: Sequence[str] = EXPORT_HEADINGS,
     ) -> None:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
-        sheet.append(list(EXPORT_HEADINGS))
+        sheet.append(list(columns))
         # `￿` sorts after every real string, so a missing supplier or item code
         # lands at the end rather than at the top where a buyer would read it first.
         ordered = sorted(
@@ -3101,22 +3129,24 @@ class OrderInquiryWorklistService:
                 # Only where it says something the QTY column does not: a single-row
                 # run has its own quantity as its total, and printing it twice is noise.
                 run_total = float(total) if last_of_run and len(run) > 1 else None
-                sheet.append(
-                    [
-                        row.get("so_date"),
-                        row.get("so_number") or "",
-                        code or "",
-                        float(_dec(row.get("qty"))),
-                        run_total,
-                        row.get("delivery_date"),
-                        row.get("project_customer") or "",
-                        # Blank means nobody has placed it, exactly as it does on their
-                        # sheet.
-                        row.get("supplier") or "",
-                        row.get("po_number") or "",
-                        row.get("location") or "",
-                        ack_label(row),
-                        _export_taken(row),
-                        _export_remaining(row),
-                    ]
-                )
+                values = [
+                    row.get("so_date"),
+                    row.get("so_number") or "",
+                    code or "",
+                    float(_dec(row.get("qty"))),
+                    run_total,
+                    row.get("delivery_date"),
+                    row.get("project_customer") or "",
+                    # Blank means nobody has placed it, exactly as it does on their
+                    # sheet.
+                    row.get("supplier") or "",
+                    row.get("po_number") or "",
+                    row.get("location") or "",
+                    ack_label(row),
+                    _export_taken(row),
+                    _export_remaining(row),
+                ]
+                # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
+                # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
+                # never carries more cells than it has headings for.
+                sheet.append(values[: len(columns)])

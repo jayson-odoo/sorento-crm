@@ -175,8 +175,9 @@ export function RunPlanningModal({
     touchedOrdersRef.current = false;
   }, [open]);
 
-  /** Every open project SO with an OI row, for the Orders picker - fetched only while
-   *  Demand = Project, and re-fetched as either range changes (the delivery range narrows
+  /** Every open project SO with an OI row, for the Orders picker - fetched while
+   *  Demand = Project OR All (Lane D, AC-D1: "the same candidate query" for both; Dealer
+   *  has no picker), and re-fetched as either range changes (the delivery range narrows
    *  `rows_in_range`, the raise window narrows `rows_raised_in_window`; either drives the
    *  pre-selection below). */
   const {
@@ -192,16 +193,17 @@ export function RunPlanningModal({
         raised_from: raisedFrom || undefined,
         raised_to: raisedTo || undefined,
       }),
-    enabled: open && demand === 'project',
+    enabled: open && demand !== 'retail',
   });
 
   // Pre-select every SO with a line in range AND a row raised in the window (J1 + R2),
   // re-derived on every fresh result UNTIL the buyer has touched the list by hand (V4) -
   // a range or raise-window edit before that point still updates the pick; one after
   // keeps whatever they chose. With no raise window `rows_raised_in_window` equals
-  // `rows_total`, so this is unchanged from before the raise window existed.
+  // `rows_total`, so this is unchanged from before the raise window existed. Runs for
+  // All too (Lane D) - Dealer never reaches here (the fetch above is disabled for it).
   useEffect(() => {
-    if (demand !== 'project' || touchedOrdersRef.current || !candidateOrders) return;
+    if (demand === 'retail' || touchedOrdersRef.current || !candidateOrders) return;
     setSoNumbers(
       candidateOrders
         .filter((o) => o.rows_in_range > 0 && o.rows_raised_in_window > 0)
@@ -214,34 +216,57 @@ export function RunPlanningModal({
     setSoNumbers(next);
   };
 
-  /** `so_number - project label or customer name`, trimmed when neither is on file. The
-   *  LABEL is the option's accessible name and stays as-is; the raised count joins the
-   *  description instead, appended only while a raise window is set. */
-  const raiseWindowSet = Boolean(raisedFrom || raisedTo);
+  /** `so_number - customer_name`, trimmed when neither is on file - the option's
+   *  accessible name, kept IDENTICAL to the menu row's own printed text (fix round 3:
+   *  the row and the label must agree, so `project_label` is dropped from the LABEL
+   *  too - a buyer searching for what the row shows must find it). `project_label`
+   *  still has to be FINDABLE, though (fix round 4 nit) - it rides `searchText`
+   *  instead, the fuzzy index `SearchableMultiSelect`'s static mode reads in
+   *  preference to `label`, so typing a project word still finds the order without
+   *  printing it anywhere. */
   const orderOptions = useMemo(
     () =>
       (candidateOrders ?? []).map((o) => {
-        const suffix = o.project_label ?? o.customer_name ?? '';
-        const description = raiseWindowSet
-          ? `${o.rows_in_range} lines in range · raised ${o.rows_raised_in_window}`
-          : `${o.rows_in_range} lines in range`;
+        const customer = o.customer_name ?? '';
         return {
           value: o.so_number,
-          label: suffix ? `${o.so_number} - ${suffix}` : o.so_number,
-          description,
+          label: customer ? `${o.so_number} - ${customer}` : o.so_number,
+          searchText: `${o.so_number} ${o.customer_name ?? ''} ${o.project_label ?? ''}`,
         };
       }),
-    [candidateOrders, raiseWindowSet],
+    [candidateOrders],
   );
 
   /** Awaiting-ack counts, kept apart from `orderOptions` so `renderOption` can colour just
-   *  that part of the description rather than the whole secondary line (27 Aug ruling:
-   *  never bought against, so it has to stay visible before Start). */
+   *  that part of the row (27 Aug ruling: never bought against, so it has to stay visible
+   *  before Start). */
   const awaitingBySoNumber = useMemo(() => {
     const map = new Map<string, number>();
     for (const o of candidateOrders ?? []) map.set(o.so_number, o.rows_awaiting);
     return map;
   }, [candidateOrders]);
+
+  /** The Orders field's own closed-trigger label (AC-D1: ONE line, the first two SO
+   *  numbers then `+x` for the rest - `SO418869, SO419517 +12`, no chip wall) - shared by
+   *  Demand = All and Demand = Project alike ("Same trigger under Demand = Project"). */
+  const renderOrdersTriggerLabel = useCallback(
+    (selected: { value: string; label: string }[]) => {
+      if (selected.length === 0) return 'Every project order in range';
+      const soNumbers = selected.map((o) => o.value);
+      const shown = soNumbers.slice(0, 2).join(', ');
+      const rest = soNumbers.length - 2;
+      const text = rest > 0 ? `${shown} +${rest}` : shown;
+      // `block truncate` + `title` (fix round 4 nit: inline `truncate` never ellipsises
+      // - it needs a block/inline-block box to clip against) - every selected SO number,
+      // not just the two shown, so a hover/long-press at 375px still reads the full pick.
+      return (
+        <span className="block truncate" title={soNumbers.join(', ')}>
+          {text}
+        </span>
+      );
+    },
+    [],
+  );
 
   const today = todayDateInputValue();
 
@@ -275,12 +300,19 @@ export function RunPlanningModal({
       // Empty = no horizon (today's behaviour): every open SO line is planned
       // regardless of when it is needed.
       plan_horizon_date: horizon,
-      // Demand = All sends neither key (V3): the modal predates demand scoping and an
-      // unnarrowed run must stay indistinguishable from before this existed.
+      // Demand = All sends no demand_class (V3): the modal predates demand scoping and
+      // an unnarrowed run must stay indistinguishable from before this existed.
       ...(demand ? { demand_class: demand } : {}),
       // The buyer's FINAL selection - `[]` when everything was unticked, which still
-      // means "every project order in range" (design 4.6), not "none".
-      ...(demand === 'project' ? { so_numbers: soNumbers } : {}),
+      // means "every project order in range" (design 4.6), not "none" - always sent
+      // under Project, never omitted. Under All (Lane D, AC-D2/D3) `so_numbers` MAY
+      // accompany the run to narrow its own project legs, sent only when there is
+      // something to narrow by - an All run with nothing picked (no candidates, or the
+      // picker never loaded) stays indistinguishable from before this lane, matching
+      // every pre-Lane-D test's exact payload.
+      ...(demand === 'project' || (demand === '' && soNumbers.length > 0)
+        ? { so_numbers: soNumbers }
+        : {}),
     });
   };
 
@@ -311,7 +343,11 @@ export function RunPlanningModal({
           </div>
 
           <div>
-            <Label className="mb-1 block">Sales orders needed</Label>
+            {/* Renamed by Lane D (AC-D1b, owner ruling: "this order range only is for
+                project") - the range now narrows only the two project legs on an All
+                run; the retail SO-book leg plans every open line regardless of it, same
+                as an unhorizoned run today. */}
+            <Label className="mb-1 block">Project delivery range</Label>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label htmlFor="plan-window-start" className="mb-1 block text-2xs text-muted-foreground">
@@ -343,72 +379,77 @@ export function RunPlanningModal({
           </div>
 
           {demand === 'project' ? (
-            <>
-              <div>
-                <Label className="mb-1 block">Inquiries raised</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="plan-raised-from" className="mb-1 block text-2xs text-muted-foreground">
-                      Raised from
-                    </Label>
-                    <Input
-                      id="plan-raised-from"
-                      type="date"
-                      value={raisedFrom}
-                      onChange={(e) => setRaisedFrom(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="plan-raised-to" className="mb-1 block text-2xs text-muted-foreground">
-                      Raised to
-                    </Label>
-                    <Input
-                      id="plan-raised-to"
-                      type="date"
-                      value={raisedTo}
-                      onChange={(e) => setRaisedTo(e.target.value)}
-                    />
-                  </div>
+            <div>
+              <Label className="mb-1 block">Inquiries raised</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label htmlFor="plan-raised-from" className="mb-1 block text-2xs text-muted-foreground">
+                    Raised from
+                  </Label>
+                  <Input
+                    id="plan-raised-from"
+                    type="date"
+                    value={raisedFrom}
+                    onChange={(e) => setRaisedFrom(e.target.value)}
+                  />
                 </div>
-                <p className="mt-1 text-2xs text-muted-foreground">
-                  Empty = any raise date. Pre-selects the matching orders; the list still
-                  shows them all.
-                </p>
+                <div>
+                  <Label htmlFor="plan-raised-to" className="mb-1 block text-2xs text-muted-foreground">
+                    Raised to
+                  </Label>
+                  <Input
+                    id="plan-raised-to"
+                    type="date"
+                    value={raisedTo}
+                    onChange={(e) => setRaisedTo(e.target.value)}
+                  />
+                </div>
               </div>
+              <p className="mt-1 text-2xs text-muted-foreground">
+                Empty = any raise date. Pre-selects the matching orders; the list still
+                shows them all.
+              </p>
+            </div>
+          ) : null}
 
-              <div>
-                <Label className="mb-1 block">Orders</Label>
-                <SearchableMultiSelect
-                  value={soNumbers}
-                  onChange={handleSoNumbersChange}
-                  options={orderOptions}
-                  disabled={candidatesLoading}
-                  placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
-                  emptyMessage={
-                    candidatesError ? 'Could not load orders.' : 'No project orders found.'
-                  }
-                  renderOption={(opt) => {
-                    const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
-                    return (
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <span className="break-words">{opt.label}</span>
-                        <span className="break-words text-xs text-muted-foreground">
-                          {opt.description}
-                          {awaiting > 0 ? (
-                            <span className="text-warning">
-                              {`, ${awaiting} awaiting ack`}
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    );
-                  }}
-                />
-                <p className="mt-1 text-2xs text-muted-foreground">
-                  Empty = every project order in range.
-                </p>
-              </div>
-            </>
+          {/* Lane D (AC-D1): the Orders picker now shows for All as well as Project -
+              same candidate query, same "everything in range ticked by default" rule,
+              same trigger. Dealer has no picker (nothing to narrow against a retail
+              run). */}
+          {demand !== 'retail' ? (
+            <div>
+              <Label className="mb-1 block">Orders</Label>
+              <SearchableMultiSelect
+                value={soNumbers}
+                onChange={handleSoNumbersChange}
+                options={orderOptions}
+                disabled={candidatesLoading}
+                placeholder={candidatesLoading ? 'Loading orders...' : 'Every project order in range'}
+                emptyMessage={
+                  candidatesError ? 'Could not load orders.' : 'No project orders found.'
+                }
+                renderTriggerLabel={renderOrdersTriggerLabel}
+                // Owner ruling (Lane D fix round 1, narrowed round 3): one-line menu rows
+                // under Project AND All, full stop - `opt.label` IS "<SO number> -
+                // <customer>" (the option's own accessible name, fix round 3 item 3), so
+                // the row prints that same string, with the awaiting-ack count appended
+                // only when it is non-zero.
+                renderOption={(opt) => {
+                  const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
+                  return (
+                    <span className="break-words">
+                      {opt.label}
+                      {awaiting > 0 ? (
+                        <span className="text-warning">{`, ${awaiting} awaiting ack`}</span>
+                      ) : null}
+                    </span>
+                  );
+                }}
+              />
+              <p className="mt-1 text-2xs text-muted-foreground">
+                Empty = every project order in range.
+              </p>
+            </div>
           ) : null}
 
           <div>
