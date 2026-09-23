@@ -1,15 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import { Bookmark, ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { statusTextClass } from '@/lib/status-pill';
-import { OrderInquiryStatePill } from '../../../_shared/components/OrderInquiryVerbPill';
+import { OrderInquiryStatePill, ReservePill } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { formatInquiryQty, inquiryFooterTotals } from '../../../_shared/lib/orderInquiryWorklist';
 import {
@@ -27,15 +25,19 @@ import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentD
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
- * Remaining, Delivery date, Supplier, PO, SPO, Location, Instruction, State, Reserve
- * (section 6c F2). Taken/Remaining are S3
- * (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1); SO line is S6 (AC-B6-1). Product/Qty/
- * Delivery date/Supplier/Location/Instruction reuse the worklist's OWN cell renderers
- * (`orderInquiryWorklistColumns.tsx`) so the same fact reads the same way on both screens.
- * PO/SPO are the ONE deliberate difference (AC-DP-04): this single-header screen opens the
- * simpler `OrderInquiryDocumentDialog`, not the worklist's bundling/reallocate-aware
- * `DocumentsCell` - a header's own lines have no "which OTHER row is this bundled with"
- * question to answer, since every row here already belongs to the one document.
+ * Remaining, Delivery date, Supplier, PO, SPO, Location, Instruction, State. Taken/
+ * Remaining are S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1); SO line is S6
+ * (AC-B6-1). Product/Qty/Delivery date/Supplier/Location/Instruction reuse the
+ * worklist's OWN cell renderers (`orderInquiryWorklistColumns.tsx`) so the same fact
+ * reads the same way on both screens. PO/SPO are the ONE deliberate difference
+ * (AC-DP-04): this single-header screen opens the simpler `OrderInquiryDocumentDialog`,
+ * not the worklist's bundling/reallocate-aware `DocumentsCell` - a header's own lines
+ * have no "which OTHER row is this bundled with" question to answer, since every row
+ * here already belongs to the one document.
+ *
+ * Round 3 (section 6d G2, AC-RS-68): the separate `reserve` icon column round 2 added
+ * is retired - the State cell itself carries the reserve state now (`ReservePill`
+ * beside/instead of `OrderInquiryStatePill`), one fewer column on an already-wide grid.
  */
 
 /** The first PO (or SPO) link this line carries, for a document trigger. `null` when the
@@ -194,58 +196,30 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <InstructionCell row={row.original} />,
       },
+      // `PLAN-oi-request-cs-reserve.md` section 6d G2 (AC-RS-68): the separate `reserve`
+      // icon column (round 2's own artefact) is gone - the State cell itself is the
+      // click target now, amber `Request to reserve` / green `Reserved N` with a tick
+      // while an open request or an actual reserve exists on the row, the plain state
+      // pill otherwise. `onReserveClick` absent -> `ReservePill` renders a read-only
+      // span, same as the worklist's own usage beside Instruction.
       {
         accessorKey: 'state',
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
         size: 190,
         meta: { headerTitle: 'State' },
-        cell: ({ row }) => <OrderInquiryStatePill state={row.original.state} />,
-      },
-      // `PLAN-oi-request-cs-reserve.md` section 6c F2 (AC-RS-61): replaces the old
-      // non-interactive `ReservePill` beside State - an icon-button, amber while a
-      // request is open, green once reserved, absent on every other row, opening
-      // `ReserveRowDialog` for THAT row. Visible to every viewer; only clickable with
-      // `onReserveClick` wired (the caller gates that on `projects.order_inquiries.
-      // reserve`, the same way `canReserve` already reaches this hook's caller).
-      {
-        id: 'reserve',
-        header: () => <span className="sr-only">Reserve</span>,
         cell: ({ row }) => {
-          const state = row.original.reserve_state;
-          if (state !== 'requested' && state !== 'reserved') return null;
-          // S6 (reviewer round): the SAME palette `ReservePill` reads (`pending`/`done`
-          // - `OrderInquiryVerbPill.tsx`), not a bespoke amber/emerald pair invented
-          // locally here.
-          const colour = statusTextClass(state === 'requested' ? 'pending' : 'done');
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  className={`size-6 ${colour}`}
-                  aria-label="Reserve"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onReserveClick?.(row.original);
-                  }}
-                >
-                  <Bookmark className="size-4" aria-hidden />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {state === 'requested' ? 'Request to reserve' : `Reserved ${row.original.reserved_qty ?? ''}`}
-              </TooltipContent>
-            </Tooltip>
-          );
+          const reserveState = row.original.reserve_state;
+          if (reserveState === 'requested' || reserveState === 'reserved') {
+            return (
+              <ReservePill
+                reserveState={reserveState}
+                reservedQty={row.original.reserved_qty}
+                onClick={onReserveClick ? () => onReserveClick(row.original) : undefined}
+              />
+            );
+          }
+          return <OrderInquiryStatePill state={row.original.state} />;
         },
-        size: 52,
-        minSize: 52,
-        enableSorting: false,
-        enableResizing: false,
-        meta: { headerTitle: 'Reserve' },
       },
     ],
     [onReserveClick],

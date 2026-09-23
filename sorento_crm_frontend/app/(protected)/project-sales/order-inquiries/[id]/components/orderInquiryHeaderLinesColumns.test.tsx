@@ -6,11 +6,14 @@
  * behaviour is `orderInquiryWorklist.test.ts`'s and `orderInquiryWorklistColumns.test.tsx`'s.
  *
  * Column-order list updated at the #1119 x oi-request-cs-reserve merge (22 Sep, cross-lane):
- * main's own version of this assertion predates two columns this lane already shipped in
+ * main's own version of this assertion predates a column this lane already shipped in
  * Phase 1 - `Expand` (the board stock-grid chevron, `PLAN-oi-request-cs-reserve.md` 3.9)
- * sits FIRST, before Product; `Reserve` (the section 6c F2 icon-button, replacing the old
- * inline `ReservePill` beside State) is new this round and sits last. Both are real,
- * shipped columns, not a merge artefact.
+ * sits FIRST, before Product. Real, shipped, not a merge artefact.
+ *
+ * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G2, AC-RS-68): the round-2 `Reserve`
+ * column this list used to end with is retired - the State cell itself is the reserve
+ * click target now (`AC-RS-68` suite below), so the census here drops back to one column
+ * per fact.
  */
 import { fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -41,7 +44,6 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Location',
       'Instruction',
       'State',
-      'Reserve',
     ]);
   });
 

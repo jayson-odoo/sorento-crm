@@ -1,5 +1,6 @@
 'use client';
 
+import { Check } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
 /**
@@ -122,31 +123,65 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
 /**
  * `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20/AC-RS-25): `requested` while an open
  * reserve request row exists, `reserved` once CS has actually reserved something (and no
- * open request). Rendered BESIDE the state pill, never merged with it - the same
- * "handshake beside state" split `OrderInquiryStatePill` already carries.
+ * open request). Rendered BESIDE the state pill on the worklist (its own read-only
+ * usage, no `onClick`); round 3 (section 6d G2, AC-RS-68) also reuses this same pill AS
+ * the Lines grid's own "State" cell click target - `onClick` set turns it into a
+ * `role=button` `aria-label="Reserve"`, and `reserved` gains the owner's own tick.
  */
 export function ReservePill({
   reserveState,
   reservedQty,
+  onClick,
 }: {
   reserveState: 'requested' | 'reserved' | string | null | undefined;
   reservedQty?: string | null;
+  /** AC-RS-68: opens `ReserveRowDialog` for this row - absent renders a plain span, the
+   * worklist's own read-only usage. */
+  onClick?: () => void;
 }) {
   if (!reserveState) return null;
+  const interactive = Boolean(onClick);
   if (reserveState === 'requested') {
-    return (
+    const content = <>Request to reserve</>;
+    return interactive ? (
+      <button
+        type="button"
+        aria-label="Reserve"
+        onClick={onClick}
+        className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}
+      >
+        {content}
+      </button>
+    ) : (
       <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}>
-        Request to reserve
+        {content}
       </span>
     );
   }
   if (reserveState === 'reserved') {
-    return (
-      // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
-      // a reserve is a finished outcome, the same reading `done` carries everywhere
-      // else in `lib/status-pill.ts`.
-      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('done')}`}>
+    // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
+    // a reserve is a finished outcome, the same reading `done` carries everywhere
+    // else in `lib/status-pill.ts`.
+    const content = (
+      <>
+        {/* The owner's own tick ("after confirmed the product should have a ticked
+            icon", round 3 owner words). */}
+        <Check className="size-3" aria-hidden />
         Reserved {reservedQty ?? ''}
+      </>
+    );
+    return interactive ? (
+      <button
+        type="button"
+        aria-label="Reserve"
+        onClick={onClick}
+        className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}
+      >
+        {content}
+      </button>
+    ) : (
+      <span className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}>
+        {content}
       </span>
     );
   }
