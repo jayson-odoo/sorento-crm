@@ -55,10 +55,18 @@ function DataGridTableDndHeader<TData>({
   // in for is not rendered), so it stays draggable and each id registers exactly once.
   // Grids without column groups never take either branch.
   const isGroupHeader = !header.isPlaceholder && header.subHeaders.length > 0;
+  // AC-RS-69 (`PLAN-oi-request-cs-reserve.md` section 6d G3): a fixed utility column
+  // (`meta.draggable === false`, e.g. the shared select column) or one carrying an
+  // expanded row's own content (`meta.expandedContent`, e.g. the OI Lines "expand"
+  // chevron) offers no grip and no drag affordance - it is not a column a reader
+  // reorders, it is part of the grid's own chrome.
+  const noDrag =
+    header.column.columnDef.meta?.draggable === false ||
+    Boolean(header.column.columnDef.meta?.expandedContent);
 
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
     id: header.column.id,
-    disabled: isGroupHeader,
+    disabled: isGroupHeader || noDrag,
   });
 
   const style: CSSProperties = {
@@ -89,19 +97,28 @@ function DataGridTableDndHeader<TData>({
       dndRef={setNodeRef}
       rowSpan={rowSpan}
     >
-      <div
-        className="flex items-center justify-start gap-0.5 w-full cursor-grab select-none"
-        {...attributes}
-        {...listeners}
-        aria-label="Drag column to reorder"
-      >
-        {/* Keeping the grip icon purely visual (drag is on the entire header area). */}
-        <GripVertical className="size-4 opacity-35 ms-1" aria-hidden="true" />
-        {flexRender(header.column.columnDef.header, header.getContext())}
-        {props.tableLayout?.columnsResizable && column.getCanResize() && (
-          <DataGridTableHeadRowCellResize header={header} />
-        )}
-      </div>
+      {noDrag ? (
+        <div className="flex items-center justify-start gap-0.5 w-full select-none">
+          {flexRender(header.column.columnDef.header, header.getContext())}
+          {props.tableLayout?.columnsResizable && column.getCanResize() && (
+            <DataGridTableHeadRowCellResize header={header} />
+          )}
+        </div>
+      ) : (
+        <div
+          className="flex items-center justify-start gap-0.5 w-full cursor-grab select-none"
+          {...attributes}
+          {...listeners}
+          aria-label="Drag column to reorder"
+        >
+          {/* Keeping the grip icon purely visual (drag is on the entire header area). */}
+          <GripVertical className="size-4 opacity-35 ms-1" aria-hidden="true" />
+          {flexRender(header.column.columnDef.header, header.getContext())}
+          {props.tableLayout?.columnsResizable && column.getCanResize() && (
+            <DataGridTableHeadRowCellResize header={header} />
+          )}
+        </div>
+      )}
     </DataGridTableHeadRowCell>
   );
 }
@@ -155,7 +172,20 @@ function DataGridTableDnd<TData>({
     Array.isArray(table.getState().columnOrder) && table.getState().columnOrder.length > 0
       ? (table.getState().columnOrder as string[])
       : leafIds;
-  const orderedIds = mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
+  // AC-RS-69: a fixed utility / expanded-content column never registers as a drop
+  // target either - dragging another column past it must not offer to land there.
+  const nonDraggableIds = new Set(
+    table
+      .getAllLeafColumns()
+      .filter(
+        (c) =>
+          c.columnDef.meta?.draggable === false || Boolean(c.columnDef.meta?.expandedContent),
+      )
+      .map((c) => c.id),
+  );
+  const orderedIds = mergeColumnOrderWithLeafColumns(rawOrder, leafIds).filter(
+    (id) => !nonDraggableIds.has(id),
+  );
 
   return (
     <DndContext
