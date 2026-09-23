@@ -660,14 +660,18 @@ def test_retail_order_not_plannable():
     """AC-S1-7. Retail demand is refused with its code and raises nothing.
 
     The second half of this test used to assert D8 ("a CLOSED project-class order is NOT
-    refused - it is adopted and its rows are raised"): retired under R4, 21 Sep 2026,
-    `PLAN-board-received-stock-own-arrival.md` S4 / AC-S4-3, which makes a closed or
-    cancelled core line never a candidate, not even as a last resort. A closed order whose
-    only line is closed and fully delivered therefore has nowhere for the sheet's row to
-    land at all: the order itself is NOT refused (`orders_not_plannable` stays empty, it is
-    simply never adopted, `orders_adopted: 0`) and the row is reported with its own
-    reason, not silently dropped, but not raised either -
-    R9 (21 Sep 2026, PLAN-board-received-stock-own-arrival): order_fully_delivered."""
+    refused - it is adopted and its rows are raised"), then AC-S4-3 (R4, 21 Sep 2026)
+    retired that in favour of "closed or cancelled is never a candidate at all".
+
+    REWRITTEN AGAIN (R1, owner 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`, SO421985):
+    the captain's own ruling on the tester's handback widens the candidate gate itself
+    (`_pick_lines_by_date_order`'s `candidates` now reads `line_status != 'cancelled'`,
+    not `== 'open'`) rather than touching `_close_history` (which the coder deletes as
+    dead) - so D8's ORIGINAL reading is correct again for CLOSED, just for a different
+    reason: a delivered, closed order IS adopted and its row raised, full stop, no
+    history-close afterwards. Only a CANCELLED line still yields no candidate at all -
+    AC-S4-3's own remaining half, pinned in the third block below with its unchanged
+    `order_fully_delivered` reason (AC-S4-6 / R9, 21 Sep 2026)."""
     with world() as w:
         retail = w.order(demand_class="retail")
         w.line(retail, qty_ordered="50")
@@ -694,9 +698,26 @@ def test_retail_order_not_plannable():
 
         result = w.apply(data)
 
-        # AC-S4-3: the order is not refused, but its only line is closed and takes no row.
-        # AC-S4-6 / R9: with no open line surviving at all, the reason is its own
-        # order_fully_delivered, never the genuine-item-mismatch no_line_for_item.
+        # R1 (23 Sep 2026): a CLOSED line is a candidate again - the order is adopted and
+        # its row raises, exactly D8's original reading, "closed" no longer excludes it.
+        assert result["orders_not_plannable"] == []
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert row.state == INQUIRY_RAISED
+
+    with world() as w:
+        cancelled = w.order()
+        w.line(cancelled, qty_ordered="50", qty_delivered="0", line_status="cancelled")
+        data = sheet([
+            (cancelled.so_number, w.product.product_code, 10, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        # AC-S4-3's own remaining half (R1 narrows the gate, does not remove it): a
+        # CANCELLED line still yields no candidate, the same order_fully_delivered
+        # reason AC-S4-6 (R9) uses for "no open line survives at all".
         assert result["orders_not_plannable"] == []
         assert result["rows_raised"] == 0, result
         assert result["rows_line_not_found"] == 1, result
@@ -761,12 +782,20 @@ def test_ac_ob_10_an_order_back_row_against_a_delivered_line_is_never_history_cl
         assert row.actioned_by is None
 
 
-def test_ac_ob_11_an_order_row_against_a_delivered_line_still_history_closes():
-    """REWRITTEN (R2, owner 23 Sep 2026, implied by R1, `PLAN-oi-order-rows-uncapped.md`
-    SO421985): a delivered line is no longer a reason to history-close an ORDER row at
-    all - AC-OU-7 below is what AC-S1-29 now reads for ORDER against a delivered line.
-    This name is kept (do not delete) for AC-OU-8, its own new sibling: the importer
-    keeps closing history on a CANCELLED line only, narrowed from "not open demand"."""
+def test_ac_ou_8_an_order_row_against_a_cancelled_line_is_not_raised():
+    """AC-OU-8 (captain ruling round 2, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`).
+    Was `test_ac_ob_11_an_order_row_against_a_delivered_line_still_history_closes`
+    (AC-OB-11) - superseded here, name changed to match what it now pins.
+
+    R1's own widening moved to the CANDIDATE gate, not `_close_history` (which the
+    coder deletes as dead - no candidate a fresh raise ever lands on can be CANCELLED,
+    so a "history close" test on it never had anything left to catch once the gate
+    itself excludes cancelled lines up front). `_pick_lines_by_date_order`'s
+    `candidates` now reads `line_status != "cancelled"` (was `== "open"`), so a CLOSED
+    line is admitted (AC-OU-7 below) and only a CANCELLED line is still excluded - the
+    row never raises at all, reported under the SAME `order_fully_delivered` reason
+    AC-S4-3/AC-S4-6 already use for "no open line survives", and no row reaches the
+    database."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="3", qty_delivered="3", line_status="cancelled")
@@ -777,19 +806,52 @@ def test_ac_ob_11_an_order_row_against_a_delivered_line_still_history_closes():
 
         result = w.apply(data)
 
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        assert row.verb == IV_ORDER
-        assert row.state == INQUIRY_ACTIONED
-        assert row.actioned_at is not None
+        assert result["rows_raised"] == 0, result
+        assert result["rows_line_not_found"] == 1, result
+        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
+        assert w.rows() == [], "a cancelled line must never raise a row"
 
 
 def test_ac_ou_7_an_order_row_against_a_delivered_closed_line_stays_raised():
-    """AC-OU-7 (R1/R2, 23 Sep 2026). Uploading an ORDER row against a line delivered in
-    full - `line_status` still `open` so it remains an import CANDIDATE (AC-S1-29,
-    AC-S4-3), the same shape AC-OB-10 pins for ORDER_BACK - stores state `raised`, never
-    `actioned`, for ORDER too now. `_close_history` no longer tests `_is_open_demand`,
-    only whether the core line is CANCELLED (R2)."""
+    """AC-OU-7 (captain ruling round 2, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`,
+    SO421985). The core scenario: a line delivered in full AND `line_status = 'closed'`
+    (AutoCount's own reading once the pull marks a line done) is now a CANDIDATE again -
+    `_pick_lines_by_date_order`'s `candidates` widens from `line_status == 'open'` to
+    `line_status != 'cancelled'` - so the row raises normally, `state = raised`. This is
+    the R1 gate move itself, not merely its consequence: AC-S4-3 (R4, 21 Sep 2026)
+    excluded a closed line from the candidate pool entirely, and R1 (23 Sep) narrows
+    that exclusion to cancelled lines only. `_close_history`'s old "delivered means
+    history" reading (AC-S1-29) is retired with it - the coder deletes `_close_history`
+    as dead code, since nothing that reaches `raise_row` can be non-open-and-not-
+    cancelled without ALSO being open (the two constraints collapse once delivered/
+    closed is no longer excluded upstream)."""
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="3", qty_delivered="3", line_status="closed")
+        data = sheet([
+            (order.so_number, w.product.product_code, 3, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert row.verb == IV_ORDER
+        assert row.state == INQUIRY_RAISED, (
+            "a delivered, CLOSED line is a candidate again (R1) - the row must raise"
+        )
+        assert row.actioned_at is None
+        assert row.actioned_by is None
+
+
+def test_ac_ou_7b_an_order_row_against_a_delivered_still_open_line_stays_raised():
+    """AC-OU-7's sibling: a line delivered in full but `line_status` still `open` (the
+    AC-S1-29 shape, the same one AC-OB-10 already pins for ORDER_BACK) was ALWAYS a
+    candidate, before and after this lane - kept as its own test because it exercises a
+    DIFFERENT code path (the ordinary `candidates` branch, never the widened "no open
+    line" fallback AC-OU-7 above now reaches) and must keep raising unaffected by the
+    gate's widening."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="3", qty_delivered="3")
@@ -803,9 +865,7 @@ def test_ac_ou_7_an_order_row_against_a_delivered_closed_line_stays_raised():
         assert result["rows_raised"] == 1, result
         row = w.one_row()
         assert row.verb == IV_ORDER
-        assert row.state == INQUIRY_RAISED, (
-            "a delivered, closed line is no longer a reason to history-close an ORDER row"
-        )
+        assert row.state == INQUIRY_RAISED
         assert row.actioned_at is None
         assert row.actioned_by is None
 
