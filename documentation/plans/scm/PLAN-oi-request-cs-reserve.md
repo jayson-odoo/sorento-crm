@@ -426,6 +426,26 @@ drag handle (same `cursor-col-resize` affordance as `DataGridTableHeadRowCellRes
 on the code), and remembered in `localStorage` key `cellStockTable.locationWidth` (read/write in
 try/catch; absent = today's slack behaviour). One column, one key: no column-config API row.
 
+**G6 Multi-row dialogs are tables, not stacked cards (owner, 23 Sep on :3080: "more tabulated to
+save space, later I got 10 products to request to reserve, then gg, we should use standard
+datagrid table in the system").** Both multi-row dialogs render one DataGrid row per product
+(`tableLayout: { width: 'fixed', columnsResizable: true }`, `columnResizeMode: 'onChange'`,
+explicit `size` per column, no pagination, no sort, no column config):
+
+- `ReserveRowDialog` (CS acting, `rows.length > 1`): columns Product | Requested | Location
+  (`SearchableSelect`) | Reserved (number `Input`) | Reason (`Input`, enabled the moment Reserved <
+  Requested) | action (`Confirm reserved` per row). A confirmed row's Reserved cell reads
+  `Reserved N` with the tick and its inputs are gone. Footer: `Confirm all` (enabled when every
+  still-open row is valid, i.e. reason present wherever short) posting the per-row endpoint row by
+  row, top to bottom, stopping on the first failure (rows already confirmed stay confirmed; the
+  failed row shows the error toast). Dialog width `sm:max-w-4xl`; at 375px the grid scrolls
+  sideways inside the dialog body.
+- `ReserveRequestDialog` (purchasing raising): columns Product | Delivery date | Remaining | Requested
+  (number `Input`) | Location (`SearchableSelect`). Note stays below the grid. Same width.
+- The single-row `ReserveRowDialog` keeps its form + History tabs (one row, nothing to tabulate).
+- `AC-RS-74`, `AC-RS-75`. Existing behavioural tests (AC-RS-22, 65..67, 66b, R1/R2, N1/N2) stay
+  green: same props, same callbacks, same endpoint calls; only the layout changes.
+
 Coder verifies G4 live on :3080 before writing the fix (a screenshot of the expanded row on a
 grid wider than the viewport, then the same after) and reports if either cause is not the one
 measured. Tests: AC-RS-65..72 below, tester-first.

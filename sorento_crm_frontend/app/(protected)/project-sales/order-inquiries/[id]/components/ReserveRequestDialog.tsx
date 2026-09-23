@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -10,6 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -30,7 +33,17 @@ import type {
  * S5 (reviewer round): the write goes through `onSend`, a mutate function the caller
  * builds from `useCreateOrderInquiryReserveRequest` (`_shared/hooks/useOrderInquiry.ts`)
  * - this dialog no longer imports the feature service directly (UI -> hook -> service ->
- * api-client), and stays free of `QueryClientProvider` for its own vitest suite.
+ * api-client).
+ *
+ * G6 (`PLAN-oi-request-cs-reserve.md` section 6d, AC-RS-75, owner: "we should use
+ * standard datagrid table in the system"): the body is ONE DataGrid, one row per
+ * selected line, rather than a stacked card per row - the `requested`/`location`
+ * dictionaries below already keyed by row id, so the write path (`handleSend`) is
+ * unchanged; only the layout is a grid now. `DataGrid` reads `useQueryClient()`
+ * internally (`useListingColumnPreferences`, unconditional regardless of whether a
+ * `listingKey` is passed), so unlike before, this dialog's own vitest suite now needs
+ * a `QueryClientProvider` ancestor. No `listingKey` is passed, so the hook's own
+ * `useQuery` stays disabled and issues no network read.
  */
 export interface ReserveRequestDialogRow {
   id: string;
@@ -81,6 +94,127 @@ export function ReserveRequestDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rowsSignature]);
 
+  // G6: `columns` must stay REFERENTIALLY STABLE across a keystroke - `flexRender`
+  // renders a columnDef's own `cell` function AS the component type, so a `columns`
+  // array recomputed every render (the naive `useMemo(..., [requested, location])`
+  // this started as) hands each cell a BRAND NEW function identity on every render,
+  // which React treats as a brand new component type and unmounts/remounts the
+  // `<Input>` underneath it - losing focus and dropping the very keystroke that
+  // triggered the re-render (measured live: the DOM node before and after a
+  // `fireEvent.change` are NOT `===`). `stateRef` carries the latest
+  // `requested`/`location` for the (now permanently memoized) cell closures to read
+  // at render time, so the identity a keystroke's own `setRequested` call produces
+  // never reaches `columns` itself. `data` (`rows`, the caller's own array) already
+  // stays stable independently of this - see `project_datagrid_inline_data_render_
+  // loop`, the identity that lesson is actually about.
+  const stateRef = React.useRef({ requested, location });
+  stateRef.current = { requested, location };
+
+  const columns = React.useMemo<ColumnDef<ReserveRequestDialogRow>[]>(
+    () => [
+      {
+        id: 'product',
+        header: 'Product',
+        cell: ({ row }) => (
+          <span className="block truncate text-sm font-medium" title={row.original.item_code ?? undefined}>
+            {row.original.item_code}
+          </span>
+        ),
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Product' },
+      },
+      {
+        id: 'delivery_date',
+        header: 'Delivery date',
+        cell: ({ row }) =>
+          row.original.delivery_date ? (
+            <span>{formatDateInMalaysia(row.original.delivery_date)}</span>
+          ) : (
+            <span className="text-muted-foreground">No delivery date</span>
+          ),
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Delivery date' },
+      },
+      {
+        id: 'remaining',
+        header: 'Remaining',
+        cell: ({ row }) => <span className="tabular-nums">{row.original.remaining}</span>,
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Remaining', headerClassName: 'text-end', cellClassName: 'text-end' },
+      },
+      {
+        id: 'requested',
+        header: 'Requested',
+        cell: ({ row }) => {
+          const remainingQty = Number(row.original.remaining || '0');
+          return (
+            <>
+              <Label htmlFor={`reserve-requested-${row.original.id}`} className="sr-only">
+                Requested
+              </Label>
+              <Input
+                id={`reserve-requested-${row.original.id}`}
+                type="number"
+                min={1}
+                max={remainingQty}
+                value={stateRef.current.requested[row.original.id] ?? remainingQty}
+                onChange={(event) => {
+                  const raw = Number(event.target.value);
+                  // Nit (review round, ported): a typed 0 (or a blank field) can never
+                  // be sent - clamped up to 1, `min={1}` above's own floor, rather than
+                  // down to 0.
+                  const capped = Math.min(Math.max(raw || 1, 1), remainingQty);
+                  setRequested((prev) => ({ ...prev, [row.original.id]: capped }));
+                }}
+              />
+            </>
+          );
+        },
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'Requested' },
+      },
+      {
+        id: 'location',
+        header: 'Location',
+        cell: ({ row }) => (
+          <>
+            <Label htmlFor={`reserve-location-${row.original.id}`} className="sr-only">
+              Location
+            </Label>
+            <SearchableSelect
+              id={`reserve-location-${row.original.id}`}
+              value={stateRef.current.location[row.original.id] ?? row.original.defaultLocation}
+              onChange={(value) =>
+                setLocation((prev) => ({ ...prev, [row.original.id]: value }))
+              }
+              options={row.original.locationOptions}
+            />
+          </>
+        ),
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Location' },
+      },
+    ],
+    // Deliberately empty: see the doc above. `stateRef` supplies fresh values,
+    // `setRequested`/`setLocation` are stable (React), and every other read
+    // (`row.original.*`) is scoped to the row `flexRender` hands the cell.
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
   async function handleSend() {
     setSending(true);
     try {
@@ -104,58 +238,28 @@ export function ReserveRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-2xl">
+      {/* G6: wide enough for the grid, same rule `ReserveRowDialog`'s own multi-row
+          dialog follows. */}
+      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Request CS to reserve</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex-1 space-y-4 overflow-y-auto">
-          {rows.map((row) => {
-            const remainingQty = Number(row.remaining || '0');
-            return (
-              <div key={row.id} className="space-y-3 rounded-lg border border-border p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium">{row.item_code}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {row.delivery_date
-                      ? `Due ${formatDateInMalaysia(row.delivery_date)}`
-                      : 'No delivery date'}
-                    {' - '}remaining {row.remaining}
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label htmlFor={`reserve-requested-${row.id}`}>Requested</Label>
-                    <Input
-                      id={`reserve-requested-${row.id}`}
-                      type="number"
-                      min={1}
-                      max={remainingQty}
-                      value={requested[row.id] ?? remainingQty}
-                      onChange={(event) => {
-                        const raw = Number(event.target.value);
-                        // Nit (review round): a typed 0 (or a blank field) can never be
-                        // sent - clamped up to 1, `min={1}` above's own floor, rather
-                        // than down to 0.
-                        const capped = Math.min(Math.max(raw || 1, 1), remainingQty);
-                        setRequested((prev) => ({ ...prev, [row.id]: capped }));
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor={`reserve-location-${row.id}`}>Location</Label>
-                    <SearchableSelect
-                      id={`reserve-location-${row.id}`}
-                      value={location[row.id] ?? row.defaultLocation}
-                      onChange={(value) =>
-                        setLocation((prev) => ({ ...prev, [row.id]: value }))
-                      }
-                      options={row.locationOptions}
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          <div className="overflow-x-auto">
+            <DataGrid
+              table={table}
+              recordCount={rows.length}
+              tableLayout={{
+                width: 'fixed',
+                columnsResizable: true,
+                // The DialogBody above already owns the scroll viewport
+                // (overflow-y-auto).
+                scrollerMaxHeight: false,
+              }}
+            >
+              <DataGridTable />
+            </DataGrid>
+          </div>
           <div className="space-y-1">
             <Label htmlFor="reserve-request-note">Note (optional)</Label>
             <Textarea

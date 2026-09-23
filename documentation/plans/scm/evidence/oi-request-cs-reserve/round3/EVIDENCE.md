@@ -122,3 +122,28 @@ carries a new open request #4 on `CB2807-DIY`, qty 4, raised by Teh Jayson).
 
 `errors`/`console` clean throughout this run. No write made (Confirm reserved was never clicked) -
 no data left behind by this pass.
+
+## G6 (23 Sep) - multi-row dialogs are DataGrid tables, not stacked cards - BROWSER PASS BLOCKED
+
+Session `oireserve-r3-g6` (name reserved, never reached an open page): `agent-browser open` on
+:3080 failed at the CHROME LAUNCH step, before any navigation - `Auto-launch failed: Chrome
+exited early ... without writing DevToolsActivePort`. Diagnosed directly (bypassing
+agent-browser): launching `~/.agent-browser/browsers/chrome-152.0.7977.42/Google Chrome for
+Testing.app` by hand, with or without `--headless=new`/`--headless=old`, `--no-sandbox`,
+`OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`, or `dangerouslyDisableSandbox: true` on the Bash tool,
+exits 134 (SIGABRT) every time. The crash report
+(`/Library/Logs/DiagnosticReports/Google Chrome for Testing-*.ips`, 20 of them from this session
+alone) faults inside `_RegisterApplication`/`TransformProcessType`
+(macOS LaunchServices/Application Services), not inside Chromium's own code - a machine-level
+LaunchServices/WindowServer connectivity failure for this user session, not a code defect and not
+something a coder-level agent can fix from inside a worktree. `WindowServer` shows a fresh start
+time (8:08 PM) close to this session; whether that is cause or coincidence is unclear.
+
+No screenshots exist for G6 as a result - `G6-1280-reserve-grid.png`, `G6-375-reserve-grid.png`,
+`G6-1280-request-grid.png`, `G6-375-request-grid.png` are NOT captured. Everything else the
+brief asked for is done and green: `ReserveRowDialog.test.tsx` (45 tests, including the new
+AC-RS-74 suite) and `ReserveRequestDialog.test.tsx` (17 tests, including the new AC-RS-75 suite)
+both pass, the full `order-inquiries` + `components/ui` vitest scope is green (605/606, 1 pre-
+existing skip), `tsc --noEmit` is clean, `eslint` is clean on every touched file. Reported to the
+captain as BLOCKED (environment), not silently skipped - a re-run once Chrome launches again on
+this machine should add the four screenshots here without needing any further code change.

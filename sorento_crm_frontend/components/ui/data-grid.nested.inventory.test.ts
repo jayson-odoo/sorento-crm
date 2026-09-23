@@ -188,6 +188,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:349',
     'The DataGridTable of the same grid, not a second one',
   ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx:249',
+    "G6 (PLAN-oi-request-cs-reserve.md section 6d): one row per selected line, in a dialog opened as a sibling of the OI Lines tab (Request CS to reserve). Already scrollerMaxHeight={false}",
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx:260',
+    'The DataGridTable of the same grid, not a second one',
+  ],
 ]);
 
 /**

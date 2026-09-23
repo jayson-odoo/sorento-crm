@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,6 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -36,15 +39,21 @@ import type {
  * line-click path, which keeps its own Reserve/History tabs exactly as before -
  * `rows` with one entry renders identically, whichever way the caller reaches it.
  *
- * Kept free of `QueryClientProvider`/react-query entirely on purpose, the same reason
- * `ReserveRequestsCard` was: its own vitest suite renders it with no providers at all.
- * Every read this dialog needs (`openRequest`, `history`, the pool options) is resolved
- * by the CALLER and handed down as props. S5 (reviewer round): the two writes no
- * longer call the feature service directly either - `onReserve` is the caller's own
- * `useReserveOrderInquiryRow` mutation (`_shared/hooks/useOrderInquiry.ts`), and
- * `unreserveControl` (S2) is a server-deferred pending action
- * (`useDeferredAction`/`order_inquiry_reserve_row.unreserve`) the caller builds and
- * hands down the same way `cancelControl` already works.
+ * This component imports no feature service of its own - every read it needs
+ * (`openRequest`, `history`, the pool options) is resolved by the CALLER and handed
+ * down as props. S5 (reviewer round): the two writes no longer call the feature
+ * service directly either - `onReserve` is the caller's own `useReserveOrderInquiryRow`
+ * mutation (`_shared/hooks/useOrderInquiry.ts`), and `unreserveControl` (S2) is a
+ * server-deferred pending action (`useDeferredAction`/`order_inquiry_reserve_row.
+ * unreserve`) the caller builds and hands down the same way `cancelControl` already
+ * works.
+ *
+ * G6 (round 3 fix round 3): the multi-row body is now a `DataGrid`
+ * (`components/ui/data-grid`), which reads `useQueryClient()` internally
+ * (`useListingColumnPreferences`, called unconditionally regardless of whether a
+ * `listingKey` is passed) - so unlike before, this component's own vitest suite now
+ * needs a `QueryClientProvider` ancestor. No `listingKey` is passed, so the hook's own
+ * `useQuery` stays `enabled: false` and issues no network read.
  */
 
 export interface ReserveRowDialogOpenRequest {
@@ -444,6 +453,491 @@ function ReserveRowSection({
   );
 }
 
+/** Round 3 fix round 3 G6 (`PLAN-oi-request-cs-reserve.md` section 6d,
+ * `oi-request-cs-reserve-acceptance-criteria.md` AC-RS-74): a multi-row dialog's own
+ * per-row edit, held in the DIALOG rather than inside a mounted `ReserveRowSection` -
+ * the grid renders every row as ONE DataGrid cell each, so there is no per-row React
+ * component instance left to hold its own `useState` the way the stacked-cards layout
+ * used to. Same reset rule `ReserveRowSection`'s own effect carried: a value-identical
+ * re-render (a refetch landing the same server data) must not wipe an in-progress
+ * edit - `signature` pins that. */
+interface ReserveGridDraft {
+  signature: string;
+  location: string;
+  reserved: number;
+  editedReserved: boolean;
+  reason: string;
+}
+
+function reserveGridDraftSignature(
+  row: ReserveRowDialogRow,
+  locationOptions: SearchableSelectOption[],
+  defaultLocationId: string | null,
+): string {
+  if (!row.openRequest) return 'none';
+  return `${row.openRequest.requestId}:${row.openRequest.qtyRequested}:${defaultLocationId ?? ''}:${locationOptions.map((o) => o.value).join(',')}`;
+}
+
+function reserveGridInitialDraft(
+  row: ReserveRowDialogRow,
+  locationOptions: SearchableSelectOption[],
+  defaultLocationId: string | null,
+  availableQtyByLocation: Record<string, number>,
+): ReserveGridDraft | null {
+  if (!row.openRequest) return null;
+  const requestedQty = Number(row.openRequest.qtyRequested || '0');
+  const initialLocation = defaultLocationId ?? locationOptions[0]?.value ?? '';
+  const available = availableQtyByLocation[initialLocation];
+  return {
+    signature: reserveGridDraftSignature(row, locationOptions, defaultLocationId),
+    location: initialLocation,
+    reserved: Math.max(0, Math.min(requestedQty, available != null ? available : requestedQty)),
+    editedReserved: false,
+    reason: '',
+  };
+}
+
+/**
+ * G6: ONE DataGrid row per product, replacing the stacked `ReserveRowSection` cards
+ * for a multi-row dialog (`effectiveRows.length > 1`). The single-row (tabs) path is
+ * untouched - it keeps `ReserveRowSection` exactly as before.
+ *
+ * Every prop, callback, endpoint call and piece of session state the multi-row path
+ * already carried stays: `confirmedRows`/`onRowConfirmed` (the dialog's own close
+ * effect still watches it), the O3 "already confirmed this session" 4th arg to
+ * `onReserve`, and N1's bare-location echo. `showRequestLine`'s old purpose - a
+ * read-only viewer still sees what was requested - is now met unconditionally by the
+ * always-visible Requested column rather than a conditional text line.
+ */
+function ReserveRowsGrid({
+  rows,
+  locationOptions,
+  defaultLocationId,
+  availableQtyByLocation,
+  canAct,
+  onReserve,
+  handleReserve,
+  confirmedRows,
+  onRowConfirmed,
+}: {
+  rows: ReserveRowDialogRow[];
+  locationOptions: SearchableSelectOption[];
+  defaultLocationId: string | null;
+  availableQtyByLocation: Record<string, number>;
+  canAct: boolean;
+  /** The RAW caller prop - `confirmAllGridRows` below builds its own 4th arg as it
+   * walks the still-open rows in order, so it cannot go through `handleReserve`'s own
+   * (single-call) wrapping. */
+  onReserve: (
+    requestId: string,
+    rowId: string,
+    payload: ReserveRowPayload,
+    alreadyConfirmedRowIds?: string[],
+  ) => Promise<OrderInquiryReserveRequestRow>;
+  /** The dialog's own wrapper (O3) - used by the per-row Confirm reserved button,
+   * exactly the calling convention `ReserveRowSection` already used. */
+  handleReserve: (
+    requestId: string,
+    rowId: string,
+    payload: ReserveRowPayload,
+  ) => Promise<OrderInquiryReserveRequestRow>;
+  confirmedRows: Record<string, { qty: number; location: string }>;
+  onRowConfirmed: (rowId: string, qty: number, locationLabel: string) => void;
+}) {
+  const [drafts, setDrafts] = React.useState<Record<string, ReserveGridDraft>>({});
+  const [confirmingRowId, setConfirmingRowId] = React.useState<string | null>(null);
+  const [confirmingAll, setConfirmingAll] = React.useState(false);
+
+  const draftsSignature = rows
+    .map(
+      (row) =>
+        `${row.rowId}=${reserveGridDraftSignature(
+          row,
+          row.locationOptions ?? locationOptions,
+          row.defaultLocationId ?? defaultLocationId,
+        )}`,
+    )
+    .join('|');
+
+  React.useEffect(() => {
+    setDrafts((prev) => {
+      const next: Record<string, ReserveGridDraft> = {};
+      for (const row of rows) {
+        if (!row.openRequest) continue;
+        const rowLocationOptions = row.locationOptions ?? locationOptions;
+        const rowDefaultLocationId = row.defaultLocationId ?? defaultLocationId;
+        const rowAvailable = row.availableQtyByLocation ?? availableQtyByLocation;
+        const signature = reserveGridDraftSignature(row, rowLocationOptions, rowDefaultLocationId);
+        const existing = prev[row.rowId];
+        next[row.rowId] =
+          existing && existing.signature === signature
+            ? existing
+            : (reserveGridInitialDraft(row, rowLocationOptions, rowDefaultLocationId, rowAvailable) ??
+              existing);
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftsSignature]);
+
+  function handleLocationChange(row: ReserveRowDialogRow, value: string) {
+    setDrafts((prev) => {
+      const current = prev[row.rowId];
+      if (!current || !row.openRequest) return prev;
+      const requestedQty = Number(row.openRequest.qtyRequested || '0');
+      const rowAvailable = row.availableQtyByLocation ?? availableQtyByLocation;
+      const available = rowAvailable[value];
+      const reserved = current.editedReserved
+        ? current.reserved
+        : Math.max(0, Math.min(requestedQty, available != null ? available : requestedQty));
+      return { ...prev, [row.rowId]: { ...current, location: value, reserved } };
+    });
+  }
+
+  function handleReservedChange(row: ReserveRowDialogRow, raw: number) {
+    setDrafts((prev) => {
+      const current = prev[row.rowId];
+      if (!current || !row.openRequest) return prev;
+      const requestedQty = Number(row.openRequest.qtyRequested || '0');
+      return {
+        ...prev,
+        [row.rowId]: { ...current, editedReserved: true, reserved: Math.min(Math.max(raw || 0, 0), requestedQty) },
+      };
+    });
+  }
+
+  function handleReasonChange(row: ReserveRowDialogRow, value: string) {
+    setDrafts((prev) => {
+      const current = prev[row.rowId];
+      if (!current) return prev;
+      return { ...prev, [row.rowId]: { ...current, reason: value } };
+    });
+  }
+
+  function locationLabelFor(row: ReserveRowDialogRow, value: string): string {
+    const rowLocationOptions = row.locationOptions ?? locationOptions;
+    const selectedOption = rowLocationOptions.find((option) => option.value === value);
+    // N1 (fix round 4 nit, ported): the bare code, never the whole option label (which
+    // may carry an " available N" suffix in production).
+    return selectedOption ? bareLocationCode(selectedOption.label) : '';
+  }
+
+  async function confirmRow(row: ReserveRowDialogRow) {
+    const draft = drafts[row.rowId];
+    if (!row.openRequest || !draft) return;
+    setConfirmingRowId(row.rowId);
+    try {
+      await handleReserve(row.openRequest.requestId, row.rowId, {
+        warehouse_id: draft.location,
+        qty_reserved: draft.reserved,
+        reason: draft.reason.trim() ? draft.reason.trim() : null,
+      });
+      onRowConfirmed(row.rowId, draft.reserved, locationLabelFor(row, draft.location));
+    } catch {
+      // The caller's own mutation hook already toasted the error (S5).
+    } finally {
+      setConfirmingRowId((id) => (id === row.rowId ? null : id));
+    }
+  }
+
+  /** Footer Confirm all (AC-RS-74): calls `onReserve` once per still-open row, IN
+   * TABLE ORDER, awaiting each before the next - stopping at the first rejection so
+   * every row confirmed before it stays confirmed (its own `onRowConfirmed` already
+   * ran). The O3 4th arg is built by hand here (never through `handleReserve`, which
+   * reads the dialog's own `confirmedRows` STATE - stale mid-loop, since a state
+   * update from an earlier iteration has not necessarily re-rendered this component
+   * by the time the next iteration's own call goes out). */
+  async function confirmAll() {
+    setConfirmingAll(true);
+    const alreadyConfirmed = new Set(Object.keys(confirmedRows));
+    try {
+      for (const row of rows) {
+        if (alreadyConfirmed.has(row.rowId)) continue;
+        const draft = drafts[row.rowId];
+        if (!row.openRequest || !draft) continue;
+        try {
+          await onReserve(
+            row.openRequest.requestId,
+            row.rowId,
+            {
+              warehouse_id: draft.location,
+              qty_reserved: draft.reserved,
+              reason: draft.reason.trim() ? draft.reason.trim() : null,
+            },
+            Array.from(alreadyConfirmed),
+          );
+          alreadyConfirmed.add(row.rowId);
+          onRowConfirmed(row.rowId, draft.reserved, locationLabelFor(row, draft.location));
+        } catch {
+          break; // AC-RS-74: stop after a rejected call - earlier rows stay confirmed.
+        }
+      }
+    } finally {
+      setConfirmingAll(false);
+    }
+  }
+
+  // G6: `columns` must stay REFERENTIALLY STABLE across a keystroke or a Confirm
+  // click - `flexRender` renders a columnDef's own `cell` FUNCTION as the component
+  // type, so a `columns` array recomputed every render hands each cell a brand new
+  // function identity every time, which React reads as a brand new component type
+  // and unmounts/remounts the `<Input>`/`<SearchableSelect>` underneath it - losing
+  // focus and dropping the very keystroke that triggered the re-render (measured
+  // live in a minimal repro: the DOM node before and after a `fireEvent.change` were
+  // not `===`). `latestRef` carries every value and handler the (now permanently
+  // memoized) cell closures need, refreshed on every render, so a keystroke's own
+  // state update never reaches `columns` itself.
+  const latestRef = React.useRef({
+    confirmedRows,
+    drafts,
+    canAct,
+    locationOptions,
+    confirmingRowId,
+    confirmingAll,
+    handleLocationChange,
+    handleReservedChange,
+    handleReasonChange,
+    confirmRow,
+    confirmAll,
+    locationLabelFor,
+  });
+  latestRef.current = {
+    confirmedRows,
+    drafts,
+    canAct,
+    locationOptions,
+    confirmingRowId,
+    confirmingAll,
+    handleLocationChange,
+    handleReservedChange,
+    handleReasonChange,
+    confirmRow,
+    confirmAll,
+    locationLabelFor,
+  };
+
+  const columns = React.useMemo<ColumnDef<ReserveRowDialogRow>[]>(
+    () => [
+      {
+        id: 'product',
+        header: 'Product',
+        cell: ({ row }) => (
+          <span className="block truncate text-sm font-medium" title={row.original.itemCode ?? undefined}>
+            {row.original.itemCode}
+          </span>
+        ),
+        size: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Product' },
+      },
+      {
+        id: 'requested',
+        header: 'Requested',
+        cell: ({ row }) => (
+          <span className="tabular-nums">{row.original.openRequest?.qtyRequested ?? '0'}</span>
+        ),
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Requested', headerClassName: 'text-end', cellClassName: 'text-end' },
+      },
+      {
+        id: 'location',
+        header: 'Location',
+        cell: ({ row }) => {
+          const r = row.original;
+          const { confirmedRows: confirmedNow, drafts: draftsNow, canAct: canActNow, locationOptions: locationOptionsNow } =
+            latestRef.current;
+          const confirmed = confirmedNow[r.rowId];
+          const draft = draftsNow[r.rowId];
+          if (confirmed) {
+            return (
+              <span className="block truncate text-sm text-muted-foreground">
+                {confirmed.location}
+              </span>
+            );
+          }
+          if (!draft) return null;
+          if (!canActNow) {
+            return (
+              <span className="block truncate text-sm">
+                {latestRef.current.locationLabelFor(r, draft.location)}
+              </span>
+            );
+          }
+          return (
+            <>
+              <Label htmlFor={`reserve-grid-location-${r.rowId}`} className="sr-only">
+                Location
+              </Label>
+              <SearchableSelect
+                id={`reserve-grid-location-${r.rowId}`}
+                value={draft.location}
+                onChange={(value) => latestRef.current.handleLocationChange(r, value)}
+                options={r.locationOptions ?? locationOptionsNow}
+              />
+            </>
+          );
+        },
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Location' },
+      },
+      {
+        id: 'reserved',
+        header: 'Reserved',
+        cell: ({ row }) => {
+          const r = row.original;
+          const { confirmedRows: confirmedNow, drafts: draftsNow, canAct: canActNow } = latestRef.current;
+          const confirmed = confirmedNow[r.rowId];
+          const draft = draftsNow[r.rowId];
+          if (confirmed) {
+            return (
+              <span className="flex items-center gap-1.5 text-sm">
+                <Check className="size-4 text-emerald-600" aria-hidden />
+                Reserved {confirmed.qty}
+              </span>
+            );
+          }
+          if (!draft) return null;
+          const requestedQty = Number(r.openRequest?.qtyRequested || '0');
+          if (!canActNow) {
+            return <span className="tabular-nums">{draft.reserved}</span>;
+          }
+          return (
+            <>
+              <Label htmlFor={`reserve-grid-reserved-${r.rowId}`} className="sr-only">
+                Reserved
+              </Label>
+              <Input
+                id={`reserve-grid-reserved-${r.rowId}`}
+                type="number"
+                min={0}
+                max={requestedQty}
+                step="any"
+                value={draft.reserved}
+                onChange={(event) =>
+                  latestRef.current.handleReservedChange(r, Number(event.target.value))
+                }
+              />
+            </>
+          );
+        },
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'Reserved' },
+      },
+      {
+        id: 'reason',
+        header: 'Reason',
+        cell: ({ row }) => {
+          const r = row.original;
+          const { confirmedRows: confirmedNow, drafts: draftsNow, canAct: canActNow } = latestRef.current;
+          const confirmed = confirmedNow[r.rowId];
+          const draft = draftsNow[r.rowId];
+          if (confirmed || !draft) return null;
+          const requestedQty = Number(r.openRequest?.qtyRequested || '0');
+          const short = draft.reserved < requestedQty;
+          if (!short) return null;
+          if (!canActNow) {
+            return <span className="block truncate text-sm">{draft.reason || null}</span>;
+          }
+          return (
+            <>
+              <Label htmlFor={`reserve-grid-reason-${r.rowId}`} className="sr-only">
+                Reason
+              </Label>
+              <Input
+                id={`reserve-grid-reason-${r.rowId}`}
+                value={draft.reason}
+                onChange={(event) => latestRef.current.handleReasonChange(r, event.target.value)}
+              />
+            </>
+          );
+        },
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Reason' },
+      },
+      // Always present (a fixed column COUNT keeps `columns` structurally stable
+      // whether or not `canAct` is true right now) - empty when read-only.
+      {
+        id: 'action',
+        header: '',
+        cell: ({ row }) => {
+          const r = row.original;
+          const { confirmedRows: confirmedNow, drafts: draftsNow, canAct: canActNow, confirmingRowId: confirmingRowIdNow, confirmingAll: confirmingAllNow } =
+            latestRef.current;
+          if (!canActNow) return null;
+          const confirmed = confirmedNow[r.rowId];
+          const draft = draftsNow[r.rowId];
+          if (confirmed || !draft) return null;
+          const requestedQty = Number(r.openRequest?.qtyRequested || '0');
+          const short = draft.reserved < requestedQty;
+          const canConfirm = !short || draft.reason.trim().length > 0;
+          return (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => latestRef.current.confirmRow(r)}
+              disabled={!canConfirm || confirmingRowIdNow === r.rowId || confirmingAllNow}
+            >
+              Confirm reserved
+            </Button>
+          );
+        },
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Action' },
+      },
+    ],
+    // Deliberately empty: see the doc above - `latestRef` supplies every value and
+    // handler these closures need, refreshed every render.
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.rowId,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  const openRows = rows.filter((row) => confirmedRows[row.rowId] == null && row.openRequest);
+  const confirmAllDisabled =
+    !canAct ||
+    confirmingAll ||
+    openRows.length === 0 ||
+    openRows.some((row) => {
+      const draft = drafts[row.rowId];
+      const requestedQty = Number(row.openRequest?.qtyRequested || '0');
+      if (!draft) return true;
+      return draft.reserved < requestedQty && draft.reason.trim().length === 0;
+    });
+
+  return (
+    <div className="space-y-3">
+      <div className="overflow-x-auto">
+        <DataGrid
+          table={table}
+          recordCount={rows.length}
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
+          <DataGridTable />
+        </DataGrid>
+      </div>
+      {canAct ? (
+        <div className="flex justify-end">
+          <Button type="button" onClick={confirmAll} disabled={confirmAllDisabled}>
+            Confirm all
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ReserveRowDialog({
   open,
   onOpenChange,
@@ -596,7 +1090,10 @@ export function ReserveRowDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      {/* G6: a multi-row grid needs the wider dialog + horizontal scroll room the
+          single-row (tabs) form never did - the single-row path keeps its old
+          `sm:max-w-lg`. */}
+      <DialogContent className={showTabs ? 'sm:max-w-lg' : 'sm:max-w-4xl'}>
         <DialogHeader className="pe-10">
           <div className="flex flex-row flex-wrap items-center justify-between gap-2">
             <DialogTitle>
@@ -683,49 +1180,25 @@ export function ReserveRowDialog({
               Nothing left to reserve on this request.
             </p>
           ) : (
-            // Round 3 (AC-RS-65/AC-RS-66): no tabs - one section per row, each with its
-            // own item-code heading and its own Confirm reserved. History does not
-            // render here; it lives on the line (single-row path above). The shared
-            // request line moved to the header (nit, fix round 2) - each section keeps
-            // only its own item code + inputs, EXCEPT the requested qty is per-row and
-            // the header's own shared line deliberately omits it (L555-557 above) - N2
-            // (fix round 4 nit): a read-only viewer (`!canAct`) still needs to see it
-            // somewhere, so their own sections show their own request line again.
-            <div className="space-y-4">
-              {effectiveRows.map((row) => {
-                const confirmedEntry = confirmedRows[row.rowId];
-                if (confirmedEntry != null) {
-                  return (
-                    <div
-                      key={row.rowId}
-                      className="flex items-center gap-2 rounded-lg border border-border p-3"
-                    >
-                      <Check className="size-4 text-emerald-600" aria-hidden />
-                      <span className="text-sm font-medium">{row.itemCode}</span>
-                      <span className="text-sm text-muted-foreground">
-                        Reserved {confirmedEntry.qty}
-                      </span>
-                    </div>
-                  );
-                }
-                return (
-                  <div key={row.rowId} className="space-y-2 rounded-lg border border-border p-3">
-                    <div className="text-sm font-medium">{row.itemCode}</div>
-                    <ReserveRowSection
-                      row={row}
-                      locationOptions={row.locationOptions ?? locationOptions}
-                      defaultLocationId={row.defaultLocationId ?? defaultLocationId}
-                      availableQtyByLocation={row.availableQtyByLocation ?? availableQtyByLocation}
-                      canAct={canAct}
-                      onReserve={handleReserve}
-                      onRowConfirmed={handleRowConfirmed}
-                      unreserveControl={undefined}
-                      showRequestLine={!canAct}
-                    />
-                  </div>
-                );
-              })}
-            </div>
+            // G6 (AC-RS-74): no stacked cards - ONE DataGrid, one row per product.
+            // `ReserveRowsGrid` owns its own per-row draft state (there is no mounted
+            // `ReserveRowSection` instance per row any more to hold it) and calls
+            // `handleReserve` (per-row Confirm reserved, O3's wrapping) or the raw
+            // `onReserve` prop (Confirm all, which builds its own 4th arg as it walks
+            // the still-open rows). `showRequestLine`'s old job - a read-only viewer
+            // still sees what was requested - is met unconditionally by the Requested
+            // column now, rather than a conditional text line.
+            <ReserveRowsGrid
+              rows={effectiveRows}
+              locationOptions={locationOptions}
+              defaultLocationId={defaultLocationId}
+              availableQtyByLocation={availableQtyByLocation}
+              canAct={canAct}
+              onReserve={onReserve}
+              handleReserve={handleReserve}
+              confirmedRows={confirmedRows}
+              onRowConfirmed={handleRowConfirmed}
+            />
           )}
         </DialogBody>
       </DialogContent>

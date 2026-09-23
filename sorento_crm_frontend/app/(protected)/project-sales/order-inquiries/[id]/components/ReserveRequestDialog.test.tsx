@@ -11,8 +11,9 @@
  * toast ("Request #N sent to ...") is that hook's own job, not asserted here.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
 
 const ROWS = [
@@ -48,15 +49,22 @@ const onSendSpy = vi.fn(async () => ({
   first_to_name: 'Eling',
 }));
 
+/** G6: the body is now a `DataGrid`, which reads `useQueryClient()` internally
+ * regardless of whether a `listingKey` is passed - this dialog's own vitest suite
+ * needs a `QueryClientProvider` ancestor now. No `listingKey` is ever passed, so the
+ * hook's own `useQuery` stays disabled and issues no network read. */
 function renderDialog(overrides: Partial<React.ComponentProps<typeof ReserveRequestDialog>> = {}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
-    <ReserveRequestDialog
-      open
-      onOpenChange={vi.fn()}
-      rows={ROWS as never}
-      onSend={onSendSpy as never}
-      {...overrides}
-    />,
+    <QueryClientProvider client={qc}>
+      <ReserveRequestDialog
+        open
+        onOpenChange={vi.fn()}
+        rows={ROWS as never}
+        onSend={onSendSpy as never}
+        {...overrides}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -161,5 +169,81 @@ describe('reviewer fix round: a typed 0 cannot be sent', () => {
     } else {
       expect(requestedInput.value).toBe('1');
     }
+  });
+});
+
+// --------------------------------------------------------------------------------- //
+// G6 (`PLAN-oi-request-cs-reserve.md` section 6d, AC-RS-75) - owner ruling, 23 Sep:  //
+// the grid's own Delivery date column is headed "Delivery date" (matches the Lines   //
+// grid column and the email's DELIVERY DATE), not "Due".                            //
+// --------------------------------------------------------------------------------- //
+
+describe('AC-RS-75 (G6): the body is ONE DataGrid, not stacked cards', () => {
+  it('is a DataGrid table (role=table, fixed+resizable, explicit column sizes) with one row per selected row and the five column headers', async () => {
+    renderDialog();
+
+    const table = await screen.findByRole('table');
+    expect(table).toBeInTheDocument();
+    // `tableLayout: { width: 'fixed', columnsResizable: true }`.
+    expect(table.className).toMatch(/table-fixed/);
+    expect(table.querySelector('th[style*="width"]')).toBeInTheDocument();
+
+    const scoped = within(table);
+    expect(scoped.getByRole('columnheader', { name: 'Product' })).toBeInTheDocument();
+    expect(scoped.getByRole('columnheader', { name: 'Delivery date' })).toBeInTheDocument();
+    expect(scoped.getByRole('columnheader', { name: 'Remaining' })).toBeInTheDocument();
+    expect(scoped.getByRole('columnheader', { name: 'Requested' })).toBeInTheDocument();
+    expect(scoped.getByRole('columnheader', { name: 'Location' })).toBeInTheDocument();
+    // No "Due" column - the owner ruling renamed it.
+    expect(scoped.queryByRole('columnheader', { name: 'Due' })).not.toBeInTheDocument();
+    // Header row + 2 selected rows.
+    expect(scoped.getAllByRole('row')).toHaveLength(3);
+
+    // No stacked per-row cards remain - the old card wrapper's own class combo.
+    expect(document.querySelectorAll('.rounded-lg.border.border-border').length).toBe(0);
+  });
+
+  it('Note stays BELOW the grid, outside the table', async () => {
+    renderDialog();
+
+    const table = await screen.findByRole('table');
+    const noteField = screen.getByLabelText(/note/i);
+    expect(table.contains(noteField)).toBe(false);
+  });
+
+  it('each row keeps its own independent Requested/Location, and Send posts the same payload shape as AC-RS-22', async () => {
+    const onOpenChange = vi.fn();
+    renderDialog({ onOpenChange });
+
+    const requestedInputs = (await screen.findAllByLabelText(/requested/i)) as HTMLInputElement[];
+    expect(requestedInputs).toHaveLength(2);
+    fireEvent.change(requestedInputs[0], { target: { value: '40' } });
+
+    // Row-2's own Requested is untouched by row-1's own edit.
+    expect(requestedInputs[1].value).toBe('30');
+
+    fireEvent.click(screen.getByRole('button', { name: /send request/i }));
+
+    await waitFor(() => expect(onSendSpy).toHaveBeenCalledTimes(1));
+    const [payload] = onSendSpy.mock.calls[0] as [{
+      rows: Array<{ row_id: string; qty_requested: string | number; warehouse_id: string }>;
+      note?: string | null;
+    }];
+    expect(payload.rows).toEqual([
+      { row_id: 'row-1', qty_requested: 40, warehouse_id: 'BRW' },
+      { row_id: 'row-2', qty_requested: 30, warehouse_id: 'MWH' },
+    ]);
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it('at 375px the grid scrolls sideways inside the dialog body without clipping the page', async () => {
+    renderDialog();
+
+    const table = await screen.findByRole('table');
+    // The grid's own horizontal-scroll wrapper - the dialog body never sets
+    // `overflow-x-hidden` over it, so the table can scroll sideways rather than
+    // clip, whatever the viewport width.
+    const scrollWrapper = table.closest('.overflow-x-auto');
+    expect(scrollWrapper).toBeInTheDocument();
   });
 });

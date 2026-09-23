@@ -12,8 +12,9 @@
  * same way `cancelControl.countdown` replaces the header's own button.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -98,29 +99,40 @@ function idleUnreserveControl() {
   };
 }
 
+/** G6: the multi-row body is now a `DataGrid`, which reads `useQueryClient()`
+ * internally regardless of whether a `listingKey` is passed - every render/rerender
+ * in this file needs a `QueryClientProvider` ancestor now. No `listingKey` is ever
+ * passed, so the hook's own `useQuery` stays disabled and issues no network read. */
+function withQueryClient(node: React.ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+}
+
 function renderDialog(overrides: Partial<React.ComponentProps<typeof ReserveRowDialog>> = {}) {
   return render(
-    <ReserveRowDialog
-      open
-      onOpenChange={vi.fn()}
-      rowId="row-1"
-      itemCode="B2155-NL-BLUE"
-      openRequest={openRequestFixture() as never}
-      history={historyFixture() as never}
-      locationOptions={[
-        { value: 'brw-id', label: 'BRW' },
-        { value: 'dc1-id', label: 'DC1' },
-        { value: 'wh3-id', label: 'WH3' },
-      ]}
-      defaultLocationId="brw-id"
-      availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
-      netReservedQty="0"
-      canAct
-      onReserve={onReserveSpy as never}
-      onConfirmed={vi.fn()}
-      unreserveControl={idleUnreserveControl()}
-      {...(overrides as never)}
-    />,
+    withQueryClient(
+      <ReserveRowDialog
+        open
+        onOpenChange={vi.fn()}
+        rowId="row-1"
+        itemCode="B2155-NL-BLUE"
+        openRequest={openRequestFixture() as never}
+        history={historyFixture() as never}
+        locationOptions={[
+          { value: 'brw-id', label: 'BRW' },
+          { value: 'dc1-id', label: 'DC1' },
+          { value: 'wh3-id', label: 'WH3' },
+        ]}
+        defaultLocationId="brw-id"
+        availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
+        netReservedQty="0"
+        canAct
+        onReserve={onReserveSpy as never}
+        onConfirmed={vi.fn()}
+        unreserveControl={idleUnreserveControl()}
+        {...(overrides as never)}
+      />,
+    ),
   );
 }
 
@@ -196,23 +208,25 @@ describe('ported AC-RS-28: typed Reserved/Reason input survives a same-values re
     expect(reservedInput.value).toBe('30');
 
     rerender(
-      <ReserveRowDialog
-        open
-        onOpenChange={vi.fn()}
-        rowId="row-1"
-        itemCode="B2155-NL-BLUE"
-        openRequest={openRequestFixture() as never}
-        history={historyFixture() as never}
-        locationOptions={[
-          { value: 'brw-id', label: 'BRW' },
-          { value: 'dc1-id', label: 'DC1' },
-          { value: 'wh3-id', label: 'WH3' },
-        ]}
-        defaultLocationId="brw-id"
-        availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
-        netReservedQty="0"
-        canAct
-      />,
+      withQueryClient(
+        <ReserveRowDialog
+          open
+          onOpenChange={vi.fn()}
+          rowId="row-1"
+          itemCode="B2155-NL-BLUE"
+          openRequest={openRequestFixture() as never}
+          history={historyFixture() as never}
+          locationOptions={[
+            { value: 'brw-id', label: 'BRW' },
+            { value: 'dc1-id', label: 'DC1' },
+            { value: 'wh3-id', label: 'WH3' },
+          ]}
+          defaultLocationId="brw-id"
+          availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
+          netReservedQty="0"
+          canAct
+        />,
+      ),
     );
 
     expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('30');
@@ -311,22 +325,24 @@ describe('F5: Unreserve is its own action, offered only once nothing is left ope
     const { rerender } = renderDialog({ openRequest: null, netReservedQty: '50' });
     const rerenderWith = (unreserveControl: React.ComponentProps<typeof ReserveRowDialog>['unreserveControl']) =>
       rerender(
-        <ReserveRowDialog
-          open
-          onOpenChange={vi.fn()}
-          rowId="row-1"
-          itemCode="B2155-NL-BLUE"
-          openRequest={null}
-          history={historyFixture() as never}
-          locationOptions={[]}
-          defaultLocationId={null}
-          availableQtyByLocation={{}}
-          netReservedQty="50"
-          canAct
-          onReserve={onReserveSpy as never}
-          onConfirmed={vi.fn()}
-          unreserveControl={unreserveControl}
-        />,
+        withQueryClient(
+          <ReserveRowDialog
+            open
+            onOpenChange={vi.fn()}
+            rowId="row-1"
+            itemCode="B2155-NL-BLUE"
+            openRequest={null}
+            history={historyFixture() as never}
+            locationOptions={[]}
+            defaultLocationId={null}
+            availableQtyByLocation={{}}
+            netReservedQty="50"
+            canAct
+            onReserve={onReserveSpy as never}
+            onConfirmed={vi.fn()}
+            unreserveControl={unreserveControl}
+          />,
+        ),
       );
 
     fireEvent.click(await screen.findByRole('button', { name: /^unreserve$/i }));
@@ -471,26 +487,28 @@ describe('R1 (fix round 3): confirming does not permanently hide ReserveRowSecti
     expect(screen.queryByRole('button', { name: /^unreserve$/i })).not.toBeInTheDocument();
 
     rerender(
-      <ReserveRowDialog
-        open
-        onOpenChange={vi.fn()}
-        rowId="row-1"
-        itemCode="B2155-NL-BLUE"
-        openRequest={null}
-        history={historyFixture() as never}
-        locationOptions={[
-          { value: 'brw-id', label: 'BRW' },
-          { value: 'dc1-id', label: 'DC1' },
-          { value: 'wh3-id', label: 'WH3' },
-        ]}
-        defaultLocationId="brw-id"
-        availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
-        netReservedQty="90"
-        canAct
-        onReserve={onReserveSpy as never}
-        onConfirmed={vi.fn()}
-        unreserveControl={idleUnreserveControl()}
-      />,
+      withQueryClient(
+        <ReserveRowDialog
+          open
+          onOpenChange={vi.fn()}
+          rowId="row-1"
+          itemCode="B2155-NL-BLUE"
+          openRequest={null}
+          history={historyFixture() as never}
+          locationOptions={[
+            { value: 'brw-id', label: 'BRW' },
+            { value: 'dc1-id', label: 'DC1' },
+            { value: 'wh3-id', label: 'WH3' },
+          ]}
+          defaultLocationId="brw-id"
+          availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5, 'wh3-id': 0 }}
+          netReservedQty="90"
+          canAct
+          onReserve={onReserveSpy as never}
+          onConfirmed={vi.fn()}
+          unreserveControl={idleUnreserveControl()}
+        />,
+      ),
     );
 
     expect(await screen.findByRole('button', { name: /^unreserve$/i })).toBeInTheDocument();
@@ -566,26 +584,28 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
     overrides: Partial<Record<string, unknown>> = {},
   ) {
     return render(
-      <ReserveRowDialog
-        open
-        onOpenChange={vi.fn()}
-        rows={rows as never}
-        // Top-level fallbacks so the component's own unguarded `history.find(...)`
-        // does not throw before the assertions below get to run - see the doc above.
-        history={[] as never}
-        netReservedQty="0"
-        locationOptions={[
-          { value: 'brw-id', label: 'BRW' },
-          { value: 'dc1-id', label: 'DC1' },
-        ]}
-        defaultLocationId="brw-id"
-        availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5 }}
-        canAct
-        onReserve={onReserveSpy as never}
-        onConfirmed={vi.fn()}
-        unreserveControl={idleUnreserveControl()}
-        {...(overrides as never)}
-      />,
+      withQueryClient(
+        <ReserveRowDialog
+          open
+          onOpenChange={vi.fn()}
+          rows={rows as never}
+          // Top-level fallbacks so the component's own unguarded `history.find(...)`
+          // does not throw before the assertions below get to run - see the doc above.
+          history={[] as never}
+          netReservedQty="0"
+          locationOptions={[
+            { value: 'brw-id', label: 'BRW' },
+            { value: 'dc1-id', label: 'DC1' },
+          ]}
+          defaultLocationId="brw-id"
+          availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5 }}
+          canAct
+          onReserve={onReserveSpy as never}
+          onConfirmed={vi.fn()}
+          unreserveControl={idleUnreserveControl()}
+          {...(overrides as never)}
+        />,
+      ),
     );
   }
 
@@ -921,18 +941,19 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
   });
 
   /**
-   * N2 (fix round 4 nit). The shared header line deliberately omits the per-row
-   * requested qty (L555-557 above: it differs per row, and stays with that row's
-   * own Reserved input) - but a read-only viewer never sees a Reserved input at all,
-   * so with `showRequestLine` unconditionally `false` for every multi-row section,
-   * NOTHING on screen ever told them what was actually requested. Each section's own
-   * `showRequestLine` is now `!canAct` - a viewer WHO CAN confirm still sees it once,
-   * in the header only (no change there); a viewer who cannot sees it per-section.
-   *
-   * TEST-FIRST (fix round 4): today neither section prints "requested" text at all
-   * when `canAct` is false - a red here is "no such text", never a fixture bug.
+   * N2 (fix round 4 nit; SELECTOR updated for G6, behaviour unchanged - see
+   * `PLAN-oi-request-cs-reserve.md` section 6d G6). The shared header line
+   * deliberately omits the per-row requested qty (it differs per row) - but a
+   * read-only viewer never sees a Reserved input at all, so nothing used to tell
+   * them what was actually requested. G6 replaced the stacked-card sections (each
+   * with its own conditional "requested N" text line) with a DataGrid whose
+   * Requested COLUMN is always visible, on every row, whether or not `canAct` - so
+   * the same fact (what a read-only viewer's row asked for) is now read off that
+   * column's own cell rather than a text line. This test still pins the underlying
+   * requirement (AC-RS-74/N2): a read-only viewer sees every row's own requested
+   * qty; it now reads the grid CELL instead of the old card's own sentence.
    */
-  it('N2: canAct false - each section shows its OWN requested qty via its own request line', async () => {
+  it('N2: canAct false - each row shows its OWN requested qty via the Requested column', async () => {
     renderMultiRowDialog(
       [
         rowFixture({
@@ -949,8 +970,12 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
       { canAct: false },
     );
 
-    expect(await screen.findByText(/requested 20/)).toBeInTheDocument();
-    expect(screen.getByText(/requested 15/)).toBeInTheDocument();
+    // Requested AND (read-only) Reserved both default to the same figure with no
+    // `availableQtyByLocation` cap in this fixture, so the number renders more than
+    // once per row - `getAllByText` rather than a single match.
+    const table = within(await screen.findByRole('table'));
+    expect(table.getAllByText('20').length).toBeGreaterThan(0);
+    expect(table.getAllByText('15').length).toBeGreaterThan(0);
   });
 
   /**
@@ -965,5 +990,149 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
     expect(
       await screen.findByText('Nothing left to reserve on this request.'),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * G6 (`PLAN-oi-request-cs-reserve.md` section 6d, AC-RS-74; owner, 23 Sep on
+   * :3080: "more tabulated to save space, later I got 10 products to request to
+   * reserve, then gg, we should use standard datagrid table in the system"). The
+   * stacked `ReserveRowSection` cards above are replaced by ONE DataGrid, one row
+   * per product - `columns` memoized with an EMPTY dep array + `latestRef` reads
+   * (see `ReserveRowsGrid`'s own doc comment) so a keystroke never remounts a cell.
+   *
+   * TEST-FIRST: before this slice the multi-row body was `<div className="space-y-4">`
+   * of `rounded-lg border` cards, no `role="table"` anywhere - every assertion below
+   * is red against that markup.
+   */
+  describe('AC-RS-74 (G6): the multi-row body is ONE DataGrid, not stacked cards', () => {
+    function twoOpenRows() {
+      return [
+        rowFixture({
+          rowId: 'row-1',
+          itemCode: 'B2155-NL-BLUE',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        }),
+        rowFixture({
+          rowId: 'row-2',
+          itemCode: 'B2155-NL-RED',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        }),
+      ];
+    }
+
+    it('is a DataGrid table (role=table, fixed+resizable, explicit column sizes) with one row per product and the five column headers - no stacked cards remain', async () => {
+      renderMultiRowDialog(twoOpenRows());
+
+      const table = await screen.findByRole('table');
+      expect(table).toBeInTheDocument();
+      // `tableLayout: { width: 'fixed', columnsResizable: true }`.
+      expect(table.className).toMatch(/table-fixed/);
+      expect(
+        table.querySelector('th[style*="width"]'),
+      ).toBeInTheDocument();
+
+      const scoped = within(table);
+      expect(scoped.getByRole('columnheader', { name: 'Product' })).toBeInTheDocument();
+      expect(scoped.getByRole('columnheader', { name: 'Requested' })).toBeInTheDocument();
+      expect(scoped.getByRole('columnheader', { name: 'Location' })).toBeInTheDocument();
+      expect(scoped.getByRole('columnheader', { name: 'Reserved' })).toBeInTheDocument();
+      expect(scoped.getByRole('columnheader', { name: 'Reason' })).toBeInTheDocument();
+      // Header row + 2 product rows.
+      expect(scoped.getAllByRole('row')).toHaveLength(3);
+
+      // No stacked per-row cards remain (G6) - the old card wrapper's own class combo.
+      expect(document.querySelectorAll('.rounded-lg.border.border-border').length).toBe(0);
+    });
+
+    it('the dialog is wider for a multi-row grid (sm:max-w-4xl), so the grid has room to scroll sideways at 375px', async () => {
+      renderMultiRowDialog(twoOpenRows());
+
+      const table = await screen.findByRole('table');
+      const dialogContent = table.closest('[data-slot="dialog-content"]');
+      expect(dialogContent?.className).toMatch(/sm:max-w-4xl/);
+    });
+
+    it("each row's Location/Reserved/Reason inputs are independent", async () => {
+      renderMultiRowDialog(twoOpenRows());
+
+      const locationSelects = await screen.findAllByLabelText('Location');
+      expect(locationSelects).toHaveLength(2);
+
+      // Row-1 only: switch its Location to DC1 (available 5) - its own Reserved
+      // recomputes short of its own Requested (20); row-2 is untouched.
+      fireEvent.click(locationSelects[0]);
+      fireEvent.click(await screen.findByText('DC1'));
+
+      await waitFor(() => {
+        const reservedInputs = screen.getAllByLabelText('Reserved') as HTMLInputElement[];
+        expect(reservedInputs[0].value).toBe('5');
+        expect(reservedInputs[1].value).toBe('15');
+      });
+
+      // Row-1 is short now - its OWN Reason input appears; row-2 stays full (15 of
+      // 15), no Reason input for it.
+      expect(screen.getAllByLabelText('Reason')).toHaveLength(1);
+    });
+
+    it('a confirmed row\'s Reserved cell reads "Reserved N" with the tick and carries no inputs', async () => {
+      renderMultiRowDialog(twoOpenRows());
+
+      const confirmButtons = await screen.findAllByRole('button', { name: /confirm reserved/i });
+      fireEvent.click(confirmButtons[0]);
+
+      await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText('Reserved 20')).toBeInTheDocument();
+      // Only row-2's own Reserved input is left.
+      expect(screen.getAllByLabelText('Reserved')).toHaveLength(1);
+      expect(screen.getAllByRole('button', { name: /confirm reserved/i })).toHaveLength(1);
+    });
+
+    describe('footer Confirm all', () => {
+      it('is disabled while any open row is short without a reason, enabled once every short row has one', async () => {
+        renderMultiRowDialog(twoOpenRows());
+
+        const reservedInputs = (await screen.findAllByLabelText('Reserved')) as HTMLInputElement[];
+        // Row-1 short of its own Requested (10 of 20), no reason yet.
+        fireEvent.change(reservedInputs[0], { target: { value: '10' } });
+
+        const confirmAllButton = screen.getByRole('button', { name: /^confirm all$/i });
+        expect(confirmAllButton).toBeDisabled();
+
+        const reasonInput = await screen.findByLabelText('Reason');
+        fireEvent.change(reasonInput, { target: { value: 'BRW only has 10 today' } });
+
+        await waitFor(() => expect(confirmAllButton).not.toBeDisabled());
+      });
+
+      it('calls onReserve once per open row in table order, stopping after a rejected call - earlier rows stay confirmed', async () => {
+        const calledRowIds: string[] = [];
+        const rejectSecond = vi.fn(async (requestId: string, rowId: string) => {
+          calledRowIds.push(rowId);
+          if (rowId === 'row-2') throw new Error('server refused');
+          return { id: 'rr-1', state: 'requested' };
+        });
+
+        renderMultiRowDialog(twoOpenRows(), { onReserve: rejectSecond as never });
+
+        fireEvent.click(await screen.findByRole('button', { name: /^confirm all$/i }));
+
+        await waitFor(() => expect(calledRowIds).toEqual(['row-1', 'row-2']));
+        // row-1's own call landed FIRST and succeeded - it stays confirmed even
+        // though row-2's own call (called second, in table order) was rejected.
+        expect(await screen.findByText('Reserved 20')).toBeInTheDocument();
+        // row-2 stays open - its own Confirm reserved button is still there.
+        expect(screen.getByRole('button', { name: /confirm reserved/i })).toBeInTheDocument();
+      });
+
+      it('closes the dialog once the last row confirms', async () => {
+        const onOpenChangeSpy = vi.fn();
+        renderMultiRowDialog(twoOpenRows(), { onOpenChange: onOpenChangeSpy });
+
+        fireEvent.click(await screen.findByRole('button', { name: /^confirm all$/i }));
+
+        await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(onOpenChangeSpy).toHaveBeenCalledWith(false));
+      });
+    });
   });
 });
