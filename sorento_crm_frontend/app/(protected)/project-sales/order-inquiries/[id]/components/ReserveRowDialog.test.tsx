@@ -499,6 +499,35 @@ describe('R1 (fix round 3): confirming does not permanently hide ReserveRowSecti
 });
 
 /**
+ * N1 (fix round 4 nit). `useReserveRowOptions.ts` builds a Location option's own
+ * `label` as `${code}  available ${qty}` (two spaces) in production - R1's own echo
+ * printed that WHOLE label verbatim, so a real confirm flashed "Reserved 12 @ BRW
+ * available 87" rather than "Reserved 12 @ BRW". Every other test fixture in this
+ * file uses a bare code as the label ("BRW", no suffix), which is why this bug never
+ * showed up in R1's own test above - this one uses the production shape on purpose.
+ *
+ * TEST-FIRST (fix round 4): today the echo's own text is "Reserved 12 @ BRW
+ * available 87" - a red here is exactly that, never a fixture bug.
+ */
+describe('N1 (fix round 4 nit): the stale confirm echo names the BARE location code, never the whole option label', () => {
+  it('a production-shaped label ("BRW  available 87") echoes as "Reserved 12 @ BRW"', async () => {
+    renderDialog({
+      openRequest: openRequestFixture({ qtyRequested: '12' }) as never,
+      locationOptions: [{ value: 'brw-id', label: 'BRW  available 87' }],
+      defaultLocationId: 'brw-id',
+      availableQtyByLocation: { 'brw-id': 87 },
+    });
+
+    // Full match (min(12, 87) = 12) - Confirm enables with no Reason needed.
+    fireEvent.click(await screen.findByRole('button', { name: /confirm reserved/i }));
+    await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(1));
+
+    const echo = await screen.findByText(/^Reserved 12/);
+    expect(echo.textContent).toBe('Reserved 12 @ BRW');
+  });
+});
+
+/**
  * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, `oi-request-cs-reserve-
  * acceptance-criteria.md` AC-RS-66/AC-RS-67). The email deep link used to open this
  * dialog for ONE row (`rowId`/`itemCode`/`openRequest`/`history`/`netReservedQty` as
@@ -618,7 +647,9 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
 
     fireEvent.click(confirmButtons[0]);
     await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(1));
-    expect(onReserveSpy).toHaveBeenCalledWith('rr-1', 'row-1', expect.any(Object));
+    // O3 (fix round 4 nit): the dialog's own wrapper threads the row ids THIS
+    // session has already confirmed as a 4th arg - none yet, on the FIRST confirm.
+    expect(onReserveSpy).toHaveBeenCalledWith('rr-1', 'row-1', expect.any(Object), []);
 
     // The first section is now read-only; the second row still offers its own Confirm.
     await waitFor(() =>
@@ -627,7 +658,64 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
 
     fireEvent.click(screen.getByRole('button', { name: /confirm reserved/i }));
     await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(2));
+    // O3: the SECOND confirm's own call names row-1 as already confirmed.
+    expect(onReserveSpy).toHaveBeenCalledWith('rr-1', 'row-2', expect.any(Object), ['row-1']);
     await waitFor(() => expect(onOpenChangeSpy).toHaveBeenCalledWith(false));
+  });
+
+  /**
+   * O3 (fix round 4 nit). `reserveRequestsQuery.data` (the caller's own cache) can
+   * still read a row THIS session just confirmed as open - the refetch it triggered
+   * has not landed by the time a fast second confirm's own `onReserve` runs. The
+   * dialog's own `confirmedRows` state, in contrast, is updated the instant the
+   * FIRST confirm's own promise resolves - well before a human could click the
+   * second button - so it is always current for this purpose regardless of network
+   * timing. Simulated here with two DEFERRED `onReserve` promises: the first is
+   * resolved and awaited BEFORE the second button is even clicked, so the ordering
+   * is deterministic without relying on real timers.
+   *
+   * TEST-FIRST (fix round 4): today `onReserve` is called with only 3 args - a red
+   * here is "expected 4th arg ['row-1'], got undefined", never a fixture bug.
+   */
+  it('O3: the fast second confirm names the FIRST row as already confirmed, even before the caller refetches', async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const deferredOnReserve = vi.fn((..._args: unknown[]) => {
+      onReserveSpy(..._args);
+      return new Promise((resolve) => {
+        resolveFirst = resolve;
+      });
+    });
+
+    renderMultiRowDialog(
+      [
+        rowFixture({
+          rowId: 'row-1',
+          itemCode: 'B2155-NL-BLUE',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        }),
+        rowFixture({
+          rowId: 'row-2',
+          itemCode: 'B2155-NL-RED',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        }),
+      ],
+      { onReserve: deferredOnReserve as never },
+    );
+
+    const confirmButtons = await screen.findAllByRole('button', { name: /confirm reserved/i });
+    fireEvent.click(confirmButtons[0]);
+    await waitFor(() => expect(deferredOnReserve).toHaveBeenCalledTimes(1));
+    resolveFirst({ id: 'rr-1', state: 'requested' });
+    // The first section is now read-only - confirms row-1's own confirmedRows entry
+    // has actually landed before the second click.
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /confirm reserved/i })).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm reserved/i }));
+    await waitFor(() => expect(deferredOnReserve).toHaveBeenCalledTimes(2));
+
+    expect(onReserveSpy).toHaveBeenNthCalledWith(2, 'rr-1', 'row-2', expect.any(Object), ['row-1']);
   });
 
   /**
@@ -830,6 +918,39 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
     ).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /confirm reserved/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Reserved')).not.toBeInTheDocument();
+  });
+
+  /**
+   * N2 (fix round 4 nit). The shared header line deliberately omits the per-row
+   * requested qty (L555-557 above: it differs per row, and stays with that row's
+   * own Reserved input) - but a read-only viewer never sees a Reserved input at all,
+   * so with `showRequestLine` unconditionally `false` for every multi-row section,
+   * NOTHING on screen ever told them what was actually requested. Each section's own
+   * `showRequestLine` is now `!canAct` - a viewer WHO CAN confirm still sees it once,
+   * in the header only (no change there); a viewer who cannot sees it per-section.
+   *
+   * TEST-FIRST (fix round 4): today neither section prints "requested" text at all
+   * when `canAct` is false - a red here is "no such text", never a fixture bug.
+   */
+  it('N2: canAct false - each section shows its OWN requested qty via its own request line', async () => {
+    renderMultiRowDialog(
+      [
+        rowFixture({
+          rowId: 'row-1',
+          itemCode: 'B2155-NL-BLUE',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        }),
+        rowFixture({
+          rowId: 'row-2',
+          itemCode: 'B2155-NL-RED',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        }),
+      ],
+      { canAct: false },
+    );
+
+    expect(await screen.findByText(/requested 20/)).toBeInTheDocument();
+    expect(screen.getByText(/requested 15/)).toBeInTheDocument();
   });
 
   /**

@@ -60,6 +60,7 @@ import {
 } from '../../../_shared/lib/orderInquiryHeaderStatus';
 import {
   canCancelReserveRequest,
+  reserveRequestCompletes,
   resolveReserveRowRequestAnchor,
 } from '../../../_shared/lib/orderInquiryReserve';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
@@ -894,7 +895,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           defaultLocationId={reserveRowOptions?.defaultWarehouseId ?? null}
           availableQtyByLocation={reserveRowOptions?.availableQtyByWarehouseId ?? {}}
           canAct={canReserve}
-          onReserve={(requestId, rowId, payload) => {
+          onReserve={(requestId, rowId, payload, alreadyConfirmedRowIds) => {
             // Nit (fix round 2): resolved off the REQUEST `onReserve` was actually
             // called for (`requestId`, every row this dialog carries shares one, but
             // reading it here rather than trusting that holds keeps the two things a
@@ -911,13 +912,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             // (never carried by this dialog at all) stayed open; a cancelled OI line
             // named by the request but filtered out of `activeLines` never counted;
             // another user's own answer (landed via refetch, not this session)
-            // wasn't credited; a failed confirm still incremented the ref. The
-            // request row THIS call is answering (`rowId`) is treated as answered
-            // regardless of what `qty_reserved` still reads in the not-yet-refetched
-            // cache - every OTHER row must already carry a non-null `qty_reserved`.
-            const completes = (request?.rows ?? []).every(
-              (r) => r.row_id === rowId || r.qty_reserved != null,
-            );
+            // wasn't credited; a failed confirm still incremented the ref. O2/O3
+            // (fix round 4 nits): `reserveRequestCompletes` (`orderInquiryReserve.ts`,
+            // unit-tested directly there) also answers `false` when `request` itself
+            // is not in the cache (never a vacuous `true` off nothing to check), and
+            // ORs in `alreadyConfirmedRowIds` (the dialog's own session state) so a
+            // fast second confirm still counts a sibling row the cache has not
+            // refetched yet.
+            const completes = reserveRequestCompletes(request, rowId, alreadyConfirmedRowIds);
             return reserveRowMutation.mutateAsync({
               requestId,
               rowId,

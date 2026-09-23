@@ -115,6 +115,18 @@ const HISTORY_KIND_LABEL: Record<string, string> = {
   cancelled: 'Request cancelled',
 };
 
+/**
+ * N1 (fix round 4 nit): a `SearchableSelect` option's own `label` carries the
+ * available-qty suffix in production (`useReserveRowOptions.ts`: `${location}
+ * available ${qty}`, two spaces), so reading the label straight as the "location"
+ * the stale confirm echo names would flash "Reserved 12 @ BRW  available 87" - the
+ * BARE code is everything before that double space (absent in test fixtures that
+ * never carry the suffix, where this is a no-op split).
+ */
+function bareLocationCode(label: string): string {
+  return label.split('  ')[0];
+}
+
 function HistoryPanel({ history }: { history: ReserveRowDialogHistoryEntry[] }) {
   return (
     <div className="space-y-2">
@@ -277,8 +289,11 @@ function ReserveRowSection({
       });
       // R1: the CODE, not the raw warehouse id `location` itself holds (no UUID in
       // the frontend UI) - the same resolution the real "already reserved" branch
-      // below reads off `history`'s own most recent `reserved` entry.
-      const locationLabel = locationOptions.find((option) => option.value === location)?.label ?? '';
+      // below reads off `history`'s own most recent `reserved` entry. N1 (fix round
+      // 4 nit): the option's own LABEL carries the available-qty suffix in
+      // production - `bareLocationCode` strips it, so the flash never leaks it.
+      const selectedOption = locationOptions.find((option) => option.value === location);
+      const locationLabel = selectedOption ? bareLocationCode(selectedOption.label) : '';
       onRowConfirmed(rowId, reserved, locationLabel);
     } catch {
       // The caller's own mutation hook already toasted the error (S5).
@@ -470,11 +485,18 @@ export function ReserveRowDialog({
    * the worklist row (`reserved_qty`), never recomputed here. */
   netReservedQty?: string;
   canAct: boolean;
-  /** S5: the caller's own `useReserveOrderInquiryRow` mutation. */
+  /** S5: the caller's own `useReserveOrderInquiryRow` mutation. O3 (fix round 4
+   * nit): the FOURTH arg names every row THIS dialog session has already confirmed
+   * (`Object.keys(confirmedRows)` at the moment of the call, threaded in by this
+   * component itself below - never a `ReserveRowSection` concern) - the caller's own
+   * `reserveRequestsQuery.data` can still read a row this session just answered as
+   * open (the refetch it triggered has not landed yet), and a fast second confirm
+   * needs to know that row is DONE regardless of what the stale cache still says. */
   onReserve: (
     requestId: string,
     rowId: string,
     payload: ReserveRowPayload,
+    alreadyConfirmedRowIds?: string[],
   ) => Promise<OrderInquiryReserveRequestRow>;
   onConfirmed?: () => void;
   /** S2: null while nothing offers Unreserve yet (canAct false, or nothing reserved).
@@ -510,44 +532,49 @@ export function ReserveRowDialog({
   const [confirmedRows, setConfirmedRows] = React.useState<
     Record<string, { qty: number; location: string }>
   >({});
-  // R2 (fix round 3 review finding): mirrors `confirmedRows`' own keys, updated
-  // SYNCHRONOUSLY inside the handler (a ref write is immediate, unlike a `setState`
-  // whose merged result is only visible once React re-renders) - two confirms
-  // resolving close enough together that React batches their state updates both
-  // still land here before the close-effect below ever runs, so the effect always
-  // sees the TRUE count rather than whichever state snapshot happened to commit.
-  const confirmedRowIdsRef = React.useRef<Set<string>>(new Set());
   const rowsSignature = effectiveRows.map((row) => row.rowId).join(',');
   React.useEffect(() => {
     setConfirmedRows({});
-    confirmedRowIdsRef.current = new Set();
   }, [rowsSignature]);
 
-  // R2: the next state is computed via the FUNCTIONAL updater form, never off the
-  // `confirmedRows` closure - two sections' own `handleConfirm` resolving close
-  // enough together that React batches the resulting state updates both read the
-  // SAME stale closure under the old plain-object form, and the second silently
-  // overwrote the first's flip. `onOpenChange` never runs from inside the updater
-  // (React may invoke it more than once) - the close decision moves to its own
-  // effect below, keyed on `confirmedRows` itself.
+  // R2 (fix round 3 review finding): the next state is computed via the FUNCTIONAL
+  // updater form, never off the `confirmedRows` closure - two sections' own
+  // `handleConfirm` resolving close enough together that React batches the
+  // resulting state updates both read the SAME stale closure under the old
+  // plain-object form, and the second silently overwrote the first's flip.
+  // `onOpenChange` never runs from inside the updater (React may invoke it more
+  // than once) - the close decision moves to its own effect below.
   function handleRowConfirmed(confirmedRowId: string, qty: number, locationLabel: string) {
-    confirmedRowIdsRef.current.add(confirmedRowId);
     setConfirmedRows((prev) => ({ ...prev, [confirmedRowId]: { qty, location: locationLabel } }));
     onConfirmed?.();
   }
 
-  // R2: multi-row only (the tabs/single-row path keeps the dialog open after a
-  // Confirm, exactly as it always has) - fires once every carried row has confirmed,
-  // reading the REF (always current the instant the handler above ran) rather than
-  // the `confirmedRows` state this effect is merely keyed on.
+  // O1 (fix round 4 nit): reads `confirmedRows` STATE directly - the functional
+  // updater above already guarantees it is fully merged by the time this effect
+  // runs (React applies queued updaters in order off the true previous state, never
+  // a stale closure, however many land in the same batch), so a separate ref
+  // mirroring the same count was redundant. Multi-row only (the tabs/single-row
+  // path keeps the dialog open after a Confirm, exactly as it always has).
   React.useEffect(() => {
     if (showTabs) return;
     if (effectiveRows.length === 0) return;
-    if (confirmedRowIdsRef.current.size >= effectiveRows.length) {
+    if (Object.keys(confirmedRows).length >= effectiveRows.length) {
       onOpenChange(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmedRows]);
+
+  // O3 (fix round 4 nit): wraps the CALLER's own `onReserve` with the row ids THIS
+  // dialog session has already confirmed, read fresh off `confirmedRows` on every
+  // render (never stale) - a fast second confirm's own `onReserve` call needs to
+  // know its SIBLING section already answered even though the caller's own read
+  // query has not refetched yet. `ReserveRowSection` itself is untouched: it still
+  // calls a 3-arg `onReserve`, this wrapping happens only here.
+  const handleReserve = React.useCallback(
+    (requestId: string, rowId: string, payload: ReserveRowPayload) =>
+      onReserve(requestId, rowId, payload, Object.keys(confirmedRows)),
+    [onReserve, confirmedRows],
+  );
 
   const soleRow = effectiveRows[0];
   // Nit (fix round 2): every row in a multi-row dialog shares ONE request - the
@@ -634,7 +661,7 @@ export function ReserveRowDialog({
                       defaultLocationId={soleRow.defaultLocationId ?? defaultLocationId}
                       availableQtyByLocation={soleRow.availableQtyByLocation ?? availableQtyByLocation}
                       canAct={canAct}
-                      onReserve={onReserve}
+                      onReserve={handleReserve}
                       onRowConfirmed={handleRowConfirmed}
                       unreserveControl={unreserveControl}
                     />
@@ -660,7 +687,10 @@ export function ReserveRowDialog({
             // own item-code heading and its own Confirm reserved. History does not
             // render here; it lives on the line (single-row path above). The shared
             // request line moved to the header (nit, fix round 2) - each section keeps
-            // only its own item code + inputs.
+            // only its own item code + inputs, EXCEPT the requested qty is per-row and
+            // the header's own shared line deliberately omits it (L555-557 above) - N2
+            // (fix round 4 nit): a read-only viewer (`!canAct`) still needs to see it
+            // somewhere, so their own sections show their own request line again.
             <div className="space-y-4">
               {effectiveRows.map((row) => {
                 const confirmedEntry = confirmedRows[row.rowId];
@@ -687,10 +717,10 @@ export function ReserveRowDialog({
                       defaultLocationId={row.defaultLocationId ?? defaultLocationId}
                       availableQtyByLocation={row.availableQtyByLocation ?? availableQtyByLocation}
                       canAct={canAct}
-                      onReserve={onReserve}
+                      onReserve={handleReserve}
                       onRowConfirmed={handleRowConfirmed}
                       unreserveControl={undefined}
-                      showRequestLine={false}
+                      showRequestLine={!canAct}
                     />
                   </div>
                 );

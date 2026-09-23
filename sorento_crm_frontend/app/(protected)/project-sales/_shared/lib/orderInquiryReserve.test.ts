@@ -5,7 +5,11 @@
  * holding the reserve permission".
  */
 import { describe, expect, it } from 'vitest';
-import { canCancelReserveRequest, resolveReserveRowRequestAnchor } from './orderInquiryReserve';
+import {
+  canCancelReserveRequest,
+  reserveRequestCompletes,
+  resolveReserveRowRequestAnchor,
+} from './orderInquiryReserve';
 
 describe('canCancelReserveRequest', () => {
   it('a CS holder (canReserve) may cancel any open request, whoever raised it', () => {
@@ -49,5 +53,45 @@ describe('resolveReserveRowRequestAnchor', () => {
 
   it('answers null with nothing answered yet', () => {
     expect(resolveReserveRowRequestAnchor([])).toBeNull();
+  });
+});
+
+/**
+ * O2/O3 (fix round 4 nits, `oi-request-cs-reserve-acceptance-criteria.md`). Extracted
+ * from `OrderInquiryDetail.tsx`'s own inline `onReserve` handler specifically so
+ * these two edges are unit-testable directly - reaching them through the full
+ * rendered dialog is not really possible (a row's own `openRequest` and the request
+ * this function reads are derived off the SAME query, so they cannot legitimately
+ * disagree inside one React render the way a manufactured `request: undefined` or a
+ * stale-cache race would need).
+ */
+describe('reserveRequestCompletes', () => {
+  const rows = [
+    { row_id: 'row-a', qty_reserved: null },
+    { row_id: 'row-b', qty_reserved: null },
+    { row_id: 'row-c', qty_reserved: '8' },
+  ];
+
+  it('true once every OTHER row already carries a non-null qty_reserved', () => {
+    expect(
+      reserveRequestCompletes({ rows: [{ row_id: 'row-a', qty_reserved: null }, { row_id: 'row-b', qty_reserved: '5' }] }, 'row-a'),
+    ).toBe(true);
+  });
+
+  it('false while another row is still open, and not in alreadyConfirmedRowIds', () => {
+    expect(reserveRequestCompletes({ rows }, 'row-a')).toBe(false);
+  });
+
+  it('O2: false when the request itself is missing from the cache - never a vacuous true off nothing to check', () => {
+    expect(reserveRequestCompletes(undefined, 'row-a')).toBe(false);
+    expect(reserveRequestCompletes(null, 'row-a')).toBe(false);
+  });
+
+  it('O3: a row named in alreadyConfirmedRowIds counts as answered even while its own qty_reserved still reads null', () => {
+    expect(reserveRequestCompletes({ rows }, 'row-a', ['row-b'])).toBe(true);
+  });
+
+  it('O3: alreadyConfirmedRowIds alone is not enough - every row must be covered by one path or the other', () => {
+    expect(reserveRequestCompletes({ rows }, 'row-a', [])).toBe(false);
   });
 });

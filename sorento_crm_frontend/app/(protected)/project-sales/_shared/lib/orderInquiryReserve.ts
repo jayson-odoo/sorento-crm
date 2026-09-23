@@ -50,3 +50,32 @@ export function resolveReserveRowRequestAnchor(
   const stillHoldsLink = byOrdinalDesc.find((r) => Number(r.rowQtyReserved || '0') > 0);
   return stillHoldsLink?.id ?? byOrdinalDesc[0]?.id ?? null;
 }
+
+export interface ReserveCompletesRow {
+  row_id: string;
+  qty_reserved: string | null;
+}
+
+/**
+ * O2/O3 (fix round 4 nits, `oi-request-cs-reserve-acceptance-criteria.md`): whether
+ * a Confirm reserved on `rowId` COMPLETES its request - every OTHER row the request
+ * names must already be answered, either per the caller's own read cache
+ * (`qty_reserved` non-null) or per `alreadyConfirmedRowIds`, the confirming dialog's
+ * OWN session state (a row it already flipped read-only this session, which the
+ * caller's own read query has not necessarily refetched yet by the time a FAST
+ * second confirm's own call lands - `reserveRequestsQuery.data` reflects the first
+ * confirm's own refetch on its own schedule, not synchronously with the second
+ * click). `request` absent (O2) answers `false`, never vacuously `true` off an
+ * empty `rows` array with nothing to check - there is no request to complete.
+ */
+export function reserveRequestCompletes(
+  request: { rows: ReserveCompletesRow[] } | null | undefined,
+  rowId: string,
+  alreadyConfirmedRowIds: string[] = [],
+): boolean {
+  if (!request) return false;
+  const alreadyConfirmed = new Set(alreadyConfirmedRowIds);
+  return request.rows.every(
+    (row) => row.row_id === rowId || row.qty_reserved != null || alreadyConfirmed.has(row.row_id),
+  );
+}
