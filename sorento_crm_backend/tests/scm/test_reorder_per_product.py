@@ -758,7 +758,7 @@ def test_a_confirmed_buy_with_no_linked_supplier_is_an_exception_not_dropped(scm
     assert float(summary["suggested_qty"]) == 914.0
 
 
-def test_a_level_sets_bypass_never_fires_when_stock_already_covers_the_confirmed_buy(scm_app):
+def test_a_level_sets_bypass_fires_for_the_confirmed_buy_even_when_stock_covers_it(scm_app):
     """AC-5, FLIPPED by Lane F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep
     2026 - CB4702 x 493 hidden behind 702 on hand): a confirmed project Buy is now bought
     IN FULL on an All run, never netted against on-hand - the same rule a Project run

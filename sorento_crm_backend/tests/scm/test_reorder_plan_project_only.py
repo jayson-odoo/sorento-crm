@@ -660,13 +660,18 @@ def test_ac_po_12_project_run_buys_the_row_in_full_even_when_on_hand_covers_it(s
     )
 
 
-def test_ac_po_12b_project_run_ignores_a_confirmed_reserve_against_the_line(scm_app):
-    """R1a = A's other half: a confirmed Reserve/Borrow supply reduction against the SAME
-    line (`so_line_allocations`, `source_type='reserve'` - `_project_supply_reduction`
-    nets it against `net`/`sizing_net` for the RETAIL-basis path only, see the long
-    comment above `sizing_net` in `_compute_cell`) must not touch a Project run's figure
-    either: `project_need` reads straight off `project_confirmed_committed`, which the
-    reserve claim never adjusts.
+def test_ac_po_12b_project_run_reduces_the_confirmed_buy_by_a_confirmed_reserve_against_the_line(scm_app):
+    """R1a = A's other half, FLIPPED (captain ruling, 23 Sep 2026, Lane F fix round 3,
+    `PLAN-order-sheet-oi-reports-22sep.md`): a confirmed Reserve/Borrow supply reduction
+    against the SAME line (`so_line_allocations`, `source_type='reserve'`) now reduces a
+    Project run's own row Buy too - R1a's "not netted against stock" carves out on-hand/
+    SPO/PO, never a Reserve, which is CS's own explicit decision to use the stock (the
+    exact case R1a's own docstring names as the pushback path, "purchasing pushes back
+    through Request CS to reserve"). Originally pinned the OPPOSITE ("ignores... must not
+    touch"), reading `project_need` straight off `project_confirmed_committed` with no
+    reduction applied anywhere in `_project_only_cell` - `_project_only_cell` now applies
+    `max(project_need - project_supply_reduction, 0)`, the same formula every other sizing
+    path uses.
     """
     _, db, _, _ = scm_app
     u = _seed_single_covered_by_stock(db)
@@ -684,9 +689,8 @@ def test_ac_po_12b_project_run_ignores_a_confirmed_reserve_against_the_line(scm_
     svc.run_reorder(created["run_id"], db=db)
 
     buys = _buy_rows(db, created["run_id"], u["pid"])
-    assert buys, "expected a Buy of the row's own qty despite the confirmed reserve claim"
+    assert buys, "expected a Buy of the row's own qty less the confirmed reserve claim"
     total = sum(float(b["rounded_qty"]) for b in buys)
-    assert total == 20.0, (
-        f"a confirmed Reserve/Borrow claim must not reduce a Project run's own row Buy, "
-        f"got {total}"
+    assert total == 5.0, (
+        f"expected the confirmed 20 less the reserved 15 = 5, got {total}"
     )

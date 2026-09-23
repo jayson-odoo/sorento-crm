@@ -124,7 +124,8 @@ Plan: `PLAN-order-sheet-oi-reports-22sep.md`. Status: DRAFT, rulings R1-R4 appli
   sizing plus the full OI qty.
 - AC-F3 ORDER BACK on a closed, fully delivered SO line, confirmed: bought in full on an
   All run and on a Project run.
-- AC-F4 A confirmed Reserve decision of R units on that row reduces the bought qty by R.
+- AC-F4 A confirmed Reserve decision of R units on that row reduces the bought qty by R,
+  on every sizing path (single-member, pool, product-grain) and on a Project run too.
 - AC-F5 Retail-only products and Dealer runs size exactly as before.
 - AC-F6 The demand drill's Project figure, the order sheet's Project qty and the OI
   worksheet agree with the bought project qty on that run.

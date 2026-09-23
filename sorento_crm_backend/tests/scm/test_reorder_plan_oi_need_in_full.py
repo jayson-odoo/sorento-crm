@@ -218,6 +218,55 @@ def _oi_order_back(db, *, pid, wid, qty="493"):
     )
 
 
+def _seed_two_location_product_grain(db, *, level: float = 100.0):
+    """Two INDEPENDENT (non-pooled) locations of one product under the PROD SHAPE
+    (`policy_type='reorder_level'`) - `_emit_product` plans product-grain regardless of
+    pooling (`_is_product_level_basis` is checked before the pool/single-member split), so
+    no `pool_warehouse_id` link is needed between A and B. `level` set low (100, well below
+    A's own 1,000 on hand) so RETAIL alone never triggers a buy even once B's small deficit
+    joins the aggregate - the allocation regression this guards (review fix round 3) is
+    about WHERE the confirmed project need lands, not how much is bought."""
+    a_wid = _mk_warehouse(db, _code("A"))
+    b_wid = _mk_warehouse(db, _code("B"))
+    pid = _mk_product(db, _code("P"))
+    _mk_stock(db, pid, a_wid, 1000)
+    _mk_stock(db, pid, b_wid, 0)
+    _mk_movement(db, pid, a_wid, 1, days_ago=7)
+    _mk_movement(db, pid, b_wid, 1, days_ago=7)
+    _mk_demand(db, pid, a_wid, 0.0)
+    _mk_demand(db, pid, b_wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} Supplier"), lead=30, moq=1, mult=1)
+    eng.ensure_reorder_policy_defaults(db)
+    db.execute(
+        text("UPDATE scm.reorder_policy SET policy_type = 'reorder_level' "
+             "WHERE scope_type = 'global'")
+    )
+    db.execute(
+        text(
+            "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, "
+            "company_id, created_at) VALUES (:id, :p, NULL, :lvl, 'manual', :co, now())"
+        ),
+        {"id": _u(), "p": pid, "lvl": level, "co": SORENTO_COMPANY_ID},
+    )
+    db.flush()
+    return {"pid": pid, "a_wid": a_wid, "b_wid": b_wid}
+
+
+def _allocation_for(db, run_id: str, pid: str) -> dict[str, float]:
+    """``{warehouse_id: qty}`` off the ONE product-grain buy row's `allocation` column
+    (`_allocation_lines`'s own frozen split) - the test only needs to compare which
+    SIBLING the split favoured."""
+    row = db.execute(
+        text(
+            "SELECT allocation FROM scm.reorder_recommendation "
+            "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+        ),
+        {"r": run_id, "p": pid},
+    ).mappings().first()
+    assert row is not None, "expected a buy row"
+    return {a["warehouse_id"]: float(a["qty"]) for a in (row["allocation"] or [])}
+
+
 def _run_all(db, *, so_numbers: list[str]) -> str:
     created = svc.create_run(
         db, [], enqueue=False,
@@ -484,4 +533,103 @@ def test_ac_f6_write_rows_and_worksheet_scope_agree_with_the_bought_project_qty(
     assert any(float(r["qty"]) == 493.0 for r in scope_rows), (
         f"expected the OI worksheet's own row scope to carry the owed 493 too, got "
         f"{scope_rows}"
+    )
+
+
+# =============================================================================
+# Review fix round 3 (reviewer NOT READY) - ALLOCATION: `_emit_product`'s split must not
+# read the COMBINED (project-folded-in) net for its per-location deficit, or a confirmed
+# OI row's own location (stock-covered, so its combined deficit reads ~0) loses the split
+# to a merely retail-short sibling that carries none of the project demand at all. Two
+# independent locations, product-grain: A holds huge stock and the confirmed OI row (50);
+# B carries a small retail shortfall (5) and no project demand - the buy must land at A,
+# not be diluted away to B.
+# =============================================================================
+
+def test_emit_product_allocates_the_project_buy_to_the_oi_rows_own_location(scm_app):
+    _, db, _, _ = scm_app
+    u = _seed_two_location_product_grain(db)
+    _core_line_for_run(db, u["pid"], u["b_wid"], qty=5, demand_class="retail")
+    so = _oi_order_back(db, pid=u["pid"], wid=u["a_wid"], qty="50")
+
+    run_id = _run_all(db, so_numbers=[so["so_number"]])
+
+    assert _total_buy(db, run_id, u["pid"]) == 50.0, (
+        f"expected the confirmed 50 alone (B's small retail deficit never triggers its "
+        f"own buy), got {_recs_for(db, run_id, u['pid'])}"
+    )
+    allocation = _allocation_for(db, run_id, u["pid"])
+    a_qty = allocation.get(u["a_wid"], 0.0)
+    b_qty = allocation.get(u["b_wid"], 0.0)
+    assert a_qty > b_qty, (
+        f"expected the confirmed OI row's own location (A) to take the majority of the "
+        f"split, not a merely retail-short sibling (B) with no project demand of its own "
+        f"- reading the COMBINED (project-folded-in) net for the deficit sites the buy at "
+        f"B instead: {allocation}"
+    )
+    assert a_qty >= 45.0, (
+        f"A's own confirmed 50 must not be diluted away by B's small retail deficit: "
+        f"{allocation}"
+    )
+
+
+# =============================================================================
+# RULING (captain, 23 Sep 2026, fix round 3): a confirmed Reserve/Borrow claim
+# (`project_supply_reduction`) reduces the bought project qty on EVERY sizing path, not
+# only the single-member one AC-F4 already pins - R1a's "not netted against stock" carves
+# out on-hand/SPO/PO, not a Reserve, which is CS's own explicit decision to use the stock.
+# =============================================================================
+
+def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_the_pool_path(scm_app):
+    """The reviewer's own probe: 702 on hand (326 + 376), 493 confirmed, a 100-unit
+    Reserve -> 393, not the 493 `_emit_pool` bought before this round."""
+    _, db, _, _ = scm_app
+    u = _seed_pool(db, on_hand_root=326, on_hand_child=376)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["root_wid"], "qty": 493,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["root_wid"], qty=100)
+
+    run_id = _run_all(db, so_numbers=[so["so_number"]])
+
+    assert _total_buy(db, run_id, u["pid"]) == 393.0, (
+        f"expected the confirmed project need (493) less the reserved 100 = 393 on the "
+        f"pool path too, got {_recs_for(db, run_id, u['pid'])}"
+    )
+
+
+def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_the_product_grain_path(scm_app):
+    _, db, _, _ = scm_app
+    u = _seed_product_grain(db, on_hand=702, level=100)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 493,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
+
+    run_id = _run_all(db, so_numbers=[so["so_number"]])
+
+    assert _total_buy(db, run_id, u["pid"]) == 393.0, (
+        f"expected the confirmed project need (493) less the reserved 100 = 393 on the "
+        f"product-grain path too, got {_recs_for(db, run_id, u['pid'])}"
+    )
+
+
+def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_a_project_run(scm_app):
+    """A Reserve reduces the bought qty on a PROJECT run too - `_project_only_cell`'s own
+    "read raw" rule (R1a) carves out on-hand/SPO/PO netting, not a Reserve."""
+    _, db, _, _ = scm_app
+    u = _seed_single_member(db, on_hand=702)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 493,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
+
+    run_id = _run_project(db, so_numbers=[so["so_number"]])
+
+    assert _total_buy(db, run_id, u["pid"]) == 393.0, (
+        f"expected the confirmed project need (493) less the reserved 100 = 393 on a "
+        f"Project run too, got {_recs_for(db, run_id, u['pid'])}"
     )

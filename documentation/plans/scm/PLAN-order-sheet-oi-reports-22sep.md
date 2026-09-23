@@ -290,21 +290,34 @@ apply the same for both".
   retail leg keeps today's netting: retail is sized on `retail_net` (net with the project
   channel taken back out and confirmed project claims on stock removed), then the raw
   project need is added. `project_supply_reduction` (a confirmed Reserve / Borrow decision
-  CS already recorded) still reduces the project need - that IS the stock case CS chose.
+  CS already recorded) still reduces the project need on EVERY path, including Project
+  runs and the network aggregate - that IS the stock case CS chose, so R1a's "not netted
+  against stock" carves it out rather than exempting it (fix round 3, captain ruling 23
+  Sep: the original cut left a Project run's own `_project_only_cell` and `_emit_pool`'s
+  project-only branch reading the raw figure, unreduced).
 - F2 Applies in all three sizing paths (`_emit_cell` single member, `_emit_pool`,
-  `_emit_product`) and to the network aggregate branch if it sizes project need at all
-  (say so if it does not). Dealer runs are untouched (no project leg).
+  `_emit_product`) and to the network aggregate branch, which already added project need
+  on top of a retail-only sizing before this lane (reviewer-confirmed, fix round 3) and
+  now also applies the Reserve/Borrow reduction the same way. Dealer runs are untouched
+  (no project leg). `_emit_product`'s ALLOCATION (where the buy is sited, not how much)
+  must read the RETAIL aggregate's own per-location deficit plus each location's own
+  project need, never the combined (project-folded-in) net's deficit - the latter reads a
+  stock-covered OI location as un-short and sites the buy at an unrelated retail-short
+  sibling instead (fix round 3, reviewer NOT READY finding).
 - F3 The decision label and the Suggestion text keep reading "Stock: X / PO: Y / Buy: Z"
   where Buy now includes the full project need; the demand drill's Project figure equals
   the frozen `project_customers` sum (Lane A) and the OI worksheet's rows for that run.
 - F4 Consequence stated to the owner: a product with 702 on hand and a confirmed row for
-  493 buys 493 on an All run from now on; purchasing pushes back through Request CS to
-  reserve (#1120) when stock should cover it instead.
+  493 buys 493 on an All run from now on, on every sizing path; purchasing pushes back
+  through Request CS to reserve (#1120) when stock should cover it instead - and that
+  Reserve then reduces the bought qty, wherever in the plan the row sizes.
 
 Tests: pytest, All run: product with on hand > confirmed OI qty -> Suggested >= OI qty
 (exactly the OI qty when retail trigger is off); ORDER BACK on a closed, delivered SO line
 -> bought in full (owed uncapped rule kept); a confirmed Reserve decision on that row ->
-reduced by the reserved qty; retail-only product unchanged; Dealer run unchanged;
+reduced by the reserved qty, on every sizing path (single-member, pool, product-grain, a
+Project run); the product-grain buy is allocated to the OI row's own location, not a
+retail-short sibling; retail-only product unchanged; Dealer run unchanged;
 `test_reorder_plan_project_only.py`, `test_reorder_plan_all_picked_orders.py`,
 `test_reorder_window_start.py`, `test_reorder_one_formula*` updated where they pinned the
 netting on All runs (name each and cite this ruling). Lands in Lane E's worktree and PR

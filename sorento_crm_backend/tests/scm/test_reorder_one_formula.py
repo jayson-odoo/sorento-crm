@@ -147,7 +147,7 @@ def test_level_row_nets_po_once(scm_app):
 
 # --- AC-3: project demand is inside the net, never added a second time -----------------
 
-def test_location_row_project_inside_net(scm_app):
+def test_location_row_project_row_is_bought_in_full_on_top_of_a_covered_net(scm_app):
     """A location-grain row (the default forecast/reorder_point basis - a `reorder_level`
     product is ALWAYS planned product-grain, `_is_product_level_basis`, so this is the
     other basis a single-location product actually reaches `_emit_cell` under).
