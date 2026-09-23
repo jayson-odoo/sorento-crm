@@ -116,3 +116,16 @@ Plan: `PLAN-order-sheet-oi-reports-22sep.md`. Status: DRAFT, rulings R1-R4 appli
   confirmed OI line or not.
 - AC-E7 The product's line appears on the order sheet (Project qty) and the OI worksheet for
   that run.
+## Lane F - confirmed OI need bought in full on an All run
+
+- AC-F1 All run, product with on hand greater than its confirmed OI qty, retail trigger
+  off: Suggested qty equals the OI owed qty; the row is visible (not covered).
+- AC-F2 All run, same product with the retail trigger on: Suggested qty equals retail
+  sizing plus the full OI qty.
+- AC-F3 ORDER BACK on a closed, fully delivered SO line, confirmed: bought in full on an
+  All run and on a Project run.
+- AC-F4 A confirmed Reserve decision of R units on that row reduces the bought qty by R.
+- AC-F5 Retail-only products and Dealer runs size exactly as before.
+- AC-F6 The demand drill's Project figure, the order sheet's Project qty and the OI
+  worksheet agree with the bought project qty on that run.
+- AC-F7 Pool, single-member and product-grain paths all satisfy AC-F1.

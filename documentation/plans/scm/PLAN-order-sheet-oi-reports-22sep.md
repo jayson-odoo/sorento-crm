@@ -1,6 +1,6 @@
 # PLAN: order sheet fixes, OI worksheet for a plan run, async OI export
 
-Status: Lanes A-D BUILT (A + B merged; C + D re-land in #1144). Lane E (discontinued admission) IN PROGRESS 23 Sep. Earlier: four PRs ready for review, awaiting owner go: #1134 (A), #1136 (B), #1138 (C, stacked on A), #1140 (D, stacked on A). Merge order A, C, D; B independent. Lane stack :3000/:8000 serves Lane D for hand-testing.
+Status: Lanes A-D BUILT (A + B merged; C + D re-land in #1144). Lane E (discontinued admission) + Lane F (OI need bought in full on All runs) IN PROGRESS 23 Sep, one PR #1148. Earlier: four PRs ready for review, awaiting owner go: #1134 (A), #1136 (B), #1138 (C, stacked on A), #1140 (D, stacked on A). Merge order A, C, D; B independent. Lane stack :3000/:8000 serves Lane D for hand-testing.
 UAC: `order-sheet-oi-reports-22sep-acceptance-criteria.md`.
 
 ## What the owner asked (22 Sep 2026, order sheet screenshot + OI report sample)
@@ -274,6 +274,41 @@ change.
 
 Branch: from `fix/order-sheet-cells` (= #1144's head, same `_planning_rows` region); PR base
 retargeted to main by the captain right after #1144 merges and BEFORE the owner merges it.
+
+## Lane F - confirmed OI need is bought in full on an All run too (owner ruling 23 Sep)
+
+Measured 23 Sep (0921 copy, current code): OI-000749 CB4702 x 493 ORDER BACK, confirmed,
+22/09/2026, SO421985. The engine's committed select returns 493 inside the 01/09 to 16/11
+window, so the product is admitted; but on the All run (plan 23/09 10:51) the project need
+is netted against 702 on hand (326 BRW + 376 BRW-IR) by the one-formula sizing, comes out
+covered, and the row is hidden. On a Project run R1a buys the 493 in full. Owner: "should
+apply the same for both".
+
+- F1 On an All run, confirmed project OI need (`project_confirmed_committed`, the same
+  figure Lane A's Project qty prints) is bought IN FULL on top of the retail sizing, never
+  netted against on hand / open PO / SPO - R1a extended from Project runs to All runs. The
+  retail leg keeps today's netting: retail is sized on `retail_net` (net with the project
+  channel taken back out and confirmed project claims on stock removed), then the raw
+  project need is added. `project_supply_reduction` (a confirmed Reserve / Borrow decision
+  CS already recorded) still reduces the project need - that IS the stock case CS chose.
+- F2 Applies in all three sizing paths (`_emit_cell` single member, `_emit_pool`,
+  `_emit_product`) and to the network aggregate branch if it sizes project need at all
+  (say so if it does not). Dealer runs are untouched (no project leg).
+- F3 The decision label and the Suggestion text keep reading "Stock: X / PO: Y / Buy: Z"
+  where Buy now includes the full project need; the demand drill's Project figure equals
+  the frozen `project_customers` sum (Lane A) and the OI worksheet's rows for that run.
+- F4 Consequence stated to the owner: a product with 702 on hand and a confirmed row for
+  493 buys 493 on an All run from now on; purchasing pushes back through Request CS to
+  reserve (#1120) when stock should cover it instead.
+
+Tests: pytest, All run: product with on hand > confirmed OI qty -> Suggested >= OI qty
+(exactly the OI qty when retail trigger is off); ORDER BACK on a closed, delivered SO line
+-> bought in full (owed uncapped rule kept); a confirmed Reserve decision on that row ->
+reduced by the reserved qty; retail-only product unchanged; Dealer run unchanged;
+`test_reorder_plan_project_only.py`, `test_reorder_plan_all_picked_orders.py`,
+`test_reorder_window_start.py`, `test_reorder_one_formula*` updated where they pinned the
+netting on All runs (name each and cite this ruling). Lands in Lane E's worktree and PR
+#1148 as its second slice (same functions), after Lane E's review fixes.
 
 ## Sequencing
 
