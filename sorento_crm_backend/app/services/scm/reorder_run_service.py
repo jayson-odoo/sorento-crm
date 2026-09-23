@@ -870,7 +870,25 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # S5, AC-S5.2: an excluded product earns no row, even one it would otherwise be
     # committed-demand-admitted into (G10's named-product bypass does not reach here - that
     # case is refused outright at `create_run`, see `_reject_excluded_named_products`).
-    where = ["p.is_active = true", "p.is_discontinued = false",
+    #
+    # DISCONTINUED-PROJECT-ADMISSION (Lane E, `PLAN-order-sheet-oi-reports-22sep.md`,
+    # owner ruling 23 Sep): a discontinued product is normally hard-excluded, but a
+    # CONFIRMED project OI line inside the run's own scope (picked orders, window,
+    # acknowledged) is still owed to a customer, so `p.is_discontinued = false` widens
+    # to admit a discontinued product too when `cv_all` (the run's own committed-demand
+    # CTE, already scoped to this run's `demand_class`/`so_numbers`/horizon) shows
+    # confirmed project demand for it anywhere. `is_active` and `exclude_from_planning`
+    # stay hard - discontinued is the only one of the three an OI line overrides. A
+    # Dealer run's `cv_all` carries no project leg at all (`demand_class='retail'` keeps
+    # only the book leg), so `project_confirmed_committed` is always 0 there and this OR
+    # never fires (AC-E5). Leg 2 (below level, moved in 180 d, further down this
+    # function) is NOT read here - it is evidence a product still sells, not evidence of
+    # project demand, so it must never admit a discontinued product on its own (AC-E3);
+    # its own subquery keeps `p.is_discontinued = false` unchanged.
+    where = ["p.is_active = true",
+             "(p.is_discontinued = false OR EXISTS ("
+             "SELECT 1 FROM cv_all c WHERE c.product_id = p.id "
+             "AND COALESCE(c.project_confirmed_committed, 0) > 0))",
              "p.exclude_from_planning = false"]
     params: dict[str, Any] = {}
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="cw")
@@ -1142,6 +1160,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- buyer can see where the two disagree; the engine does not read them.
                p.reorder_level AS master_reorder_level,
                p.reorder_quantity AS master_reorder_quantity,
+               p.is_discontinued,
                w.warehouse_code, w.warehouse_name, w.segment,
                -- The site pool this location draws on (its own id when it heads one).
                -- R15: the last purchase, the SPO book and the PO book are all read at the
@@ -1194,6 +1213,13 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         ORDER BY p.product_code, w.warehouse_code
     """)
     out = [dict(r) for r in db.execute(sql, params).mappings().all()]
+    # Lane E: a row can only be `is_discontinued = true` here because the widened WHERE
+    # above admitted it through the confirmed-OI OR (the non-OR branch requires
+    # `is_discontinued = false`), so every such row is sized PROJECT-ONLY below - no
+    # retail reorder-point or level top-up for a product nobody restocks for the shelf.
+    for r in out:
+        if r.get("is_discontinued"):
+            r["discontinued_project_only"] = True
     if product_ids is not None:
         # G10: a named product is buyer intent, not merely "let it into the run" - a
         # buyer who typed a SKU into Start Plan wants the SAME evaluation this product
@@ -1693,7 +1719,12 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                 # S1, round 2): a named product keeps its retail sizing even under Project -
                 # `committed_gate_exempt` is stamped on the ROW by `_planning_rows`.
                 r, c = members[0]
-                if demand_class == "project" and not r.get("committed_gate_exempt"):
+                # Lane E: a discontinued product admitted only through the confirmed-OI
+                # OR (`discontinued_project_only`, stamped in `_planning_rows`) sizes
+                # PROJECT-ONLY on every run kind that can admit it at all, not just a
+                # Project run - nobody restocks a discontinued line for the shelf.
+                if ((demand_class == "project" and not r.get("committed_gate_exempt"))
+                        or r.get("discontinued_project_only")):
                     c = _project_only_cell(c)
                 recs.extend(_emit_cell(run_id, r, c))
             else:
@@ -1937,8 +1968,12 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # SKU's retail sizing to the project-only branch below, which is not what naming a
     # product means. `any(...)` rather than a single row's flag because the flag is
     # run-scoped (every row of a `product_ids`-narrowed run carries it identically).
-    project_only = demand_class == "project" and not any(
-        r.get("committed_gate_exempt") for r in prows)
+    # Lane E: a discontinued product admitted only through the confirmed-OI OR
+    # (`discontinued_project_only`, stamped in `_planning_rows`) sizes PROJECT-ONLY on
+    # every run kind that can admit it at all, not just a Project run.
+    project_only = (demand_class == "project" and not any(
+        r.get("committed_gate_exempt") for r in prows)) or any(
+        r.get("discontinued_project_only") for r in prows)
 
     # Policy is resolved for the pool, so one pool cannot be planned under two policies.
     policy = eng.resolve_policy_for_sku(db, str(prows[0]["product_id"]), pool_id,
@@ -2247,8 +2282,12 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     pid = str(prows[0]["product_id"])
     # G10 (review S1, round 2): a NAMED product (`product_ids` given at Start Plan) keeps
     # its retail sizing under a Project run - see the matching flag in `_emit_pool`.
-    project_only = demand_class == "project" and not any(
-        r.get("committed_gate_exempt") for r in prows)
+    # Lane E: a discontinued product admitted only through the confirmed-OI OR
+    # (`discontinued_project_only`, stamped in `_planning_rows`) sizes PROJECT-ONLY on
+    # every run kind that can admit it at all, not just a Project run.
+    project_only = (demand_class == "project" and not any(
+        r.get("committed_gate_exempt") for r in prows)) or any(
+        r.get("discontinued_project_only") for r in prows)
     policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
     tog = eng.policy_toggles(policy)
     # G7 / AC-S13.6 (review fix round 2, 9 Sep): the SAME product-wide lookup
