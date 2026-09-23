@@ -754,7 +754,12 @@ def _pick_lines_by_date_order(
         candidates = [c for c in order_lines if (c[0].line_status or "open") != "cancelled"]
         candidates.sort(key=_line_pick_key)
         candidate_ids = {str(c[0].id) for c in candidates}
-        last_id = str(candidates[-1][0].id) if candidates else None
+        # R4: the "last open line takes the overflow row" tier only matters inside the
+        # dominant OPEN tier - `candidates[-1]` is the last CLOSED line whenever one
+        # exists (open sorts first), which would point the overflow preference at nothing
+        # an open row could ever match.
+        open_candidates = [c for c in candidates if (c[0].line_status or "open") == "open"]
+        last_id = str((open_candidates or candidates)[-1][0].id) if candidates else None
         used_this_walk: set = set()
 
         ordered = sorted(
