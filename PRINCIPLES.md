@@ -231,6 +231,16 @@ the same axis as the module decision - not a separate schema axis.
   reuse that tab set on both views. Read-only metadata (Created, Last Updated, ids) goes in the
   page header or a meta strip, **never inside a tab body**, because it has no edit counterpart and
   would otherwise force the two views to differ.
+- **A long-running job advances on the server, never on a browser being open** (owner ruling
+  23 Sep 2026, D27). Every stage transition of a multi-stage background job (build -> preview ->
+  review, upload -> parse -> apply) is driven by the worker or a scheduler tick, so a job that
+  starts at 7:40 finishes at 7:48 whether the user watched it, switched tabs or closed the
+  laptop. The browser is a viewer: it polls to SHOW state, and a poll may also advance state as
+  a fast path, but no transition may EXIST only in the poll. A page that polls a running job
+  keeps polling while its tab is hidden (`refetchIntervalInBackground: true`), so the progress
+  on screen is never frozen when the user comes back. Precedent that violated this: the
+  AutoCount pull's preview was enqueued only by the review page's poll, and a snapshot ready at
+  7:43 sat idle until the owner returned at 8:17 (`PLAN-autocount-pull-server-advance.md`).
 - **Detail pages carry prev/next record navigation** (`components/common/RecordNavigation`).
   Reviewing records one by one is the normal case; sending the user back to the list between each
   is what makes a screen feel half-built. Established usage: `user-management/users/[id]`,

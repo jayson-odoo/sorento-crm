@@ -501,6 +501,21 @@ def _chatbot_delegated_sweep_tick():
         logger.error("Chatbot delegated sweep tick failed: %s", e, exc_info=True)
 
 
+def _autocount_pull_advance_tick():
+    """APScheduler tick: drive the AutoCount pull build -> preview transition
+    server-side (D27), so a snapshot that finishes building has its preview
+    enqueued within 30s whether or not anyone has the pull page open - see
+    PLAN-autocount-pull-server-advance.md for the 23 Sep 2026 incident this
+    closes. Owns its own DB session; best-effort and never raises."""
+    try:
+        from app.services.autocount_pull_service import advance_building_pulls
+
+        with scheduler_session() as db:
+            advance_building_pulls(db)
+    except Exception as e:
+        logger.error("AutoCount pull advance tick failed: %s", e, exc_info=True)
+
+
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
     return run_sync_rq_jobs(queue_name, max_jobs_per_run)
@@ -638,11 +653,22 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # AutoCount pull server advance (D27): every 30s. A pull's build -> preview
+    # transition used to happen only inside a browser's status poll; this tick is
+    # what makes it happen with no tab open (PLAN-autocount-pull-server-advance.md).
+    scheduler.add_job(
+        _autocount_pull_advance_tick,
+        trigger=IntervalTrigger(seconds=30),
+        id="autocount_pull_advance",
+        name="AutoCount pull advance",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer "
         "(every %ds), AI trace sweep (daily), chatbot delegated sweep (every minute), "
-        "SPO container relink sweep (daily)",
+        "SPO container relink sweep (daily), AutoCount pull advance (every 30s)",
         max(1, drain_seconds),
     )
     return scheduler
