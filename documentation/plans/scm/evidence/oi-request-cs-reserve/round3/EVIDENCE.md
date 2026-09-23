@@ -21,6 +21,21 @@ grid overflows the 1280px viewport (Delivery date onward sit off-screen at rest)
 | AC-RS-66 | Confirmed the first section (reason required, short qty) - it flipped to a read-only "Reserved 1" line with a tick, the dialog stayed open, the second section stayed editable. Confirmed the second section - the dialog closed itself and the `?reserve=` param was removed from the URL (`get url` returned the bare detail path). | `AC-RS-66-first-section-confirmed.png` (first section ticked, second still open), `AC-RS-66-dialog-closed-after-last.png`/URL check (dialog gone, param stripped) | PASS |
 | AC-RS-72 (rollup) | All of the above, plus: a full reload after both requests shows all four rows (CWCX604-S-SH, CSH2073, CWCSC604-SH, CWCX605-RL) reading "Reserved N" with ticks; `console`/`errors` clean throughout the run. | `AC-RS-72-all-reserved-final.png` | PASS |
 
+## Fix round 1 (23 Sep) - per-row pool resolution, AC-RS-65b/AC-RS-66b
+
+Session `oireserve-r3-fix1`, same OI (`OI-000750`), navigated fresh from `/` via the sidebar
+(Procurement -> Supply Chain -> Order Inquiries -> search `OI-000750`). Ticked two still-open
+`raised` rows naming DIFFERENT products, CWCY605 and CKS1050 (confirmed distinct
+`product_id`s off the network log below), sent a third reserve request (#3, both rows still
+open), then opened `?reserve=<request #3 id>`.
+
+| AC | What was checked | Evidence | Result |
+| --- | --- | --- | --- |
+| AC-RS-65b | `network requests --filter stock-detail` shows TWO distinct `product_id` query params (`f253b5c5-...` for CWCY605, `29c0db38-...` for CKS1050), each fetched once - not the primary row's product asked twice, not a shared call. Each section's own Location field defaults to a DIFFERENT reading of the SAME site name ("BRW available -103" for CWCY605 vs "BRW available 0" for CKS1050 - same pool, genuinely different per-product availability, which is only possible if each section resolved its own product). Opening each dropdown in turn showed two ENTIRELY DIFFERENT six-pool option lists (CWCY605: BRW -103, DC1 247, MWH 0, RESERVE -254, RSW 0, WH3 116; CKS1050: every pool reading 0) - proof the second section is not an echo of the first row's own resolution. | `G1-per-row-options.png` | PASS |
+| AC-RS-66b | `ReserveRowDialogRow`'s optional per-row `locationOptions`/`availableQtyByLocation`/`defaultLocationId` are what the dialog actually renders from (confirmed by the differing option lists above); the existing single-row (line-click) dialogs from the earlier evidence run above (`AC-RS-67-single-row-dialog-tabs.png` etc.) are unaffected, confirming the fallback to the dialog's own top-level prop still holds for a caller that supplies none. | `G1-per-row-options.png` + the unchanged single-row screenshots above | PASS |
+
+Console/errors clean throughout this run.
+
 ## Deviation from the brief's literal step order
 
 The brief asked the coder to verify G4's cause live, screenshot the "before" state, **then**

@@ -187,6 +187,22 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn(async () => ({ pending: null, last_outcome: null })),
 }));
 
+// Fix round 1 (`PLAN-oi-request-cs-reserve.md` 6d "Fix round 1", AC-RS-65b):
+// `useReserveRowOptions` reads this per PRODUCT - two rows naming different products
+// must resolve two different pool lists, not one shared by the whole dialog.
+const getStockDetailMock = vi.fn(async (productId: string) => {
+  if (productId === 'prod-a') {
+    return { locations: [{ warehouse_id: 'wh-a', location: 'BRW', available_qty: '12' }] };
+  }
+  if (productId === 'prod-b') {
+    return { locations: [{ warehouse_id: 'wh-b', location: 'DC1', available_qty: '7' }] };
+  }
+  return { locations: [] };
+});
+vi.mock('../../../_shared/services/fulfilmentPlanningService', () => ({
+  getStockDetail: (...args: unknown[]) => getStockDetailMock(...(args as [string])),
+}));
+
 import { OrderInquiryDetail } from './OrderInquiryDetail';
 // Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, AC-RS-65): overrides the
 // module-level mock's resolved lines per test, the same way `getReserveRequestsMock`
@@ -449,5 +465,100 @@ describe('AC-RS-65: ?reserve=<request_id> opens ONE dialog with a section per st
     // lives on the line now (`ReserveRowDialog.test.tsx` AC-RS-67), never inside a
     // multi-row deep link.
     expect(screen.queryByRole('tab', { name: /history/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Fix round 1 (`PLAN-oi-request-cs-reserve.md` 6d "Fix round 1", `oi-request-cs-
+ * reserve-acceptance-criteria.md` AC-RS-65b). TEST-FIRST: today `OrderInquiryDetail`
+ * resolves `useReserveRowOptions` for the PRIMARY row alone and hands that ONE result
+ * to every section of the dialog - two rows naming different products both end up
+ * offered the primary row's own pools. A red here is "getStockDetail was called for
+ * only one product" / "the second section shows the first row's own pool options" -
+ * never a fixture bug.
+ */
+describe('AC-RS-65b: a multi-row dialog resolves pool options PER ROW, off each row\'s own product', () => {
+  const ROW_PROD_A = row({
+    id: 'row-prod-a',
+    item_code: 'PRODA-1',
+    product_id: 'prod-a',
+    reserve_state: 'requested',
+  });
+  const ROW_PROD_B = row({
+    id: 'row-prod-b',
+    item_code: 'PRODB-1',
+    product_id: 'prod-b',
+    reserve_state: 'requested',
+  });
+  const MULTI_PRODUCT_REQUEST = {
+    id: 'rr-multi-product',
+    order_inquiry_id: 'oi-1',
+    ordinal: 5,
+    state: 'requested' as const,
+    requested_by: 'user-1',
+    requested_by_name: 'Joey',
+    requested_at: '2026-09-23T09:00:00',
+    note: null,
+    reserved_by_name: null,
+    reserved_at: null,
+    cancelled_at: null,
+    first_to_name: null,
+    rows: [
+      {
+        id: 'reqrow-prod-a',
+        row_id: 'row-prod-a',
+        item_code: 'PRODA-1',
+        qty_requested: '10',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: null,
+        reason: null,
+      },
+      {
+        id: 'reqrow-prod-b',
+        row_id: 'row-prod-b',
+        item_code: 'PRODB-1',
+        qty_requested: '5',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: null,
+        reason: null,
+      },
+    ],
+  };
+
+  it('resolves getStockDetail once per distinct product, and each section shows only its own product\'s pools', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_PROD_A, ROW_PROD_B]);
+    getReserveRequestsMock.mockResolvedValue([MULTI_PRODUCT_REQUEST]);
+    searchParamsValue = 'reserve=rr-multi-product';
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
+    await waitFor(() => expect(getStockDetailMock).toHaveBeenCalledWith('prod-a', null, [], 'pools'));
+    await waitFor(() => expect(getStockDetailMock).toHaveBeenCalledWith('prod-b', null, [], 'pools'));
+    // Every product resolved is one of the two the dialog's rows actually name - never
+    // the primary row's own product asked twice, never a third, unrelated one.
+    const productsAsked = new Set(getStockDetailMock.mock.calls.map((call) => call[0]));
+    expect(productsAsked).toEqual(new Set(['prod-a', 'prod-b']));
+
+    // Reserved default is min(requested, THIS product's own available qty) - 10 for
+    // prod-a (min(10, 12)), 5 for prod-b (min(5, 7)).
+    const reservedInputs = await screen.findAllByLabelText('Reserved');
+    expect(reservedInputs).toHaveLength(2);
+    expect((reservedInputs[0] as HTMLInputElement).value).toBe('10');
+    expect((reservedInputs[1] as HTMLInputElement).value).toBe('5');
+
+    // The first section's own Location dropdown offers prod-a's own pool (BRW) only -
+    // never prod-b's DC1, which would mean the primary row's resolution leaked across.
+    // Scoped to `role=option` (the opened listbox's own entries), because the SECOND
+    // section's own selected value already renders the text "DC1" too.
+    const locationSelects = screen.getAllByLabelText('Location');
+    fireEvent.click(locationSelects[0]);
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining('BRW')]),
+    );
+    expect(options.some((option) => (option.textContent ?? '').includes('DC1'))).toBe(false);
   });
 });

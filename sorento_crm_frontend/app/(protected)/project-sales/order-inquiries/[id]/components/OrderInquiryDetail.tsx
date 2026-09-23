@@ -348,24 +348,31 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const reserveRowEffectiveRequestId =
     reserveRowOpenRequest?.requestId ?? reserveRowLastRequestId ?? null;
 
-  // The dialog's own Location/Reserved defaults are resolved off the PRIMARY row's
-  // product alone and shared by every section a multi-row dialog carries - the same
-  // simplification the plan's own OrderInquiryDetail wiring names (item code, open
-  // request, history and net reserved are the only fields mapped PER row).
+  // Fix round 1 (AC-RS-65b/AC-RS-66b): EVERY row this dialog carries a section for
+  // resolves its OWN Location/Reserved defaults, off its OWN product - two rows in one
+  // multi-row dialog can name different products, and `useReserveRowOptions` already
+  // resolves N entries through `useQueries`, so this is one entry per dialog row
+  // rather than one entry for the primary row alone.
+  const reserveRowDialogLines = useMemo(
+    () =>
+      reserveDialogRowIds
+        .map((rowId) => activeLines.find((line) => line.id === rowId))
+        .filter((line): line is OrderInquiryWorklistRow => Boolean(line)),
+    [reserveDialogRowIds, activeLines],
+  );
   const reserveRowOptionsEntries = useMemo(
     () =>
-      reserveRowDialogRow
-        ? [
-            {
-              key: reserveRowDialogRow.id,
-              productId: reserveRowDialogRow.product_id ?? null,
-              location: reserveRowDialogRow.location ?? null,
-            },
-          ]
-        : [],
-    [reserveRowDialogRow],
+      reserveRowDialogLines.map((line) => ({
+        key: line.id,
+        productId: line.product_id ?? null,
+        location: line.location ?? null,
+      })),
+    [reserveRowDialogLines],
   );
   const reserveRowOptionsResolved = useReserveRowOptions(reserveRowOptionsEntries);
+  // Kept for the dialog's own top-level fallback props (the single-row scalar-prop
+  // path, and any older caller that has not moved to per-row resolution) - the
+  // PRIMARY row's own resolved options.
   const reserveRowOptions = reserveRowDialogRow
     ? reserveRowOptionsResolved[reserveRowDialogRow.id]
     : undefined;
@@ -387,22 +394,33 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     [reserveRowHistoryQuery.data],
   );
 
-  // AC-RS-65: every row this dialog holds a section for, mapped from its own line -
-  // item code, open request, net reserved per row; History only follows the PRIMARY
-  // row (the single-row path's own tab; a multi-row dialog never shows one).
+  // AC-RS-65/AC-RS-65b: every row this dialog holds a section for, mapped from its own
+  // line AND its own resolved pool options - item code, open request, history, net
+  // reserved, locationOptions/availableQtyByLocation/defaultLocationId all per row;
+  // History only follows the PRIMARY row (the single-row path's own tab; a multi-row
+  // dialog never shows one).
   const reserveRowDialogRows: ReserveRowDialogRow[] = useMemo(
     () =>
-      reserveDialogRowIds
-        .map((rowId) => activeLines.find((line) => line.id === rowId))
-        .filter((line): line is OrderInquiryWorklistRow => Boolean(line))
-        .map((line) => ({
+      reserveRowDialogLines.map((line) => {
+        const own = reserveRowOptionsResolved[line.id];
+        return {
           rowId: line.id,
           itemCode: line.item_code ?? null,
           openRequest: openRequestForRow(line.id),
           history: line.id === primaryReserveRowId ? reserveRowHistory : [],
           netReservedQty: line.reserved_qty ?? '0',
-        })),
-    [reserveDialogRowIds, activeLines, openRequestForRow, primaryReserveRowId, reserveRowHistory],
+          locationOptions: own?.options,
+          availableQtyByLocation: own?.availableQtyByWarehouseId,
+          defaultLocationId: own?.defaultWarehouseId ?? null,
+        };
+      }),
+    [
+      reserveRowDialogLines,
+      reserveRowOptionsResolved,
+      openRequestForRow,
+      primaryReserveRowId,
+      reserveRowHistory,
+    ],
   );
 
   // F2 header "Cancel request" (plan 6c): the same countdown pattern round 1's own

@@ -535,4 +535,52 @@ describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for
     await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(onOpenChangeSpy).toHaveBeenCalledWith(false));
   });
+
+  /**
+   * Fix round 1 (`PLAN-oi-request-cs-reserve.md` 6d "Fix round 1", `oi-request-cs-
+   * reserve-acceptance-criteria.md` AC-RS-66b). TEST-FIRST: today `ReserveRowSection`
+   * only ever reads the dialog's own TOP-LEVEL `locationOptions`/`availableQtyByLocation`
+   * /`defaultLocationId` - every section of a multi-row dialog shares that one set, so
+   * a row naming a different product still sees the FIRST row's own pools. A red here
+   * is "the second section's own Location option leaked into the first" / "the Reserved
+   * default came from the wrong row's own availability" - never a fixture bug.
+   */
+  it('AC-RS-66b: each row section reads its OWN per-row locationOptions/availableQtyByLocation/defaultLocationId, never the dialog-wide fallback', async () => {
+    renderMultiRowDialog([
+      rowFixture({
+        rowId: 'row-1',
+        itemCode: 'B2155-NL-BLUE',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        locationOptions: [{ value: 'brw-id', label: 'BRW' }],
+        availableQtyByLocation: { 'brw-id': 15 },
+        defaultLocationId: 'brw-id',
+      }),
+      rowFixture({
+        rowId: 'row-2',
+        itemCode: 'B2155-NL-RED',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        locationOptions: [{ value: 'dc1-id', label: 'DC1' }],
+        availableQtyByLocation: { 'dc1-id': 9 },
+        defaultLocationId: 'dc1-id',
+      }),
+    ]);
+
+    // Reserved default is min(requested, THIS row's own available qty) - 15 for row-1
+    // (min(20, 15)), 9 for row-2 (min(15, 9)) - never the dialog-wide fallback's own
+    // { 'brw-id': 90, 'dc1-id': 5 }, which would read 20 and 15 respectively.
+    const reservedInputs = await screen.findAllByLabelText('Reserved');
+    expect(reservedInputs).toHaveLength(2);
+    expect((reservedInputs[0] as HTMLInputElement).value).toBe('15');
+    expect((reservedInputs[1] as HTMLInputElement).value).toBe('9');
+
+    // Each Location select offers only ITS OWN row's own option - the dialog-wide
+    // fallback carries both BRW and DC1, so an opened listbox naming both would mean
+    // the fallback leaked in instead of the per-row list. Scoped to `role=option`
+    // (the opened listbox's own entries) rather than the whole document, because the
+    // SECOND section's own selected value already renders the text "DC1" too.
+    const locationSelects = screen.getAllByLabelText('Location');
+    fireEvent.click(locationSelects[0]);
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['BRW']);
+  });
 });

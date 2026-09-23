@@ -104,6 +104,26 @@ Contributing lines tabs the grid view's dialog shows.
 | AC-RS-63 | [FE] | Every date-time in the dialog and the history renders through the shared `formatDateTime` helper (no `T`-separated ISO text, no microseconds). |
 | AC-RS-64 | [E2E] | agent-browser on :3080, from `/` by sidebar: Eling opens the OI from the email link, the dialog opens on the first open row, she reserves at DC1 with a reason; the row shows `Reserved N`; she unreserves part, History shows reserve then unreserve, net matches; Unlink on that row is unavailable for the reserve. Screens saved under the evidence dir. |
 
+### Round 3 (plan 6d, 23 Sep, owner hand test after #1120 shipped)
+
+| # | Layer | Given / When / Then |
+| --- | --- | --- |
+| AC-RS-65 | [FE] | Given `?reserve=<request_id>` on the OI detail URL and the request has two open rows and one already-reserved row, then ONE `ReserveRowDialog` opens with two sections (one per open row: item code, Location, Reserved, Confirm reserved) and no History tab; supersedes the "first open row" clause of AC-RS-62. Closing removes the param. |
+| AC-RS-66 | [FE] | Given the multi-row dialog, when one section's Confirm reserved posts (per-row endpoint, payload as AC-RS-56), then that section reads `Reserved N` with the tick and its inputs are gone, the other section stays editable; when the last open section confirms, the dialog closes and the reserved toast shows once per confirm. |
+| AC-RS-67 | [FE] | Given the dialog opened from a line (one row), then it renders tabs Reserve and History exactly as before (AC-RS-61 dialog contents unchanged). |
+| AC-RS-68 | [FE] | Lines grid: no column with id `reserve` exists; the `state` cell of a row with `reserve_state requested` renders an amber `Request to reserve` pill that is a button (aria-label `Reserve`), a row with `reserve_state reserved` renders a green `Reserved <qty>` pill with a `Check` icon that is a button (aria-label `Reserve`), and a row with `reserve_state null` renders the plain `OrderInquiryStatePill` (`On PO/SPO` for `placed`, etc.) with no button. Clicking either reserve pill calls `onReserveClick` with that row. |
+| AC-RS-69 | [FE] | `DataGridTableDndHeader`: a column with `meta.draggable === false` or with `meta.expandedContent` renders no `GripVertical` and no `aria-label="Drag column to reorder"` wrapper (sortable disabled); a normal column still renders both. The shared select column sets `meta.draggable = false`; the OI Lines `expand` column header therefore shows no grip. |
+| AC-RS-70 | [FE] | `DataGridTableBodyRowExpandded` wraps `expandedContent` in an element with `position: sticky; left: 0` whose `max-width` tracks the DataGrid scroll container's clientWidth (CSS variable set by a ResizeObserver on the container; jsdom: the variable is set from `clientWidth` on mount and on observer callback). `CellStockTable`'s wrapper carries `overflow-x-auto` and NOT `overscroll-x-contain`. |
+| AC-RS-71 | [FE] | `CellStockTable` Location header renders a resize handle; dragging it (pointerdown / pointermove / pointerup) sets the Location column width in px, never below 120; the width is written to `localStorage['cellStockTable.locationWidth']` and read back on the next mount; with no stored value the column keeps today's `w-full` slack class; a throwing `localStorage` leaves the table rendering. |
+| AC-RS-72 | [E2E] | agent-browser on :3080, from `/` by sidebar: on an OI whose Lines grid is wider than the viewport, expand a row: the stock table's number columns are visible without scrolling and shift-wheel over the stock table scrolls the grid sideways; the expand header shows no grip; a reserved row's State reads `Reserved N` with a tick and opens the dialog on click; an email-style deep link with two open rows opens one dialog with two sections. Screens under `documentation/plans/scm/evidence/oi-request-cs-reserve/round3/`. |
+
+### Round 3 fix round 1 (per-row pool resolution, 23 Sep)
+
+| # | Layer | Given / When / Then |
+| --- | --- | --- |
+| AC-RS-65b | [FE] | Given the multi-row dialog (AC-RS-65) with two open rows naming DIFFERENT products, then `useReserveRowOptions` resolves once per distinct `product_id` (`getStockDetail` called once per product, not once per row and not only for the first row), and each section's Location dropdown / Reserved default read that row's OWN pool options and availability. |
+| AC-RS-66b | [FE] | `ReserveRowDialogRow` carries optional per-row `locationOptions`, `availableQtyByLocation`, `defaultLocationId`; each falls back to the dialog's own top-level prop when absent, so a single-row caller (or an older multi-row caller that has not moved to per-row resolution) renders unchanged. |
+
 ## Out of scope (recorded, not built)
 
 AutoCount transfer / transfer number; `StockTransfer` paper row for OI-driven reserves; Taken /

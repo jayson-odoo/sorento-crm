@@ -1,6 +1,6 @@
 # PLAN - Order inquiry: Request CS to reserve stock (+ stock grid on OI lines and board list)
 
-Status: **APPROVED 22 Sep 2026 ("ok cool, go" in Lavish), building.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
+Status: **SHIPPED #1120 (9fc93c90a, 23 Sep 2026); round 3 (section 6d, AC-RS-65..72) BUILDING on `fix/oi-reserve-round3`.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
 Track: full three-phase lane (migration, new permission, email). One lane, one PR (R-E).
 Lavish marks folded: same `CellStockTable` component; reserved mail carries BALANCE; board list view
 opens the grid view's dialog from the row (Q3 accepted with the go). Branch `feat/oi-request-cs-reserve`.
@@ -374,6 +374,72 @@ the reserve link qty by `qty` (deletes the link at 0), `refresh_link_state`, one
 event, no email. Unlink (bulk deferred action and per-row) SKIPS reserve links: the per-row Unlink
 is not offered on a reserve link and the bulk action ignores them; 3.3 "Reversal" is superseded.
 Section 7 "amend a reserved qty" is superseded: top-up = new request, reduce = Unreserve.
+
+## 6d. Round 3 (owner hand test after #1120 shipped, 23 Sep): five asks, one fix lane
+
+Branch `fix/oi-reserve-round3` off main 7c2c8e342 (no migration, no auth change). Owner words:
+"the link only opens 1 popup ... can't it open all the items here?"; "after reserved it is called
+On PO/SPO which is kinda sus, it should be called reserved"; "combine the reserve icon with the
+state ... adding too many columns also not good"; "after confirmed the product should have a
+ticked icon"; the grip on the expand header; "the location column too big, can we resize this and
+make it remembered"; "I can't scroll horizontally when I place my cursor here and shift scroll".
+
+**G1 Email link opens every row of the request.** `?reserve=<request_id>` opens ONE
+`ReserveRowDialog` carrying every still-open row of that request (`rows: [...]`, one section per
+row: item code, Location, Reserved, Reason-when-short, its own **Confirm reserved**), not the first
+open row alone. Each Confirm still calls the per-row endpoint (AC-RS-56 unchanged); a confirmed
+section flips to a read-only `Reserved N` line with the tick; the dialog closes itself once the
+last section is confirmed. The line-click path passes ONE row and keeps the History tab; the
+multi-row path has no History tab (history lives on the line). One component, `rows` length 1..N.
+
+**G2 State column carries the reserve state; the Reserve column goes.** In
+`orderInquiryHeaderLinesColumns.tsx` the `state` cell renders, in this order: `reserve_state ===
+'requested'` -> amber pill `Request to reserve`; `reserve_state === 'reserved'` -> green pill
+`Reserved N` with a lucide `Check` icon (the owner's tick); else `OrderInquiryStatePill` as today.
+Both reserve pills are the click target (`role=button`, aria-label `Reserve`) opening the dialog
+for that row, replacing the `reserve` column, which is deleted. `ReservePill` in
+`OrderInquiryVerbPill.tsx` gains `onClick?` (rendered as a button when set) and the tick on
+`reserved`; the worklist keeps its read-only usage. `STATE_LABEL` untouched (one map, AC-B5-2).
+
+**G3 No grip on fixed utility headers.** `DataGridTableDndHeader` renders no `GripVertical` and
+passes `disabled: true` to `useSortable` when `columnDef.meta?.draggable === false` OR the column
+carries `meta.expandedContent`; the shared select column (`data-grid-select-column.tsx`) sets
+`meta.draggable = false`. `ColumnMeta` gains `draggable?: boolean`. Not keyed on `enableHiding`
+(real data columns use it in 12 grids).
+
+**G4 Expanded content stays inside the viewport and the page scrolls sideways over it.** Two
+causes, both measured on origin/main. (a) `DataGridTableBodyRowExpandded` puts the content in a
+`<td colSpan=all>` as wide as the whole fixed-layout table, so on a grid wider than its scroll
+container the inner `CellStockTable` (Location = `w-full` slack column) stretches past the right
+edge and its number columns sit off-screen: fix = the expanded `<td>` wraps content in a
+`sticky left-0` div whose `max-width` is the DataGrid scroll container's clientWidth (a CSS
+variable set by one `ResizeObserver` on the container; every `expandedContent` site benefits, the
+nested-inventory tests enumerate them). (b) `CellStockTable`'s wrapper is `overflow-x-auto
+overscroll-x-contain`: an `overflow:auto` box is a scroll container even without overflow, and
+`overscroll-behavior: contain` on it stops wheel / trackpad chaining to the parent grid's
+scroller, so shift-wheel and two-finger swipes over the stock table do nothing (the same trap
+`data-grid-table.tsx:171` records for the grid itself). Fix = drop `overscroll-x-contain` there.
+
+**G5 Location column resizable, remembered per browser.** `CellStockTable` Location `<th>` gets a
+drag handle (same `cursor-col-resize` affordance as `DataGridTableHeadRowCellResize`); the width
+(px, floor 120) is held in component state, applied to the Location cells (`truncate` + `title`
+on the code), and remembered in `localStorage` key `cellStockTable.locationWidth` (read/write in
+try/catch; absent = today's slack behaviour). One column, one key: no column-config API row.
+
+Coder verifies G4 live on :3080 before writing the fix (a screenshot of the expanded row on a
+grid wider than the viewport, then the same after) and reports if either cause is not the one
+measured. Tests: AC-RS-65..72 below, tester-first.
+
+**Fix round 1 (23 Sep, per-row pool resolution).** G1's first pass resolved Location options /
+availability / default off the PRIMARY row alone and shared that one set across every section of
+a multi-row dialog - wrong the moment two rows name different products. `useReserveRowOptions`
+already resolves N entries through `useQueries` (`useReserveRowOptions.ts` L90), so this is
+wiring only: `ReserveRowDialogRow` gains optional per-row `locationOptions` /
+`availableQtyByLocation` / `defaultLocationId` (falling back to the dialog's own top-level prop
+when absent); `OrderInquiryDetail.tsx`'s `reserveRowOptionsEntries` covers every id in
+`reserveDialogRowIds` (not just the primary), and each row's own resolved entry is threaded into
+its own `ReserveRowDialogRow`. History / Cancel request / Unreserve stay off the primary row only
+(single-row mode). AC-RS-65b/AC-RS-66b.
 
 ## 7. Out of scope (recorded, not built)
 

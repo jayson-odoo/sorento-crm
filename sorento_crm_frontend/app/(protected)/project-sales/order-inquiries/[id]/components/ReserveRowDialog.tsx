@@ -76,6 +76,15 @@ export interface ReserveRowDialogRow {
   /** The row's own NET reserved (sum reserved - sum unreserved) - read straight off
    * the worklist row (`reserved_qty`), never recomputed here. */
   netReservedQty: string;
+  /** Fix round 1 (AC-RS-65b/AC-RS-66b): this row's OWN pool options/availability/
+   * default - two rows in one multi-row dialog can name different products, and each
+   * must see its own product's own pools. Absent falls back to the dialog's own
+   * top-level `locationOptions`/`availableQtyByLocation`/`defaultLocationId` prop, so a
+   * single-row caller (or an older caller that has not moved to per-row resolution)
+   * renders exactly as before. */
+  locationOptions?: SearchableSelectOption[];
+  availableQtyByLocation?: Record<string, number>;
+  defaultLocationId?: string | null;
 }
 
 export interface ReserveRowDialogCancelControl {
@@ -537,9 +546,9 @@ export function ReserveRowDialog({
                 {soleRow ? (
                   <ReserveRowSection
                     row={soleRow}
-                    locationOptions={locationOptions}
-                    defaultLocationId={defaultLocationId}
-                    availableQtyByLocation={availableQtyByLocation}
+                    locationOptions={soleRow.locationOptions ?? locationOptions}
+                    defaultLocationId={soleRow.defaultLocationId ?? defaultLocationId}
+                    availableQtyByLocation={soleRow.availableQtyByLocation ?? availableQtyByLocation}
                     canAct={canAct}
                     onReserve={onReserve}
                     onRowConfirmed={handleRowConfirmed}
@@ -578,9 +587,9 @@ export function ReserveRowDialog({
                     <div className="text-sm font-medium">{row.itemCode}</div>
                     <ReserveRowSection
                       row={row}
-                      locationOptions={locationOptions}
-                      defaultLocationId={defaultLocationId}
-                      availableQtyByLocation={availableQtyByLocation}
+                      locationOptions={row.locationOptions ?? locationOptions}
+                      defaultLocationId={row.defaultLocationId ?? defaultLocationId}
+                      availableQtyByLocation={row.availableQtyByLocation ?? availableQtyByLocation}
                       canAct={canAct}
                       onReserve={onReserve}
                       onRowConfirmed={handleRowConfirmed}
