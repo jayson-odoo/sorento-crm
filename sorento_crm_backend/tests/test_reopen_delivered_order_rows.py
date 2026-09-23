@@ -270,14 +270,142 @@ def test_ac_ou_11d_a_cancelled_core_line_is_never_touched():
         assert world["row"].actioned_by == uploader
 
 
-def test_ac_ou_11e_a_dry_run_writes_nothing_but_still_prints_the_candidate():
-    """AC-OU-11. The default (`apply=False`) reports the same candidate list as an
-    `apply` run would, and writes nothing at all."""
+def test_ac_ou_11f_the_principal_guard_same_instant_different_actor_is_skipped():
+    """AC-OU-11, the principal half of the two-signal importer-closed test (module
+    docstring; the same test `backfill_order_back_rows.py::_is_importer_closed` uses,
+    R3/R4 precedent). `actioned_at` sits in the SAME instant as the header's own
+    `raised_at` - the CLOCK signal alone would call this importer-closed - but
+    `actioned_by` is a DIFFERENT principal from the header's own `raised_by`: a
+    purchasing user who happened to mark the row actioned in the same second the sheet
+    raised it. Never reopened."""
+    with pg_session() as db:
+        company_id = _sorento(db)
+        uploader = _uploader(db)
+        purchasing_user = _uploader(db)
+        world = _reopen_candidate(
+            db, company_id, uploader, delivery_date=date(2026, 9, 15),
+            actioned_by=purchasing_user,
+        )
+        db.commit()
+
+        result = reopen.run(
+            db, delivery_from=date(2026, 9, 1), company_code=None, apply=True,
+        )
+        db.commit()
+
+        matches = [r for r in result if r.get("delivery_date") == date(2026, 9, 15)]
+        assert matches, result
+        assert matches[0]["action"] == "skipped_person_actioned", (
+            "the CLOCK alone matched, but the PRINCIPAL differs from the header's own "
+            "raised_by - a different actor's same-instant action must never flip"
+        )
+
+        db.refresh(world["row"])
+        assert world["row"].state == INQUIRY_ACTIONED
+        assert world["row"].actioned_by == purchasing_user
+
+
+def test_ac_ou_11g_company_code_scopes_the_reopen_to_one_company():
+    """AC-OU-11, `--company` scoping (module docstring, `company_code`). The SAME SO
+    number exists in TWO companies (`so_number` is unique per company, not globally -
+    `uq_sales_orders_company_so_number`), each carrying an otherwise-identical
+    importer-closed candidate. `company_code='SRT'` reopens only SRT's row; the OTHER
+    company's identically-numbered row is untouched."""
+    with pg_session() as db:
+        sorento_id = _sorento(db)
+        other_id = _uid()
+        db.execute(text(
+            "INSERT INTO companies (id, name, code, is_active, created_at) "
+            "VALUES (:i, :n, :c, true, now())"
+        ), {"i": other_id, "n": f"{MARKER} Other Co", "c": f"{MARKER}-CO-{other_id[:6]}"})
+        db.flush()
+
+        shared_so = f"{MARKER}-SO-SHARED-{_uid()[:6]}"
+        sorento_uploader = _uploader(db)
+        other_uploader = _uploader(db)
+        sorento_world = _reopen_candidate(
+            db, sorento_id, sorento_uploader, so_number=shared_so,
+            delivery_date=date(2026, 9, 15),
+        )
+        other_world = _reopen_candidate(
+            db, other_id, other_uploader, so_number=shared_so,
+            delivery_date=date(2026, 9, 15),
+        )
+        db.commit()
+
+        result = reopen.run(
+            db, delivery_from=date(2026, 9, 1), company_code="SRT", apply=True,
+        )
+        db.commit()
+
+        matches = [r for r in result if r.get("so_number") == shared_so]
+        assert matches, result
+        assert all(r.get("company_code") == "SRT" for r in matches), (
+            "a company_code filter must never report a row from a DIFFERENT company", result,
+        )
+
+        db.refresh(sorento_world["row"])
+        assert sorento_world["row"].state == INQUIRY_RAISED, "SRT's own row must reopen"
+
+        db.refresh(other_world["row"])
+        assert other_world["row"].state == INQUIRY_ACTIONED, (
+            "the OTHER company's identically-numbered row must be untouched"
+        )
+        assert other_world["row"].actioned_by == other_uploader
+
+
+def test_ac_ou_11h_a_second_apply_run_is_idempotent():
+    """AC-OU-11, idempotence (module docstring, SAFETY / IDEMPOTENCY, the same guarantee
+    `backfill_order_back_rows.py` gives). Running `apply=True` a SECOND time over rows
+    the first run already reopened finds nothing left to flip - the candidate query is
+    `state = 'actioned'`, and a reopened row now reads `raised` - so no `reopened`
+    action appears and the row's state is unchanged by the second run."""
     with pg_session() as db:
         company_id = _sorento(db)
         uploader = _uploader(db)
         world = _reopen_candidate(db, company_id, uploader, delivery_date=date(2026, 9, 15))
         db.commit()
+
+        first = reopen.run(
+            db, delivery_from=date(2026, 9, 1), company_code=None, apply=True,
+        )
+        db.commit()
+        first_matches = [r for r in first if r.get("delivery_date") == date(2026, 9, 15)]
+        assert first_matches and first_matches[0]["action"] == "reopened", first
+
+        db.refresh(world["row"])
+        assert world["row"].state == INQUIRY_RAISED
+
+        second = reopen.run(
+            db, delivery_from=date(2026, 9, 1), company_code=None, apply=True,
+        )
+        db.commit()
+
+        second_matches = [r for r in second if r.get("delivery_date") == date(2026, 9, 15)]
+        assert second_matches == [], (
+            "a row the first run already reopened is no longer `state = actioned`, so "
+            "the second run's own candidate query must never pick it up at all", second,
+        )
+
+        db.refresh(world["row"])
+        assert world["row"].state == INQUIRY_RAISED, "the second run must change nothing"
+
+
+def test_ac_ou_11e_a_dry_run_writes_nothing_but_still_prints_the_candidate():
+    """AC-OU-11. The default (`apply=False`) reports the same candidate list as an
+    `apply` run would, and writes nothing at all.
+
+    Deliberately NO `db.commit()` before calling `run()` here, unlike its apply=True
+    siblings below: `run()` reads through the SAME session `db` is bound to, so the
+    seed's own `.flush()` calls (inside `_reopen_candidate`) are already visible to it
+    within the one open transaction - a dry run never commits internally either
+    (`if apply: db.commit()`, same shape `backfill_order_back_rows.py::run` uses), so
+    this test is the one case in the file where `pg_session`'s own rollback at teardown
+    genuinely undoes everything and no ZZT-REOP row is left committed."""
+    with pg_session() as db:
+        company_id = _sorento(db)
+        uploader = _uploader(db)
+        world = _reopen_candidate(db, company_id, uploader, delivery_date=date(2026, 9, 15))
         expected_actioned_at = world["row"].actioned_at
 
         result = reopen.run(

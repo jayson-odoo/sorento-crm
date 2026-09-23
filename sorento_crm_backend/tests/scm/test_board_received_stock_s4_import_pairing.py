@@ -157,18 +157,16 @@ def test_ac_s4_2_fifth_row_beyond_last_line_lands_as_second_row_on_it():
 
 @pytest.mark.parametrize("status", ["closed", "cancelled"])
 def test_ac_s4_3_closed_or_cancelled_line_never_paired(status: str):
-    """AC-S4-3. A closed or cancelled core line is never paired, even when it is the only
-    qty fit - R4's explicit narrowing of the older "closed lines migrate too" (D8) reading,
-    for this date-order pick alone.
-
-    Reason updated under R9 (21 Sep 2026, PLAN-board-received-stock-own-arrival,
-    AC-S4-6): this order has no open line at all, so the row is now refused with its own
-    reason `order_fully_delivered`, never the genuine-item-mismatch `no_line_for_item` -
-    this test still pins "never paired"; AC-S4-6 (below) pins the reason itself.
+    """AC-S4-3. REWRITTEN under R1 (owner, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`,
+    SO421985): a closed core line is no longer excluded from the candidate pool at all -
+    `_pick_lines_by_date_order`'s `candidates` now reads `line_status != 'cancelled'`,
+    not `== 'open'` (R4's OLDER "closed lines migrate too" (D8) exclusion, from 21 Sep
+    2026, is narrowed to CANCELLED alone). A cancelled line is the only status still
+    never paired - its own reason stays `order_fully_delivered` (AC-S4-6, R9, unchanged).
     """
     with world() as w:
         order = w.order()
-        w.line(
+        line = w.line(
             order,
             qty_ordered="30",
             qty_delivered="30" if status == "closed" else "0",
@@ -179,10 +177,18 @@ def test_ac_s4_3_closed_or_cancelled_line_never_paired(status: str):
 
         result = w.apply(data)
 
-        assert result["rows_raised"] == 0, result
-        assert w.rows() == [], "a row was raised against a closed/cancelled line"
-        assert result["rows_line_not_found"] == 1, result
-        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
+        if status == "closed":
+            assert result["rows_raised"] == 1, result
+            rows = w.rows()
+            assert len(rows) == 1, rows
+            assert str(rows[0].so_line_id) == str(w.mirror_of(line).id), (
+                "a closed line is a candidate again (R1) - the row must land on it"
+            )
+        else:
+            assert result["rows_raised"] == 0, result
+            assert w.rows() == [], "a row was raised against a cancelled line"
+            assert result["rows_line_not_found"] == 1, result
+            assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
 
 
 def test_ac_s4_4_reupload_of_both_books_restates_in_place_never_drops():
@@ -227,23 +233,16 @@ def test_ac_s4_4_reupload_of_both_books_restates_in_place_never_drops():
 
 @pytest.mark.parametrize("status", ["closed", "cancelled"])
 def test_ac_s4_6_fully_delivered_order_row_is_refused_with_its_own_reason(status: str):
-    """AC-S4-6 (R9). A sheet row for a sales order whose only line is closed or
-    cancelled - no open line survives at all - is refused with its OWN reason
-    `order_fully_delivered`, never `no_line_for_item`: the order is not adopted, no OI row
-    is written, and the old D8 history row on the closed line is not written either
-    (`w.rows() == []` covers that - nothing at all lands for this sales order).
-
-    RED today: `_pick_lines_by_date_order` filters an order down to its OPEN lines, finds
-    none, and calls `_match_row(row, [], ...)` - whose FIRST filter (`same_item`) is empty
-    regardless of WHY the candidate list is empty, so it reports `no_line_for_item`
-    (`app/services/import_outcome_codes.py::NO_LINE_FOR_ITEM`) today. The literal string
-    `"order_fully_delivered"` is asserted directly rather than importing a constant, so this
-    test stays red on the STRING even once the coder adds
-    `import_outcome_codes.ORDER_FULLY_DELIVERED` to that module.
-    """
+    """AC-S4-6 (R9). REWRITTEN under R1 (owner, 23 Sep 2026,
+    `PLAN-oi-order-rows-uncapped.md`, SO421985): only a CANCELLED-only order still has no
+    open line at all - a closed core line is a candidate again (AC-S4-3's own rewrite,
+    above), so a closed-only order is now ADOPTED and its row raised, the "no open line
+    survives" refusal (`order_fully_delivered`,
+    `app/services/import_outcome_codes.py::ORDER_FULLY_DELIVERED`) applying to the
+    cancelled case alone."""
     with world() as w:
         order = w.order()
-        w.line(
+        line = w.line(
             order,
             qty_ordered="30",
             qty_delivered="30" if status == "closed" else "0",
@@ -253,27 +252,40 @@ def test_ac_s4_6_fully_delivered_order_row_is_refused_with_its_own_reason(status
         data = book_of(w, order, [(30, date(2026, 6, 1))])
 
         preview = w.preview(data)
-        assert preview["rows_raised"] == 0, preview
-        assert preview["orders_adopted"] == 0, preview
-        assert preview["rows_line_not_found"] == 1, preview
-        assert preview["line_not_found"][0]["reason"] == "order_fully_delivered", preview
-
         result = w.apply(data)
-        assert result["rows_raised"] == 0, result
-        assert result["orders_adopted"] == 0, result
-        assert result["rows_line_not_found"] == 1, result
-        assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
-        assert w.rows() == [], "a row was written for an order with no open line at all"
+
+        if status == "closed":
+            assert preview["rows_raised"] == 1, preview
+            assert preview["orders_adopted"] == 1, preview
+            assert result["rows_raised"] == 1, result
+            assert result["orders_adopted"] == 1, result
+            rows = w.rows()
+            assert len(rows) == 1, rows
+            assert str(rows[0].so_line_id) == str(w.mirror_of(line).id)
+        else:
+            assert preview["rows_raised"] == 0, preview
+            assert preview["orders_adopted"] == 0, preview
+            assert preview["rows_line_not_found"] == 1, preview
+            assert preview["line_not_found"][0]["reason"] == "order_fully_delivered", preview
+
+            assert result["rows_raised"] == 0, result
+            assert result["orders_adopted"] == 0, result
+            assert result["rows_line_not_found"] == 1, result
+            assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
+            assert w.rows() == [], "a row was written for an order with no open line at all"
 
 
 def test_ac_s4_6_mixed_closed_and_cancelled_lines_report_order_fully_delivered():
-    """AC-S4-6 (R9). "All closed or cancelled" covers a MIX of the two statuses across an
-    order's lines, not only a single-line order of one status - the parametrized test above
-    proves each status alone; this proves the order-wide check is "no OPEN line survives",
-    not "every line shares one status"."""
+    """AC-S4-6 (R9). REWRITTEN under R1 (owner, 23 Sep 2026,
+    `PLAN-oi-order-rows-uncapped.md`): "all closed or cancelled" no longer refuses the
+    order the moment ANY line in the mix is closed - a closed line is a candidate again
+    (AC-S4-3's own rewrite), so a MIX of one closed and one cancelled line now RAISES
+    the row onto the closed one; `order_fully_delivered` survives only for an order
+    whose lines are ALL cancelled (a second block below, the shape this test used to
+    pin as its whole point)."""
     with world() as w:
         order = w.order()
-        w.line(
+        closed_line = w.line(
             order, qty_ordered="10", qty_delivered="10",
             required_date=date(2026, 5, 1), line_status="closed",
         )
@@ -281,7 +293,29 @@ def test_ac_s4_6_mixed_closed_and_cancelled_lines_report_order_fully_delivered()
             order, qty_ordered="20", qty_delivered="0",
             required_date=date(2026, 6, 1), line_status="cancelled",
         )
-        data = book_of(w, order, [(15, date(2026, 6, 1))])
+        data = book_of(w, order, [(9, date(2026, 6, 1))])
+
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        assert result["orders_adopted"] == 1, result
+        rows = w.rows()
+        assert len(rows) == 1, rows
+        assert str(rows[0].so_line_id) == str(w.mirror_of(closed_line).id), (
+            "the row must land on the closed line - the only candidate the mix offers"
+        )
+
+    with world() as w:
+        order = w.order()
+        w.line(
+            order, qty_ordered="10", qty_delivered="0",
+            required_date=date(2026, 5, 1), line_status="cancelled",
+        )
+        w.line(
+            order, qty_ordered="20", qty_delivered="0",
+            required_date=date(2026, 6, 1), line_status="cancelled",
+        )
+        data = book_of(w, order, [(9, date(2026, 6, 1))])
 
         result = w.apply(data)
 
@@ -289,6 +323,94 @@ def test_ac_s4_6_mixed_closed_and_cancelled_lines_report_order_fully_delivered()
         assert result["orders_adopted"] == 0, result
         assert result["line_not_found"][0]["reason"] == "order_fully_delivered", result
         assert w.rows() == [], "a row was written for an order with no open line at all"
+
+
+# --------------------------------------------------------------------------- #
+# R4 (captain ruling, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): OPEN     #
+# lines keep pairing priority over a closed one, whatever the two lines' own  #
+# required dates read - the date-order pick is open-first, THEN by date       #
+# within each tier, not a flat date sort across both.                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_r4_an_open_line_outranks_a_closed_one_even_with_a_later_required_date():
+    """R4. One order, one product: an OPEN line dated LATER (2026-06-01) and a CLOSED,
+    fully-delivered line dated EARLIER (2026-01-01) - a flat date sort would put the
+    closed line first. One sheet row must still land on the OPEN line, whatever the
+    two lines' own required dates read.
+
+    Second block, against the coder's own landed `_rank` (its docstring, `_rank`'s
+    `closed` tier comment, `project_order_inquiry_import_service.py`): the tier is
+    ABSOLUTE, not "open wins until its own capacity runs out, then closed" - "a closed
+    line only wins when the item's own candidate set holds no open line at all", and
+    room is a PREFERENCE among same-tier candidates (R10), never a filter that
+    exhausts one tier into the next. So a SECOND row for the same item still lands on
+    the SAME open line, not the closed one, as long as the open line remains a
+    same-item candidate at all - the closed line stays untouched (unmirrored) the
+    whole time. (Traced against the coder's in-progress code, 23 Sep 2026 - if a
+    later revision instead exhausts the open line's own capacity before falling to
+    closed, this assertion is the one to revisit, not `test_ac_s4_3_...`/`test_ac_s4_6_
+    ...` above, which pin the "no open line survives at all" shape separately.)
+
+    RED before the coder's stable open-first ordering lands in `_line_pick_key`/
+    `_pick_lines_by_date_order`: today's key sorts by `required_date` alone, so the
+    closed line (2026-01-01) would win the first row instead of the open one."""
+    with world() as w:
+        order = w.order()
+        closed_line = w.line(
+            order, qty_ordered="30", qty_delivered="30",
+            required_date=date(2026, 1, 1), line_status="closed",
+        )
+        open_line = w.line(
+            order, qty_ordered="30", qty_delivered="0",
+            required_date=date(2026, 6, 1), line_status="open",
+        )
+
+        one_row = book_of(w, order, [(10, date(2026, 6, 1))])
+        result = w.apply(one_row)
+
+        assert result["rows_raised"] == 1, result
+        rows = w.rows()
+        assert len(rows) == 1, rows
+        assert str(rows[0].so_line_id) == str(w.mirror_of(open_line).id), (
+            "the OPEN line must win the first row even though its own required date "
+            "is LATER than the closed line's"
+        )
+
+    with world() as w:
+        order = w.order()
+        closed_line = w.line(
+            order, qty_ordered="30", qty_delivered="30",
+            required_date=date(2026, 1, 1), line_status="closed",
+        )
+        open_line = w.line(
+            order, qty_ordered="30", qty_delivered="0",
+            required_date=date(2026, 6, 1), line_status="open",
+        )
+
+        two_rows = book_of(w, order, [(10, date(2026, 6, 1)), (10, date(2026, 1, 1))])
+        result = w.apply(two_rows)
+
+        # The tier is ABSOLUTE, not merely a preference that yields once the open line
+        # is "full": `_rank`'s own comment (`project_order_inquiry_import_service.py`)
+        # is explicit - "a closed line only wins when the item's own candidate set
+        # holds no open line at all". Room/free-ness only orders candidates WITHIN a
+        # tier (R10: "room is a preference ... never a filter"), so with one open line
+        # still a same-item candidate, BOTH rows land there; the closed line is never
+        # touched while any open line remains in the running - not "open-first until
+        # exhausted, then closed", but "open always, unless there is no open line at
+        # all" (the AC-S4-3/AC-S4-6 shape above).
+        assert result["rows_raised"] == 2, result
+        rows = w.rows()
+        assert len(rows) == 2, rows
+        assert {str(r.so_line_id) for r in rows} == {str(w.mirror_of(open_line).id)}, (
+            "both rows must land on the OPEN line - a closed line only becomes a "
+            "candidate at all once no open line survives for the item", rows,
+        )
+        assert w.mirror_of(closed_line) is None, (
+            "the closed line must never be adopted/mirrored while the open line "
+            "keeps absorbing every row"
+        )
 
 
 # --------------------------------------------------------------------------- #
