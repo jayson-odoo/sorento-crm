@@ -183,3 +183,92 @@ function renderStandalone(
   const { getByTestId } = render(<InnerGrid tableLayout={tableLayout} />);
   return getByTestId('inner-grid');
 }
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` section 6d G4a, `oi-request-cs-reserve-acceptance-
+ * criteria.md` AC-RS-70 (round 3).
+ *
+ * TEST-FIRST (Phase 2): today `DataGridTableBodyRowExpandded` puts `expandedContent`
+ * straight into a bare `<td colSpan={...}>` with no wrapper at all, and nothing sets a
+ * CSS variable off the scroll container's own width - so on a grid wider than its
+ * scroll container the expanded content (the OI Lines stock grid, `CellStockTable`'s
+ * own `w-full` slack Location column) stretches past the right edge. A red here is "no
+ * sticky wrapper" / "the scroller never states its own width" - the plan's own stated
+ * fix not existing yet - never an import typo.
+ *
+ * `--dg-viewport-w` is the name this test pins for the CSS variable; the coder wires it.
+ */
+describe('AC-RS-70: the expanded row stays inside the viewport (round 3)', () => {
+  function ExpandedRowHarness({
+    expandedContent,
+  }: {
+    expandedContent: () => React.ReactNode;
+  }) {
+    const columns: ColumnDef<Outer>[] = [
+      {
+        id: 'name',
+        accessorKey: 'name',
+        header: 'Location',
+        size: 300,
+        meta: { expandedContent },
+      },
+    ];
+    const table = useReactTable({
+      data: OUTER_ROWS,
+      columns,
+      getRowId: (r) => r.id,
+      getCoreRowModel: getCoreRowModel(),
+      // The row is expanded from the start - through the grid's OWN expansion state,
+      // unlike the `Nested` harness above (which calls `meta.expandedContent` by hand
+      // and so never exercises `DataGridTableBodyRowExpandded` at all).
+      initialState: { expanded: { [OUTER_ROWS[0].id]: true } },
+    });
+    return (
+      <div data-testid="expanded-outer-grid">
+        <DataGrid table={table} recordCount={OUTER_ROWS.length}>
+          <DataGridTable />
+        </DataGrid>
+      </div>
+    );
+  }
+
+  it('wraps expandedContent in a sticky, width-capped element tied to the scroll container', () => {
+    // jsdom's `clientWidth` is always 0 - stubbed so the ResizeObserver-driven variable
+    // has a real number to report, the same way the column-drag suite stubs
+    // `getBoundingClientRect` for the geometry dnd-kit needs.
+    const originalDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get: () => 800,
+    });
+
+    try {
+      const { getByTestId } = render(
+        <ExpandedRowHarness
+          expandedContent={() => <div data-testid="expanded-inner">Inner</div>}
+        />,
+      );
+
+      const inner = getByTestId('expanded-inner');
+      const wrapper = inner.parentElement as HTMLElement;
+
+      expect(wrapper.className).toMatch(/\bsticky\b/);
+      expect(wrapper.className).toMatch(/\bleft-0\b/);
+      const carriesMaxWidthVar =
+        wrapper.className.includes('max-w-[var(--dg-viewport-w') ||
+        (wrapper.style.maxWidth ?? '').includes('var(--dg-viewport-w');
+      expect(carriesMaxWidthVar).toBe(true);
+
+      // The scroll container states the variable every `expandedContent` site reads -
+      // set from its own `clientWidth` on mount (a ResizeObserver keeps it live).
+      const scroller = getByTestId('expanded-outer-grid').querySelector(
+        '[data-slot="data-grid-scroller"]',
+      ) as HTMLElement;
+      expect(scroller.style.getPropertyValue('--dg-viewport-w')).toBe('800px');
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalDescriptor);
+      }
+    }
+  });
+});

@@ -188,6 +188,10 @@ vi.mock('@/services/pendingActionService', () => ({
 }));
 
 import { OrderInquiryDetail } from './OrderInquiryDetail';
+// Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, AC-RS-65): overrides the
+// module-level mock's resolved lines per test, the same way `getReserveRequestsMock`
+// already does for the reserve-requests read.
+import { getOrderInquiryHeaderLines } from '../../../_shared/services/orderInquiryService';
 
 function renderDetail() {
   const client = new QueryClient({
@@ -358,5 +362,92 @@ describe('Re-review finding 1 (captain ruling, 23 Sep): Unreserve is reachable a
     await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
     const [call] = createPendingActionSpy.mock.calls[0] as [{ payload: { request_id: string } }];
     expect(call.payload.request_id).toBe('rr-with-link');
+  });
+});
+
+/**
+ * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, AC-RS-65). Supersedes the
+ * "first open row" clause of AC-RS-62 above: `?reserve=<request_id>` used to open the
+ * dialog for the request's FIRST open row alone - now it opens ONE dialog carrying a
+ * section for EVERY still-open row of that request, and drops the History tab (which
+ * belongs to the single-row, line-click path - AC-RS-67 pins that half in
+ * `ReserveRowDialog.test.tsx`).
+ */
+describe('AC-RS-65: ?reserve=<request_id> opens ONE dialog with a section per still-open row', () => {
+  const ROW_A = row({ id: 'row-a', item_code: 'ZZT-ROWA', reserve_state: 'requested' });
+  const ROW_B = row({ id: 'row-b', item_code: 'ZZT-ROWB', reserve_state: 'requested' });
+  const ROW_C = row({
+    id: 'row-c',
+    item_code: 'ZZT-ROWC',
+    reserve_state: 'reserved',
+    reserved_qty: '10',
+  });
+
+  /** One request, three rows: two still open, one already answered within it. */
+  const MULTI_ROW_REQUEST = {
+    id: 'rr-multi',
+    order_inquiry_id: 'oi-1',
+    ordinal: 3,
+    state: 'requested' as const,
+    requested_by: 'user-1',
+    requested_by_name: 'Joey',
+    requested_at: '2026-09-23T09:00:00',
+    note: null,
+    reserved_by_name: null,
+    reserved_at: null,
+    cancelled_at: null,
+    first_to_name: null,
+    rows: [
+      {
+        id: 'reqrow-a',
+        row_id: 'row-a',
+        item_code: 'ZZT-ROWA',
+        qty_requested: '20',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: null,
+        reason: null,
+      },
+      {
+        id: 'reqrow-b',
+        row_id: 'row-b',
+        item_code: 'ZZT-ROWB',
+        qty_requested: '15',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: null,
+        reason: null,
+      },
+      {
+        id: 'reqrow-c',
+        row_id: 'row-c',
+        item_code: 'ZZT-ROWC',
+        qty_requested: '10',
+        warehouse_id: null,
+        location: null,
+        qty_reserved: '10',
+        reason: null,
+      },
+    ],
+  };
+
+  it('two open rows + one already-reserved row: one dialog, two Confirm sections, no History tab', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, ROW_A, ROW_B, ROW_C]);
+    getReserveRequestsMock.mockResolvedValue([MULTI_ROW_REQUEST]);
+    searchParamsValue = 'reserve=rr-multi';
+
+    renderDetail();
+
+    // ONE dialog only - never one per open row.
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
+
+    // Today the deep link opens a dialog for the FIRST open row alone, so only ONE
+    // "Confirm reserved" renders here - this is where the red sits.
+    expect(await screen.findAllByRole('button', { name: /confirm reserved/i })).toHaveLength(2);
+
+    // Round 3 supersedes the single-row dialog's own History tab for this path - it
+    // lives on the line now (`ReserveRowDialog.test.tsx` AC-RS-67), never inside a
+    // multi-row deep link.
+    expect(screen.queryByRole('tab', { name: /history/i })).not.toBeInTheDocument();
   });
 });

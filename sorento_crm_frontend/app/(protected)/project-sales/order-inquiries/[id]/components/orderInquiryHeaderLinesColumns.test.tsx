@@ -12,9 +12,9 @@
  * inline `ReservePill` beside State) is new this round and sits last. Both are real,
  * shipped columns, not a merge artefact.
  */
-import { render, renderHook, screen } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
@@ -139,5 +139,82 @@ describe('AC-B3-5: the Lines tab footers total the buy rows only', () => {
     expect(screen.getByTestId('footer-qty')).toHaveTextContent(/^100$/);
     expect(screen.getByTestId('footer-taken')).toHaveTextContent(/^40$/);
     expect(screen.getByTestId('footer-remaining')).toHaveTextContent(/^60$/);
+  });
+});
+
+/**
+ * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G2, AC-RS-68). The separate
+ * `reserve` id column (see the `'Reserve'` title in the AC-B3-1 list above - a round-2
+ * artefact this round retires) is deleted; the State cell itself becomes the click
+ * target - amber `Request to reserve` / green `Reserved N` with a tick, both a button
+ * named `Reserve`, and the plain `OrderInquiryStatePill` on every other row.
+ *
+ * `column.cell(...)` is called directly with a minimal `{ row: { original } }` context
+ * - the same shape the real cell renderer destructures (`({ row }) => ...row.original`)
+ * - rather than mounting a full react-table instance, the same trick
+ * `useOrderInquiryHeaderLinesColumns` itself needs no table state to answer.
+ */
+describe('AC-RS-68: the State cell carries the reserve state; no separate Reserve column', () => {
+  function stateColumnCell(
+    row: OrderInquiryWorklistRow,
+    onReserveClick?: (row: OrderInquiryWorklistRow) => void,
+  ) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns({ onReserveClick }));
+    const stateColumn = result.current.find(
+      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(stateColumn).toBeDefined();
+    return stateColumn!.cell({ row: { original: row } });
+  }
+
+  it('no column carries id "reserve" any more', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+
+    expect(
+      result.current.find((column) => (column as { id?: string }).id === 'reserve'),
+    ).toBeUndefined();
+  });
+
+  it('a requested row: amber "Request to reserve" pill, a Reserve button, calling onReserveClick with the row', () => {
+    const onReserveClick = vi.fn();
+    const requestedRow = linesRow({
+      id: 'row-req',
+      state: 'raised',
+      reserve_state: 'requested',
+    });
+
+    render(<>{stateColumnCell(requestedRow, onReserveClick)}</>);
+
+    const button = screen.getByRole('button', { name: 'Reserve' });
+    expect(button).toHaveTextContent('Request to reserve');
+    fireEvent.click(button);
+    expect(onReserveClick).toHaveBeenCalledWith(requestedRow);
+  });
+
+  it('a reserved row: green "Reserved N" pill with a Check tick, a Reserve button, calling onReserveClick with the row', () => {
+    const onReserveClick = vi.fn();
+    const reservedRow = linesRow({
+      id: 'row-res',
+      state: 'partly_linked',
+      reserve_state: 'reserved',
+      reserved_qty: '3',
+    });
+
+    const { container } = render(<>{stateColumnCell(reservedRow, onReserveClick)}</>);
+
+    const button = screen.getByRole('button', { name: 'Reserve' });
+    expect(button).toHaveTextContent('Reserved 3');
+    expect(container.querySelector('svg.lucide-check')).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(onReserveClick).toHaveBeenCalledWith(reservedRow);
+  });
+
+  it('a row with no reserve state: the plain OrderInquiryStatePill, no Reserve button', () => {
+    const plainRow = linesRow({ id: 'row-plain', state: 'placed', reserve_state: null });
+
+    render(<>{stateColumnCell(plainRow)}</>);
+
+    expect(screen.queryByRole('button', { name: 'Reserve' })).not.toBeInTheDocument();
+    expect(screen.getByText('On PO/SPO')).toBeInTheDocument();
   });
 });

@@ -1281,3 +1281,106 @@ describe('CellStockTable: the S3 jump handles', () => {
     expect(() => act(() => ref.current?.jumpToDonor())).not.toThrow();
   });
 });
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` section 6d G4b, `oi-request-cs-reserve-acceptance-
+ * criteria.md` AC-RS-70 (round 3, the `CellStockTable` half).
+ *
+ * TEST-FIRST (Phase 2): `overscroll-x-contain` is still on the wrapper today, which is
+ * exactly what stops a shift-wheel / two-finger swipe over the table from chaining to
+ * the parent OI Lines grid's own scroller (`data-grid-table.tsx:171`'s own doc records
+ * the identical trap for the grid itself). A red here is "the class is still there" -
+ * never a crash.
+ */
+describe('AC-RS-70: the wrapper lets a shift-wheel scroll chain to the parent grid (round 3 G4b)', () => {
+  it('carries overflow-x-auto and drops overscroll-x-contain', () => {
+    renderTable([position()]);
+
+    const wrapper = screen.getByTestId('cell-stock-table');
+    expect(wrapper.className).toContain('overflow-x-auto');
+    expect(wrapper.className).not.toContain('overscroll-x-contain');
+  });
+});
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` section 6d G5, `oi-request-cs-reserve-acceptance-
+ * criteria.md` AC-RS-71 (round 3).
+ *
+ * TEST-FIRST (Phase 2): the Location header carries no resize affordance at all today -
+ * every assertion below starts from `getByTestId('cell-stock-location-resize')`, which
+ * does not exist yet. A red here is "no such element" - missing behaviour, not a
+ * fixture bug.
+ */
+describe('AC-RS-71: the Location column is resizable and remembered per browser (round 3 G5)', () => {
+  const STORAGE_KEY = 'cellStockTable.locationWidth';
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  function locationHeader(): HTMLElement {
+    return screen.getByRole('columnheader', { name: /location/i });
+  }
+
+  it('renders a resize handle on the Location header', () => {
+    renderTable([position()]);
+
+    expect(screen.getByTestId('cell-stock-location-resize')).toBeInTheDocument();
+  });
+
+  it('reads a stored width back on the next mount', () => {
+    window.localStorage.setItem(STORAGE_KEY, '200');
+    renderTable([position()]);
+
+    expect(locationHeader().style.width).toBe('200px');
+  });
+
+  it('dragging the handle grows the width from a stored baseline, and persists the new one', () => {
+    window.localStorage.setItem(STORAGE_KEY, '200');
+    renderTable([position()]);
+
+    const handle = screen.getByTestId('cell-stock-location-resize');
+    const th = locationHeader();
+    expect(th.style.width).toBe('200px');
+
+    fireEvent.pointerDown(handle, { clientX: 300 });
+    fireEvent.pointerMove(handle, { clientX: 400 });
+    fireEvent.pointerUp(handle);
+
+    expect(th.style.width).toBe('300px');
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('300');
+  });
+
+  it('never drags the width below a 120px floor', () => {
+    window.localStorage.setItem(STORAGE_KEY, '200');
+    renderTable([position()]);
+
+    const handle = screen.getByTestId('cell-stock-location-resize');
+    const th = locationHeader();
+
+    fireEvent.pointerDown(handle, { clientX: 300 });
+    fireEvent.pointerMove(handle, { clientX: -1000 });
+    fireEvent.pointerUp(handle);
+
+    expect(th.style.width).toBe('120px');
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('120');
+  });
+
+  it('keeps today’s w-full slack class, and still offers the handle, when nothing is stored', () => {
+    renderTable([position()]);
+
+    expect(locationHeader().className).toContain('w-full');
+    expect(screen.getByTestId('cell-stock-location-resize')).toBeInTheDocument();
+  });
+
+  it('still renders the table, resize handle included, when localStorage throws', () => {
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage disabled');
+    });
+
+    expect(() => renderTable([position()])).not.toThrow();
+    expect(screen.getByTestId('cell-stock-location-resize')).toBeInTheDocument();
+
+    spy.mockRestore();
+  });
+});

@@ -403,3 +403,136 @@ describe('read-only without the reserve permission (AC-RS-62 half)', () => {
     expect(screen.queryByRole('button', { name: /unreserve/i })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G1, `oi-request-cs-reserve-
+ * acceptance-criteria.md` AC-RS-66/AC-RS-67). The email deep link used to open this
+ * dialog for ONE row (`rowId`/`itemCode`/`openRequest`/`history`/`netReservedQty` as
+ * top-level scalar props, everything above this block). Round 3 replaces that shape
+ * with `rows: [...]`, length 1..N, keeping every OTHER prop (`open`, `onOpenChange`,
+ * `locationOptions`, `defaultLocationId`, `availableQtyByLocation`, `canAct`,
+ * `onReserve`, `onConfirmed`, `unreserveControl`, `cancelControl`) at the top level -
+ * ONE section per row, its own Confirm reserved, and a History tab ONLY when `rows`
+ * carries exactly one entry (the line-click path keeps AC-RS-61's tabs unchanged; the
+ * multi-row deep-link path has none, since history lives on the line - AC-RS-65 pins
+ * that half in `OrderInquiryDetail.reserveIcon.test.tsx`).
+ *
+ * TEST-FIRST (Phase 2): today the component reads none of `rows` - it still reads the
+ * OLD top-level `rowId`/`itemCode`/`openRequest`/`history`/`netReservedQty`, every one
+ * of which is `undefined` when only `rows` is passed. `history` is read unguarded
+ * (`history.find(...)`) even on the "nothing reserved" branch, so a bare `rows`-only
+ * render throws before any assertion runs - `history={[]}`/`netReservedQty="0"` are
+ * handed at the top level below PURELY to dodge that crash and land on the real
+ * red: the dialog still renders through the OLD single-row reading (an item code /
+ * Confirm button that belong to no row in `rows` at all), never the new shape.
+ */
+describe('AC-RS-66/AC-RS-67 (round 3): rows - one section per row, tabs only for a single row', () => {
+  function rowFixture(over: Partial<Record<string, unknown>> = {}) {
+    return {
+      rowId: 'row-1',
+      itemCode: 'B2155-NL-BLUE',
+      openRequest: openRequestFixture(),
+      history: historyFixture(),
+      netReservedQty: '0',
+      ...over,
+    };
+  }
+
+  function renderMultiRowDialog(
+    rows: unknown[],
+    overrides: Partial<Record<string, unknown>> = {},
+  ) {
+    return render(
+      <ReserveRowDialog
+        open
+        onOpenChange={vi.fn()}
+        rows={rows as never}
+        // Top-level fallbacks so the component's own unguarded `history.find(...)`
+        // does not throw before the assertions below get to run - see the doc above.
+        history={[] as never}
+        netReservedQty="0"
+        locationOptions={[
+          { value: 'brw-id', label: 'BRW' },
+          { value: 'dc1-id', label: 'DC1' },
+        ]}
+        defaultLocationId="brw-id"
+        availableQtyByLocation={{ 'brw-id': 90, 'dc1-id': 5 }}
+        canAct
+        onReserve={onReserveSpy as never}
+        onConfirmed={vi.fn()}
+        unreserveControl={idleUnreserveControl()}
+        {...(overrides as never)}
+      />,
+    );
+  }
+
+  it('rows length 1: tabs Reserve and History, and the ONE row’s own item code and Confirm reserved', async () => {
+    renderMultiRowDialog([
+      rowFixture({
+        rowId: 'row-1',
+        itemCode: 'B2155-NL-BLUE',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+      }),
+    ]);
+
+    expect(await screen.findByText(/B2155-NL-BLUE/)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /reserve/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm reserved/i })).toBeInTheDocument();
+  });
+
+  it('rows length 2: no History tab, and each row gets its own section with its own Confirm reserved', async () => {
+    renderMultiRowDialog([
+      rowFixture({
+        rowId: 'row-1',
+        itemCode: 'B2155-NL-BLUE',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+      }),
+      rowFixture({
+        rowId: 'row-2',
+        itemCode: 'B2155-NL-RED',
+        openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+      }),
+    ]);
+
+    expect(screen.queryByRole('tab', { name: /history/i })).not.toBeInTheDocument();
+    expect(await screen.findAllByText(/B2155-NL-BLUE/)).not.toHaveLength(0);
+    expect(screen.getAllByText(/B2155-NL-RED/).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: /confirm reserved/i })).toHaveLength(2);
+  });
+
+  it('confirming one section flips it to a read-only "Reserved N" line, the other stays editable; confirming the last closes the dialog', async () => {
+    const onOpenChangeSpy = vi.fn();
+    renderMultiRowDialog(
+      [
+        rowFixture({
+          rowId: 'row-1',
+          itemCode: 'B2155-NL-BLUE',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '20' }),
+        }),
+        rowFixture({
+          rowId: 'row-2',
+          itemCode: 'B2155-NL-RED',
+          openRequest: openRequestFixture({ requestId: 'rr-1', qtyRequested: '15' }),
+        }),
+      ],
+      { onOpenChange: onOpenChangeSpy },
+    );
+
+    const confirmButtons = await screen.findAllByRole('button', { name: /confirm reserved/i });
+    expect(confirmButtons).toHaveLength(2);
+
+    fireEvent.click(confirmButtons[0]);
+    await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(1));
+    expect(onReserveSpy).toHaveBeenCalledWith('rr-1', 'row-1', expect.any(Object));
+
+    // The first section is now read-only; the second row still offers its own Confirm.
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /confirm reserved/i })).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm reserved/i }));
+    await waitFor(() => expect(onReserveSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onOpenChangeSpy).toHaveBeenCalledWith(false));
+  });
+});
