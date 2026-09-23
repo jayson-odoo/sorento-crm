@@ -85,3 +85,26 @@ before this lane and present on every dialog across the app).
 
 Not cleaned up: request #4 (`B2155-NL-BLUE`/`CB2807-DIY`, still open) is left on `OI-000750` in
 this worktree's own dev database - test data on an isolated per-lane backend, not shared/prod.
+
+## Fix round 3 (23 Sep) - regressions R1/R2 + should-fixes F1/F2/F3
+
+Session `oireserve-r3-fix3`, 1280x800, logged in as the E2E test user, navigated fresh from `/`
+via the sidebar (Procurement -> Supply Chain -> Order Inquiries -> search `OI-000750`, same id as
+above).
+
+| Finding | What was checked | Evidence | Result |
+| --- | --- | --- | --- |
+| R1 | Clicked the `Request to reserve` pill on `B2155-NL-BLUE` (single-row, line-click path, request #4 from round 2's own evidence) - Location defaulted BRW available 87, Reserved defaulted 12 (full match, no Reason needed). Clicked Confirm reserved: toast "Reserved" fired, and the dialog's own Reserve tab immediately read `Reserved 12 @ BRW` with an `Unreserve` button - reachable in the SAME dialog session, no close/reopen needed (the bug: the old gate hid `ReserveRowSection` for the whole session, so this button never appeared until the dialog was closed and reopened). | `fix3-R1-confirm-then-unreserve.png` | PASS |
+| R2 | Created a fresh two-row request (#5, `CWCY604-SH` qty 2 + `C-FH16` qty 156, both "To buy" rows ticked via Actions -> Request CS to reserve), then opened `?reserve=<request #5 id>`. Both sections' own Confirm reserved were clicked in ONE synchronous `eval` call (`document.querySelectorAll('button').filter(...).forEach(b => b.click())`) - both `POST .../rows/<id>/reserve` calls returned 200 (`network requests --filter /reserve --method POST`), and the dialog closed itself exactly once (the URL lost `?reserve=` with no further action). Re-read the Lines grid afterward: both rows now read `Reserved 2` / `Reserved 156` (`aria-label="Reserve"` button text), and the grid's own Taken/Remaining columns read 2/0 and 156/0 - both writes landed, neither flip was lost. | `fix3-R2-two-confirms.png` | PASS |
+| F1 | Not independently re-driven live this round - the exact "3-row request, dialog carries only 1" and "answered by someone else" scenarios need mocked request shapes a real OI's own live data does not happen to carry; `OrderInquiryDetail.reserveIcon.test.tsx`'s own new F1 suite (3 tests) pins the server-truth computation directly. R1's own live pass above DOES exercise the real `completes` path end-to-end: `B2155-NL-BLUE` was the only open row left in request #4 (`CB2807-DIY` already answered earlier) at the time of its confirm, so the toast read "Reserved, Teh Jayson notified" (not captured in the S1 nit's own PASS row above, but consistent with F1's fix - `completes` correctly read `true` off the request's own row list). | - | Covered by vitest (3 tests) + consistent with R1's own live toast |
+| F2 (cancelControl) | Not independently re-driven live this round - reproducing "primary row answered while another stays open, viewer lacks the reserve permission" needs a second held session (or a direct API POST as a different user) mid-dialog, which the coder's own single logged-in session cannot exercise live without also faking a second identity; `OrderInquiryDetail.reserveIcon.test.tsx`'s own new F2 suite reproduces the exact race (mocked `invalidateQueries` landing mid-session) and asserts Cancel request survives it. | - | Covered by vitest (1 test) |
+| F2 (empty vs read-only) | Not independently re-driven live (would need a second, non-reserve-permission user account) - `ReserveRowDialog.test.tsx`'s own corrected suite (`canAct false with open rows: every section still renders ... read-only`) pins the fixed behaviour directly, replacing the test that pinned the wrong one. | - | Covered by vitest (2 tests) |
+| F3 | `data-dnd-disabled` (not `aria-disabled`) confirmed via the vitest suite's own DOM read (`components/ui/data-grid-table-dnd.header.test.tsx`); no live-visible difference (an attribute rename, not a behaviour change) so no separate screenshot. | - | Covered by vitest (6 tests) |
+
+`errors` clean throughout this run (no uncaught page errors); `console` carried only the same
+pre-existing Radix `Missing Description for {DialogContent}` warning already noted in round 2,
+unrelated to this fix.
+
+Not cleaned up: request #4 is now FULLY answered (`B2155-NL-BLUE` reserved 12, `CB2807-DIY`
+already reserved from round 2); request #5 (`CWCY604-SH`/`C-FH16`) is also fully answered - both
+left on `OI-000750` in this worktree's own dev database, test data only.
