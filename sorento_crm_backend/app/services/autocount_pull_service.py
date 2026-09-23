@@ -18,6 +18,7 @@ directly - see the test file's module docstring.
 """
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from datetime import datetime, timedelta
@@ -30,6 +31,8 @@ from sqlalchemy.orm import Session
 from app.models.job import ImportJob, JobStatus
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.queue_service import enqueue_job
+
+logger = logging.getLogger(__name__)
 
 #: Entity name (as the FE/route spells it) -> the permission slug that gates it.
 ENTITY_PERMISSIONS = {
@@ -300,6 +303,42 @@ def refresh_pull_status(db: Session, job: ImportJob) -> dict:
             db.refresh(job)
 
     return serialize(job, db)
+
+
+def advance_building_pulls(db: Session) -> int:
+    """Server-side driver for the build -> preview transition (D27). Before this, the
+    preview task was only ever enqueued by a browser's `GET /pulls/{id}` poll, so a
+    snapshot that finished building with nobody watching the tab sat idle - one SRT
+    products pull, 23 Sep 2026, went 34 minutes untouched between FoundryX reporting
+    `ready` and the owner reopening the page. Called every 30s from a scheduler tick.
+
+    Selects every still-`building` pull (`pending` job, stored phase `building`) and
+    runs the SAME `refresh_pull_status` a browser poll would, one at a time, each in
+    its own `try/except` so one pull's FoundryX error never stops the rest - the next
+    tick retries it unchanged. Nothing new is marked failed here: `refresh_pull_status`
+    already owns build expiry and FoundryX `failed`. Returns the number of pulls
+    iterated; zero `building` pulls means zero FoundryX calls (nothing here constructs
+    a client before the loop).
+    """
+    jobs = (
+        db.query(ImportJob)
+        .filter(
+            ImportJob.job_type.in_(list(JOB_TYPES.values())),
+            ImportJob.status == JobStatus.PENDING.value,
+            ImportJob.job_metadata["autocount_pull"]["phase"].astext == "building",
+        )
+        .order_by(ImportJob.created_at.asc())
+        .all()
+    )
+    for job in jobs:
+        try:
+            refresh_pull_status(db, job)
+        except Exception:
+            logger.warning(
+                "advance_building_pulls: refresh failed for pull job %s", job.id, exc_info=True
+            )
+            db.rollback()
+    return len(jobs)
 
 
 def serialize(job: ImportJob, db: Session) -> dict:
