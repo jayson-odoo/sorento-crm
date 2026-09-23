@@ -2343,9 +2343,12 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     wh_inputs = [{"warehouse_id": str(r["warehouse_id"]),
                   "demand_rate": float(r["avg_daily_demand"] or 0.0),
                   # The cell's own net: on hand + SPO + the open PO book - what is
-                  # committed, project demand included. The project channel is NETTED here
-                  # rather than added on top of a retail-only sizing, because there is one
-                  # net now and the level is measured against all of it (AC-R2).
+                  # committed, project demand included. This net (and therefore `agg`,
+                  # `agg["warehouses"]`'s per-location deficit, and every DISPLAY figure
+                  # this function freezes - on hand, the row's `net`, the split) stays the
+                  # PRE-Lane-F, one-formula reading: what changed 23 Sep is which figure
+                  # the BUY is SIZED against, not what the plan shows the buyer happened
+                  # at each location - see the `retail_agg` comment below the trigger.
                   #
                   # The cell's own net, which counts the SITE POOL only (R19, captain 28
                   # Aug - superseding AC-R1's "the total across all locations"). Stock in a
@@ -2355,25 +2358,20 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                  for r, c in zip(prows, cells)]
     # PLAN-reorder-one-formula.md (owner ruling, 11 Sep 2026): "no level = 0" - a product
     # nobody has set a level for is planned against a target of 0, the SAME trigger and
-    # sizing path a level-set product goes through, never a special case. Project demand
-    # is already inside `net` (folded in above, "AC-R2"), so level 0 alone is enough to
-    # buy it - the #794 bypass that bought the confirmed Project Buy IN FULL, with no
-    # netting against on-hand/SPO/PO at all, is retired: it is exactly the double-buy /
-    # under-buy bug this plan fixes (measured on B2155-NL-BLUE: bypass bought 493, the
-    # one formula buys 196). `level` itself (possibly None) is still what is FROZEN onto
-    # the row (`inputs.reorder_level`, `needs_level` below) - only the sizing target
-    # substitutes 0. Project runs are the DELIBERATE EXCEPTION since R1a (owner ruling A,
-    # 22 Sep 2026, `PLAN-reorder-plan-project-only.md`): a Project run buys the confirmed
-    # row in full again, un-netted - not a reinstatement of the retired #794 bypass, which
-    # ran on EVERY run; this one is scoped to `demand_class == "project"` alone (the
-    # `project_only` branch a few lines down) and every other run keeps the one-formula
-    # netting this comment describes.
+    # sizing path a level-set product goes through, never a special case. `level` itself
+    # (possibly None) is still what is FROZEN onto the row (`inputs.reorder_level`,
+    # `needs_level` below) - only the sizing target substitutes 0. Project runs are the
+    # DELIBERATE EXCEPTION since R1a (owner ruling A, 22 Sep 2026,
+    # `PLAN-reorder-plan-project-only.md`): a Project run buys the confirmed row in full
+    # again, un-netted - scoped to `demand_class == "project"` alone (the `project_only`
+    # branch a few lines down).
     effective_level = level if level is not None else 0.0
     agg = eng.aggregate_product(wh_inputs, level=effective_level, moq=moq,
                                 order_multiple=order_multiple)
-    # Confirmed unplaced Project Buy - demand only, folded into `net` above (never added a
-    # second time here). Still summed for the `project_need`/`retail_need` display split
-    # below (AC-F03: the two halves must sum to what was actually sized).
+    # Confirmed unplaced Project Buy - RAW demand. Summed for the `project_need`/
+    # `retail_need` display split below (AC-F03: the two halves must sum to what was
+    # actually sized) AND, since Lane F (23 Sep 2026), for the amount added on top of
+    # Retail's own sizing when this run is not project-only (below).
     pool_project_need = sum(float(c.get("project_need") or 0.0) for c in cells)
     # PROJECT-ONLY (`PLAN-reorder-plan-project-only.md`, owner ruling R1, 22 Sep 2026): the
     # product-grain twin of `_emit_pool`'s branch - a Project run sizes this product on its
@@ -2400,10 +2398,39 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
             if triggered else None
         )
     else:
-        triggered, reason_label = eng.trigger("reorder_level", net=agg["agg_net"],
-                                              reorder_level=effective_level)
-        recommended = float(agg["recommended_qty"]) if triggered else 0.0
-        rounded = float(agg["buy_qty"]) if triggered else 0.0
+        # LANE F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026,
+        # CB4702 x 493 hidden behind 702 on hand): Retail's own trigger/sizing is
+        # recomputed on a SEPARATE aggregate keyed by `retail_net` (project stripped back
+        # out, `_compute_cell`'s own display figure) rather than read off `agg["agg_net"]`
+        # above (project folded IN, "AC-R2") - `agg`/`wh_inputs` themselves stay untouched
+        # (they still feed the on-hand/net/split figures this row DISPLAYS, unaffected by
+        # this lane). The confirmed project need, net only of a confirmed Reserve/Borrow
+        # claim (`project_supply_reduction` - a decision CS already made against these
+        # rows), is then added RAW on top - the SAME shape `_emit_pool`'s own `else`
+        # branch already uses. `triggered` fires on EITHER half, so a product short only
+        # of firm project Buy, sitting above its retail level, still buys. MOQ/order-
+        # multiple apply ONCE, to the combined figure, below - never to
+        # `retail_agg["buy_qty"]` (Retail's own rounding) nor to `pool_project_need`
+        # separately.
+        retail_wh_inputs = [{"warehouse_id": str(r["warehouse_id"]),
+                             "demand_rate": float(r["avg_daily_demand"] or 0.0),
+                             "net": float(c.get("retail_net") or 0.0)}
+                            for r, c in zip(prows, cells)]
+        retail_agg = eng.aggregate_product(retail_wh_inputs, level=effective_level, moq=moq,
+                                           order_multiple=order_multiple)
+        retail_triggered, reason_label = eng.trigger(
+            "reorder_level", net=retail_agg["agg_net"], reorder_level=effective_level)
+        retail_recommended = float(retail_agg["recommended_qty"]) if retail_triggered else 0.0
+        project_reduction = sum(
+            float(c.get("project_supply_reduction") or 0.0) for c in cells)
+        project_part = max(pool_project_need - project_reduction, 0.0)
+        triggered = retail_triggered or project_part > 0
+        recommended = retail_recommended + project_part
+        rounded = (eng.round_order_qty(recommended, moq, order_multiple)
+                   if triggered and recommended > 0 else 0.0)
+        if project_part > 0 and not retail_triggered:
+            reason_label = (
+                f"project buy: {_qty_label(project_part)} confirmed unplaced Buy in this pool")
     if project_only:
         # (review S2, round 2) The same fix as `_emit_pool`'s deficit loop: `agg`'s own
         # per-location `deficit` (`max(-net, 0.0)`, `aggregate_product`) is netted against
@@ -2684,48 +2711,73 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     project_committed = float(row.get("project_committed") or 0.0)
     project_need = float(row.get("project_confirmed_committed") or 0.0)
     project_supply_reduction = float(row.get("project_supply_reduction") or 0.0)
-    # RETAIL's own net, for the channel drill alone (AC-F07): the firm project channel
-    # taken back out (`net` already subtracted it as part of `committed`) and the stock a
-    # project has already claimed removed, so the drill can say what Retail on its own is
-    # short by. It is a DISPLAY figure and it no longer sizes anything - see below.
+    # RETAIL's own net, for the channel drill (AC-F07) AND - since Lane F, below - what
+    # Retail is actually SIZED against: the firm project channel taken back out (`net`
+    # already subtracted it as part of `committed`) and the stock a project has already
+    # claimed removed.
     retail_net = net + project_need - project_supply_reduction
-    # THE net the buy is sized against (ONE FORMULA, PLAN-reorder-one-formula.md AC-3):
-    # `net` with project demand INSIDE it, exactly as the product-grain path sizes
-    # (`_emit_product`: "the project channel is NETTED here rather than added on top of a
-    # retail-only sizing"). Only `project_supply_reduction` comes off it - units physically
-    # on hand, and therefore inside `net`, that CS has already promised to a project, so
-    # planning may not count them as supply twice.
-    #
-    # Sizing against `retail_net` instead is what silently DROPPED confirmed project
-    # demand from a location-grain buy: S4 retired the old "+ project_need" addition on the
-    # correct reasoning that project belongs inside the net, but `retail_net` is precisely
-    # the net with project taken OUT, so neither half counted it. Measured on the
-    # ZZTCHRM-DJ fixture (retail 30 + class-less 7 + firm project 12, on hand 0): the row
-    # sized 37 where the formula says 49, i.e. a customer's 12 confirmed units bought as 0.
-    sizing_net = net - project_supply_reduction
 
+    # LANE F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 - supersedes
+    # the ONE-FORMULA ruling below for the project channel): Retail is triggered and sized
+    # against `retail_net` (project stripped back out), and the confirmed project need -
+    # net only of a confirmed Reserve/Borrow claim (`project_supply_reduction`, a decision
+    # CS already made against THIS row) - is added RAW on top, never netted against
+    # on-hand/SPO/PO. `triggered` fires on EITHER half: a location short only of firm
+    # project Buy has no retail deficit of its own and must still buy. This is the SAME
+    # shape `_emit_pool`/`_plan_network` already used (their own `retail_net`-keyed
+    # `wh_inputs` plus a raw project add-on) - `_emit_cell`/`_emit_product` are the two
+    # paths this lane brings into line with it.
+    #
+    # Measured (CB4702/OI-000749/SO421985, 23 Sep): a confirmed ORDER_BACK row of 493,
+    # product on hand 702 (326 BRW + 376 BRW-IR). The ONE-FORMULA sizing below (`net` with
+    # project INSIDE it, `sizing_net = net - project_supply_reduction`) netted the 493
+    # against the 702, read `sizing_net = 209 >= rop`, and hid the row as covered - on an
+    # All run only; a Project run already bought the 493 in full (R1a). Owner: "should
+    # apply the same for both." Sizing project INSIDE `net` is what let stock nobody
+    # promised to a project hide a confirmed customer commitment; adding it raw on top,
+    # like the pool already does, is the fix.
+    #
+    # ONE FORMULA (`PLAN-reorder-one-formula.md` AC-3, 11 Sep 2026 - the project HALF is
+    # superseded by Lane F above; kept for why `retail_net`-only sizing was wrong for
+    # RETAIL's own share before this lane, and still governs the reorder_level "no level =
+    # 0" rule `_emit_product` applies): project belongs inside ONE net rather than bolted
+    # on top of a retail-only figure unconditionally - S4 retired the old bare
+    # "+ project_need" addition (issue #794) on that reasoning, but sizing against
+    # `retail_net` (project taken OUT) repeated the same mistake with the sign flipped:
+    # neither half counted it. Measured on the ZZTCHRM-DJ fixture (retail 30 + class-less 7
+    # + firm project 12, on hand 0): the row sized 37 where the formula said 49, i.e. a
+    # customer's 12 confirmed units bought as 0. Lane F's raw add-on (never netted, always
+    # counted) closes that gap from the other direction: the two rulings agree that project
+    # demand must never be silently dropped, and disagree only on whether on hand may cover
+    # it - Lane F's owner ruling says it may not.
+    #
     # on_cadence=True: in M3 every run counts as a review cadence (periodic_review always
     # gets to fire when below order-up-to). Real cadence scheduling (only fire on the SKU's
     # due review date) is future work.
     triggered, reason_label = eng.trigger(
-        policy_type, net=sizing_net, rop=rop, min_level=min_override, oup=oup,
+        policy_type, net=retail_net, rop=rop, min_level=min_override, oup=oup,
         on_cadence=True, reorder_level=reorder_level)
     # On this basis the level IS the order-up-to: order the difference, nothing more.
     target = reorder_level if policy_type == "reorder_level" else oup
     # Unrounded on purpose: MOQ and the order multiple are applied ONCE, to the whole
-    # need, below. Rounding one channel's half and then adding the other's would apply the
-    # supplier's terms to one channel and not the other.
-    recommended, _unrounded = eng.order_qty(
-        triggered, net=sizing_net, oup=target, moq=None, order_multiple=None)
+    # need (retail + project), below. Rounding one channel's half and then adding the
+    # other's would apply the supplier's terms to one channel and not the other.
+    retail_recommended, _unrounded = eng.order_qty(
+        triggered, net=retail_net, oup=target, moq=None, order_multiple=None)
     # RETAIL's own gap, beside its own net, for the drill - and the figure an AGGREGATE
     # basis (`_emit_pool`, `_plan_network`, `_emit_product`) reads off this cell. Left
     # UNCAPPED here, along with `project_need`: an aggregate sums the raw per-location
     # figures and applies the AC-F03 cap once, against the quantity IT sized, so capping
     # them per cell would zero a location that is individually untriggered inside a group
     # that is genuinely short. The capped DISPLAY split of a location-grain row's own buy
-    # is applied where that row is emitted (`_emit_cell`).
-    retail_need, _unrounded_retail = eng.order_qty(
-        triggered, net=retail_net, oup=target, moq=None, order_multiple=None)
+    # is applied where that row is emitted (`_emit_cell`). Since Lane F this IS the figure
+    # `recommended` sizes retail on, so the two can no longer disagree.
+    retail_need = retail_recommended
+    project_part = max(project_need - project_supply_reduction, 0.0)
+    if project_part > 0 and not triggered:
+        triggered = True
+        reason_label = f"project buy: {_qty_label(project_part)} confirmed unplaced Buy in this pool"
+    recommended = retail_recommended + project_part
     rounded = (eng.round_order_qty(recommended, moq, order_multiple)
                if triggered and recommended > 0 else 0.0)
     if not triggered:
