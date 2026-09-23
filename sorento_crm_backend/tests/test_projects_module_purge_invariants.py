@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from pathlib import Path
 
 import pytest
+from sqlalchemy import CheckConstraint
 
 from app.database import Base
 from app.models import projects as projects_models
@@ -47,6 +49,32 @@ MODEL_MODULES = (projects_models, project_so_models)
 #: Foreign keys the database resolves without help, so the delete ORDER cannot break on them.
 #: CASCADE takes the child with the parent; SET NULL leaves it behind, detached.
 SELF_RESOLVING = frozenset({"CASCADE", "SET NULL"})
+
+
+def _one_of_n_check_columns(table) -> frozenset[str]:
+    """Column names THIS table's own CHECK constraints count in an "exactly one of
+    these must be set" group (`ck_order_inquiry_links_one_target`, for the one that
+    matters here) - detected off the constraint's own SQL text, not a hardcoded column
+    list, so a future one-target CHECK is caught the same way with no edit here.
+
+    Security review round 2, B2: a SET NULL foreign key onto one of these columns is
+    NOT self-resolving the way the blanket `SELF_RESOLVING` set above assumes. Ordinary
+    SET NULL just detaches a child that stays legal with a null parent; here the CHECK
+    can flip from satisfied to violated the instant purge sets ONE column of the group
+    NULL while the row already holds none of the others (`order_inquiry_reserve_request_
+    rows` deleted before `order_inquiry_links` used to do exactly that).
+    """
+    covered: set[str] = set()
+    for constraint in table.constraints:
+        if not isinstance(constraint, CheckConstraint) or constraint.sqltext is None:
+            continue
+        text = str(constraint.sqltext)
+        if not re.search(r"=\s*1\b", text):
+            continue
+        for column in table.columns:
+            if re.search(rf"\b{re.escape(column.name)}\b", text):
+                covered.add(column.name)
+    return frozenset(covered)
 
 #: The frontend's copy of the same list, read by the uninstall dialog. `tests/` sits at
 #: <repo>/sorento_crm_backend/tests, so the repo root is two levels up.
@@ -176,13 +204,20 @@ def test_children_are_deleted_before_their_parents():
     violations: list[str] = []
     for index, model in enumerate(PURGE_ORDER):
         table = model.__table__
+        guarded_columns = _one_of_n_check_columns(table)
         for constraint in table.foreign_key_constraints:
             target = list(constraint.elements)[0].column.table.fullname
             if target == table.fullname or target not in position:
                 # Self-references resolve within one statement; targets outside the module
                 # are core tables purge never deletes, so their order here is irrelevant.
                 continue
-            if (constraint.ondelete or "").upper() in SELF_RESOLVING:
+            ondelete = (constraint.ondelete or "").upper()
+            fk_column_names = {col.name for col in constraint.columns}
+            # B2 (security review round 2): SET NULL onto a column a one-of-N CHECK
+            # covers is not self-resolving - see `_one_of_n_check_columns`.
+            if ondelete in SELF_RESOLVING and not (
+                ondelete == "SET NULL" and fk_column_names & guarded_columns
+            ):
                 continue
             if index > position[target]:
                 violations.append(

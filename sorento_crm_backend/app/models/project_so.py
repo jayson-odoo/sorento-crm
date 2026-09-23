@@ -1204,15 +1204,194 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
+    #: PLAN-oi-request-cs-reserve.md 3.1: the THIRD target a link may name - a row of an
+    #: `OrderInquiryReserveRequest` Eling confirmed.
+    #:
+    #: `CASCADE`, NOT `SET NULL` (B2, security review round 2 - the original `SET NULL`
+    #: was wrong, not merely unsafe-by-omission: `__table_args__` below requires EXACTLY
+    #: ONE of the three targets set at all times, so setting only THIS one null while a
+    #: reserve link's other two are already null leaves the row satisfying none of them,
+    #: which the CHECK rejects outright). Deleting the request row this link was made
+    #: against removes the placement WITH it - there is no "keep the link, forget which
+    #: request confirmed it" reading the CHECK would even allow, unlike a PO/SPO link,
+    #: whose OTHER two targets stay null while its own document is merely re-imported.
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.order_inquiry_reserve_request_rows.id",
+            ondelete="CASCADE",
+            name="fk_order_inquiry_links_reserve_request_row",
+        ),
+        nullable=True,
+    )
+
     __table_args__ = (
         CheckConstraint(
-            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int"
+            " + (reserve_request_row_id IS NOT NULL)::int = 1",
             name="ck_order_inquiry_links_one_target",
         ),
         CheckConstraint("qty > 0", name="ck_order_inquiry_links_qty_positive"),
         Index("ix_order_inquiry_links_row", "row_id"),
         Index("ix_order_inquiry_links_po_line", "po_line_id"),
         Index("ix_order_inquiry_links_spo_allocation", "spo_allocation_id"),
+        Index("ix_order_inquiry_links_reserve_request_row", "reserve_request_row_id"),
+        # SF-9 (security review, `oirs_0002_reserve_round2` amended): the lost-update
+        # backstop for `reserve_row` - at most one link may ever name a given reserve
+        # request row, so a caller that reaches the flush on a stale read (the
+        # `.with_for_update()` lock in the service is the primary defence) hits this
+        # constraint and 409s instead of writing a second link. Partial: the CHECK
+        # above already requires exactly one target per link, so every non-reserve
+        # link leaves this column NULL and must stay out of the unique set.
+        Index(
+            "uq_order_inquiry_links_reserve_request_row",
+            "reserve_request_row_id",
+            unique=True,
+            postgresql_where=text("reserve_request_row_id IS NOT NULL"),
+        ),
+        {"schema": "projects"},
+    )
+
+
+#: PLAN-oi-request-cs-reserve.md (R1-R11): purchasing asks CS to cover part of a row from
+#: own or pool stock before buying the balance. Two tables: the REQUEST (one per ask,
+#: `OI-2609-0678 request #2`, addressed by ordinal within the inquiry rather than its own
+#: number - R5 repeats the cycle on the remaining qty rather than amending) and its ROWS
+#: (one per order-inquiry row asked, `OrderInquiryReserveRequestRow` below).
+RESERVE_REQUESTED = "requested"
+RESERVE_RESERVED = "reserved"
+RESERVE_CANCELLED = "cancelled"
+
+
+class OrderInquiryReserveRequest(Base, CompanyScopedMixin):
+    """One "request CS to reserve" ask, covering one or more order inquiry rows.
+
+    `ordinal` addresses it within the inquiry (`OI-2609-0678 request #2`) - a reserve
+    request earns no number of its own (section 2, "Reserve requests get NO number").
+    `state` walks `requested` -> `reserved` (Eling's Confirm, 3.3) or `requested` ->
+    `cancelled` (the requester's own Cancel, or anyone holding the reserve permission,
+    3.2); once `reserved` it stays history even if every link it wrote is later unlinked
+    (R5's "no amend after confirm; repeat instead", AC-RS-14).
+    """
+
+    __tablename__ = "order_inquiry_reserve_requests"
+    __audit_entity_type__ = "project_order_inquiry_reserve_requests"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    order_inquiry_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ordinal = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, server_default=RESERVE_REQUESTED)
+    requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    requested_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    note = Column(Text, nullable=True)
+    reserved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reserved_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    cancelled_at = Column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            f"state IN ('{RESERVE_REQUESTED}', '{RESERVE_RESERVED}', '{RESERVE_CANCELLED}')",
+            name="ck_order_inquiry_reserve_requests_state",
+        ),
+        UniqueConstraint(
+            "order_inquiry_id", "ordinal", name="uq_order_inquiry_reserve_requests_ordinal"
+        ),
+        Index("ix_order_inquiry_reserve_requests_inquiry", "order_inquiry_id"),
+        {"schema": "projects"},
+    )
+
+
+class OrderInquiryReserveRequestRow(Base, CompanyScopedMixin):
+    """One order inquiry row named on a reserve request.
+
+    `warehouse_id` defaults to the row's own pool (R3) at request time and is Eling's own
+    to change at reserve time (3.3) - stored here, never re-derived, so the reserved mail
+    and the link's own `document` always print what she actually chose. `qty_reserved` is
+    null while the request is open; the moment Eling confirms it holds the answer for
+    every row of the request in one call (3.3's all-or-nothing), including a genuine `0`
+    with its required `reason`.
+    """
+
+    __tablename__ = "order_inquiry_reserve_request_rows"
+    __audit_entity_type__ = "project_order_inquiry_reserve_request_rows"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_reserve_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    qty_requested = Column(Numeric(15, 4), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    qty_reserved = Column(Numeric(15, 4), nullable=True)
+    reason = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("qty_requested > 0", name="ck_order_inquiry_reserve_rows_qty_positive"),
+        UniqueConstraint(
+            "request_id", "row_id", name="uq_order_inquiry_reserve_request_rows_row"
+        ),
+        Index("ix_order_inquiry_reserve_request_rows_request", "request_id"),
+        Index("ix_order_inquiry_reserve_request_rows_row", "row_id"),
+        {"schema": "projects"},
+    )
+
+
+#: PLAN-oi-request-cs-reserve.md section 6c, F3: one history row per reserve/unreserve
+#: on a request row. `requested` / `cancelled` are never rows here - they derive straight
+#: off `OrderInquiryReserveRequest` (`requested_at`/`requested_by`, `cancelled_at`/
+#: `cancelled_by`), which is already the one copy of that fact.
+RESERVE_EVENT_RESERVED = "reserved"
+RESERVE_EVENT_UNRESERVED = "unreserved"
+
+
+class OrderInquiryReserveEvent(Base, CompanyScopedMixin):
+    """One reserve or unreserve on a request row - the dialog's own History tab (F3).
+
+    `reserve_request_row_id` CASCADEs off its own parent row, so the history a request
+    row's `reserve/unreserve` calls wrote goes with it rather than orphaning; a reserve
+    LINK is a separate, live fact (`OrderInquiryLink.reserve_request_row_id`,
+    `SET NULL`) - this table is the append-only audit trail beside it, never the source
+    of the link's own quantity.
+    """
+
+    __tablename__ = "order_inquiry_reserve_events"
+    __audit_entity_type__ = "project_order_inquiry_reserve_events"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_reserve_request_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(16), nullable=False)
+    qty = Column(Numeric(15, 4), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    note = Column(Text, nullable=True)
+    actor_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            f"kind IN ('{RESERVE_EVENT_RESERVED}', '{RESERVE_EVENT_UNRESERVED}')",
+            name="ck_order_inquiry_reserve_events_kind",
+        ),
+        CheckConstraint("qty > 0", name="ck_order_inquiry_reserve_events_qty_positive"),
+        Index("ix_order_inquiry_reserve_events_row", "reserve_request_row_id"),
         {"schema": "projects"},
     )
 

@@ -142,35 +142,49 @@ export function isInquiryBuyRow(verb: string): boolean {
 }
 
 /**
- * Taken: this row's own links, summed - `linked_qty` already IS that sum (the REAL links
- * only, never the synthetic "via PO" entries, per `OrderInquiryRow.linked_qty`'s own doc
- * comment). `-` on a notice row (AC-B3-3): an ADVANCE/DELAY/CHANGE_SO/... row never carries
- * a link of its own, and a `0` there would read as "nothing was taken" rather than "this
- * question does not apply to this row".
+ * Taken: this row's own links, summed, PLUS what CS has reserved off it (review round 2,
+ * B1 / `PLAN-oi-request-cs-reserve.md` section 7: "this lane only adds reserved_qty to
+ * those figures") - `linked_qty` deliberately excludes a reserve link
+ * (`links_for_rows`'s own AC-RS-12 note: a reserve link is not a PO/SPO document), so
+ * `reserved_qty` is the ONLY other place that quantity can come from.
  */
-export function inquiryRowTaken(
-  row: Pick<OrderInquiryWorklistRow, 'verb' | 'linked_qty'>,
-): string {
-  if (!isInquiryBuyRow(row.verb)) return '-';
-  return formatInquiryQty(row.linked_qty ?? '0');
+function inquiryRowTakenQty(
+  row: Pick<OrderInquiryWorklistRow, 'linked_qty' | 'reserved_qty'>,
+): number {
+  return Number(row.linked_qty ?? '0') + Number(row.reserved_qty ?? '0');
 }
 
 /**
- * Remaining: Qty minus Taken minus bundled, never negative (AC-B3-2). `-` on a notice row
- * (AC-B3-3, same reason as Taken above); `0` on a row itself `cancelled` or whose sales-
- * order LINE is cancelled (AC-B3-4, `line_cancelled`) - that quantity is called off, not
- * still owed.
+ * Taken: this row's own links, summed - `linked_qty` already IS that sum (the REAL links
+ * only, never the synthetic "via PO" entries, per `OrderInquiryRow.linked_qty`'s own doc
+ * comment) - plus `reserved_qty` (see `inquiryRowTakenQty` above). `-` on a notice row
+ * (AC-B3-3): an ADVANCE/DELAY/CHANGE_SO/... row never carries a link of its own, and a
+ * `0` there would read as "nothing was taken" rather than "this question does not apply
+ * to this row".
+ */
+export function inquiryRowTaken(
+  row: Pick<OrderInquiryWorklistRow, 'verb' | 'linked_qty' | 'reserved_qty'>,
+): string {
+  if (!isInquiryBuyRow(row.verb)) return '-';
+  return formatInquiryQty(String(inquiryRowTakenQty(row)));
+}
+
+/**
+ * Remaining: Qty minus Taken (links + reserved) minus bundled, never negative (AC-B3-2).
+ * `-` on a notice row (AC-B3-3, same reason as Taken above); `0` on a row itself
+ * `cancelled` or whose sales-order LINE is cancelled (AC-B3-4, `line_cancelled`) - that
+ * quantity is called off, not still owed.
  */
 export function inquiryRowRemaining(
   row: Pick<
     OrderInquiryWorklistRow,
-    'verb' | 'qty' | 'linked_qty' | 'bundled_qty' | 'state' | 'line_cancelled'
+    'verb' | 'qty' | 'linked_qty' | 'reserved_qty' | 'bundled_qty' | 'state' | 'line_cancelled'
   >,
 ): string {
   if (!isInquiryBuyRow(row.verb)) return '-';
   if (row.state === 'cancelled' || row.line_cancelled) return '0';
   const remaining =
-    Number(row.qty ?? '0') - Number(row.linked_qty ?? '0') - Number(row.bundled_qty ?? '0');
+    Number(row.qty ?? '0') - inquiryRowTakenQty(row) - Number(row.bundled_qty ?? '0');
   return formatInquiryQty(String(Math.max(remaining, 0)));
 }
 
@@ -194,12 +208,12 @@ export function inquiryRowCountsForFooter(
 export function inquiryFooterTotals(
   rows: Pick<
     OrderInquiryWorklistRow,
-    'verb' | 'state' | 'line_cancelled' | 'qty' | 'linked_qty' | 'bundled_qty'
+    'verb' | 'state' | 'line_cancelled' | 'qty' | 'linked_qty' | 'reserved_qty' | 'bundled_qty'
   >[],
 ): { qty: number; taken: number; remaining: number } {
   const counted = rows.filter(inquiryRowCountsForFooter);
   const qty = counted.reduce((total, row) => total + Number(row.qty ?? '0'), 0);
-  const taken = counted.reduce((total, row) => total + Number(row.linked_qty ?? '0'), 0);
+  const taken = counted.reduce((total, row) => total + inquiryRowTakenQty(row), 0);
   const bundled = counted.reduce((total, row) => total + Number(row.bundled_qty ?? '0'), 0);
   return { qty, taken, remaining: Math.max(qty - taken - bundled, 0) };
 }

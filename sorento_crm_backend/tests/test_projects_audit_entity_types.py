@@ -70,6 +70,13 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-oi-header-list-detail.md S1, migration 523_oi_monthly_no_raises: born straight
     # into `projects` the same way.
     "order_inquiry_raises",
+    # PLAN-oi-request-cs-reserve.md S1, migration oirs_0001_reserve_requests: born straight
+    # into `projects` the same way.
+    "order_inquiry_reserve_requests",
+    "order_inquiry_reserve_request_rows",
+    # PLAN-oi-request-cs-reserve.md section 6c, migration oirs_0002_reserve_round2: born
+    # straight into `projects` the same way.
+    "order_inquiry_reserve_events",
 })
 
 
@@ -98,6 +105,9 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
     from app.models.project_so import (
         OrderInquiryLink,
+        OrderInquiryReserveEvent,
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequestRow,
         SOSupplyDecision,
         SOSupplyDecisionDraft,
     )
@@ -111,6 +121,20 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     assert (
         _audit_entity_type(SOSupplyDecisionDraft)
         == "project_so_supply_decision_drafts"
+    )
+    # PLAN-oi-request-cs-reserve.md S1: the same convention, pinned at birth.
+    assert (
+        _audit_entity_type(OrderInquiryReserveRequest)
+        == "project_order_inquiry_reserve_requests"
+    )
+    assert (
+        _audit_entity_type(OrderInquiryReserveRequestRow)
+        == "project_order_inquiry_reserve_request_rows"
+    )
+    # PLAN-oi-request-cs-reserve.md section 6c: the same convention, pinned at birth.
+    assert (
+        _audit_entity_type(OrderInquiryReserveEvent)
+        == "project_order_inquiry_reserve_events"
     )
 
 

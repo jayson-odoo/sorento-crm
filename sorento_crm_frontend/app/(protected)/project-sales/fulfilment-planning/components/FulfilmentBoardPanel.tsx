@@ -1982,6 +1982,10 @@ export function FulfilmentBoardPanel({
                 // the effect the list reads it with.
                 focusKey={focusKey}
                 onFocusHandled={handleLeftOutLineFocused}
+                // AC-RS-42: the SAME pool-share policy the grid's own cell dialog passes,
+                // so a line's Stock button reads the site-pool subtotal the tenant actually
+                // runs rather than the component's own constant default.
+                poolSharePct={board.data?.pool_share_pct}
               />
             ) : (
               <>

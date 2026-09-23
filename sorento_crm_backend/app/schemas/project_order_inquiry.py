@@ -11,9 +11,10 @@ raw ``verb`` so the screen can colour by verb while printing what purchasing rea
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.services.uuid_path_param import UUID_PATTERN
 
@@ -304,6 +305,12 @@ class OrderInquiryWorklistRow(BaseModel):
     so_date: Optional[date] = None
     so_number: Optional[str] = None
     item_code: Optional[str] = None
+    #: Addressing only, never rendered - two products on the live book share one item
+    #: code, so a caller that keys a stock lookup off `item_code` risks the wrong one
+    #: (`PLAN-oi-request-cs-reserve.md` section 6 item 1). Already selected by `_COLUMNS`
+    #: (`Product.id.label("product_id")`); declared here because `response_model` drops
+    #: what it is not told about.
+    product_id: Optional[str] = None
     product_name: Optional[str] = None
     qty: str
     delivery_date: Optional[date] = None
@@ -435,6 +442,15 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
+    #: request row exists, `reserved` once something has actually been reserved (and no
+    #: open request), else null. Declared here because `response_model` silently drops a
+    #: field it has not been told about.
+    reserve_state: Optional[str] = None
+    #: 3.4 (AC-RS-12): the sum of the row's reserve links - a THIRD figure beside
+    #: `taken_from_po`/`remaining_open`, both of which already include it (they sum by
+    #: `row_id` with no target filter).
+    reserved_qty: str = "0"
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -1258,3 +1274,129 @@ class OrderInquiryRelatedDocumentsOut(BaseModel):
 
     purchase_orders: List[OrderInquiryRelatedPOOut] = []
     spos: List[OrderInquiryRelatedSPOOut] = []
+
+
+# ------------------------------------------------------- request CS to reserve (3.2/3.3)
+
+
+def _finite_qty(value: str) -> str:
+    """SF-9 (security review): `"nan"`/`"inf"`/`"-inf"` construct a valid `Decimal`
+    (no exception at parse time) and only blow up - `decimal.InvalidOperation` -> an
+    uncaught 500 - on the FIRST comparison the service makes against one, on reserve,
+    unreserve and create alike. Pydantic answers 422 here, before any of that code
+    runs; `order_inquiry_reserve_service._dec` rejects the same shape as its own
+    belt-and-braces, for a caller that reaches the service directly."""
+    try:
+        parsed = Decimal(value)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("must be a valid number") from None
+    if not parsed.is_finite():
+        raise ValueError("must be a finite number")
+    return value
+
+
+class ReserveRequestRowIn(BaseModel):
+    """One order-inquiry row named on a request (3.2). `warehouse_id` omitted means the
+    pool of the row's own `stock_location` (R3).
+
+    N-2 (review round): `row_id`/`warehouse_id` are UUID-PATTERNED - a malformed value
+    reached a raw `.id.in_([...])` downstream and 500'd instead of 422."""
+
+    row_id: str = Field(..., pattern=UUID_PATTERN)
+    qty_requested: str
+    warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+
+    _qty_requested_finite = field_validator("qty_requested")(_finite_qty)
+
+
+class CreateReserveRequestIn(BaseModel):
+    rows: List[ReserveRequestRowIn]
+    #: N-4 (review round): an arbitrarily long note lands verbatim in an outgoing email
+    #: body / the worklist chip.
+    note: Optional[str] = Field(None, max_length=5000)
+
+    @model_validator(mode="after")
+    def _no_duplicate_rows(self) -> "CreateReserveRequestIn":
+        """N-2: the SAME `row_id` named twice in one CREATE payload used to write two
+        `OrderInquiryReserveRequestRow`s for one row, together requesting more than the
+        row's own remaining - refused here, before any write, same wording family as
+        the service's own "already has an open reserve request" (`reserve_request_
+        already_open`)."""
+        seen: set = set()
+        for row in self.rows:
+            if row.row_id in seen:
+                raise ValueError(
+                    f"Row {row.row_id} already has an open reserve request on this ask."
+                )
+            seen.add(row.row_id)
+        return self
+
+
+# --------------------------------------------------------- request CS to reserve, round 2
+
+
+class ReserveRowIn(BaseModel):
+    """`POST .../reserve-requests/{request_id}/rows/{row_id}/reserve` (F2): answers ONE
+    request row. `row_id` is on the PATH (`OrderInquiryRow.id`, the id every other route
+    on this row already keys by), never repeated in the body."""
+
+    warehouse_id: str = Field(..., pattern=UUID_PATTERN)
+    qty_reserved: str
+    reason: Optional[str] = Field(None, max_length=2000)
+
+    _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+
+
+class UnreserveRowIn(BaseModel):
+    """`POST .../reserve-requests/{request_id}/rows/{row_id}/unreserve` (F5)."""
+
+    qty: str
+    note: Optional[str] = Field(None, max_length=5000)
+
+    _qty_finite = field_validator("qty")(_finite_qty)
+
+
+class ReserveHistoryEntryOut(BaseModel):
+    """One line of the dialog's History tab (F3): `kind` is `requested` / `reserved` /
+    `unreserved` / `cancelled`, newest first. `actor_name` is always a human name or
+    email, never a UUID (Cursor rules)."""
+
+    kind: str
+    qty: Optional[str] = None
+    location: Optional[str] = None
+    reason: Optional[str] = None
+    actor_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class OrderInquiryReserveRequestRowOut(BaseModel):
+    id: str
+    row_id: str
+    item_code: Optional[str] = None
+    qty_requested: str
+    warehouse_id: Optional[str] = None
+    location: Optional[str] = None
+    qty_reserved: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class OrderInquiryReserveRequestOut(BaseModel):
+    """`POST .../reserve-requests`, `.../reserve-requests/{id}/cancel`, `.../reserve`
+    (AC-RS-1, AC-RS-19, AC-RS-6). `notified_name` is the first resolved recipient of the
+    request mail, read back for the dialog's own toast (plan 3.7) - null when the
+    request automation is disabled or holds no recipient yet (nothing has broken; there
+    is simply nobody configured to name)."""
+
+    id: str
+    order_inquiry_id: str
+    ordinal: int
+    state: str
+    requested_by: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    note: Optional[str] = None
+    reserved_by_name: Optional[str] = None
+    reserved_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    rows: List[OrderInquiryReserveRequestRowOut] = []
+    notified_name: Optional[str] = None

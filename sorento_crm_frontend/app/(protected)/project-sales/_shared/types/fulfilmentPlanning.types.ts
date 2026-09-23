@@ -2183,6 +2183,16 @@ export interface StockDetail {
    */
   group?: string | null;
   bins?: StockDetailBin[];
+  /**
+   * `PLAN-oi-request-cs-reserve.md` 3.9: one entry per member of `bins` (the same set), in
+   * `CellStockTable`'s own shape - so the OI stock grid (`OrderInquiryStockGrid`) renders the
+   * SAME component the board's cell dialog does, rather than a second matrix built from
+   * `bins` alone, which carries on-hand only. `where` is `group` for every member of a
+   * GROUP read (this endpoint carries no asking line, so it cannot say which one bin is
+   * "its own") and `own` for a plain one-bin read; `net`/`net_of` are stated on a GROUP
+   * read only.
+   */
+  locations?: BoardCellLocation[];
   qty_on_hand: string;
   so_qty: string;
   spo_qty: string;

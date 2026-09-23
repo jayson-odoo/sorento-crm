@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  PackageSearch,
 } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -15,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import {
   BoardDecisionPill,
@@ -40,10 +42,31 @@ import {
 } from '../../_shared/lib/supplyVocabulary';
 import type { SupplyPart } from '../../_shared/lib/supplyVocabulary';
 import type {
+  BoardCell,
   BoardContribution,
   BoardDecision,
   BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
+
+/**
+ * A single-line CELL, built from the contribution itself (`PLAN-oi-request-cs-reserve.md`
+ * 3.9, AC-RS-42): the list view has no grid-axis cell to point at (the row IS the line), so
+ * this wraps the line's own `locations` - the SAME per-location stock position the grid's
+ * cell carries for it - in the shape `BoardCellBreakdownDialog` already renders, unchanged.
+ * `bucket_key` is the contribution's own key: unique per row, and never read as a real date
+ * bucket by the dialog (it only uses it as half of a remount key and a fallback label).
+ */
+function boardCellForContribution(contribution: BoardContribution): BoardCell {
+  return {
+    item_code: contribution.item_code,
+    bucket_key: contribution.key,
+    total_qty: contribution.qty_outstanding ?? contribution.qty,
+    locations: contribution.locations ?? [],
+    contributions: [contribution],
+    unplannable_count: contribution.unplannable ? 1 : 0,
+    contested_count: contribution.contested ? 1 : 0,
+  };
+}
 
 /**
  * The board as a LIST, not a grid: one row per contributing line across every cell (D2,
@@ -66,6 +89,7 @@ export function FulfilmentBoardListView({
   pageResetKey,
   focusKey,
   onFocusHandled,
+  poolSharePct,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -105,7 +129,26 @@ export function FulfilmentBoardListView({
   focusKey?: string | null;
   /** Fired once `focusKey` has been opened, so the caller can clear it for the next click. */
   onFocusHandled?: () => void;
+  /**
+   * The board's own `pool_share_pct` (LADDER v8, R-K), threaded through to the per-line
+   * Stock dialog exactly as the grid's own cell dialog receives it - a line's `locations`
+   * can carry a site-pool row as readily as a cell's can.
+   */
+  poolSharePct?: number;
 }) {
+  /**
+   * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
+   * view's cell strip does, scoped to this one line - never a second table reinventing what
+   * `BoardCellBreakdownDialog` already draws.
+   */
+  const [openContribution, setOpenContribution] = React.useState<BoardContribution | null>(
+    null,
+  );
+  const openCell = React.useMemo(
+    () => (openContribution ? boardCellForContribution(openContribution) : null),
+    [openContribution],
+  );
+
   /**
    * Which rows are open - the same STATE the cell breakdown keeps, and the same panel inside
    * it, opened as MANY at a time here (AC-C12: Expand all would mean nothing on a list that
@@ -515,17 +558,50 @@ export function FulfilmentBoardListView({
         // Numeric, not the raw string `qty_outstanding`/`qty` ride on - a lexicographic
         // sort would put "20" ahead of "9" (owner ruling, 22 Sep 2026).
         accessorFn: (row) => Number(row.qty_outstanding ?? row.qty ?? 0),
+        // #1119 (owner ruling, 22 Sep 2026): the sortable `DataGridColumnHeader`, titled
+        // "Outstanding qty" - every column header carries a sort control, this one included.
+        // AC-RS-42 names the clickable figure inside the cell "the To plan figure"; that is
+        // the qty button below, not the column's own title.
         header: ({ column }) => <DataGridColumnHeader title="Outstanding qty" column={column} />,
-        cell: ({ row }) => (
-          <span className="flex min-w-0 items-center gap-1">
-            <span className="block min-w-0 truncate tabular-nums">
-              {row.original.qty_outstanding ?? row.original.qty}
+        cell: ({ row }) => {
+          const contribution = row.original;
+          return (
+            <span className="flex min-w-0 items-center gap-1">
+              <button
+                type="button"
+                className="block min-w-0 truncate text-start tabular-nums hover:underline"
+                data-testid={`board-list-to-plan-${contribution.key}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setOpenContribution(contribution);
+                }}
+              >
+                {contribution.qty_outstanding ?? contribution.qty}
+              </button>
+              {changeIcons(contribution, 'outstanding')}
+              {/* AC-RS-42: a labelled Stock button per row, opening the SAME dialog the
+                  grid view's cell strip does - purchasing used to leave this screen and
+                  open the grid just to check one line's own stock. */}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 gap-1 px-1.5"
+                aria-label="Stock"
+                data-testid={`board-list-stock-${contribution.key}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setOpenContribution(contribution);
+                }}
+              >
+                <PackageSearch className="size-3.5" aria-hidden />
+                <span className="hidden xl:inline">Stock</span>
+              </Button>
             </span>
-            {changeIcons(row.original, 'outstanding')}
-          </span>
-        ),
-        size: 100,
-        minSize: 90,
+          );
+        },
+        size: 160,
+        minSize: 140,
         enableSorting: true,
       },
       {
@@ -680,7 +756,7 @@ export function FulfilmentBoardListView({
         minSize: 170,
       },
     ],
-    [changeIcons, dirtySetterFor, draft, onDecide, openRow],
+    [changeIcons, dirtySetterFor, draft, onDecide, openRow, setOpenContribution],
   );
 
   return (
@@ -761,6 +837,23 @@ export function FulfilmentBoardListView({
       focusRowId={focusKey}
     />
     <UnsavedDecisionPrompt state={expansion} />
+    {/* AC-RS-42: the grid view's OWN dialog, unchanged, opened here for one line at a time -
+        the expanded decision panel above is untouched. */}
+    {openCell && (
+      <BoardCellBreakdownDialog
+        cell={openCell}
+        bucketLabel={
+          openContribution?.required_date
+            ? formatDateInMalaysia(openContribution.required_date)
+            : 'No date'
+        }
+        draft={draft}
+        poolSharePct={poolSharePct}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        onClose={() => setOpenContribution(null)}
+      />
+    )}
     </>
   );
 }
