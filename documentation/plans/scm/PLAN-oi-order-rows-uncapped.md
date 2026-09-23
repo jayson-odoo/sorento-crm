@@ -1,6 +1,6 @@
 # PLAN: An ORDER inquiry row is owed until it is linked, whatever AutoCount says about the line (23 Sep 2026)
 
-Status: BUILT 23 Sep 2026, review in progress; browser AC-OU-12 queued (no slot). Feature track (one demand fragment
+Status: BUILT 23 Sep 2026, review round 2; browser AC-OU-12 queued (no slot). Feature track (one demand fragment
 across the view, the plan SELECT and the worklist ORM twin, a view migration, a bounded
 reopen script).
 UAC: `oi-order-rows-uncapped-acceptance-criteria.md`.
@@ -62,15 +62,36 @@ order". A raised ORDER row is buy demand until purchasing links it, full stop.
   scm.committed_v` with the new frozen body `_AS_OF_527`, 525's body frozen beside it for
   the downgrade; `down_revision` = current single head; drift guard in
   `tests/scm/test_committed_v_migration_chain.py` registers 527.
-- S3 Importer: `_close_history` candidates = rows whose core line has `line_status ==
-  "cancelled"` only (replace the `_is_open_demand` test at `:3177`); docstring updated (R2).
+- S3 Importer, what shipped (review round 2, R2 turned out to reach deeper than the candidate
+  test alone): `_pick_lines_by_date_order`'s own candidate gate widens from `line_status ==
+  "open"` to `line_status != "cancelled"` - a closed/delivered line is a raise CANDIDATE again,
+  not merely a line `_close_history` used to be trusted to close afterwards - so a sheet row
+  against a delivered line now raises directly instead of being refused `order_fully_delivered`
+  before it ever reaches `raise_row`. With that gate widened, `_close_history` is dead (a
+  cancelled line never reaches `raise_row` at all, so nothing raised is ever a candidate to
+  close) and is deleted outright, along with its call site, the `history` list, and
+  `_is_open_demand` (zero remaining callers). Nothing closes on upload any more. R4 (captain,
+  23 Sep 2026): open lines keep PAIRING PRIORITY over closed ones, ABSOLUTE - admitting a
+  closed line as a candidate must never let it outrank a pre-existing open line, whatever
+  the date order or how many rows already sit on it, so both `_line_pick_key` and the
+  per-row `_rank` closure sort OPEN before CLOSED as their own dominant tier, ahead of
+  free/room/last-resort; a row reaches a closed line only once the item's own candidate set
+  on that order holds no open line at all.
 - S4 Reopen script `scripts/reopen_delivered_order_rows.py --delivery-from YYYY-MM-DD
   [--company CODE] [--apply]`: rows `verb IN (ORDER, ORDER_BACK)`, `state = actioned`,
   importer-closed (`actioned_by == order_inquiries.raised_by` and `actioned_at` within 60 s
   of `raised_at` or of `raised_at + 8 h`, the same test `backfill_order_back_rows.py` uses),
   core line `line_status != cancelled`, `delivery_date >= --delivery-from`, unlinked qty >
   0 -> `state = raised`, `actioned_by/at` NULL, header `raised`. Dry run by default prints
-  SO, item, qty, delivery, company; `--apply` commits once; `--delivery-from` mandatory.
+  SO, item, qty, delivery, company; `--apply` commits once; `--delivery-from` mandatory. The
+  scope is not only "delivered" rows: it reopens any importer-closed row the old
+  `_is_open_demand` test would have stamped `actioned` for ANY reason - `line_status !=
+  open`, `purchasing_status = covered`, or qty 0 alike - as long as the core line is not
+  cancelled and the delivery date clears the cutoff (or carries none at all, which always
+  clears it regardless of `--delivery-from`, the same "unscheduled demand is still demand"
+  reading `horizon_committed_select_sql` gives it). Measured on the 23 Sep copy this is 0
+  rows for `covered` and 0 for qty-0 beyond the delivered shape already counted, so R3's
+  168-row / 9,221-unit figure (option B) is the real scope, not an undercount.
 - S5 Picker / plan / board: nothing to change; they read the fragments.
 
 ## 5. Test list (tester first)
@@ -81,8 +102,10 @@ order". A raised ORDER row is buy demand until purchasing links it, full stop.
 - Worklist Remaining: same 493 on the delivered line.
 - Candidate orders: an SO whose only rows are ORDER on delivered lines is listed with
   rows_total 3 (SO421985 shape).
-- Importer: ORDER row uploaded against a delivered `closed` line -> state raised; against a
-  `cancelled` line -> actioned (history) as today; ORDER_BACK unchanged.
+- Importer: ORDER row uploaded against a delivered `closed` line -> raised (candidate gate
+  widened, AC-OU-7); against a `cancelled` line -> refused with its existing reason code,
+  no row created, nothing history-closed (`_close_history` retired, AC-OU-8); ORDER_BACK
+  unchanged. Open lines keep pairing priority over closed ones (R4, captain, 23 Sep 2026).
 - Migration 527 drift guard + in-place round trip (clone the 525 test).
 - Reopen script: importer-closed row with delivery 15 Sep and `--delivery-from 2026-09-01`
   flips; delivery 15 Aug does not; person-actioned does not; cancelled line does not; dry

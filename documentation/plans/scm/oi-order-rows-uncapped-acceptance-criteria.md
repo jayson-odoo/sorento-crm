@@ -12,8 +12,14 @@ Plan: `PLAN-oi-order-rows-uncapped.md`. AC-OU-n.
 - AC-OU-5: The worklist Remaining for the AC-OU-1 row is 493.
 - AC-OU-6: `/reorder-runs/candidate-orders` lists an SO whose only rows are ORDER rows on
   delivered lines, `rows_total` equal to the row count.
-- AC-OU-7: Uploading an ORDER row against a delivered, closed line stores state `raised`.
-- AC-OU-8: Uploading an ORDER row against a cancelled line still stores state `actioned`.
+- AC-OU-7: Uploading an ORDER row against a delivered, closed line RAISES it (state
+  `raised`) - the candidate gate widens to `line_status != "cancelled"`, so the row reaches
+  `raise_row` directly rather than being refused `order_fully_delivered`.
+- AC-OU-8: Uploading an ORDER row against a cancelled line does NOT raise - it is skipped
+  with the existing cancelled reason code (`order_fully_delivered` when it is the order's
+  only line, `no_line_for_item`-style refusal otherwise) - and nothing is history-closed:
+  `_close_history` is retired (R2), a cancelled line is refused before a row is ever raised
+  against it.
 - AC-OU-9: Migration 527 re-creates `scm.committed_v` in place, same columns and types,
   round-trips with 525, and the drift guard passes.
 - AC-OU-10: `scripts/reopen_delivered_order_rows.py` refuses to run without

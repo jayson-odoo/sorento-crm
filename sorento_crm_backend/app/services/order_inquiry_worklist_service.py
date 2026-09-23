@@ -1767,15 +1767,16 @@ class OrderInquiryWorklistService:
         carries links, so per `so_line_id`:
 
         * `taken` - the sum of every LINK on the line's rows, whatever document it names;
-        * `remaining` - the sum of `qty - linked` across them, floored at zero, which is
-          exactly `scm.committed_v`'s own confirmed leg (migrations 422, 511, 527) and
-          therefore exactly what still flows to reorder planning. UNCAPPED (owner ruling
-          R1, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): SO421985 raised three ORDER
-          rows of 493, the AutoCount pull then marked the lines delivered 493/493, and a
-          Remaining that capped at the line's outstanding read 0 for a row nobody had
-          linked - the 14 Sep cap this replaced fixed the opposite defect (SO368872 /
-          SRTWC286-SH, Remaining 302 beside a Buy card of 0) but the owner has since ruled
-          the row is owed regardless of what the line's delivered column says.
+        * `remaining` - the sum of `qty - linked` across them, floored at zero. NOT the
+          SAME expression as `scm.committed_v`'s confirmed leg - `bundled_qty` is not
+          subtracted here, unlike the view's own `- oir.bundled_qty`. UNCAPPED either way
+          (owner ruling R1, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): SO421985
+          raised three ORDER rows of 493, the AutoCount pull then marked the lines
+          delivered 493/493, and a Remaining that capped at the line's outstanding read 0
+          for a row nobody had linked - the 14 Sep cap this replaced fixed the opposite
+          defect (SO368872 / SRTWC286-SH, Remaining 302 beside a Buy card of 0) but the
+          owner has since ruled the row is owed regardless of what the line's delivered
+          column says.
 
         Scoped to the verbs `committed_v` counts: `ORDER` and, since part 2 section 4b,
         `ORDER_BACK`. Rows in `actioned` / `cancelled` are out, as they always were.
