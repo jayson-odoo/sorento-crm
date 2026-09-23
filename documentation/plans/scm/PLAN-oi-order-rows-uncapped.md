@@ -1,6 +1,6 @@
 # PLAN: An ORDER inquiry row is owed until it is linked, whatever AutoCount says about the line (23 Sep 2026)
 
-Status: PLANNED 23 Sep 2026, tester + coder running. Feature track (one demand fragment
+Status: BUILT 23 Sep 2026, review in progress; browser AC-OU-12 queued (no slot). Feature track (one demand fragment
 across the view, the plan SELECT and the worklist ORM twin, a view migration, a bounded
 reopen script).
 UAC: `oi-order-rows-uncapped-acceptance-criteria.md`.
