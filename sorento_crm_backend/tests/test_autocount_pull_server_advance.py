@@ -284,6 +284,12 @@ class TestAdvanceBuildingPulls:
             ("review", "finished"),
             ("confirmed", "finished"),
             ("discarded", "cancelled"),
+            # S2 (opus review fix round): `status` alone (`pending`) would still match a
+            # `previewing` row - only the JSONB phase predicate excludes it. A row this
+            # shape is not one the real lifecycle produces (previewing always flips
+            # status to queued in the same UPDATE), but the predicate must not rely on
+            # that coincidence to stay correct.
+            ("previewing", "pending"),
         ],
     )
     def test_t7_non_building_phases_are_never_selected(self, monkeypatch, phase, status):
@@ -301,6 +307,52 @@ class TestAdvanceBuildingPulls:
             row = _job_row(db, job.id)
             assert row["metadata"]["autocount_pull"]["phase"] == phase
             assert row["status"] == status
+
+
+# ======================================================================= S1 (AC-SA-8 guard)
+
+
+class TestClaimAndEnqueuePreviewGuard:
+    """S1 (opus review fix round): `_claim_and_enqueue_preview`'s own conditional UPDATE
+    (`status == PENDING`) is what AC-SA-8 leans on for "a browser poll and the tick
+    racing enqueue ONE preview" - covered end-to-end in `test_autocount_pull_sr1.py`, but
+    never against the tick's own call site directly. These two prove the guard itself,
+    calling `_claim_and_enqueue_preview` the way `advance_building_pulls` does."""
+
+    def test_s1a_a_half_claimed_row_is_never_enqueued_and_stays_unchanged(self, monkeypatch):
+        """`status` already flipped to `queued` (a poll that raced ahead of this call)
+        while the stored `phase` is still `building` - the shape a losing caller would
+        see mid-race. The UPDATE's own WHERE (`status == PENDING`) must refuse it."""
+        with blank_session() as db:
+            from app.services.autocount_pull_service import _claim_and_enqueue_preview, _pull_meta
+
+            job = _seed_pull(db, phase="building", status="queued")
+            pull = _pull_meta(job)
+            captured = _patch_enqueue(monkeypatch)
+
+            _claim_and_enqueue_preview(db, job, pull, _fixture("products-header-ready.json"))
+
+            assert captured == []
+            row = _job_row(db, job.id)
+            assert row["status"] == "queued"
+            assert row["metadata"]["autocount_pull"]["phase"] == "building"
+
+    def test_s1b_calling_it_twice_on_the_same_row_enqueues_preview_exactly_once(self, monkeypatch):
+        with blank_session() as db:
+            from app.services.autocount_pull_service import _claim_and_enqueue_preview, _pull_meta
+
+            job = _seed_pull(db, phase="building", status="pending")
+            captured = _patch_enqueue(monkeypatch)
+            header = _fixture("products-header-ready.json")
+
+            _claim_and_enqueue_preview(db, job, _pull_meta(job), header)
+            db.refresh(job)
+            _claim_and_enqueue_preview(db, job, _pull_meta(job), header)
+
+            assert len(captured) == 1
+            row = _job_row(db, job.id)
+            assert row["status"] == "queued"
+            assert row["metadata"]["autocount_pull"]["phase"] == "previewing"
 
 
 # ======================================================================= scheduler wiring
