@@ -1035,6 +1035,45 @@ class UnplaceAllRequest(BaseModel):
     raised_by: Optional[str] = None
 
 
+class OrderInquiryWorklistExportRequest(BaseModel):
+    """Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B6): the list page's own
+    async export - the SAME filter shape `GET /order-inquiries` (and its retiring
+    sync `GET /order-inquiries/export`) already take, as a JSON body rather than a
+    query string. Every field omitted means the whole book, exactly like the GET.
+
+    Security review fix round 2, item 1: `query`/`location`/`po_number`/`spo_number`
+    carry the SAME length caps the GET route's own `Query(..., max_length=...)`
+    declarations do; `state`/`linked`/`kind`/`ack` the SAME closed `Literal` sets the
+    GET route pins at the route layer. `project_id`/`supplier_id`/`agent` are
+    pattern-pinned the same way `AcknowledgeFilter` above pins its own (`pattern=
+    UUID_PATTERN`) - a malformed JSON body field reads as 422 (bad input), never the
+    404 `validate_uuid_path` answers for a path param. The route ALSO runs
+    `_validate_worklist_filter_uuids` before creating the download row, so a value
+    that somehow slipped past this pattern is still refused before it reaches SQL.
+    """
+
+    query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    state: Optional[WorklistState] = None
+    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    project: Optional[str] = None
+    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    raised_by: Optional[str] = None
+    linked: Optional[Literal["po", "spo", "none"]] = None
+    kind: Optional[Literal["spo", "po", "buy"]] = None
+    ack: Optional[
+        Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
+    ] = None
+    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    so_month: Optional[str] = None
+    po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    delivery_from: Optional[str] = None
+    delivery_to: Optional[str] = None
+
+
 class UnplaceAllResult(BaseModel):
     unplaced: int = 0
 

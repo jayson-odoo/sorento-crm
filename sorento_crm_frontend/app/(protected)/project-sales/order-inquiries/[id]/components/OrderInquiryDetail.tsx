@@ -10,13 +10,13 @@ import {
   FileText,
   Link2,
   ListOrdered,
+  Printer,
   ShoppingCart,
   Ship,
   Unlink,
   Undo2,
   Wand2,
 } from 'lucide-react';
-import { toast } from '@/lib/toast';
 import BackToList from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdow
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -42,6 +43,7 @@ import {
   orderInquiryHeadersPagerQuery,
   useAutoPlaceOrderInquiryRows,
   useCreateOrderInquiryReserveRequest,
+  useExportOrderInquiryXlsx,
   useOrderInquiryHandshake,
   useOrderInquiryHeaderDetail,
   useOrderInquiryHeaderLines,
@@ -60,8 +62,6 @@ import {
   canCancelReserveRequest,
   resolveReserveRowRequestAnchor,
 } from '../../../_shared/lib/orderInquiryReserve';
-import { saveBlobAs } from '../../../_shared/services/fileDownload';
-import { downloadOrderInquiryWorklistXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
@@ -152,6 +152,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const reserveRowMutation = useReserveOrderInquiryRow(id);
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
+  const exportXlsx = useExportOrderInquiryXlsx(id);
 
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
@@ -161,7 +162,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // `?reserve=<request_id>` (AC-RS-62) or a click on the Lines grid's own Reserve
   // icon-button (`orderInquiryHeaderLinesColumns.tsx`).
   const [reserveRowDialogId, setReserveRowDialogId] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
   // ONE countdown rendered inline in the header card (`useDeferredBulkAction`'s own
@@ -499,21 +500,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     unlinkSelectedAction.run(selectedLinked.map((line) => ({ id: line.id })));
   }
 
-  async function handleExport() {
-    if (!header) return;
-    setExporting(true);
-    try {
-      // W: filtered by `inquiry_id`, the plan's own contract - every non-cancelled row
-      // of exactly this header, the same filter the Lines tab itself reads by.
-      const blob = await downloadOrderInquiryWorklistXlsx({ inquiry_id: id });
-      saveBlobAs(blob, `${header.inquiry_no}.xlsx`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to export the order inquiry');
-    } finally {
-      setExporting(false);
-    }
-  }
-
   // S1 (reviewer, fix round 22 Sep 2026): `page.tsx`'s own `PageHeader` already renders
   // a `BackToList` - a second one at the top of every state here was redundant. The
   // in-card CTA on not-found stays: it is the page's own next step, not a nav duplicate.
@@ -675,9 +661,23 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       </Tooltip>
                     )
                   ) : null}
-                  <DropdownMenuItem disabled={exporting} onSelect={exporting ? undefined : handleExport}>
+                  <DropdownMenuItem
+                    disabled={exportXlsx.isPending}
+                    onSelect={
+                      exportXlsx.isPending ? undefined : () => exportXlsx.mutate()
+                    }
+                  >
                     <Download className="size-4" aria-hidden />
                     Export Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setDownloadsOpen(true);
+                    }}
+                  >
+                    <Printer className="size-4" aria-hidden />
+                    Download history
                   </DropdownMenuItem>
                 </DetailActionsMenu>
               }
@@ -842,6 +842,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           }}
         />
       ) : null}
+
+      <EntityDownloadsButton
+        entityType="order_inquiry"
+        entityId={id}
+        label={header.inquiry_no}
+        open={downloadsOpen}
+        onOpenChange={setDownloadsOpen}
+      />
     </div>
   );
 }

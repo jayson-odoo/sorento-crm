@@ -720,6 +720,15 @@ async def preview_extend_sla_tracking(
         service = ConversationSLATrackingService(db)
         tracking = service.get_tracking(str(tracking_id), load_event_logs=False)
         _assert_extend_assignee(tracking, current_user)
+        # S3 (fix round 1, PLAN-keep-assignee-on-resolve-22sep): the real extend
+        # already 422s a resolved tracker (`_assert_can_extend`,
+        # sla_service.py); the preview must reject it the same way rather than
+        # computing a working-days delta for a task nobody can actually extend.
+        if bool(getattr(tracking, "is_resolved", False)):
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot extend a resolved SLA task.",
+            )
         if getattr(tracking, "due_at_resolution", None) is None:
             raise HTTPException(
                 status_code=422,

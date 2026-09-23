@@ -30,10 +30,13 @@ qty**, **BRW incoming qty**, **Last in qty**, **Last in date**, **Remarks**.
 
 * **Description** and **Category** come from the product master at the moment of export, not
   from the frozen plan.
+* **BRW incoming qty** prints one "container - quantity" line per open shipment, or the bare
+  quantity when a shipment names no container - the SPO number itself is not shown. **BRW PO
+  qty** still names each purchase order number.
 * **Last in qty** reads the newest shipping order line for the product, received or not - the
-  same line the chatbot's "last in" answer names. It prints "SPO number - container number -
-  quantity", or "SPO number - quantity" when that shipping order named no container. It is
-  blank when the product has no shipping order line at all.
+  same line the chatbot's "last in" answer names. It prints one "container - quantity" line,
+  or the bare quantity when that line names no container - the SPO number itself is not
+  shown. It is blank when the product has no shipping order line at all.
 * **Last in date** is that same line's expected delivery date, or its issue date when it has
   none.
 * **Supplier** is dropped from both sheets entirely (not left blank) when the report is sent

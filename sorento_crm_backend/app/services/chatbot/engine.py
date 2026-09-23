@@ -1589,6 +1589,9 @@ def _run_stages(  # noqa: PLR0915
             accepted_company=plan.trace.company,
             declined_offer_copy=plan.trace.lane == "offer_declined",
             prior_session=session_block,
+            # R6 (22 Sep 2026): a null `routing.suggested_team` falls back to the
+            # QUESTION's own domain team before the flat "customer_service" literal.
+            policy=policy,
         )
         # Security N-3/S2 (hand pass 11 security review): an accepted offer whose options
         # carry a COMPANY needs that company - and above all its `company_id` - to reach
@@ -2117,6 +2120,10 @@ def _run_stages(  # noqa: PLR0915
                     # R4 (owner ruling 5): the record-key rerun gate asks the RESOLVER
                     # what this message's token is, not the parser's hint.
                     resolved_kinds=resolved_kinds,
+                    # R6 (fix round 2): so a null `routing.suggested_team` inside the
+                    # per-domain fetch context gets the same domain-aware fill this
+                    # turn's own `ctx.parse.output` already got above.
+                    policy=policy,
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),

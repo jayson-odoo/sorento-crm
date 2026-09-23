@@ -120,3 +120,29 @@ describe('ConversationSLATrackingDetail gear (D6, S3-02)', () => {
     expect(separatorIndex).toBe(rows.indexOf(destructive) - 1);
   });
 });
+
+/**
+ * Fix round 4: the Chat Records `Sheet`'s own `SheetContent` must not be
+ * independently scrollable - `SheetBody` is the ONE intended scroll
+ * container, and a second one around the same flex-fill thread is what
+ * produced the 375px overlap defect (the ticket drawer's identical Sheet).
+ * Pinned here because reverting ONLY this file's change left the whole
+ * suite green - nothing else exercises this specific Sheet mount's classes.
+ */
+describe('ConversationSLATrackingDetail Chat Records sheet layout (fix round 4)', () => {
+  it('the sheet content does not double-scroll against SheetBody', async () => {
+    useConversationSLATrackingDetail.mockReturnValue({
+      data: tracking({ respond_io_id: '10025531' }),
+      isLoading: false,
+    });
+    render(<ConversationSLATrackingDetail trackingId="tr-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Chat Records/i }));
+    await screen.findByTestId('chat-records');
+
+    const sheetContent = document.querySelector('[data-slot="sheet-content"]');
+    expect(sheetContent).toBeTruthy();
+    expect(sheetContent?.className).not.toContain('overflow-y-auto');
+    expect(sheetContent?.className).toContain('overflow-hidden');
+  });
+});

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -24,6 +24,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.download import DownloadResponse
 from app.schemas.project_order_inquiry import (
     AcknowledgeResult,
     AcknowledgeRowsRequest,
@@ -45,6 +46,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryRowOut,
     OrderInquirySpoDetail,
     OrderInquirySummary,
+    OrderInquiryWorklistExportRequest,
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
     PlaceOnPoRequest,
@@ -71,11 +73,13 @@ from app.models.project_so import (
     OrderInquiryReserveRequestRow,
 )
 from app.services import project_service as projects
+from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.scm.summary_order_service import compact_ddmmyyyy
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
@@ -95,6 +99,13 @@ ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
 #: whoever may commit stock against a request - separate from `ACKNOWLEDGE`, which is
 #: purchasing's own grant to raise the request in the first place.
 RESERVE = "projects.order_inquiries.reserve"
+#: Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B7 / `app/dependencies.py`'s own
+#: rule): a WRITE endpoint - it creates a `user_downloads` row and enqueues a
+#: background render - is never reachable by `X-API-Key` alone, unlike the sync GET it
+#: replaces. Same permission slug as `VIEW` (exporting states nothing new, it only
+#: prints what the worklist already answers) but the real-signed-in-user dependency,
+#: mirroring `order_summary.py`'s own `_EXPORT`.
+_EXPORT = require_permission(VIEW)
 
 #: The sort set the list accepts, declared here as a `Literal` because FastAPI cannot
 #: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
@@ -553,6 +564,134 @@ def export_order_inquiry_worklist(
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/export", response_model=DownloadResponse)
+def export_order_inquiry_worklist_async(
+    payload: OrderInquiryWorklistExportRequest = Body(default_factory=OrderInquiryWorklistExportRequest),
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """Lane B, AC-B6/R4 (`PLAN-order-sheet-oi-reports-22sep.md`): the list page's own
+    Export Excel, through My Downloads - the GET above stays for one release (MCP /
+    other callers), this is what the screen calls now.
+
+    Same shape as `export_order_summary` (`app/api/v1/scm/order_summary.py`): create
+    the `user_downloads` row, enqueue the render, mark it failed and answer 503 on an
+    enqueue failure rather than leaving the row stuck pending.
+    """
+    from app.api.v1.projects._common import acting_company_id
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_order_inquiry_worklist_xlsx
+
+    filters = payload.model_dump(exclude_none=True)
+    # Security review fix round 2, item 1: the SAME UUID guard the GET list/summary/
+    # matrix routes and the acknowledge route's own `filter` branch run - defense in
+    # depth alongside the schema's own `pattern=UUID_PATTERN` fields, and BEFORE any
+    # `user_downloads` row exists, so a malformed filter never reaches the worker.
+    _validate_worklist_filter_uuids(filters)
+    # The worker has no request-scoped company: snapshot the enqueuing request's own
+    # single-company scope so the task can adopt it - the render then sees exactly the
+    # rows this caller could see, not the worker's fail-closed UNSET default.
+    # `acting_company_id` (review fix round 3, item 4 - reuse, not reimplement) raises
+    # a clean 400 for an ambiguous/no scope BEFORE any `user_downloads` row exists,
+    # same as the UUID guard above.
+    company_id = acting_company_id(db)
+
+    if DownloadService(db).has_in_flight(
+        user_id=str(current_user["id"]), kind="order_inquiry_worklist_xlsx",
+    ):
+        raise AppException(
+            status_code=409,
+            message="An order inquiry export is already being prepared - check My "
+                    "Downloads.",
+        )
+
+    filename = f"order-inquiries-{compact_ddmmyyyy(None)}.xlsx"
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind="order_inquiry_worklist_xlsx",
+        filename=filename,
+    )
+    try:
+        enqueue_job(
+            generate_order_inquiry_worklist_xlsx,
+            str(download.id),
+            filters,
+            str(current_user["id"]),
+            company_id=company_id,
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue order inquiry export: {e}"
+        )
+        raise AppException(
+            status_code=503,
+            message="Could not queue order inquiry export. Please try again.",
+        )
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
+
+
+@router.post("/order-inquiries/{inquiry_id}/export", response_model=DownloadResponse)
+def export_order_inquiry_header(
+    inquiry_id: str,
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """Lane B, AC-B1/AC-B3/AC-B4/AC-B7 (`PLAN-order-sheet-oi-reports-22sep.md`): the OI
+    detail page's own Export Excel, through My Downloads, tied to this one header so
+    its download history is reachable from the OI itself (AC-B5, `EntityDownloadsButton`
+    for `("order_inquiry", inquiry_id)`).
+
+    Same shape as `export_order_summary`: create the `user_downloads` row, enqueue the
+    render, mark it failed and answer 503 on an enqueue failure. 404 for an unknown or
+    another company's header, off the SAME loader the detail page itself reads.
+    """
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_order_inquiry_xlsx
+
+    validate_uuid_path(inquiry_id, resource="Order inquiry")
+    header = OrderInquiryHeaderService(db).get(inquiry_id)
+
+    if DownloadService(db).has_in_flight(
+        user_id=str(current_user["id"]), kind="order_inquiry_xlsx",
+        source_entity_type="order_inquiry", source_entity_id=inquiry_id,
+    ):
+        raise AppException(
+            status_code=409,
+            message="An order inquiry export is already being prepared - check My "
+                    "Downloads.",
+        )
+
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind="order_inquiry_xlsx",
+        source_entity_type="order_inquiry",
+        source_entity_id=inquiry_id,
+        filename=f"{header.inquiry_no}.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_order_inquiry_xlsx,
+            str(download.id),
+            inquiry_id,
+            str(current_user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue order inquiry export: {e}"
+        )
+        raise AppException(
+            status_code=503,
+            message="Could not queue order inquiry export. Please try again.",
+        )
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 
 
 @router.get("/order-inquiries/matrix", response_model=OrderInquiryMatrixResponse)

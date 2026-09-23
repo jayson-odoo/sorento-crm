@@ -295,17 +295,15 @@ export default function ConversationSLATrackingList() {
         accessorKey: 'assigned_user_name',
         header: ({ column }) => <DataGridColumnHeader title="Assigned To" column={column} />,
         cell: ({ row }) => {
-          // A resolved row has no assignee (resolve NULLs it), so it names the
-          // resolver instead of reading "-" on exactly the rows someone opens to
-          // find out who handled it. Same helper as the detail header.
+          // Owner ruling S4 (23 Sep 2026): resolve keeps the assignee for
+          // audit now, so this column names the assignee on every row, open
+          // or resolved - no more role swap. Who resolved it is a detail-page
+          // fact (header subtitle), not shown in this listing.
           const handler = slaHandler(row.original);
           if (!handler.name) return '-';
           const title = `${handler.prefix} ${handler.name}`;
           return (
             <span className="block truncate" title={title}>
-              {handler.prefix === 'Resolved by' && (
-                <span className="text-muted-foreground">Resolved by </span>
-              )}
               {handler.name}
             </span>
           );

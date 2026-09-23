@@ -20,8 +20,10 @@ the ladder walked by the engine itself). The stock tool answers a HIT with every
 0 - in BOTH presenter modes (detailed `quantity_on_hand`, compact `total_on_hand`/
 "Total") - and the rung tools answer whatever each case needs. Every expected string is
 production copy from `lanes/business/answer.py` (`only_other_note`'s "No {word} for X.",
-the incoming `lead`, `_group_parts`' "but PO is placed", `_CROSSDOMAIN_RUNG_TEAM`) or the
-owner's own prod paste - nothing invented here.
+the incoming `lead`, `_group_parts`' "but PO is placed") or the owner's own prod paste -
+nothing invented here. `_CROSSDOMAIN_RUNG_TEAM` is retired (owner ruling 22 Sep 2026, R6,
+AC-EQ-5): the warehouse team offer below is now the SAME whether the PO rung answers or
+not.
 
 No live parser, no :8766, no API key: `stub_parser` supplies the verdict.
 """
@@ -333,7 +335,7 @@ class TestAllZeroStockHitClimbsToIncoming:
 
 class TestAllZeroStockHitFallsThroughToThePORung:
     @pytest.mark.parametrize("mode", MODES)
-    def test_incoming_empty_then_po_rows_print_with_the_purchasing_offer(
+    def test_incoming_empty_then_po_rows_print_with_the_warehouse_offer(
         self, mode, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
         result, said, probes = _run(
@@ -348,8 +350,9 @@ class TestAllZeroStockHitFallsThroughToThePORung:
         assert _tool_calls(probes, PO_TOOL), (
             f"with the incoming rung empty the PO rung must be probed: {probes}"
         )
-        # `_group_parts`' header for a PO line, and the rung's own team
-        # (`_CROSSDOMAIN_RUNG_TEAM["purchase_order"] == "purchasing"`).
+        # `_group_parts`' header for a PO line. Owner ruling 22 Sep 2026, R6 (AC-EQ-5)
+        # retired `_CROSSDOMAIN_RUNG_TEAM` - a stock-origin ask keeps the warehouse team
+        # even when the PO rung is what answered.
         assert PO_HEADER in said, said
         # Production's own field names, not the row's raw label - `_crossdomain_rung_text`
         # (answer.py:1234-1235) hardcodes "*Ordered:*"/"*Outstanding:*", matching the
@@ -357,9 +360,10 @@ class TestAllZeroStockHitFallsThroughToThePORung:
         assert "*Ordered:* 10" in said, said
         assert "*Outstanding:* 10" in said, said
         assert "2026-09-11" in said, said
-        assert PURCHASING_OFFER in said, said
-        assert WAREHOUSE_OFFER not in said, (
-            "the offer and the routing name the SAME team - the rung that answered", said
+        assert WAREHOUSE_OFFER in said, said
+        assert PURCHASING_OFFER not in said, (
+            "a stock-origin ask never re-points to purchasing just because the PO rung "
+            "answered", said
         )
 
 

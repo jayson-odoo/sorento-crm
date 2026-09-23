@@ -212,6 +212,16 @@ inquiry:
 * **Reject selected**, **Unconfirm**, **Export Excel** round out the menu, the same as on the
   worklist.
 
+**Export Excel** queues a workbook of this order inquiry rather than downloading one straight
+away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and
+the file lands in **My Downloads** once it is ready. Pressing **Export Excel** again while one is
+still being prepared does nothing but tell you it already is, with a toast reading "An order
+inquiry export is already being prepared - check My Downloads."
+
+**Download history** opens the list of every Excel export made from this order inquiry, newest
+first, so you can come back to it later and reopen a file you already made instead of exporting it
+again.
+
 ## Prev / next
 
 The pager beside the header walks the same filtered list you opened the order inquiry from - for
@@ -254,7 +264,9 @@ planning](sales-order-changes.md)) keep going out the same way, their links now 
 page. A **Request CS to reserve** and a CS **Confirm reserved** each send their own email too -
 see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md). Confirming,
 unconfirming, sending a reserve request, cancelling one, reserving and unreserving all show an
-on-screen toast.
+on-screen toast. **Export Excel** shows a toast too, then the workbook appears in **My Downloads**
+once it is ready, the same as the low stock report and the order summary sheet. Both the export
+and the reserve actions need the **Order Inquiries** view permission and a signed-in user.
 
 ## See also
 
