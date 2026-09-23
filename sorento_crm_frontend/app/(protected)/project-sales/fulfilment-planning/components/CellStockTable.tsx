@@ -421,10 +421,17 @@ export const CellStockTable = React.forwardRef<
         table's header sat 33px ABOVE its parent panel's visible top, i.e. clipped out of sight,
         while the wheel moved whichever region the pointer happened to be over rather than the
         one the reader was reading. Horizontal scroll stays: the table is wider than the dialog
-        and has always scrolled sideways. */}
+        and has always scrolled sideways.
+
+        AC-RS-70 (round 3 G4b): NO `overscroll-x-contain` here any more. An `overflow:
+        auto` box is a scroll container even with nothing to scroll, and `overscroll-
+        behavior: contain` on it stops a shift-wheel / two-finger swipe from chaining
+        to the parent OI Lines grid's own scroller once this table sits inside that
+        grid's own expanded row - `data-grid-table.tsx`'s own doc records the identical
+        trap for the grid itself. */}
       <div
         data-testid="cell-stock-table"
-        className="w-full overflow-x-auto overscroll-x-contain rounded-lg border border-border"
+        className="w-full overflow-x-auto rounded-lg border border-border"
       >
         {/* `w-full`, never `table-fixed`: the table fills the dialog (the captain's screenshot
           had it stopping at two thirds with an empty band on the right), the numeric columns
