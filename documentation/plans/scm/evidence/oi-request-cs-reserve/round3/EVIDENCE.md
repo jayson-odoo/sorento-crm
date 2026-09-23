@@ -56,3 +56,32 @@ Reported explicitly per the brief's own instruction to report any deviation.
   an attempted drag-and-drop gesture (headless drag simulation is unreliable for dnd-kit's
   pointer-sensor activation distance; the existing `data-grid-table-dnd.column-drag.test.tsx`
   suite already covers that mechanism and was left green by this change).
+
+## Fix round 2 (23 Sep) - review findings S1-S5 + nits
+
+Session `oireserve-r3-fix2`, logged in as the E2E test user, viewport 375x812 unless noted,
+navigated fresh from `/` via the sidebar (Procurement -> Supply Chain -> Order Inquiries ->
+search `OI-000750`, id `0256749a-1107-4e4a-8833-1a0356e7666e`). No open reserve request named
+two rows of different products on this OI, so one was created live: ticked `B2155-NL-BLUE`
+(qty 12) and `CB2807-DIY` (qty 4), Actions -> Request CS to reserve, sent - `POST
+.../reserve-requests` returned request id `5d5e262b-9d93-4c74-99ec-0ae0107f74e4`, ordinal 4
+(`network request <id> --json` read the response body directly, since the toast alone does not
+carry the id). `?reserve=5d5e262b-9d93-4c74-99ec-0ae0107f74e4` opened the multi-row dialog for
+every capture below.
+
+| Finding | What was checked | Evidence | Result |
+| --- | --- | --- | --- |
+| S1 | `DataGridTableBodyRowCell` output for the Expand/Select columns on the Lines grid: `eval` read `aria-disabled="true"` on both their own `<td>`s (the new signal `isFixedUtilityColumn` drives), and `null` on an ordinary data column's `<td>` (e.g. `State`) - matches the vitest suite's own new assertions. | (DOM read only, no dedicated screenshot - the visual effect is identical to before, `S3-375-expanded-row.png` shows the Expand column still working) | PASS |
+| S2 | Expanded `CWCX604-S-SH`'s own stock table at 375px: `cell-stock-table`'s `scrollWidth` (960) exceeds `clientWidth` (315) and is reachable - setting `scrollLeft = 700` brought `Available for Project` / `PO qty` / `Taken` into view (previously clipped with nothing to scroll). | `S3-375-expanded-row.png` (at rest, content reachable via the wrapper's own scroll, nothing clipped with no way back) | PASS |
+| S4 | Not re-driven live this round (`ReserveRowDialog.test.tsx`'s own new S4 suite exercises the single-row Confirm-once behaviour headless-accurately - a live click needs the exact short-reserve/Reason state the vitest fixture controls precisely); the multi-row equivalent (confirm one section, it flips read-only, the dialog stays open) was already live-verified in the base round 3 run above and is unchanged by this fix. | - | Covered by vitest (22 tests green) |
+| S5 | Not independently re-driven live (`OrderInquiryDetail.reserveIcon.test.tsx`'s new S5 suite reproduces the exact async race - a mocked `router.replace` that never actually drops the URL param, then a forced rerender with the same params - which is not reproducible through a real browser's own `router.replace`, which DOES complete before the next paint in practice). Live behaviour unaffected: opening `?reserve=...` and closing still removes the param and leaves the icon clickable, the same round-3 base behaviour. | - | Covered by vitest (11 tests green) |
+| Multi-row header nit | The dialog opened for request #4 (two sections, `B2155-NL-BLUE` and `CB2807-DIY`): `eval` on `[data-slot="dialog-header"]` read `textContent === "ReserveCancel requestRequest #4 - requested by Teh Jayson on 23/09/2026, 4:47 AM"` - the request line appears exactly ONCE, not once per section, and `className` contains `pe-10`. | `S3-375-multi-row-dialog.png` (375px), `fix2-1280-dialog-header.png` (1280px) | PASS |
+| State pill (G2 regression, round 2) | Lines grid State column at 375px (scrolled the outer grid to its own right edge to reach it): green `Reserved N` pills with a tick for the four already-reserved rows from the base round 3 run, amber `Request to reserve` for the two just-requested rows, plain `On PO/SPO` / `To Buy` pills elsewhere - clicking a `Reserved 2` pill opened the single-row dialog (tabs Reserve/History, title `Reserve - CWCX604-S-SH`, Unreserve offered). | `S3-375-state-pill.png` | PASS |
+| CellStockTable pointer nit | Not re-driven live (a real `pointercancel` needs an OS-level gesture interruption headless cannot trigger deterministically); `CellStockTable.test.tsx`'s new suite dispatches synthetic `pointercancel` / `lostpointercapture` directly and asserts the drag ends exactly as `pointerup` does. | - | Covered by vitest (57 tests green) |
+
+`console`/`errors` clean throughout this run (the only console output was the pre-existing
+`Missing Description for {DialogContent}` Radix warning, unrelated to this fix, already present
+before this lane and present on every dialog across the app).
+
+Not cleaned up: request #4 (`B2155-NL-BLUE`/`CB2807-DIY`, still open) is left on `OI-000750` in
+this worktree's own dev database - test data on an isolated per-lane backend, not shared/prod.
