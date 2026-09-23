@@ -34,6 +34,9 @@ const BrandFormSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   is_active: z.boolean(),
   access_levels: z.array(z.string()),
+  // False means every product on this brand is bought locally by CS and never
+  // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
+  flows_to_purchasing: z.boolean(),
 });
 
 interface BrandFormDialogProps {
@@ -64,6 +67,7 @@ export default function BrandFormDialog({
       description: '',
       is_active: true,
       access_levels: [],
+      flows_to_purchasing: true,
     },
   });
 
@@ -76,6 +80,7 @@ export default function BrandFormDialog({
           description: brand.description || '',
           is_active: brand.is_active,
           access_levels: brand.access_levels ?? [],
+          flows_to_purchasing: brand.flows_to_purchasing,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -84,6 +89,7 @@ export default function BrandFormDialog({
           description: copyFromBrand.description || '',
           is_active: copyFromBrand.is_active,
           access_levels: copyFromBrand.access_levels ?? [],
+          flows_to_purchasing: copyFromBrand.flows_to_purchasing,
         });
       } else {
         form.reset({
@@ -92,6 +98,7 @@ export default function BrandFormDialog({
           description: '',
           is_active: true,
           access_levels: [],
+          flows_to_purchasing: true,
         });
       }
     }
@@ -105,6 +112,7 @@ export default function BrandFormDialog({
         description: data.description ?? undefined,
         is_active: data.is_active,
         access_levels: data.access_levels ?? [],
+        flows_to_purchasing: data.flows_to_purchasing,
       };
 
       if (brandId) {
@@ -220,6 +228,24 @@ export default function BrandFormDialog({
                 <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">Active</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="flows_to_purchasing"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Flows to purchasing</FormLabel>
                   </div>
                   <FormControl>
                     <Switch

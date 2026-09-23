@@ -52,6 +52,10 @@ class BrandBase(BaseModel):
     # resolver's promotion-domain product fallback to scope product search
     # to brands the active contact can see.
     access_levels: list[str] = []
+    # PLAN-brand-flows-to-purchasing.md: false means every product on this brand
+    # is bought locally by CS and never raises an Order Inquiry. Default true so
+    # nothing changes until an admin flips it.
+    flows_to_purchasing: bool = True
 
 
 class BrandCreate(BrandBase):
@@ -66,6 +70,7 @@ class BrandUpdate(BaseModel):
     logo_url: Optional[str] = None
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
+    flows_to_purchasing: Optional[bool] = None
 
 
 class BrandResponse(BrandBase):

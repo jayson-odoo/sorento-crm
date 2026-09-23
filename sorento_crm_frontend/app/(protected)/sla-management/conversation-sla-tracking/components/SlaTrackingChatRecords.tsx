@@ -6,6 +6,7 @@ import { ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { invalidateConversationWindow } from '@/components/common/conversation/useConversationWindowState';
+import { cn } from '@/lib/utils';
 
 import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
 import TicketConversationPanel from './TicketConversationPanel';
@@ -80,12 +81,28 @@ export default function SlaTrackingChatRecords({
   );
 
   return (
-    <Card className={showAsPopup ? 'border-0 shadow-none' : ''}>
+    // R3: the popup mount flex-fills the sheet like the worklist drawer
+    // already does - every wrapper in this chain (Card, CardContent, the
+    // panel itself) carries `flex min-h-0 flex-1 flex-col`, replacing the
+    // fixed `max-h-[55vh]` cap that used to stop the thread short of the
+    // composer. The inline (non-popup) mount is unchanged.
+    <Card className={cn(showAsPopup && 'flex min-h-0 flex-1 flex-col border-0 shadow-none')}>
       <CardHeader className={showAsPopup ? 'pb-2' : ''}>{header}</CardHeader>
-      <CardContent>
+      <CardContent className={cn(showAsPopup && 'flex min-h-0 flex-1 flex-col')}>
         <TicketConversationPanel
           ticketId={trackingId}
-          maxHeightClass={showAsPopup ? 'max-h-[55vh]' : 'max-h-[400px]'}
+          // Fix round 5: `min-h-40`, not `min-h-0` - the SAME floor as
+          // `maxHeightClass` below, forwarded through to RespondChatList's
+          // root too. See InterventionTicketDrawer.tsx's identical comment.
+          className={showAsPopup ? 'min-h-40 flex-1' : undefined}
+          // Fix round 6: the INNER scroll box no longer floors itself
+          // (`min-h-0`, not `min-h-40`) - the root already does, and the
+          // inner box sits below RespondChatList's own header/search chrome
+          // inside that same floor, so a second, equal floor on the inner
+          // box overflowed the root by exactly that chrome's height. See
+          // InterventionTicketDrawer.tsx's identical comment. Inline
+          // (non-popup) mount is unaffected - its own fixed cap, unchanged.
+          maxHeightClass={showAsPopup ? 'min-h-0 flex-1' : 'max-h-[400px]'}
           // No ticket detail (a form-scope tracker, or a viewer outside the
           // ticket's act-scope): a linked Respond conversation is still enough
           // to reply through the shared entity chat send, as it always was.

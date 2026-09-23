@@ -2424,6 +2424,9 @@ class BrandService:
                 "description": b.description,
                 "logo_url": b.logo_url,
                 "is_active": b.is_active,
+                # Manual dict builder: a column not listed here never reaches the FE
+                # however faithfully the response schema inherits it.
+                "flows_to_purchasing": b.flows_to_purchasing,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,

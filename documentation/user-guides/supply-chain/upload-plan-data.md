@@ -313,9 +313,18 @@ what the ticked rows can do; each item counts only the rows it applies to, for e
 * **Link selected** auto-links the ticked rows that still have something left to link.
 * **Unlink selected** takes a link off the ticked rows, including a row that is already fully
   linked.
-* **Reject selected**, **Unconfirm**, **Unlink all...**, **Upload purchase orders** and
-  **Export Excel** round out the menu. See "Unconfirming a row" below for what **Unconfirm**
-  does.
+* **Reject selected**, **Unconfirm**, **Unlink all...** and **Upload purchase orders** round out
+  the menu. See "Unconfirming a row" below for what **Unconfirm** does.
+
+**Export Excel** queues a workbook of the current filters instead of downloading one straight
+away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and
+the file lands in **My Downloads** once it is ready. Pressing it again while one is still being
+prepared does nothing but tell you it already is, with a toast reading "An order inquiry export
+is already being prepared - check My Downloads." Unlike the OI detail page's own **Export Excel**
+(see [The Documents view and the OI detail
+page](order-inquiry-documents.md#fixing-a-link-without-leaving-the-page)), this export is not
+tied to one order inquiry, so there is no download history for it - only **My Downloads**. Needs
+the **Order Inquiries** view permission and a signed-in user.
 
 Use **Auto link all...**, **Choose document (1)**, **Link selected** and **Unlink selected** to
 review and fix a row's PO/SPO link before you confirm it - AutoCount's own linkage and the

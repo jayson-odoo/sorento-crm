@@ -68,15 +68,23 @@ interface ChatListStubProps {
   contactName?: string | null;
   comments?: unknown[];
   mediaProxy?: (url: string) => Promise<Response>;
+  onJumpToMessage?: (messageId: string) => void;
 }
 
 vi.mock('@/components/common/RespondChatList', () => ({
-  default: ({ items, contactName, comments = [], mediaProxy: proxy }: ChatListStubProps) => (
+  default: ({
+    items,
+    contactName,
+    comments = [],
+    mediaProxy: proxy,
+    onJumpToMessage,
+  }: ChatListStubProps) => (
     <div
       data-testid="chat-list"
       data-contact={contactName ?? ''}
       data-notes={comments.length}
       data-has-media-proxy={proxy ? 'yes' : 'no'}
+      data-has-jump-to-message={onJumpToMessage ? 'yes' : 'no'}
     >
       {items.length} message(s)
     </div>
@@ -238,6 +246,13 @@ describe('ConversationThreadPane', () => {
     const list = screen.getByTestId('chat-list');
     expect(list).toHaveAttribute('data-contact', 'Aisyah Rahman');
     expect(list).toHaveAttribute('data-has-media-proxy', 'yes');
+  });
+
+  // S2 / R4: this surface gets the same reply-to fetch-back reuse as the SLA
+  // ticket panel (ChatPanelParity.test.tsx pins the ticket side).
+  it('hands the shared list the same reply-to fetch-back loader as the ticket panel (S2)', () => {
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-has-jump-to-message', 'yes');
   });
 
   it('loading and error states', () => {

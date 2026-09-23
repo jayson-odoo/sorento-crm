@@ -143,8 +143,17 @@ inquiry:
   turns into a countdown with **Cancel**, and the unlink only happens once the countdown runs out
   - there is no confirmation box. Cancelling leaves the ticked lines ticked; the selection only
   clears once the unlink actually commits.
-* **Reject selected**, **Unconfirm**, **Export Excel** round out the menu, the same as on the
-  worklist.
+* **Reject selected**, **Unconfirm** round out the link fixes, the same as on the worklist.
+
+**Export Excel** queues a workbook of this order inquiry rather than downloading one straight
+away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and
+the file lands in **My Downloads** once it is ready. Pressing **Export Excel** again while one is
+still being prepared does nothing but tell you it already is, with a toast reading "An order
+inquiry export is already being prepared - check My Downloads."
+
+**Download history** opens the list of every Excel export made from this order inquiry, newest
+first, so you can come back to it later and reopen a file you already made instead of exporting it
+again.
 
 ## Prev / next
 
@@ -185,7 +194,9 @@ Nothing new here beyond what you already know: the handover, changed and undone 
 already receives (see [The order inquiry handover email](order-inquiry-handover-email.md) and
 [Sales order changes after planning](sales-order-changes.md)) keep going out the same way, their
 links now landing on this page. Confirming or unconfirming shows an on-screen toast, same as on
-the worklist.
+the worklist. **Export Excel** shows a toast too, then the workbook appears in **My Downloads**
+once it is ready, the same as the low stock report and the order summary sheet. Both need the
+**Order Inquiries** view permission and a signed-in user.
 
 ## See also
 
