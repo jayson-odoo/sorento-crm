@@ -416,57 +416,32 @@ _PLANNED_ACK_SQL = ", ".join(f"'{state}'" for state in PLANNED_ACK_STATES)
 #: `CREATE OR REPLACE VIEW` may only append columns, never drop one, and dropping it would
 #: mean dropping and rebuilding `scm.net_position_v` and everything under it for a figure
 #: that is now always 0.
-#: What the sales order line still OWES, in SQL, over the alias `sol` every project leg
-#: already joins: `demand_qty()`'s own reading - the quantity CS stated (`qty_required`) when
-#: they stated one, else what the order holds, minus what has been delivered.
-_LINE_OUTSTANDING_SQL = (
-    "GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)\n"
-    "       - COALESCE(sol.qty_delivered, 0), 0)"
-)
-
-#: What an order inquiry row still asks purchasing to buy (7.3, owner 14 Sep evening: Buy
-#: never exceeds what the line still owes). CAPPED at the line's outstanding for an ORDER
-#: row: SO368872 / SRTWC286-SH ordered 364 and delivered 352, so twelve are owed, and the
-#: uncapped reading told the plan to buy 302 of goods the customer already had. An
-#: ORDER_BACK row is NEVER capped by its borrowing line's outstanding (owner ruling 22 Sep
-#: 2026, SO417310 / MKT5529SS-DIY): the row is a hole at the DONOR location left behind when
-#: goods already shipped off the borrowing line, so the borrowing line reading delivered in
-#: full is the NORMAL case for an order back, not a reason to zero it out. Then less what is
-#: already on a document, less a "supplied with" bundle, floored at zero.
+#: What an order inquiry row still asks purchasing to buy: the quantity CS raised, less
+#: what is already linked to a document, less a "supplied with" bundle, floored at zero.
+#: UNCAPPED for every verb (owner ruling R1, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`):
+#: "this is delivered already and we want to replenish, I don't mind order back or order,
+#: as long as it needs to order". SO421985 raised three ORDER rows of 493, the AutoCount
+#: pull then marked the lines delivered 493/493 and closed the order, and Start Plan
+#: stopped listing it - a raised, unlinked row is buy demand until purchasing links it,
+#: whatever the line's own delivered column says. That retires the 7.3 / 14 Sep cap
+#: (SO368872 / SRTWC286-SH, "Buy never exceeds what the line still owes") for ORDER rows
+#: too: the known consequence is that the SO368872 shape now buys the row quantity again,
+#: which is the trade the owner took. The ORDER_BACK branch #1114 (22 Sep) carved out as an
+#: exception is gone with it - ORDER and ORDER_BACK are now the SAME formula, because the
+#: exception is now the rule.
 #:
 #: ONE fragment, interpolated into the view body, into the horizon SELECT and into the
 #: needed-date SQL, so the card, the Remaining column and the engine cannot come to answer
 #: three different numbers for one row (reviewer S1, 15 Sep). The worklist's own ORM twin is
-#: `order_inquiry_worklist_service._CAPPED_QTY`.
-_OWED_SQL = (
-    "GREATEST((CASE WHEN oir.verb = 'ORDER_BACK' THEN oir.qty\n"
-    f"              ELSE LEAST(oir.qty, {_LINE_OUTSTANDING_SQL}) END)\n"
-    "       - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)"
-)
+#: `order_inquiry_worklist_service._ROW_QTY`.
+_OWED_SQL = "GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)"
 
 #: The FORM leg's twin, and the one the MIGRATED rows actually travel on: the order inquiry
-#: sheet raises rows with no supply decision, so this is the leg that counts them. It reaches
-#: the core line through `_FORM_CORE_LINE_JOIN_SQL` below rather than through the confirmed
-#: leg's mandatory join, because a form row may genuinely have no line at all - and where it
-#: has none, the CASE keeps today's reading. Without the CASE the cap would read 0 there:
-#: Postgres `GREATEST()` ignores NULLs, so the outstanding of a missing line is 0, not NULL.
-#: The `verb = 'ORDER_BACK'` branch sits ahead of the `csol.id IS NULL` one so an order back
-#: is never capped, missing core line or not (same 22 Sep ruling as `_OWED_SQL`).
-_OWED_FORM_SQL = (
-    "GREATEST(CASE WHEN oir.verb = 'ORDER_BACK' THEN oir.qty\n"
-    "              WHEN csol.id IS NULL THEN oir.qty\n"
-    "              ELSE LEAST(oir.qty,\n"
-    "                         GREATEST(COALESCE(csol.qty_required, csol.qty_ordered)\n"
-    "                                - COALESCE(csol.qty_delivered, 0), 0)) END\n"
-    "       - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)"
-)
-
-#: How the form leg reaches that line: the row's mirror, then the core line it names. Both
-#: OUTER and both on a primary key, so neither can drop a row or multiply one.
-_FORM_CORE_LINE_JOIN_SQL = (
-    "LEFT JOIN projects.sales_order_lines cpsl ON cpsl.id = oir.so_line_id\n"
-    "    LEFT JOIN sales_order_lines csol ON csol.id = cpsl.core_sales_order_line_id"
-)
+#: sheet raises rows with no supply decision, so this is the leg that counts them. Same R1
+#: formula, same reasoning: a form row's line, when it has one, no longer caps it either, so
+#: the leg no longer needs to reach the core line at all (`_FORM_CORE_LINE_JOIN_SQL` and its
+#: `cpsl`/`csol` joins are retired with the cap that was their only reader).
+_OWED_FORM_SQL = "GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)"
 
 #: The SO-scope join `horizon_committed_select_sql(so_scoped=True)` adds to BOTH project
 #: legs (PLAN-reorder-plan-demand-class-orders.md, S2, 21 Sep 2026). Walks an inquiry row
@@ -551,8 +526,8 @@ WITH legs AS (
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
       -- PLAN-scm-supplied-with-companions.md ruling 6: a bundled unit never reaches
-      -- reorder planning, whatever the item it rides with is covered by. And 7.3: a row
-      -- whose line owes nothing more is not owed either, so the leg drops it.
+      -- reorder planning, whatever the item it rides with is covered by. R1 (23 Sep):
+      -- otherwise uncapped, so the leg drops a row only once it is fully linked/bundled.
       AND {_OWED_SQL} > 0
     UNION ALL
     -- The FORM leg: an instruction the CS Order Inquiry Form raised that no supply decision
@@ -604,7 +579,6 @@ WITH legs AS (
     LEFT JOIN warehouses fw
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
-    {_FORM_CORE_LINE_JOIN_SQL}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
         FROM projects.order_inquiry_links l
@@ -628,9 +602,8 @@ WITH legs AS (
       {NOT_REDIRECTED_SQL}
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
-      -- Ruling 6, form leg: the same "never reaches reorder planning" rule. No 7.3 cap
-      -- here: this leg matches on item code for rows no supply decision points at, so
-      -- there is no core sales order line in scope to owe anything.
+      -- Ruling 6, form leg: the same "never reaches reorder planning" rule. R1 (23
+      -- Sep): uncapped, same as the confirmed leg.
       AND {_OWED_FORM_SQL} > 0
 )
 SELECT product_id,
@@ -764,8 +737,7 @@ def horizon_committed_select_sql(
       {NOT_REDIRECTED_SQL}
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
-      -- Ruling 6: a bundled unit never reaches reorder planning. And 7.3: a row whose
-      -- line owes nothing more is nothing to buy, so the plan does not count it.
+      -- Ruling 6: a bundled unit never reaches reorder planning. R1: otherwise uncapped.
       AND {_OWED_SQL} > 0
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
       -- date rather than the core line's required_date.
@@ -825,7 +797,6 @@ def horizon_committed_select_sql(
     LEFT JOIN warehouses fw
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
-    {_FORM_CORE_LINE_JOIN_SQL}
     {so_join}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
@@ -850,8 +821,7 @@ def horizon_committed_select_sql(
       {NOT_REDIRECTED_SQL}
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
-      -- Ruling 6, form leg: the same rule again, and no 7.3 cap for the same reason the
-      -- view's own form leg has none: no core line in scope.
+      -- Ruling 6, form leg: the same rule again. R1: uncapped, same as the confirmed leg.
       AND {_OWED_FORM_SQL} > 0
       -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no
       -- date at all, so it is always in - unscheduled demand is still demand.
@@ -929,8 +899,8 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       {NOT_REDIRECTED_SQL}
       AND oir.qty > 0
-      -- Ruling 6: a fully bundled row is not owed, so it names no date either, and 7.3's
-      -- cap reads the same way: a row whose line owes nothing dates nothing.
+      -- Ruling 6: a fully bundled row is not owed, so it names no date either. R1: no
+      -- other cap either.
       AND {_OWED_SQL} > 0
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
            OR oir.delivery_date <= CAST(:horizon AS date))
@@ -941,7 +911,6 @@ WITH legs AS (
     JOIN products fp
       ON fp.product_code = oir.item_code
      AND fp.company_id = oir.company_id
-    {_FORM_CORE_LINE_JOIN_SQL}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
         FROM projects.order_inquiry_links l

@@ -93,7 +93,6 @@ from app.services.project_order_inquiry_service import (
 )
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
-from app.services.scm.demand import demand_qty
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 
 logger = logging.getLogger(__name__)
@@ -413,48 +412,33 @@ _HAS_OPEN_RESERVE_REQUEST = (
     .correlate(OrderInquiryRow)
     .exists()
 )
-#: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
-#: outer-joins (`scm/demand.py`'s own expression, so the worklist and reorder planning read
-#: one definition of outstanding). The `case` is not decoration: on a row whose mirror names
-#: no core line every column of the join is NULL, and Postgres `greatest()` IGNORES NULLs,
-#: so `demand_qty()` would answer 0 there and zero the Buy card for every such row.
-_LINE_OUTSTANDING = case(
-    (SalesOrderLine.id.is_(None), OrderInquiryRow.qty), else_=demand_qty()
-)
 #: PLAN-oi-cancelled-line-used-confirm.md (AC-CL-4/5): whether the row's own sales order
-#: line is cancelled, NULL-safe the same way `_LINE_OUTSTANDING` is - a row whose mirror
-#: names no core line reads False here, not NULL, so `~_LINE_CANCELLED` in a WHERE clause
-#: still matches it instead of silently dropping it.
+#: line is cancelled, NULL-safe - a row whose mirror names no core line reads False here,
+#: not NULL, so `~_LINE_CANCELLED` in a WHERE clause still matches it instead of silently
+#: dropping it.
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
-#: The row's quantity, capped at that (7.3) for an ORDER row. An ORDER_BACK row is NEVER
-#: capped by its borrowing line's outstanding (owner ruling 22 Sep 2026, SO417310 /
-#: MKT5529SS-DIY): it is a hole at the DONOR location left behind when goods already shipped
-#: off the borrowing line, so the line reading delivered in full is the normal case, not a
-#: reason to zero it out. ONE expression, used by the Buy card, the `kind=buy` filter and the
-#: Remaining column, so the three cannot answer differently for one row; `scm.committed_v`
-#: and the plan's horizon SQL carry the same rule as `demand._OWED_SQL`. Every reader of it
-#: must have `SalesOrderLine` joined - `_base` does, and `_quantity_flow_by_so_line` joins it
-#: for itself.
-_CAPPED_QTY = case(
-    (OrderInquiryRow.verb == IV_ORDER_BACK, OrderInquiryRow.qty),
-    else_=func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING),
-)
+#: The row's own quantity, UNCAPPED (owner ruling R1, 23 Sep 2026,
+#: `PLAN-oi-order-rows-uncapped.md`): "this is delivered already and we want to replenish,
+#: I don't mind order back or order, as long as it needs to order". SO421985 raised three
+#: ORDER rows of 493, the AutoCount pull then marked the lines delivered 493/493 and closed
+#: the order, and the worklist's Remaining still read 493 while `scm.committed_v` read 0 -
+#: a raised, unlinked row is buy demand until purchasing links it, whatever the line's own
+#: delivered column says. That retires the 7.3 / 14 Sep cap (SO368872 / SRTWC286-SH, "Buy
+#: never exceeds what the line still owes") this used to apply to a plain ORDER row, and the
+#: `verb == ORDER_BACK` exception #1114 (22 Sep) carved out of it - both verbs are now the
+#: SAME expression, `OrderInquiryRow.qty` itself, so this no longer reads `SalesOrderLine`
+#: at all. ONE expression, used by the Buy card, the `kind=buy` filter and the Remaining
+#: column, so the three cannot answer differently for one row; `scm.committed_v` and the
+#: plan's horizon SQL carry the same rule as `demand._OWED_SQL`.
+_ROW_QTY = OrderInquiryRow.qty
 #: PLAN-scm-supplied-with-companions.md ruling 7 excludes only a row's OWN `bundled_qty`
 #: from the cards - the item it rides ON (the host) still needs buying independently of
 #: whether a companion happens to ride inside its line: CKS1050 unlinked qty 1 is Buy 1
 #: whether or not CKSW015 rides on it. No cross-row subtraction here (UAC D5, corrected).
-#:
-#: CAPPED BY THE LINE'S OUTSTANDING (7.3, owner 14 Sep evening: Buy never exceeds what the
-#: line still owes). `qty - linked - bundled` never looked at delivery, so SO368872 /
-#: SRTWC286-SH - 364 ordered, 352 delivered, twelve outstanding - asked purchasing to buy
-#: 240 of something the customer had already had. Measured on the 3am prod copy, the cap
-#: moves the whole Buy total from 154,618 to 153,124 (138 rows sit on a partly delivered
-#: line), so it is a correctness fix rather than a big number. The cards (`_kinds`) and the
-#: `kind=buy` filter are the two readers, and both build on `_base`, which carries the join.
 _UNLINKED_QTY = func.greatest(
-    _CAPPED_QTY - _linked_qty() - OrderInquiryRow.bundled_qty, 0
+    _ROW_QTY - _linked_qty() - OrderInquiryRow.bundled_qty, 0
 )
 #: The three STAGES a unit passes through, left to right (R-F): not yet on any document,
 #: on a purchase order line but not yet on a shipment, already on an SPO (own link or a
@@ -1730,19 +1714,12 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
             )
-            # NOT dead (17 Sep review finding pushed back on, see PLAN "Review
-            # findings" table note): `_UNLINKED_QTY` (this query's own `open_qty`)
-            # is built off `_LINE_OUTSTANDING`, which reads the bare `SalesOrderLine`
-            # table directly (`_LINE_OUTSTANDING`'s own docstring: "every reader of
-            # it must have `SalesOrderLine` joined") - removing this outerjoin left
-            # `SalesOrderLine` unjoined in the FROM clause, which SQLAlchemy then
-            # cross-joined against `OrderInquiry` (a real cartesian product,
-            # SAWarning, and `test_link_suggests_reallocate_to_every_sooner_open_
-            # row` red) rather than actually dropping an unused join.
-            .outerjoin(
-                SalesOrderLine,
-                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
-            )
+            # R1 (23 Sep 2026): `_UNLINKED_QTY` (this query's own `open_qty`) no longer
+            # reads `SalesOrderLine` - it is `_ROW_QTY`, the row's own `qty`, uncapped -
+            # so the join a 17 Sep review finding once needed here to avoid a cartesian
+            # product against `OrderInquiry` (SAWarning,
+            # `test_link_suggests_reallocate_to_every_sooner_open_row`) is retired with
+            # the cap that was its only reason to exist.
             .filter(
                 ProjectSalesOrderLine.product_id.in_(product_ids),
                 OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
@@ -1790,12 +1767,16 @@ class OrderInquiryWorklistService:
         carries links, so per `so_line_id`:
 
         * `taken` - the sum of every LINK on the line's rows, whatever document it names;
-        * `remaining` - the sum of `least(qty, what the line still owes) - linked` across
-          them, which is exactly `scm.committed_v`'s own confirmed leg (migrations 422 and
-          511) and therefore exactly what still flows to reorder planning. The cap is 7.3
-          (owner 14 Sep evening): SO368872 / SRTWC286-SH had 352 of its 364 delivered, so
-          Remaining 302 beside a Buy card reading 0 was the screen contradicting itself
-          while the engine went on buying the 302 (reviewer S1, 15 Sep).
+        * `remaining` - the sum of `qty - linked` across them, floored at zero. NOT the
+          SAME expression as `scm.committed_v`'s confirmed leg - `bundled_qty` is not
+          subtracted here, unlike the view's own `- oir.bundled_qty`. UNCAPPED either way
+          (owner ruling R1, 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`): SO421985
+          raised three ORDER rows of 493, the AutoCount pull then marked the lines
+          delivered 493/493, and a Remaining that capped at the line's outstanding read 0
+          for a row nobody had linked - the 14 Sep cap this replaced fixed the opposite
+          defect (SO368872 / SRTWC286-SH, Remaining 302 beside a Buy card of 0) but the
+          owner has since ruled the row is owed regardless of what the line's delivered
+          column says.
 
         Scoped to the verbs `committed_v` counts: `ORDER` and, since part 2 section 4b,
         `ORDER_BACK`. Rows in `actioned` / `cancelled` are out, as they always were.
@@ -1811,10 +1792,10 @@ class OrderInquiryWorklistService:
         so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
         if not so_line_ids:
             return {}
-        # The core sales order line the cap reads, reached the same way `_base` reaches it:
-        # the row's mirror line, then the core line it names. Both joins are on a primary
-        # key and both are OUTER, so a row whose mirror names no core line still counts,
-        # uncapped, exactly as it did before.
+        # R1 (23 Sep 2026): uncapped, so this no longer reads any core sales order line -
+        # `_ROW_QTY` is the row's own `qty`, nothing else. The joins that used to reach it
+        # (`ProjectSalesOrderLine` -> `SalesOrderLine`) are gone with the cap they existed
+        # for; `OrderInquiryRow.so_line_id` needs neither to group or filter.
         linked = (
             func.coalesce(
                 select(func.sum(OrderInquiryLink.qty))
@@ -1828,17 +1809,9 @@ class OrderInquiryWorklistService:
             self.db.query(
                 OrderInquiryRow.so_line_id,
                 func.coalesce(func.sum(linked), 0),
-                func.coalesce(func.sum(func.greatest(_CAPPED_QTY - linked, 0)), 0),
+                func.coalesce(func.sum(func.greatest(_ROW_QTY - linked, 0)), 0),
             )
             .select_from(OrderInquiryRow)
-            .outerjoin(
-                ProjectSalesOrderLine,
-                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
-            )
-            .outerjoin(
-                SalesOrderLine,
-                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
-            )
             .filter(
                 OrderInquiryRow.so_line_id.in_(so_line_ids),
                 OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
@@ -2622,7 +2595,6 @@ class OrderInquiryWorklistService:
                 _PO_LINKED_QTY.label("po_linked"),
                 self._derived_cover_qty().label("derived_cover"),
                 _linked_qty().label("linked_any"),
-                _CAPPED_QTY.label("capped_qty"),
                 # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-4): so `buy` alone can
                 # zero out below - `incoming`/`purchased` stay real (a cancelled-line
                 # row that already holds a link still counts in Purchased/Incoming, C4).
@@ -2642,11 +2614,13 @@ class OrderInquiryWorklistService:
         )
         # AC-CL-4: a row on a cancelled line owes nothing to Buy - nobody will buy it -
         # while `incoming`/`purchased` above stay real for a row that already holds a
-        # link (C4).
+        # link (C4). R1 (23 Sep 2026): uncapped, so Buy reads off `inner.c.qty` - the
+        # row's own quantity, the SAME column `incoming`/`purchased` already read above -
+        # rather than a separate "capped_qty" that would now just equal it.
         buy = case(
             (inner.c.line_cancelled, 0),
             else_=func.greatest(
-                inner.c.capped_qty - inner.c.linked_any - inner.c.bundled_qty, 0
+                inner.c.qty - inner.c.linked_any - inner.c.bundled_qty, 0
             ),
         )
         return select(

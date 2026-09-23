@@ -1496,14 +1496,13 @@ def _seed_partly_delivered(w, *, delivered: str):
 
 
 def test_ac_r_38a_the_remaining_column_is_capped():
-    """AC-R-38, the Remaining column (`_quantity_flow_by_so_line`).
-
-    The captain, 20 Aug: "show the quantity, quantity taken from PO, and the remaining
-    quantity, cause this is what flows to reorder planning". So this figure and the Buy card
-    have to agree, and the cap 7.3 put on the card belongs here too.
-
-    Green at e9690a0e5 - 55f1d0d57 capped this reader along with the card - and kept as the
-    pin that says so, because the two readers below are where it did not reach.
+    """REWRITTEN (R1, owner 23 Sep 2026, `PLAN-oi-order-rows-uncapped.md`, SO421985): the
+    7.3 cap this test (AC-R-38) used to pin is RETIRED for every verb - the Remaining
+    column is now the row's own qty less what is linked, `364 - 62 = 302`, whatever the
+    sales order line's own delivered figure reads. Name kept (do not delete, same
+    treatment as AC-OB-5/AC-R-36's own rewrites); the two blocks below now prove
+    delivery has NO say at all: 352 delivered (12 outstanding) and 300 delivered (64
+    outstanding) must read the SAME 302.
 
     On the REAL database (`pg_session`): `scm.committed_v`, which the sibling tests read, is
     installed by a migration and the blank scratch schema has no view, so all three share the
@@ -1515,54 +1514,56 @@ def test_ac_r_38a_the_remaining_column_is_capped():
         assert Decimal(str(line.qty_ordered)) - Decimal(str(line.qty_delivered)) == (
             Decimal("12")
         ), "twelve of the 364 are still owed"
-        assert _remaining_open(w.db, row) == Decimal("0"), (
-            "the Remaining column offers more than the sales order line still owes"
+        assert _remaining_open(w.db, row) == Decimal("302"), (
+            "the cap is retired (R1) - Remaining is the row's own qty less what is linked"
         )
 
     with world(pg_session) as w:
         _line, row = _seed_partly_delivered(w, delivered="300")
 
-        assert _remaining_open(w.db, row) == Decimal("2")
+        assert _remaining_open(w.db, row) == Decimal("302"), (
+            "a different delivered figure must not move Remaining any more"
+        )
 
 
 def test_ac_r_38b_committed_v_is_capped():
-    """AC-R-38, `scm.committed_v`.
-
-    The view is what every stock screen reads "committed" off. A row that says nothing left
-    to buy on the worklist and 302 in the view is worse than one that says 302 in both,
-    because only one of the two is on a screen somebody checks.
-    """
+    """REWRITTEN (R1, 23 Sep 2026), sibling of the rewrite above: `scm.committed_v` now
+    counts the row's own qty less what is linked in full, `364 - 62 = 302`, regardless of
+    delivery - both 352 delivered and 300 delivered must read 302."""
     with world(pg_session) as w:
         _line, _row = _seed_partly_delivered(w, delivered="352")
 
-        assert _committed(w.db, w.product.id, planned=False) == Decimal("0"), (
-            "the view counts demand the customer has already been given"
+        assert _committed(w.db, w.product.id, planned=False) == Decimal("302"), (
+            "the cap is retired (R1) - the view counts what is still linked short of the row"
         )
 
     with world(pg_session) as w:
         _line, _row = _seed_partly_delivered(w, delivered="300")
 
-        assert _committed(w.db, w.product.id, planned=False) == Decimal("2")
+        assert _committed(w.db, w.product.id, planned=False) == Decimal("302"), (
+            "a different delivered figure must not move the view's figure any more"
+        )
 
 
 def test_ac_r_38c_the_plans_own_select_is_capped():
-    """AC-R-38, `demand.horizon_committed_select_sql` - what a reorder run actually buys
-    from.
-
-    This is the reader that spends money. Uncapped, the plan proposes 302 of an item the
-    sales order line owes twelve of, and 62 of those twelve are already on a purchase order.
-    """
+    """REWRITTEN (R1, 23 Sep 2026), sibling of the rewrites above:
+    `demand.horizon_committed_select_sql` - what a reorder run actually buys from - now
+    proposes the row's own qty less what is linked in full, `364 - 62 = 302`, whatever
+    the line's own delivered figure reads. Known consequence (R1's own words): the plan
+    now proposes 302 of something twelve of which is owed, the trade the owner took."""
     with world(pg_session) as w:
         _line, _row = _seed_partly_delivered(w, delivered="352")
 
-        assert _committed(w.db, w.product.id, planned=True) == Decimal("0"), (
-            "the reorder run would buy 302 of something twelve of which is owed"
+        assert _committed(w.db, w.product.id, planned=True) == Decimal("302"), (
+            "the cap is retired (R1) - the reorder run buys the row's own qty less links"
         )
 
     with world(pg_session) as w:
         _line, _row = _seed_partly_delivered(w, delivered="300")
 
-        assert _committed(w.db, w.product.id, planned=True) == Decimal("2")
+        assert _committed(w.db, w.product.id, planned=True) == Decimal("302"), (
+            "a different delivered figure must not move the plan's own figure any more"
+        )
 
 
 # --------------------------------------------------------------------------- #
