@@ -633,3 +633,38 @@ def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_a_project_run(sc
         f"expected the confirmed project need (493) less the reserved 100 = 393 on a "
         f"Project run too, got {_recs_for(db, run_id, u['pid'])}"
     )
+
+
+# =============================================================================
+# Review round 3 nit (reviewer, 23 Sep 2026, READY) - `retail_net` must CLAMP the
+# reduction to the row's own project need, not subtract an oversized Reserve unclamped.
+# =============================================================================
+
+def test_retail_net_clamps_an_oversized_reserve_to_the_rows_own_need(scm_app):
+    """A Reserve of 100 against a confirmed need of just 20: `retail_net` must land back
+    on exactly `net` (80 = 100 on hand - 20 committed) - the reserve fully absorbs the row's
+    own 20-unit need and Retail is unaffected - not `net - 80` (the unclamped reading,
+    which read Retail as 80 units worse off than the no-project baseline for no reason).
+    The project part is unaffected by the clamp (`max(need - reduction, 0)` already floors
+    at 0): the reserve fully covers the confirmed 20, so nothing is bought at all.
+    """
+    _, db, _, _ = scm_app
+    u = _seed_single_member(db, on_hand=100)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
+
+    run_id = _run_all(db, so_numbers=[so["so_number"]])
+
+    recs = _recs_for(db, run_id, u["pid"])
+    assert len(recs) == 1, recs
+    row = recs[0]
+    assert float(row["inputs"]["retail_net"]) == 80.0, (
+        f"expected retail_net to land back on `net` (80), not net - 80 (0) from an "
+        f"unclamped reduction: {row}"
+    )
+    assert row["rec_type"] == "covered", (
+        f"expected no buy - the reserve fully covers the confirmed need: {row}"
+    )

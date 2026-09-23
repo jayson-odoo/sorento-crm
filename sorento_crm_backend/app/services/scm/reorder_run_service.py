@@ -2746,8 +2746,14 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # RETAIL's own net, for the channel drill (AC-F07) AND - since Lane F, below - what
     # Retail is actually SIZED against: the firm project channel taken back out (`net`
     # already subtracted it as part of `committed`) and the stock a project has already
-    # claimed removed.
-    retail_net = net + project_need - project_supply_reduction
+    # claimed removed. Review round 3 nit (reviewer, 23 Sep 2026): the reduction is
+    # CLAMPED to this row's own project need - an oversized Reserve (data entry, or a
+    # Reserve raised before the confirmed qty was trimmed) is stock CS claimed against
+    # THIS row's need, never more than the need itself, so anything past it is not evidence
+    # Retail lost anything. Unclamped, a reserve of 100 against a confirmed need of 20 read
+    # `retail_net` 80 units WORSE than the no-project baseline (`net - 80`) - only 20 of
+    # that reduction was ever this row's own stock.
+    retail_net = net + project_need - min(project_supply_reduction, project_need)
 
     # LANE F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 - supersedes
     # the ONE-FORMULA ruling below for the project channel): Retail is triggered and sized
