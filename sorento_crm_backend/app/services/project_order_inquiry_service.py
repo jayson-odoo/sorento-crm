@@ -4655,6 +4655,12 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # PLAN-oi-request-cs-reserve.md (AC-RS-12): a reserve link is not a PO or
+                # an SPO document - this reader's whole vocabulary is "which BOOK is this
+                # on" - so it never leaks in here as a `kind="po"` entry with every book
+                # column blank. `reserved_qty` (the worklist serializer) is where it
+                # actually surfaces.
+                OrderInquiryLink.reserve_request_row_id.is_(None),
                 # R7/AC-E9: SPOAllocation is OUTER-joined, so this passes a plain PO
                 # link (its columns come back NULL) untouched and only excludes a
                 # link whose SPO side names a retired line.
@@ -5731,11 +5737,19 @@ class ProjectOrderInquiryService:
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
             row.state = self._coverage_state(_dec(row.qty), linked, _dec(row.bundled_qty))
-            first = links[0] if links else None
-            # The FIRST link's document, by when it was made. `po_ref` has carried a PO
-            # number since section G and several readers still print it; it is a display of
-            # the links now, so it is restated here rather than left holding whatever the
-            # last single-line placement happened to set.
+            # The FIRST REAL document's own link, by when it was made - a reserve link
+            # (`document="Reserved @ BRW"`, `reserve_request_row_id` set) is not a PO or
+            # an SPO (PLAN-oi-request-cs-reserve.md, review round SF-1): skipped here so
+            # a row reserved before it is ever placed on a book does not read a fake
+            # `po_ref`. `po_number` (the worklist's own reader) already gets this right
+            # (`_PO_LINKED_QTY`/`links_for_rows` both filter on the real target column);
+            # this is the SAME rule applied to the row's own stored display.
+            first = next(
+                (link for link in links if link.reserve_request_row_id is None), None
+            )
+            # `po_ref` has carried a PO number since section G and several readers still
+            # print it; it is a display of the links now, so it is restated here rather
+            # than left holding whatever the last single-line placement happened to set.
             row.po_ref = first.document if first is not None else None
             row.po_line_id = first.po_line_id if first is not None else None
             row.spo_ref = (
@@ -8938,12 +8952,18 @@ class ProjectOrderInquiryService:
     def unplace(
         self, row_id: str, *, actor_user_id: str, link_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Unlink. With a `link_id` that ONE link goes; without one every link on the row
-        goes, which is what the whole-row action means.
+        """Unlink. With a `link_id` that ONE link goes; without one every PO/SPO link on
+        the row goes, which is what the whole-row action means.
 
         A partly linked row can therefore give back one of its documents and keep the
         other, which is the point of the child table: before it, "unplace" was the only
         move and it took the whole placement with it.
+
+        **A reserve link is never touched here** (`PLAN-oi-request-cs-reserve.md`
+        section 6c, F5 - "unlink is unlink, unreserve is unreserve ... the one doing
+        the job different so dangerous if they are the same"). Naming a reserve
+        link's own id is refused outright; the whole-row form silently leaves any
+        reserve link standing and acts on the PO/SPO links only.
         """
         row = self._row_or_404(row_id)
         links = self._links_of(row.id)
@@ -8955,6 +8975,16 @@ class ProjectOrderInquiryService:
                     message="That link no longer exists.",
                     code="order_inquiry_link_not_found",
                 )
+            if links[0].reserve_request_row_id is not None:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        "This is a reserve, not a link - use Unreserve to give it back."
+                    ),
+                    code="order_inquiry_unlink_reserve_refused",
+                )
+        else:
+            links = [link for link in links if link.reserve_request_row_id is None]
         if not links:
             raise AppException(
                 status_code=409,
@@ -8984,6 +9014,10 @@ class ProjectOrderInquiryService:
 
         Idempotent: an empty `row_ids`, or a set none of which holds a link (a second click
         after the first already ran), returns 0.
+
+        **Skips reserve links** (`PLAN-oi-request-cs-reserve.md` section 6c, F5): the
+        bulk action is PO/SPO unlink, never Unreserve, so a row holding only a reserve
+        link is left standing and not counted.
         """
         wanted = [row_id for row_id in (row_ids or []) if row_id]
         if not wanted:
@@ -8991,12 +9025,22 @@ class ProjectOrderInquiryService:
         rows = (
             self.db.query(OrderInquiryRow)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
-            .filter(OrderInquiryRow.id.in_(wanted))
+            .filter(
+                OrderInquiryRow.id.in_(wanted),
+                OrderInquiryLink.reserve_request_row_id.is_(None),
+            )
             .distinct()
             .all()
         )
         for row in rows:
-            self._remove_links(row, self._links_of(row.id))
+            self._remove_links(
+                row,
+                [
+                    link
+                    for link in self._links_of(row.id)
+                    if link.reserve_request_row_id is None
+                ],
+            )
         if rows:
             self.refresh_link_state(rows)
             self.db.flush()

@@ -111,6 +111,21 @@ def resolve_recipients(
             if owner is not None:
                 add(getattr(owner, "email", None), getattr(owner, "name", None), str(getattr(owner, "id")))
 
+    # PLAN-oi-request-cs-reserve.md 3.6 (AC-RS-16): Cc the person who REQUESTED the
+    # reserve and/or the person who RAISED the order inquiry - two more of the same
+    # "read a person off the context" shape `include_actor` already is, added in this
+    # order so `include_requester` resolves before `include_raiser` (the reserved
+    # mail's own To/Cc order, since it sets neither `user_ids` nor `include_actor`).
+    if config.get("include_requester") and promotion_context:
+        requester = promotion_context.get("requester") or {}
+        if requester.get("email"):
+            add(requester.get("email"), requester.get("name"))
+
+    if config.get("include_raiser") and promotion_context:
+        raiser = promotion_context.get("raiser") or {}
+        if raiser.get("email"):
+            add(raiser.get("email"), raiser.get("name"))
+
     for raw in config.get("extra_emails") or []:
         add(str(raw))
 

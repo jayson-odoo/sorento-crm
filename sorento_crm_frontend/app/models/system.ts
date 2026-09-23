@@ -50,6 +50,14 @@ export interface SystemSetting {
   /** The code of the unit above, resolved by the backend - never a bare UUID on screen. */
   defaultUomCode?: string | null;
 
+  /**
+   * `PLAN-oi-request-cs-reserve.md` section 6c (F1): the reserve dialog's own
+   * configurable default Location - owner words, "list all the site pool with this BRW
+   * (configurable as default)". Null means no configured default; the dialog then
+   * falls back to the row's own site pool (R3).
+   */
+  oiReserveDefaultPoolWarehouseId?: string | null;
+
   /** Takeover cooldown window in seconds (0 = instant takeover). */
   takeoverCooldownSeconds?: number;
   /** Global default undo grace window for form-SLA actions, in seconds. */

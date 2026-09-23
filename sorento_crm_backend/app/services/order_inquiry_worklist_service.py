@@ -68,6 +68,8 @@ from app.models.project_so import (
     IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -388,6 +390,29 @@ def _linked_qty(*where) -> Any:
 #: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
+#: PLAN-oi-request-cs-reserve.md 3.4 (AC-RS-12): what CS has reserved off this row - a
+#: THIRD link target beside PO/SPO, never counted into either of the two above (a reserve
+#: link's `po_line_id`/`spo_allocation_id` are both null by the widened CHECK, so this is
+#: purely additive, not a re-split of the same links).
+_RESERVED_LINKED_QTY = _linked_qty(OrderInquiryLink.reserve_request_row_id.isnot(None))
+#: AC-RS-20: an OPEN reserve request row exists for this row (its parent request still
+#: `requested`) - the chip reads `requested` while this is true, whatever `_RESERVED_
+#: LINKED_QTY` above already holds from an earlier cycle (R5: reserved then requested
+#: again on the balance still reads `requested`).
+_HAS_OPEN_RESERVE_REQUEST = (
+    select(OrderInquiryReserveRequestRow.id)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequest.state == "requested",
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+)
 #: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
 #: outer-joins (`scm/demand.py`'s own expression, so the worklist and reorder planning read
 #: one definition of outstanding). The `case` is not decoration: on a row whose mirror names
@@ -728,6 +753,9 @@ _COLUMNS = (
     _LINE_CANCELLED.label("line_cancelled"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
+    # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20).
+    _RESERVED_LINKED_QTY.label("reserved_qty"),
+    _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
     # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
     # label outright (S2, review round 1) - the export runs this `json_agg` for every row
@@ -766,10 +794,20 @@ def _qty_str(value: Decimal) -> str:
 #: the buy-verb gate (`_SUGGESTION_LINKABLE_VERBS`, the same set the FE's
 #: `TAKEN_REMAINING_VERBS` names): `-` on a notice row (it never carries a link of its
 #: own), `0` on a row or line already cancelled.
+#:
+#: Review round 2, B1 (`PLAN-oi-request-cs-reserve.md` section 7): `linked_qty`
+#: deliberately excludes a reserve link (`links_for_rows`'s own AC-RS-12 note), so
+#: `reserved_qty` (the serializer's own separate field) is the only other place that
+#: quantity can come from - both readers add it in, the same way the FE's own
+#: `inquiryRowTakenQty` does.
+def _export_taken_qty(row: Dict[str, Any]) -> Decimal:
+    return _dec(row.get("linked_qty")) + _dec(row.get("reserved_qty"))
+
+
 def _export_taken(row: Dict[str, Any]) -> str:
     if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
         return "-"
-    return _qty_str(_dec(row.get("linked_qty")))
+    return _qty_str(_export_taken_qty(row))
 
 
 def _export_remaining(row: Dict[str, Any]) -> str:
@@ -778,7 +816,7 @@ def _export_remaining(row: Dict[str, Any]) -> str:
     if row.get("state") == "cancelled" or row.get("line_cancelled"):
         return "0"
     remaining = (
-        _dec(row.get("qty")) - _dec(row.get("linked_qty")) - _dec(row.get("bundled_qty"))
+        _dec(row.get("qty")) - _export_taken_qty(row) - _dec(row.get("bundled_qty"))
     )
     return _qty_str(max(remaining, _ZERO))
 
@@ -2038,6 +2076,11 @@ class OrderInquiryWorklistService:
             "so_date": row.so_date,
             "so_number": row.so_number,
             "item_code": row.item_code,
+            # PLAN-oi-request-cs-reserve.md section 6 item 1: the stock grid keys on the
+            # product's id, never the item code string - two products share one code on
+            # the live book. Already on `row` (`_COLUMNS` selects `Product.id`);
+            # `response_model` drops what it is not told about.
+            "product_id": row.product_id,
             "product_name": row.product_name,
             "qty": _qty_str(_dec(row.qty)),
             "delivery_date": row.delivery_date,
@@ -2060,6 +2103,16 @@ class OrderInquiryWorklistService:
             "location": row.location,
             "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
             "remaining_open": _qty_str(line_flow.get("remaining", _ZERO)),
+            # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20): `requested` while
+            # an open request row exists, else `reserved` once something has actually
+            # been reserved, else null - an open request always wins (R5: reserved then
+            # requested again on the balance reads `requested`, never `reserved`).
+            "reserve_state": (
+                "requested"
+                if getattr(row, "has_open_reserve_request", False)
+                else ("reserved" if _dec(getattr(row, "reserved_qty", None)) > _ZERO else None)
+            ),
+            "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,

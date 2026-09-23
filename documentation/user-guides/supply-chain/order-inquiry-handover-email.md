@@ -105,6 +105,8 @@ dedicated combined line is built.
 
 * [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md) - what
   the mail's link opens.
+* [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md) - the separate
+  emails a "Request CS to reserve" exchange sends.
 * [Sales order changes after planning](sales-order-changes.md) - the in-app notification
   purchasing gets once a change is confirmed or amended, separate from this email.
 * [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md#undo-last-confirm)
