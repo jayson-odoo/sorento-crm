@@ -15,7 +15,7 @@ not to one of its operating companies.
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -55,14 +55,38 @@ class ImportFieldAlias(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        # The plain triple (migration 311), NOT widened to include `supplier_id` (review
-        # round 3): 22 call sites - every seeder, `scripts/bootstrap_env.py`, several scm
-        # tests - `INSERT ... ON CONFLICT (doc_type, field, alias) DO NOTHING` against this
-        # exact constraint by name, and rewriting them is not this column's call to make.
-        # It is also the right rule: a supplier's OVERRIDE of a word changes its TOKEN
-        # (`field`) for the same `alias`, which is a different triple and was never blocked;
-        # what the triple correctly refuses is a second row - shared or scoped - naming a
-        # (field, alias) pair a row already names, because that mapping already exists.
-        UniqueConstraint("doc_type", "field", "alias", name="uq_import_field_alias_triple"),
+        # Split in two (migration `ifa_supplier_uniq`, owner ruling A, review round 2):
+        # the plain triple (migration 311) had no `supplier_id` in it, so a SECOND
+        # supplier saving the identical (header, field) pair an earlier supplier already
+        # saved lost the `ON CONFLICT` race and never got a row of its own. A shared row
+        # (`supplier_id IS NULL`) is unique against every OTHER shared row on its own; a
+        # supplier row is unique against every other row THAT SAME supplier has saved -
+        # two different suppliers may each hold their own row for the same header.
+        # Every seeder inserting a shared row must name this index's own predicate -
+        # `ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING` -
+        # a bare `ON CONFLICT (doc_type, field, alias) DO NOTHING` no longer matches any
+        # index at all (42P10).
+        Index(
+            "uq_import_field_alias_shared",
+            "doc_type",
+            "field",
+            "alias",
+            unique=True,
+            postgresql_where=text("supplier_id IS NULL"),
+        ),
+        # NOT partial: Postgres only infers a partial index as an `ON CONFLICT` arbiter
+        # when the statement repeats the index's own predicate verbatim, and the natural
+        # conflict target every caller writes is the plain four-column tuple. A NULL
+        # `supplier_id` never collides here (Postgres never treats two NULLs as equal),
+        # so this being non-partial is harmless for shared rows - `uq_import_field_alias_
+        # shared` above is what polices those.
+        Index(
+            "uq_import_field_alias_supplier",
+            "doc_type",
+            "field",
+            "alias",
+            "supplier_id",
+            unique=True,
+        ),
         Index("ix_import_field_alias_doc_type_field", "doc_type", "field"),
     )
