@@ -38,6 +38,9 @@ DOC_TYPE = "packing_list"
 
 #: Without an item code and a quantity there is nothing to receive against.
 _REQUIRED_COLUMNS = ("item_code", "qty")
+#: Public alias (B7, T6) - so the import-mapping probe (B4) can flag these without
+#: importing the private name.
+REQUIRED_COLUMNS = _REQUIRED_COLUMNS
 
 #: Fields that describe the CONTAINER rather than a line. They may appear as columns in the
 #: table or as labelled cells above it; either way they belong to the block, not the row.
@@ -270,9 +273,17 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
-def _header_map(raw: list, resolver: AliasResolver) -> dict[int, str]:
+def _header_map(
+    raw: list, resolver: AliasResolver, header_texts: Optional[list[str]] = None
+) -> dict[int, str]:
+    """`header_texts`, when given, is the mapper's own probe (B2/B3) reading of THIS row -
+    the synthesised column texts (`外箱/木托尺寸 [2]`, a spliced second header row) rather
+    than the row's own raw cells, so a header only the probe could name still resolves
+    through a saved alias. Absent, every other row keeps resolving off its own raw text,
+    unchanged - a repeated header row (the Jinbaichuan shape) is never touched by this."""
     out: dict[int, str] = {}
-    for pos, cell in enumerate(raw):
+    source = header_texts if header_texts is not None else raw
+    for pos, cell in enumerate(source):
         f = resolver.field_for_header(cell)
         if f:
             out[pos] = f
@@ -518,17 +529,41 @@ def _shipper_of(raw: list, resolver: AliasResolver) -> Optional[str]:
 
 
 def read_workbook(
-    file_data: bytes, resolver: Optional[AliasResolver] = None, *, db: Optional[Session] = None
+    file_data: bytes,
+    resolver: Optional[AliasResolver] = None,
+    *,
+    db: Optional[Session] = None,
+    header_row: Optional[int] = None,
 ) -> PackingReadResult:
     """Parse a packing list into blocks.
 
     `resolver` is injectable so parsing can be tested against a file alone, with no database in
     the picture; `db` builds one from the alias table for the normal path.
+
+    `header_row` (B6, AC-M3) - the mapper's own stepper naming exactly which row is the
+    header, overriding the row-by-row guess below for THAT one row. Probed once, up front,
+    so `_header_map` can hand it the probe's synthesised column texts instead of the row's
+    own raw cells (B3) - what makes a merged/spliced column resolve at all.
     """
     if resolver is None:
         if db is None:
             raise ValueError("read_workbook needs either a resolver or a session")
         resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+
+    # Memoised (review round 1, security m2, "once per read") - see the identical comment
+    # in `proforma_invoice_reader.read_workbook`.
+    _probed_cache: list = []
+
+    def _get_probed():
+        if not _probed_cache:
+            from app.services.scm.header_probe import probe as probe_headers
+
+            _probed_cache.append(probe_headers(file_data, header_row=header_row))
+        return _probed_cache[0]
+
+    header_texts: Optional[list[str]] = None
+    if header_row is not None:
+        header_texts = [c.header for c in _get_probed().columns]
 
     result = PackingReadResult()
     try:
@@ -610,7 +645,8 @@ def read_workbook(
                 footer_lines.append(text)
             continue
 
-        mapped = _header_map(raw, resolver)
+        override_texts = header_texts if header_texts is not None and row_number == header_row else None
+        mapped = _header_map(raw, resolver, header_texts=override_texts)
 
         if _is_header(mapped):
             if not saw_header:
@@ -688,6 +724,14 @@ def read_workbook(
 
     if not saw_header:
         result.missing_columns = list(_REQUIRED_COLUMNS)
+        # B6/AC-M4: see the identical note in `proforma_invoice_reader.read_workbook` -
+        # the alias-free probe (B2) names every unresolved column even when no row
+        # resolved enough required columns to be recognised as a header at all.
+        probed = _get_probed()
+        result.unmapped_headers = [
+            c.header for c in probed.columns
+            if c.header and resolver.raw_field_for_header(c.header) is None
+        ]
         return result
 
     present = set(col_field.values())
