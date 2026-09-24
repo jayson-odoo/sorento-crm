@@ -713,6 +713,38 @@ def test_B3_convert_carry_on_the_pi_detail_matches_what_convert_will_write():
         assert carry["consignee"], carry
 
 
+def test_B4_pi_detail_consignee_is_the_company():
+    """R-B (24 Sep, owner) extends past `convert_carry` (B1/B3): the PI's OWN displayed
+    consignee - both the detail payload (`serialize`, what GET .../{id} returns) and the
+    upload preview's summary - must be the invoice's own company name too, regardless of
+    what the sheet stated (`consignee_ref`/`doc.consignee`). Today `serialize()` still
+    returns `invoice.consignee_ref` verbatim and `preview()`'s summary returns the
+    reader's raw parsed `doc.consignee` - neither reads the company, so this is red until
+    both are pointed at `_company_name_for`/`_convert_carry`'s own company lookup."""
+    from app.models.company import Company
+    from app.services.scm import proforma_invoice_service
+
+    with pg_session() as db:
+        tag = uuid.uuid4().hex[:8]
+        company_id, supplier_id, invoice = _apply_dafuyuan_pi(db, tag)
+        # A sheet that DID state a consignee, and it differs from the company - proves the
+        # detail payload does not just happen to agree because the field was empty.
+        invoice.consignee_ref = "SOME OTHER COMPANY SDN BHD"
+        db.flush()
+
+        company = db.query(Company).filter(Company.id == company_id).one()
+
+        detail = proforma_invoice_service.serialize(db, invoice)
+        assert detail["consignee"] == company.name, (detail["consignee"], company.name)
+
+        preview = proforma_invoice_service.preview(
+            db, _fixture("dafuyuan_pi_20260922.xlsx"), supplier_id=supplier_id, header_row=14,
+        )
+        assert preview["documents"][0]["consignee"] == company.name, (
+            preview["documents"][0]["consignee"], company.name,
+        )
+
+
 # =================================================================================== #
 # E1/E2 - async packing-list download (design E)
 # =================================================================================== #

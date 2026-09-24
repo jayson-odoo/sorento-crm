@@ -170,10 +170,17 @@ def test_d2b_a_partial_quantity_on_a_rowed_pi_line_is_refused_422():
 
 
 def test_d2c_header_carries_over_when_one_container_agrees_and_is_blank_on_conflict():
+    """AC-D2c + R-B (owner, 24 Sep): container/seal/SO carry only when every selected PI
+    agrees on ONE container, and are blank on a conflict - unchanged. Consignee is
+    DIFFERENT since R-B: it is always the invoices' own COMPANY name (never the sheet's
+    `consignee_ref`), and it carries regardless of whether the container conflicts -
+    `_convert_carry`'s own docstring is the source of that split."""
+    from app.models.company import Company
     from app.services.scm import proforma_invoice_service
 
     with blank_session() as db:
-        _company_id, product, supplier = _world(db)
+        company_id, product, supplier = _world(db)
+        company = db.query(Company).filter(Company.id == company_id).one()
         from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoicePackingLine
 
         def _invoice_with_row(container_no, row_container_no):
@@ -215,7 +222,9 @@ def test_d2c_header_carries_over_when_one_container_agrees_and_is_blank_on_confl
         # in `forwarder_order_ref`, never in the bill of lading field (ruling 28).
         assert shipment.forwarder_order_ref == "BL-XYZ"
         assert shipment.bill_of_lading_number is None
-        assert shipment.consignee == "SORENTO SDN BHD"
+        # R-B: the company, never the sheet's `consignee_ref` ("SORENTO SDN BHD" above),
+        # even though on this row the two happen to differ.
+        assert shipment.consignee == company.name, (shipment.consignee, company.name)
         assert not result.get("header_conflicts")
 
         # Conflict: two PIs whose rows name DIFFERENT containers.
@@ -226,12 +235,15 @@ def test_d2c_header_carries_over_when_one_container_agrees_and_is_blank_on_confl
         )
         shipment2 = db.query(_Shp).filter(_Shp.id == result2["shipment_id"]).one()
         assert shipment2.shipping_container_number is None
-        # Every carried field is blank on a conflict, not just the container: they describe
-        # ONE container between them, and half of one document's header on another's box is
+        # Every container/seal/SO field is blank on a conflict, since they describe ONE
+        # container between them, and half of one document's header on another's box is
         # worse than a blank the operator fills in.
         assert shipment2.seal_number is None
         assert shipment2.forwarder_order_ref is None
-        assert shipment2.consignee is None
+        # Consignee is EXEMPT from the conflict blanking (R-B): it is the company both
+        # conflicting PIs share, not a fact about which container their goods are in, so it
+        # carries even while the container itself is left for the operator to fill in.
+        assert shipment2.consignee == company.name, (shipment2.consignee, company.name)
         assert "container_number" in (result2.get("header_conflicts") or [])
 
 
