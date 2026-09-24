@@ -1762,6 +1762,10 @@ class FulfilmentBoardService:
         pick the LIVE row when a refused row and the row CS raised in its place share a
         `created_at`. An answered refusal is therefore taken out of the running explicitly
         rather than left to lose the coin flip - see `_refusal_answered`.
+
+        A cancelled row is never a "last writer" either - it is skipped before it can seed
+        or overwrite an entry, so a withdrawn line falls back to whatever older row still
+        stands, or to no entry at all when none does.
         """
         if not core_line_ids:
             return {}
@@ -1864,6 +1868,13 @@ class FulfilmentBoardService:
                     "_row_id": str(row_id),
                     "redirected": bool(redirected_to_pool),
                 }
+            if state == INQUIRY_CANCELLED:
+                # A cancelled row never becomes the column's entry, not even to seed one
+                # over a blank cell - so a line whose only surviving row is cancelled reads
+                # "-" rather than a number nobody holds. `live_entry` above already excludes
+                # it; this excludes it from last-writer-wins too, so an older row that is
+                # still live (or still-open refusal) wins the cell instead.
+                continue
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
             )

@@ -80,6 +80,11 @@ the mirror `project_line_id`s of covered lines carrying a `rejected` draft.
   line in the results panel ("Line N: rejection is staged; it commits after the pending
   change is applied.").
 
+- AC-B16 **NEW, hand-test fix, 24 Sep 2026:** after Confirm withdraws the line, the board's
+  OI column reads a plain dash for it: a `cancelled` order inquiry row never becomes the
+  column's entry (`project_fulfilment_board_service._order_inquiries` skips it before the
+  last-writer pick), so a line whose only surviving row is cancelled has no `order_inquiry`
+  payload, while an older row that still stands (raised / placed) keeps winning the cell.
 ## Row actions (`BoardVerdictActions`, beside the pill)
 
 - AC-R1 A covered line (`Confirmed` pill) shows the pencil (Change decision) AND the X.
