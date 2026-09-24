@@ -1,6 +1,6 @@
 # PLAN: ideation testable on test turns (`is_test` through the real intake)
 
-Status: small fix track, PR open (#pending)
+Status: small fix track, PR open (#1182)
 Plan created: 2026-09-24T09:40:00Z
 Domain: chatbot / ideation
 Issue: #1179 (sorento side only; the shared-service side is a separate lane)
