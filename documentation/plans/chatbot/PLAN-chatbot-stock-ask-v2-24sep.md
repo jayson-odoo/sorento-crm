@@ -1,6 +1,6 @@
 # PLAN - Chatbot stock ask v2: four-branch answer on #1118's verdict step, X cap, Y ETA offset, salesman notification, asks record
 
-Status: grilled 24 Sep 2026, ready for tickets. Track: full feature (four migrations, one new permission family, one new table, a portal page). Nothing built.
+Status: grilled, lavish review round 1 folded 24 Sep 2026, ready for tickets, nothing built
 Issue: #1168. Grill: owner rulings R1 to R11 of 24 Sep 2026 (quoted below, binding; they override the pre-grill draft).
 UAC: `chatbot-stock-ask-v2-24sep-acceptance-criteria.md`
 Depends on: PR #1118 (`feat/chatbot-dealer-stock-verdict`, open) rebased onto main and merged (slice S0); PR #1177 (`feat/customer-sales-agent-assignment`, open, #1170 slice 1) merged before S4.
@@ -33,6 +33,16 @@ Classification: the X / Y columns, the contact toggles and the `stock_asks` tabl
 > R10 Detailed and Compact mode contacts are unchanged by v2.
 >
 > R11 Dependencies: PR #1177 (customer sales agent picker, slice 1 of #1170) gives the customer -> agent link; #1118 gives quantity collection and the availability read.
+
+### Lavish review, 24 Sep 2026
+
+> R10 "a shipment shouldn't have null eta". Measured on the prod copy sorento_ai_automation_0921: 0 of 275 inbound_shipments have a NULL estimated_arrival_date (119 in_transit, all dated). Plan change: an R5 candidate shipment must have estimated_arrival_date NOT NULL; one without it does not qualify, so the dealer gets B4. Remove the "ETA to be confirmed" line everywhere (S3 entry shape, Risks item about NULL ETA, and UAC AC-SA309: replace that AC with "a shipment lacking estimated_arrival_date never qualifies for R5; with no other qualifying shipment the answer is B4"). Record the measurement in the plan.
+>
+> R11 "can we keep the column?" (stock-low-threshold). Yes: keep system_settings.chatbot_stock_low_threshold_pct and its Settings card exactly as #1118 lands them. Delete migration sa2_0003_drop_stock_low_threshold from S3, delete the "Settings > Chatbot loses the threshold card" frontend seam line, delete the Risks item that offers dropping dsv_0001 in S0, and adjust any UAC line that asserted the column or card is gone (state instead: unchanged, still unread by v2).
+>
+> R12 "the product inherit from category, overridable, we don't need parent category -> category relationship for now". This already matches the resolution rule (product value, else its own category value, else 0); add the quote under Rulings and leave the rule as is.
+>
+> R13 owner asked "the notification to salesperson is in this plan?" Answer is yes, S4. Add one line at the top of S4 saying so in plain words.
 
 What these rulings retire from the pre-grill draft: `customers.stock_warehouse_id` (R3), any change to the `stock_denied` / `demand_qty` arm (R1), `COALESCE(eta_delay_date, ...)` and location-scoped incoming (R5), "NULL X = no cap" (R2), the fifth `unassigned` answer (R3 removes the missing-location case; a contact with no customer still gets its branch answer, only the send is skipped per R8), and a "Stock asks" card in place of a tab (R9).
 
@@ -74,6 +84,53 @@ What these rulings retire from the pre-grill draft: `customers.stock_warehouse_i
 
 A dealer contact on an "Availability only" policy names products; #1118's task collects a quantity per product. For each product the bot answers one of four fixed sentences and never a number of ours except Q and a date. For B1, B2, B4 the customer's sales agent gets one WhatsApp line when the contact's "Notify salesman" is on. Every answered ask is a row the office works on the customer's Asks tab and the agent works on the portal's Customer asks page.
 
+## Sample conversations (for the owner to proof-read)
+
+Dealer contact: Ah Seng (Hock Lee Trading). Every bot sentence below is quoted verbatim from R6 (Rulings) with only the product code, quantity and date substituted. Every agent notification line renders the S4 context vars (R8/S4) through a plain, one-line layout that is not yet the final template copy - marked "(wording proposed)" where the plan leaves the exact words open. Dates are dd/mm/yyyy.
+
+**(a) B2 - in stock, Q <= X**
+
+Dealer: Do you have SRT5674, need 50 units?
+Bot: Yes, we have stock for SRT5674 x 50, please refer to your salesman to proceed.
+Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT5674, qty 50, outcome: in stock. Asked at 24/09/2026 14:32. (wording proposed; sent as plain text, inside the 24h window)
+
+**(b) B1 - quantity above X**
+
+Dealer: I need 300 units of CWCX604.
+Bot: The quantity is more than what I can confirm here, please refer to your salesman.
+Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about CWCX604, qty 300, outcome: too big. Asked at 24/09/2026 14:35. (wording proposed; sent as template, outside the 24h window)
+
+**(c) B1 - X unset for that category**
+
+Dealer: Can I get 20 of SRT446?
+Bot: The quantity is more than what I can confirm here, please refer to your salesman.
+Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT446, qty 20, outcome: no cap set for Wiper Blades. Asked at 24/09/2026 14:40. (wording proposed; sent as plain text, inside the 24h window)
+
+**(d) B3 - incoming with ETA, packing list toggle OFF**
+
+Dealer: Do you have SRTW2000, need 150?
+Bot: No stock at the moment, ETA 19/10/2026.
+No agent notification (B3).
+
+**(e) B3 - incoming with ETA, packing list toggle ON**
+
+Dealer: Need 150 units of SRT6536.
+Bot: No stock at the moment, ETA 02/11/2026.
+[the shipment's packing list is attached to this reply]
+No agent notification (B3).
+
+**(f) B4 - no stock, no incoming**
+
+Dealer: Any stock for SRT5674, need 150?
+Bot: No stock and no incoming at the moment, please refer to your salesman.
+Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT5674, qty 150, outcome: no stock no incoming. Asked at 24/09/2026 15:05. (wording proposed; sent as template, outside the 24h window)
+
+**(g) Multi-product turn - one message, two lines**
+
+Dealer: Need SRT5674 x 50 and CWCX604 x 300.
+Bot: Yes, we have stock for SRT5674 x 50, please refer to your salesman to proceed.
+The quantity is more than what I can confirm here, please refer to your salesman.
+
 ## Slices
 
 Every slice: migration, backend seam, frontend seam, tests (the `tester` agent writes them first, red, from this plan and the UAC; the `coder` makes them green), UAC ids. pytest on Postgres only (`tests/_pg_fixture.py`); CI has no data, every test seeds its own chain.
@@ -114,14 +171,14 @@ Every slice: migration, backend seam, frontend seam, tests (the `tester` agent w
 
 ### S3 - Four-branch verdict and the R5 ETA read
 
-**Migration** `sa2_0003_drop_stock_low_threshold`: drops `system_settings.chatbot_stock_low_threshold_pct` (added by #1118's `dsv_0001`; after R6 nothing reads it). Removed from both manual `system_settings` dict builders and the Settings > Chatbot page (`StockLowThresholdCard.tsx` and its test deleted).
+**Migration:** none (R11: `system_settings.chatbot_stock_low_threshold_pct`, added by #1118's `dsv_0001`, stays exactly as #1118 lands it; v2 simply never reads it, since B1 to B4 have no "running low" answer).
 
 **Backend seam** (`StockService._apply_stock_visibility`, availability branch only; `detailed` / `compact` return earlier and are untouched, R10):
 1. Keep: `_supply_scope`, the open SO read, `net_available` (R3, R4), `_resolve_ask`, the per-code merge, `needs_quantity` (so `StockQtyTask` keeps working unchanged, R1).
 2. Delete: the `spo_allocations` read, the `purchase_order_lines` read, the threshold / lead-time read, the `verdict()` call, `stock_verdict.py`, `tests/test_stock_verdict.py`.
 3. Add one read per page: X and Y via `stock_ask_limits.effective` for the page's products (products joined to their category, one query).
-4. Add the R5 ETA read (one query per page, `app/services/incoming_stock_service.py` gains `earliest_packing_list_shipment(db, product_ids) -> {product_id: (shipment_id, estimated_arrival_date, attachment_id)}`): `inbound_shipments` join `inbound_shipment_lines` on `shipment_id`, `_not_draft_shipment_filter()`, `_still_incoming_filter()`, `inbound_shipments.attachment_id IS NOT NULL`, `line.product_id IN (...)`, ordered by `estimated_arrival_date ASC NULLS LAST`, first per product (`DISTINCT ON (product_id)`). No warehouse filter (ANY location, R5). No `eta_delay_date`.
-5. Decision (pure, `app/services/stock_ask_branch.py`, replaces `stock_verdict.py`): `branch(q, x, available, shipment_date) -> "too_big" | "in_stock" | "incoming" | "no_incoming"`: `q > x` (x = 0 when unset, so every q >= 1 is `too_big`) -> `too_big`; `available >= q` -> `in_stock`; a shipment row exists -> `incoming`; else `no_incoming`. A shipment row whose `estimated_arrival_date` is NULL still counts as existing (nulls last); its entry carries no date and the presenter says "ETA to be confirmed" (the one case R5 leaves undated; flagged, not invented).
+4. Add the R5 ETA read (one query per page, `app/services/incoming_stock_service.py` gains `earliest_packing_list_shipment(db, product_ids) -> {product_id: (shipment_id, estimated_arrival_date, attachment_id)}`): `inbound_shipments` join `inbound_shipment_lines` on `shipment_id`, `_not_draft_shipment_filter()`, `_still_incoming_filter()`, `inbound_shipments.attachment_id IS NOT NULL`, `inbound_shipments.estimated_arrival_date IS NOT NULL` (R10: a shipment without a date never qualifies), `line.product_id IN (...)`, ordered by `estimated_arrival_date ASC`, first per product (`DISTINCT ON (product_id)`). No warehouse filter (ANY location, R5). No `eta_delay_date`. Measured on the prod copy `sorento_ai_automation_0921` (24 Sep 2026): 0 of 275 `inbound_shipments` have a NULL `estimated_arrival_date` (119 `in_transit`, all dated), so this filter drops nothing observed in practice; it is there for correctness, not to fix a live gap.
+5. Decision (pure, `app/services/stock_ask_branch.py`, replaces `stock_verdict.py`): `branch(q, x, available, shipment_date) -> "too_big" | "in_stock" | "incoming" | "no_incoming"`: `q > x` (x = 0 when unset, so every q >= 1 is `too_big`) -> `too_big`; `available >= q` -> `in_stock`; a shipment row exists -> `incoming`; else `no_incoming`. Because the R5 read requires `estimated_arrival_date NOT NULL` (R10), a shipment row that reaches `branch()` always carries a date: there is no undated `incoming` case, and "ETA to be confirmed" is not a real answer.
 6. Entry shape (replaces `available` / `verdict` / `running_low` / `disclaimer`): `branch`, `cap_unset: bool` (X resolved from NULLs), `category_name` (for the B1 reason), `eta` (`dd/mm/yyyy` of `estimated_arrival_date + Y`, `incoming` only), `packing_list` (`_attachment_payload` of the shipment's attachment, `incoming` only AND only when the asking contact's `respond_contacts.packing_list_allowed` is true; the route already resolves that contact, so the raw GET never carries the file for a contact who may not have it). No quantity of ours on the wire.
 7. Presenter `_availability_line` (MCP) renders R6 verbatim per entry, one line per product in asked order:
    - `too_big`: "The quantity is more than what I can confirm here, please refer to your salesman."
@@ -131,12 +188,14 @@ Every slice: migration, backend seam, frontend seam, tests (the `tester` agent w
    `<P>` is `product_code` (fallback `product_name`, never the id).
 8. Engine: at the `tasks_after_reply` call site, when an entry is `incoming` with `packing_list` present, emit a `send_attachments` action with that file (the existing action shape). Nothing else changes in the engine in S3.
 
-**Frontend seam:** Settings > Chatbot loses the threshold card (only).
+**Frontend seam:** none (R11: Settings > Chatbot keeps the threshold card exactly as #1118 landed it).
 
-**Tests (tester first):** `tests/test_stock_ask_branch.py`: the UAC truth table. `tests/test_stock_availability_block.py` (rewritten where it pinned `verdict` / `disclaimer`, the old assertions deleted, not skipped): location scope (stock outside the policy set not counted); open SO subtracted; ETA picks the earliest `estimated_arrival_date` among shipments with a packing list; a shipment without `attachment_id` ignored even if earlier; draft shipment ignored; received line ignored; fully received quantity ignored; `eta_delay_date` ignored; a shipment into a warehouse outside the policy set still counts; `spo_allocations` and open PO lines produce no ETA; Y added across a month end; X unset -> `too_big` + `cap_unset`; product X overrides category X; `packing_list` present only with the toggle on; no digit of ours in any entry field; `detailed` and `compact` payloads byte-identical to before. MCP `tests/test_presenters_availability_lines.py` rewritten: four sentences, asked order, no UUID, no "running low", no "purchase". `tests/chatbot` engine test: B3 with toggle on emits `send_attachments`, off does not. The `demand_qty` / `stock_denied` suites untouched and green (R1). Migration test: the column is gone and `GET /system-settings` no longer lists it. Vitest: Settings > Chatbot page renders without the card.
+**Tests (tester first):** `tests/test_stock_ask_branch.py`: the UAC truth table. `tests/test_stock_availability_block.py` (rewritten where it pinned `verdict` / `disclaimer`, the old assertions deleted, not skipped): location scope (stock outside the policy set not counted); open SO subtracted; ETA picks the earliest `estimated_arrival_date` among shipments with a packing list; a shipment without `attachment_id` ignored even if earlier; draft shipment ignored; received line ignored; fully received quantity ignored; `eta_delay_date` ignored; a shipment into a warehouse outside the policy set still counts; `spo_allocations` and open PO lines produce no ETA; Y added across a month end; X unset -> `too_big` + `cap_unset`; product X overrides category X; `packing_list` present only with the toggle on; no digit of ours in any entry field; `detailed` and `compact` payloads byte-identical to before. MCP `tests/test_presenters_availability_lines.py` rewritten: four sentences, asked order, no UUID, no "running low", no "purchase". `tests/chatbot` engine test: B3 with toggle on emits `send_attachments`, off does not. The `demand_qty` / `stock_denied` suites untouched and green (R1).
 **UAC:** AC-SA301 to AC-SA318.
 
 ### S4 - Agent notification + integration_log
+
+R13: yes, this is where the salesman notification lives.
 
 **Migration:** none (use case registration is code; the template mapping is admin data).
 
@@ -209,13 +268,11 @@ Exactly R9's fields. `customer_id` nullable: an ask from a contact with no resol
 ## Risks and rebase points
 
 - #1118 is +18k lines and 44 commits; S0 may take a round of conflict work in `engine.py` and `turn_runtime.py`. Line numbers above cite #1118's head and will move.
-- `dsv_0001` adds the threshold column that S3 drops. If the owner prefers, S0 can instead drop `dsv_0001` and the card before #1118 merges; the plan keeps S0 a pure rebase so #1118 lands as reviewed.
 - #1177 not merged blocks S4 onwards (the agent link is settable only through it).
-- A shipment with a packing list but NULL `estimated_arrival_date` is `incoming` with no date; the plan answers "ETA to be confirmed" and the UAC pins it (AC-SA309). Owner may re-rule.
 - Security review joins S3 (per-contact attachment release), S4 (outbound send) and S6 (portal scope).
 
 ## Files (expected)
 
-Backend: `alembic/versions/sa2_000{1..4}_*.py`, `app/models/product.py`, `app/models/access.py`, `app/models/user.py`, `app/models/stock_ask.py` (new), `app/models/respond_template.py`, `app/schemas/product.py`, `app/schemas/stock_ask.py` (new), `app/rbac/permission_registry.py`, `app/api/v1/master_data/categories.py`, `app/api/v1/master_data/products.py`, `app/api/v1/user_management/contacts.py`, `app/api/v1/user_management/settings.py`, `app/api/v1/order_management/customers.py`, `app/api/v1/public/portal_customer_asks.py` (new), `app/api/v1/public/__init__.py`, `app/services/stock_ask_limits.py` (new), `app/services/stock_ask_branch.py` (new), `app/services/stock_verdict.py` (deleted), `app/services/inventory_service.py`, `app/services/incoming_stock_service.py`, `app/services/stock_ask_service.py` (new), `app/services/price_tag_request_service.py`, `app/services/contact_service.py`, `app/services/list_query_registry.py`, `app/services/chatbot/engine.py`, `app/services/chatbot/turn_runtime.py`, `app/services/chatbot/turn/state.py`, `app/tasks/stock_ask_tasks.py` (new).
+Backend: `alembic/versions/sa2_0001_*.py`, `sa2_0002_*.py`, `sa2_0004_*.py` (no `sa2_0003`: R11 keeps the threshold column, so S3 needs no migration), `app/models/product.py`, `app/models/access.py`, `app/models/user.py`, `app/models/stock_ask.py` (new), `app/models/respond_template.py`, `app/schemas/product.py`, `app/schemas/stock_ask.py` (new), `app/rbac/permission_registry.py`, `app/api/v1/master_data/categories.py`, `app/api/v1/master_data/products.py`, `app/api/v1/user_management/contacts.py`, `app/api/v1/user_management/settings.py`, `app/api/v1/order_management/customers.py`, `app/api/v1/public/portal_customer_asks.py` (new), `app/api/v1/public/__init__.py`, `app/services/stock_ask_limits.py` (new), `app/services/stock_ask_branch.py` (new), `app/services/stock_verdict.py` (deleted), `app/services/inventory_service.py`, `app/services/incoming_stock_service.py`, `app/services/stock_ask_service.py` (new), `app/services/price_tag_request_service.py`, `app/services/contact_service.py`, `app/services/list_query_registry.py`, `app/services/chatbot/engine.py`, `app/services/chatbot/turn_runtime.py`, `app/services/chatbot/turn/state.py`, `app/tasks/stock_ask_tasks.py` (new).
 MCP: `sorento_crm_mcp/sorento_crm_mcp/presenters.py`.
-Frontend: `product-categories/components/CategoryForm.tsx`, `products/components/ProductForm.tsx` (+ product view), `user-management/contacts/[id]/components/ContactChatbotSection.tsx` + service + hook, `user-management/settings/chatbot/` (card removed), `order-management/customers/components/CustomerDetail.tsx` + new `CustomerAsksTab.tsx`, `services/stockAskService.ts`, `services/whatsappTemplateService.ts`, `app/(auth)/portal/customer_asks/page.tsx`, `app/(auth)/portal/components/CustomerAsksList.tsx`.
+Frontend: `product-categories/components/CategoryForm.tsx`, `products/components/ProductForm.tsx` (+ product view), `user-management/contacts/[id]/components/ContactChatbotSection.tsx` + service + hook, `order-management/customers/components/CustomerDetail.tsx` + new `CustomerAsksTab.tsx`, `services/stockAskService.ts`, `services/whatsappTemplateService.ts`, `app/(auth)/portal/customer_asks/page.tsx`, `app/(auth)/portal/components/CustomerAsksList.tsx`. `user-management/settings/chatbot/` untouched (R11: the threshold card stays).

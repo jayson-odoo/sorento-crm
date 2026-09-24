@@ -66,7 +66,7 @@ Truth table for `branch()` (x and y already resolved; unset = 0):
 - **AC-SA306 [BE]** `eta_delay_date` is never read: a shipment with `estimated_arrival_date` 2026-10-12 and `eta_delay_date` 2026-10-20, Y = 0 -> told 12/10/2026.
 - **AC-SA307 [BE]** A qualifying shipment whose line is allocated to a warehouse OUTSIDE the policy set still yields `incoming` (ANY location, R5).
 - **AC-SA308 [BE]** Open `spo_allocations` and open purchase order lines alone produce `no_incoming` (never a source, R5).
-- **AC-SA309 [BE]** A qualifying shipment with NULL `estimated_arrival_date` sorts after dated ones; when it is the only one the branch is `incoming` with no `eta`, and the line reads "No stock at the moment, ETA to be confirmed." (plan risk; owner may re-rule).
+- **AC-SA309 [BE]** A shipment lacking `estimated_arrival_date` never qualifies for R5; with no other qualifying shipment the answer is B4 (lavish review R10, 24 Sep 2026).
 - **AC-SA310 [BE]** Entry shape: `branch`, `cap_unset`, `category_name`, `eta` (incoming only, dd/mm/yyyy), `packing_list` (see AC-SA311); `verdict`, `running_low`, `disclaimer`, `available` are gone; `needs_quantity` and `requested_qty` unchanged so `StockQtyTask` still opens, fills and closes (#1118 task suites green).
 - **AC-SA311 [BE]** `packing_list` (`filename`, `file_path`, `mime_type`) is present on an `incoming` entry only when the asking contact's `packing_list_allowed` is true; absent otherwise and on every other branch.
 - **AC-SA312 [BE][T]** No entry field and no presenter line carries a quantity of ours: a regex guard over the rendered reply finds no digits except Q and the date.
@@ -74,7 +74,7 @@ Truth table for `branch()` (x and y already resolved; unset = 0):
 - **AC-SA314 [BE]** Engine: B3 with `packing_list` present emits one `send_attachments` action with that file; without it, no attachment action.
 - **AC-SA315 [BE]** `detailed` and `compact` payloads are unchanged (R10); the `stock_denied` / `demand_qty` suites on `chatbot_stock_denial_enabled` pass unchanged (R1).
 - **AC-SA316 [BE]** `stock_verdict.py` and `tests/test_stock_verdict.py` are gone; nothing imports `stock_verdict`.
-- **AC-SA317 [BE]** After `sa2_0003`, `system_settings.chatbot_stock_low_threshold_pct` does not exist and neither settings dict builder emits it. **[FE]** Settings > Chatbot renders without the threshold card.
+- **AC-SA317 [BE]** `system_settings.chatbot_stock_low_threshold_pct` and its Settings > Chatbot card are unchanged from #1118 (lavish review R11, 24 Sep 2026); v2 does not read the column in any branch. **[FE]** Settings > Chatbot still renders the threshold card.
 - **AC-SA318 [E2E]** Console check per `documentation/agents/chatbot-verification.md` against an "Availability only" dealer contact: one turn per branch (B1 via Q > X, B1 via unset X, B2, B3 with toggle on and off, B4); replies quoted in `documentation/plans/chatbot/evidence/`.
 
 ## S4 - Agent notification + integration_log
@@ -118,7 +118,7 @@ Truth table for `branch()` (x and y already resolved; unset = 0):
 ## Definition of Done for the lane
 
 - Every AC green, or re-ruled by the owner in this file.
-- All four migrations chain onto main's single head (`./scripts/alembic-reparent.sh`), `alembic heads` shows one.
+- All three new migrations (`sa2_0001`, `sa2_0002`, `sa2_0004`; no `sa2_0003`, R11) chain onto main's single head (`./scripts/alembic-reparent.sh`), `alembic heads` shows one.
 - New columns on every manual dict builder (AC-SA108, AC-SA202); dropped column off both settings builders (AC-SA317).
 - Reviewer + security-reviewer (RBAC, outbound send, per-contact attachment release, portal scope) + browser pass at 375px and 1280px, once per lane.
 - PR body names the track (full), this file and the plan.
