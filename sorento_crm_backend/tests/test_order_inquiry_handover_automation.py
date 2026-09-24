@@ -3111,7 +3111,13 @@ def test_two_orders_confirmed_together_group_by_so_number_each_in_line_no_order(
     db = world.db
     supply = ProjectSupplyService(db)
 
+    # N1 (reviewer round 2): fixed, ordering-discriminating S/O numbers - queued in
+    # REVERSE S/O order (B confirmed first, A confirmed second) - so the summary
+    # table's own sort has something to prove, the same reasoning the AC-3 test's
+    # fixed item codes already carry.
     core_so_a = _core_so(db, world.company_id)
+    core_so_a.so_number = f"ZZT-A-{_uid()[:8]}"
+    db.flush()
     product_a1, product_a2 = _product(db), _product(db)
     core_line_a1 = _core_line(
         db, core_so_a, product_a1, world.warehouse, qty_ordered="5", required_date=WAS
@@ -3126,6 +3132,8 @@ def test_two_orders_confirmed_together_group_by_so_number_each_in_line_no_order(
     line_a2 = _project_line(db, order_a, line_no=2, product=product_a2, core_line=core_line_a2)
 
     core_so_b = _core_so(db, world.company_id)
+    core_so_b.so_number = f"ZZT-B-{_uid()[:8]}"
+    db.flush()
     product_b1, product_b2 = _product(db), _product(db)
     core_line_b1 = _core_line(
         db, core_so_b, product_b1, world.warehouse, qty_ordered="7", required_date=WAS
@@ -3195,6 +3203,15 @@ def test_two_orders_confirmed_together_group_by_so_number_each_in_line_no_order(
         assert group_line_nos == sorted(group_line_nos), (
             f"AC-2: within S/O {so_number}, lines must be in line_no order, got {group_line_nos}"
         )
+
+    # N1 (reviewer round 2): the SO summary table agrees with the line table above -
+    # confirmed in REVERSE S/O order (B, then A), so a dropped sort would print the
+    # summary as queued (B, A) instead of ascending (A, B).
+    summary_so_numbers = [o["so_number"] for o in matches[-1]["context"]["handover"]["orders"]]
+    assert summary_so_numbers == sorted([core_so_a.so_number, core_so_b.so_number]), (
+        f"AC-2 nit: the SO summary table must be sorted by S/O no like the line table, "
+        f"got {summary_so_numbers}"
+    )
 
 
 def test_amendment_row_without_so_line_id_sorts_after_rows_with_one(api, monkeypatch):
