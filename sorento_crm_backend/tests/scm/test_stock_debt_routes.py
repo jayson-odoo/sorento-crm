@@ -1559,8 +1559,13 @@ def test_cutoff_keeps_undated_and_unlocated(scm_app):
 
 
 def test_cutoff_supply_after_due_still_covers(scm_app):
-    """AC-3/A2: supply landing after a line's due date, but on or before the cutoff, still
-    covers it - the cutoff only prunes DEMAND, it does not change how the walk assigns."""
+    """AC-3/A2: a line due 10 Nov, covered by an SPO landing 20 Nov, ends `late` - R37
+    books the shortfall in the line's OWN month regardless of the fact it is eventually
+    covered (`test_supply_arriving_after_the_debt_is_spare_in_its_own_month` proves the
+    same rule), so November reads -20 whether or not a cutoff is applied. AC-3's actual
+    claim is narrower than "the month reads 0": the cutoff must not change how the walk
+    ASSIGNS - the SPO still covers the line, and the cutoff leaves the Nov balance exactly
+    as it is without one."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -1573,13 +1578,34 @@ def test_cutoff_supply_after_due_still_covers(scm_app):
     db.flush()
 
     with TestClient(app) as c:
-        body = c.get(
+        with_cutoff = c.get(
             BASE, params={"query": marker, "cutoff": "2026-11-30", "only_debt": False}
         ).json()
+        without_cutoff = c.get(
+            BASE, params={"query": marker, "only_debt": False}
+        ).json()
+        cell = c.get(
+            f"{BASE}/{product.id}/cell",
+            params={"month": "2026-11", "cutoff": "2026-11-30"},
+        ).json()
 
-    row = _row_of(body, product.product_code)
-    balances = {m["key"]: m["balance"] for m in row["months"]}
-    assert balances["2026-11"] == 0
+    balances_with = {
+        m["key"]: m["balance"] for m in _row_of(with_cutoff, product.product_code)["months"]
+    }
+    balances_without = {
+        m["key"]: m["balance"]
+        for m in _row_of(without_cutoff, product.product_code)["months"]
+    }
+    assert balances_with["2026-11"] == -20
+    assert balances_without["2026-11"] == -20
+    assert balances_with["2026-11"] == balances_without["2026-11"]
+
+    assert len(cell["demand"]) == 1
+    line = cell["demand"][0]
+    assert line["so_number"] == f"{marker}-SO1"
+    assert line["status"] == "late"
+    assert line["assigned_qty"] == 20
+    assert line["short_qty"] == 20
 
 
 def test_supplier_filter_reads_newest_po_line(scm_app):

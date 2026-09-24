@@ -23,8 +23,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.services.error_handler import AppException
-from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg
-from tests.scm.test_order_sheet_export_downloads import _NoCloseSession
+from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg, seed_user
+from tests.scm.test_order_sheet_export_downloads import _NoCloseSession, _savepoint_session
 from tests.scm.test_stock_debt_routes import (
     BASE,
     TODAY,
@@ -123,11 +123,10 @@ def test_export_route_creates_download_and_enqueues(scm_app, monkeypatch):
 # =========================================================================== #
 
 
-def test_generate_stock_debt_xlsx_marks_ready_and_failed(scm_app, monkeypatch):
+def test_generate_stock_debt_xlsx_marks_ready(scm_app, monkeypatch):
     """AC-12b: the task mirrors `generate_low_stock_report` - mark_processing, build the
     workbook through `StockDebtService.export()`, store it, then `mark_ready` with
-    `row_count` and `sheet_count`; on any exception it marks the row `failed` with the
-    message and never raises into RQ."""
+    `row_count` and `sheet_count`."""
     from app.services.download_service import DownloadService
 
     export_tasks, task_fn = _task()
@@ -176,20 +175,48 @@ def test_generate_stock_debt_xlsx_marks_ready_and_failed(scm_app, monkeypatch):
     assert calls[-1].get("row_count") == 1, calls[-1]
     assert calls[-1].get("sheet_count") == 1, calls[-1]
 
-    # The failure path: the service raising marks the row failed and swallows the error.
-    download2 = DownloadService(db).create(
-        user_id=str(user_id), kind="stock_debt_xlsx", filename="zzt-stock-debt-test2.xlsx",
-    )
-    db.flush()
-    monkeypatch.setattr(
-        "app.services.scm.stock_debt_service.StockDebtService.export",
-        lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
-    )
-    task_fn(str(download2.id), str(user_id), {"query": marker, "split": "none"})
-    row2 = DownloadService(db).get(str(download2.id))
-    assert row2 is not None
-    assert row2.status == "failed", getattr(row2, "error", None)
-    assert "boom" in (row2.error or "")
+
+def test_generate_stock_debt_xlsx_marks_failed_when_export_raises(monkeypatch):
+    """AC-12b, other half: on any exception the row is marked `failed` with the message
+    and the task never raises into RQ.
+
+    Run in its OWN `_savepoint_session()` rather than `_client(scm_app)`'s fixture - the
+    same known fixture limitation `test_order_sheet_export_downloads.py::
+    test_generate_order_sheet_marks_failed_when_render_raises` documents and works
+    around: `_record_failure` always calls `db.rollback()` first, and against
+    `scm_app`'s auto-restarting SAVEPOINT that cascades to the fixture's own outer
+    transaction, deassociating it and expiring the download row the success half just
+    created (`ObjectDeletedError` on the very next read). `_savepoint_session()`'s
+    `join_transaction_mode="create_savepoint"` is the one shape whose own
+    commit/rollback stays scoped to its own savepoint.
+    """
+    from app.services.download_service import DownloadService
+
+    export_tasks, task_fn = _task()
+
+    with _savepoint_session() as db:
+        user_id = seed_user(db, None)
+        download = DownloadService(db).create(
+            user_id=str(user_id), kind="stock_debt_xlsx",
+            filename="zzt-stock-debt-test-failed.xlsx",
+        )
+        db.flush()
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+        monkeypatch.setattr(
+            "app.services.scm.stock_debt_service.StockDebtService.export",
+            lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = task_fn(str(download.id), str(user_id), {"query": "ZZTNOPE", "split": "none"})
+
+        assert result["status"] == "failed", result
+        # A FRESH read, off the same session but a new query - not the stale ORM
+        # instance `create()` returned.
+        row = DownloadService(db).get(str(download.id))
+        assert row is not None
+        assert row.status == "failed", row.status
+        assert "boom" in (row.error or ""), row.error
 
 
 # =========================================================================== #

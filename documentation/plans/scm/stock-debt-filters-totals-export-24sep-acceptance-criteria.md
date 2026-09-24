@@ -7,7 +7,7 @@ Owner rulings: 24 Sep 2026 (R1-R13, two lavish rounds folded in)
 
 - AC-1 `GET /project-sales/stock-debt?cutoff=2026-11-30` drops every demand line with `required_date` after 30 Nov 2026. A product whose only open line is due 5 Dec 2026 is not in debt and, with `only_debt=true`, has no row. `months` on the envelope ends at `2026-11`.
 - AC-2 With a cutoff, an undated line and an unlocated line still count (`undated`, `unlocated` unchanged). TBA reads 0 when `tba_date_from` is after the cutoff.
-- AC-3 A line due 10 Nov covered by an SPO arriving 20 Nov stays covered under `cutoff=2026-11-30` (supply after the due date but inside the walk still assigns as today).
+- AC-3 A line due 10 Nov, covered by an SPO arriving 20 Nov, ends `late` and books its shortfall in its own month (R37): November reads -20 with `cutoff=2026-11-30` applied, exactly as it does without one - the cutoff prunes DEMAND due after it, it does not change how the walk assigns or which month a covered-but-late line's shortfall lands in.
 - AC-4 `supplier_id=<S>` keeps only products whose LAST supplier is S: the supplier on the product's newest purchase-order line (newest by PO issue date, then line created_at; cancelled POs skipped), else the primary-flagged product supplier, else none. `supplier_id=none` keeps only products with neither. A product with a newer SPO from another supplier still files under the PO's supplier.
 - AC-5 Every row carries `supplier_id`, `supplier_name`, `category_code`, `total`. `total` = sum of the row's `months[].balance` + `tba` + `undated` + `unlocated`.
 - AC-6 Envelope carries `totals` = per-month sum over EVERY row of the filtered set (not the page), plus `tba`, `undated`, `unlocated`, `total`. Page 2 returns the same `totals` as page 1.
