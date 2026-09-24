@@ -1,6 +1,6 @@
 # PLAN: an open ideation draft keeps short and question-shaped turns in the ideate lane
 
-Status: small fix track, PR open (#n)
+Status: small fix track, PR open (#1185)
 Plan created: 2026-09-24T08:35:54Z
 Domain: chatbot / ideation intake
 Issue: #1178 (evidence: PR #1176, `documentation/plans/ideation/REVIEW-ideation-flow-ux-24sep.md`
