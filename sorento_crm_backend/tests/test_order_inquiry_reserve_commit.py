@@ -1257,3 +1257,32 @@ def test_commit_reserve_validation_carried_from_reserve_row(reserve_api):
         ("reserved", "0"),
         ("requested", "50"),
     ], history.json()
+
+
+def _is_utc_iso(value) -> bool:
+    return isinstance(value, str) and (value.endswith("Z") or value.endswith("+00:00"))
+
+
+def test_history_and_request_timestamps_serialize_as_utc(reserve_api):
+    """The reserve columns are `TIMESTAMP` without time zone and hold naive UTC
+    (`datetime.utcnow()`); the wire must say so, or the browser reads them as local."""
+    client, world = reserve_api
+    row = _open_row(world, qty="20", item_code=f"{MARKER}-TZ")
+    request_id = _request(client, world, (row, "20"))
+    committed = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "20"}]},
+    )
+    assert committed.status_code == 200, committed.text
+    world.db.commit()
+    body = committed.json()[0]
+    assert _is_utc_iso(body["requested_at"]), body
+    assert _is_utc_iso(body["reserved_at"]), body
+
+    history = client.get(ROW_HISTORY_URL(request_id, row.id))
+    assert history.status_code == 200, history.text
+    for entry in history.json():
+        assert _is_utc_iso(entry["created_at"]), entry
+
+    listed = client.get(REQUEST_URL(world.inquiry.id)).json()
+    assert all(_is_utc_iso(item["requested_at"]) for item in listed), listed

@@ -74,7 +74,7 @@ from app.services import project_service as projects
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
-from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm.summary_order_service import compact_ddmmyyyy
@@ -1170,11 +1170,11 @@ def _serialize_reserve_request(
         "state": request.state,
         "requested_by": request.requested_by,
         "requested_by_name": _name(request.requested_by),
-        "requested_at": request.requested_at,
+        "requested_at": as_utc(request.requested_at),
         "note": request.note,
         "reserved_by_name": _name(request.reserved_by),
-        "reserved_at": request.reserved_at,
-        "cancelled_at": request.cancelled_at,
+        "reserved_at": as_utc(request.reserved_at),
+        "cancelled_at": as_utc(request.cancelled_at),
         "rows": [
             {
                 "id": rr.id,

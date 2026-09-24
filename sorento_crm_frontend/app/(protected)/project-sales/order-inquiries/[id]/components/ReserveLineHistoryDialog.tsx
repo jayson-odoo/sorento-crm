@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { OrderInquiryReserveHistoryEntry } from '../../../_shared/services/orderInquiryReserveService';
 
 /**
@@ -55,7 +55,9 @@ export function ReserveLineHistoryDialog({
                 </div>
                 <div className="text-muted-foreground">
                   {entry.actor_name ?? 'Unknown'}
-                  {entry.created_at ? ` on ${formatDateTime(entry.created_at)}` : ''}
+                  {/* UTC on the wire (and naive UTC on older rows): shown in Malaysia
+                      time. `formatDateTime` strips the offset and would print UTC. */}
+                  {entry.created_at ? ` on ${formatDateTimeInMalaysia(entry.created_at)}` : ''}
                   {entry.reason ? ` - ${entry.reason}` : ''}
                 </div>
               </div>

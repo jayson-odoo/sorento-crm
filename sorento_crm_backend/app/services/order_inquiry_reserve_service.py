@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -83,6 +83,17 @@ def _dec(value: Any) -> Decimal:
     except Exception:  # noqa: BLE001 - a malformed number is data, not a crash
         return _ZERO
     return parsed if parsed.is_finite() else _ZERO
+
+
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """The reserve tables' timestamps are `TIMESTAMP` without time zone and hold naive
+    UTC (`datetime.utcnow()`; no migration wanted to change the columns). Tagging them
+    UTC on the way out makes the wire carry an offset, so the browser converts to local
+    time instead of printing UTC as if it were local - rows stored before this fix
+    included."""
+    if value is None or not isinstance(value, datetime):
+        return value
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def _qty_str(value: Any) -> str:
@@ -1032,6 +1043,8 @@ class OrderInquiryReserveService:
         entries.sort(
             key=lambda entry: entry["created_at"] or datetime.min, reverse=True
         )
+        for entry in entries:
+            entry["created_at"] = as_utc(entry["created_at"])
         return entries
 
     # --------------------------------------------------------------- toast-only read
