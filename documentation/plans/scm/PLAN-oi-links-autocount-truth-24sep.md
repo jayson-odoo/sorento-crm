@@ -1,8 +1,9 @@
 # PLAN - Order inquiry links: AutoCount is the source of truth, the cascade only suggests
 
-Status: DRAFT 24 Sep 2026. /feature step 1 (journey) and step 3 (UAC, plan) drafted; step 2
-(grill) is out to the owner as the "Grill questions" below, each with a recommendation, and
-step 4 (plan review) follows the answers. No code until then. Track: full (new table,
+Status: IN PROGRESS 24 Sep 2026. /feature step 1 (journey) and step 3 (UAC, plan) drafted; step
+2 (grill) answered by the owner on PR #1220 (see "Rulings" below) - every recommendation stands,
+G4 and G6 wording is being confirmed in chat but building to the recommendation. S2, Phase 1
+(frontend mock) under way. Track: full (new table,
 migration, a change to what the Buy card, stock debt and `scm.committed_v` count). Branch
 `fix/oi-links-24sep`, one lane, one PR with the S1 repair (issue #1215 points 1, 2, 5). UAC:
 `oi-links-autocount-truth-24sep-acceptance-criteria.md`. Domain: SCM, order inquiries.
@@ -403,7 +404,35 @@ Nothing below changes, animates or moves:
 
 ## Rulings
 
-(empty; filled as the grill questions are answered)
+Owner rulings on the grill questions (24 Sep 2026, verbatim; PR #1220 comment
+https://github.com/jayson-odoo/sorento-crm/pull/1220#issuecomment-5817947313):
+
+**R1 (G1).** "okay, yeah correct we always refer to autocount now" - recommendation stands.
+
+**R2 (G2).** "yeah" - recommendation stands.
+
+**R3 (G3).** "yeah correct, always follow autocount" - recommendation stands.
+
+**R4 (G4).** Not answered yet; the recommendation stands (Auto link all keeps its name, follows
+AutoCount first, then refreshes suggestions) until the owner says otherwise.
+
+**R5 (G5).** "okay" - recommendation stands.
+
+**R6 (G6).** "wdym, a row is not considered bought if it already linked right?" - clarification
+pending; the reading in force: a row with a REAL link counts as bought, a row with only a
+suggestion does not, which is the owner's earlier ruling that a suggested link is not a real
+link.
+
+**R7 (G7).** "yeap" - recommendation stands.
+
+**R8 (G8).** "ok" - recommendation stands.
+
+**R9 (G9).** "ok" - recommendation stands.
+
+**R10 (G10).** "yeah correct" - recommendation stands.
+
+S2 onward builds to these rulings; G4 and G6 wording is being confirmed in chat before the
+lane's review.
 
 ## Grill questions
 
