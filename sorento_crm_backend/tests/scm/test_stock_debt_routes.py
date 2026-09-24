@@ -970,6 +970,10 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     assert current[0]["date"] == TODAY.isoformat()
     assert current[0]["bought_for"] is None
     assert current[0]["overdue"] is False
+    # `line_no` is the seeded core line's own AutoCount `Seq` - `None` here since `_demand`
+    # never sets one - and the service OMITS the key entirely rather than sending it as
+    # `null` (`stock_debt_service.py`: `**({"line_no": line_no} if line_no is not None
+    # else {})`), verified directly against the route's own JSON, not assumed.
     assert current[0]["assigned_to"] == [{"so_number": f"{marker}-SO1", "qty": 40}]
 
 
