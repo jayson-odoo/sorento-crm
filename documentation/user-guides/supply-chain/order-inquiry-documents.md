@@ -77,16 +77,17 @@ page opens on.
 is the product name), **SO line** (a link to that exact line on the sales order, e.g.
 `SO402757 · L5`), **Qty** (the same **(i)** you know from the worklist when a line's quantity or
 date changed), **Taken**, **Remaining**, **Delivery date**, **Supplier**, **PO**, **SPO**,
-**Location**, **Instruction**, **State**, **Reserve**. Cancelled lines are hidden, the same as on
-the worklist. A checkbox column lets you tick lines; a search box narrows by product; **Columns**
+**Location**, **Instruction**, **State**. Cancelled lines are hidden, the same as on the
+worklist. A checkbox column lets you tick lines; a search box narrows by product; a **State**
+filter beside it narrows by status, including **Request to reserve** and **Reserved**; **Columns**
 lets you show or hide columns, Taken and Remaining included; the footer totals **Qty**, **Taken**
 and **Remaining**. Clicking a **PO** or **SPO** number opens the same **Backing documents**
 lightbox as the worklist.
 
-**Reserve** carries nothing on a line that has never been asked to be reserved. It shows an amber
-icon reading **Request to reserve** once purchasing has asked, or a green icon reading **Reserved
-\<qty\>** once CS has answered - see [Ask CS to reserve stock](#ask-cs-to-reserve-stock) and
-[Reserve for purchasing](#reserve-for-purchasing-cs) below.
+Each row also carries a small chevron beside its checkbox: click it to expand a stock breakdown
+for that product without leaving the page. The breakdown stays inside the grid's own width, and
+its **Location** column can be dragged wider or narrower - the width you set is remembered on
+this browser.
 
 **Taken** is how much of the line's own quantity is already on a PO or SPO link. **Remaining** is
 Qty minus Taken, minus anything already covered by an **Included with** companion (see [Upload
@@ -126,6 +127,12 @@ worklist, the board):
 * **Done** - you've actioned the row; there's nothing left to do.
 * **Cancelled** - the instruction was called off.
 
+On a line purchasing has asked CS to reserve stock for, this same column instead prints
+**Request to reserve \<qty\>** (amber) while the request is still open, **Reserved \<qty\>**
+(green, ticked) once CS has reserved some or all of it, or **Not reserved** (neutral) once CS has
+answered with nothing - see [Ask CS to reserve stock](#ask-cs-to-reserve-stock) and [Reserve for
+purchasing](#reserve-for-purchasing-cs) below for what each one lets you do next.
+
 ## Confirming
 
 Press **Confirm**. With nothing ticked, it confirms every line still waiting in the whole order
@@ -143,56 +150,66 @@ the balance.
    row with something left in **Remaining** and no reserve request already open on it. A row that
    doesn't qualify greys out **Request CS to reserve** in the gear menu with a tooltip naming why.
 2. Open the gear menu and choose **Request CS to reserve**.
-3. The **Request CS to reserve** dialog lists one card per selected row: item code, delivery date
-   and what's left to request, a **Requested** number (defaults to the remaining, never higher),
-   and a **Location** (defaults to the configured pool - see [Default location for the Reserve
-   dialog](order-inquiry-reserve-email.md#default-location-for-the-reserve-dialog)). An optional
-   **Note** sits below the rows, for the whole request.
+3. The **Request CS to reserve** dialog lists one row per selected line in a table - **Product**,
+   **Delivery date**, **Remaining**, **Requested** (defaults to the remaining, never higher) and
+   **Location** (defaults to the configured pool - see [Default location for the Reserve
+   dialog](order-inquiry-reserve-email.md#default-location-for-the-reserve-dialog)). A **Note
+   (optional)** box sits below the table, for the whole request.
 4. Press **Send request**. A toast reads `Request #<n> sent to <name>`.
 
-The rows now carry an amber **Reserve** icon reading **Request to reserve**, and the order
-inquiry's header carries a **Request to reserve** badge while any request is open. One email
+The lines now read an amber **Request to reserve \<qty\>** pill in the **State** column. One email
 leaves for CS - see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md).
 
-To pull a request back, open the row's **Reserve** icon and press **Cancel request** in the
-dialog header - a short countdown with **Cancel**, no email either way.
+To pull a request back, open the gear menu and choose **Cancel request** - a short countdown with
+**Cancel**, no email either way.
 
-Once CS answers, the icon turns green and reads **Reserved \<qty\>**; **Taken** already counts
-it and **Remaining** is the balance still to buy by PO or SPO, the same as today. You can ask CS
-to reserve again on that balance the same way.
+Once CS reserves against a line, its pill turns green and reads **Reserved \<qty\>**; **Taken**
+already counts it and **Remaining** is the balance still to buy by PO or SPO, the same as today.
+You can ask CS to reserve again on that balance the same way.
 
 ## Reserve for purchasing (CS)
 
-Use this when purchasing has asked you to reserve stock against an order inquiry line, and you
-hold the **Reserve Stock for Order Inquiries** permission.
+Use this when purchasing has asked you to reserve stock against one or more order inquiry lines,
+and you hold the **Reserve Stock for Order Inquiries** permission.
 
 1. Open the order inquiry from the request email's **Open in Order Inquiries** link (you'll need
-   to be logged in), or open any row's **Reserve** icon on the Lines tab yourself. The link lands
-   on the dialog for the request's first row still waiting for you.
-2. On the **Reserve** tab: the request line (`Request #n - requested <qty> by <name> on <date>`),
-   a **Location** (defaults to the configured pool or, if none is set, the row's own site pool -
-   changing it re-reads what that location can give), and **Reserved** (defaults to what the
-   chosen location has, never more than requested).
-3. If **Reserved** is less than **Requested**, including 0, a **Reason** box appears and blocks
-   the next step until filled.
-4. Press **Confirm reserved**. A toast reads `Reserved, <requester> notified`.
+   to be logged in), or open it from the list yourself. The link lands on the **Lines** tab
+   filtered to **Request to reserve**, so you see only the lines that still need you.
+2. On a line reading **Request to reserve \<qty\>**, two icons sit beside the pill:
+   * The tick, **Reserve**, stages the full requested quantity at the default pool with no form.
+   * The pencil, **Edit reserve**, opens a small form for that line - **Location** (defaults to
+     the configured pool), **Reserved** (defaults to what's available there, up to what was
+     requested), and, if you lower **Reserved** below what was requested (0 included), a required
+     **Reason**. Press **Stage**.
+3. Either way, nothing is posted yet - the line now shows a dashed chip (for example `Reserve 20
+   @ DC1`) with an **Undo** button beside it. Stage as many lines as you like, and **Undo** any of
+   them before you commit.
+4. Press **Reserve (\<n\>)** beside **Confirm** in the page header, \<n\> being how many lines
+   you've staged. This is the one commit - it reserves every staged line in a single click and
+   sends CS's own reserved mail to the requester (`Reserved, <requester> notified`), naming only
+   the lines this click reserved. Lines you left untouched stay **Request to reserve**, and the
+   requester's mail says how many lines are still to reserve.
+5. A committed line turns green - **Reserved \<qty\>** with a tick - or, if you staged 0 with a
+   reason, reads **Not reserved**.
 
-The icon turns green and shows the reserved quantity; one email leaves for the requester - see
-[Reserve request and reserved-stock emails](order-inquiry-reserve-email.md).
+**Amend reserve** - the pencil that now sits beside a **Reserved** or **Not reserved** line -
+opens the same form with **Location** locked to where it's already reserved and **Reserved**
+prefilled with that line's current net reserved quantity. Change it, **Stage**, then **Reserve
+(\<n\>)** to commit the amendment; a **Reason** is required whenever the new amount is below what
+was originally requested.
 
-**History** tab, on the same dialog, lists every request, reserve and unreserve on that row,
-newest first, with who did it and when.
+**History** - the icon beside **Amend reserve** - lists every request, reserve and amend on that
+line, newest first, with who did it and when.
 
-Once a row has nothing open, its Reserve tab shows what's net reserved and, if you hold the
-permission, an **Unreserve** control: enter a **Qty** (up to what's net reserved) and an optional
-**Note**, press **Unreserve**. The button becomes a countdown; the release commits once it lapses
-and cannot be undone after that. Unreserving releases the newest reserve on that row first, and
-sends no email. Without the permission, the Reserve tab is read-only and Unreserve doesn't show,
-though you can still read History.
+The **State** filter beside the search box on the **Lines** tab includes **Request to reserve**
+and **Reserved** alongside the usual states, so you can narrow to only what needs you.
+
+Without the **Reserve Stock for Order Inquiries** permission, none of this shows - lines display
+their plain state pill only.
 
 **Unlink never touches a reserve.** Unlinking a row (per row, or **Unlink selected**) only takes
-off a PO or SPO link; a reserve link isn't offered there at all. Undo a reserve with **Unreserve**
-on that row's own dialog instead.
+off a PO or SPO link; a reserve link isn't offered there at all. To change what's reserved on a
+line, use **Amend reserve** on that line instead (see above).
 
 ## Fixing a link without leaving the page
 
@@ -261,12 +278,13 @@ reports nothing for it.
 The handover, changed and undone emails purchasing already receives (see [The order inquiry
 handover email](order-inquiry-handover-email.md) and [Sales order changes after
 planning](sales-order-changes.md)) keep going out the same way, their links now landing on this
-page. A **Request CS to reserve** and a CS **Confirm reserved** each send their own email too -
-see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md). Confirming,
-unconfirming, sending a reserve request, cancelling one, reserving and unreserving all show an
-on-screen toast. **Export Excel** shows a toast too, then the workbook appears in **My Downloads**
-once it is ready, the same as the low stock report and the order summary sheet. Both the export
-and the reserve actions need the **Order Inquiries** view permission and a signed-in user.
+page. A **Request CS to reserve** and CS's own **Reserve** click each send their own email too -
+see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md), one mail per
+click naming only the lines that click reserved. Confirming, unconfirming, sending a reserve
+request, cancelling one, and reserving or amending a reservation all show an on-screen toast.
+**Export Excel** shows a toast too, then the workbook appears in **My Downloads** once it is
+ready, the same as the low stock report and the order summary sheet. Both the export and the
+reserve actions need the **Order Inquiries** view permission and a signed-in user.
 
 ## See also
 
