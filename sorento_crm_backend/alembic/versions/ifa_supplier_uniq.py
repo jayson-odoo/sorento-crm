@@ -52,7 +52,7 @@ database already has, not necessarily in migration order, so "runs before this o
 fresh DB" does not hold for that call path.
 
 Revision ID: ifa_supplier_uniq
-Revises: oirs_0004_reserve_event_zero
+Revises: oihr_0003_location_column
 Create Date: 2026-09-24
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ifa_supplier_uniq"
-down_revision = "oirs_0004_reserve_event_zero"
+down_revision = "oihr_0003_location_column"
 branch_labels = None
 depends_on = None
 
