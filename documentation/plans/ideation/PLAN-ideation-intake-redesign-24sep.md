@@ -1,7 +1,7 @@
 # PLAN - Ideation intake redesign (issue #1172)
 
 **Status:** approved by the owner 24 Sep 2026 (lavish review, "ok cool, proceed"), R18 framework
-constraint binding; tickets pending; nothing built.
+constraint binding; tickets S1 #1198, S2 #1199, S3 #1200, S4 #1201, S5 #1202; nothing built.
 Track: full (shared-service migration for `ideas.title`, `ideas.submitter_tier`,
 `ideas.status_token`, the idea-number sequence; two repos).
 **UAC:** `ideation-intake-redesign-24sep-acceptance-criteria.md` (this plan fulfils it; the
