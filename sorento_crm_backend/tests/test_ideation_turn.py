@@ -548,6 +548,53 @@ def test_outage_returns_graceful_reply(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Issue #1179 - `is_test` rides the create_idea payload (AC-1..AC-3 of         #
+# `documentation/plans/chatbot/ideation-is-test-turns-acceptance-criteria.md`) #
+# --------------------------------------------------------------------------- #
+_COLLECTING = {
+    "draft_id": "d-test-1",
+    "status": "collecting",
+    "captured": {},
+    "missing": ["impact"],
+    "reply_text": "Here's what I've got so far",
+}
+
+
+def test_test_turn_payload_carries_is_test_true(wired):
+    """AC-1: a test turn tells the shared service so the idea is hidden from the board."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True)
+    assert wired.payloads[0]["is_test"] is True
+
+
+def test_live_turn_payload_carries_is_test_false(wired):
+    """AC-2: the key is always present, false on a live turn (the default)."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn()
+    assert wired.payloads[0]["is_test"] is False
+
+
+def test_test_turn_returns_the_pointer_but_never_persists_it(wired):
+    """AC-3: the caller carries the draft pointer; the contact row is untouched.
+
+    A test pointer written to the real `respond_contacts` row would be read back by the
+    contact's next LIVE turn through the DB fallback in `handle_turn`, so a test idea
+    would silently continue as a live one."""
+    wired.set_session_vars({"other_key": "kept"})
+    wired.set_create_idea(dict(_COLLECTING))
+    out = _turn(is_test=True)
+
+    assert out["status"] == "collecting"
+    assert out["reply_text"] == "Here's what I've got so far"
+    assert out["session_vars"]["ideation"]["draft_id"] == "d-test-1"
+    assert out["session_vars"]["other_key"] == "kept"
+    assert wired.overwrites == [], "a test turn must not write respond_contacts.session_vars"
+    assert wired.store == {"other_key": "kept"}
+
+
+# --------------------------------------------------------------------------- #
 # call_create_idea wraps httpx errors into IdeationServiceError (AC-19 layer)  #
 # --------------------------------------------------------------------------- #
 def test_call_create_idea_wraps_httpx_error(monkeypatch):
@@ -607,6 +654,29 @@ def test_endpoint_logs_on_success(api_client):
     assert logs[0].status == "success"
     assert logs[0].direction == "inbound"
     assert logs[0].external_reference == "rio-1"
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ({**_TURN_BODY, "is_test": True}, True),
+        (_TURN_BODY, False),
+    ],
+    ids=["is_test-true", "absent-defaults-false"],
+)
+def test_endpoint_forwards_is_test_to_the_service(api_client, body, expected):
+    """AC-4 (#1179): the flag the MCP tool posts reaches `handle_turn`."""
+    client, _logs, mp = api_client
+    seen: list = []
+
+    def _capture(*a, **k):  # noqa: ANN001
+        seen.append(k)
+        return {"status": "collecting", "reply_text": "ok", "session_vars": {}}
+
+    mp.setattr("app.api.v1.external.ideation.handle_turn", _capture)
+    resp = client.post(_TURN_URL, json=body)
+    assert resp.status_code == 200
+    assert seen[0]["is_test"] is expected
 
 
 def test_endpoint_logs_on_failure(api_client):
