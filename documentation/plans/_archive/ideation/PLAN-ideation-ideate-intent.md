@@ -1,8 +1,21 @@
 # PLAN - Sorento `ideate` intent + Ideas iframe host
 
-**Status:** Planning (UAC written first; grilled against the sorento AI brain + program spine; no code yet - 2026-07-18).
-Multi-modal capture (voice/image/video/file) grilled + folded in 2026-07-20 → decisions DC-1..DC-10, UAC Group F
-(AC-60..AC-70), Phase 2f. Blocked on spine §5.1 (`attachments[]` + `discard_draft_id`) + the n8n contract.
+**Status:** Built and shipped, in production (Status corrected 2026-09-24; the earlier line still read "no code yet").
+Every sorento-side item in section 1 exists in the tree: the `ideate` intent in the parser schema
+(`app/schemas/ai_semantic_parser.py`), `POST /api/v1/external/ideation/turn` (`app/api/v1/external/ideation.py`,
+`app/services/ideation_turn_service.py`, `app/services/ideation_media_service.py`), the workspace binding
+`respond_workspaces.ideation_product_id`, the embed-session mint (`app/api/v1/integrations/ideation_embed.py`),
+the `/ideas` + `/ideas/{id}` iframe host (`app/(protected)/ideas/`, `components/ideas/IdeationEmbed.tsx`), and the
+MCP tool `crm_ideation_turn` (`sorento_crm_mcp/sorento_crm_mcp/ideation.py`), which the chatbot now calls through
+`app/services/chatbot/lanes/ideate.py`. Multi-modal capture (DC-1..DC-10, UAC Group F) shipped with it.
+Tests: `tests/test_ideation_*.py` (8 files), `tests/chatbot/test_s3_canned_and_ideate.py`,
+`sorento_crm_mcp/tests/test_ideation_tool.py`, vitest under `app/(protected)/ideas/` and `components/ideas/`.
+Git evidence: all of the above is already in the tree at the oldest commit this clone carries (4ee8fa1f,
+2026-09-20, #1051); the ideate lane was reworked by the chatbot turn-engine re-architecture (0a335146,
+2026-09-22, #952); the live flow was walked in `REVIEW-ideation-flow-ux-24sep.md` (2026-09-24, PR #1176).
+The plan's own build note (Phase 2f, 2026-07-20) stands in section 5. Still unmet, per
+`ideation-ideate-intent-test-report.md`: the live-LLM and Playwright rows were DEFERRED, never run deterministically.
+Archived to `documentation/plans/_archive/ideation/` with its UAC.
 **UAC:** `ideation-ideate-intent-acceptance-criteria.md` (this plan fulfils it).
 **Program spine (authority on contracts):** `foundryx-shared-service/documentation/plans/ideation/PLAN-ideation-to-delivery-program.md`
  - this plan keys back to **§5.1 (`create_idea`)**, **§5.2 (`session_vars.ideation`)**, **§5.3 (embed SSO + product-domain link)**, and **D6/D7/D8/D19**.
