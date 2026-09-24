@@ -255,10 +255,16 @@ def handle_turn(
     session_vars_in: dict[str, Any] | None = None,
     media_clients: MediaClients | None = None,
     fetch_recent_messages: Any = None,
+    is_test: bool = False,
 ) -> dict[str, Any]:
     """Handle one `ideate` turn. Returns ``{ status, reply_text, link?, session_vars }``.
 
     ``session_vars`` in the return is always the FULL, updated blob (AC-10).
+    ``is_test`` (#1179) marks a chatbot dry-run turn: ``create_idea`` is still called,
+    with ``is_test: true`` so the shared service hides the idea from the board, and the
+    contact's ``session_vars`` is NOT persisted - the returned blob is the caller's to
+    carry. A test pointer written to the real contact row would otherwise be read back
+    by the contact's next live turn through the DB fallback below.
     ``submitter_name`` is the n8n Respond.io-profile fallback used only when the
     CRM's respond_contacts row has no name (WS-A). ``media_selection`` /
     ``is_new_idea`` drive multi-modal capture (Group F); ``media_clients`` and
@@ -389,6 +395,8 @@ def handle_turn(
         "fields": extraction.fields,
         "remove": extraction.remove,
         "confirm": extraction.confirm,
+        # Always present, true or false: the shared service keys its board filter on it.
+        "is_test": bool(is_test),
     }
     if effective_submitter_name:
         payload["submitter_name"] = effective_submitter_name
@@ -439,7 +447,8 @@ def handle_turn(
         if seen_media_ids:
             ideation_blob["seen_media_ids"] = sorted(seen_media_ids)
         new_session_vars["ideation"] = ideation_blob
-    overwrite_for_contact(db, respond_io_id=respond_io_id, state=new_session_vars)
+    if not is_test:
+        overwrite_for_contact(db, respond_io_id=respond_io_id, state=new_session_vars)
 
     response: dict[str, Any] = {
         "status": status_val,
