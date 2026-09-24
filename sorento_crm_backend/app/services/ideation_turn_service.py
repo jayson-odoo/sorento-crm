@@ -38,6 +38,7 @@ from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
 from app.services.conversation_variables_service import (
     _coerce_to_dict,
+    get_for_contact,
     overwrite_for_contact,
 )
 from app.services.ideation_extractor import IdeateExtraction, extract_ideate_turn
@@ -89,6 +90,15 @@ _RECAP_FIELD_ORDER: tuple[tuple[str, str], ...] = (
 
 _QUESTION_MARKS = "?？"  # ASCII ? and full-width ？ (AC-1302)
 
+# Blocking 1 (reviewer, round 1, PR #1222 at 720bb8f5): any IDEA-<digits> token
+# in a composed reply must be EXACTLY a fact's idea number - word-boundary
+# matched, never a substring (IDEA-0042 is not IDEA-00421).
+_IDEA_TOKEN_RE = re.compile(r"\bIDEA-\d+\b")
+# The duplicate-candidate template's own opening phrase - a reply carrying it
+# while the status ISN'T duplicate_candidate is always an invention (there is
+# no candidate fact to name).
+_DUPLICATE_MENTION = "Similar idea exists:"
+
 
 def _ideate_reply_facts(result: dict[str, Any]) -> dict[str, Any]:
     """The FACTS block for the S3 composer (R5) - status, title, captured
@@ -114,6 +124,42 @@ def _ends_in_one_question(text_out: str) -> bool:
     return sum(stripped.count(ch) for ch in _QUESTION_MARKS) == 1
 
 
+def _allowed_idea_numbers(facts: dict[str, Any]) -> set[str]:
+    """Every idea number a composed reply is allowed to name: the response's own
+    ``idea_number`` (the idea's on complete, the candidate's on voted) and the
+    duplicate candidate's, when one is offered."""
+    allowed: set[str] = set()
+    if facts.get("idea_number"):
+        allowed.add(str(facts["idea_number"]))
+    candidate = facts.get("duplicate_candidate") or {}
+    if candidate.get("idea_number"):
+        allowed.add(str(candidate["idea_number"]))
+    return allowed
+
+
+def _facts_not_fabricated(text_out: str, facts: dict[str, Any], status: str | None) -> bool:
+    """Blocking 1 (reviewer, round 1): applied to EVERY status, not only
+    ``complete`` - reject any ``IDEA-<digits>`` token that is not EXACTLY a
+    fact's idea number (word-boundary match, never a substring), any URL that
+    is not exactly ``facts.link``, and a duplicate-candidate mention when the
+    status carries no such candidate."""
+    allowed_numbers = _allowed_idea_numbers(facts)
+    for match in _IDEA_TOKEN_RE.finditer(text_out):
+        if match.group(0) not in allowed_numbers:
+            return False
+
+    link = facts.get("link")
+    urls = [u.rstrip(".,;:!！)。") for u in re.findall(r"https?://\S+", text_out)]
+    for url in urls:
+        if url != link:
+            return False
+
+    if status != "duplicate_candidate" and _DUPLICATE_MENTION in text_out:
+        return False
+
+    return True
+
+
 def _passes_reply_checks(text_out: str, facts: dict[str, Any]) -> bool:
     """Deterministic acceptance gate for a composed reply (AC-1302 to AC-1304,
     AC-1310, AC-1311). Facts never come from the model - if the number, title,
@@ -123,29 +169,45 @@ def _passes_reply_checks(text_out: str, facts: dict[str, Any]) -> bool:
     if not text_out:
         return False
 
-    # AC-1307: the access-denied composition has no facts to verify beyond "the
-    # LLM produced something" - the fallback template is the only shape rule.
-    if facts.get("denied"):
-        return True
-
-    lines = [line.strip() for line in text_out.splitlines() if line.strip()]
     status = facts.get("status")
 
+    # AC-1307: the access-denied composition has no positive facts to verify -
+    # only that the LLM didn't invent a URL or tack on a question (Should fix 3).
+    if facts.get("denied"):
+        if re.search(r"https?://", text_out):
+            return False
+        if any(ch in text_out for ch in _QUESTION_MARKS):
+            return False
+        return True
+
+    if not _facts_not_fabricated(text_out, facts, status):
+        return False
+
+    lines = [line.strip() for line in text_out.splitlines() if line.strip()]
+
     if status == "complete":
-        # AC-1311: line 1 the title, idea_number verbatim, at most the one URL
-        # named by link and no other (R6 as amended by R13).
+        # AC-1311: line 1 the title, line 2 the idea number verbatim, line 3
+        # (any line) 'Track it here: <link>' (R6 as amended by R13).
         title = facts.get("title")
-        if title and title not in lines[0]:
+        if title and lines and title not in lines[0]:
             return False
         idea_number = facts.get("idea_number")
-        if idea_number and idea_number not in text_out:
-            return False
-        link = facts.get("link")
-        urls = [u.rstrip(".,;:!！)。") for u in re.findall(r"https?://\S+", text_out)]
-        if link:
-            if link not in text_out or any(u != link for u in urls):
+        if idea_number:
+            if len(lines) < 2 or idea_number not in lines[1]:
                 return False
-        elif urls:
+        link = facts.get("link")
+        if link and not any(
+            line.startswith("Track it here:") and link in line for line in lines
+        ):
+            return False
+        return True
+
+    # voted / cancelled (Should fix 1): terminal, same as complete - no trailing
+    # question required. `_facts_not_fabricated` already rejected an invented
+    # idea number; voted additionally requires the real one to be named.
+    if status in ("voted", "cancelled"):
+        idea_number = facts.get("idea_number")
+        if status == "voted" and idea_number and idea_number not in text_out:
             return False
         return True
 
@@ -158,13 +220,19 @@ def _passes_reply_checks(text_out: str, facts: dict[str, Any]) -> bool:
             return False
         return _ends_in_one_question(text_out)
 
-    # collecting / review / anything else non-terminal: AC-1310's point-form shape
-    # applies to a RECAP reply - detected here as one whose first line names the
-    # title (a plain clarifying answer, e.g. "what do you mean impact?", never
-    # opens with the title and is exempt from the field-recap lines, AC-1310).
+    # collecting / review / anything else non-terminal: AC-1310's point-form
+    # shape applies to a RECAP reply. Should fix 2: detect a recap by the title
+    # opening line 1 OR by a captured field's value already appearing anywhere
+    # in the text (an LLM that dropped the title line but still echoed the
+    # facts) - either way, every present captured field must show as its own
+    # 'Label: value' line, never packed into prose (AC-1310, "regardless"). A
+    # plain clarifying answer that echoes none of the captured values is exempt.
     title = facts.get("title")
-    if title and lines and title in lines[0]:
-        captured = facts.get("captured") or {}
+    captured = facts.get("captured") or {}
+    is_recap = bool(title and lines and title in lines[0])
+    if not is_recap:
+        is_recap = any(value and value in text_out for value in captured.values())
+    if is_recap:
         for key, label in _RECAP_FIELD_ORDER:
             value = captured.get(key)
             if not value:
@@ -275,7 +343,17 @@ def compose_ideate_denial_reply(db: Session, *, user_message: str, fallback_text
 class IdeationServiceError(Exception):
     """Raised when the shared-service ``create_idea`` call cannot be completed
     (outage/timeout/HTTP error/malformed body). The caller degrades to a graceful
-    reply - never a 500 on the n8n send sub-flow (AC-19)."""
+    reply - never a 500 on the n8n send sub-flow (AC-19).
+
+    ``status_code`` (Should fix 4, reviewer round 1) carries the shared-service
+    HTTP status when the failure was a response, not a transport/parse error -
+    None for a timeout, connection failure, or malformed body. The S4 idle
+    sweep's close uses it to tell "the draft is already gone" (4xx - clear the
+    pointer) from "the service is down" (5xx/transport - keep retrying)."""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class _ContactState:
@@ -403,6 +481,10 @@ def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> di
             )
             resp.raise_for_status()
             data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        raise IdeationServiceError(
+            f"create_idea request failed: {exc}", status_code=exc.response.status_code
+        ) from exc
     except httpx.HTTPError as exc:
         raise IdeationServiceError(f"create_idea request failed: {exc}") from exc
     except (ValueError, json.JSONDecodeError) as exc:
@@ -522,6 +604,11 @@ def handle_turn(
     prior_next_field = ideation_state.get("next_field")
     prior_duplicate_candidate = ideation_state.get("duplicate_candidate") or None
     prior_title = ideation_state.get("title")
+    # Blocking 2 (reviewer, round 1, PR #1222 at 720bb8f5): the draft's captured
+    # answers, carried on the pointer since the create_idea response that
+    # produced them. Threaded to the extractor as context so it can EXTEND a
+    # field instead of losing what was captured earlier (AC-1219).
+    prior_captured = ideation_state.get("captured") or {}
     prior_transcript = ideation_state.get("transcript") or []
     pending_media = ideation_state.get("pending_media") or None
     seen_media_ids: set[str] = set(ideation_state.get("seen_media_ids") or [])
@@ -540,6 +627,7 @@ def handle_turn(
         prior_next_field = None
         prior_duplicate_candidate = None
         prior_title = None
+        prior_captured = {}
         prior_transcript = []
         pending_media = None
         seen_media_ids = set()
@@ -621,6 +709,8 @@ def handle_turn(
         next_field=prior_next_field,
         duplicate_candidate_title=(prior_duplicate_candidate or {}).get("title"),
         field_labels=_IDEATION_FIELD_LABELS,
+        captured=prior_captured,
+        prior_title=prior_title,
     )
 
     # (4) build the §5.1 input deterministically. Captions fold into message_text so
@@ -657,7 +747,10 @@ def handle_turn(
         payload["cancel"] = True
     # AC-1214: only meaningful while the pointer is a duplicate candidate; default
     # to "separate" unless the extractor read an explicit vote (R4 default).
-    if prior_status == "duplicate_candidate":
+    # Nit 3 (reviewer round 1): omit it entirely when the user is cancelling -
+    # precedence between cancel and duplicate_choice is shared-service's call,
+    # not sorento's to pre-empt with a stale "separate" alongside cancel: true.
+    if prior_status == "duplicate_candidate" and extraction.review_action != "cancel":
         payload["duplicate_choice"] = (
             "vote" if extraction.duplicate_choice == "vote" else "separate"
         )
@@ -705,6 +798,9 @@ def handle_turn(
             # sweep, which has no create_idea response to read - can name the
             # idea in a reminder.
             "title": result.get("title") or prior_title,
+            # Blocking 2: the draft's current captured answers, carried forward
+            # so the NEXT turn's extractor has them as context (AC-1219 extend).
+            "captured": result.get("captured") or prior_captured,
             # Persist the running transcript so the NEXT turn appends to it (WS-B).
             "transcript": transcript_list,
             "updated_at": _now_iso(),
@@ -811,8 +907,11 @@ def _close_idle_ideation_draft(
     """AC-1402/AC-1407: close the draft via the same ``cancel: true`` contract a
     live turn uses (plan S4: ``{product_id, draft_id, cancel: true,
     submitter_contact_id}``). Returns True on success (caller clears the
-    pointer); False on any shared-service outage or missing config (caller
-    KEEPS the pointer so the next tick retries)."""
+    pointer). Should fix 4 (reviewer round 1): a 4xx (the draft is already
+    closed/gone shared-service side) is ALSO treated as success - clearing the
+    pointer rather than re-POSTing the same dead draft_id every 15 minutes
+    forever. Only a transport/5xx failure returns False (caller KEEPS the
+    pointer so the next tick retries, AC-1407)."""
     config = _resolve_ideation_config(db)
     if not config.is_ready:
         return False
@@ -825,7 +924,15 @@ def _close_idle_ideation_draft(
         payload["draft_id"] = draft_id
     try:
         call_create_idea(config.base_url, config.api_key, payload)
-    except IdeationServiceError:
+    except IdeationServiceError as exc:
+        if exc.status_code is not None and 400 <= exc.status_code < 500:
+            logger.warning(
+                "ideation idle sweep: close got %s for respond_io_id=%s (draft "
+                "already gone) - clearing the pointer instead of retrying",
+                exc.status_code,
+                respond_io_id,
+            )
+            return True
         logger.warning(
             "ideation idle sweep: close outage for respond_io_id=%s", respond_io_id, exc_info=True
         )
@@ -869,12 +976,22 @@ def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> d
             if reminded_at is None:
                 if updated_at is None or (now - updated_at) < _IDLE_REMINDER_AFTER:
                     continue
+                # The send is a network call - a live turn can land on this
+                # contact while it is in flight. Should fix 5 (reviewer round
+                # 1): re-read session_vars FRESH right before writing and merge
+                # reminded_at onto THAT, rather than blindly overwriting with
+                # the snapshot read at the top of this loop (which would
+                # silently discard whatever the live turn just wrote).
                 _send_ideation_reminder(
                     db, respond_io_id=contact.respond_io_id, title=ideation.get("title")
                 )
-                new_ideation = dict(ideation)
+                fresh_session_vars = get_for_contact(db, respond_io_id=contact.respond_io_id)
+                fresh_ideation = fresh_session_vars.get("ideation")
+                if not fresh_ideation:
+                    continue  # a live turn finished/cleared the draft meanwhile
+                new_ideation = dict(fresh_ideation)
                 new_ideation["reminded_at"] = now.isoformat()
-                new_session_vars = dict(session_vars)
+                new_session_vars = dict(fresh_session_vars)
                 new_session_vars["ideation"] = new_ideation
                 overwrite_for_contact(
                     db, respond_io_id=contact.respond_io_id, state=new_session_vars
@@ -891,14 +1008,22 @@ def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> d
                 draft_id=ideation.get("draft_id"),
             )
             if closed_ok:
-                new_session_vars = dict(session_vars)
-                new_session_vars.pop("ideation", None)
-                overwrite_for_contact(
-                    db, respond_io_id=contact.respond_io_id, state=new_session_vars
-                )
+                # Same race, same fix: re-read fresh, and only clear the
+                # pointer if it is still pointing at the draft we just closed -
+                # a live turn may have started a NEW draft while the close
+                # call was in flight.
+                fresh_session_vars = get_for_contact(db, respond_io_id=contact.respond_io_id)
+                fresh_ideation = fresh_session_vars.get("ideation")
+                if fresh_ideation and fresh_ideation.get("draft_id") == ideation.get("draft_id"):
+                    new_session_vars = dict(fresh_session_vars)
+                    new_session_vars.pop("ideation", None)
+                    overwrite_for_contact(
+                        db, respond_io_id=contact.respond_io_id, state=new_session_vars
+                    )
                 closed += 1
             # else: outage - keep the pointer, the next tick retries (AC-1407).
         except Exception:  # noqa: BLE001 - one bad row must not sink the batch
+            db.rollback()
             logger.exception(
                 "ideation idle sweep: failed for respond_io_id=%s", contact.respond_io_id
             )

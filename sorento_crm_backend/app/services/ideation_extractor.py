@@ -192,6 +192,8 @@ def extract_ideate_turn(
     next_field: str | None = None,
     duplicate_candidate_title: str | None = None,
     field_labels: dict[str, str] | None = None,
+    captured: dict[str, str] | None = None,
+    prior_title: str | None = None,
 ) -> IdeateExtraction:
     """Extract the ideate NLU output from ``message_text`` given the draft context.
 
@@ -235,6 +237,23 @@ def extract_ideate_turn(
     if field_labels:
         labels = ", ".join(f"{k} ({v})" for k, v in field_labels.items())
         context_lines.append(f"Known field keys: {labels}")
+    # Blocking 2 (reviewer, round 1, PR #1222 at 720bb8f5): without the draft's
+    # CURRENT captured answers and its stored title, the model can only ever
+    # emit a fresh, standalone value for a field - it has no way to EXTEND the
+    # existing one, and no way to know a title already exists to keep stable
+    # (AC-1219's "extended, not overwritten"; title stability).
+    if captured:
+        captured_lines = "; ".join(f"{k}: {v}" for k, v in captured.items())
+        context_lines.append(
+            f"Already captured so far (EXTEND these when the message adds more "
+            f"detail to one of them - output the FULL merged value, never just "
+            f"the new sentence alone): {captured_lines}"
+        )
+    if prior_title:
+        context_lines.append(
+            f"Current stored title (keep the SAME title unless the problem "
+            f"statement itself changes enough to need a new one): {prior_title}"
+        )
     user_block = "\n".join(context_lines) + f"\n\nUser message:\n{raw}"
 
     messages_in = [

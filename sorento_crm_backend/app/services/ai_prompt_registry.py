@@ -149,7 +149,9 @@ def _ideate_extractor_fallback() -> str:
         "the same question again, never a menu.\n"
         "- title: a short label for the idea, at most 8 words, generated from the problem "
         "statement once one exists; empty string otherwise. Keep the SAME title across "
-        "turns unless the problem statement itself changes enough to need a new one.\n"
+        "turns unless the problem statement itself changes enough to need a new one - the "
+        "draft context tells you the CURRENT stored title when one exists; re-emit it "
+        "unchanged unless that condition is met.\n"
         "- review_action: only meaningful while the draft status is 'review'. 'submit' for "
         "an explicit yes/ok/boleh/submit/confirm. 'change' when the user is editing a "
         "captured field this turn (put the edit itself in fields, and the request text in "
@@ -178,6 +180,11 @@ def _ideate_extractor_fallback() -> str:
         "specific answer keys. One message can fill several keys at once.\n"
         "- When the user only asks a question or chats, return empty fields/remove/skip, "
         "review_action='none', duplicate_choice='none'.\n"
+        "- The draft context may show fields ALREADY CAPTURED SO FAR. When this message "
+        "adds more detail to one of those fields (by meaning, not by which field was "
+        "asked), output the FULL EXTENDED value for that key - the existing text plus the "
+        "new detail, merged into one coherent value - never just the new sentence alone; "
+        "the old detail must never be lost.\n"
     )
 
 
@@ -210,16 +217,21 @@ def _ideate_reply_fallback() -> str:
         "own prose, but still end with the one question on its own final line.\n"
         "- Exactly ONE '?' (or the full-width '？') in the WHOLE reply, and it must be "
         "the very last character, for every non-terminal status. A terminal reply "
-        "(status=complete) asks no question.\n"
+        "(status=complete, voted, or cancelled) asks no question.\n"
         "- status=complete: line 1 the title, line 2 the idea number verbatim plus that "
         "we'll update them on WhatsApp, line 3 'Track it here: <link>' when a link fact "
         "is given. Never include any other URL.\n"
+        "- status=voted: a short plain line confirming the vote was counted for the "
+        "candidate's idea number (fact idea_number), verbatim. No question.\n"
+        "- status=cancelled: a short plain line confirming the draft was dropped. No "
+        "question.\n"
         "- status=duplicate_candidate: line 1 'Similar idea exists: <candidate title>', "
         "then the one question asking whether to vote for that one or keep this one "
         "separate.\n"
         "- denied_agent fact present: apologise plainly that this feature isn't "
-        "available to them right now. No question, no field lines.\n"
-        "- Never fabricate a title, idea number, or link that isn't in the FACTS.\n"
+        "available to them right now. No question, no URL, no field lines.\n"
+        "- Never fabricate a title, idea number, or link that isn't in the FACTS, and "
+        "never mention a similar/duplicate idea unless the FACTS carry one.\n"
     )
 
 
