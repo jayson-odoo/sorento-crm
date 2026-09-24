@@ -31,6 +31,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.models.base import get_company_scope
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
@@ -49,6 +50,7 @@ from app.models.project_so import (
     SOLineAllocation,
 )
 from app.models.sales_agent import SalesAgent
+from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 from app.services.scm import sales_agent_service, spo_supply
@@ -193,19 +195,29 @@ class StockDebtService:
         )
         supplier_map = self._last_supplier_map(product_ids)
 
-        filtered = []
+        pre_supplier = []
         for product_id, code, name, category_code in products:
             result = assignments[product_id]
             if only_debt and not self._in_debt(result):
                 continue
             supplier = supplier_map.get(product_id) or {"id": None, "name": None}
+            pre_supplier.append((product_id, code, name, category_code, supplier, result))
+
+        # AC-7c: the supplier FACET is built from the set BEFORE the `supplier_id` filter
+        # narrows it - the select can then switch supplier without first clearing itself,
+        # rather than a narrowed board silently dropping every option but the one chosen.
+        suppliers = self._suppliers_list(row[4] for row in pre_supplier)
+
+        filtered = []
+        for entry in pre_supplier:
+            supplier = entry[4]
             if supplier_id == "none":
                 if supplier["id"] is not None:
                     continue
             elif supplier_id:
                 if supplier["id"] != supplier_id:
                     continue
-            filtered.append((product_id, code, name, category_code, supplier, result))
+            filtered.append(entry)
 
         axis = self._axis((row[5] for row in filtered), cutoff=cutoff)
         filtered.sort(key=lambda row: self._sort_key(row[5], row[1]))
@@ -239,7 +251,6 @@ class StockDebtService:
             )
 
         totals = self._totals(data_rows, axis)
-        suppliers = self._suppliers_list(data_rows)
         sheet_counts = self._sheet_counts(data_rows)
 
         start = max(page - 1, 0) * limit
@@ -1069,7 +1080,16 @@ class StockDebtService:
                 PurchaseOrderLine.product_id.in_(product_ids),
                 PurchaseOrder.status != "cancelled",
             )
-        ).subquery()
+        )
+        # COMPANY SCOPE, EXPLICITLY, on BOTH tables named in this branch (belt-and-braces,
+        # matching `spo_last_receipt_service`'s own windowed branch): `.subquery()` loses
+        # the `with_loader_criteria` the session's `do_orm_execute` listener injects, and
+        # the outer query below names only `Supplier`.
+        for model in (PurchaseOrderLine, PurchaseOrder):
+            predicate = build_company_predicate(model, get_company_scope(self.db))
+            if predicate is not None:
+                numbered = numbered.filter(predicate)
+        numbered = numbered.subquery()
         po_supplier: Dict[str, Optional[str]] = {
             str(pid): (str(sid) if sid else None)
             for pid, sid in self.db.query(numbered.c.product_id, numbered.c.supplier_id)
@@ -1134,13 +1154,18 @@ class StockDebtService:
         }
 
     @staticmethod
-    def _suppliers_list(data_rows: List[dict]) -> List[Dict[str, str]]:
-        """Distinct last suppliers of the filtered set, sorted by name (AC-7)."""
+    def _suppliers_list(
+        suppliers: Iterable[Dict[str, Optional[str]]],
+    ) -> List[Dict[str, str]]:
+        """Distinct last suppliers, sorted by name (AC-7). Takes the raw `{id, name}`
+        entries directly - AC-7c: the caller passes the set BEFORE the `supplier_id`
+        filter narrows it, not a page of already-built rows, so the facet never loses an
+        option the reader could still pick."""
         seen: Dict[str, str] = {}
-        for row in data_rows:
-            supplier_id = row["supplier_id"]
+        for supplier in suppliers:
+            supplier_id = supplier["id"]
             if supplier_id and supplier_id not in seen:
-                seen[supplier_id] = row["supplier_name"] or ""
+                seen[supplier_id] = supplier["name"] or ""
         return [
             {"id": supplier_id, "name": name}
             for supplier_id, name in sorted(seen.items(), key=lambda pair: pair[1])
