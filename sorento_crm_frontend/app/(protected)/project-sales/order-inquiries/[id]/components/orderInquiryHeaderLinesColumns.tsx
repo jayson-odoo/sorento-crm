@@ -94,10 +94,14 @@ function ReserveActionsCell({
   onUndoStaged?: (rowId: string) => void;
 }) {
   if (staged) {
+    const chipText = reserveChipText(staged);
     return (
       <div className="flex min-w-0 items-center gap-1.5">
-        <span className="inline-flex items-center truncate rounded-full border border-dashed border-muted-foreground/50 px-2 py-0.5 text-xs text-muted-foreground">
-          {reserveChipText(staged)}
+        <span
+          title={chipText}
+          className="min-w-0 truncate rounded-full border border-dashed border-muted-foreground/50 px-2 py-0.5 text-xs text-muted-foreground"
+        >
+          {chipText}
         </span>
         <Button
           type="button"
@@ -373,7 +377,8 @@ export function useOrderInquiryHeaderLinesColumns({
       columns.push({
         id: 'reserve_actions',
         header: () => <span className="sr-only">Reserve actions</span>,
-        size: 90,
+        // Wide enough for the staged chip ("Reserve 107 @ BRW") plus Undo.
+        size: 240,
         enableSorting: false,
         enableResizing: false,
         // An action cell, not a fact to rearrange: no drag grip on its header.
