@@ -166,12 +166,38 @@ export function PlanContainerDialog({
     }
   };
 
+  // The column mapper (PLAN-import-column-mapper-24sep.md F2): one doc type per file kind
+  // here (never "none", which has no file to map). `null` keeps the mapper off the "No
+  // file" and mid-fetch states, rather than a truthy `''` reading as a real doc type.
+  const mapDocType: ImportMappingDocType | null =
+    docKind === 'proforma' ? 'proforma_invoice' : docKind === 'stock_list' ? 'supplier_inventory' : null;
+  const [mapResult, setMapResult] = useState<{
+    probe: ImportMappingProbe;
+    fields: ImportMappingField[];
+  } | null>(null);
+  const [mapSelections, setMapSelections] = useState<ImportMappingSelection[]>([]);
+  const [mapping, setMapping] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  // Declared BEFORE `upload` so its own `preview`/`apply` closures below can read the
+  // probed header row (B6, AC-M3) - the mapper's stepper pick threads onto the SAME read
+  // Test/Confirm take, not a second one.
+  const mapHeaderRow = mapResult?.probe.header_row ?? null;
+
+  // Every call below OMITS the header_row argument entirely when there is none, rather
+  // than passing an explicit `null` positionally - keeps a plain upload (no mapper input
+  // yet) calling the service exactly as it always has.
+  const previewProforma = (file: File) =>
+    mapHeaderRow != null
+      ? previewProformaInvoice(file, supplierId, mapHeaderRow)
+      : previewProformaInvoice(file, supplierId);
+  const previewStock = (file: File) =>
+    mapHeaderRow != null
+      ? previewStockList(file, supplierId, mapHeaderRow)
+      : previewStockList(file, supplierId);
+
   const upload = useTwoStepUpload<StockListPreview | ProformaInvoicePreview, unknown>({
     open,
-    preview: (file) =>
-      docKind === 'proforma'
-        ? previewProformaInvoice(file, supplierId)
-        : previewStockList(file, supplierId),
+    preview: (file) => (docKind === 'proforma' ? previewProforma(file) : previewStock(file)),
     apply: async (file) => {
       // The plan FIRST (S6): every row this apply writes carries its id, which is what
       // makes the statement the plan's own rather than the supplier's latest.
@@ -179,17 +205,16 @@ export function PlanContainerDialog({
       startedPlanRef.current = plan;
       try {
         if (docKind === 'proforma') {
-          const read =
-            proformaPreviewRef.current ?? (await previewProformaInvoice(file, supplierId));
-          return await applyProformaInvoice(
-            file,
-            supplierId,
-            revisionsFrom(read),
-            null,
-            plan.id,
-          );
+          const read = proformaPreviewRef.current ?? (await previewProforma(file));
+          return mapHeaderRow != null
+            ? await applyProformaInvoice(
+                file, supplierId, revisionsFrom(read), null, plan.id, mapHeaderRow,
+              )
+            : await applyProformaInvoice(file, supplierId, revisionsFrom(read), null, plan.id);
         }
-        return await applyStockList(file, supplierId, plan.id);
+        return mapHeaderRow != null
+          ? await applyStockList(file, supplierId, plan.id, mapHeaderRow)
+          : await applyStockList(file, supplierId, plan.id);
       } catch (e) {
         // AC-F2: the file was refused, so the plan it was for goes with it. Nobody is left
         // holding an empty record they did not ask for and cannot tell from a real one.
@@ -209,7 +234,13 @@ export function PlanContainerDialog({
         throw e;
       }
     },
-    test: docKind === 'proforma' ? undefined : (file) => testStockList(file, supplierId),
+    test:
+      docKind === 'proforma'
+        ? undefined
+        : (file) =>
+            mapHeaderRow != null
+              ? testStockList(file, supplierId, mapHeaderRow)
+              : testStockList(file, supplierId),
     onApplied: () => {
       const plan = startedPlanRef.current;
       if (plan) openPlan(plan);
@@ -222,19 +253,6 @@ export function PlanContainerDialog({
     proformaPreviewRef.current =
       docKind === 'proforma' ? ((preview as ProformaInvoicePreview | null) ?? null) : null;
   }, [preview, docKind]);
-
-  // The column mapper (PLAN-import-column-mapper-24sep.md F2): one doc type per file kind
-  // here (never "none", which has no file to map). `null` keeps the mapper off the "No
-  // file" and mid-fetch states, rather than a truthy `''` reading as a real doc type.
-  const mapDocType: ImportMappingDocType | null =
-    docKind === 'proforma' ? 'proforma_invoice' : docKind === 'stock_list' ? 'supplier_inventory' : null;
-  const [mapResult, setMapResult] = useState<{
-    probe: ImportMappingProbe;
-    fields: ImportMappingField[];
-  } | null>(null);
-  const [mapSelections, setMapSelections] = useState<ImportMappingSelection[]>([]);
-  const [mapping, setMapping] = useState(false);
-  const [mapError, setMapError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {

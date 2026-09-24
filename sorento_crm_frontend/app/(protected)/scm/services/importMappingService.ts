@@ -3,57 +3,40 @@
  * Import column mapper (S4/S5) - feature service
  * ============================================================================
  * Layering: ImportColumnMapper / PlanContainerDialog / SupplierDocumentsUploadDialog ->
- * THIS service -> (Phase 2) lib/api-client -> backend.
+ * THIS service -> lib/api-client -> backend.
  *
- * ── PHASE 1 MOCK (PRINCIPLES.md phase order; PLAN-import-column-mapper-24sep.md B4/B5) ──
- * The two backend endpoints below do not exist yet - this lane's Phase 1 builds every
- * screen against a MOCK of them, per the plan's own slice order ("F1 ... against a mocked
- * probe, F2+F3+F4"). Phase 2 swaps `probeImportMapping`/`saveImportMapping` for real
- * `apiFetch` calls; every OTHER export here (the shapes, the field lists, the header list)
- * is the contract Phase 2 keeps - only the two functions' bodies change.
- *
- * `probeImportMapping` stands in for:
- *   POST /api/v1/scm/import-mapping/probe  (multipart file, supplier_id, doc_type,
+ * ── BACKEND CONTRACT (app/api/v1/scm/import_mapping.py) ─────────────────────────────────
+ * `probeImportMapping`:
+ *   POST /api/v1/scm/import-mapping/probe  (multipart file, supplier_id, doc_types[],
  *   optional header_row) -> {header_row, columns:[{position, header, samples, field,
- *   source}], required_fields, fields:[{field,label}]}                            (B4)
+ *   source, required}], required_fields, missing_required, fields:[{field,label}]}  (B4)
  *
- * `saveImportMapping` stands in for:
- *   POST /api/v1/scm/import-mapping/save  {supplier_id, doc_type, mappings:[{header,
+ * `saveImportMapping`:
+ *   POST /api/v1/scm/import-mapping/save  {supplier_id, doc_types:[...], mappings:[{header,
  *   field}]} - upserts SUPPLIER-scoped rows, replacing this supplier's earlier choice for
  *   the same header rather than accumulating (AC-M6). `field: "ignore"` is a saved choice
  *   (G2/AC-M7), never omitted.                                                     (B5)
  *
  * A combined file (one sheet read as BOTH a proforma invoice and a packing list, grill G4
- * / AC-M13) probes and saves against an ARRAY of doc types rather than one - the mock
- * merges their field lists and required fields into the ONE section the dialog shows,
- * and records the pick under one shared key. Phase 2's real save still has to write rows
- * under both `import_field_alias.doc_type`s (G4); this mock does not model that split
- * (there is only one doc type table row shape here, not two) - noted so Phase 2 does not
- * assume the split already works.
+ * / AC-M13) probes and saves against an ARRAY of doc types rather than one - the backend
+ * merges their field lists and required fields into the ONE section the dialog shows, and
+ * `save` writes the same rows under both `import_field_alias.doc_type`s.
  *
- * ── WHAT IS REAL, WHAT IS MADE UP ──────────────────────────────────────────────────────
- * The header TEXTS below are measured (PLAN "Measured" section, 24 Sep): the NEW YANGGANG
- * proforma invoice's own header row, header row 15, with the two-line headers
- * (`件数\n（件）`) and the merged `外箱/木托尺寸` columns exactly as the plan's B2 will
- * synthesise them (`外箱/木托尺寸 [2]`, `[3]`). The SAMPLE VALUES under them are made up -
- * nobody has read the real cells yet, only the header row - so they are plausible
- * placeholders, not the supplier's own figures. Nothing downstream should read a sample
- * value as fact.
+ * Permission: `require_any_permission(["scm.proforma_invoice.upload", "scm.reorder.run"])`
+ * - the union of the two real preview endpoints' own guards (proforma invoice / packing
+ * list, and the stock list), since a caller who reached either dialog already holds one.
  *
- * ── THE TWO STATES A CALLER SEES ────────────────────────────────────────────────────────
- * The mock behaves like a real supplier-scoped memory, in-process: the FIRST probe for a
- * (supplier, doc types) pair returns every column unresolved (`field: null,
- * source: 'none'`) - the golden path, AC-M9/AC-E1. Once `saveImportMapping` has been
- * called for that pair, every LATER probe returns whatever was saved (`source: 'supplier'`)
- * - the collapsed path, AC-M11/AC-E2 - and a column never saved (because the operator left
- * it unpicked) keeps reading as unresolved forever after, which is exactly how AC-M12's
- * "one new column" state arises from ordinary use: map 19 of 20 columns, Test, reopen -
- * the 20th is still `source: 'none'` and the mapper expands with it highlighted.
- * `buildMockProbe` below exposes the same two states directly (no supplier memory, no
- * async) for a caller - a vitest spec - that wants one without driving the flow that
- * produces it.
+ * ── PHASE 1 → PHASE 2 ────────────────────────────────────────────────────────────────────
+ * Phase 1 built every screen against a MOCK of the two endpoints above (in-memory supplier
+ * memory standing in for the real `import_field_alias` table). Phase 2 (B4/B5 landed) swaps
+ * the two functions' bodies for real `apiFetch` calls below; every OTHER export here (the
+ * shapes, the field lists, the header list, `buildMockProbe`) is unchanged - `buildMockProbe`
+ * / `__resetImportMappingMockForTests` stay as TEST-ONLY fixtures (not used by either
+ * dialog), the same real header list and field lists a spec can still reach for directly.
  * ============================================================================
  */
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 export type ImportMappingDocType =
   | 'proforma_invoice'
@@ -224,38 +207,6 @@ const NEW_YANGGANG_HEADERS: { header: string; samples: string[] }[] = [
   { header: '备注', samples: ['含配件', '无'] },
 ];
 
-function normalizeHeaderKey(header: string): string {
-  // A loose stand-in for the backend's own `normalize_header` (NFKC + strip to
-  // alphanumeric/CJK) - good enough to treat `件数\n（件）` and `件数（件）` as the same
-  // key without importing the real normaliser into the browser bundle.
-  return header
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[^0-9a-z㐀-鿿]+/g, '');
-}
-
-/** In-memory stand-in for the `import_field_alias` rows a real save would write -
- *  supplier + doc-type-set scoped, exactly like the real table (R1/R2). Module-level on
- *  purpose: the whole point is that it survives closing and reopening a dialog within the
- *  same browser session, the way a real save would. `__resetImportMappingMockForTests`
- *  clears it between vitest specs. */
-const savedLayouts = new Map<string, Record<string, string>>();
-
-function layoutKey(
-  supplierId: string,
-  docTypes: ImportMappingDocType[],
-): string {
-  return `${supplierId}::${[...docTypes].sort().join('+')}`;
-}
-
-async function settle<T>(value: T): Promise<T> {
-  // A real request has a round trip; a busy state that resolves synchronously reads as a
-  // bug (nothing ever shows the Testing/Reading spinner) the moment somebody removes an
-  // `await` upstream expecting one.
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  return value;
-}
-
 export interface ProbeImportMappingRequest {
   file: File;
   supplierId: string;
@@ -272,29 +223,28 @@ export interface ProbeImportMappingResult {
 }
 
 export async function probeImportMapping({
+  file,
   supplierId,
   docTypes,
   headerRow,
 }: ProbeImportMappingRequest): Promise<ProbeImportMappingResult> {
-  const saved = savedLayouts.get(layoutKey(supplierId, docTypes)) ?? {};
-  const columns: ImportMappingColumn[] = NEW_YANGGANG_HEADERS.map((h, i) => {
-    const field = saved[normalizeHeaderKey(h.header)] ?? null;
-    return {
-      position: i,
-      header: h.header,
-      samples: h.samples,
-      field,
-      source: field ? 'supplier' : 'none',
-    };
-  });
-  return settle({
+  const body = new FormData();
+  body.append('file', file);
+  body.append('supplier_id', supplierId);
+  docTypes.forEach((docType) => body.append('doc_types', docType));
+  if (headerRow != null) body.append('header_row', String(headerRow));
+  const res = await apiFetch('/api/v1/scm/import-mapping/probe', { method: 'POST', body });
+  if (!res.ok) throw new Error(await extractApiError(res, "Failed to read the file's columns"));
+  const data = await res.json();
+  return {
     probe: {
-      header_row: headerRow ?? NEW_YANGGANG_HEADER_ROW,
-      columns,
-      required_fields: mergedRequired(docTypes),
+      header_row: data.header_row,
+      columns: data.columns,
+      required_fields: data.required_fields,
+      missing_required: data.missing_required,
     },
-    fields: mergedFields(docTypes),
-  });
+    fields: data.fields,
+  };
 }
 
 export interface SaveImportMappingRequest {
@@ -308,13 +258,12 @@ export async function saveImportMapping({
   docTypes,
   mappings,
 }: SaveImportMappingRequest): Promise<void> {
-  const key = layoutKey(supplierId, docTypes);
-  const next = { ...(savedLayouts.get(key) ?? {}) };
-  mappings.forEach((m) => {
-    next[normalizeHeaderKey(m.header)] = m.field;
+  const res = await apiFetch('/api/v1/scm/import-mapping/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supplier_id: supplierId, doc_types: docTypes, mappings }),
   });
-  savedLayouts.set(key, next);
-  await settle(undefined);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the column mapping'));
 }
 
 /** Direct access to the two (three, counting the derived one) probe shapes, with no
@@ -346,7 +295,11 @@ export function buildMockProbe(
   };
 }
 
-/** Test-only: clears the module-level supplier memory between specs. */
+/** Test-only. A no-op now that `probeImportMapping`/`saveImportMapping` call the real
+ *  API (Phase 2, B4/B5) - there is no in-memory supplier layout left to clear. Kept
+ *  exported so a spec written against the Phase 1 mock's contract does not need editing
+ *  to drop the call; real state lives on the server and is whatever the test's own
+ *  fixture (a rolled-back savepoint) leaves it. */
 export function __resetImportMappingMockForTests(): void {
-  savedLayouts.clear();
+  // Nothing to reset - see the doc comment above.
 }

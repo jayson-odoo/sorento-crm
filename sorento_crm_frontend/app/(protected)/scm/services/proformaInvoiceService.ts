@@ -449,6 +449,7 @@ function proformaForm(
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -466,16 +467,20 @@ function proformaForm(
   // revised here is stamped with it, so the plan reads its own five blocks rather than
   // whichever single invoice sorted first for the supplier.
   if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
+  // The import column mapper's stepper (B6, AC-M3) - which row is the header, overriding
+  // the guess. Sent whenever the mapper has read one, never invented here.
+  if (headerRow != null) body.append('header_row', String(headerRow));
   return body;
 }
 
 export async function previewProformaInvoice(
   file: File,
   supplierId: string,
+  headerRow?: number | null,
 ): Promise<ProformaInvoicePreview> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/preview', {
     method: 'POST',
-    body: proformaForm(file, supplierId),
+    body: proformaForm(file, supplierId, null, null, null, headerRow),
   });
   return readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
 }
@@ -496,10 +501,11 @@ export async function applyProformaInvoice(
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, revisionOf, fileAsNew, loadingPlanId),
+    body: proformaForm(file, supplierId, revisionOf, fileAsNew, loadingPlanId, headerRow),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }
@@ -507,10 +513,11 @@ export async function applyProformaInvoice(
 export async function testProformaInvoice(
   file: File,
   supplierId: string,
+  headerRow?: number | null,
 ): Promise<UploadTestResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply?validate_only=true', {
     method: 'POST',
-    body: proformaForm(file, supplierId),
+    body: proformaForm(file, supplierId, null, null, null, headerRow),
   });
   return readJson<UploadTestResult>(res, 'Failed to test the proforma invoice');
 }

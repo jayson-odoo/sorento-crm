@@ -38,6 +38,12 @@ export interface ImportMappingColumn {
    *  it yet. `IGNORE_FIELD` counts as a known answer (AC-M7), never as unresolved. */
   field: string | null;
   source: 'supplier' | 'shared' | 'none';
+  /** True when `field` is one of the doc type's required fields (B4's own wire shape) -
+   *  not read by this component, which derives its own live "still needed" line from
+   *  CURRENT picks (`unresolvedRequiredFields`) rather than this static, probe-time flag;
+   *  carried on the type so a caller inspecting the raw probe sees it too. Optional so a
+   *  hand-built probe (a spec, `buildMockProbe`) need not state it. */
+  required?: boolean;
 }
 
 /** One pickable field the doc type's reader asks for, plus its screen label. */
@@ -56,6 +62,12 @@ export interface ImportMappingProbe {
    *  badge and the caller's own Test-disabled reason (AC-M9), never a per-column flag: a
    *  required field can be satisfied by ANY column, not a fixed one. */
   required_fields: string[];
+  /** `required_fields` not yet resolved BY ANY COLUMN, as the probe found them - B4's own
+   *  wire shape. Optional (a hand-built probe need not state it): this component always
+   *  recomputes its live "still needed" line from current picks instead
+   *  (`unresolvedRequiredFields`), since a probe-time snapshot goes stale the moment the
+   *  operator picks a field. */
+  missing_required?: string[];
 }
 
 /** One header's pick, in the shape `onChange` reports it and `save` (B5) takes it -

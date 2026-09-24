@@ -187,6 +187,7 @@ function stockForm(
   file: File,
   supplierId: string,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -196,16 +197,20 @@ function stockForm(
   // cannot move an older plan's figures. Absent (the standalone stock-list page) it keeps
   // the supplier-wide replace it always did.
   if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
+  // The import column mapper's stepper (B6, AC-M3) - which row is the header, overriding
+  // the guess. Sent whenever the mapper has read one, never invented here.
+  if (headerRow != null) body.append('header_row', String(headerRow));
   return body;
 }
 
 export async function previewStockList(
   file: File,
   supplierId: string,
+  headerRow?: number | null,
 ): Promise<StockListPreview> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/preview', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, null, headerRow),
   });
   const body = await readJson<Omit<StockListPreview, 'ok'>>(res, 'Failed to read the stock list');
   // The backend calls it `readable`; the shared upload hook asks for `ok`.
@@ -226,18 +231,23 @@ export async function applyStockList(
   file: File,
   supplierId: string,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): Promise<StockListResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply', {
     method: 'POST',
-    body: stockForm(file, supplierId, loadingPlanId),
+    body: stockForm(file, supplierId, loadingPlanId, headerRow),
   });
   return readJson<StockListResult>(res, 'Failed to save the stock list');
 }
 
-export async function testStockList(file: File, supplierId: string): Promise<UploadTestResult> {
+export async function testStockList(
+  file: File,
+  supplierId: string,
+  headerRow?: number | null,
+): Promise<UploadTestResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply?validate_only=true', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, null, headerRow),
   });
   return readJson<UploadTestResult>(res, 'Failed to test the stock list');
 }
@@ -1315,6 +1325,8 @@ interface SupplierDocumentsFormOptions {
   attachTo?: { id: string; pi_number: string } | null;
   /** Per block, what the operator picked instead of what the server resolved. */
   attachToBlocks?: SupplierDocumentBlockAttach[];
+  /** The import column mapper's stepper pick, per file (B6, AC-M3) - `{file name: row}`. */
+  headerRows?: Record<string, number>;
 }
 
 function supplierDocumentsForm(files: File[], opts: SupplierDocumentsFormOptions): FormData {
@@ -1326,6 +1338,9 @@ function supplierDocumentsForm(files: File[], opts: SupplierDocumentsFormOptions
   if (opts.attachTo) body.append('attach_to', opts.attachTo.id);
   if (opts.attachToBlocks?.length) {
     body.append('attach_to_blocks', JSON.stringify(opts.attachToBlocks));
+  }
+  if (opts.headerRows && Object.keys(opts.headerRows).length > 0) {
+    body.append('header_rows', JSON.stringify(opts.headerRows));
   }
   return body;
 }
