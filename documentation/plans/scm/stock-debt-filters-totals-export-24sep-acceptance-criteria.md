@@ -40,7 +40,7 @@ on the live stack, folded in below - see "Owner hand-test round" for the rulings
 ## Frontend filters and totals
 
 - AC-19 The toolbar carries exactly three controls: Search, Filters (with an active count badge), and a primary `Export` button at the right. No refresh button, no switch on the bar.
-- AC-19b (R14/R14b/R15/R16, superseding the original wording) The Filters panel holds, in order: Book (All / Project / Retail, default All), Supplier (`SearchableMultiSelect`, options from `suppliers` plus "No supplier" - R15, multi), Due date (From / To inputs - two typeable `DatePicker`s, clearable - R14b, replaces the single Cutoff date and, before that, the `DateRangePicker` R14 introduced), Only products in debt (switch, default on). The Ownership group control is GONE (R16). The count badge counts Book when not All, supplier(s), the due date range, and "only in debt" when OFF.
+- AC-19b (R14/R14c/R15/R16, superseding the original wording; R14b's From/To wording superseded in turn) The Filters panel holds, in order: Book (All / Project / Retail, default All), Supplier (`SearchableMultiSelect`, options from `suppliers` plus "No supplier" - R15, multi), Sales order delivery date (shared range picker, typeable - R14c, one `DateRangePicker` control, DD/MM/YYYY typing, replaces R14b's From/To pair and, before that, the plain Cutoff date), Only products in debt (switch, default on). The Ownership group control is GONE (R16). The count badge counts Book when not All, supplier(s), the delivery date range, and "only in debt" when OFF.
 - AC-19c Active filters render as chips under the bar, one per filter, each with its own clear; clearing a chip refetches. "Only in debt" chips only when off ("Including covered products"). Two or more suppliers picked together render as ONE chip "Suppliers: N" (R15); a due-date range renders as one chip "Due: 1 Nov 26 to 30 Nov 26" (R14).
 - AC-20 (superseded by R16) Book = Retail no longer needs to hide an Ownership group select - the control does not exist any more.
 - AC-21 (R17) A `Total` column sits after TBA as the last column (No date/No location are gone, R17), right-aligned, signed, no tone; it equals months + TBA for the row.
@@ -89,13 +89,29 @@ changed it.
   `max(current month, date_from's month)` to `date_to`'s month (no `date_to` = today's
   rule). `cutoff` is REMOVED, not aliased.
 - R14b (owner, 24 Sep, hand test round 2: the range widget's month arrow is dead inside
-  the Filters panel and it cannot be typed) Due date is TWO typeable date inputs, labelled
-  "From" and "To" - the same `DatePicker` component (`@/components/ui/date-picker`, DD/MM/
-  YYYY typing plus a calendar button) the single Cutoff field used before R14, not the
-  `DateRangePicker` R14 introduced. Chip reads `Due: 1 Nov 26 to 30 Nov 26` with both set,
-  `Due: from 1 Nov 26` with only From set, `Due: to 30 Nov 26` with only To set. Clearing
-  the chip clears both inputs. The wire is unchanged by this ruling: the service still
-  sends `date_from` / `date_to` exactly as R14 defined them.
+  the Filters panel and it cannot be typed) SUPERSEDED by R14c, same day, on sight - the
+  owner reversed this ruling before it shipped. Due date is TWO typeable date inputs,
+  labelled "From" and "To" - the same `DatePicker` component (`@/components/ui/date-picker`,
+  DD/MM/YYYY typing plus a calendar button) the single Cutoff field used before R14, not
+  the `DateRangePicker` R14 introduced. Chip reads `Due: 1 Nov 26 to 30 Nov 26` with both
+  set, `Due: from 1 Nov 26` with only From set, `Due: to 30 Nov 26` with only To set.
+  Clearing the chip clears both inputs. The wire is unchanged by this ruling: the service
+  still sends `date_from` / `date_to` exactly as R14 defined them.
+- R14c (owner, 24 Sep, reversing R14b on sight: "use the same date range component but I
+  can type; I don't want two different date fields; call it sales order delivery date")
+  ONE range control again - the shared `DateRangePicker` (`components/ui/date-range-picker.tsx`,
+  the same one Sales Orders' "Ordered" filter uses), relabelled "Sales order delivery
+  date" (not "Due date"). The shared component itself gains a typeable trigger: the
+  Popover/Button trigger becomes a text input showing `DD/MM/YYYY - DD/MM/YYYY`
+  (placeholder unchanged), with the calendar icon button beside it, unchanged. Typing a
+  full `DD/MM/YYYY - DD/MM/YYYY` and blurring or pressing Enter emits the range; typing a
+  single `DD/MM/YYYY` emits `from = to` = that day; text that does not parse leaves the
+  value unchanged and restores the previous label on blur; the calendar popover still
+  works for click selection; Clear still empties both. Every existing caller
+  (`SalesOrdersGrid`'s "Ordered" filter, `RegisterProjectDialog`) gets typing for free,
+  no prop change - `from`/`to`/`onChange`/`placeholder`/`disabled`/`className`/`id`/
+  `'aria-label'` are untouched. Chip on Stock Debt reads `Delivery: 1 Nov 26 to 30 Nov 26`
+  (not `Due:`). The wire is unchanged by this ruling too: `date_from` / `date_to`.
 - R15 Supplier is a MULTI select. Param `supplier_ids` (repeatable query param; `none`
   allowed among the values). A product matches when its last supplier is in the set (or
   has none and `none` is in the set). Export body takes `supplier_ids: []`. `supplier_id`

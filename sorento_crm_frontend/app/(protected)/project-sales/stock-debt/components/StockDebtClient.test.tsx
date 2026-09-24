@@ -384,39 +384,44 @@ describe('StockDebtClient', () => {
     await screen.findByText('Book');
   }
 
-  it('offers a Due date RANGE, not a single Cutoff date (R14)', async () => {
+  it('offers ONE Sales order delivery date range control, not two From/To inputs (R14c)', async () => {
+    // R14c (owner, reversing R14b on sight): "use the same date range component but I
+    // can type; I don't want two different date fields; call it sales order delivery
+    // date." RED today: the panel still shows R14b's two `DatePicker`s labelled "From"
+    // and "To" under a "Due date" heading - neither the new label nor its removal of
+    // the two-field layout has landed.
     renderBoard();
     await screen.findByText('SRTWB242');
     await openFilters();
 
-    expect(screen.getByText('Due date')).toBeInTheDocument();
+    expect(screen.getByText('Sales order delivery date')).toBeInTheDocument();
+    expect(screen.queryByText('Due date')).not.toBeInTheDocument();
     expect(screen.queryByText('Cutoff date')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('To')).not.toBeInTheDocument();
   });
 
-  it('types a Due date range into From/To inputs, shows the range chip, and carries it into the list and the cell drill (R14b/AC-11b)', async () => {
-    // RED today: Due date is still the single `DateRangePicker` widget (a Popover +
-    // react-day-picker Calendar, aria-label "Due date") - there is no "From" or "To"
-    // TYPEABLE input on the screen at all (R14b, owner 24 Sep: the range widget's month
-    // arrow is dead inside the Filters panel and it cannot be typed). `getByLabelText`
-    // for either throws before any of the assertions below run.
+  it('types a delivery date range into the shared range control, shows the Delivery chip, and carries it into the list and the cell drill (R14c/AC-11b)', async () => {
+    // RED today: there is no single control labelled "Sales order delivery date" at
+    // all - `getByLabelText` throws before typing anything. Once R14c lands, this is
+    // the shared `components/ui/date-range-picker.tsx` (own red tests in
+    // `date-range-picker.test.tsx`) reused here under the new label, never a
+    // Stock-Debt-local field.
     renderBoard();
     await screen.findByText('SRTWB242');
     await openFilters();
 
     fireEvent.click(screen.getByRole('radio', { name: 'Retail' }));
-    // The same typeable `DatePicker` (`@/components/ui/date-picker`) the Cutoff field
-    // used earlier in this lane (see `PurchaseOrderDetail.test.tsx`'s own
-    // `fireEvent.change(screen.getByLabelText('Order date'), { target: { value: ... } })`
-    // pattern) - DD/MM/YYYY typing, no popover interaction needed to drive it.
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '01/11/2026' } });
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '30/11/2026' } });
+    const rangeInput = screen.getByLabelText('Sales order delivery date');
+    fireEvent.change(rangeInput, { target: { value: '01/11/2026 - 30/11/2026' } });
+    fireEvent.keyDown(rangeInput, { key: 'Enter' });
 
     await waitFor(() =>
       expect(getStockDebtList).toHaveBeenCalledWith(
         expect.objectContaining({ dateFrom: '2026-11-01', dateTo: '2026-11-30' }),
       ),
     );
-    expect(screen.getByText('Due: 1 Nov 26 to 30 Nov 26')).toBeInTheDocument();
+    expect(screen.getByText('Delivery: 1 Nov 26 to 30 Nov 26')).toBeInTheDocument();
 
     // The Filters dropdown (a Radix DropdownMenu) marks the rest of the page
     // `aria-hidden` while it is open, which is exactly right for a real reader but
@@ -433,36 +438,6 @@ describe('StockDebtClient', () => {
         'p1', '2026-09', '2026-11-01', '2026-11-30', 'retail',
       ),
     );
-  });
-
-  it('shows a "from" only chip when just the From date is set (R14b)', async () => {
-    renderBoard();
-    await screen.findByText('SRTWB242');
-    await openFilters();
-
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '01/11/2026' } });
-
-    await waitFor(() =>
-      expect(getStockDebtList).toHaveBeenCalledWith(
-        expect.objectContaining({ dateFrom: '2026-11-01', dateTo: '' }),
-      ),
-    );
-    expect(screen.getByText('Due: from 1 Nov 26')).toBeInTheDocument();
-  });
-
-  it('shows a "to" only chip when just the To date is set (R14b)', async () => {
-    renderBoard();
-    await screen.findByText('SRTWB242');
-    await openFilters();
-
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '30/11/2026' } });
-
-    await waitFor(() =>
-      expect(getStockDebtList).toHaveBeenCalledWith(
-        expect.objectContaining({ dateFrom: '', dateTo: '2026-11-30' }),
-      ),
-    );
-    expect(screen.getByText('Due: to 30 Nov 26')).toBeInTheDocument();
   });
 
   it('has no Ownership group filter left on the screen (R16)', async () => {
