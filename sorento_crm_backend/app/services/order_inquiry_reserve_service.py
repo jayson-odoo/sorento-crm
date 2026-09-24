@@ -650,9 +650,15 @@ class OrderInquiryReserveService:
         seen: set = set()
         for row_id in row_ids:
             if row_id in seen:
+                # Named by item code when the row loads (6e.4 re-review); a ghost id
+                # still reads as itself.
+                named = (
+                    self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
+                )
+                label = _row_label(named) if named is not None else f"Row {row_id}"
                 raise AppException(
                     422,
-                    f"Row {row_id} is named more than once in this commit.",
+                    f"{label} is named more than once in this commit.",
                     code="reserve_commit_duplicate_row",
                 )
             seen.add(row_id)
@@ -702,11 +708,14 @@ class OrderInquiryReserveService:
                     code="reserve_commit_no_open_request",
                 )
             reserve_rr_ids[row.id] = open_rr.id
-        amend_rr_ids: Dict[str, str] = {}
+        # 6e.4 "Amend edits the LINE's net": every answered request row of the line,
+        # newest request first - a decrease releases in this order, an increase lands
+        # on the first (the latest answered).
+        amend_rr_ids: Dict[str, List[str]] = {}
         for entry in amendments:
             row = rows_by_id[str(entry["row_id"])]
-            answered_rr = (
-                self.db.query(OrderInquiryReserveRequestRow)
+            answered = (
+                self.db.query(OrderInquiryReserveRequestRow.id)
                 .join(
                     OrderInquiryReserveRequest,
                     OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
@@ -716,18 +725,21 @@ class OrderInquiryReserveService:
                     OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
                 )
                 .order_by(OrderInquiryReserveRequest.ordinal.desc())
-                .first()
+                .all()
             )
-            if answered_rr is None:
+            if not answered:
                 raise AppException(
                     422,
                     f"{_row_label(row)} has not been reserved yet - answer it first.",
                     code="reserve_amend_not_reserved",
                 )
-            amend_rr_ids[row.id] = answered_rr.id
+            amend_rr_ids[row.id] = [rr_id for (rr_id,) in answered]
 
         # ---- lock: requests first, then request rows, each ordered by id (6e.4) ----
-        all_rr_ids = sorted(set(reserve_rr_ids.values()) | set(amend_rr_ids.values()))
+        all_rr_ids = sorted(
+            set(reserve_rr_ids.values())
+            | {rr_id for rr_ids in amend_rr_ids.values() for rr_id in rr_ids}
+        )
         request_ids = sorted(
             {
                 request_id
@@ -785,42 +797,47 @@ class OrderInquiryReserveService:
         prepared_amendments: List[tuple] = []
         for entry in amendments:
             row = rows_by_id[str(entry["row_id"])]
-            rr = rr_by_id[amend_rr_ids[row.id]]
-            if rr.qty_reserved is None:
+            answered = [
+                rr_by_id[rr_id]
+                for rr_id in amend_rr_ids[row.id]
+                if rr_by_id[rr_id].qty_reserved is not None
+            ]
+            if not answered:
                 raise AppException(
                     422,
                     f"{_row_label(row)} has not been reserved yet - answer it first.",
                     code="reserve_amend_not_reserved",
                 )
-            link = (
-                self.db.query(OrderInquiryLink)
-                .filter(OrderInquiryLink.reserve_request_row_id == rr.id)
-                .first()
-            )
-            current_qty = _dec(link.qty) if link is not None else _ZERO
-            new_qty = _strict_qty(entry.get("qty_reserved"), row)
+            links_by_rr = {
+                link.reserve_request_row_id: link
+                for link in self.db.query(OrderInquiryLink)
+                .filter(OrderInquiryLink.reserve_request_row_id.in_([rr.id for rr in answered]))
+                .all()
+            }
+            current_net = sum((_dec(link.qty) for link in links_by_rr.values()), _ZERO)
+            new_net = _strict_qty(entry.get("qty_reserved"), row)
             # 6e.4 (security N2): a no-op is skipped outright - no event, no mail, and
             # the reason on file is left as it was.
-            if new_qty == _dec(rr.qty_reserved) and new_qty == current_qty:
+            if new_net == current_net:
                 continue
-            # 6e.4 (reviewer B1): the amend-up cap is what this answer may grow to
-            # without the row's links exceeding its own qty.
-            cap = min(_dec(rr.qty_requested), current_qty + _remaining(self.db, row))
-            new_qty, reason_clean = _checked_answer(
+            # The line may grow by what it still has open, never past its own qty.
+            cap = current_net + _remaining(self.db, row)
+            total_requested = sum((_dec(rr.qty_requested) for rr in answered), _ZERO)
+            new_net, reason_clean = _checked_answer(
                 row,
                 entry,
                 cap=cap,
-                reason_below=_dec(rr.qty_requested),
+                reason_below=total_requested,
                 out_of_range_code="reserve_amend_qty_out_of_range",
                 noun="amended",
             )
-            prepared_amendments.append((rr, row, new_qty, reason_clean, link, current_qty))
+            prepared_amendments.append((row, answered, links_by_rr, current_net, new_net, reason_clean))
 
         # ---- everything validated - now write ----
         # Nit N-a: row id order, so two concurrent commits on one inquiry take the row
         # locks `refresh_link_state` needs in the same order (no deadlock).
         prepared_reserves.sort(key=lambda item: str(item[1].id))
-        prepared_amendments.sort(key=lambda item: str(item[1].id))
+        prepared_amendments.sort(key=lambda item: str(item[0].id))
         refresher = ProjectOrderInquiryService(self.db)
         touched_by_request: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -848,19 +865,38 @@ class OrderInquiryReserveService:
             refresher.refresh_link_state([row])
             touched_by_request.setdefault(rr.request_id, []).append({"rr": rr, "row": row})
 
-        for rr, row, new_qty, reason_clean, link, current_qty in prepared_amendments:
-            delta = new_qty - current_qty
-            if delta < _ZERO:
-                if new_qty > _ZERO:
-                    link.qty = new_qty
-                elif link is not None:
-                    self.db.delete(link)
-                self._add_event(
-                    row, rr, RESERVE_EVENT_UNRESERVED, -delta, rr.warehouse_id, reason_clean, actor_user_id
-                )
-            elif delta > _ZERO:
+        for row, answered, links_by_rr, current_net, new_net, reason_clean in prepared_amendments:
+            touched_rrs: List[OrderInquiryReserveRequestRow] = []
+            if new_net < current_net:
+                # Release newest request first, one `unreserved` event per link touched.
+                release = current_net - new_net
+                for rr in answered:
+                    if release <= _ZERO:
+                        break
+                    link = links_by_rr.get(rr.id)
+                    if link is None or _dec(link.qty) <= _ZERO:
+                        continue
+                    take = min(_dec(link.qty), release)
+                    left = _dec(link.qty) - take
+                    if left > _ZERO:
+                        link.qty = left
+                    else:
+                        self.db.delete(link)
+                    rr.qty_reserved = _dec(rr.qty_reserved) - take
+                    self._add_event(
+                        row, rr, RESERVE_EVENT_UNRESERVED, take, rr.warehouse_id, reason_clean, actor_user_id
+                    )
+                    release -= take
+                    touched_rrs.append(rr)
+                # The reason lands on the row whose link was touched last.
+                touched_rrs[-1].reason = reason_clean
+            else:
+                # Raise the latest answered request row's link (re-created from 0).
+                rr = answered[0]
+                delta = new_net - current_net
+                link = links_by_rr.get(rr.id)
                 if link is not None:
-                    link.qty = new_qty
+                    link.qty = _dec(link.qty) + delta
                 else:
                     code = _warehouse_code(self.db, rr.warehouse_id) or ""
                     self.db.add(
@@ -870,19 +906,21 @@ class OrderInquiryReserveService:
                             row_id=row.id,
                             reserve_request_row_id=rr.id,
                             document=f"Reserved @ {code}",
-                            qty=new_qty,
+                            qty=delta,
                             linked_by=actor_user_id,
                             auto=False,
                         )
                     )
+                rr.qty_reserved = _dec(rr.qty_reserved) + delta
+                rr.reason = reason_clean
                 self._add_event(
                     row, rr, RESERVE_EVENT_RESERVED, delta, rr.warehouse_id, reason_clean, actor_user_id
                 )
-            rr.qty_reserved = new_qty
-            rr.reason = reason_clean
+                touched_rrs.append(rr)
             self._flush_link()
             refresher.refresh_link_state([row])
-            touched_by_request.setdefault(rr.request_id, []).append({"rr": rr, "row": row})
+            for rr in touched_rrs:
+                touched_by_request.setdefault(rr.request_id, []).append({"rr": rr, "row": row})
 
         # ---- per request touched: complete it when its last row is answered, queue
         # its own dispatch ----

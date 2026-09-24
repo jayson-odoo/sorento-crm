@@ -550,10 +550,11 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
         "unreserving everything via an amendment must restore the row's own state"
     )
 
-    # Above qty_requested (50) is 422.
+    # Above the line's cap is 422. 6e.4 "Amend edits the LINE's net": the cap is the net
+    # (0) plus the row's live remaining (100), no longer the request's 50, so 101 here.
     above = client.post(
         COMMIT_URL(world.inquiry.id),
-        json={"amendments": [{"row_id": row.id, "qty_reserved": "51"}]},
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "101"}]},
     )
     assert above.status_code == 422, above.text
 
@@ -1380,3 +1381,125 @@ def test_commit_500_never_echoes_the_exception(reserve_api, monkeypatch):
     )
     assert response.status_code == 500, response.text
     assert "SELECT" not in response.text, response.text
+
+
+def _line_with_two_answers(client, world, code):
+    """AC-RS-78d's line: qty 100, request #1 asked 30 and got 30, request #2 asked 20
+    and got 0 - the pill reads `Reserved 30`, 50 requested in total."""
+    row = _open_row(world, qty="100", item_code=f"{MARKER}-{code}")
+    first = _request(client, world, (row, "30"))
+    ok = client.post(
+        COMMIT_URL(world.inquiry.id), json={"reserves": [{"row_id": row.id, "qty_reserved": "30"}]}
+    )
+    assert ok.status_code == 200, ok.text
+    world.db.commit()
+    second = _request(client, world, (row, "20"))
+    zero = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "0", "reason": "none left"}]},
+    )
+    assert zero.status_code == 200, zero.text
+    world.db.commit()
+    return row, first, second
+
+
+def _link_qty(world, rr_id):
+    link = (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == rr_id)
+        .first()
+    )
+    return link.qty if link is not None else None
+
+
+def _net(world, row):
+    world.db.expire_all()
+    total = (
+        world.db.query(sa.func.coalesce(sa.func.sum(OrderInquiryLink.qty), 0))
+        .filter(
+            OrderInquiryLink.row_id == row.id,
+            OrderInquiryLink.reserve_request_row_id.isnot(None),
+        )
+        .scalar()
+    )
+    return Decimal(str(total))
+
+
+def test_AC_RS_78d_amend_edits_the_line_net(reserve_api):
+    client, world = reserve_api
+
+    # Decrease: 30 -> 10 releases 20 from #1's link, newest request first (#2 holds 0).
+    row, first, second = _line_with_two_answers(client, world, "NETDOWN")
+    no_reason = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "10"}]},
+    )
+    assert no_reason.status_code == 422, no_reason.text
+    assert no_reason.json()["code"] == "reserve_reason_required", no_reason.text
+
+    down = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "10", "reason": "20 back"}]},
+    )
+    assert down.status_code == 200, down.text
+    world.db.commit()
+    rr1, rr2 = _rr(world, first, row), _rr(world, second, row)
+    assert _net(world, row) == Decimal("10")
+    assert _link_qty(world, rr1.id) == Decimal("10")
+    assert rr1.qty_reserved == Decimal("10") and rr2.qty_reserved == Decimal("0")
+    assert [(k, Decimal(str(q))) for k, q in _events(world, rr1.id)] == [
+        ("reserved", Decimal("30")),
+        ("unreserved", Decimal("20")),
+    ]
+    assert [(k, Decimal(str(q))) for k, q in _events(world, rr2.id)] == [("reserved", Decimal("0"))]
+
+    # Increase: 30 -> 45 raises #2's (the latest answered) link from 0 to 15.
+    row_b, first_b, second_b = _line_with_two_answers(client, world, "NETUP")
+    up = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row_b.id, "qty_reserved": "45", "reason": "15 more"}]},
+    )
+    assert up.status_code == 200, up.text
+    world.db.commit()
+    rr1b, rr2b = _rr(world, first_b, row_b), _rr(world, second_b, row_b)
+    assert _net(world, row_b) == Decimal("45")
+    assert _link_qty(world, rr1b.id) == Decimal("30")
+    assert _link_qty(world, rr2b.id) == Decimal("15")
+    assert rr2b.qty_reserved == Decimal("15")
+    assert [(k, Decimal(str(q))) for k, q in _events(world, rr2b.id)] == [
+        ("reserved", Decimal("0")),
+        ("reserved", Decimal("15")),
+    ]
+
+    # Cap = net + live remaining: a PO link leaves 10, so 60 (> 45 + 10) is 422.
+    po_line = _purchase_order(world.db, world.company_id)["line"]
+    world.db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=world.company_id, row_id=row_b.id,
+            po_line_id=po_line.id, document="ZZT-PO-45", qty=Decimal("45"),
+        )
+    )
+    world.db.commit()
+    over = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row_b.id, "qty_reserved": "60"}]},
+    )
+    assert over.status_code == 422, over.text
+    assert over.json()["code"] == "reserve_amend_qty_out_of_range", over.text
+    assert row_b.item_code in over.text and "55" in over.text, over.text
+
+
+def test_duplicate_row_422_names_the_item_code(reserve_api):
+    client, world = reserve_api
+    row = _open_row(world, qty="20", item_code=f"{MARKER}-DUPNAME")
+    _request(client, world, (row, "20"))
+    dup = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [{"row_id": row.id, "qty_reserved": "20"}],
+            "amendments": [{"row_id": row.id, "qty_reserved": "5", "reason": "x"}],
+        },
+    )
+    assert dup.status_code == 422, dup.text
+    assert dup.json()["code"] == "reserve_commit_duplicate_row", dup.text
+    assert row.item_code in dup.text, dup.text
