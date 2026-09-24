@@ -1,6 +1,11 @@
 # PLAN: ideation testable on test turns (`is_test` through the real intake)
 
-Status: small fix track, PR open (#1182)
+Status: small fix track, PR open (#1182), fix round 1 addressed. Merge order (Should
+fix 2, reviewer round 1): shared-service PR jayson-odoo/foundryx-shared-service#84
+(adds `is_test` to `CreateIdeaIn` and the idea row) must be merged and deployed
+BEFORE #1182 - a live ideate turn deployed ahead of #84 would send `is_test: false`
+to a shared-service schema that does not know the field yet. Not merged by this
+session.
 Plan created: 2026-09-24T09:40:00Z
 Domain: chatbot / ideation
 Issue: #1179 (sorento side only; the shared-service side is a separate lane)

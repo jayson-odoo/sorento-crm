@@ -282,3 +282,20 @@ landing on turn 0's open offer), so `apply()` never calls it an acceptance and
 through to the domain fill (`incoming` -> `purchasing`) - the same shape the UAC's
 AC-EQ-20 pins directly. Neither turn is a live `pytest` failure today (`_pin_text`
 absent on both, measured); re-record owed for turn 0's own text only, not urgent.
+
+## Not currently a failure, staleness owed: owner-15sep-chain-006 and chain-018 still carry the D14 placeholder (coder, PR #1182 fix round 1, 24 Sep 2026)
+
+`console/owner-15sep-chain-006-console-check-1789442546.json` and `console/owner-
+15sep-chain-018-console-check-1789444993.json` each have an ideate step whose
+`expected.text` is still the pre-#1179 placeholder, `"[dry-run: ideation reply not
+generated]"`. Neither is a live `pytest` failure today: both stems are already
+covered by the "Composite / cascading chains" bucket above
+(`owner-15sep-chain-{...,006,...,018,...}`), so `test_turn_replay.py` skips them
+before the text comparison ever runs, and `expected.text` carries no `_pin_text`
+flag on either file regardless. `console/case-005-an-idea-reaches-the-ideate-
+lane.json` (this same fix round, `DIVERGENCES.md`'s note on the same subject)
+shows what the placeholder becomes once the case is actually re-recorded against
+the real `crm_ideation_turn` intake: a `tool_results` entry for the tool plus the
+real `reply_text`. When either chain is eventually pulled out of the composite
+bucket for its own re-record (T4/cascade work, not this round's scope), its ideate
+step's placeholder line is owed the same treatment - re-record owed, not urgent.

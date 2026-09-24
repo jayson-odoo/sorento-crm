@@ -264,7 +264,11 @@ def handle_turn(
     with ``is_test: true`` so the shared service hides the idea from the board, and the
     contact's ``session_vars`` is NOT persisted - the returned blob is the caller's to
     carry. A test pointer written to the real contact row would otherwise be read back
-    by the contact's next live turn through the DB fallback below.
+    by the contact's next live turn through the DB fallback below. Symmetrically
+    (reviewer Blocking 2, round 1), an incoming pointer - from either
+    ``session_vars_in`` or the DB fallback - is only continued when its own stamped
+    ``is_test`` matches THIS turn's; a mismatch starts fresh rather than letting a
+    test turn read/confirm a live draft or vice versa.
     ``submitter_name`` is the n8n Respond.io-profile fallback used only when the
     CRM's respond_contacts row has no name (WS-A). ``media_selection`` /
     ``is_new_idea`` drive multi-modal capture (Group F); ``media_clients`` and
@@ -285,6 +289,14 @@ def handle_turn(
         or session_vars.get("ideation")                        # legacy DB fallback
         or {}
     )
+    # #1179 blocking 2 (reviewer, round 1): a pointer is continued only when its
+    # `is_test` flag matches THIS turn's - a live pointer read by a test turn (or a
+    # test pointer read by a live turn, e.g. across a console Reset) is exactly the
+    # cross-contamination D14 exists to prevent, so it starts fresh instead. A
+    # pointer with no `is_test` key (written before this fix, always by a live turn
+    # back then) reads as live.
+    if bool(ideation_state.get("is_test")) != bool(is_test):
+        ideation_state = {}
     draft_id = ideation_state.get("draft_id")
     prior_status = ideation_state.get("status")
     prior_missing = ideation_state.get("missing") or []
@@ -439,6 +451,10 @@ def handle_turn(
             # Persist the running transcript so the NEXT turn appends to it (WS-B).
             "transcript": transcript_list,
             "updated_at": _now_iso(),
+            # #1179 blocking 2: stamped so a LATER turn can refuse to continue this
+            # pointer if its own `is_test` does not match (see the read-side guard
+            # above).
+            "is_test": bool(is_test),
         }
         # Carry the media state (Group F): the outstanding menu + everything already
         # offered, so a later turn resolves the selection and we never re-nag.

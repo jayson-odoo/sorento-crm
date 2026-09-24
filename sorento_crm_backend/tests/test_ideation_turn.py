@@ -595,6 +595,47 @@ def test_test_turn_returns_the_pointer_but_never_persists_it(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer Blocking 2 (PR #1182 round 1): a pointer's `is_test` flag must      #
+# match the turn's, or a test turn can continue (and confirm) the contact's   #
+# LIVE draft - exactly the cross-contamination D14 exists to prevent.         #
+# --------------------------------------------------------------------------- #
+def test_stored_live_pointer_is_not_continued_by_a_test_turn(wired):
+    """A live pointer already sitting in the contact's DB row (no `is_test` key,
+    i.e. written before this fix or by a live turn) must not be picked up by a
+    later test turn - it starts fresh instead of sending the live draft_id."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "ZZT-live-draft-1", "status": "collecting", "missing": ["impact"]}}
+    )
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True)
+    assert "draft_id" not in wired.payloads[0]
+
+
+def test_test_flagged_pointer_is_not_continued_by_a_live_turn(wired):
+    """The reverse direction: a pointer stamped `is_test: true` (from an earlier
+    test turn) must not be continued by a live turn - the customer's real turn
+    starts its own draft rather than resuming a test one."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "ZZT-test-draft-1", "status": "collecting", "is_test": True}}
+    )
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn()
+    assert "draft_id" not in wired.payloads[0]
+
+
+def test_console_reset_does_not_leak_the_stored_live_draft_into_a_test_turn(wired):
+    """The console Reset path: `session_vars_in={"ideation": None}` (an explicit
+    None, not an absent key - `engine._inject_harness_session` writes exactly this
+    shape) must not fall through to the contact's stored LIVE pointer either."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "ZZT-live-draft-2", "status": "collecting", "missing": ["impact"]}}
+    )
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True, session_vars_in={"ideation": None})
+    assert "draft_id" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
 # call_create_idea wraps httpx errors into IdeationServiceError (AC-19 layer)  #
 # --------------------------------------------------------------------------- #
 def test_call_create_idea_wraps_httpx_error(monkeypatch):
