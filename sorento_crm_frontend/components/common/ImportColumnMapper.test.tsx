@@ -41,16 +41,31 @@ const FIELDS: ImportMappingField[] = [
   { field: 'qty', label: 'Quantity' },
 ];
 
+/** What production actually sends for a doc type carrying every header-block field
+ *  (proforma_invoice) - the default so the two pre-existing header-field tests below
+ *  exercise the REAL choice list rather than an empty one, now that the component reads
+ *  `probe.header_field_choices` instead of its own hard-coded constant (V2). */
+const DEFAULT_HEADER_FIELD_CHOICES: ImportMappingField[] = [
+  { field: 'pi_number', label: 'PI number' },
+  { field: 'invoice_date', label: 'Invoice date' },
+  { field: 'bl_no', label: 'BL' },
+  { field: 'container_no', label: 'Container' },
+  { field: 'seal_no', label: 'Seal' },
+  { field: 'currency', label: 'Currency' },
+];
+
 function probeWith(
   columns: ImportMappingColumn[],
   headerRow: number | null = 1,
   headerFields?: ImportMappingHeaderField[],
+  headerFieldChoices: ImportMappingField[] = DEFAULT_HEADER_FIELD_CHOICES,
 ): ImportMappingProbe {
   return {
     header_row: headerRow,
     columns,
     required_fields: ['item_code', 'qty'],
     ...(headerFields ? { header_fields: headerFields } : {}),
+    header_field_choices: headerFieldChoices,
   };
 }
 

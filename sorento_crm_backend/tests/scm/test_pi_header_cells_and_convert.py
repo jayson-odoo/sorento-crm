@@ -826,13 +826,14 @@ def test_E2_generate_packing_list_xlsx_task_renders_same_bytes_and_marks_ready(s
     """AC-D2: the RQ task renders the SAME workbook bytes the existing synchronous export
     (`consolidated_packing_list.to_xlsx`) produces for the same shipment, and marks the
     download row ready - the same pattern `generate_complaint_pdf` already follows."""
+    from app.models.company import UserCompany
     from app.models.procurement import InboundShipment
     from app.services.download_service import DownloadService
     from app.services.scm import consolidated_packing_list
     from app.tasks import export_tasks
 
     app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk, role="purchasing")
+    scope = as_company_user(app, db, gcu, gcuk, role="purchasing")
 
     from tests.scm.conftest import seed_user
 
@@ -843,6 +844,12 @@ def test_E2_generate_packing_list_xlsx_task_renders_same_bytes_and_marks_ready(s
         shipment_status="draft",
     )
     db.add(shipment)
+    db.flush()
+
+    # R7: the task now refuses a download whose owning user has no membership in the
+    # shipment's own company - a real membership row, not just the request-scope override
+    # `as_company_user` also installs.
+    db.add(UserCompany(id=_u(), user_id=uid, company_id=next(iter(scope))))
     db.flush()
 
     dl = DownloadService(db).create(
