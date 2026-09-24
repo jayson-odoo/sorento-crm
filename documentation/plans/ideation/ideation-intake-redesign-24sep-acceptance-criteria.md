@@ -47,6 +47,15 @@ AC-1111) and are not to be read as real. Per the lavish-review department ruling
 department is free text only, never asked directly - so most transcripts below never mention it;
 (b) is the one that does.
 
+**Round 2 update (R10):** every recap below is now point form - the title on its own line, then
+one line per captured field present so far (Solution, Impact, Department, in that order, only
+the ones present), then the one question alone as the final line. The earlier one-sentence
+wording ("Here's ... solution: ...; impact: ...") was this plan's own proposed wording, not an
+LLM being random - the shape is a rule the LLM composer and its template fallback both have to
+follow either way (AC-1310). A plain clarifying answer (e.g. "what do you mean impact?") is not a
+recap and keeps its own prose. The `complete` confirmation also carries the tracking link
+alongside the idea number, marked **(proposed, owner to confirm)** per R11 - see (a)'s last turn.
+
 ### (a) First idea, one optional question, then submit
 
 Only `problem` is ever required (R1); everything after the opening line is optional. Ah Seng's
@@ -54,31 +63,65 @@ opening message already carries the required field, so nothing required is ever 
 
 ```
 Dealer: i have an idea, the price tag should show promo price in red
-Bot: Got it - "Show promo price in red on price tags". What's your proposed solution? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+What's your proposed solution? (wording proposed)
 Dealer: a small red sticker with the discount price next to the normal price
-Bot: Thanks. What's the impact if we do this? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+Solution: a small red sticker with the discount price next to the normal price
+What's the impact if we do this? (wording proposed)
 Dealer: sales team stops getting asked why the sticker price is different from the system price
-Bot: Here's "Show promo price in red on price tags" - solution: a red sticker with the discount price; impact: sales team stops getting asked. Submit it? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+Solution: a small red sticker with the discount price next to the normal price
+Impact: sales team stops getting asked why the sticker price is different from the system price
+Submit it? (wording proposed)
 Dealer: yes
-Bot: Got it - idea IDEA-0182 is in. We'll update you on WhatsApp. (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+Idea IDEA-0182 is in. We'll update you on WhatsApp. (wording proposed)
+Track it here: <link> (proposed, owner to confirm - R11)
 ```
 
 ### (b) Changing a detail mid-draft, in plain words (also: department as free text)
 
 Ah Seng names his department in passing in the opening message; it is captured and echoed back
 exactly as typed, never looked up against a customer record (lavish review 24 Sep 2026).
+Department appears in the fixed display order (Solution, Impact, Department) whenever it is
+present, even before Solution and Impact are answered.
 
 ```
 Dealer: i have an idea, add a filter for slow moving stock on the dashboard, our warehouse team keeps asking for it
-Bot: Got it - "Add slow moving stock filter to dashboard". What's your proposed solution? (wording proposed)
+Bot:
+"Add slow moving stock filter to dashboard"
+Department: warehouse team
+What's your proposed solution? (wording proposed)
 Dealer: a toggle that hides anything that sold in the last 90 days
-Bot: Thanks. What's the impact if we do this? (wording proposed)
+Bot:
+"Add slow moving stock filter to dashboard"
+Solution: a toggle that hides anything that sold in the last 90 days
+Department: warehouse team
+What's the impact if we do this? (wording proposed)
 Dealer: helps the warehouse team clear dead stock faster
-Bot: Here's "Add slow moving stock filter to dashboard" - solution: a 90-day sold toggle; impact: clears dead stock faster; department: warehouse team. Submit it? (wording proposed)
+Bot:
+"Add slow moving stock filter to dashboard"
+Solution: a toggle that hides anything that sold in the last 90 days
+Impact: helps the warehouse team clear dead stock faster
+Department: warehouse team
+Submit it? (wording proposed)
 Dealer: change the impact to freeing up warehouse floor space, not just clearing stock
-Bot: Updated - impact is now freeing up warehouse floor space. Still good to submit? (wording proposed)
+Bot:
+"Add slow moving stock filter to dashboard"
+Solution: a toggle that hides anything that sold in the last 90 days
+Impact: freeing up warehouse floor space, not just clearing stock
+Department: warehouse team
+Still good to submit? (wording proposed)
 Dealer: ok
-Bot: Got it - idea IDEA-0183 is in. We'll update you on WhatsApp. (wording proposed)
+Bot:
+"Add slow moving stock filter to dashboard"
+Idea IDEA-0183 is in. We'll update you on WhatsApp. (wording proposed)
+Track it here: <link> (proposed, owner to confirm - R11)
 ```
 
 ### (c) A bare "confirm" and a question-shaped hesitation mid-draft
@@ -87,26 +130,39 @@ Bot: Got it - idea IDEA-0183 is in. We'll update you on WhatsApp. (wording propo
 turn 5-6 exchange - a question about a field staying in the ideate lane with a plain answer
 rather than falling out to a menu - assumes #1178's routing fix (landing separately) alongside
 this plan's S3 reply composer; it is shown here because the owner asked to see the whole
-experience, not because #1178 is part of this plan.
+experience, not because #1178 is part of this plan. The clarifying answer at turn 6 is not a
+recap, so it keeps its own prose (AC-1310).
 
 ```
 Dealer: i have an idea, chatbot should remember what a dealer already asked before
-Bot: Got it - "Chatbot remembers past dealer questions". What's your proposed solution? (wording proposed)
+Bot:
+"Chatbot remembers past dealer questions"
+What's your proposed solution? (wording proposed)
 Dealer: skip
-Bot: No problem. What's the impact if we do this? (wording proposed)
+Bot:
+"Chatbot remembers past dealer questions"
+What's the impact if we do this? (wording proposed)
 Dealer: what do you mean impact?
 Bot: Impact just means what changes for us once this is done - fewer repeated questions, happier dealers, that sort of thing. What's the impact if we do this? (wording proposed)
 Dealer: fewer repeated questions for the support team
-Bot: Here's "Chatbot remembers past dealer questions" - solution: skipped; impact: fewer repeated questions for the support team. Submit it? (wording proposed)
+Bot:
+"Chatbot remembers past dealer questions"
+Impact: fewer repeated questions for the support team
+Submit it? (wording proposed)
 Dealer: confirm
-Bot: Got it - idea IDEA-0184 is in. We'll update you on WhatsApp. (wording proposed)
+Bot:
+"Chatbot remembers past dealer questions"
+Idea IDEA-0184 is in. We'll update you on WhatsApp. (wording proposed)
+Track it here: <link> (proposed, owner to confirm - R11)
 ```
 
 ### (d) Cancel
 
 ```
 Dealer: i have an idea for stock alerts
-Bot: Got it - "Stock alerts idea". What's your proposed solution? (wording proposed)
+Bot:
+"Stock alerts idea"
+What's your proposed solution? (wording proposed)
 Dealer: actually never mind, cancel
 Bot: No worries, I've dropped that idea. Say the word anytime you want to start again. (wording proposed)
 ```
@@ -115,12 +171,18 @@ Bot: No worries, I've dropped that idea. Say the word anytime you want to start 
 
 The bot names the earlier idea and asks; it never upvotes on its own. Anything other than an
 explicit vote - including moving straight on with a new detail - defaults to keep-separate (R4).
+The duplicate template is point form too: the candidate's title on its own line, then the
+question.
 
 ```
 Dealer: i have an idea, the price tag should show promo price in red
-Bot: Similar idea exists: Show promo price in red on price tags. Vote for that one, or keep yours separate? [fixed template, S1]
+Bot:
+Similar idea exists: Show promo price in red on price tags
+Vote for that one, or keep yours separate? [fixed template, S1, point form per R10]
 Dealer: keep mine separate, mine also covers the online store price
-Bot: Got it, I'll keep this as its own idea. What's your proposed solution? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+What's your proposed solution? (wording proposed)
 ```
 
 No vote is recorded anywhere in this exchange - the candidate's tally is untouched unless Ah Seng
@@ -129,12 +191,16 @@ had said something like "vote for that one".
 ### (f) The LLM reply fails; the template fallback speaks
 
 Same draft as (a), same idea, but on the submit turn the LLM composer fails (timeout, empty
-output, or fails one of the AC-1302 to AC-1304 checks) and the S1 fallback template is used
-unchanged (R5) - marked below with a bracketed note that would never appear on WhatsApp itself.
+output, or fails one of the AC-1302 to AC-1304, AC-1310 checks) and the S1 fallback template is
+used unchanged (R5) - marked below with a bracketed note that would never appear on WhatsApp
+itself. The fallback template is point form by rule, same as the LLM output.
 
 ```
 Dealer: yes
-Bot: [template fallback - LLM reply failed] Your idea IDEA-0182 has been captured. We will update you on WhatsApp.
+Bot: [template fallback - LLM reply failed]
+"Show promo price in red on price tags"
+Idea IDEA-0182 is in. We'll update you on WhatsApp.
+Track it here: <link> (proposed, owner to confirm - R11)
 ```
 
 ### (g) A test turn from the console, hidden from the board
@@ -144,14 +210,50 @@ exactly the same conversation as (a) - the console has no way to tell him it is 
 
 ```
 Dealer: i have an idea, the price tag should show promo price in red
-Bot: Got it - "Show promo price in red on price tags". What's your proposed solution? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+What's your proposed solution? (wording proposed)
 Dealer: a small red sticker with the discount price next to the normal price
-Bot: Thanks. What's the impact if we do this? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+Solution: a small red sticker with the discount price next to the normal price
+What's the impact if we do this? (wording proposed)
 Dealer: sales team stops getting asked why the sticker price is different from the system price
-Bot: Here's "Show promo price in red on price tags" - solution: a red sticker with the discount price; impact: sales team stops getting asked. Submit it? (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+Solution: a small red sticker with the discount price next to the normal price
+Impact: sales team stops getting asked why the sticker price is different from the system price
+Submit it? (wording proposed)
 Dealer: yes
-Bot: Got it - idea IDEA-0185 is in. We'll update you on WhatsApp. (wording proposed)
+Bot:
+"Show promo price in red on price tags"
+Idea IDEA-0185 is in. We'll update you on WhatsApp. (wording proposed)
+Track it here: <link> (proposed, owner to confirm - R11)
 [is_test: true - this idea is created and numbered like any other, but it stays off the board and is skipped by duplicate matching against other dealers' ideas (AC-1108)]
+```
+
+### (h) A mid-draft detour, then back to the idea
+
+Ah Seng asks a stock question in the middle of a draft, gets a plain stock answer, then comes
+back; the bot resumes on the same field it had asked before the detour (R12). The draft was
+never at risk - its pointer lives on `session_vars.ideation`, not on any lane a turn happens to
+run in - but the AUTOMATIC part shown below (the bot recognising "ok back to my idea" and
+resuming on its own, with no need to name the idea again) depends on two pieces not in this plan:
+the chatbot's focus feature (#863, open) and the open-draft lane rule (#1178, PR #1185, open).
+Until both land, Ah Seng would resume by naming the idea explicitly instead of a bare "back to my
+idea".
+
+```
+Dealer: i have an idea, add a filter for slow moving stock on the dashboard
+Bot:
+"Add slow moving stock filter to dashboard"
+What's your proposed solution? (wording proposed)
+Dealer: do you have SRT5674, need 50?
+Bot: SRT5674 has 62 units on hand right now. (wording proposed; a different lane, stock)
+Dealer: ok back to my idea
+Bot:
+"Add slow moving stock filter to dashboard"
+What's your proposed solution? (wording proposed)
 ```
 
 ## Group A - Shared-service contract (S1)
@@ -196,7 +298,9 @@ Bot: Got it - idea IDEA-0185 is in. We'll update you on WhatsApp. (wording propo
   close).
 - **AC-1114 [SS][T]** Given a `complete` for a WhatsApp-source idea, when the response is built,
   then `link` is null and the fallback `reply_text` names the idea number and says the user
-  will be updated on WhatsApp (R6, F9).
+  will be updated on WhatsApp (R6, F9). **Standing as originally written** - round 2's R11
+  proposes replacing this AC (see AC-1118); not rewritten here pending the owner's
+  confirmation.
 - **AC-1115 [SS][T]** Given a call carrying `submitter_tier: "dealer"`, when the idea is
   created, then `ideas.submitter_tier` holds `dealer` and triage views show it (R7).
 - **AC-1116 [SS][T]** Given every response, then it carries `status`, `draft_id`, `reply_text`,
@@ -207,6 +311,12 @@ Bot: Got it - idea IDEA-0185 is in. We'll update you on WhatsApp. (wording propo
   `create-idea` is called, then it still works: no title, no tier, no skip, and the duplicate
   path returns `duplicate_candidate` (the old sorento treats an unknown status as non-terminal
   and keeps the pointer). Deploy order is shared-service first.
+- **AC-1118 [SS][T] (PROPOSED - lavish review round 2, owner to confirm; R11)** Given a
+  `complete` for a WhatsApp-source idea and the product has a `product_domain_base` configured,
+  when the response is built, then `link` carries `mint_idea_link`'s
+  `{product_domain_base}/ideas/{idea_id}` URL instead of null - the same field and value every
+  other source already gets, and the same SSO-gated `(protected)/ideation/ideas/[id]` page F9
+  named. If confirmed, this AC replaces AC-1114 in the same change; not rewritten here.
 
 ## Group B - Sorento payload, title, duplicate ask, semantic review (S2)
 
@@ -271,7 +381,8 @@ Bot: Got it - idea IDEA-0185 is in. We'll update you on WhatsApp. (wording propo
   with exactly one question mark (`?` or the full-width `？`) as its last non-space character
   and contains no other (R5).
 - **AC-1303 [BE][T]** Given `complete`, when the LLM reply is accepted, then it contains the
-  `idea_number` verbatim and no URL (R5, R6).
+  `idea_number` verbatim and no URL (R5, R6). **If R11 (round 2, proposed) is confirmed, this
+  AC is rewritten to allow the one URL named by `link` and no other** - not rewritten here.
 - **AC-1304 [BE][T]** Given `duplicate_candidate`, when the LLM reply is accepted, then it
   contains the candidate title verbatim (R4, R5).
 - **AC-1305 [BE][T]** Given the LLM call fails, times out, returns empty, or fails any check in
@@ -288,6 +399,21 @@ Bot: Got it - idea IDEA-0185 is in. We'll update you on WhatsApp. (wording propo
 - **AC-1308 [C]** Console case: "what do you mean impact?" gets an explanation of impact that
   ends in the impact question.
 - **AC-1309 [C]** Console case: a Malay idea gets a Malay reply.
+- **AC-1310 [BE][T]** Given a reply that recaps the draft (the initial understanding turn, a
+  next-field ask, the review turn, or the `duplicate_candidate` reply), when it is accepted -
+  whether composed by the LLM or served from the shared-service template fallback - then it is
+  point form: line 1 the title (the candidate's title for `duplicate_candidate`), one line per
+  captured field present so far in the fixed order Solution, Impact, Department (a skipped or
+  not-yet-answered field is left out, not shown as blank), then the one question alone as the
+  final line; a reply that packs the fields into one sentence fails the check regardless of
+  where it came from (R5, R10, lavish review round 2). A plain clarifying answer to a question
+  about a field (e.g. "what do you mean impact?") is exempt from the field-recap lines - it
+  keeps its own prose - but still ends in the one question (F2 stays #1178's for the routing;
+  this AC pins only the shape once a reply is composed).
+- **AC-1311 [BE][T] (PROPOSED - lavish review round 2, owner to confirm; depends on AC-1118/R11)**
+  Given `complete` and AC-1118 is confirmed, when the reply is accepted, then it is point form:
+  line 1 the title, line 2 the idea number and the WhatsApp-update sentence, line 3 "Track it
+  here: <link>" when the product has one configured, omitted when it does not.
 
 ## Group D - 24h reminder and close (S4)
 
