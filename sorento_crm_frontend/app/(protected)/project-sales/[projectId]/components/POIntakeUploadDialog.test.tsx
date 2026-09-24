@@ -43,12 +43,14 @@ vi.mock('../../_shared/services/poIntakeService', () => ({
 }));
 
 const listProjects = vi.fn();
+const listEditableProjectOptions = vi.fn();
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../_shared/services/projectService')>();
   return {
     ...actual,
     listProjects: (...args: unknown[]) => listProjects(...args),
+    listEditableProjectOptions: (...args: unknown[]) => listEditableProjectOptions(...args),
   };
 });
 
@@ -184,5 +186,32 @@ describe('POIntakeUploadDialog', () => {
     expect(screen.getByLabelText(/^Project/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('PO document'), { target: { files: [pdf()] } });
     expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
+  });
+
+  it('routes to the review page under the project PICKED from Start, never a blank segment (S2-7)', async () => {
+    listEditableProjectOptions.mockResolvedValue([
+      { value: 'p-setia-alam', label: 'Setia Alam', description: 'PRJ-000009 · SP Setia' },
+    ]);
+    uploadPurchaseOrderDocument.mockResolvedValue({
+      purchase_order_id: 'po1',
+      po_version_id: 'v9',
+      version_no: 1,
+      extraction_state: 'queued',
+      page_count: 3,
+    });
+
+    renderDialog({ projectId: undefined });
+
+    fireEvent.click(screen.getByLabelText(/^Project/));
+    fireEvent.click(await screen.findByText('Setia Alam'));
+
+    fireEvent.change(screen.getByLabelText('PO document'), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    await waitFor(() =>
+      expect(uploadPurchaseOrderDocument).toHaveBeenCalledWith('p-setia-alam', expect.any(Object)),
+    );
+    expect(push).toHaveBeenCalledWith('/project-sales/p-setia-alam/purchase-orders/v9');
+    expect(push).not.toHaveBeenCalledWith(expect.stringContaining('/project-sales//'));
   });
 });

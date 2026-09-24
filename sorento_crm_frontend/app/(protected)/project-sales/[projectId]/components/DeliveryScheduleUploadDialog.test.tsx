@@ -48,6 +48,7 @@ vi.mock('../../_shared/services/deliveryScheduleService', () => ({
 
 const listPurchaseOrders = vi.fn();
 const listParties = vi.fn();
+const listEditableProjectOptions = vi.fn();
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../_shared/services/projectService')>();
@@ -55,6 +56,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
     ...actual,
     listPurchaseOrders: (...args: unknown[]) => listPurchaseOrders(...args),
     listParties: (...args: unknown[]) => listParties(...args),
+    listEditableProjectOptions: (...args: unknown[]) => listEditableProjectOptions(...args),
   };
 });
 
@@ -142,6 +144,9 @@ beforeEach(() => {
     extraction_state: 'queued',
     page_count: 7,
   });
+  listEditableProjectOptions.mockResolvedValue([
+    { value: 'p1', label: 'Tuju Residences', description: 'PRJ-000001' },
+  ]);
 });
 
 describe('DeliveryScheduleUploadDialog', () => {
@@ -268,5 +273,43 @@ describe('DeliveryScheduleUploadDialog', () => {
 
     expect(screen.getByLabelText(/^Project/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Upload$/ })).toBeDisabled();
+  });
+
+  it('disables the Purchase order field until a project is picked (Should fix 3, PR #1219 round 1)', () => {
+    renderDialog([], { project: undefined });
+
+    expect(screen.getByLabelText(/Purchase order/i)).toBeDisabled();
+    expect(screen.getByLabelText(/Purchase order/i)).toHaveTextContent('Pick a project first');
+  });
+
+  it('enables the Purchase order field once a project is picked from Start', async () => {
+    listPurchaseOrders.mockResolvedValue([]);
+    renderDialog([], { project: undefined });
+
+    expect(screen.getByLabelText(/Purchase order/i)).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText(/^Project/));
+    fireEvent.click(await screen.findByText('Tuju Residences'));
+
+    await waitFor(() => expect(screen.getByLabelText(/Purchase order/i)).not.toBeDisabled());
+  });
+
+  it('routes to the review page under the project PICKED from Start, never a blank segment (S2-7)', async () => {
+    renderDialog([], { project: undefined });
+
+    fireEvent.click(screen.getByLabelText(/^Project/));
+    fireEvent.click(await screen.findByText('Tuju Residences'));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Purchase order/i)).toHaveTextContent('HQ/26/01/121'),
+    );
+
+    fireEvent.change(screen.getByLabelText(/^File/i), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+
+    await waitFor(() => expect(uploadDeliverySchedule).toHaveBeenCalled());
+    expect(uploadDeliverySchedule.mock.calls[0][0]).toBe('po1');
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v2');
+    expect(push).not.toHaveBeenCalledWith(expect.stringContaining('/project-sales//'));
   });
 });

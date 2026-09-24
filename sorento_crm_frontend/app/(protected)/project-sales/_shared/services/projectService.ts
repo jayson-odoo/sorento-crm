@@ -96,13 +96,34 @@ export async function listProjects(
   return response.json();
 }
 
+/** `GET /projects/` takes `limit` up to `MAX_PAGE_LIMIT` (`app/schemas/common.py`, backend). */
+const PROJECTS_MAX_PAGE_LIMIT = 1000;
+
 /**
  * Options for the "which project" picker on the page-level Start menu (S2-6): only
  * projects the user can edit, since that is what the upload endpoints require anyway.
+ *
+ * `can_edit` is filtered client-side, so a page of the newest projects can be all non-editable
+ * ones while an editable project sits on a later page - paging through with the backend's own
+ * max page size until every row is fetched is what keeps the picker from missing one (Should
+ * fix 2, PR #1219 round 1).
  */
 export async function listEditableProjectOptions(query: string) {
-  const body = await listProjects({ query: query || undefined, limit: 50 });
-  return body.data
+  const projects: Project[] = [];
+  let page = 1;
+  for (;;) {
+    const body = await listProjects({
+      query: query || undefined,
+      page,
+      limit: PROJECTS_MAX_PAGE_LIMIT,
+    });
+    projects.push(...body.data);
+    if (body.data.length < PROJECTS_MAX_PAGE_LIMIT || projects.length >= body.pagination.total) {
+      break;
+    }
+    page += 1;
+  }
+  return projects
     .filter((project) => project.can_edit)
     .map((project) => ({
       value: project.id,

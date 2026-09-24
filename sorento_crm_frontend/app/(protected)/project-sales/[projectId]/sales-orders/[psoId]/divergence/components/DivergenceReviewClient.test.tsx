@@ -175,6 +175,17 @@ describe('DivergenceReviewClient', () => {
     expect(screen.getByText('550.0000')).toBeInTheDocument();
   });
 
+  it('heads the section "AutoCount differences", not the old "AutoCount comparison" (R6, S1-2)', async () => {
+    renderReview();
+
+    // The heading's own text node sits beside a sibling `- {doc_no}` node, so the match has
+    // to look at the whole heading's text content rather than one exact text node.
+    expect(
+      await screen.findByText((_, element) => element?.tagName === 'H2' && (element.textContent ?? '').startsWith('AutoCount differences')),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/autocount comparison/i)).not.toBeInTheDocument();
+  });
+
   it('says amendments are blocked while anything is unanswered', async () => {
     renderReview();
 

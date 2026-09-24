@@ -168,12 +168,13 @@ export function DeliveryScheduleUploadDialog({
                 id="schedule-po"
                 value={poId}
                 onChange={setPoId}
+                disabled={!effectiveProjectId}
                 options={poRows.map((po) => ({
                   value: po.id,
                   label: po.po_number,
                   description: po.issuing_party_name ?? undefined,
                 }))}
-                placeholder="Which PO is this schedule for"
+                placeholder={effectiveProjectId ? 'Which PO is this schedule for' : 'Pick a project first'}
                 emptyMessage="No purchase orders on this project"
               />
             </div>

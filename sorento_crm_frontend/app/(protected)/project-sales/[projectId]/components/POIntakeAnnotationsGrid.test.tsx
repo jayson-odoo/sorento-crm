@@ -289,6 +289,10 @@ describe('POIntakeAnnotationsGrid', () => {
     expect(reason).toBeInTheDocument();
     expect(reason).not.toHaveAttribute('title');
     expect(reason).not.toHaveClass('truncate');
+    // Nit 7 (PR #1219 round 1): a later `line-clamp-1` would still lack `truncate` and pass the
+    // check above, so pin the wrap behaviour directly rather than only the absence of `truncate`.
+    expect(reason).toHaveClass('whitespace-normal');
+    expect(reason.className).not.toMatch(/\bline-clamp-\d+\b/);
   });
 
   it('shows reviewer and date with no empty reason line when there is no reason', () => {
