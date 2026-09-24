@@ -351,6 +351,23 @@ describe('AC-RS-83: pills + per-row icon buttons, gated by the reserve permissio
     expect(within(plainRow).queryByLabelText('History')).not.toBeInTheDocument();
   });
 
+  it('AC-RS-83c: the icons sit in the same cell as the State pill; no Reserve actions column', async () => {
+    renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+
+    const pill = within(gridRowFor('ZZT-REQUESTED')).getByText(/request to reserve 107/i);
+    const cell = pill.closest('td') as HTMLElement;
+    expect(within(cell).getByLabelText('Reserve')).toBeInTheDocument();
+    expect(within(cell).getByLabelText('Edit reserve')).toBeInTheDocument();
+
+    const reservedPill = within(gridRowFor('ZZT-RESERVED')).getByText(/reserved 30/i);
+    const reservedCell = reservedPill.closest('td') as HTMLElement;
+    expect(within(reservedCell).getByLabelText('Amend reserve')).toBeInTheDocument();
+    expect(within(reservedCell).getByLabelText('History')).toBeInTheDocument();
+
+    expect(screen.queryAllByText('Reserve actions')).toHaveLength(0);
+  });
+
   it('no header badge, no Confirm all button, no "Open reserve request" control anywhere on the page', async () => {
     renderDetail();
     await screen.findByText('ZZT-REQUESTED');
@@ -381,8 +398,11 @@ describe('AC-RS-84: the tick stages the full requested qty at the default pool, 
     const tick = within(requestedRow).getByLabelText('Reserve');
     fireEvent.click(tick);
 
-    expect(await screen.findByText('Reserve 107 @ BRW')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /undo/i })).toBeInTheDocument();
+    const chip = await screen.findByText('Reserve 107 @ BRW');
+    // AC-RS-83c: the staged chip and Undo stay in the State cell too.
+    const chipCell = chip.closest('td') as HTMLElement;
+    expect(within(chipCell).getByText(/request to reserve 107/i)).toBeInTheDocument();
+    expect(within(chipCell).getByRole('button', { name: /undo/i })).toBeInTheDocument();
     expect(commitReserveSpy).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /undo/i }));
@@ -455,6 +475,9 @@ describe('AC-RS-87: header Reserve CTA, disabled while nothing staged, commits t
     const reserveCta = await screen.findByTestId('reserve-cta');
     expect(reserveCta).toHaveAccessibleName(/^reserve$/i);
     expect(reserveCta).toBeDisabled();
+    // Owner, 24 Sep: CS's Reserve is the CTA colour (primary, like Confirm), not outline.
+    expect(reserveCta.className).toContain('bg-primary');
+    expect(reserveCta.className).not.toContain('border-input');
 
     fireEvent.click(within(gridRowFor('ZZT-REQUESTED')).getByLabelText('Reserve'));
     await screen.findByText('Reserve 107 @ BRW');
@@ -633,6 +656,8 @@ describe('6e.4 review round: declined lines, the action column gate, amend prefi
     await screen.findByText('ZZT-PLAIN');
 
     expect(screen.queryAllByText('Reserve actions')).toHaveLength(0);
+    expect(screen.queryByLabelText('Edit reserve')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Amend reserve')).not.toBeInTheDocument();
     expect(screen.queryByTestId('reserve-cta')).not.toBeInTheDocument();
   });
 

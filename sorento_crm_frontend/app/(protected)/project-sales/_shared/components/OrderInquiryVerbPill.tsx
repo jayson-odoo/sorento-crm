@@ -125,8 +125,8 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
  * reserve request row exists, `reserved` once CS has actually reserved something (and no
  * open request). Rendered BESIDE the state pill on the worklist (its own read-only
  * usage). Round 4 (section 6e.2, AC-RS-83/84): "The pill is no longer a button" - the
- * Lines grid's own reserve action moved to its own `reserve_actions` icon-button column
- * (`orderInquiryHeaderLinesColumns.tsx`); this pill is plain text everywhere now, amber
+ * Lines grid's reserve icons sit beside it in the same State cell (AC-RS-83c,
+ * `orderInquiryHeaderLinesColumns.tsx`); this pill is plain text everywhere now, amber
  * `Request to reserve N` printing the OPEN request's own `qty_requested`, green
  * `Reserved N` with the owner's own tick.
  */

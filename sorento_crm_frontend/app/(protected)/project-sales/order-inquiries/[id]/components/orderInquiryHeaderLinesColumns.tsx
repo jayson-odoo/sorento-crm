@@ -37,8 +37,8 @@ import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentD
  *
  * Round 4 (`PLAN-oi-request-cs-reserve.md` section 6e.2, owner round 4, 24 Sep,
  * AC-RS-83): the State cell's own reserve pill is plain text again (round 3's
- * click-target button is retired) - the reserve action moves to its own
- * `reserve_actions` icon-button column, gated by `canReserve` and driven by the
+ * click-target button is retired) - the reserve icons render beside it in the same
+ * cell (AC-RS-83c), gated by `canReserve` and driven by the
  * caller's own staged-decision map (`OrderInquiryDetail.tsx` owns that state; this
  * column is a pure renderer over it).
  */
@@ -182,7 +182,6 @@ function ReserveActionsCell({
 
 export function useOrderInquiryHeaderLinesColumns({
   canReserve,
-  showReserveActions = true,
   stagedByRowId,
   onTickReserve,
   onEditReserve,
@@ -190,12 +189,9 @@ export function useOrderInquiryHeaderLinesColumns({
   onHistoryClick,
   onUndoStaged,
 }: {
-  /** AC-RS-83: gates the WHOLE `reserve_actions` column - a viewer without
-   * `projects.order_inquiries.reserve` sees the pills only, no action cell at all. */
+  /** AC-RS-83/83c: gates the reserve icons inside the State cell - a viewer without
+   * `projects.order_inquiries.reserve` sees the pills only. */
   canReserve?: boolean;
-  /** 6e.4: whether the inquiry has anything to act on (an open request, or a reserved /
-   * declined line) - the column is absent otherwise, even for a permission holder. */
-  showReserveActions?: boolean;
   /** 6e.2: this line's own staged (not yet committed) decision, keyed by row id -
    * `OrderInquiryDetail.tsx` owns the map, this column only renders over it. */
   stagedByRowId?: Record<string, StagedReserveEntry>;
@@ -344,63 +340,54 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <InstructionCell row={row.original} />,
       },
-      // `PLAN-oi-request-cs-reserve.md` section 6e.2 (AC-RS-83): plain text again - the
-      // reserve action itself lives in `reserve_actions` below, not this cell.
+      // `PLAN-oi-request-cs-reserve.md` 6e.2 (AC-RS-83): the pill is plain text.
       {
         accessorKey: 'state',
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-        size: 190,
+        // AC-RS-83c (owner, 24 Sep: "this pen can put right next to state?"): the
+        // reserve icons sit in this cell, right of the pill - no separate column, which
+        // saved column preferences appended after Location. Wide enough for the pill
+        // plus a staged chip and Undo. `minSize` too: a saved column width (190 from
+        // before) would otherwise keep clipping the icons for every user who has one.
+        size: canReserve ? 380 : 190,
+        minSize: canReserve ? 380 : undefined,
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const reserveState = row.original.reserve_state;
-          if (
+          const pill =
             reserveState === 'requested' ||
             reserveState === 'reserved' ||
-            reserveState === 'declined'
-          ) {
-            return (
+            reserveState === 'declined' ? (
               <ReservePill
                 reserveState={reserveState}
                 reservedQty={row.original.reserved_qty}
                 requestedQty={row.original.requested_qty}
               />
+            ) : (
+              <OrderInquiryStatePill state={row.original.state} />
             );
-          }
-          return <OrderInquiryStatePill state={row.original.state} />;
+          if (!canReserve) return pill;
+          return (
+            <div className="flex min-w-0 items-center gap-1">
+              <span className="shrink-0">{pill}</span>
+              <ReserveActionsCell
+                row={row.original}
+                staged={stagedByRowId?.[row.original.id]}
+                onTickReserve={onTickReserve}
+                onEditReserve={onEditReserve}
+                onAmendReserve={onAmendReserve}
+                onHistoryClick={onHistoryClick}
+                onUndoStaged={onUndoStaged}
+              />
+            </div>
+          );
         },
       },
     ];
 
-    // AC-RS-83: the WHOLE column is absent for a viewer without the reserve permission
-    // - "pills only, no action cell", never a column that exists but renders nothing.
-    if (canReserve && showReserveActions) {
-      columns.push({
-        id: 'reserve_actions',
-        header: () => <span className="sr-only">Reserve actions</span>,
-        // Wide enough for the staged chip ("Reserve 107 @ BRW") plus Undo.
-        size: 240,
-        enableSorting: false,
-        enableResizing: false,
-        // An action cell, not a fact to rearrange: no drag grip on its header.
-        meta: { headerTitle: 'Reserve actions', draggable: false },
-        cell: ({ row }) => (
-          <ReserveActionsCell
-            row={row.original}
-            staged={stagedByRowId?.[row.original.id]}
-            onTickReserve={onTickReserve}
-            onEditReserve={onEditReserve}
-            onAmendReserve={onAmendReserve}
-            onHistoryClick={onHistoryClick}
-            onUndoStaged={onUndoStaged}
-          />
-        ),
-      });
-    }
-
     return columns;
   }, [
     canReserve,
-    showReserveActions,
     stagedByRowId,
     onTickReserve,
     onEditReserve,

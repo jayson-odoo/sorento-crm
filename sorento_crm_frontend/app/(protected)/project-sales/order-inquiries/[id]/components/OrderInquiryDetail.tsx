@@ -804,7 +804,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                     {canReserve && (openReserveRequest || stagedCount > 0) ? (
                       <Button
                         size="sm"
-                        variant="outline"
                         data-testid="reserve-cta"
                         onClick={commitStaged}
                         disabled={stagedCount === 0 || commitReserveMutation.isPending}

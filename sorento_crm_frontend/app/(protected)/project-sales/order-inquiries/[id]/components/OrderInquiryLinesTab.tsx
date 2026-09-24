@@ -88,7 +88,7 @@ export function OrderInquiryLinesTab({
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
   /** AC-RS-83 (`PLAN-oi-request-cs-reserve.md` 6e.2): gates the Lines grid's own
-   * `reserve_actions` icon-button column - the rest are that column's own callbacks,
+   * reserve icons inside the State cell (AC-RS-83c) - the rest are their callbacks,
    * threaded straight through to `useOrderInquiryHeaderLinesColumns`. */
   canReserve?: boolean;
   stagedByRowId?: Record<string, StagedReserveEntry>;
@@ -111,21 +111,8 @@ export function OrderInquiryLinesTab({
   const [stateFilter, setStateFilter] = useState<string[]>(() =>
     searchParams.get('reserve') ? [RESERVE_REQUESTED_FILTER_VALUE] : [],
   );
-  // 6e.4 (AC-RS-83b): the action column only when there is something to act on - a
-  // line with an open request (`requested`) or an answered one (`reserved`/`declined`).
-  const showReserveActions = useMemo(
-    () =>
-      lines.some(
-        (line) =>
-          line.reserve_state === 'requested' ||
-          line.reserve_state === 'reserved' ||
-          line.reserve_state === 'declined',
-      ),
-    [lines],
-  );
   const columns = useOrderInquiryHeaderLinesColumns({
     canReserve,
-    showReserveActions,
     stagedByRowId,
     onTickReserve,
     onEditReserve,
