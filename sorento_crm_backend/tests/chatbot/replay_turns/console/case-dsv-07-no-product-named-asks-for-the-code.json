@@ -68,7 +68,7 @@
         "action_kinds": [],
         "branch_kind": "business_query",
         "canned": [
-          "Which product do you need? Send the product code and the quantity."
+          "That would search every stock we have - I need at least one filter to narrow it down. Give me a product code, warehouse, or date range, and I can look it up."
         ],
         "entity_ids": [],
         "pending": null,
@@ -81,32 +81,12 @@
       },
       "source": {
         "db": "dsv-tester-handwritten",
-        "expected_from": "hand_authored_red_fixture (review round 11, D35)",
+        "expected_from": "hand_authored_red_fixture (review round 11, D35); re-expected at S0 rebase (#1193) onto main's R13 stock-no-subject hotfix, which refuses a scope-less inventory query before any tool call (gate.ALLOWS_EMPTY['inventory'] is False) instead of #1118's own catalogue-page-then-ask reply",
         "prompt_version": null,
         "recorded_at": "2026-09-22T00:00:00+00:00",
         "turn_id": "zzt-dsv-900000007"
       },
-      "tool_results": [
-        {
-          "tool": "crm_inventory_stock_balance_list",
-          "args": {
-            "_diagnostics": null,
-            "access_levels": null,
-            "contact_id": null,
-            "date_mode": null,
-            "include_sellable": null,
-            "is_active": null,
-            "space_id": null,
-            "view": null
-          },
-          "envelope": {
-            "has_result": true,
-            "intro": "Which product do you need? Send the product code and the quantity.",
-            "items": [],
-            "stock_availability": []
-          }
-        }
-      ],
+      "tool_results": [],
       "verdict": {
         "access_levels": [],
         "broaden_axis": null,
