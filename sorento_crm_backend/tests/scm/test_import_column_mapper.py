@@ -1119,3 +1119,272 @@ def test_probe_samples_are_rounded():
         for sample in col.samples:
             if _looks_numeric(sample):
                 assert len(sample) <= 12, (col.header, sample)
+
+
+# =============================================================================
+# Round 2 (owner ruling A, 24 Sep 2026): the alias unique constraint moves to
+# per-supplier - one partial unique index for shared rows (supplier_id IS NULL), one for
+# supplier rows (supplier_id IS NOT NULL). None of this exists yet (model still carries
+# the single `uq_import_field_alias_triple`, no migration) - R11-R13 are red until the
+# coder's migration lands; R14 is a regression guard for the classify() fix from round 1
+# and is already green.
+# =============================================================================
+
+
+# --------------------------------------------------------------------------- #
+# R11 - a second supplier saving the SAME header+field keeps its OWN row (owner ruling A)
+# --------------------------------------------------------------------------- #
+
+
+def test_second_supplier_keeps_identical_mapping(scm_app):
+    from app.services.import_alias_service import AliasResolver
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    supplier_a = _create_supplier(db, code_suffix="R11A")
+    supplier_b = _create_supplier(db, code_suffix="R11B")
+    client = TestClient(app)
+
+    mapping = [
+        {"header": "序号", "field": "ignore"},
+        {"header": "件数（件）", "field": "cartons"},
+    ]
+    r_a = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={"supplier_id": supplier_a, "doc_types": ["proforma_invoice"], "mappings": mapping},
+    )
+    assert r_a.status_code == 200, r_a.text
+
+    # Today the table's own unique triple is (doc_type, field, alias) with NO supplier_id
+    # in it, so this second, unrelated supplier's IDENTICAL save silently loses the race
+    # against A's already-landed row: `ON CONFLICT DO NOTHING` treats B's save as already
+    # said, and B ends up with none of ITS OWN rows at all.
+    r_b = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={"supplier_id": supplier_b, "doc_types": ["proforma_invoice"], "mappings": mapping},
+    )
+    assert r_b.status_code == 200, r_b.text
+
+    resolver_b = AliasResolver.for_supplier(db, "proforma_invoice", supplier_b)
+    assert resolver_b.field_for_header("件数（件）") == "cartons", (
+        "supplier B's own identical mapping must resolve for B too, independent of A"
+    )
+    assert resolver_b.field_for_header("序号") is None, "ignore, for B"
+    assert "序号" not in resolver_b.unmapped_headers({"序号": "x"}), "known (ignored), for B"
+
+    # A is unaffected by B ever having saved anything.
+    resolver_a = AliasResolver.for_supplier(db, "proforma_invoice", supplier_a)
+    assert resolver_a.field_for_header("件数（件）") == "cartons"
+
+    r_probe_b = client.post(
+        "/api/v1/scm/import-mapping/probe",
+        files={"file": ("FSCU8706420.xlsx", _fixture("ny_pi_FSCU8706420.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_b, "doc_types": "proforma_invoice"},
+    )
+    assert r_probe_b.status_code == 200, r_probe_b.text
+    cols_b = {c["header"]: c for c in r_probe_b.json()["columns"]}
+    assert cols_b["件数\n（件）"]["source"] == "supplier", cols_b["件数\n（件）"]
+    assert cols_b["序号"]["source"] == "supplier", cols_b["序号"]
+
+    # KEEP: a mapping IDENTICAL to an existing SHARED row still writes no supplier row -
+    # the existing row already answers the same way theirs would have (this half must
+    # still hold once the constraint splits, not just accidentally today).
+    supplier_c = _create_supplier(db, code_suffix="R11C")
+    r_c = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_c,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": "QTY", "field": "qty"}],
+        },
+    )
+    assert r_c.status_code == 200, r_c.text
+    from sqlalchemy import text as _text
+
+    own_rows = db.execute(
+        _text(
+            "SELECT count(*) FROM import_field_alias "
+            "WHERE supplier_id = :s AND doc_type = 'proforma_invoice' AND alias = 'QTY'"
+        ),
+        {"s": supplier_c},
+    ).scalar()
+    assert own_rows == 0, "identical-to-shared must not write a redundant supplier row"
+    r_probe_c = client.post(
+        "/api/v1/scm/import-mapping/probe",
+        files={"file": ("FSCU8706420.xlsx", _fixture("ny_pi_FSCU8706420.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_c, "doc_types": "proforma_invoice"},
+    )
+    assert r_probe_c.status_code == 200, r_probe_c.text
+
+
+# --------------------------------------------------------------------------- #
+# R12 - the future per-supplier constraint shape (owner ruling A), exercised directly
+# --------------------------------------------------------------------------- #
+
+
+def test_shared_rows_stay_unique():
+    from sqlalchemy import text
+    from sqlalchemy.exc import ProgrammingError
+
+    with pg_session() as db:
+        doc_type = "proforma_invoice"
+
+        # Shared (supplier_id NULL) - the seeder shape every existing `INSERT ... ON
+        # CONFLICT (doc_type, field, alias) DO NOTHING` already uses, restated with the
+        # partial predicate the split adds. Measured (24 Sep): Postgres accepts a full
+        # (non-partial) unique index as the arbiter for a MORE restrictive `WHERE`
+        # predicate than the index's own (a full index's implicit predicate, TRUE, is
+        # implied by any predicate) - so this half already holds against TODAY's single
+        # `uq_import_field_alias_triple` too. Not the red half; kept because it is the
+        # steady-state behaviour the split must not disturb.
+        alias = f"{MARKER}SHAREDR12"
+        db.execute(
+            text(
+                "INSERT INTO import_field_alias (id, doc_type, field, alias, supplier_id) "
+                "VALUES (gen_random_uuid(), :dt, 'ignore', :a, NULL)"
+            ),
+            {"dt": doc_type, "a": alias},
+        )
+        db.flush()
+        db.execute(
+            text(
+                "INSERT INTO import_field_alias (id, doc_type, field, alias, supplier_id) "
+                "VALUES (gen_random_uuid(), :dt, 'ignore', :a, NULL) "
+                "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
+            ),
+            {"dt": doc_type, "a": alias},
+        )
+        count = db.execute(
+            text(
+                "SELECT count(*) FROM import_field_alias "
+                "WHERE doc_type = :dt AND alias = :a AND supplier_id IS NULL"
+            ),
+            {"dt": doc_type, "a": alias},
+        ).scalar()
+        assert count == 1, "the duplicate SHARED insert must be a no-op"
+
+        # Supplier-scoped (owner ruling A) - the natural arbiter for a supplier row is
+        # (doc_type, field, alias, supplier_id), a FOUR-column index that does not exist
+        # yet (verified directly against a scratch table carrying only today's 3-column
+        # index: Postgres refuses this exact ON CONFLICT target with "no unique or
+        # exclusion constraint matching the ON CONFLICT specification", 42P10). This is
+        # the half that is genuinely red until `uq_import_field_alias_supplier` exists.
+        supplier_id = _seed_supplier_with_company(db, code_suffix="R12")
+        supplier_alias = f"{MARKER}SUPR12"
+        db.execute(
+            text(
+                "INSERT INTO import_field_alias (id, doc_type, field, alias, supplier_id) "
+                "VALUES (gen_random_uuid(), :dt, 'ignore', :a, :s)"
+            ),
+            {"dt": doc_type, "a": supplier_alias, "s": supplier_id},
+        )
+        db.flush()
+        try:
+            db.execute(
+                text(
+                    "INSERT INTO import_field_alias (id, doc_type, field, alias, supplier_id) "
+                    "VALUES (gen_random_uuid(), :dt, 'ignore', :a, :s) "
+                    "ON CONFLICT (doc_type, field, alias, supplier_id) DO NOTHING"
+                ),
+                {"dt": doc_type, "a": supplier_alias, "s": supplier_id},
+            )
+        except ProgrammingError as exc:
+            raise AssertionError(
+                "no unique index on (doc_type, field, alias, supplier_id) exists yet "
+                f"(owner ruling A, uq_import_field_alias_supplier): {exc}"
+            ) from exc
+        count2 = db.execute(
+            text(
+                "SELECT count(*) FROM import_field_alias "
+                "WHERE doc_type = :dt AND alias = :a AND supplier_id = :s"
+            ),
+            {"dt": doc_type, "a": supplier_alias, "s": supplier_id},
+        ).scalar()
+        assert count2 == 1, "the duplicate SUPPLIER insert must be a no-op too"
+
+
+# --------------------------------------------------------------------------- #
+# R13 - the migration itself: the two new indexes exist, the old one is gone
+# --------------------------------------------------------------------------- #
+
+
+def test_migration_indexes_exist():
+    from sqlalchemy import text
+
+    with pg_session() as db:
+        rows = db.execute(
+            text("SELECT indexname FROM pg_indexes WHERE tablename = 'import_field_alias'")
+        ).fetchall()
+        names = {r[0] for r in rows}
+        # Red until the coder's migration is written AND applied to this private DB
+        # (sorento_icm_ci) - today only `uq_import_field_alias_triple` exists.
+        assert "uq_import_field_alias_shared" in names, names
+        assert "uq_import_field_alias_supplier" in names, names
+        assert "uq_import_field_alias_triple" not in names, (
+            "the old single triple constraint must be dropped by the migration"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# R14 - DAFUYUAN through /supplier-documents/preview: one file, one block (regression
+# guard for round 1's classify() fix - expected GREEN)
+# --------------------------------------------------------------------------- #
+
+
+def test_supplier_documents_preview_dafuyuan_single_block(scm_app):
+    import json
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.reorder.run")
+    supplier_id = _create_supplier(db, code_suffix="R14")
+    client = TestClient(app)
+
+    mapping = {
+        "产品型号": "item_code",
+        "数量": "qty",
+        "单价 (RMB)": "unit_price",
+        "总金额 TOTAL RMB": "amount",
+        "序号": "ignore",
+        "箱数": "ignore",
+    }
+    r_save = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": h, "field": f} for h, f in mapping.items()],
+        },
+    )
+    assert r_save.status_code == 200, r_save.text
+
+    r = client.post(
+        "/api/v1/scm/supplier-documents/preview",
+        files=[("files", ("dafuyuan.xlsx", _fixture("dafuyuan_pi_20260922.xlsx"), _XLSX))],
+        data={"supplier_id": supplier_id, "header_rows": json.dumps({"dafuyuan.xlsx": 14})},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["files"]) == 1, body
+    f = body["files"][0]
+    # Corrected TWICE against the real bytes (measured 24 Sep), both against the
+    # function's own name:
+    #   1. The file's OWN row 12 reads "SORENTO装箱单 20260922（1）" (the original filename,
+    #      embedded as a text line in the sheet itself) alongside row 3's "PROFORMA
+    #      INVOICE - 形式发票" - `classify()`'s title scan sees BOTH the PI and the PL
+    #      marker and correctly calls it "combined", not "proforma_invoice".
+    #   2. "Single block" does not hold either: `packing_list`'s SHARED aliases already
+    #      resolve 产品型号/数量/箱数 (item_code/qty/cartons - verified directly against
+    #      `sorento_icm_ci`) with nothing supplier-scoped saved for that doc type at all,
+    #      so the SAME sheet reads as a valid packing block too (cartons 744, the file's
+    #      own stated total) - a combined file's blocks come from BOTH readers (G4's own
+    #      design), and this one satisfies both on shared aliases alone. Two blocks is
+    #      the real, correct green state; what R14 actually pins is the PI block's own
+    #      numbers among them.
+    assert f["kind"] == "combined", f
+    assert len(f["blocks"]) == 2, f["blocks"]
+    pi_block = next(b for b in f["blocks"] if b["amount"] == 110434)
+    assert pi_block["line_count"] == 15, pi_block
+    pl_block = next(b for b in f["blocks"] if b["cartons"] == 744)
+    assert pl_block is not None
