@@ -749,6 +749,12 @@ class ProjectOrderInquiryService:
         # `Project`, `Customer` or `users` while a confirm is raising rows against them.
         self._handover_order_facts_cache: Dict[str, Dict[str, Any]] = {}
         self._handover_actor_cache: Dict[str, Optional[Dict[str, str]]] = {}
+        # AC-2 (issue #1166, reviewer nit): `_record_handover`'s own `so_line_id ->
+        # line_no` read, memoised the same way. `_append_still_raised_amendment_rows`
+        # preloads this in ONE query for every row it is about to queue - a re-confirm
+        # carrying thirty still-raised amendment rows would otherwise cost thirty PK
+        # round trips, one per `_record_handover` call, inside the same transaction.
+        self._handover_line_no_cache: Dict[str, Optional[int]] = {}
         # R7's own-arrival credit, asked once per ROW by the path picker
         # (`_own_arrival_credit_for_row`). A replan settles every row of an order in one
         # call, and each row used to build a fresh `ProjectSupplyService` (throwing away
@@ -3174,6 +3180,23 @@ class ProjectOrderInquiryService:
         # column zeroed (that column is the record of what it once asked for) - the
         # handover line still has to say "0" (AC-H5), which no read of `row.qty` gives.
         qty_str = "0" if kind == "cancelled" else _qty_str(_dec(row.qty))
+        # AC-2 (24 Sep, owner ruling): the AutoCount SO line sequence this row's own
+        # line carries, read off `sales_order_lines.line_no` rather than
+        # `FulfilmentBoardService._line_numbers`'s positional renumbering (that
+        # sequence is a board display convenience for lines not all mirrored, not the
+        # book's own order) - `None` for a row with no `so_line_id` (an amendment
+        # exception row that names no line), which `_build_handover_context` sorts
+        # after every row of the same S/O that has one. Memoised
+        # (`_handover_line_no_cache`, reviewer nit): `_append_still_raised_amendment_
+        # rows` preloads it in one query before this method's own loop.
+        if not row.so_line_id:
+            line_no = None
+        elif row.so_line_id in self._handover_line_no_cache:
+            line_no = self._handover_line_no_cache[row.so_line_id]
+        else:
+            so_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
+            line_no = so_line.line_no if so_line is not None else None
+            self._handover_line_no_cache[row.so_line_id] = line_no
         line = {
             "so_date": _handover_fmt_date(facts.get("so_date")),
             "so_number": so_number,
@@ -3182,6 +3205,10 @@ class ProjectOrderInquiryService:
             "item_code": row.item_code,
             "qty": qty_str,
             "delivery_date": _handover_fmt_date(row.delivery_date),
+            # AC-1: "very, very important" to the owner - blank, never the word "None",
+            # when the row carries no stock location (`_build_handover_context`'s own
+            # subject-scope reduction already treats a blank the same way).
+            "location": row.stock_location or "",
             "remark": handover_remark(kind, row, was),
             "was": _format_handover_was(was),
         }
@@ -3197,6 +3224,10 @@ class ProjectOrderInquiryService:
                 "customer": facts.get("customer"),
                 "project": facts.get("project"),
                 "stock_location": row.stock_location,
+                #: AC-2/AC-3: what `_build_handover_context` sorts the whole queue by -
+                #: `so_number` above, then these two.
+                "line_no": line_no,
+                "item_code": row.item_code,
                 "verb_keys": _handover_verb_keys(kind, row, was),
                 "line": line,
                 "actor": self._handover_actor(resolved_actor_id),
@@ -3268,6 +3299,21 @@ class ProjectOrderInquiryService:
         already_queued = {
             item.get("row_id") for item in self.db.info.get(_HANDOVER_PENDING_KEY, [])
         }
+        # Reviewer nit: preload every one of THESE rows' `line_no` in one query, rather
+        # than leaving `_record_handover` to hit `ProjectSalesOrderLine` per row below -
+        # the confirm's own lines are typically already in the identity map (loaded
+        # earlier in the same transaction), but a still-raised amendment row's line
+        # usually is not.
+        uncached_line_ids = {
+            row.so_line_id
+            for row in rows
+            if row.so_line_id and row.so_line_id not in self._handover_line_no_cache
+        }
+        if uncached_line_ids:
+            for line_id, line_no in self.db.query(
+                ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no
+            ).filter(ProjectSalesOrderLine.id.in_(uncached_line_ids)):
+                self._handover_line_no_cache[line_id] = line_no
         for row in rows:
             if str(row.id) in already_queued:
                 continue
@@ -9588,6 +9634,20 @@ def confirmed_unplaced_buy_rows(
     return query.all()
 
 
+def _handover_sort_key(item: Dict[str, Any]) -> Tuple[str, bool, int, str]:
+    """AC-2/AC-3 (24 Sep, owner ruling): S/O no, then the AutoCount SO line sequence
+    ascending with a row that names no line (`line_no is None`) sorted LAST within its
+    own S/O, then item code - the order CS ticked lines in, or whether a line is the
+    confirm's own or a carried-forward amendment row, has no effect."""
+    line_no = item.get("line_no")
+    return (
+        item.get("so_number") or "",
+        line_no is None,
+        line_no if line_no is not None else 0,
+        item.get("item_code") or "",
+    )
+
+
 def _build_handover_context(
     pending: Sequence[Dict[str, Any]]
 ) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -9595,11 +9655,22 @@ def _build_handover_context(
     dispatch it under - PURE aggregation over what `_record_handover` already resolved
     and formatted eagerly (see its own docstring for why: a fresh drain-time session
     cannot see a write that is still open under a savepoint). `None` on an empty queue.
+
+    AC-2/AC-3: the LINE TABLE is built off a copy sorted by `_handover_sort_key` -
+    a still-raised amendment row `_append_still_raised_amendment_rows` appends to this
+    same queue is not a special case, it sorts exactly like every other item. The SO
+    summary table (`orders`) is separately re-sorted by S/O no after it is built, so
+    the two tables agree on which order comes first (reviewer nit) - everything ELSE
+    below (`so_numbers`/location aggregation for the subject, `first_inquiry_id`)
+    stays over `pending` in QUEUE order, unchanged by this lane: AC-4 pins the subject
+    rule as-is.
     """
     if not pending:
         return None
 
-    lines: List[Dict[str, Any]] = []
+    lines: List[Dict[str, Any]] = [
+        item["line"] for item in sorted(pending, key=_handover_sort_key)
+    ]
     orders: List[Dict[str, Any]] = []
     seen_pso: set = set()
     so_numbers: List[str] = []
@@ -9639,7 +9710,14 @@ def _build_handover_context(
         if location:
             locations.add(location)
         verb_keys.update(item.get("verb_keys") or ())
-        lines.append(item["line"])
+
+    # Reviewer nit: the SO summary table reads by S/O no, the same primary key the
+    # line table below is sorted by - built in queue order above (`seen_pso` still
+    # dedups on first sight), then re-sorted here so the two tables never disagree
+    # about which S/O comes first. The SUBJECT's own `so_numbers` stays in queue
+    # order (AC-4 pins its rule as-is; it only ever joins them with " , ", so their
+    # order is not user-visible the way two tables printed one under the other is).
+    orders = sorted(orders, key=lambda order: order.get("so_number") or "")
 
     # AC-H7 / AC-R2-14/15: one NAMED location (blanks ignored) -> "<location> @ <so
     # list>"; two or more named, or none at all, -> bare "<so list>".

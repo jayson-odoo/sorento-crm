@@ -42,7 +42,9 @@ class CustomerBase(BaseModel):
 
 
 class CustomerCreate(CustomerBase):
-    pass
+    # Who sells to this customer (`sales_agents.id`). Optional: most of the 6,397 existing
+    # rows have never had one set. `None` on create is the same as omitting it.
+    sales_agent_id: Optional[str] = None
 
 
 class CustomerUpdate(BaseModel):
@@ -50,6 +52,9 @@ class CustomerUpdate(BaseModel):
     email: Optional[str] = None
     phone_number: Optional[str] = None
     is_active: Optional[bool] = None
+    # `null` clears the assignment (exclude_unset in the service keeps that distinct
+    # from "field omitted, leave alone").
+    sales_agent_id: Optional[str] = None
 
 
 class CustomerSimple(BaseModel):
@@ -65,7 +70,13 @@ class CustomerResponse(CustomerBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    # Who sells to this customer. `sales_agent_id` is the FK a write addresses; the code
+    # + name are read-only, resolved off the `sales_agents` master by `Customer.sales_agent`
+    # (`app/models/order.py`) so no screen ever has to print the id (Cursor rule).
+    sales_agent_id: Optional[str] = None
+    sales_agent_code: Optional[str] = None
+    sales_agent_name: Optional[str] = None
+
     class Config:
         from_attributes = True
 

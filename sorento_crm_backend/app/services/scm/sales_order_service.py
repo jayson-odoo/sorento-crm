@@ -41,6 +41,7 @@ from app.models.scm import OrderLinkClaim
 from app.services.document_ingest_service import CANCELLED
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm import sales_agent_service
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE
@@ -240,22 +241,23 @@ class SalesOrderService:
             raise AppException(404, "Sales agent not found", code="SALES_AGENT_NOT_FOUND")
         return agent
 
-    def list_agents(self, query: Optional[str] = None) -> list[dict]:
+    def list_agents(self, query: Optional[str] = None, scope=None) -> list[dict]:
         """Every active sales agent, for the Agent filter and the detail page's Agent select.
 
         `sales_agents` is a shared master (no `CompanyScopedMixin`, see
-        `app/models/sales_agent.py`) - unscoped, same as `_agent` above and
+        `app/models/sales_agent.py`) - unscoped by default, same as `_agent` above and
         `sales_agent_service.resolve`. `query` is an optional substring match on the code
         or the person label, for the searchable select; omitted, every active row comes
         back (~55 today, comfortably below a page).
+
+        `scope` (a `CompanyScope`, default `None` = unrestricted) is read by
+        `sales_agent_service.list_active`'s `scope_filter`: `None` keeps this route's own
+        historical unscoped behaviour, while a caller that DOES want isolation (the customer
+        form's `/customers/sales-agents-select`, PR #1177 review blocking item 1) passes its
+        own resolved scope so the two selects share ONE query and can never drift about
+        which agents exist.
         """
-        qs = self.db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
-        if query:
-            like = f"%{query.strip()}%"
-            qs = qs.filter(
-                or_(SalesAgent.sales_agent.ilike(like), SalesAgent.person_label.ilike(like))
-            )
-        rows = qs.order_by(SalesAgent.sales_agent.asc()).all()
+        rows = sales_agent_service.list_active(self.db, query, scope)
         return [
             {
                 "id": a.id,

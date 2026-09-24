@@ -4645,9 +4645,6 @@ def _complete_canned_lane(
 
     canned = copy_mod.resolve(db)
     reply_extras: dict[str, Any] = {}
-    # Only the `ideate` arm can set this: it is the one canned lane whose reply text comes
-    # from a seam, so it is the one whose `send_message` stands a value in (AC-507).
-    preview = False
 
     if branch_kind in canned_lanes.NO_SESSION_WRITE_BRANCH_KINDS:
         text = canned_lanes.access_denied_text(ctx, canned)
@@ -4672,13 +4669,12 @@ def _complete_canned_lane(
             jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables"
         ) or {}
         if branch_kind == "ideate":
-            # D14 / H37: `dry_run` goes INTO the lane, not around it. The lane's seam is
-            # an MCP write tool that mints a real idea record and pulls the contact's
-            # media, so the guard has to sit before the call rather than after it.
+            # `dry_run` goes INTO the lane, not around it: the lane's seam is an MCP write
+            # tool, and on a dry run it is called as a TEST turn (`is_test`) rather than
+            # skipped (#1179), so the reply is the tool's own words on both kinds of turn.
             lane = ideate_mod.run(ctx, item, dry_run=dry_run)
             tail_item = lane["item"]
             reply_extras = lane["reply_extras"]
-            preview = bool(lane.get("preview"))
             fragments: dict[str, Any] = {"item": tail_item}
         else:
             fragments = canned_lanes.fragments_for(branch_kind, item, ctx, prev_variables, canned)
@@ -4699,7 +4695,7 @@ def _complete_canned_lane(
         )
         reply = {**reply, **reply_extras}
 
-    actions = _send_actions(reply, dry_run=dry_run, preview=preview)
+    actions = _send_actions(reply, dry_run=dry_run)
     turn_trace.record(
         "sent",
         summary="Handed the reply to the caller to send.",

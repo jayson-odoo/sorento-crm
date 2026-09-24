@@ -1445,7 +1445,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "respond.io contact id) and `message_text` (what they just said), plus `session_vars` "
             "carrying the `ideation` pointer from the previous turn (null on the first). Optionally "
             "`submitter_name`, `media_selection` when a photo menu is open (comma-joined positions, "
-            "or 'all'), and `is_new_idea` to start a fresh draft over an open one. RETURNS "
+            "or 'all'), `is_new_idea` to start a fresh draft over an open one, and `is_test` "
+            "for a test turn (the idea is stored hidden from the board, no session state is "
+            "persisted). RETURNS "
             "`{status, reply_text, link?, session_vars}` - `reply_text` is what to "
             "send the customer, `session_vars.ideation` is the pointer to carry into the next turn, and "
             "`link` is the deep link once `status` is 'complete'. WRITE action: it creates and updates a "
@@ -1465,6 +1467,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "submitter_name",
             "media_selection",
             "is_new_idea",
+            "is_test",
         ),
         module="chatbot",
         external=True,
