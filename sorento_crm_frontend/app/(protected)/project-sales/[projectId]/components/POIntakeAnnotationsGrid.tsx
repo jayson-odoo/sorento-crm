@@ -278,10 +278,7 @@ export function POIntakeAnnotationsGrid({
                 {who}
               </span>
               {annotation.action_note && (
-                <span
-                  className="block truncate text-xs text-muted-foreground"
-                  title={annotation.action_note}
-                >
+                <span className="block whitespace-normal break-words text-xs text-muted-foreground">
                   {annotation.action_note}
                 </span>
               )}

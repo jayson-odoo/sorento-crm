@@ -701,7 +701,7 @@ export function DeliveryScheduleReviewClient({
               onValueChange={(next) => next && setViewMode(next as 'phase' | 'date')}
             >
               <ToggleGroupItem value="phase" className="px-3">
-                By phase
+                By area
               </ToggleGroupItem>
               <ToggleGroupItem value="date" className="px-3">
                 By date
