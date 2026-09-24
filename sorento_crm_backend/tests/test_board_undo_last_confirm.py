@@ -220,6 +220,117 @@ def test_undo_restores_revision_one_column_for_column(api):
     assert after == fixture["before"], "every seeded table must read back exactly as before"
 
 
+# --------------------------------------------------------------------------- AC-B14
+# `PLAN-board-reject-on-confirmed-line.md`: a withdrawal that rides alongside a real
+# composition (`payload.lines` non-empty) reaches `uncover_lines` THROUGH `confirm()`'s
+# own `uncover_line_ids` - journalled exactly as an ordinary reconfirm is, undoable.
+
+
+def test_undo_of_a_mixed_confirm_restores_the_withdrawn_lines_row_and_the_superseded_revision(
+    api,
+):
+    """A press naming both `lines` (line 2, re-amended) and `rejected_line_ids` (line 1,
+    staged rejected) writes revision 2, cancelling line 1's raised OI row. Undoing it must
+    put revision 1 back ACTIVE and line 1's row back to `raised` - column for column, the
+    same exact-restore seam every other test in this file uses, so a coder's replay that
+    forgot the withdrawn line's own row (or its note) is caught rather than merely the
+    columns this test happened to name."""
+    from app.models.project_so import DECISION_ACTIVE, INQUIRY_CANCELLED, INQUIRY_RAISED
+
+    from .test_fulfilment_line_draft_route import _board, _stage_reject
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    product_2 = _product(db)
+    _stock(db, product_2, world.pool_wh, on_hand=100)
+    core_line_2 = _core_line(db, core_so, product_2, world.own_wh, qty_ordered="6")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line_1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=20, product=product_2, core_line=core_line_2)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line_1.id, buy_qty="10"),
+                _line_payload(
+                    line_2.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}]
+                ),
+            ]
+        },
+    )
+    assert first.status_code == 200, first.text
+    decision1 = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_1.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    assert row.state == INQUIRY_RAISED, "sanity: the row has to start raised"
+
+    key_1 = next(
+        contribution["key"]
+        for contribution in _board(client, core_so)["contributions"]
+        if contribution["item_code"] == world.product.product_code
+    )
+    _stage_reject(client, key_1)
+
+    before = _snapshot(db)
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_2.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}]
+                )
+            ],
+            "rejected_line_ids": [str(line_1.id)],
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["rejected_count"] == 1
+    db.refresh(row)
+    assert row.state == INQUIRY_CANCELLED, "sanity: withdrawn by the second confirm"
+    decision2 = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.revision_no == 2,
+        )
+        .one()
+    )
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    result = undo_last_confirm(db, order, actor_user_id=world.eling)
+    assert result["revision_no"] == decision2.revision_no
+    assert result["restored_to"] == decision1.revision_no
+
+    after = _snapshot(db)
+    assert after == before, "every table this write touched must read back exactly as before"
+
+    db.expire_all()
+    restored_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
+    assert restored_row.state == INQUIRY_RAISED
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .one()
+    )
+    assert active.id == decision1.id, "revision 1 is active again"
+
+
 # --------------------------------------------------------------------------- AC-UC-17
 
 

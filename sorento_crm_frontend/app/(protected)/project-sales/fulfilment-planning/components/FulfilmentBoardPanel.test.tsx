@@ -4075,3 +4075,96 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
     expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
   });
 });
+
+/**
+ * S1 (fix round, review): `runConfirmAll`'s own wiring for a covered line's staged
+ * reject (`wantedOrders`' own `rejected` branch, the per-order body's `rejected_line_ids`,
+ * and the post-confirm toast's `withdrawn` clause) had NOTHING pinning it - a kill test
+ * proved reverting all three together left every test in this file green. These three
+ * close that gap, against a board whose only saved decision on its one line is the
+ * staged reject (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`).
+ */
+describe("FulfilmentBoardPanel: Confirm carries a covered line's staged reject (S1, fix round)", () => {
+  function coveredRejectedBoard() {
+    return withContribution(
+      boardOf([
+        demand({
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '100',
+          },
+        }),
+      ]),
+      () => true,
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-23T00:00:00Z',
+        },
+      }),
+    );
+  }
+
+  it('puts the order in the press and reads Confirm (1)', async () => {
+    getPlanningBoard.mockResolvedValue(coveredRejectedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+  });
+
+  it("posts lines: [] and the mirror id in rejected_line_ids", async () => {
+    getPlanningBoard.mockResolvedValue(coveredRejectedBoard());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 2, rejected_count: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      {
+        orders: {
+          pso_id: string;
+          lines: unknown[];
+          rejected_line_ids: string[];
+        }[];
+      },
+    ];
+    expect(body.orders).toEqual([
+      expect.objectContaining({
+        pso_id: 'pso-so-a',
+        lines: [],
+        rejected_line_ids: ['pl-so-a-1'],
+      }),
+    ]);
+  });
+
+  it('renders "· 1 withdrawn" in the toast when rejected_count comes back non-zero', async () => {
+    getPlanningBoard.mockResolvedValue(coveredRejectedBoard());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 2, rejected_count: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('· 1 withdrawn')),
+    );
+  });
+});

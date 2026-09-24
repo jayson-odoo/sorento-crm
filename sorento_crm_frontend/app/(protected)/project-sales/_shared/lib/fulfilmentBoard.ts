@@ -281,6 +281,36 @@ export function confirmLinesFor(
 }
 
 /**
+ * `ConfirmSupplyBody.rejected_line_ids` for one order - the mirror ids of COVERED lines a
+ * `rejected` draft is staged on (owner ruling 23 Sep 2026,
+ * `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the rejection" - reject on a
+ * confirmed line is a STAGED decision like every other board decision now, and Confirm is
+ * what actually withdraws it, never the draft save). `confirmLinesFor` above already leaves
+ * a rejected line OUT of `lines` (covered or not, `lineFor`'s own rule) - this is the OTHER
+ * half of the same press for exactly the covered ones: an UNCOVERED rejected line has
+ * nothing active to withdraw, so it is excluded here, same as it always was.
+ */
+export function rejectedCoveredLineIdsFor(
+  contributions: BoardContribution[],
+  salesOrderId: string,
+  draft: BoardDraft,
+): string[] {
+  const ids: string[] = [];
+  for (const contribution of contributions) {
+    if (contribution.sales_order_id !== salesOrderId) continue;
+    // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds
+    // of line - an ACTIVE decision, or a live order-inquiry row naming it with none
+    // (`inquiry_decided`, #875). Only the first has a `line_snapshots` entry Confirm's
+    // `rejected_line_ids` could ever name, so this reads `decision` (non-null exactly
+    // then), not `covered`.
+    if (!contribution.decision) continue;
+    if (draft[contribution.key]?.verdict !== 'rejected') continue;
+    if (contribution.project_line_id) ids.push(contribution.project_line_id);
+  }
+  return ids;
+}
+
+/**
  * Why a decided line cannot be posted by this confirmation. Every one of these is a line the
  * server would refuse, and the confirmation is atomic across the order, so posting it would take
  * every other line down with it. It is left out and NAMED instead.
@@ -614,13 +644,36 @@ export function plannedLineCount(
   contributions: BoardContribution[],
   salesOrderId: string,
   draft: BoardDraft,
+  /**
+   * Orders a PENDING planning-change batch currently covers (S4, fix round,
+   * `PLAN-board-reject-on-confirmed-line.md`): a batch apply has no shape for a
+   * withdrawal riding beside it, so the server refuses `rejected_line_ids` alongside
+   * `batch_id` (AC-B12) and the caller sends `[]` for such an order instead
+   * (`rejectedCoveredLineIdsFor`'s own result, zeroed). A covered-rejected line on one
+   * of these orders must not count here either, or the counter promises a withdrawal
+   * this press cannot actually carry out - the "Confirm (1)" that then posts nothing
+   * for it. Empty by default: every OTHER caller (the panel's own per-decision toast,
+   * every test that does not name a batch) is unaffected.
+   */
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
 ): number {
+  const batchBlocked = batchBlockedSalesOrderIds.has(salesOrderId);
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (contribution.unplannable) return false;
     // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
     // its apply is the retire path, which needs no composition to build.
     if (contribution.cancelled) return true;
+    // An ACTIVELY covered line (an active decision, not merely a live order-inquiry row -
+    // N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) with a staged reject posts
+    // nothing either (`rejected_line_ids` carries it, not `lines`), and is still one of the
+    // lines THIS press acts on - Confirm is what withdraws it (owner ruling 23 Sep 2026) -
+    // UNLESS a pending batch is holding it back (see `batchBlockedSalesOrderIds` above). An
+    // inquiry-only covered line has no active decision for Confirm to withdraw, so it falls
+    // through to `lineFor` below, which already reads it as nothing to post (not counted).
+    if (contribution.decision && draft[contribution.key]?.verdict === 'rejected') {
+      return !batchBlocked;
+    }
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
@@ -636,20 +689,27 @@ export function plannedLineCount(
  * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): an uncovered line nobody
  * has saved a decision for is undecided, not agreed, so the counter reports nothing for it -
  * "Save all suggested" is the bulk way to agree with the engine before Confirm. A REJECTED
- * line is a decision that commits nothing, counted apart rather than simply excluded. A line
- * an active decision already COVERS and nobody has amended is not counted: the server carries
- * it into the next revision itself. A SAVED-BUT-STALE line (S4, AC-4.4) is not counted either,
- * the same reason `lineFor` will not post it.
+ * line is a decision that commits nothing, counted apart rather than simply excluded - EXCEPT
+ * a COVERED rejected line (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`):
+ * that one is a withdrawal Confirm actually carries out (`rejected_line_ids`), so it counts in
+ * `toConfirm` too, beside `rejected`. A line an active decision already COVERS and nobody has
+ * amended OR rejected is not counted: the server carries it into the next revision itself. A
+ * SAVED-BUT-STALE line (S4, AC-4.4) is not counted either, the same reason `lineFor` will not
+ * post it.
  */
 export function confirmSummaryFor(
   contributions: BoardContribution[],
   draft: BoardDraft,
+  /** Threaded straight through to `plannedLineCount` (S4, fix round) - see its own doc. */
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
 ): { toConfirm: number; rejected: number; orderCount: number; changed: number } {
   // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
   // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
   // carries forward regardless of a local click, so it is checked FIRST - a click of
   // "rejected" on an already-confirmed line cannot make Confirm refuse it, and must not be
-  // counted as a rejection either.
+  // counted as a rejection either. REJECTED is now read BEFORE the covered/amended check
+  // (23 Sep 2026 rework): a covered line's own rule below only ever exempted an UNTOUCHED or
+  // AMENDED one, and a rejected covered line is neither - it is a THIRD thing Confirm acts on.
   let rejected = 0;
   // C4 (code review round 3 batch 2): a saved line the engine has re-suggested is dropped
   // from Confirm with no trace beyond the pill itself, which is easy to miss on a board of
@@ -672,11 +732,18 @@ export function confirmSummaryFor(
     // is the caller's own draft, already merged with whatever the server sent as
     // `contribution.draft`, so its being falsy here is the whole signal that nobody saved it.
     if (!contribution.covered && !decision) continue;
-    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;
+      // An ACTIVELY covered reject (an active decision, not merely a live order-inquiry row
+      // - N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) is a WITHDRAWAL Confirm
+      // carries out this same press - its order belongs in the confirmable set, same as an
+      // amendment does, so `toConfirm` counts it (`plannedLineCount`'s own new branch is
+      // what actually adds the +1 for this line). An UNCOVERED reject, or an inquiry-only
+      // one with no active decision to withdraw, stays excluded, as it always was.
+      if (contribution.decision) orderIds.add(contribution.sales_order_id);
       continue;
     }
+    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (contribution.draft?.stale) {
       changed += 1;
       continue;
@@ -684,7 +751,8 @@ export function confirmSummaryFor(
     orderIds.add(contribution.sales_order_id);
   }
   const toConfirm = [...orderIds].reduce(
-    (total, salesOrderId) => total + plannedLineCount(contributions, salesOrderId, draft),
+    (total, salesOrderId) =>
+      total + plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds),
     0,
   );
   return { toConfirm, rejected, orderCount: orderIds.size, changed };

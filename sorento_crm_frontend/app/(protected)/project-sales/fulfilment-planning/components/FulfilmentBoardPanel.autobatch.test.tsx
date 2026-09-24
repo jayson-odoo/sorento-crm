@@ -544,3 +544,173 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     );
   });
 });
+
+/**
+ * S4 (fix round, review): a covered line's staged reject on an order that ALSO carries a
+ * pending planning-change batch has nothing to ride along in - the server refuses
+ * `rejected_line_ids` alongside `batch_id` (AC-B12), so the panel already zeroed the id
+ * out of the request. What it did NOT do was stop `plannedLineCount` promising the line
+ * in the "Confirm (N)" counter, or say anything when the press then posted nothing for
+ * it - the "Confirm (1) then nothing" gap.
+ */
+describe("S4: a covered line's staged reject on a batched order does not ride along", () => {
+  function withRejectedContribution(
+    board: ReturnType<typeof buildBoard>,
+    matchProjectLineId: string,
+  ): ReturnType<typeof buildBoard> {
+    const rejected = {
+      decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+      saved_by: 'Test Planner',
+      saved_at: '2026-09-23T00:00:00Z',
+    };
+    const apply = (entry: { project_line_id?: string | null }) =>
+      entry.project_line_id === matchProjectLineId ? { ...entry, draft: rejected } : entry;
+    return {
+      ...board,
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        contributions: cell.contributions.map(apply),
+      })),
+      contributions: board.contributions.map(apply),
+    } as ReturnType<typeof buildBoard>;
+  }
+
+  /**
+   * A's only line, line 9, project_line_id `pl-381895-9` - deliberately NOT one of the
+   * THREE lines BATCH_A's own rows name (`pl-381895-1/-2/-3`): naming one of those would
+   * also UNCOVER and PRE-MARK it once the batch loads (`uncoverChangedLines`/AC-B13, the
+   * OTHER two batch mechanics this board runs), which would say nothing about this fix.
+   * A carries a `pending_change_batch_id` regardless of which line the batch's own rows
+   * name - the server's refusal (AC-B12, `board_reject_not_supported_in_batch`) is keyed
+   * on the ORDER's `batch_id`, so line 9's withdrawal cannot ride along either, even
+   * though the batch has nothing to say about it. B is an ordinary saved (approved),
+   * unbatched line on a different order - what keeps Confirm enabled at all, so the
+   * button is reachable to press in the second test below.
+   */
+  function demandA9(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
+    return {
+      sales_order_id: 'so-381895',
+      so_number: 'SO381895',
+      customer_name: 'YOTU BUILDER',
+      project_sales_order_id: 'pso-381895',
+      project_line_id: 'pl-381895-9',
+      line_no: 9,
+      item_code: 'SRTWCX-LINE-9',
+      qty: '10',
+      required_date: '2026-08-25',
+      fulfilment_location: 'BRW-IB',
+      priority: null,
+      ...overrides,
+    } as BoardDemandLine;
+  }
+
+  function boardWithBatchBlockedReject() {
+    return withRejectedContribution(
+      withSavedContribution(
+        withPendingBatch(
+          buildBoard(
+            [
+              demandA9({
+                decision: {
+                  revision_no: 1,
+                  timely_spo_qty: '0',
+                  reserve: [],
+                  borrow: [],
+                  buy_qty: '10',
+                },
+              }),
+              demandB(),
+            ],
+            { today: TODAY, freeStock: {}, granularity: 'week' },
+          ),
+          { 'so-381895': BATCH_A.id },
+        ),
+        'so-381896',
+      ),
+      'pl-381895-9',
+    );
+  }
+
+  it('excludes the batch-blocked reject from the Confirm (N) count', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithBatchBlockedReject());
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+
+    // 1 (B's own saved line) - NOT 2, which is what `plannedLineCount` counted before this
+    // fix by including A's covered-rejected line regardless of the batch blocking it.
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+  });
+
+  it('names the held-back withdrawal in the results panel instead of posting nothing silently', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithBatchBlockedReject());
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381896', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    // A never rode along - only B, the ordinary saved line, was actually posted.
+    expect(body.orders.map((order: { pso_id: string }) => order.pso_id)).toEqual([
+      'pso-so-381896',
+    ]);
+
+    expect(
+      await screen.findByText(
+        'Line 9: rejection is staged; it commits after the pending change is applied.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * N2 (fix round, `PLAN-board-reject-on-confirmed-line.md`): the held-back entry above is
+   * NOT a refusal - A posted nothing else this press (its only line's withdrawal was the
+   * held-back one), so it must not count against the header's denominator (B alone
+   * confirmed, so "1 of 1", never "1 of 2") and its row must not render destructive.
+   */
+  it('the held-back order does not count against the header, and renders neutral, not destructive', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithBatchBlockedReject());
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381896', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    // A posted nothing else this press: the ONLY-a-withdrawal sentence, not the "was
+    // confirmed, but..." one reserved for an order that ALSO posted something else.
+    const heldBackRow = await screen.findByText(
+      'SO381895: has a staged rejection that commits after the pending change is applied.',
+    );
+    expect(heldBackRow.className).not.toContain('text-destructive');
+
+    const results = screen.getByTestId('board-confirm-results');
+    // Only B counts: A's held-back entry is excluded from BOTH sides of the ratio.
+    expect(results).toHaveTextContent('1 of 1 orders confirmed');
+  });
+});

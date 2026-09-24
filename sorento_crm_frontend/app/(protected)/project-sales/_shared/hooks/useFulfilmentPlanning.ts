@@ -476,6 +476,14 @@ export function patchContributionDraft<
  * have nothing to learn from either one - and now neither does the board query itself, since
  * nothing about the ENGINE's suggestion moved.
  *
+ * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+ * feedback: "we should confirm the rejection"): a `rejected` save on a covered line used to
+ * reach `uncover_lines` on the server, which needed a matching invalidation here (S3, fix
+ * round 3) - that call is gone. Every save, `rejected` included, is a STAGED draft now, same
+ * as any other verdict: nothing about the active confirmation moves, so the plain patch below
+ * is the whole story again. Confirm is what invalidates the wider list (`useConfirmManyMutation`
+ * above), the same press that actually withdraws the line.
+ *
  * NO SUCCESS TOAST HERE (D6, matching `useConfirmManyMutation`'s own note): the sentence
  * "Line 3 saved - 4 to confirm" (AC-4.1) needs the FRESH board-wide confirm count, which
  * this hook does not have - only `FulfilmentBoardPanel`'s own `decide()`, which already

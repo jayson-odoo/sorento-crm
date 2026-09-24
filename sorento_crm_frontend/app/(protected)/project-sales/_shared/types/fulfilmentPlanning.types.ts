@@ -625,6 +625,15 @@ export interface ConfirmSupplyBody {
    * a second revision.
    */
   batch_id?: string | null;
+  /**
+   * The mirror `project_line_id`s of COVERED lines a `rejected` draft was staged on (owner
+   * ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
+   * rejection" - reject on a confirmed line is a STAGED decision like every other board
+   * decision, and Confirm is what commits it, never the draft save itself). Never overlaps
+   * `lines` - a line is either REPLACED (named in `lines`) or DROPPED (named here). Absent
+   * on every ordinary Confirm; may not travel alongside `batch_id`.
+   */
+  rejected_line_ids?: string[];
 }
 
 export interface ConfirmException {
@@ -658,6 +667,12 @@ export interface ConfirmResult {
   transfers_kept?: number | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
+  /**
+   * How many covered lines this SAME press withdrew (`ConfirmSupplyBody.rejected_line_ids`,
+   * owner ruling 23 Sep 2026). The toast needs it beside the confirmed count - "N confirmed"
+   * says nothing about the lines this press also took OUT.
+   */
+  rejected_count?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -2441,6 +2456,9 @@ export interface ConfirmManyOrderBody {
    * Falls back to `ConfirmManyBody.batch_id` server-side when absent.
    */
   batch_id?: string | null;
+  /** This order's own half of `ConfirmSupplyBody.rejected_line_ids` (owner ruling 23 Sep
+   * 2026). Same rule, same refusal alongside a batch. */
+  rejected_line_ids?: string[];
 }
 
 export interface ConfirmManyBody {
@@ -2473,6 +2491,9 @@ export interface ConfirmManyOrderResult {
   transfers_kept?: number | null;
   /** The lines this order's planner flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
+  /** How many covered lines THIS order's own press withdrew, the per-order twin of
+   * `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026). */
+  rejected_count?: number | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }
