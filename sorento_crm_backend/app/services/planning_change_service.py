@@ -2779,15 +2779,17 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
 
     `row.proposal_json["sources"]` names every own-arrival Reserve the row's own live
     proposal carries - goods that already landed for this line, `source: "own_arrival"`,
-    each naming the PO. The amend still stands for whatever reserve at that SAME warehouse
-    it keeps; only the part that would drop BELOW what is credited is refused, so amending
-    the remainder (an ordinary reserve or Buy beside the credit) is untouched.
+    each naming the document it landed on (the SPO, since R7's follow-up
+    `PLAN-r7-landed-reads-spo-received.md`, R3 - never a PO). The amend still stands for
+    whatever reserve at that SAME warehouse it keeps; only the part that would drop BELOW
+    what is credited is refused, so amending the remainder (an ordinary reserve or Buy
+    beside the credit) is untouched.
 
     A credit source carrying NO `warehouse_id` names no pile the composition can be judged
     against, so it is logged and treated as NOT credited (security review, nit 5). It used
     to compare against zero and therefore refuse EVERY amend of such a row - one malformed
     proposal would have locked a planner out of amending that line at all, with a message
-    naming a PO they could do nothing about.
+    naming a document they could do nothing about.
     """
     credit_sources = [
         s for s in (row.proposal_json or {}).get("sources") or []
@@ -2814,11 +2816,14 @@ def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> N
             continue
         still_reserved = reserved_by_wh.get(wh, _ZERO)
         if still_reserved < credited:
-            po = source.get("supply_document")
+            # R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`, R3): `supply_document`
+            # is the document goods actually LANDED on - an SPO number, never a PO
+            # number - so the sentence names it bare, with no "PO" noun in front of it.
+            doc = source.get("supply_document")
             message = (
-                f"{qty_text(credited)} landed for this line on PO {po}; nothing to buy "
+                f"{qty_text(credited)} landed for this line on {doc}; nothing to buy "
                 "for it"
-                if po
+                if doc
                 else f"{qty_text(credited)} landed for this line; nothing to buy for it"
             )
             raise AppException(
