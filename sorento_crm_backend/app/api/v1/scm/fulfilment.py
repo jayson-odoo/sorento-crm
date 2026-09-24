@@ -869,15 +869,19 @@ def _header_rows(raw: Optional[str]) -> dict[str, int]:
         raise AppException(422, "header_rows must be a JSON object", detail="header_rows")
     out: dict[str, int] = {}
     for name, row in parsed.items():
-        try:
-            value = int(row)
-        except (TypeError, ValueError):
-            continue
+        # Review round 3, R20: `int(row)` used to coerce silently - `int(True) == 1` and
+        # `int(2.7) == 2` both "succeed", so a bool or a float the stepper never actually
+        # produced was accepted with no sign anything was wrong. A plain `int` and nothing
+        # else (bool is an `int` subclass, excluded explicitly).
+        if isinstance(row, bool) or not isinstance(row, int):
+            raise AppException(
+                422, f"header_rows.{name} must be a whole number", detail="header_rows"
+            )
         # Same bound as the single-file `header_row` Form field (security m2, review
         # round 1) - a per-file JSON map bypasses FastAPI's own `ge`/`le` on that field,
         # so the same range is enforced here by hand.
-        if 1 <= value <= 1000:
-            out[str(name)] = value
+        if 1 <= row <= 1000:
+            out[str(name)] = row
     return out
 
 

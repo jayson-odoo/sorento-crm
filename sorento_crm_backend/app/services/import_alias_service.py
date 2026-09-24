@@ -115,15 +115,24 @@ class AliasResolver:
         row, which is why the query narrows to `supplier_id` rather than reading every
         row the way `for_doc_type` does. Same header, different meaning per supplier
         (design section) is exactly what a shared table alone cannot hold.
+
+        A `supplier_id` that is not a real id at all (review round 3, R18 - same guard
+        `WordList.for_supplier` in `supplier_code_composer.py` already uses) reads as the
+        SHARED-only list rather than reaching the uuid column comparison, which raises
+        `InvalidTextRepresentation` - not an `AppException` - and leaves the session
+        aborted.
         """
+        from app.services.scm.supplier_scope import is_uuid
+
+        valid_supplier_id = supplier_id if supplier_id and is_uuid(supplier_id) else None
         query = db.query(
             ImportFieldAlias.field, ImportFieldAlias.alias, ImportFieldAlias.supplier_id
         ).filter(ImportFieldAlias.doc_type == doc_type)
-        if supplier_id:
+        if valid_supplier_id:
             query = query.filter(
                 or_(
                     ImportFieldAlias.supplier_id.is_(None),
-                    ImportFieldAlias.supplier_id == supplier_id,
+                    ImportFieldAlias.supplier_id == valid_supplier_id,
                 )
             )
         else:

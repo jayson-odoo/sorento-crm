@@ -210,24 +210,29 @@ def create_import_field_alias(
     )
     _assert_known_field(payload.doc_type, field_value)
     _assert_supplier_exists(db, payload.supplier_id)
-    # Matched on the TRIPLE alone, regardless of `supplier_id` (review round 3): the mapping
-    # a (doc_type, field, alias) pair names already exists the moment ANY row - shared, or
-    # another supplier's - names it, and a second row on that same triple is not an
-    # override (an override changes the FIELD, i.e. the word's token, for the same alias),
-    # it is a duplicate of an answer that already exists.
-    existing = (
-        db.query(ImportFieldAlias)
-        .filter(
-            ImportFieldAlias.doc_type == payload.doc_type,
-            ImportFieldAlias.field == field_value,
-            ImportFieldAlias.alias == payload.alias,
-        )
-        .first()
+    # Matched on the triple WITHIN THE SAME SCOPE (owner ruling A, review round 2, migration
+    # `ifa_supplier_uniq` - supersedes review round 3's note that used to live here): a
+    # shared row (`supplier_id` NULL) duplicates only another shared row on the same
+    # triple, and a supplier row duplicates only THAT SAME supplier's own row - a second
+    # supplier saving the identical (doc_type, field, alias) triple is not a duplicate of
+    # the first supplier's row, it is that supplier's own first row, exactly what the DB
+    # itself now allows (R11).
+    existing_query = db.query(ImportFieldAlias).filter(
+        ImportFieldAlias.doc_type == payload.doc_type,
+        ImportFieldAlias.field == field_value,
+        ImportFieldAlias.alias == payload.alias,
     )
+    if payload.supplier_id:
+        existing_query = existing_query.filter(
+            ImportFieldAlias.supplier_id == payload.supplier_id
+        )
+    else:
+        existing_query = existing_query.filter(ImportFieldAlias.supplier_id.is_(None))
+    existing = existing_query.first()
     if existing is not None:
         if existing.supplier_id:
             supplier_name = _supplier_names(db, [existing]).get(str(existing.supplier_id))
-            scope = f" ({supplier_name})" if supplier_name else " (another supplier's row)"
+            scope = f" ({supplier_name})" if supplier_name else " (this supplier)"
         else:
             scope = " (shared)"
         raise AppException(

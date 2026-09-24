@@ -141,8 +141,9 @@ def save(
     nothing for either reader). A field that matches NONE of the requested doc types is a
     genuine mistake - unknown to every reader asked - and is refused, 422.
 
-    Insert targets the SUPPLIER partial index (`uq_import_field_alias_supplier`,
-    migration `ifa_supplier_uniq`, owner ruling A, review round 2): a different supplier
+    Insert targets `uq_import_field_alias_supplier` (migration `ifa_supplier_uniq`, owner
+    ruling A, review round 2 - a PLAIN, non-partial index, not partial the way its shared
+    counterpart is; see that migration's own docstring for why): a different supplier
     saving the SAME header now gets its OWN row rather than losing the `ON CONFLICT` race
     against an earlier supplier's (R11) - the old plain triple had no `supplier_id` in it,
     so a second supplier's identical save silently no-opped and that supplier never got a
@@ -174,20 +175,25 @@ def save(
             db.query(ImportFieldAlias).filter(ImportFieldAlias.id.in_(stale_ids)).delete(
                 synchronize_session=False
             )
-        # A SHARED row already answering this exact (doc_type, field, alias) makes a
-        # supplier row redundant - skip the insert rather than duplicate what already
-        # resolves the same way for this supplier too (R11's kept half).
-        shared_exists = (
-            db.query(ImportFieldAlias.id)
+        # A SHARED row already answering this exact (doc_type, field) for the SAME
+        # normalised header makes a supplier row redundant - skip the insert rather than
+        # duplicate what already resolves the same way for this supplier too (R11's kept
+        # half). Matched by the normalised key (review round 3, R19), same reason as the
+        # DELETE above: a literal `alias == header` comparison missed a header that only
+        # differs by case or whitespace from the shared row's own spelling ('Qty ' vs the
+        # seeded 'QTY'), so the check never fired and a redundant supplier row landed
+        # anyway.
+        shared_rows = (
+            db.query(ImportFieldAlias.alias)
             .filter(
                 ImportFieldAlias.doc_type == doc_type,
                 ImportFieldAlias.field == field_value,
-                ImportFieldAlias.alias == header,
                 ImportFieldAlias.supplier_id.is_(None),
             )
-            .first()
+            .all()
         )
-        if shared_exists is not None:
+        shared_exists = any(normalize_header(row.alias) == target_key for row in shared_rows)
+        if shared_exists:
             return
         # `uq_import_field_alias_supplier` is a PLAIN (non-partial) index - Postgres only
         # infers a partial index as an ON CONFLICT arbiter when the predicate is repeated

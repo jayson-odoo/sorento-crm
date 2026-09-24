@@ -31,9 +31,11 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.scm import SupplierInventory
+from app.services.error_handler import AppException
 from app.services.scm.supplier_code_composer import WordList
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
 from app.services.scm.supplier_scope import (
+    is_uuid,
     supplier_check as _supplier_check,
     supplier_mismatch_warning as _supplier_mismatch_warning,
 )
@@ -193,7 +195,16 @@ def preview(
     absent (the standalone stock-list page, and the "Plan a container" dialog - which previews
     before the plan it will apply into exists, so there is nothing of that plan's own to
     count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
+
+    A `supplier_id` that is not a real id at all (review round 3, R18) is refused here,
+    format-only - not `assert_supplier`'s company-scoped existence check, which this route
+    has never done and is not this fix's call to add - because `SupplierInventory.
+    supplier_id == supplier_id` below is a raw comparison against a UUID column: an
+    unparseable string reaches Postgres and raises `InvalidTextRepresentation`, a 500, not
+    a form mistake.
     """
+    if not is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
     parsed = _parse(db, data, supplier_id, header_row)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
     held_scope = db.query(SupplierInventory).filter(

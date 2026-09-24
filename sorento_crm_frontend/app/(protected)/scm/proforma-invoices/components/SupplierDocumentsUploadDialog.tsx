@@ -324,11 +324,26 @@ export function SupplierDocumentsUploadDialog({
   // so a supplier change is indistinguishable from a brand-new file to this guard: every
   // current file re-probes the moment the key it would need has never been seen before.
   const probedKeysRef = useRef<Set<string>>(new Set());
+  // Which supplier the keys above were recorded for (review round 3, V6b): a set that
+  // only ever GROWS meant cycling A -> B -> A treated A's key, still sitting in the set
+  // from the first visit, as "already probed" the second time too, and the mapper kept
+  // showing B's stale columns under A's name. Cleared whenever `supplierId` itself
+  // changes, so a revisited supplier is indistinguishable from a first-time one.
+  const lastProbedSupplierIdRef = useRef<string | null>(null);
 
   // Probe every file's headers the moment it lands (F3/AC-M9: "before Test"), and drop the
   // entry for a file the operator removed from the drop zone.
   useEffect(() => {
     if (!supplierId) return;
+    // A cancelled-flag guard (V6b, same pattern `PlanContainerDialog` already uses): the
+    // supplier can change again before a probe fired under the PREVIOUS one resolves, and
+    // whichever response happened to land last used to win regardless of which supplier
+    // it was actually for.
+    let cancelled = false;
+    if (lastProbedSupplierIdRef.current !== supplierId) {
+      probedKeysRef.current.clear();
+      lastProbedSupplierIdRef.current = supplierId;
+    }
     const names = new Set(files.map((f) => f.name));
     setMapByFile((prev) => {
       let changed = false;
@@ -357,6 +372,7 @@ export function SupplierDocumentsUploadDialog({
       }));
       void probeImportMapping({ file, supplierId, docTypes: SUPPLIER_DOCUMENT_MAP_DOC_TYPES })
         .then((res) => {
+          if (cancelled) return;
           setMapByFile((prev) => ({
             ...prev,
             [file.name]: {
@@ -371,6 +387,7 @@ export function SupplierDocumentsUploadDialog({
           }));
         })
         .catch((e) => {
+          if (cancelled) return;
           setMapByFile((prev) => ({
             ...prev,
             [file.name]: {
@@ -381,6 +398,9 @@ export function SupplierDocumentsUploadDialog({
           }));
         });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [files, supplierId]);
 
   const mapUnresolvedByFile = (fileName: string): string[] => {

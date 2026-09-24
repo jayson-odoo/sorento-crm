@@ -70,6 +70,17 @@ async def read_upload_retained(file: UploadFile) -> RetainedUpload:
             ),
         )
     source_name = file.filename or "upload.xlsx"
+    # Security review, round 3: `file.size` - Starlette's own running total from the
+    # multipart parse, set BEFORE this handler ever touches the body - is checked first
+    # when present, so an oversized upload 413s without this module also copying the whole
+    # body into a `bytes` object just to measure it. The `len(source_bytes)` check below
+    # stays as the real enforcement for the case `.size` is absent (an older client that
+    # never advertises it).
+    if file.size is not None and file.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="The uploaded file exceeds the 25 MB limit.",
+        )
     source_bytes = await file.read()
     if not source_bytes:
         raise HTTPException(

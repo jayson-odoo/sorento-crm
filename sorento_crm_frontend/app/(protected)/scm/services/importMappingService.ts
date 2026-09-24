@@ -22,9 +22,12 @@
  * merges their field lists and required fields into the ONE section the dialog shows, and
  * `save` writes the same rows under both `import_field_alias.doc_type`s.
  *
- * Permission: `require_any_permission(["scm.proforma_invoice.upload", "scm.reorder.run"])`
- * - the union of the two real preview endpoints' own guards (proforma invoice / packing
- * list, and the stock list), since a caller who reached either dialog already holds one.
+ * Permission: PER doc type, not one blanket gate (review round 1, R2) - each requested doc
+ * type in `doc_types` is checked against exactly the permission(s) its OWN upload endpoint
+ * accepts (`scm.proforma_invoice.upload` or `scm.reorder.run` for proforma_invoice /
+ * packing_list, `scm.reorder.run` only for supplier_inventory), so a proforma-invoice-only
+ * caller cannot probe or save a stock-list layout through this endpoint even though
+ * `/scm/supplier-inventory/*` itself would refuse them directly.
  *
  * Phase 1's mock (the field lists, `NEW_YANGGANG_HEADERS`, `buildMockProbe`,
  * `__resetImportMappingMockForTests`) is retired (review round 1, reviewer M5): both real

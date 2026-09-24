@@ -42,7 +42,7 @@ export interface ImportMappingColumn {
    *  not read by this component, which derives its own live "still needed" line from
    *  CURRENT picks (`unresolvedRequiredFields`) rather than this static, probe-time flag;
    *  carried on the type so a caller inspecting the raw probe sees it too. Optional so a
-   *  hand-built probe (a spec, `buildMockProbe`) need not state it. */
+   *  hand-built probe (a spec fixture, e.g. this file's own tests) need not state it. */
   required?: boolean;
 }
 

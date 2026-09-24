@@ -92,10 +92,31 @@ def downgrade() -> None:
     bind = op.get_bind()
     bind.execute(sa.text("DROP INDEX IF EXISTS uq_import_field_alias_supplier"))
     bind.execute(sa.text("DROP INDEX IF EXISTS uq_import_field_alias_shared"))
-    # The plain triple cannot come back while two SUPPLIER-scoped rows share a
-    # (doc_type, field, alias) the split allowed (a second supplier's own row for a
-    # header another supplier had already claimed, R11's whole point) - delete the
-    # newer duplicate per triple, keep the oldest, before re-adding the constraint.
+    # The plain triple cannot come back while two rows share a (doc_type, field, alias)
+    # the split allowed. Two passes, in order (review round 3, R17 - the original single
+    # pass only ever considered a SUPPLIER row for deletion, and only when it was the
+    # NEWER of a same-triple pair, so a supplier row OLDER than a same-triple SHARED row
+    # matched neither condition and both survived):
+    #
+    # 1. A shared row (`supplier_id IS NULL`) already answers for every supplier on this
+    #    triple, so it always wins - every supplier row on the same triple is removed
+    #    regardless of which is older (unlike pass 2, age does not decide here).
+    bind.execute(
+        sa.text(
+            """
+            DELETE FROM import_field_alias a
+            WHERE a.supplier_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM import_field_alias b
+                  WHERE b.supplier_id IS NULL
+                    AND b.doc_type = a.doc_type AND b.field = a.field AND b.alias = a.alias
+              )
+            """
+        )
+    )
+    # 2. Among what is left (no shared row involved), two different suppliers' own rows
+    #    for the same triple - a second supplier's own row for a header another supplier
+    #    had already claimed, R11's whole point - keep the oldest, delete the newer.
     bind.execute(
         sa.text(
             """
