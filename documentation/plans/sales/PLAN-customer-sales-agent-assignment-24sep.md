@@ -16,7 +16,7 @@ Customer (dealer) has one sales agent. Sales agent has one WhatsApp contact. Not
 
 ## Change (one seam)
 
-1. Backend: `sales_agent_id: UUID | None` on `CustomerUpdate` and `CustomerCreate` if it exists; `sales_agent_id`, `sales_agent_code`, `sales_agent_name` (person_label) on `CustomerResponse` and on the list serializer registered in `list_query_registry.py` for customers. Validation: the agent must exist and be visible under company scope; 422 otherwise. Permission: existing `order_management.customers.edit`.
+1. Backend: `sales_agent_id: UUID | None` on `CustomerUpdate` and `CustomerCreate` if it exists; `sales_agent_id`, `sales_agent_code`, `sales_agent_name` (person_label) on `CustomerResponse` and on the list serializer registered in `list_query_registry.py` for customers. Validation: the agent must exist and be visible under company scope; 422 otherwise. Permission: `order_management.customers.edit` / `.add` exist in the registry but the PUT/POST customer routes do not enforce them today (review PR #1177 round 1, security item 2) - gating them is an auth change, out of scope for this small-fix lane, tracked as a follow-up in #1190.
 2. Frontend: `sales_agent_id` + display names on `Customer` / `CustomerFormData` types; `SearchableSelect` "Sales agent", clearable, options from the sales agent service (search by code and name, no capped dropdown: reuse the existing sales agents select pattern or a `useSalesAgentsSelect` that queries by term); read-only value on `CustomerDetail` in the same position as the form (view = edit layout); a "Sales agent" column on the customers DataGrid with explicit `size`, truncate + title.
 3. No UUID visible anywhere: show `code - name`.
 

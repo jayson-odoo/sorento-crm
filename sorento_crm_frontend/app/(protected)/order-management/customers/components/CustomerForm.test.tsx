@@ -158,4 +158,18 @@ describe('CustomerForm - Sales agent', () => {
     const option = await screen.findByRole('option', { name: /RETIRED.*Old Agent/ });
     expect(option).toHaveAttribute('aria-disabled', 'true');
   });
+
+  it('never labels the current agent inactive while the options query is still loading', async () => {
+    // Review round 2, new finding 1: while `agentOptions` is loading (or errors, or 403s -
+    // PUT is ungated today), `options` reads as an empty array, same as a genuinely
+    // deactivated agent - and used to synthesize a misleading "(inactive)" label on an
+    // agent that is perfectly active, just not loaded yet. Never resolves during this test.
+    getCustomer.mockResolvedValue({ ...CUSTOMER });
+    getCustomerSalesAgentsSelect.mockReturnValue(new Promise(() => {}));
+    render(<CustomerForm customerId="cust-1" />);
+
+    const combo = await screen.findByRole('combobox', { name: 'Sales Agent' });
+    expect(combo).not.toHaveTextContent('(inactive)');
+    expect(combo).not.toHaveTextContent('SEAN I');
+  });
 });

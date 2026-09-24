@@ -44,15 +44,23 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   // still show it, or the trigger falls back to the placeholder and the next save silently
   // clears the assignment (review PR #1177, should-fix item 2). Shown disabled: visible,
   // not re-selectable once cleared.
+  //
+  // Gated on `agentOptions.isSuccess`: while the options query is still loading, or after
+  // it errors (or 403s - PUT is ungated today, review round 2 security item 2), `options`
+  // reads as an empty array too, which is indistinguishable from "this id really is
+  // inactive" - and would label an ACTIVE agent "(inactive)" for the whole time the list
+  // has not loaded (review round 2, new finding 1).
   const agentSelectOptions = useMemo(() => {
     const base = agentOptions.options;
     const currentId = customer?.sales_agent_id;
-    if (!currentId || base.some((o) => o.value === currentId)) return base;
+    if (!agentOptions.isSuccess || !currentId || base.some((o) => o.value === currentId)) {
+      return base;
+    }
     const label = customer?.sales_agent_name
       ? `${customer.sales_agent_code} - ${customer.sales_agent_name} (inactive)`
       : `${customer?.sales_agent_code ?? ''} (inactive)`;
     return [...base, { value: currentId, label, disabled: true }];
-  }, [agentOptions.options, customer]);
+  }, [agentOptions.options, agentOptions.isSuccess, customer]);
 
   const form = useForm<CustomerSchemaType>({
     resolver: zodResolver(CustomerSchema),
