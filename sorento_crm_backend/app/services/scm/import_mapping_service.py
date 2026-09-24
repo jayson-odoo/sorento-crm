@@ -141,15 +141,15 @@ def save(
     nothing for either reader). A field that matches NONE of the requested doc types is a
     genuine mistake - unknown to every reader asked - and is refused, 422.
 
-    `ON CONFLICT (doc_type, field, alias) DO NOTHING` (the table's own triple, unchanged -
-    "no new table, no migration"): that triple has no `supplier_id` in it by design (see
-    the model's own comment), so a header already aliased - shared, or another supplier's
-    own row - to the SAME field cannot be re-inserted for this supplier too. The insert
-    silently does nothing in that case rather than erroring, and reading still works: the
-    existing row (whoever it belongs to) already answers this supplier's header the same
-    way theirs would have. Only a genuinely NEW (doc_type, field, alias) triple - the
-    common case, since two suppliers rarely write the exact same header text - actually
-    lands a new row.
+    Insert targets the SUPPLIER partial index (`uq_import_field_alias_supplier`,
+    migration `ifa_supplier_uniq`, owner ruling A, review round 2): a different supplier
+    saving the SAME header now gets its OWN row rather than losing the `ON CONFLICT` race
+    against an earlier supplier's (R11) - the old plain triple had no `supplier_id` in it,
+    so a second supplier's identical save silently no-opped and that supplier never got a
+    row of their own. Before inserting, a SHARED row (`supplier_id IS NULL`) answering the
+    exact same (doc_type, field, alias) is checked for and, if one exists, the insert is
+    skipped entirely - the shared row already answers this supplier's header the same way
+    theirs would have, so no redundant supplier row is written (R11's kept half).
     """
     known_by_doc_type = {doc_type: set(canonical_fields(doc_type)) for doc_type in doc_types}
 
@@ -174,10 +174,31 @@ def save(
             db.query(ImportFieldAlias).filter(ImportFieldAlias.id.in_(stale_ids)).delete(
                 synchronize_session=False
             )
+        # A SHARED row already answering this exact (doc_type, field, alias) makes a
+        # supplier row redundant - skip the insert rather than duplicate what already
+        # resolves the same way for this supplier too (R11's kept half).
+        shared_exists = (
+            db.query(ImportFieldAlias.id)
+            .filter(
+                ImportFieldAlias.doc_type == doc_type,
+                ImportFieldAlias.field == field_value,
+                ImportFieldAlias.alias == header,
+                ImportFieldAlias.supplier_id.is_(None),
+            )
+            .first()
+        )
+        if shared_exists is not None:
+            return
+        # `uq_import_field_alias_supplier` is a PLAIN (non-partial) index - Postgres only
+        # infers a partial index as an ON CONFLICT arbiter when the predicate is repeated
+        # verbatim, and this insert always carries a non-NULL `supplier_id`, so the plain
+        # four-column tuple is the correct, simpler target (see the model's own note).
         stmt = (
             pg_insert(ImportFieldAlias)
             .values(doc_type=doc_type, field=field_value, alias=header, supplier_id=supplier_id)
-            .on_conflict_do_nothing(constraint="uq_import_field_alias_triple")
+            .on_conflict_do_nothing(
+                index_elements=["doc_type", "field", "alias", "supplier_id"]
+            )
         )
         db.execute(stmt)
 
