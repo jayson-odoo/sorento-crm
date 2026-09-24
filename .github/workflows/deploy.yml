@@ -445,7 +445,20 @@ jobs:
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             --splits 3 --group ${{ matrix.shard }} \
+            --store-durations --durations-path .test_durations.shard${{ matrix.shard }}.json \
             -m "not serial_ddl" $IGNORES tests/scm/
+
+      # Feeds `.test_durations` (see test-backend): pytest-split writes only the
+      # durations of the tests THIS shard ran, so each shard's artifact is a
+      # partial file - merged into one committed file by hand, same as the
+      # main suite's.
+      - name: Upload SCM shard durations artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scm-durations-${{ matrix.shard }}
+          path: sorento_crm_backend/.test_durations.shard${{ matrix.shard }}.json
+          retention-days: 7
 
       - name: Run SCM serial_ddl tests serially (executing gate)
         if: matrix.shard == 1
@@ -611,9 +624,24 @@ jobs:
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 6"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             --splits 6 --group ${{ matrix.shard }} \
+            --store-durations --durations-path .test_durations.shard${{ matrix.shard }}.json \
             --ignore-glob='tests/test_migration_*.py' \
             -m "not serial_ddl" \
             $IGNORES --ignore=tests/scm tests/
+
+      # Feeds the committed `.test_durations` file below: each shard's own
+      # `--store-durations` output is a PARTIAL file (only the tests IT ran),
+      # merged by hand into one file after downloading every shard's artifact
+      # (`gh run download <run id>`, then a small script sums them into one
+      # sorted dict keyed by nodeid). Refresh when the longest shard drifts
+      # more than ~3 min above the shortest.
+      - name: Upload backend shard durations artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-${{ matrix.shard }}
+          path: sorento_crm_backend/.test_durations.shard${{ matrix.shard }}.json
+          retention-days: 7
 
       # Migration tests run serially, outside the xdist pool, on one shard only.
       #
