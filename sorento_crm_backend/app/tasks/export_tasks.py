@@ -131,8 +131,8 @@ def generate_packing_list_xlsx(download_id: str, shipment_id: str) -> dict:
     """
     db = SessionLocal()
     from app.models.base import UNSET, get_company_scope
-    from app.models.company import UserCompany
     from app.models.procurement import InboundShipment
+    from app.services.company_scope_resolver import resolve_user_grant_ids
 
     caller_scope = get_company_scope(db)
     svc = DownloadService(db)
@@ -160,16 +160,13 @@ def generate_packing_list_xlsx(download_id: str, shipment_id: str) -> dict:
                 "refusing to export."
             )
 
-        is_member = (
-            db.query(UserCompany.id)
-            .filter(
-                UserCompany.user_id == str(row.user_id),
-                UserCompany.company_id == str(company_id),
-            )
-            .first()
-            is not None
-        )
-        if not is_member:
+        # S1 (review round 2, blocker): the PLATFORM'S OWN scope resolver, not a raw
+        # `UserCompany` lookup - `resolve_user_grant_ids` treats a superadmin/admin as a
+        # member of EVERY company (the same rule the active-company switcher and every
+        # other screen already honour), so an admin's export of a shipment they hold no
+        # explicit membership row for still renders, exactly as it would through the
+        # normal request path.
+        if str(company_id) not in resolve_user_grant_ids(db, str(row.user_id)):
             raise ValueError(
                 f"User {row.user_id} is not a member of shipment {shipment_id}'s "
                 "company; refusing to export."

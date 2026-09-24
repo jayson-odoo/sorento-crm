@@ -1589,11 +1589,24 @@ def _company_name_for(db: Session, company_id: Optional[str]) -> Optional[str]:
     return company.name if company else None
 
 
+def _company_names(db: Session, company_ids: list[str]) -> dict[str, Optional[str]]:
+    """Company name per id, in ONE query (S4, review round 2 - the same per-page
+    batching `_supplier_labels` already gives suppliers): a caller listing several
+    invoices resolves every row's consignee (R-B: always the company) from this dict
+    instead of `_company_name_for` running a fresh `companies` query per row."""
+    ids = [cid for cid in set(company_ids) if cid]
+    if not ids:
+        return {}
+    rows = db.query(Company.id, Company.name).filter(Company.id.in_(ids)).all()
+    return {str(cid): name for cid, name in rows}
+
+
 def _convert_carry(
     db: Session,
     invoices: list[ProformaInvoice],
     *,
     rows_by_invoice: Optional[dict[str, list]] = None,
+    company_name: Optional[str] = None,
 ) -> dict[str, Optional[str]]:
     """Container/seal/SO/consignee exactly as `convert_to_draft_shipment` (B1) will write
     them onto the draft - shared by it and `serialize` (B3), so the dialog's "Carried onto
@@ -1607,6 +1620,12 @@ def _convert_carry(
     never a "BL" (6 Sep ruling, unchanged). R-B (24 Sep): consignee is ALWAYS the invoices'
     OWN COMPANY name - never `consignee_ref`, which is read off the sheet and ignored here -
     and carries regardless of whether the container agrees.
+
+    `company_name`, when given (S4, review round 2), is used AS THE ANSWER rather than
+    resolved here - `serialize`'s own per-page `_company_names` batch already has it, and
+    a caller with several invoices to list must not pay for a fresh `companies` query
+    per row just because this function alone ran one. `None` falls back to the single-
+    invoice lookup, unchanged (`convert_to_draft_shipment`'s own one-shot call).
     """
     def _pi_container(inv: ProformaInvoice) -> Optional[str]:
         if rows_by_invoice:
@@ -1625,8 +1644,11 @@ def _convert_carry(
         seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
         so = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
 
-    company_id = next((inv.company_id for inv in invoices if inv.company_id), None)
-    consignee = _company_name_for(db, company_id)
+    if company_name is not None:
+        consignee = company_name
+    else:
+        company_id = next((inv.company_id for inv in invoices if inv.company_id), None)
+        consignee = _company_name_for(db, company_id)
     return {
         "container": container,
         "seal": seal,
@@ -1762,6 +1784,10 @@ def convert_to_draft_shipment(
         .order_by(ProformaInvoiceLine.invoice_id, ProformaInvoiceLine.line_no)
         .all()
     )
+    #: N-7 (review round 2 nit): which LINE NUMBER to name in a covered-sibling's own
+    #: skip note - `line.id` -> `line.line_no`, so the note can say "line N" rather than
+    #: an id nobody reads.
+    lines_by_id: dict[str, ProformaInvoiceLine] = {str(l.id): l for l in lines}
 
     # Group by (product, supplier) - the same grain a real packing list writes on, and the
     # one that lets two PIs from the same factory naming the same model become one shipment
@@ -1815,6 +1841,9 @@ def convert_to_draft_shipment(
     #: key (three lines of one product, one packing row boxing all of them - the fallback
     #: is for a product the packing list never mentions at all, not this one).
     matched_products_by_invoice: dict[str, set[str]] = {}
+    #: N-7: (invoice_id, product_key) -> the line_no of the FIRST matched-row line found
+    #: for it - named in a covered sibling's own skip note.
+    covering_line_no: dict[tuple[str, str], int] = {}
     for row in (
         db.query(ProformaInvoicePackingLine)
         .filter(ProformaInvoicePackingLine.proforma_invoice_id.in_(ids))
@@ -1828,9 +1857,13 @@ def convert_to_draft_shipment(
             packing_rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
             product_key = str(row.product_id or row.product_set_id or "")
             if product_key:
-                matched_products_by_invoice.setdefault(
-                    str(row.proforma_invoice_id), set()
-                ).add(product_key)
+                invoice_id = str(row.proforma_invoice_id)
+                matched_products_by_invoice.setdefault(invoice_id, set()).add(product_key)
+                covering_key = (invoice_id, product_key)
+                if covering_key not in covering_line_no:
+                    covering_line = lines_by_id.get(str(row.proforma_invoice_line_id))
+                    if covering_line is not None:
+                        covering_line_no[covering_key] = covering_line.line_no
         elif row.match_state in ("dismissed", "unmatched"):
             # `description_en` before `description` (S2, text glossary lane, R4) - the
             # customs-facing note reads English wherever the glossary knows it.
@@ -1918,6 +1951,15 @@ def convert_to_draft_shipment(
         if line_product_key and line_product_key in matched_products_by_invoice.get(
             str(ln.invoice_id), set()
         ):
+            # N-7 (review round 2 nit): named rather than silently dropped, so the
+            # operator sees WHY this line produced no shipment line of its own.
+            covering_no = covering_line_no.get((str(ln.invoice_id), line_product_key))
+            skipped.append((
+                ln,
+                f"Covered by the packing rows of line {covering_no}."
+                if covering_no is not None
+                else "Covered by the packing rows of another line of this invoice.",
+            ))
             continue
 
         if ln.product_id is None and ln.product_set_id is None:
@@ -3115,6 +3157,9 @@ def list_for_supplier(
     labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
     volumes = _volumes(db, [str(r.id) for r in rows])
     placements = _quantities(db, [str(r.id) for r in rows])
+    # S4 (review round 2): one `companies` query for the whole page's consignees
+    # (R-B: always the invoice's own company), not one per row.
+    company_names = _company_names(db, [str(r.company_id) for r in rows if r.company_id])
     return {
         "data": [
             serialize(
@@ -3124,6 +3169,7 @@ def list_for_supplier(
                 supplier_labels=labels,
                 volumes=volumes,
                 placements=placements,
+                company_names=company_names,
             )
             for r in rows
         ],
@@ -3169,13 +3215,17 @@ def serialize(
     supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
     volumes: Optional[dict[str, tuple[Optional[float], int]]] = None,
     placements: Optional[dict[str, dict]] = None,
+    company_names: Optional[dict[str, Optional[str]]] = None,
 ) -> dict:
     """One invoice as the API returns it: codes and names, never a bare identifier.
 
-    `supplier_labels`, `volumes` and `placements` are the page's own lookups, resolved once
-    by a caller listing several invoices; a single serialization resolves its own. Each is
-    per-page rather than per-row because each is one query that would otherwise be asked
-    twenty-five times for the same answer.
+    `supplier_labels`, `volumes`, `placements` and `company_names` are the page's own
+    lookups, resolved once by a caller listing several invoices; a single serialization
+    resolves its own. Each is per-page rather than per-row because each is one query that
+    would otherwise be asked twenty-five times for the same answer - `company_names` (S4,
+    review round 2) is `_company_names`'s own batch, keyed by `company_id`, so the R-B
+    consignee (ALWAYS the invoice's own company) costs one `companies` query for a whole
+    page rather than one per row.
 
     NOT here: a container size, a fill percentage, an "over by" (S5, ruling 1). Capacity is a
     property of the CONTAINER this invoice's goods end up sharing with however many others,
@@ -3189,6 +3239,10 @@ def serialize(
         )
     else:
         supplier_code, supplier_name = _supplier_label(db, str(invoice.supplier_id))
+    if company_names is not None:
+        consignee_name = company_names.get(str(invoice.company_id)) if invoice.company_id else None
+    else:
+        consignee_name = _company_name_for(db, invoice.company_id)
     out: dict[str, Any] = {
         "id": str(invoice.id),
         "supplier_id": str(invoice.supplier_id),
@@ -3207,7 +3261,7 @@ def serialize(
         "seal_no": invoice.seal_ref,
         # R-B (24 Sep): the consignee is ALWAYS the invoice's own company, never the
         # sheet's `consignee_ref` (kept on the row, unused for display - B4).
-        "consignee": _company_name_for(db, invoice.company_id),
+        "consignee": consignee_name,
         "bl_no": invoice.bl_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,
@@ -3244,7 +3298,11 @@ def serialize(
         out["convert_carry"] = {
             k: v
             for k, v in _convert_carry(
-                db, [invoice], rows_by_invoice={str(invoice.id): packing_rows}
+                db, [invoice], rows_by_invoice={str(invoice.id): packing_rows},
+                # N-5/S4: reuse the `consignee_name` already resolved above rather than
+                # have `_convert_carry` run its own second `companies` query for the
+                # same invoice.
+                company_name=consignee_name,
             ).items()
             if k != "conflict"
         }

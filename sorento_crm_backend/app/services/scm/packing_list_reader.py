@@ -355,6 +355,7 @@ def _split_label_pairs(
     fields: tuple[str, ...] = (),
     *,
     any_label: bool = False,
+    strict: bool = False,
 ) -> list[tuple[str, str, Optional[str]]]:
     """Every `label：value` pair in ONE string (design A1,
     PLAN-pi-header-fields-convert-fixes-24sep.md) - DAFUYUAN's own header cell states three
@@ -389,15 +390,24 @@ def _split_label_pairs(
     `any_label` path) - an unrelated colon inside running text never matches anything, so
     it is never mistaken for one.
 
-    R3(a) (review round 1, note-row regression): in the READER path (`any_label=False`), a
-    label is accepted only at the START of the cell or immediately after the previous
-    accepted pair's value - the FIRST colon in the cell must resolve, or the whole cell is
-    abandoned (a mid-table note like `Note: see PI No.: 123` must never let a LATER,
-    unrelated colon resolve into a label once the leading text already failed to). Once one
-    label has been accepted, a later unresolved colon still merges into the running value as
-    before - only the very first one is a hard gate. `any_label=True` keeps the old,
-    permissive behaviour (an unresolved colon is simply skipped) so the mapper still lists
-    every unmapped label for the operator to answer.
+    R3(a)/S2/S3 (review rounds 1-2, note-row regression): `strict=True` is the READER's
+    MID-TABLE call only (after the table header row) - a label is accepted only at the
+    START of the cell (nothing but whitespace before the resolving span) or immediately
+    after the previous accepted pair's value, so a passing mention of a real label mid-
+    sentence never opens a document: the FIRST colon must resolve AND that resolution
+    must start the cell (`Please refer PI No.: 123`'s "PI No." resolves via the lookback,
+    but "Please refer " sits in front of it - disqualified, same as `Note: see PI No.:
+    123`, whose first colon does not resolve at all). Once one label has been accepted,
+    a later unresolved colon still merges into the running value as before - only the
+    very first PAIR is gated this way.
+
+    `strict=False` (the READER's PRE-HEADER call, and the default) is permissive: an
+    unresolved colon is simply skipped, never disqualifies the cell - a genuine header-
+    block cell may carry an unmapped prefix ahead of a real label (`Ref: X  提单号：
+    OOLU1`, S3) and must still yield `bl_no`, the same way a letterhead block always
+    could before R3(a). `any_label=True` (the MAPPER's own probe path) is permissive too,
+    for the same reason, plus it keeps every unmapped label (`field` is then `None`) so
+    the operator can map it.
     """
     if any_label and len(text) > _MAX_LABEL_CELL_CHARS:
         text = text[:_MAX_LABEL_CELL_CHARS]
@@ -425,13 +435,19 @@ def _split_label_pairs(
                 break
         if label_start is None:
             if not any_label:
-                if not boundaries:
+                if strict and not boundaries:
                     # R3(a): the cell's FIRST colon failed to resolve - a note, not a
                     # header block. Nothing later in the same cell rescues it.
                     return []
                 continue
             label_start = tokens[-1].start()
             label_field = None
+        elif strict and not boundaries:
+            # S2/S3: the FIRST pair's label must START the cell - text ahead of it
+            # (beyond whitespace) means this is prose that happens to CONTAIN a known
+            # label, not a header line introducing one.
+            if text[: cut + label_start].strip():
+                return []
         boundaries.append((cut + label_start, pos, label_field))
         cut = pos + 1
     if not boundaries:
@@ -458,7 +474,8 @@ def _split_label_pairs(
 
 
 def _labelled(
-    raw: list, resolver: AliasResolver, fields: tuple[str, ...] = _BLOCK_FIELDS
+    raw: list, resolver: AliasResolver, fields: tuple[str, ...] = _BLOCK_FIELDS,
+    *, strict: bool = False,
 ) -> dict[str, str]:
     """Block-level values written as `label: value` or `label | value` in adjacent cells.
 
@@ -466,6 +483,13 @@ def _labelled(
     ask for its own five). A row that maps a label to nothing usable is ignored rather than
     recorded as blank, because a blank container number and an absent one have to stay the
     same thing here (AC-G2).
+
+    `strict` (S2/S3, review round 2) is the caller's own choice of which `_split_label_
+    pairs` gate applies: `True` for a MID-TABLE call (a note row's passing "PI No.:"
+    mention must never open a document), `False` (the default) for the PRE-HEADER
+    letterhead block, where an unmapped prefix ahead of a real label (`Ref: X  提单号：
+    OOLU1`) is common and must not throw the whole cell away. See `_split_label_pairs`'s
+    own docstring for the exact rule each mode applies.
 
     Every `label：value` pair inside ONE cell is read by `_split_label_pairs` (A1) - this
     also covers the two-fields-side-by-side shape (`箱号:WHSU6243088 / 封签号:WHA4528193`,
@@ -489,7 +513,7 @@ def _labelled(
         # to the splitter - only its OWN stringified form ever grows spurious colons
         # (`00:00:00`) that resolve to nothing; a genuine label is always text.
         if isinstance(cell, str):
-            pairs = _split_label_pairs(label, resolver, fields)
+            pairs = _split_label_pairs(label, resolver, fields, strict=strict)
             if pairs:
                 for _, value, f in pairs:
                     # R1: a pair whose label was saved as `ignore` still bounded the
@@ -914,7 +938,7 @@ def read_workbook(
             # `pending` rather than acted on immediately: a REPEATED header row right after
             # this one is what actually starts the block (existing shape, above), and
             # deciding here too would create it twice.
-            found = _labelled(raw, resolver)
+            found = _labelled(raw, resolver, strict=True)
             if found:
                 pending.update(found)
                 if current is not None and current.lines:

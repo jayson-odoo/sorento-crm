@@ -592,7 +592,7 @@ def read_workbook(
             # `pending` rather than acted on immediately: a REPEATED header row right after
             # this one is what actually starts the document (existing shape), and deciding
             # here too would create it twice.
-            labelled = _labelled(raw, resolver, _BLOCK_FIELDS)
+            labelled = _labelled(raw, resolver, _BLOCK_FIELDS, strict=True)
             if labelled:
                 _absorb(pending, labelled, row_number)
                 if current is not None and current.lines:
