@@ -256,4 +256,31 @@ describe('ImportColumnMapper', () => {
       expect.arrayContaining([{ header: '柜号', field: 'container_no' }]),
     );
   });
+
+  it('V2 (fix round 1, PLAN-pi-header-fields-convert-fixes-24sep-fixes-24sep.md): offers only the field choices the probe itself states, not a hard-coded superset', () => {
+    // A packing-list-only probe's own block fields (`packing_list_reader._BLOCK_FIELDS`)
+    // carry no `currency` at all - Currency is a proforma-invoice-only concept. The
+    // mapper's `HEADER_FIELD_CHOICES` constant is fixed regardless of doc type today, so
+    // a packing-list upload's "Header fields" section still offers Currency, which no
+    // reader for that doc type will ever save.
+    const probe = {
+      ...probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: 'item_code', source: 'supplier' }],
+        14,
+        [{ row: 13, label: '货柜号', sample: 'FSCU9304169', field: null, source: 'none' }],
+      ),
+      header_field_choices: [
+        { field: 'pi_number', label: 'PI number' },
+        { field: 'invoice_date', label: 'Invoice date' },
+        { field: 'bl_no', label: 'BL' },
+        { field: 'container_no', label: 'Container' },
+        { field: 'seal_no', label: 'Seal' },
+      ],
+    } as ImportMappingProbe;
+    renderMapper(probe);
+
+    const selects = screen.getAllByRole('combobox');
+    openSelect(selects[selects.length - 1]);
+    expect(screen.queryByText('Currency')).toBeNull();
+  });
 });

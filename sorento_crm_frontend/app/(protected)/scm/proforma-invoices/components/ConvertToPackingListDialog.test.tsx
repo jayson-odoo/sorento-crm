@@ -243,4 +243,47 @@ describe('ConvertToPackingListDialog', () => {
     expect(carryLine?.textContent).not.toContain('WRONG-BL');
     expect(carryLine?.textContent).not.toContain('Wrong Co');
   });
+
+  it('V3 (fix round 1): "Carried onto the draft" omits a part that carries nothing, rather than printing "Container -"', () => {
+    // Only consignee carries (R-B: always the company, regardless of the container
+    // agreement) - container/seal/so are all null. The line must not claim "Container -"
+    // for a fact that is not being carried at all; today the `Container {...}` segment
+    // renders unconditionally with an em-dash fallback.
+    renderDialog({
+      ...({
+        convert_carry: {
+          container: null,
+          seal: null,
+          so: null,
+          consignee: 'Sorento',
+        },
+      } as Partial<ProformaInvoiceDetail>),
+    });
+
+    const carryLine = screen.getByText(/Carried onto the draft:/).closest('p');
+    expect(carryLine?.textContent).toContain('Sorento');
+    expect(carryLine?.textContent).not.toContain('Container');
+  });
+
+  it('V3 (fix round 1): container size, the carried line and search stay OUTSIDE the table\'s own scroll region', () => {
+    // C4/AC-C3: the footer stays visible at a short window because only the TABLE scrolls
+    // inside the dialog body - the container-size picker, the carried-onto line and the
+    // search box are all ABOVE that scroll region, not inside it. Today the whole
+    // `DialogBody` (everything from the container-size select down to the table) carries
+    // the ONE `overflow-y-auto` region, so the search box is a descendant of it.
+    renderDialog({
+      ...({
+        convert_carry: {
+          container: 'FSCU9304169', seal: null, so: null, consignee: 'Sorento',
+        },
+      } as Partial<ProformaInvoiceDetail>),
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search code or product...');
+    // Radix's `Dialog` portals its content onto `document.body`, not the RTL `container`
+    // the render call returns - the scroll region has to be found there instead.
+    const scrollRegion = document.body.querySelector('.overflow-y-auto');
+    expect(scrollRegion).not.toBeNull();
+    expect(scrollRegion?.contains(searchInput)).toBe(false);
+  });
 });
