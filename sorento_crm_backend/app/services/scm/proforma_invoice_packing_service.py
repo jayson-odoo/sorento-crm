@@ -77,13 +77,34 @@ def replace_packing_rows(
     known = _with_supplier_codes(db, known, supplier_id=supplier_id, codes=codes, actor=actor)
     dismissed = _dismissed_codes(db, supplier_id, codes)
 
+    # Ordered by LINE POSITION (C1, PLAN-pi-header-fields-convert-fixes-24sep.md) - a
+    # repeated product's Nth packing row (sheet order, `row_no`) binds the Nth invoice line
+    # of that product, never every row of it onto ONE line (the old `{product_id: line}`
+    # dict collapse, last-writer-wins over an unordered query).
     inv_lines = (
         db.query(ProformaInvoiceLine)
         .filter(ProformaInvoiceLine.invoice_id == invoice.id)
+        .order_by(ProformaInvoiceLine.line_no)
         .all()
     )
-    line_by_product = {str(l.product_id): l for l in inv_lines if l.product_id}
-    line_by_set = {str(l.product_set_id): l for l in inv_lines if l.product_set_id}
+    lines_by_product: dict[str, list[ProformaInvoiceLine]] = {}
+    lines_by_set: dict[str, list[ProformaInvoiceLine]] = {}
+    for l in inv_lines:
+        if l.product_id:
+            lines_by_product.setdefault(str(l.product_id), []).append(l)
+        if l.product_set_id:
+            lines_by_set.setdefault(str(l.product_set_id), []).append(l)
+    # Per-product/set cursor - the Nth row binds the Nth line; a SURPLUS row (more rows
+    # than the product has lines) binds to the LAST one (C1, ruling 6).
+    product_cursor: dict[str, int] = {}
+    set_cursor: dict[str, int] = {}
+
+    def _next_line(candidates: list[ProformaInvoiceLine], cursor: dict[str, int], key: str):
+        if not candidates:
+            return None
+        idx = cursor.get(key, 0)
+        cursor[key] = idx + 1
+        return candidates[idx] if idx < len(candidates) else candidates[-1]
 
     # A re-upload is a CORRECTION, never an append (AC-B5) - the whole set is replaced.
     db.query(ProformaInvoicePackingLine).filter(
@@ -131,9 +152,11 @@ def replace_packing_rows(
             row.product_set_id = product.get("product_set_id")
         matched_line = None
         if product and product.get("id"):
-            matched_line = line_by_product.get(str(product["id"]))
+            pid = str(product["id"])
+            matched_line = _next_line(lines_by_product.get(pid, []), product_cursor, pid)
         elif product and product.get("product_set_id"):
-            matched_line = line_by_set.get(str(product["product_set_id"]))
+            sid = str(product["product_set_id"])
+            matched_line = _next_line(lines_by_set.get(sid, []), set_cursor, sid)
         if code_upper in dismissed:
             row.match_state = "dismissed"
             if matched_line is not None:
@@ -181,6 +204,10 @@ def rebind_packing_rows(
     dismissal is `dismissed` whatever it resolves to. Every invoice a row moved on is
     re-rolled afterwards (AC-B8).
     """
+    # Ordered by (invoice, row_no) - C1: the Nth packing row of this code, WITHIN ONE
+    # invoice, binds the Nth line that code now resolves to on that same invoice, agreeing
+    # with `replace_packing_rows`'s own binder rather than picking the FIRST matching line
+    # for every row (the old bug: three rows of a repeated product all landing on line 1).
     rows = (
         db.query(ProformaInvoicePackingLine)
         .join(
@@ -190,6 +217,10 @@ def rebind_packing_rows(
         .filter(
             ProformaInvoice.supplier_id == str(supplier_id),
             ProformaInvoicePackingLine.item_code.ilike(code),
+        )
+        .order_by(
+            ProformaInvoicePackingLine.proforma_invoice_id,
+            ProformaInvoicePackingLine.row_no,
         )
         .all()
     )
@@ -202,21 +233,29 @@ def rebind_packing_rows(
     for line in (
         db.query(ProformaInvoiceLine)
         .filter(ProformaInvoiceLine.invoice_id.in_(invoice_ids))
+        .order_by(ProformaInvoiceLine.line_no)
         .all()
     ):
         lines_by_invoice.setdefault(str(line.invoice_id), []).append(line)
 
+    # Per-invoice cursor - a row's position among ITS OWN invoice's rows of this code is
+    # what decides which of that invoice's matching lines it binds (a repeated product on
+    # a DIFFERENT invoice starts its own count at zero).
+    cursor_by_invoice: dict[str, int] = {}
     for row in rows:
         row.product_id = product_id
         row.product_set_id = product_set_id
+        inv_id = str(row.proforma_invoice_id)
+        candidates = [
+            line for line in lines_by_invoice.get(inv_id, [])
+            if (product_id and str(line.product_id or "") == str(product_id))
+            or (product_set_id and str(line.product_set_id or "") == str(product_set_id))
+        ]
         matched_line = None
-        for line in lines_by_invoice.get(str(row.proforma_invoice_id), []):
-            if product_id and str(line.product_id or "") == str(product_id):
-                matched_line = line
-                break
-            if product_set_id and str(line.product_set_id or "") == str(product_set_id):
-                matched_line = line
-                break
+        if candidates:
+            idx = cursor_by_invoice.get(inv_id, 0)
+            cursor_by_invoice[inv_id] = idx + 1
+            matched_line = candidates[idx] if idx < len(candidates) else candidates[-1]
         row.proforma_invoice_line_id = matched_line.id if matched_line is not None else None
         if dismissed:
             row.match_state = _DISMISSED
