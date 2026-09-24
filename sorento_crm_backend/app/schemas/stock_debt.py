@@ -176,6 +176,13 @@ class StockDebtSupplyEvent(BaseModel):
     #: arrival is the one the document states.
     days_late: int = 0
     assigned_to: List[StockDebtAssignedTo]
+    #: R26: an SPO's own Received (`quantity_received`) and Outstanding (the walk's own
+    #: netted balance, what `qty` used to state before this ruling split it out) - `qty`
+    #: above is now the SPO line's RAW ordered quantity. Both `None` for every other kind
+    #: (on hand has no received/outstanding history to state), so the drill prints those
+    #: two columns blank rather than a fabricated 0.
+    received_qty: Optional[float] = None
+    outstanding_qty: Optional[float] = None
 
 
 class StockDebtCell(BaseModel):
@@ -184,6 +191,11 @@ class StockDebtCell(BaseModel):
 
     demand: List[StockDebtDemandLine]
     supply: List[StockDebtSupplyEvent]
+    #: R25: the tab labels' own quantity totals, over the WHOLE tab - `demand_total_qty`
+    #: sums `open_qty` over `demand`; `supply_total_qty` sums each row's own Qty column
+    #: (Outstanding for an SPO, the on-hand figure otherwise), never recomputed by the FE.
+    demand_total_qty: float
+    supply_total_qty: float
 
 
 class StockDebtExportIn(BaseModel):

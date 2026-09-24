@@ -176,6 +176,14 @@ class SupplyEvent:
     #: by 17 Sep 2026"). Carried rather than derived from `at - stated_at`, which would be
     #: the lateness PLUS the grace and so a different number from the one a person counts.
     days_late: int = 0
+    #: R26 (Stock Debt only): an SPO's own RAW ordered/received quantities, beside `qty`
+    #: above which stays the NETTED outstanding balance the WALK itself assigns against -
+    #: changing what `qty` means here would change what every line's `free_qty`/
+    #: `assigned_qty` comes out to, which is not this ruling's business. `None` for every
+    #: kind but SPO, on hand included - the drill prints an on-hand row's Received/
+    #: Outstanding columns blank, never a fabricated 0.
+    ordered_qty: Optional[float] = None
+    received_qty: Optional[float] = None
 
 
 @dataclass(frozen=True)

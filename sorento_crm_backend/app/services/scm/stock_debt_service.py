@@ -66,7 +66,6 @@ from app.services.scm.supply_assignment import (
     BUCKET_UNDATED,
     BUCKET_UNLOCATED,
     KIND_ON_HAND,
-    KIND_PO,
     KIND_SPO,
     Assignment,
     DemandLine,
@@ -389,7 +388,14 @@ class StockDebtService:
                         if counted
                         else 0,
                         "bought_for": event.bought_for,
-                        "qty": event.qty,
+                        # R26: an SPO's own Qty is the RAW ordered quantity - `event.qty`
+                        # stays the netted OUTSTANDING balance the walk itself assigns
+                        # against, stated here as its own column instead. On hand has no
+                        # such split (it is not a document with a received/outstanding
+                        # history), so both are `None` - blank, never a fabricated 0.
+                        "qty": event.ordered_qty if event.kind == KIND_SPO else event.qty,
+                        "received_qty": event.received_qty if event.kind == KIND_SPO else None,
+                        "outstanding_qty": event.qty if event.kind == KIND_SPO else None,
                         # What nobody took, once the whole walk was over - the other half of
                         # the cell (R37). A DEAD document is free of nothing: it is not
                         # supply until somebody re-dates it (R31).
@@ -404,7 +410,25 @@ class StockDebtService:
                     }
                 )
             supply.sort(key=lambda row: (row["date"] or date.max, row["ref"] or ""))
-        return {"demand": demand, "supply": supply}
+
+        # R25: the envelope's own quantity totals, over the WHOLE tab (never the page - a
+        # drill has no paging, but the same "sum here, not on the FE" reasoning the board's
+        # own `totals` already applies). Demand sums Outstanding as it stood BEFORE this
+        # walk's assignment (`open_qty`, the line's own full ask); Supply sums whatever
+        # each row's own Qty column actually offers - Outstanding for an SPO, the on-hand
+        # figure otherwise - so the two tab labels state what a reader would get by adding
+        # the column up themselves.
+        demand_total_qty = sum(row["open_qty"] for row in demand)
+        supply_total_qty = sum(
+            row["outstanding_qty"] if row["kind"] == KIND_SPO else row["qty"]
+            for row in supply
+        )
+        return {
+            "demand": demand,
+            "supply": supply,
+            "demand_total_qty": demand_total_qty,
+            "supply_total_qty": supply_total_qty,
+        }
 
     # ------------------------------------------------------------------ the reads
 
@@ -676,7 +700,7 @@ class StockDebtService:
         *,
         as_of: Optional[date] = None,
     ) -> Dict[str, List[SupplyEvent]]:
-        """On hand, SPO and PO for the whole page - three reads, none of them per product.
+        """On hand and SPO for the whole page - two reads, neither of them per product.
 
         On hand is `quantity_on_hand - quantity_reserved`, the same arithmetic
         `_free_stock` states: reserved stock is spoken for by a picking or despatch that is
@@ -689,6 +713,13 @@ class StockDebtService:
         the walk starts, and stamping it `date.today()` while the walk ran at a pinned
         earlier date put the stock after every line due between the two, so a board
         simulated at a past date read its own floor as arriving late.
+
+        R23 (owner, 24 Sep, third red batch): "got PO doesn't mean got supply." Stock
+        Debt's own reading counts on hand and SPO only - a PO is a plan to buy, not stock
+        anybody has or a shipment already moving, and reading it as supply here let a line
+        read `covered`/`pinned` off a document that could still fall through. NOT a
+        `po_by_location()` read at all any more; the ladder and the board, which still
+        read PO (plan v7 R29), call that method directly and are untouched.
         """
         as_of = as_of or date.today()
         out: Dict[str, List[SupplyEvent]] = {}
@@ -735,28 +766,17 @@ class StockDebtService:
                         kind=KIND_SPO,
                         warehouse=codes.get(warehouse_id),
                         at=ref.arrival_date,
+                        # The WALK's own figure stays the netted outstanding balance
+                        # (R26) - `ordered_qty`/`received_qty` below are display-only.
                         qty=_float(ref.qty),
                         ref=_spo_ref(ref.spo_number),
                         is_pool=warehouse_id in pools,
+                        ordered_qty=_float(ref.ordered_qty),
+                        received_qty=_float(ref.received_qty),
                     )
                 )
 
-        for (product_id, warehouse_id), lines in self.supply.po_by_location(
-            product_ids, warehouse_ids
-        ).items():
-            for line in lines:
-                out.setdefault(product_id, []).append(
-                    SupplyEvent(
-                        key=f"po:{line.line_id}",
-                        kind=KIND_PO,
-                        warehouse=codes.get(warehouse_id),
-                        at=line.arrival_date,
-                        qty=_float(line.qty),
-                        ref=f"PO {line.po_number} line {line.po_line_no}",
-                        bought_for=line.bought_for,
-                        is_pool=warehouse_id in pools,
-                    )
-                )
+        # R23: PO is no longer read as supply here at all - see the docstring above.
         return out
 
     def _demand(
@@ -945,14 +965,14 @@ class StockDebtService:
             qty = _float(row.qty)
             if qty <= 0:
                 continue
-            if row.spo_allocation_id:
-                supply_key = f"spo:{row.spo_allocation_id}"
-                kind, ref = KIND_SPO, _spo_ref(row.spo_number)
-            else:
-                supply_key = f"po:{row.po_line_id}"
-                kind, ref = KIND_PO, (
-                    f"PO {row.po_number}" if row.po_number else "PO"
-                )
+            if not row.spo_allocation_id:
+                # R23: a placement link to a PO line pins nothing in Stock Debt any more -
+                # PO is not supply here at all, so there is no PO-kind event left in this
+                # read's span for it to bind to (AC-S2-1b's "stand an event up from the
+                # hold's own fields" branch would otherwise manufacture one).
+                continue
+            supply_key = f"spo:{row.spo_allocation_id}"
+            kind, ref = KIND_SPO, _spo_ref(row.spo_number)
             out.append(
                 Hold(
                     line_key=str(row[0]),
