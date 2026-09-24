@@ -332,6 +332,94 @@ def _is_header(mapped: dict[int, str], required: tuple[str, ...] = _REQUIRED_COL
     return all(f in values for f in required)
 
 
+#: A colon, either width - the only thing `_split_label_pairs` ever splits a cell on.
+_COLON_RE = re.compile(r"[：:]")
+
+
+def _split_label_pairs(
+    text: str,
+    resolver: Optional[AliasResolver],
+    fields: tuple[str, ...] = (),
+    *,
+    any_label: bool = False,
+) -> list[tuple[str, str, Optional[str]]]:
+    """Every `label：value` pair in ONE string (design A1,
+    PLAN-pi-header-fields-convert-fixes-24sep.md) - DAFUYUAN's own header cell states three
+    in a row: `提单号 ：OOLU2339207730          柜号 ：FSCU9304169          封条号：OOLLGZ7182`.
+
+    A position counts as a label boundary when the run of non-whitespace text immediately
+    before its colon resolves, via `resolver`, to one of `fields` (the default, A1's reader
+    path - `_labelled` below) - an unrelated colon inside running text is never mistaken for
+    one, because nothing about it resolves. `any_label=True` (F1's mapper-probe path, ruling
+    5) accepts EVERY such run regardless of whether it resolves, so a label the alias table
+    has never seen still shows up for the operator to map; its `field` is then `None`.
+
+    A value runs from just after its label's colon to the START of the next label (or the
+    end of the string), trimmed - unknown text in between (a stray note, another colon that
+    never resolved) stays with the PRECEDING pair's value rather than splitting it further,
+    since a real value here (a B/L number, a container number) never itself contains a
+    colon. An EMPTY value (`提单号：` immediately followed by the next label) drops the pair
+    entirely (AC-H2) - a blank bill of lading is not a stated one.
+
+    The label's own trailing tokens are tried shortest-first, never everything back to the
+    previous cut point (which would also carry the previous pair's whole value): the LAST
+    whitespace-delimited run before the colon first (`柜号`, `封条号`), then two runs
+    (`INVOICE NO.` - Jiexia's own English label is two words), and so on, stopping at the
+    first span that resolves. A candidate that resolves at no width at all is not a label
+    boundary here (the default, non-`any_label` path) - an unrelated colon inside running
+    text never matches anything, so it is never mistaken for one.
+    """
+    colon_positions = [m.start() for m in _COLON_RE.finditer(text)]
+    if not colon_positions:
+        return []
+    # (label_start, colon_pos, field) - field is None for an any_label match that no
+    # resolver/fields combination answers.
+    boundaries: list[tuple[int, int, Optional[str]]] = []
+    cut = 0
+    for pos in colon_positions:
+        candidate = text[cut:pos].rstrip()
+        tokens = list(re.finditer(r"\S+", candidate))
+        if not tokens:
+            continue
+        label_start = None
+        label_field = None
+        for k in range(1, len(tokens) + 1):
+            start = tokens[-k].start()
+            f = resolver.field_for_header(candidate[start:]) if resolver else None
+            if f in fields:
+                label_start = start
+                label_field = f
+                break
+        if label_start is None:
+            if not any_label:
+                continue
+            label_start = tokens[-1].start()
+            label_field = None
+        boundaries.append((cut + label_start, pos, label_field))
+        cut = pos + 1
+    if not boundaries:
+        return []
+
+    pairs: list[tuple[str, str, Optional[str]]] = []
+    for i, (label_start, colon_pos, f) in enumerate(boundaries):
+        value_start = colon_pos + 1
+        value_end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
+        value = text[value_start:value_end].strip()
+        # A value immediately followed by ANOTHER label carries that label's own leading
+        # separator in its slice (`货柜号:ABCU1 / 提单号:BL-9` - the trailing " / " belongs
+        # to NEITHER pair) - trimmed only at the tail, and only a bare `/`/`／` with no
+        # second label of its OWN behind it (`_is_label`'s same distinction, AC-F9): a
+        # value that genuinely ends in a slash (no label follows) never reaches here
+        # because nothing after it gets sliced off in the first place.
+        if i + 1 < len(boundaries):
+            value = re.sub(r"\s*[/／]\s*$", "", value).strip()
+        if not value:
+            continue
+        label_text = text[label_start:colon_pos].strip()
+        pairs.append((label_text, value, f))
+    return pairs
+
+
 def _labelled(
     raw: list, resolver: AliasResolver, fields: tuple[str, ...] = _BLOCK_FIELDS
 ) -> dict[str, str]:
@@ -342,48 +430,29 @@ def _labelled(
     recorded as blank, because a blank container number and an absent one have to stay the
     same thing here (AC-G2).
 
-    A candidate value that is itself a LABEL - it resolves to a known header, or it simply
-    ends in a colon - is not a value, and ends the search for this field. The row
-    `提单号：` ... `Date 日期：` ... `31/07/2026` is a blank bill of lading followed by a
-    date; without this the scan walked past the second label and read the date as the B/L
-    number (AC-P2.4). The colon test is what corrects the PACKING-LIST channel, where
-    `Date 日期：` resolves to nothing at all and so would not be recognised as a label.
+    Every `label：value` pair inside ONE cell is read by `_split_label_pairs` (A1) - this
+    also covers the two-fields-side-by-side shape (`箱号:WHSU6243088 / 封签号:WHA4528193`,
+    the Jiexia sample, AC-F9) with no separate handling: `_MULTI_SEP`'s own slash sits
+    between two labelled runs either way, and the split only ever fires where a KNOWN label
+    (one of `fields`) sits right before a colon, so `货柜号：ABCU1 / just a note` still reads
+    as the ONE value `ABCU1 / just a note` ("just a note" names no label of its own).
 
-    A cell may ALSO state two of these fields side by side (`箱号:WHSU6243088 /
-    封签号:WHA4528193`, the Jiexia sample) - split on the supplier's own separator before the
-    inline colon test, so both land rather than only the first half of the cell (AC-F9).
-
-    The split is refused unless what follows the separator carries a label of its own
-    (a colon): `_MULTI_SEP` only fires on a slash with whitespace either side now, but a
-    cell like `货柜号：ABCU1 / loaded first` would still match that shape without ALSO
-    checking for a second label, and "loaded first" is a note, not a second answer
-    (review round 1, purchasing consolidation batch lane C).
+    A cell holding no inline value at all - a bare label whose colon is followed by nothing,
+    or the next label immediately - falls through to the older cross-cell form: the label
+    alone, its value in the NEXT non-blank cell of the row, refused when that candidate
+    value is itself a label (`_is_label`) - `提单号：` ... `货柜号：ABCU1000009` must not read
+    the second label as the first field's value (AC-P2.4).
     """
     out: dict[str, str] = {}
     for pos, cell in enumerate(raw):
         label = _text(cell)
         if not label:
             continue
-        split = [p for p in _MULTI_SEP.split(label) if p.strip()]
-        if len(split) > 1 and any((":" in p or "：" in p) for p in split[1:]):
-            parts = split
-        else:
-            parts = [label]
-        matched_inline = False
-        for part in parts:
-            # `货柜号：XXXU123` in ONE cell is as common as two cells, so split on either colon.
-            inline = None
-            for sep in ("：", ":"):
-                if sep in part:
-                    head, _, tail = part.partition(sep)
-                    f = resolver.field_for_header(head)
-                    if f in fields and _text(tail):
-                        inline = (f, _text(tail))
-                    break
-            if inline:
-                out.setdefault(inline[0], inline[1])
-                matched_inline = True
-        if matched_inline:
+        pairs = _split_label_pairs(label, resolver, fields)
+        if pairs:
+            for _, value, f in pairs:
+                if f:
+                    out.setdefault(f, value)
             continue
 
         f = resolver.field_for_header(label)

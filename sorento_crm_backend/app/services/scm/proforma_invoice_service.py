@@ -372,6 +372,11 @@ def _summarise(
                 "invoice_date": doc.invoice_date.isoformat() if doc.invoice_date else None,
                 "container_no": doc.container_no,
                 "bl_no": doc.bl_no,
+                # A3 (PLAN-pi-header-fields-convert-fixes-24sep.md): the same two facts the
+                # PI General tab now shows beside container/BL, so the preview already
+                # states what apply() is about to write (H1/H2).
+                "seal_no": doc.seal_no,
+                "consignee": doc.consignee,
                 "lines": len(doc.lines),
                 "qty": doc.total_qty,
                 "total": doc.line_total,
