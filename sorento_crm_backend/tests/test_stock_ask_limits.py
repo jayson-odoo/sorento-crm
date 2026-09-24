@@ -88,13 +88,27 @@ def test_product_y_explicit_zero_wins_over_category_y():
 
 def test_no_parent_category_walk():
     """`effective()` accepts exactly one category - the product's OWN one. A NULL
-    product value with a NULL own-category value resolves to 0 even if some OTHER
-    (e.g. grandparent) category carries a value, because there is no second
-    parameter through which that value could ever reach this function (R2/R12).
-    A "parent category" object is deliberately never constructed here - the
-    signature itself is the proof, not a mock relationship walk."""
+    product value with a NULL own-category value resolves to 0 even when the own
+    category HAS a parent that carries a value, because `effective()` takes no
+    second category through which that value could ever reach it (R2/R12).
+
+    Blocking 3 (reviewer pass, PR #1221, 85c2e9e7): the previous fixture never gave
+    the own category a `parent` attribute at all, so a kill mutation that added
+    `getattr(category, "parent", None)` fallback code inside `effective()` stayed
+    green - `getattr` just returned `None` for an attribute the fixture never set,
+    which proves nothing about whether a walk would be followed if one existed. The
+    own category here carries a real `parent` (and `parent_category`, the other
+    plausible ORM relationship name) with X = 30 / Y = 5, so a parent-walk mutation
+    resolves to (30, 5) and this test catches it; the un-mutated `effective()`
+    still resolves to (0, 0)."""
     product = _obj(max_qty=None, eta_offset_days=None)
-    own_category = _obj(max_qty=None, eta_offset_days=None)
+    parent_with_values = _obj(max_qty=30, eta_offset_days=5)
+    own_category = SimpleNamespace(
+        chatbot_max_qty=None,
+        chatbot_eta_offset_days=None,
+        parent=parent_with_values,
+        parent_category=parent_with_values,
+    )
 
     max_qty, eta = effective(product, own_category)
 
