@@ -150,7 +150,7 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
  * Written nowhere: no link is created for either, so `via` never appears outside these
  * two columns.
  */
-interface DocumentEntry {
+export interface DocumentEntry {
   document: string;
   via: 'po' | 'spo' | null;
   /**
@@ -174,7 +174,7 @@ interface DocumentEntry {
   suggestion: OrderInquiryLinkSuggestion | null;
 }
 
-function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
+export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
   const entries: DocumentEntry[] = [];
   const seen = new Set<string>();
   for (const link of row.links ?? []) {

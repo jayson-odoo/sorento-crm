@@ -12,6 +12,7 @@ import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryS
 import { formatInquiryQty, inquiryFooterTotals } from '../../../_shared/lib/orderInquiryWorklist';
 import {
   DeliveryDateCell,
+  documentsOf,
   InstructionCell,
   ItemCodeCell,
   LocationCell,
@@ -55,17 +56,41 @@ export interface StagedReserveEntry {
   reason?: string | null;
 }
 
-/** The first PO (or SPO) link this line carries, for a document trigger. `null` when the
+/** The first PO (or SPO) document this line carries, for a document trigger - reusing the
+ * worklist's OWN derivation (`documentsOf`, issue #1215 point 5) rather than a bare
+ * `kind === 'po'` link. An SPO-only link naming its source PO (`source_po_number`) used
+ * to read a plain dash here even though the worklist already printed it "via SPO" - the
+ * two screens now agree about what counts as a document on this row. `null` when the
  * line names none of that kind - the cell then reads a plain dash, same as the worklist. */
 function firstLinkOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo') {
-  return (row.links ?? []).find((link) => link.kind === kind) ?? null;
+  return documentsOf(row, kind)[0] ?? null;
 }
 
 function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
-  const link = firstLinkOf(row, kind);
-  if (!link) return <span className="text-muted-foreground">-</span>;
+  const entry = firstLinkOf(row, kind);
+  if (!entry) return <span className="text-muted-foreground">-</span>;
+  // The REAL link behind this entry, for the PO popover's own id and (#1215 point 2) the
+  // line it sits on - `documentsOf` states the document, not the link's identity.
+  const link =
+    kind === 'po'
+      ? (row.links ?? []).find(
+          (candidate) => candidate.kind === 'po' && candidate.document === entry.document,
+        )
+      : null;
   return (
-    <OrderInquiryDocumentLink kind={kind} document={link.document} poId={link.po_id} />
+    <span className="flex min-w-0 items-center gap-1">
+      <OrderInquiryDocumentLink
+        kind={kind}
+        document={entry.document}
+        poId={link?.po_id}
+        poLineId={link?.po_line_id}
+      />
+      {entry.via ? (
+        <span className="shrink-0 text-2xs text-muted-foreground">
+          via {entry.via === 'po' ? 'PO' : 'SPO'}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

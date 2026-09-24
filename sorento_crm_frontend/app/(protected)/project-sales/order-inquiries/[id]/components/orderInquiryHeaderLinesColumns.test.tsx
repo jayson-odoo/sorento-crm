@@ -235,3 +235,64 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     expect(screen.getByRole('button', { name: /undo/i })).toBeInTheDocument();
   });
 });
+
+/**
+ * Issue #1215 point 5. Before this, the PO cell's own `firstLinkOf` read only
+ * `link.kind === 'po'`, so a row whose ONLY link is an SPO carrying `source_po_number`
+ * (`derived_po: true`) showed a bare dash here even though the worklist's own
+ * `DocumentsCell`/`documentsOf` already printed the PO number "via SPO" for the exact
+ * same row. Reusing `documentsOf` closes that gap without changing what counts as a
+ * link - the underlying link is still SPO-kind, only the derived DISPLAY changes.
+ */
+describe('issue #1215 point 5: the PO cell reads "via SPO" for an SPO-only link naming its source PO', () => {
+  function poCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const poColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'po_number',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(poColumn).toBeDefined();
+    return poColumn!.cell({ row: { original: row } });
+  }
+
+  it('prints the source PO number with a "via SPO" mark, not a dash', () => {
+    const row = linesRow({
+      id: 'row-spo-only',
+      links: [
+        {
+          id: 'link-1',
+          kind: 'spo',
+          document: 'SPO-2026/09-0080',
+          source_po_number: '202607-S0105',
+          derived_po: true,
+          qty: '6',
+        },
+      ],
+    } as never);
+
+    render(<>{poCell(row)}</>);
+
+    expect(screen.getByText('202607-S0105')).toBeInTheDocument();
+    expect(screen.getByText(/via SPO/)).toBeInTheDocument();
+    expect(screen.queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('still reads a plain dash when the row carries no link naming a PO at all', () => {
+    const row = linesRow({ id: 'row-none', links: [] } as never);
+
+    render(<>{poCell(row)}</>);
+
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('a real PO-kind link carries no "via" mark', () => {
+    const row = linesRow({
+      id: 'row-real-po',
+      links: [{ id: 'link-2', kind: 'po', document: '202607-S0031', qty: '4' }],
+    } as never);
+
+    render(<>{poCell(row)}</>);
+
+    expect(screen.getByText('202607-S0031')).toBeInTheDocument();
+    expect(screen.queryByText(/via /)).not.toBeInTheDocument();
+  });
+});
