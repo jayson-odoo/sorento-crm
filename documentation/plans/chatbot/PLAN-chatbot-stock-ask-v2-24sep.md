@@ -23,7 +23,9 @@ Classification: the X / Y columns, the contact toggles and the `stock_asks` tabl
 > B2 Q <= X and available covers Q: "Yes, we have stock for <P> x Q, please refer to your salesman to proceed". Notify the agent.
 > B3 Q <= X, not covered, a shipment per R5 exists: "No stock at the moment, ETA dd/mm/yyyy" (date + Y). No notification. Attach the shipment's packing list only when the contact's packing_list_allowed toggle is on; otherwise no attachment and no quantities.
 > B4 Q <= X, not covered, no shipment per R5: "No stock and no incoming at the moment, please refer to your salesman". Notify the agent.
->
+
+(R14 below, lavish review, prefixes each of these four sentences with the product and quantity; the wording quoted above is the original grill text.)
+
 > R7 Per-contact toggles on respond_contacts: notify_salesman (default off) and packing_list_allowed (default off), on the contact form.
 >
 > R8 Notification: customer -> customers.sales_agent_id -> sales_agents.contact_id -> Respond.io. One use case stock_ask_salesman, one template with an outcome phrase slot (in stock / too big / no stock no incoming / no cap set) and the ask facts (customer, contact, product, quantity, time). Sent through send_text_or_template (template outside the 24h window, plain text following the template wording inside it). Each send writes its integration_log row. No agent or no agent contact: record the ask, skip the send, log the skip reason.
@@ -43,6 +45,8 @@ Classification: the X / Y columns, the contact toggles and the `stock_asks` tabl
 > R12 "the product inherit from category, overridable, we don't need parent category -> category relationship for now". This already matches the resolution rule (product value, else its own category value, else 0); add the quote under Rulings and leave the rule as is.
 >
 > R13 owner asked "the notification to salesperson is in this plan?" Answer is yes, S4. Add one line at the top of S4 saying so in plain words.
+>
+> R14 on the two-product sample (g): "need to specify the product code, else nobody knows what does 2nd line mean, for every answer, we must include product code". Effect: every one of the four fixed sentences (B1 to B4) starts with the product and quantity, so a multi-product reply reads line by line. Proposed shape (wording proposed, owner proof-reads it on the page): B1 "<P> x Q: the quantity is more than what I can confirm here, please refer to your salesman." B2 "<P> x Q: yes, we have stock, please refer to your salesman to proceed." B3 "<P> x Q: no stock at the moment, ETA dd/mm/yyyy." B4 "<P> x Q: no stock and no incoming at the moment, please refer to your salesman."
 
 What these rulings retire from the pre-grill draft: `customers.stock_warehouse_id` (R3), any change to the `stock_denied` / `demand_qty` arm (R1), `COALESCE(eta_delay_date, ...)` and location-scoped incoming (R5), "NULL X = no cap" (R2), the fifth `unassigned` answer (R3 removes the missing-location case; a contact with no customer still gets its branch answer, only the send is skipped per R8), and a "Stock asks" card in place of a tab (R9).
 
@@ -86,50 +90,50 @@ A dealer contact on an "Availability only" policy names products; #1118's task c
 
 ## Sample conversations (for the owner to proof-read)
 
-Dealer contact: Ah Seng (Hock Lee Trading). Every bot sentence below is quoted verbatim from R6 (Rulings) with only the product code, quantity and date substituted. Every agent notification line renders the S4 context vars (R8/S4) through a plain, one-line layout that is not yet the final template copy - marked "(wording proposed)" where the plan leaves the exact words open. Dates are dd/mm/yyyy.
+Dealer contact: Ah Seng (Hock Lee Trading). Every bot sentence below is R14's shape (wording proposed, owner proof-reads it on the page) with only the product code, quantity and date substituted: each line starts "<code> x <quantity>:" so a multi-product reply reads line by line. Every agent notification line renders the S4 context vars (R8/S4) through a plain, one-line layout that is not yet the final template copy - marked "(wording proposed)" where the plan leaves the exact words open. Dates are dd/mm/yyyy.
 
 **(a) B2 - in stock, Q <= X**
 
 Dealer: Do you have SRT5674, need 50 units?
-Bot: Yes, we have stock for SRT5674 x 50, please refer to your salesman to proceed.
+Bot: SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.
 Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT5674, qty 50, outcome: in stock. Asked at 24/09/2026 14:32. (wording proposed; sent as plain text, inside the 24h window)
 
 **(b) B1 - quantity above X**
 
 Dealer: I need 300 units of CWCX604.
-Bot: The quantity is more than what I can confirm here, please refer to your salesman.
+Bot: CWCX604 x 300: the quantity is more than what I can confirm here, please refer to your salesman.
 Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about CWCX604, qty 300, outcome: too big. Asked at 24/09/2026 14:35. (wording proposed; sent as template, outside the 24h window)
 
 **(c) B1 - X unset for that category**
 
 Dealer: Can I get 20 of SRT446?
-Bot: The quantity is more than what I can confirm here, please refer to your salesman.
+Bot: SRT446 x 20: the quantity is more than what I can confirm here, please refer to your salesman.
 Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT446, qty 20, outcome: no cap set for Wiper Blades. Asked at 24/09/2026 14:40. (wording proposed; sent as plain text, inside the 24h window)
 
 **(d) B3 - incoming with ETA, packing list toggle OFF**
 
 Dealer: Do you have SRTW2000, need 150?
-Bot: No stock at the moment, ETA 19/10/2026.
+Bot: SRTW2000 x 150: no stock at the moment, ETA 19/10/2026.
 No agent notification (B3).
 
 **(e) B3 - incoming with ETA, packing list toggle ON**
 
 Dealer: Need 150 units of SRT6536.
-Bot: No stock at the moment, ETA 02/11/2026.
+Bot: SRT6536 x 150: no stock at the moment, ETA 02/11/2026.
 [the shipment's packing list is attached to this reply]
 No agent notification (B3).
 
 **(f) B4 - no stock, no incoming**
 
 Dealer: Any stock for SRT5674, need 150?
-Bot: No stock and no incoming at the moment, please refer to your salesman.
+Bot: SRT5674 x 150: no stock and no incoming at the moment, please refer to your salesman.
 Agent (WhatsApp): Stock ask - Hock Lee Trading (contact: Ah Seng) asked about SRT5674, qty 150, outcome: no stock no incoming. Asked at 24/09/2026 15:05. (wording proposed; sent as template, outside the 24h window)
 
 **(g) Multi-product turn - one message, two lines**
 
 Dealer: Need SRT5674 x 50 and CWCX604 x 300.
-Bot: Yes, we have stock for SRT5674 x 50, please refer to your salesman to proceed.
-The quantity is more than what I can confirm here, please refer to your salesman.
+Bot: SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.
+CWCX604 x 300: the quantity is more than what I can confirm here, please refer to your salesman.
 
 ## Slices
 
@@ -180,11 +184,11 @@ Every slice: migration, backend seam, frontend seam, tests (the `tester` agent w
 4. Add the R5 ETA read (one query per page, `app/services/incoming_stock_service.py` gains `earliest_packing_list_shipment(db, product_ids) -> {product_id: (shipment_id, estimated_arrival_date, attachment_id)}`): `inbound_shipments` join `inbound_shipment_lines` on `shipment_id`, `_not_draft_shipment_filter()`, `_still_incoming_filter()`, `inbound_shipments.attachment_id IS NOT NULL`, `inbound_shipments.estimated_arrival_date IS NOT NULL` (R10: a shipment without a date never qualifies), `line.product_id IN (...)`, ordered by `estimated_arrival_date ASC`, first per product (`DISTINCT ON (product_id)`). No warehouse filter (ANY location, R5). No `eta_delay_date`. Measured on the prod copy `sorento_ai_automation_0921` (24 Sep 2026): 0 of 275 `inbound_shipments` have a NULL `estimated_arrival_date` (119 `in_transit`, all dated), so this filter drops nothing observed in practice; it is there for correctness, not to fix a live gap.
 5. Decision (pure, `app/services/stock_ask_branch.py`, replaces `stock_verdict.py`): `branch(q, x, available, shipment_date) -> "too_big" | "in_stock" | "incoming" | "no_incoming"`: `q > x` (x = 0 when unset, so every q >= 1 is `too_big`) -> `too_big`; `available >= q` -> `in_stock`; a shipment row exists -> `incoming`; else `no_incoming`. Because the R5 read requires `estimated_arrival_date NOT NULL` (R10), a shipment row that reaches `branch()` always carries a date: there is no undated `incoming` case, and "ETA to be confirmed" is not a real answer.
 6. Entry shape (replaces `available` / `verdict` / `running_low` / `disclaimer`): `branch`, `cap_unset: bool` (X resolved from NULLs), `category_name` (for the B1 reason), `eta` (`dd/mm/yyyy` of `estimated_arrival_date + Y`, `incoming` only), `packing_list` (`_attachment_payload` of the shipment's attachment, `incoming` only AND only when the asking contact's `respond_contacts.packing_list_allowed` is true; the route already resolves that contact, so the raw GET never carries the file for a contact who may not have it). No quantity of ours on the wire.
-7. Presenter `_availability_line` (MCP) renders R6 verbatim per entry, one line per product in asked order:
-   - `too_big`: "The quantity is more than what I can confirm here, please refer to your salesman."
-   - `in_stock`: "Yes, we have stock for <P> x <Q>, please refer to your salesman to proceed."
-   - `incoming`: "No stock at the moment, ETA <dd/mm/yyyy>."
-   - `no_incoming`: "No stock and no incoming at the moment, please refer to your salesman."
+7. Presenter `_availability_line` (MCP) renders R14's shape per entry, one line per product in asked order, every line starting with `<P> x <Q>` (R14: "for every answer, we must include product code", wording proposed, owner proof-reads it on the page):
+   - `too_big`: "<P> x <Q>: the quantity is more than what I can confirm here, please refer to your salesman."
+   - `in_stock`: "<P> x <Q>: yes, we have stock, please refer to your salesman to proceed."
+   - `incoming`: "<P> x <Q>: no stock at the moment, ETA <dd/mm/yyyy>."
+   - `no_incoming`: "<P> x <Q>: no stock and no incoming at the moment, please refer to your salesman."
    `<P>` is `product_code` (fallback `product_name`, never the id).
 8. Engine: at the `tasks_after_reply` call site, when an entry is `incoming` with `packing_list` present, emit a `send_attachments` action with that file (the existing action shape). Nothing else changes in the engine in S3.
 
@@ -226,7 +230,7 @@ stock_asks
   product_code        varchar(100) NOT NULL               (snapshot)
   quantity            integer NOT NULL
   branch              varchar(20) NOT NULL CHECK in (too_big, in_stock, incoming, no_incoming)
-  answer_summary      text NOT NULL                       (the line the dealer was sent)
+  answer_summary      text NOT NULL                       (the line the dealer was sent, R14's product-and-quantity prefix included since it is the exact line, not a re-derivation)
   notified_agent      boolean NOT NULL DEFAULT false
   notify_skip_reason  varchar(80) NULL                    (why not, when not)
   state               varchar(10) NOT NULL DEFAULT 'open' CHECK in (open, done)
