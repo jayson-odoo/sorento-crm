@@ -126,6 +126,39 @@ describe('useCellSelection - drag rectangle (AC-25)', () => {
     // The rectangle the drag drew is still selected - the release click did not clear it.
     expect(result.current.isSelected('r1', '2026-09')).toBe(true);
   });
+
+  it('an immediate Shift+click after a drag with no release click still extends the rectangle (reviewer round)', () => {
+    // Many browsers/pointer-event setups do not fire a synthetic `click` when a genuine
+    // drag ends over a different element - only `pointerup` does, and the hook's own
+    // window `pointerup` listener resets `draggingRef` but never `draggedRef`. A
+    // Shift+click is then a BRAND NEW gesture (not the drag's own release), but
+    // `onCellClick` checks `draggedRef.current` FIRST, before it ever looks at
+    // `e.shiftKey` - so this Shift+click is swallowed as "ending the drag" instead of
+    // extending the selection, and `draggedRef` only clears on THIS call, silently
+    // eating exactly one legitimate click.
+    const { result } = setup();
+    act(() => {
+      result.current.onCellPointerDown('r1', '2026-09', pointerEvent());
+    });
+    act(() => {
+      result.current.onCellPointerEnter(
+        'r2',
+        '2026-10',
+        pointerEvent({ clientX: 20, clientY: 20 }),
+      );
+    });
+    // No `onCellClick` call here - the drag ends with no release click, as it does not
+    // always in a real browser.
+
+    act(() => {
+      result.current.onCellClick('r3', '2026-11', mouseEvent({ shiftKey: true }));
+    });
+
+    // A genuine Shift+click from the r1..r2 anchor out to r3 should cover the whole
+    // 3x3 block.
+    expect(result.current.selectedCount).toBe(9);
+    expect(result.current.isSelected('r3', '2026-11')).toBe(true);
+  });
 });
 
 describe('useCellSelection - shift/cmd click (AC-26)', () => {

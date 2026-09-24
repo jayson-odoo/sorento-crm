@@ -195,6 +195,39 @@ def test_export_route_refuses_api_key_principal(scm_app):
     )
 
 
+def test_export_route_refuses_in_flight_409(scm_app, monkeypatch):
+    """AC-12d (reviewer round): one in-flight export per user per kind, the same guard
+    `export_order_inquiry_worklist_async` already runs
+    (`DownloadService.has_in_flight`) - checked BEFORE a second `user_downloads` row is
+    created. Red today: the route has no in-flight check at all, so a second POST while
+    the first is still `pending`/`processing` creates a second row and enqueues a
+    second job."""
+    from app.services import queue_service
+    from app.services.download_service import DownloadService
+
+    app, db = _client(scm_app)
+    monkeypatch.setattr(
+        queue_service, "enqueue_job",
+        lambda *a, **k: type("J", (), {"id": "x"})(),
+    )
+    user_id = db.execute(text("SELECT id FROM users LIMIT 1")).scalar()
+    assert user_id, "seed_user (via _client) must have left a user row"
+    DownloadService(db).create(
+        user_id=str(user_id), kind="stock_debt_xlsx", filename="zzt-in-flight.xlsx",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        resp = c.post(f"{BASE}/export", json={"split": "none"})
+
+    assert resp.status_code == 409, resp.text
+    count = db.execute(
+        text("SELECT count(*) FROM user_downloads WHERE user_id = :u"),
+        {"u": str(user_id)},
+    ).scalar()
+    assert count == 1, "a second in-flight export left a second download row behind"
+
+
 # =========================================================================== #
 # AC-12b: the task
 # =========================================================================== #
@@ -611,13 +644,21 @@ def test_export_honours_list_filters(scm_app):
 
 
 def test_export_refuses_above_cap(scm_app, monkeypatch):
-    """AC-18: above the low stock report's own `MAX_LOW_STOCK_ROWS` the export raises a
-    422 "Narrow the plan first" and writes nothing."""
-    app, db = _client(scm_app)
+    """AC-18 (reviewer round): the ROUTE refuses above `MAX_LOW_STOCK_ROWS`
+    SYNCHRONOUSLY, before any `user_downloads` row exists and before anything is
+    enqueued - the same "every guard runs before the row" shape
+    `order_summary.py`'s export route already applies (AC-16 there). Message is
+    "Narrow the filters first" (this route's own wording - distinct from the low stock
+    report's "Narrow the plan first", there is no "plan" on this screen). Red today:
+    the route has no row-count guard of its own at all, so it creates the row and
+    enqueues unconditionally; only the worker (via `StockDebtService.export()`) would
+    ever refuse, and by then the row already exists."""
+    from app.services import queue_service
     from app.services.scm import low_stock_report_service
     from app.services.scm import stock_debt_service as svc_mod
-    from app.services.scm.stock_debt_service import StockDebtService
+    from app.api.v1.projects import stock_debt as route_mod
 
+    app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     for stem in ("A", "B"):
@@ -628,11 +669,26 @@ def test_export_refuses_above_cap(scm_app, monkeypatch):
         )
     db.flush()
 
-    # Patched on both modules: whichever one the coder reads the cap off at call time.
+    # Patched everywhere the coder might read the cap from at call time.
     monkeypatch.setattr(low_stock_report_service, "MAX_LOW_STOCK_ROWS", 1)
     monkeypatch.setattr(svc_mod, "MAX_LOW_STOCK_ROWS", 1, raising=False)
+    monkeypatch.setattr(route_mod, "MAX_LOW_STOCK_ROWS", 1, raising=False)
 
-    with pytest.raises(AppException) as excinfo:
-        StockDebtService(db).export(query=marker, only_debt=False, split="none")
-    assert excinfo.value.status_code == 422
-    assert "Narrow the plan first" in str(excinfo.value.detail)
+    calls: list = []
+    monkeypatch.setattr(
+        queue_service, "enqueue_job",
+        lambda *a, **k: calls.append((a, k)) or type("J", (), {"id": "x"})(),
+    )
+
+    before = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+    with TestClient(app) as c:
+        resp = c.post(
+            f"{BASE}/export",
+            json={"query": marker, "only_debt": False, "split": "none"},
+        )
+
+    assert resp.status_code == 422, resp.text
+    assert "Narrow the filters first" in resp.text, resp.text
+    after = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+    assert after == before, "a refused export left a download row behind"
+    assert calls == [], "a refused export must not enqueue the worker job"

@@ -12,8 +12,10 @@ Owner rulings: 24 Sep 2026 (R1-R13, two lavish rounds folded in)
 - AC-5 Every row carries `supplier_id`, `supplier_name`, `category_code`, `total`. `total` = sum of the row's `months[].balance` + `tba` + `undated` + `unlocated`.
 - AC-6 Envelope carries `totals` = per-month sum over EVERY row of the filtered set (not the page), plus `tba`, `undated`, `unlocated`, `total`. Page 2 returns the same `totals` as page 1.
 - AC-7 Envelope carries `suppliers` = distinct `{id, name}` of the filtered set's last suppliers, sorted by name.
+- AC-7c (reviewer round) `suppliers` is computed BEFORE the `supplier_id` filter narrows the set, off every OTHER active filter - so applying `supplier_id` still lists every supplier the unfiltered set carries (the select can switch supplier without clearing itself first), and every entry carries a real, non-empty `name`.
 - AC-7b Envelope carries `sheet_counts` = `{supplier, category, supplier_category}` sheet counts an export of the current filtered set would produce, none-buckets included. Page 2 returns the same values as page 1.
 - AC-8 `book=all` (default) spans flagged project bins AND site pools: a line booked at a pool bin and a line booked at a project bin both appear on the same product row, and pool stock never covers the project line nor project stock the pool line (two lines, two bins, stock only at the pool bin: project line short, pool line covered). `book=project` reproduces today's view exactly. `book=retail` shows only pool-booked demand and pool supply; `group` is ignored under `retail`.
+- AC-8b (reviewer round) The seal in AC-8 holds even when the project bin carries NO ownership-group suffix at all (so it cannot be a same-group-label accident): with an unsuffixed flagged bin and a site pool, stock at either bin never covers a line booked at the other, in both directions.
 - AC-9 `product_name` is `null` when it equals `product_code` (case-sensitive, trimmed).
 - AC-10 Every new field is declared on `StockDebtRow` / `StockDebtList` and asserted by name through the route (response_model drops undeclared fields).
 - AC-11 `/stock-debt/{product_id}/cell` accepts `cutoff` and `book` and its lines foot with the cell: a line dropped by the cutoff is not listed.
@@ -29,7 +31,8 @@ Owner rulings: 24 Sep 2026 (R1-R13, two lavish rounds folded in)
 - AC-15 `split=category`: one sheet per `category_code`, "No category" for blanks.
 - AC-16 `split=supplier_category`: one sheet per `<supplier> - <category>` pair, title cut to 31 chars with `[]:*?/\` removed; two pairs that collide after cutting get `(2)`.
 - AC-17 Export honours `query`, `group`, `only_debt`, `cutoff`, `supplier_id`, `book` exactly as the list does: the rows in the workbook are the rows the screen shows, unpaged.
-- AC-18 Above `MAX_LOW_STOCK_ROWS` rows the export answers 422 "Narrow the plan first" and writes nothing.
+- AC-18 (reworded, reviewer round) The ROUTE refuses above `MAX_LOW_STOCK_ROWS` rows SYNCHRONOUSLY, before any `user_downloads` row is created and before anything is enqueued: 422 "Narrow the filters first", no row, no enqueue call. (The service-level `StockDebtService.export()` guard, "Narrow the plan first", is the worker's own backstop and stays; the route no longer waits for it.)
+- AC-12d (reviewer round) One in-flight stock-debt export per user (`DownloadService.has_in_flight`, `kind=stock_debt_xlsx`), checked before a second `user_downloads` row is created: a second `POST .../export` while the first is `pending`/`processing` answers 409 and creates no second row.
 
 ## Frontend filters and totals
 

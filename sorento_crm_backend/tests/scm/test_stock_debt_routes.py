@@ -1512,6 +1512,10 @@ def test_cutoff_drops_demand_due_after_it(scm_app):
         db, outside, warehouse, qty=10, required_date=date(2026, 12, 5),
         so_number=f"{marker}-SO2",
     )
+    # AC-1 (reviewer round): supply landing well past the cutoff is still supply (AC-3)
+    # and would otherwise stretch a row's own `months` past it - the axis cap must clamp
+    # the COLUMN, not merely rely on there being no later demand to draw one out.
+    _spo(db, inside, warehouse, qty=5, arrives=date(2027, 1, 15))
     db.flush()
 
     with TestClient(app) as c:
@@ -1621,6 +1625,7 @@ def test_supplier_filter_reads_newest_po_line(scm_app):
     s1 = _supplier(db, f"ZZTS1{_u()[:5]}".upper())
     s2 = _supplier(db, f"ZZTS2{_u()[:5]}".upper())
     s3 = _supplier(db, f"ZZTS3{_u()[:5]}".upper())
+    s4 = _supplier(db, f"ZZTS4{_u()[:5]}".upper())
     primary = _supplier(db, f"ZZTSP{_u()[:5]}".upper())
 
     product_a = _product(db, f"{marker}-A")
@@ -1630,6 +1635,10 @@ def test_supplier_filter_reads_newest_po_line(scm_app):
     )
     _po(db, product_a, warehouse, s2, issue_date=date(2026, 1, 1))
     _po(db, product_a, warehouse, s1, issue_date=date(2026, 6, 1))
+    # AC-4 (reviewer round): a NEWER PO than S1's own, but CANCELLED - A1 names the
+    # PO's own status, so a cancelled document must not outrank the newest LIVE one
+    # however recent it is.
+    _po(db, product_a, warehouse, s4, issue_date=date(2026, 9, 1), status="cancelled")
     spo_row = _spo(
         db, product_a, warehouse, qty=5, arrives=date(2026, 11, 5),
         spo_number=f"{marker}-SPO",
@@ -1822,11 +1831,27 @@ def test_suppliers_on_envelope_distinct_sorted_by_name(scm_app):
 
     with TestClient(app) as c:
         body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        under_s1 = c.get(
+            BASE,
+            params={
+                "query": marker, "only_debt": False, "supplier_id": str(supplier_a.id),
+            },
+        ).json()
 
     assert body["suppliers"] == [
         {"id": str(supplier_a.id), "name": "Alpha supplier"},
         {"id": str(supplier_z.id), "name": "Zeta supplier"},
     ]
+
+    # AC-7c (reviewer round): `suppliers` is computed off the set BEFORE the
+    # `supplier_id` filter narrows it, so the select can switch supplier without first
+    # clearing itself - narrowing to Alpha must not make Zeta vanish from the options,
+    # even though Zeta's own product is dropped from `data`. Every entry keeps a real
+    # name, never an id standing in for one.
+    assert [r["product_code"] for r in under_s1["data"]] == [product_y.product_code]
+    assert under_s1["suppliers"] == body["suppliers"]
+    for entry in under_s1["suppliers"]:
+        assert entry["name"], f"{entry['id']} has no name"
 
 
 def test_sheet_counts_exact_with_none_buckets(scm_app):
@@ -1953,6 +1978,66 @@ def test_book_all_project_retail(scm_app):
     assert balances_retail[month_key(due)] == 0
     assert balances_retail[month_key(TODAY)] == 480
     assert book_retail_grouped == book_retail
+
+
+def test_pool_seal_both_directions(scm_app):
+    """AC-8b (reviewer round): the previous test's project bin carries a `-BB` suffix, so
+    a naive "different group label" filter would ALSO keep the two piles apart - it does
+    not prove the POOL_GROUP seal itself. Here the project bin carries NO suffix at all
+    (`group_of_warehouse_code` returns `None` for it, same as the pool's own code), so the
+    only thing that can be separating them is `assign()`'s `is_pool` flag / POOL_GROUP
+    branch. Proven in BOTH directions: stock at the pool never covers the project line,
+    and stock at the project bin never covers the pool line."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    # No hyphen - `group_of_warehouse_code` returns None, exactly like the pool's own
+    # code does. Any separation observed cannot be "different group suffix".
+    project_bin = _warehouse(db, f"ZZTBRW{_u()[:8]}".upper())
+    pool = _warehouse(db, f"ZZTPOOL{_u()[:5]}", planning=False)
+    project_bin.pool_warehouse_id = pool.id
+    db.flush()
+    due = date(2026, 11, 10)
+
+    # First half: stock only at the pool.
+    product_a = _product(db, f"{marker}-A")
+    _demand(
+        db, product_a, project_bin, qty=30, required_date=due,
+        so_number=f"{marker}-SO-PROJECT-A",
+    )
+    _demand(
+        db, product_a, pool, qty=20, required_date=due, so_number=f"{marker}-SO-POOL-A",
+    )
+    _stock(db, product_a, pool, 500)
+
+    # Second half: stock only at the project bin.
+    product_b = _product(db, f"{marker}-B")
+    _demand(
+        db, product_b, project_bin, qty=30, required_date=due,
+        so_number=f"{marker}-SO-PROJECT-B",
+    )
+    _demand(
+        db, product_b, pool, qty=20, required_date=due, so_number=f"{marker}-SO-POOL-B",
+    )
+    _stock(db, product_b, project_bin, 500)
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(
+            BASE, params={"query": marker, "book": "all", "only_debt": False}
+        ).json()
+
+    row_a = _row_of(body, product_a.product_code)
+    balances_a = {m["key"]: m["balance"] for m in row_a["months"]}
+    # Pool has the stock: the project line stays short its whole 30, the pool line is
+    # covered (its own month owes nothing).
+    assert balances_a[month_key(due)] == -30
+
+    row_b = _row_of(body, product_b.product_code)
+    balances_b = {m["key"]: m["balance"] for m in row_b["months"]}
+    # Project bin has the stock: the pool line stays short its whole 20, the project
+    # line is covered - so the ONLY thing left owed in the line's own month is the
+    # pool's 20.
+    assert balances_b[month_key(due)] == -20
 
 
 def test_product_name_null_when_equal_to_code(scm_app):
