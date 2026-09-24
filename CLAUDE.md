@@ -89,6 +89,8 @@ docker compose up -d            # from sorento_crm/ (root compose at sorento_crm
 
 For any development task, Claude boots and owns the local stack as **background Bash sessions** so the user can test immediately. Boot all four at session start (or on first dev task):
 
+For a lane that goes to a Claude Code cloud environment instead of a local worktree, see `documentation/agents/cloud-lanes.md`.
+
 | Service  | Command (run from its own dir)                                                                 | Port | Reload behavior |
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` - backend file edits auto-restart uvicorn; nothing to do |
