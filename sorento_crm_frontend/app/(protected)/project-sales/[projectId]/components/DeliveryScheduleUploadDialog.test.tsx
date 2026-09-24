@@ -91,7 +91,10 @@ const existing: DeliverySchedule = {
   confirmed_at: '2026-03-05T01:40:00',
 };
 
-function renderDialog(schedules: DeliverySchedule[] = []) {
+function renderDialog(
+  schedules: DeliverySchedule[] = [],
+  options: { project?: Project } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -99,7 +102,7 @@ function renderDialog(schedules: DeliverySchedule[] = []) {
   const result = render(
     <QueryClientProvider client={client}>
       <DeliveryScheduleUploadDialog
-        project={project}
+        project={'project' in options ? options.project : project}
         schedules={schedules}
         onDone={onDone}
       />
@@ -251,5 +254,19 @@ describe('DeliveryScheduleUploadDialog', () => {
     expect(
       await screen.findByText(/No purchase orders on this project/i),
     ).toBeInTheDocument();
+  });
+
+  it('renders no project field when opened for a known project (S2-4)', async () => {
+    renderDialog();
+    await waitFor(() => expect(listPurchaseOrders).toHaveBeenCalled());
+
+    expect(screen.queryByLabelText(/^Project/)).toBeNull();
+  });
+
+  it('renders a required project field, and refuses the upload without one, when opened with no project (S2-5)', () => {
+    renderDialog([], { project: undefined });
+
+    expect(screen.getByLabelText(/^Project/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Upload$/ })).toBeDisabled();
   });
 });

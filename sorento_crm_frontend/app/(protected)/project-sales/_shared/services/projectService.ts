@@ -96,6 +96,21 @@ export async function listProjects(
   return response.json();
 }
 
+/**
+ * Options for the "which project" picker on the page-level Start menu (S2-6): only
+ * projects the user can edit, since that is what the upload endpoints require anyway.
+ */
+export async function listEditableProjectOptions(query: string) {
+  const body = await listProjects({ query: query || undefined, limit: 50 });
+  return body.data
+    .filter((project) => project.can_edit)
+    .map((project) => ({
+      value: project.id,
+      label: project.title,
+      description: [project.project_code, project.developer_name].filter(Boolean).join(' · '),
+    }));
+}
+
 export async function getProject(projectId: string): Promise<Project> {
   const response = await apiFetch(`${BASE}/projects/${projectId}`);
   if (!response.ok)
