@@ -51,6 +51,7 @@ on the live stack, folded in below - see "Owner hand-test round" for the rulings
 ## Frontend cell selection
 
 - AC-25 Pointer-down on a value cell and dragging over others selects the rectangle they span; a plain click (no drag) still opens the cell drill.
+- AC-11b (R14/R16, owner hand-test follow-up) The board forwards its OWN `dateFrom`, `dateTo` and `book` into the cell drill it opens - never a group, which R16 already retired from the toolbar. A plain click on a value cell with Due date set to a range and Book set to a non-default value calls `getStockDebtCell(productId, month, dateFrom, dateTo, book)` with the board's own `dateFrom`, not an empty string standing in for a retired group param.
 - AC-26 Shift+click extends the rectangle from the first selected cell; Cmd/Ctrl+click toggles a single cell in or out.
 - AC-27 (R17) Clicking a month header, TBA or Total header selects that whole column on the page (No date/No location are gone, R17).
 - AC-27b (R18) The TBA column header reads "TBA" literally, always - the policy's own `tba_month` (e.g. `2029-01`) is display-only, in the header's `title` tooltip, never the visible column text.

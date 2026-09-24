@@ -66,12 +66,18 @@ describe('getStockDebtCell', () => {
     expect(calledUrl().searchParams.get('month')).toBe('unlocated');
   });
 
-  it("carries the board's ownership group, so the drill foots with the cell", async () => {
+  it('carries the due date range and book, so the drill foots with the cell', async () => {
+    // R16 retires `group` from the wire entirely - the drill now foots with the cell
+    // via the board's due date range and book, never an ownership group.
     mockedFetch.mockResolvedValue(okResponse({ demand: [], supply: [] }));
 
-    await getStockDebtCell('p1', '2026-10', 'BB');
+    await getStockDebtCell('p1', '2026-10', '2026-10-01', '2026-10-31', 'retail');
 
-    expect(calledUrl().searchParams.get('group')).toBe('BB');
+    const url = calledUrl();
+    expect(url.searchParams.get('date_from')).toBe('2026-10-01');
+    expect(url.searchParams.get('date_to')).toBe('2026-10-31');
+    expect(url.searchParams.get('book')).toBe('retail');
+    expect(url.searchParams.has('group')).toBe(false);
   });
 
   it('omits the group when the board is showing the whole book', async () => {

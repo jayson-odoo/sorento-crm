@@ -107,7 +107,15 @@ function renderDialog(cell: StockDebtCell = CELL) {
         month="2026-10"
         monthLabel="Oct 26"
         balance={-16}
-        group="BB"
+        // R16 retires the ownership group entirely - the board narrows the drill with a
+        // due date range and a book now, never a group. `group=""` is the CURRENT prop's
+        // own "no narrowing" value; `dateFrom`/`dateTo` are not on the dialog's props
+        // interface yet (`StockDebtClient.tsx`'s own comment: "StockDebtCellDialog is
+        // unchanged this round") - injected via an untyped spread so this test states
+        // the WIRE contract the coder is renaming the props towards, not today's shape.
+        group=""
+        book="retail"
+        {...({ dateFrom: '2026-11-01', dateTo: '2026-11-30' } as Record<string, unknown>)}
         onClose={() => {}}
       />
     </QueryClientProvider>,
@@ -126,10 +134,14 @@ beforeEach(() => vi.clearAllMocks());
 describe('StockDebtCellDialog', () => {
   it('asks for the cell it was opened on', async () => {
     renderDialog();
-    // AC-11: the drill also carries the board's cutoff/book, undefined here since the
-    // dialog was not given either.
+    // AC-11/AC-11b/R14: the drill carries the board's due date range and book - never an
+    // ownership group, which R16 retired. RED today: the dialog still forwards
+    // `(productId, month, group, cutoff, book)` internally, so `dateFrom`/`dateTo` never
+    // reach `getStockDebtCell` at all.
     await waitFor(() =>
-      expect(getStockDebtCell).toHaveBeenCalledWith('p1', '2026-10', 'BB', undefined, undefined),
+      expect(getStockDebtCell).toHaveBeenCalledWith(
+        'p1', '2026-10', '2026-11-01', '2026-11-30', 'retail',
+      ),
     );
   });
 
@@ -201,9 +213,10 @@ describe('StockDebtCellDialog', () => {
     // The SCM family's shell: `<Kind> · <code>` with the qualifier beside it, and the
     // product name on the muted line under it.
     expect(within(dialog).getByText('Product · SRTWB242')).toBeInTheDocument();
-    // The month, the signed balance, and the group the board was narrowed to - so the
-    // figures are not read as the whole book.
-    expect(within(dialog).getByText('Oct 26 · -16 · BB group')).toBeInTheDocument();
+    // The month and the signed balance - R16 retired the ownership-group qualifier that
+    // used to sit beside them, and no dateFrom/dateTo/book slot has replaced it on this
+    // dialog's own subtitle yet, so the context line is just the two.
+    expect(within(dialog).getByText('Oct 26 · -16')).toBeInTheDocument();
     expect(within(dialog).getByText('Sorento basin 242')).toBeInTheDocument();
   });
 

@@ -8,7 +8,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StockDebtListResponse, StockDebtRow } from '../types/stockDebt.types';
 
 if (!window.matchMedia) {
@@ -38,6 +38,34 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 }));
 
 import { getUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
+
+// AC-11b: the real `DateRangePicker` is a Popover + react-day-picker Calendar with no
+// repo pattern for driving its grid under jsdom (same note `SalesOrdersList.filters.
+// test.tsx` carries for its own Due date range). Stood in for here with a single button
+// that fires `onChange` with both ends at once - the ONE-FACT contract the real widget
+// guarantees - so what this file asserts is that the board wires the range into the
+// drill, not that the calendar itself works.
+vi.mock('@/components/ui/date-range-picker', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui/date-range-picker')>();
+  return {
+    ...actual,
+    DateRangePicker: (props: {
+      from?: string | null;
+      to?: string | null;
+      onChange: (next: { from: string | null; to: string | null }) => void;
+      placeholder?: string;
+      'aria-label'?: string;
+    }) => (
+      <button
+        type="button"
+        aria-label={props['aria-label']}
+        onClick={() => props.onChange({ from: '2026-11-01', to: '2026-11-30' })}
+      >
+        {props.from && props.to ? `${props.from} - ${props.to}` : (props.placeholder ?? 'Pick a date range')}
+      </button>
+    ),
+  };
+});
 
 // R19: the Copy fallback is asserted against these spies, not real sonner DOM output -
 // no `<Toaster>` is mounted in this render tree.
@@ -143,7 +171,7 @@ describe('StockDebtClient', () => {
 
     await waitFor(() =>
       expect(getStockDebtList).toHaveBeenCalledWith(
-        expect.objectContaining({ onlyDebt: true, group: '', query: '' }),
+        expect.objectContaining({ onlyDebt: true, query: '' }),
       ),
     );
   });
@@ -393,6 +421,34 @@ describe('StockDebtClient', () => {
     expect(screen.queryByText('Cutoff date')).not.toBeInTheDocument();
   });
 
+  it('carries the due date range and book into the cell drill (AC-11b)', async () => {
+    // RED today: the client forwards only `dateTo` into the dialog's OLD `cutoff` slot
+    // and hardcodes `group=""` (see `StockDebtClient.tsx`'s own comment on the
+    // `StockDebtCellDialog` render, "dateFrom has no slot of its own here yet") - so
+    // `dateFrom` never reaches `getStockDebtCell` at all.
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Retail' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Due date' }));
+    // The Filters dropdown (a Radix DropdownMenu) marks the rest of the page
+    // `aria-hidden` while it is open, which is exactly right for a real reader but
+    // means the grid's own cells are invisible to `getByRole` until the panel closes -
+    // Escape is how a user would dismiss it before working the table anyway.
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'SRTWB242, Sep 26, balance -16' }),
+    );
+
+    await waitFor(() =>
+      expect(getStockDebtCell).toHaveBeenCalledWith(
+        'p1', '2026-09', '2026-11-01', '2026-11-30', 'retail',
+      ),
+    );
+  });
+
   it('has no Ownership group filter left on the screen (R16)', async () => {
     renderBoard();
     await screen.findByText('SRTWB242');
@@ -437,6 +493,13 @@ describe('StockDebtClient', () => {
   });
 
   describe('Copy without navigator.clipboard (R19 - jsdom has no Clipboard API by default, matching the owner\'s http/LAN report)', () => {
+    // Vitest isolates mocks per FILE, not per test - a `document.execCommand` stub the
+    // first test installs would otherwise still be there for the second, which needs
+    // BOTH clipboard and execCommand absent to prove the error path.
+    afterEach(() => {
+      delete (document as unknown as { execCommand?: unknown }).execCommand;
+    });
+
     async function selectTwoCells() {
       // Every selection-state change remounts the grid's cell buttons rather than
       // patching them in place (measured directly: a button queried again after a
