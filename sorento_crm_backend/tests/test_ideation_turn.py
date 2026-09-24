@@ -742,6 +742,33 @@ def test_next_field_and_candidate_title_threaded_to_extractor(wired, monkeypatch
 
 
 # --------------------------------------------------------------------------- #
+# AC-1403 (S4) - a reply after the reminder drops reminded_at and moves        #
+# updated_at, restarting the 24h clock. The pointer is already rebuilt from   #
+# scratch every turn, so this is a test, not a code change (plan S4).         #
+# --------------------------------------------------------------------------- #
+def test_reply_after_reminder_drops_reminded_at(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "updated_at": "2020-01-01T00:00:00+00:00",
+                "reminded_at": "2020-01-02T00:00:00+00:00",
+            }
+        }
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    out = _turn(message_text="sorry, still working on it")
+
+    ideation = out["session_vars"]["ideation"]
+    assert "reminded_at" not in ideation
+    assert ideation["updated_at"] != "2020-01-01T00:00:00+00:00"
+
+
+# --------------------------------------------------------------------------- #
 # AC-16 - read-modify-write preserves other CRM keys                          #
 # --------------------------------------------------------------------------- #
 def test_preserves_other_crm_keys_on_write(wired):
