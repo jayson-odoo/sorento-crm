@@ -64,27 +64,30 @@ export function useExportStockDebt() {
 }
 
 /**
- * One cell's demand and supply (AC-S2-7, extended AC-11). Fires only while its lightbox
- * is open: a board is 4,000 rows x 15 columns, so nothing here is fetched up front.
+ * One cell's demand and supply (AC-S2-7, extended AC-11/AC-11b). Fires only while its
+ * lightbox is open: a board is 4,000 rows x 15 columns, so nothing here is fetched up
+ * front.
  *
- * `group`, `cutoff` and `book` are part of the KEY, not just of the request: the same
+ * `dateFrom`, `dateTo` and `book` are part of the KEY, not just of the request: the same
  * product and month answer differently under a narrowed board, so a shared cache entry
- * would hand the narrowed board the whole book's drill.
+ * would hand the narrowed board the whole book's drill. R16 retired the Ownership group
+ * this hook used to take instead - a straight pass-through to `getStockDebtCell`, no
+ * `group` anywhere.
  */
 export function useStockDebtCellQuery(
   productId: string | null,
   month: string | null,
-  group?: string,
-  cutoff?: string | null,
+  dateFrom?: string,
+  dateTo?: string,
   book?: StockDebtBook,
 ) {
   return useQuery({
     queryKey: [
-      'project-sales', 'stock-debt', 'cell', productId, month, group ?? '', cutoff ?? '',
+      'project-sales', 'stock-debt', 'cell', productId, month, dateFrom ?? '', dateTo ?? '',
       book ?? 'all',
     ],
     queryFn: () =>
-      getStockDebtCell(productId as string, month as string, group, cutoff ?? undefined, book),
+      getStockDebtCell(productId as string, month as string, dateFrom, dateTo, book),
     enabled: Boolean(productId && month),
     staleTime: 60_000,
     retry: 1,

@@ -81,8 +81,8 @@ export function StockDebtCellDialog({
   month,
   monthLabel,
   balance,
-  group,
-  cutoff,
+  dateFrom,
+  dateTo,
   book,
   onClose,
 }: {
@@ -94,18 +94,19 @@ export function StockDebtCellDialog({
   /** What the column header said, so the dialog names the same thing the reader clicked. */
   monthLabel: string;
   balance: number;
-  /** The group the board is narrowed to, echoed so the figures are not read as the whole book. */
-  group: string;
-  /** The board's own cutoff (AC-11), echoed so the drill foots with the cell that opened it. */
-  cutoff?: string | null;
+  /** The board's own due date range (AC-11/AC-11b, R14), echoed so the drill foots with
+   *  the cell that opened it. R16 retired the Ownership group this dialog used to take
+   *  instead - there is no `group` prop any more. */
+  dateFrom?: string;
+  dateTo?: string;
   /** The board's own book (AC-11), same reason. */
   book?: StockDebtBook;
   onClose: () => void;
 }) {
   // The board's own narrowing travels with the request AND with the cache key: the same
-  // product and month answer differently under `group=BB` / a cutoff / a book, so the
+  // product and month answer differently under a due date range / a book, so the
   // drill has to be recomputed over the span the cell that opened it was.
-  const cell = useStockDebtCellQuery(productId, month, group, cutoff, book);
+  const cell = useStockDebtCellQuery(productId, month, dateFrom, dateTo, book);
 
   const demandColumns = React.useMemo<ColumnDef<StockDebtDemandLine>[]>(
     () => [
@@ -341,9 +342,9 @@ export function StockDebtCellDialog({
   // the month, so a reader can add the column up and land on the balance in the title.
   const uncovered = demand.reduce((total, row) => total + row.short_qty, 0);
   const free = supply.reduce((total, row) => total + row.free_qty, 0);
-  const context = [monthLabel, signedBalance, group ? `${group} group` : null]
-    .filter(Boolean)
-    .join(' · ');
+  // R16 retired the Ownership-group qualifier that used to sit here; no due-date-range /
+  // book qualifier has replaced it on this line yet, so it is just the month and balance.
+  const context = [monthLabel, signedBalance].filter(Boolean).join(' · ');
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>

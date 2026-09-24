@@ -733,12 +733,13 @@ export function StockDebtClient() {
           month={openCell.month}
           monthLabel={openCell.label}
           balance={openCell.balance}
-          // R16: the board no longer has an Ownership group of its own to echo. `dateTo`
-          // (R14) travels through the dialog's existing `cutoff` prop - the closest
-          // narrowing it already threads through to the drill; `dateFrom` has no slot of
-          // its own here yet (`StockDebtCellDialog` is unchanged this round).
-          group=""
-          cutoff={dateTo || undefined}
+          // AC-11b: the board's own due date range and book travel straight through to
+          // the drill - R16 already dropped the Ownership group this dialog used to take
+          // instead, so there is nothing else to echo. `dateFrom` passes RAW (its own
+          // default is already ''); `dateTo`'s `|| undefined` is a no-op once it is set,
+          // it only clears the default.
+          dateFrom={dateFrom}
+          dateTo={dateTo || undefined}
           book={book}
           onClose={() => setOpenCell(null)}
         />
