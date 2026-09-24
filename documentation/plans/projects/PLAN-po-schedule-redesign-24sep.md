@@ -1,8 +1,8 @@
 # PLAN: PO and delivery schedule redesign (issue #1167)
 
 Status: approved by the owner 24 Sep 2026 (lavish review, "yeah all good for me"), R22 design
-constraint binding; tickets pending; nothing built. Track per slice: S1 small fix; S4 small fix;
-S2, S3, S5, S6, S7 full track.
+constraint binding; tickets S1 #1203, S2 #1204, S3 #1205, S4 #1206, S5 #1207, S6 #1208, S7 #1209;
+nothing built. Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.
 Evidence: `documentation/plans/projects/AUDIT-po-schedule-flow-24sep.md` and 42 screenshots
