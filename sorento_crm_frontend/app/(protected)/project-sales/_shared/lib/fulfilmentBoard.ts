@@ -315,7 +315,7 @@ export function rejectedCoveredLineIdsFor(
  * server would refuse, and the confirmation is atomic across the order, so posting it would take
  * every other line down with it. It is left out and NAMED instead.
  */
-export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse' | 'buy_reason_missing';
+export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse';
 
 export interface UnpostableLine {
   contribution: BoardContribution;
@@ -370,7 +370,6 @@ function lineFor(
   }
   if (decision?.verdict === 'rejected') return null;
 
-  const discontinued = Boolean(contribution.item_flags?.discontinued);
   const buyReason = decision?.buy_reason?.trim() || undefined;
 
   // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
@@ -379,8 +378,6 @@ function lineFor(
   // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
   // it into a Reserve was dropped from the body while the row still read "Amended".
   if (decision?.verdict === 'amended' && decision.reserve) {
-    const buy = toMinor(decision.buy_qty ?? '0');
-    if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, decision);
   }
@@ -413,10 +410,6 @@ function lineFor(
       cited_document: decision.cited_document ?? undefined,
     });
     suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
-    const suggestedBuy = toMinor(suggested.buy_qty ?? '0');
-    if (discontinued && suggestedBuy > 0 && !suggested.buy_reason?.trim()) {
-      return 'buy_reason_missing';
-    }
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
@@ -450,9 +443,6 @@ function lineFor(
     contribution.qty_proposed_buy === null
       ? Math.max(owed - incoming - reserveQty, 0)
       : toMinor(contribution.qty_proposed_buy);
-  // An approval carries no reason, and a Buy of a discontinued product needs one (AC-B11):
-  // the line is left out until the planner gives it in the editor.
-  if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
   const reserve = reserveWarehouses(contribution, reserveQty);
   // A Reserve nobody can address is not a Reserve. Leaving the line out keeps it undecided,
   // which is recoverable; posting a Reserve with no warehouse would fail the whole

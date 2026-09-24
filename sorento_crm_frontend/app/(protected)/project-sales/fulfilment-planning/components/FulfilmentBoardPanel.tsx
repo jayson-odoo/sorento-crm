@@ -2329,9 +2329,5 @@ export function FulfilmentBoardPanel({
   );
 }
 
-const UNPOSTABLE_REASONS: UnpostableReason[] = [
-  'no_mirror',
-  'no_reserve_warehouse',
-  'buy_reason_missing',
-];
+const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];
 

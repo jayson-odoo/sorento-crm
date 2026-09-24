@@ -318,7 +318,7 @@ export function ItemFlagChips({
     chips.push({
       key: 'discontinued',
       label: 'Discontinued',
-      title: 'Discontinued: a Buy for it needs a reason.',
+      title: 'Discontinued',
       tone: 'pending',
     });
   }
