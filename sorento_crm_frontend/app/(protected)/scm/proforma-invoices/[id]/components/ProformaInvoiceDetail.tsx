@@ -1407,8 +1407,13 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 )}
               </Field>
               <Field label="Invoice date">{fmtDate(invoice.invoice_date)}</Field>
+              {/* A3 (PLAN-pi-header-fields-convert-fixes-24sep.md): Container, Seal, BL,
+                  Consignee in that order - the same four facts, same order, the converted
+                  packing list shows (H1/H2). */}
               <Field label="Container">{invoice.container_no ?? EM_DASH}</Field>
+              <Field label="Seal">{invoice.seal_no ?? EM_DASH}</Field>
               <Field label="BL">{invoice.bl_no ?? EM_DASH}</Field>
+              <Field label="Consignee">{invoice.consignee ?? EM_DASH}</Field>
               <Field label="Currency">{invoice.currency ?? EM_DASH}</Field>
               <Field label="Total">
                 {fmtSupplierCost(invoice.total_amount, invoice.currency)}
