@@ -314,11 +314,21 @@ jobs:
   # that point outside tests/scm are harmless `--ignore` paths for a run that was
   # never going to collect them, and keeping one shared expression means an
   # exclusion cannot be added to one half and forgotten in the other.
+  #
+  # Sharded 3-way (run 35945594213, 2026-09-24): one runner took 25:39 wall
+  # clock for 3951 tests (23:53 under xdist plus 18s for the serial_ddl step),
+  # and that single job was the gate's critical path. pytest-split assigns
+  # every collected test to exactly one group, so the three groups together
+  # are the full tests/scm suite and no test runs twice or is dropped.
   test-backend-scm:
-    name: Backend test suite - SCM (Postgres)
+    name: Backend test suite - SCM (Postgres, xdist)
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -432,11 +442,13 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests"
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+            --splits 3 --group ${{ matrix.shard }} \
             -m "not serial_ddl" $IGNORES tests/scm/
 
       - name: Run SCM serial_ddl tests serially (executing gate)
+        if: matrix.shard == 1
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
@@ -485,14 +497,14 @@ jobs:
     runs-on: ubuntu-latest
     # The suite is CPU-bound (~3 s of CPU per test across 9k tests) and a
     # standard runner has 4 vCPUs, so one job takes ~29 min no matter how the
-    # database is tuned. Four runners in parallel, each still xdist across its
-    # own 4 cores, is 4x the CPU. pytest-split assigns every collected test to
-    # exactly one group, so the four groups together are the full suite and no
+    # database is tuned. Six runners in parallel, each still xdist across its
+    # own 4 cores, is 6x the CPU. pytest-split assigns every collected test to
+    # exactly one group, so the six groups together are the full suite and no
     # test runs twice or is dropped.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -596,9 +608,9 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 4"
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 6"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
-            --splits 4 --group ${{ matrix.shard }} \
+            --splits 6 --group ${{ matrix.shard }} \
             --ignore-glob='tests/test_migration_*.py' \
             -m "not serial_ddl" \
             $IGNORES --ignore=tests/scm tests/
@@ -615,12 +627,14 @@ jobs:
       # tests/test_order_inquiry_place_on_po.py's SELECT on another worker and
       # Postgres killed the DDL side. The whole migration set is a few seconds of
       # test time, so it runs here serially, after the xdist pool has drained,
-      # with nothing else on the database. Shard 2 is the shortest shard (about
-      # 7 minutes against shard 3's 18), so this adds nothing to the wall clock.
-      # Glob rather than a list: a future migration test with DDL is covered
-      # without anyone remembering to register it.
+      # with nothing else on the database. Run 35945594213 (2026-09-24, uneven
+      # count-based split across 4 shards) measured shard 1 as the shortest at
+      # 9:03 against shard 2's 19:34, so shard 1 is where these two serial
+      # steps land now that the matrix is rebalanced to 6 shards. Glob rather
+      # than a list: a future migration test with DDL is covered without
+      # anyone remembering to register it.
       - name: Run migration tests serially (executing gate)
-        if: matrix.shard == 2
+        if: matrix.shard == 1
         working-directory: sorento_crm_backend
         run: |
           python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
@@ -635,10 +649,10 @@ jobs:
       #
       # `-m serial_ddl` over the whole tree rather than a path list: a future test
       # that marks itself is picked up without anyone remembering to register it
-      # here. Collection of tests/ costs about 25 seconds, and shard 2 has the
+      # here. Collection of tests/ costs about 25 seconds, and shard 1 has the
       # headroom.
       - name: Run view/DDL tests serially (executing gate)
-        if: matrix.shard == 2
+        if: matrix.shard == 1
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
