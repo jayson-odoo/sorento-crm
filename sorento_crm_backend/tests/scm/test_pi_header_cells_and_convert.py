@@ -22,7 +22,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from tests._pg_fixture import pg_session
 from tests.scm.conftest import grant_permission, requires_pg
@@ -1572,3 +1572,207 @@ def test_R11_two_binders_agree_on_interleaved_codes_sharing_one_product():
             .all()
         }
         assert got == expected, (got, expected)
+
+
+# =================================================================================== #
+# Round 2 (re-review findings) - same PLAN-pi-header-fields-convert-fixes-24sep.md
+# =================================================================================== #
+
+
+def test_S1_export_task_allows_admin_without_company_row(monkeypatch):
+    """S1 (blocker): R7's cross-company refusal reads `UserCompany` directly, but the
+    platform's own scope resolver (`company_scope_resolver.resolve_user_grant_ids`)
+    treats a superadmin/admin as a member of EVERY company, membership row or not - the
+    active-company switcher and every other screen already honour that. A download
+    owned by an admin, with NO `UserCompany` row for the shipment's own company, must
+    still render 'ready'.
+
+    `_savepoint_session()`, not `scm_app`/`pg_session()`: today this test takes the
+    task's FAILURE path (it is red), and `_record_failure`'s `db.rollback()` cascades
+    past a plain session's savepoints to the outer transaction - the same reason R7/R8
+    use it (see that helper's own docstring)."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.models.procurement import InboundShipment
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+    from tests.scm.conftest import seed_user
+
+    with _savepoint_session() as db:
+        tag = uuid.uuid4().hex[:8]
+        company_id = _u()
+        db.add(Company(id=company_id, name=f"{MARKER} S1 co", code=f"{MARKER}S1{tag}"[:50], is_active=True))
+        db.flush()
+        set_company_scope(db, frozenset({company_id}))
+        shipment = InboundShipment(
+            id=_u(), shipment_number=f"{MARKER}-S1-{tag}", shipment_date=date.today(),
+            shipment_status="draft",
+        )
+        db.add(shipment)
+        db.flush()
+
+        # An admin, NO UserCompany row for `company_id` at all - the exact shape R7's
+        # raw `UserCompany` check would refuse.
+        uid = seed_user(db, "admin")
+
+        dl = DownloadService(db).create(
+            user_id=uid, kind="packing_list_xlsx", source_entity_type="inbound_shipment",
+            source_entity_id=str(shipment.id), filename="pl-admin.xlsx",
+        )
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        class _FakeBackend:
+            def __init__(self):
+                self.uploaded = None
+
+            def upload_file(self, *, file_content, file_path, content_type):
+                self.uploaded = file_content
+                return (file_path, None)
+
+        backend = _FakeBackend()
+        monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
+        monkeypatch.setattr(export_tasks, "get_backend", lambda provider: backend)
+
+        result = export_tasks.generate_packing_list_xlsx(str(dl.id), str(shipment.id))
+        assert result["status"] == "ready", result
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "ready", row.status
+        assert row.storage_key, "an admin's export must still store a file"
+
+
+def test_S2_note_row_without_leading_colon_does_not_split():
+    """S2: R3(a)'s "first colon must resolve" gate catches a note row with a leading
+    UNRESOLVED label (`Note: see PI No.: 123` - the first colon, right after "Note",
+    fails to resolve, so the whole cell is abandoned). It does nothing for a note whose
+    only colon IS the one that resolves - `Please refer PI No.: 123` and `see PI No.:
+    123 for details` each have exactly ONE colon, and the lookback search finds "PI
+    No." within it regardless of the free-text words in front. Both must leave ONE
+    document with 4 lines, `pi_number` unchanged - not a second document split off a
+    passing mention of "PI No.:" mid-sentence."""
+    from app.services.scm.proforma_invoice_reader import read_workbook
+
+    with pg_session() as db:
+        for note in ("Please refer PI No.: 123", "see PI No.: 123 for details"):
+            data = workbook([
+                [f"{MARKER} S2 letterhead"],
+                ["提单号：ABC123"],
+                [],
+                ["产品型号", "数量", "单价"],
+                ["CODE1", 5, 10],
+                ["CODE2", 3, 10],
+                [note],
+                ["CODE3", 2, 10],
+                ["CODE4", 1, 10],
+            ])
+            result = read_workbook(data, db=db)
+            assert len(result.documents) == 1, (
+                note, [(d.pi_number, len(d.lines)) for d in result.documents]
+            )
+            assert len(result.documents[0].lines) == 4, (note, result.documents[0].lines)
+            assert result.documents[0].pi_number != "123", (note, result.documents[0].pi_number)
+
+
+def test_S3_pre_header_cell_with_unknown_prefix_keeps_known_pairs():
+    """S3: R3(a)'s gate ("the FIRST colon must resolve, or the whole cell is
+    abandoned") was written for a MID-TABLE note row, but `_labelled` is the SAME
+    function the PRE-HEADER letterhead block calls too (`saw_header` still False) - a
+    genuine header-block cell carrying an UNMAPPED prefix (`Ref: X`, `Tel: 123`) ahead
+    of a real label (提单号/柜号) is not a note, and must not be thrown away wholesale
+    the way a note is. The reader must extract `bl_no`/`container_no` from these two
+    cells; the mapper's own `header_field_candidates` (`any_label=True`, no such gate)
+    already agrees today - both are asserted so a fix that only touches one side is
+    still caught."""
+    from app.services.import_alias_service import AliasResolver
+    from app.services.scm.packing_list_reader import header_field_candidates
+    from app.services.scm.proforma_invoice_reader import _BLOCK_FIELDS, DOC_TYPE, read_workbook
+
+    with pg_session() as db:
+        rows = [
+            ["Ref: X  提单号：OOLU1"],
+            ["Tel: 123 柜号：FSCU1"],
+        ]
+        data = workbook([
+            [f"{MARKER} S3 letterhead"],
+            *rows,
+            [],
+            ["产品型号", "数量", "单价"],
+            ["CODE1", 5, 10],
+        ])
+        result = read_workbook(data, db=db)
+        assert result.documents, result.problems
+        doc = result.documents[0]
+        assert doc.bl_no == "OOLU1", doc.bl_no
+        assert doc.container_no == "FSCU1", doc.container_no
+
+        resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+        candidates = header_field_candidates(rows, resolver, _BLOCK_FIELDS)
+        by_label = {c["label"].strip(): c for c in candidates}
+        assert by_label.get("提单号", {}).get("field") == "bl_no", by_label
+        assert by_label.get("柜号", {}).get("field") == "container_no", by_label
+        assert "Ref" in by_label and by_label["Ref"]["field"] is None, by_label
+        assert "Tel" in by_label and by_label["Tel"]["field"] is None, by_label
+
+
+def _count_queries(db, table_needle: str, fn):
+    """Every SQL statement executed by `fn()` that names `table_needle` - the same
+    `before_cursor_execute` counting shape `test_s3_reorder_perf_quickwins.py`'s own
+    `_count_queries` uses, narrowed to one table so a page's supplier/volume/placement
+    lookups (already batched, one query each) don't dilute what is being measured."""
+    calls = {"n": 0}
+
+    def _count(conn, cursor, statement, parameters, context, executemany):
+        if table_needle in statement.lower():
+            calls["n"] += 1
+
+    connection = db.connection()
+    event.listen(connection, "before_cursor_execute", _count)
+    try:
+        result = fn()
+    finally:
+        event.remove(connection, "before_cursor_execute", _count)
+    return result, calls["n"]
+
+
+def test_S4_pi_list_serialize_no_per_row_company_query():
+    """S4: `serialize()`'s own docstring already names the pattern - "resolved once by a
+    caller listing several invoices... one query that would otherwise be asked twenty-
+    five times" - for `supplier_labels`/`volumes`/`placements`, but `consignee` (R-B,
+    `_company_name_for(db, invoice.company_id)`) was never given the same per-page
+    batching: it runs INSIDE `serialize()`, once per row. Listing 25 invoices from the
+    SAME company must cost at most one `companies` query for the whole page, not 25."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.models.procurement import Supplier
+    from app.models.scm import ProformaInvoice
+    from app.services.scm import proforma_invoice_service
+
+    with pg_session() as db:
+        tag = uuid.uuid4().hex[:8]
+        company_id = _u()
+        db.add(Company(id=company_id, name=f"{MARKER} S4 co", code=f"{MARKER}S4{tag}"[:50], is_active=True))
+        db.flush()
+        set_company_scope(db, frozenset({company_id}))
+
+        supplier_id = _u()
+        db.add(Supplier(id=supplier_id, supplier_code=f"{MARKER}-S4", supplier_name="S4 supplier", is_active=True))
+        db.flush()
+
+        for i in range(25):
+            db.add(ProformaInvoice(
+                id=_u(), supplier_id=supplier_id, pi_number=f"PI-{MARKER}-S4-{tag}-{i:02d}",
+                line_count=0,
+            ))
+        db.flush()
+
+        result, company_queries = _count_queries(
+            db, "companies",
+            lambda: proforma_invoice_service.list_for_supplier(
+                db, supplier_id=supplier_id, limit=25,
+            ),
+        )
+        assert len(result["data"]) == 25, len(result["data"])
+        assert company_queries <= 1, (
+            f"{company_queries} `companies` queries for a 25-row page - one per row, "
+            "not one for the page"
+        )
