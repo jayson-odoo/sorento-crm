@@ -968,10 +968,24 @@ function DataGridTableBodyRowExpandded<TData>({ row }: { row: Row<TData> }) {
   return (
     <tr className={cn(props.tableLayout?.rowBorder && '[&:not(:last-child)>td]:border-b')}>
       <td colSpan={row.getVisibleCells().length}>
-        {table
-          .getAllColumns()
-          .find((column) => column.columnDef.meta?.expandedContent)
-          ?.columnDef.meta?.expandedContent?.(row.original)}
+        {/* AC-RS-70 (`PLAN-oi-request-cs-reserve.md` section 6d G4a): a fixed-layout
+            table this wide is as wide as the whole grid, so its own expanded content
+            (a nested grid, a stock table with a slack column) can stretch past the
+            scroll container's right edge with nothing to stop it. `sticky left-0`
+            pins the wrapper to the viewport's own left edge and `max-w-[var(--dg-
+            viewport-w)]` caps it at the scroller's own clientWidth - the CSS
+            variable `DataGridScroller` keeps live off a `ResizeObserver` on itself,
+            so every `expandedContent` site benefits with no change of its own.
+            S2 (fix round 2): `overflow-x-auto` too - capping the width is not the
+            same as making it reachable, and content still wider than that cap (a
+            `SpoPlannerTable` `LocationSplitPanel` at `min-w-[30rem]` on a 375px
+            viewport) needs its OWN scrollbar rather than being clipped silently. */}
+        <div className="sticky left-0 max-w-[var(--dg-viewport-w)] overflow-x-auto">
+          {table
+            .getAllColumns()
+            .find((column) => column.columnDef.meta?.expandedContent)
+            ?.columnDef.meta?.expandedContent?.(row.original)}
+        </div>
       </td>
     </tr>
   );
@@ -983,6 +997,7 @@ function DataGridTableBodyRowCell<TData>({
   dndRef,
   dndStyle,
   dndDragging,
+  dndSortableDisabled,
 }: {
   children: ReactNode;
   cell: Cell<TData, unknown>;
@@ -990,6 +1005,15 @@ function DataGridTableBodyRowCell<TData>({
   dndStyle?: CSSProperties;
   /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
   dndDragging?: boolean;
+  /** S1 (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2): true for a fixed-
+   * utility / expanded-content column's own cell (`isFixedUtilityColumn`) - the SAME
+   * value `useSortable`'s own `disabled` was handed, surfaced as `data-dnd-disabled`
+   * (F3, fix round 3: the house convention next to `data-pinned`/`data-last-col` -
+   * `aria-disabled` misdescribed a plain `<td>` as a disabled WIDGET to assistive
+   * tech) so a plain column's cell and a fixed one's are told apart in the DOM the
+   * way the header's grip already is. Undefined (no attribute) for an ordinary
+   * sortable cell. */
+  dndSortableDisabled?: boolean;
 }) {
   const { props } = useDataGrid();
 
@@ -1015,6 +1039,7 @@ function DataGridTableBodyRowCell<TData>({
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
+      data-dnd-disabled={dndSortableDisabled || undefined}
       className={cn(
         'align-middle',
         bodyCellSpacing,
@@ -1193,6 +1218,23 @@ export function moveColumnKeepingGroups(
 function DataGridScroller({ children }: { children: ReactNode }) {
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
   const { props } = useDataGrid();
+
+  // AC-RS-70 (round 3 G4a): `--dg-viewport-w` is this scroller's own `clientWidth`,
+  // kept live off a `ResizeObserver` the same way `useHorizontalOverflow` above
+  // tracks its own state - every `expandedContent` site (`DataGridTableBodyRow
+  // Expandded`) reads it through plain CSS inheritance, so a wrapper further down
+  // the tree never has to be handed the number explicitly.
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const setViewportWidth = () => {
+      el.style.setProperty('--dg-viewport-w', `${el.clientWidth}px`);
+    };
+    setViewportWidth();
+    const observer = new ResizeObserver(setViewportWidth);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
 
   // The default keeps `headerSticky` observable: a sticky header needs a
   // bounded ancestor to stick inside, and this scroller is the ONE scrollport

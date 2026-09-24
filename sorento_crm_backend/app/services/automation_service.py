@@ -387,6 +387,12 @@ class AutomationService:
                 "role_ids": [],
                 "include_promotion_owner": False,
                 "include_actor": False,
+                # PLAN-oi-request-cs-reserve.md 3.6 (review round): the falsy-config
+                # branch used to build its own dict from scratch and never mention
+                # either key, so a caller reading `include_raiser` off a freshly-created
+                # automation's default `recipient_config` got `None`, not `False`.
+                "include_raiser": False,
+                "include_requester": False,
                 "one_email": False,
                 "extra_emails": [],
             }
@@ -405,6 +411,11 @@ class AutomationService:
             # handover-email.md section 3.5). Reusable: any trigger context that
             # puts `actor` on the context earns this checkbox for free.
             "include_actor": bool(data.get("include_actor", False)),
+            # PLAN-oi-request-cs-reserve.md 3.6: Cc the person who raised the order
+            # inquiry, or the person who requested the reserve - reusable the same way
+            # `include_actor` is, wherever a trigger's context puts `raiser`/`requester`.
+            "include_raiser": bool(data.get("include_raiser", False)),
+            "include_requester": bool(data.get("include_requester", False)),
             # One email for the whole match, every resolved address on it (AC-H26) -
             # `_send_per_match`'s opt-in; off by default so a promotion/certificate
             # template that personalises `{{ recipient.name }}` per copy is unaffected.

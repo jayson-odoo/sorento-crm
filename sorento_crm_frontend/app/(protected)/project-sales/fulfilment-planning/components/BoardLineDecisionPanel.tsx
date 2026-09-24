@@ -52,7 +52,8 @@ import { ReserveAddDialog } from './ReserveAddDialog';
  * never reaches a real hover - the sentence has to live on a focusable wrapper instead.
  */
 const CONFIRMED_LINE_TITLE =
-  'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
+  'This line is already confirmed. Amend it to change the decision, reject it with a reason, ' +
+  'or undo the confirmation.';
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -272,6 +273,18 @@ export function BoardLineDecisionPanel({
    */
   const approving = matchesSuggestion(contribution, draft);
   const covered = Boolean(contribution.covered);
+  /**
+   * `covered` alone spans TWO kinds of line (N1, fix round,
+   * `PLAN-board-reject-on-confirmed-line.md`): an ACTIVE `SOSupplyDecision` covers it, or a
+   * live order-inquiry row names it with no decision at all (`inquiry_decided`, migrated
+   * sheet lines, #875) - `project_fulfilment_board_service.py`'s own `covered` property.
+   * Confirm has a withdrawal seam (`rejected_line_ids`) for the first kind only: it reads
+   * the active decision's `line_snapshots`, which the second kind has none of. So Reject
+   * after Amend stays live only where `contribution.decision` (the frozen decision object)
+   * is non-null - the #989 disabled-with-`CONFIRMED_LINE_TITLE` shape is kept for the
+   * inquiry-only case, same predicate `BoardVerdictActions`' own `rejectable` reads.
+   */
+  const activelyCovered = covered && Boolean(contribution.decision);
   const suspectedChanged =
     suspected !== Boolean(contribution.decision?.suspected_system_issue);
   /**
@@ -551,6 +564,35 @@ export function BoardLineDecisionPanel({
       <Check className="size-4" aria-hidden />
       Save decision
     </>
+  );
+
+  // Shared between the covered and uncovered Reject buttons (fix round 3, nit): the two
+  // were twenty-line twins differing only in whether a Tooltip wraps them, which is exactly
+  // the shape a shared element with a conditional wrapper is for - `disabled` and the pending
+  // guard have to move together on either branch, and duplicating them invited a drift.
+  const rejectButton = (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      // Disabled ON the landed rejection too (mirrors Save/D4): there is nothing left to
+      // reject, and a live button under "Rejected" invites a second write. `pending` (fix
+      // round 1, S4): the write this same click just started is still on the wire.
+      disabled={rejected || pending || reason.trim().length === 0}
+      onClick={reject}
+    >
+      {rejected ? (
+        <>
+          <CheckCircle2 className="size-4" aria-hidden />
+          Rejected
+        </>
+      ) : (
+        <>
+          <X className="size-4" aria-hidden />
+          Reject
+        </>
+      )}
+    </Button>
   );
 
   /**
@@ -1058,7 +1100,16 @@ export function BoardLineDecisionPanel({
                   {saveButtonLabel}
                 </Button>
               )}
-              {covered ? (
+              {activelyCovered ? (
+                // R3(b) (`PLAN-board-reject-on-confirmed-line.md`, 22 Sep 2026): Reject on an
+                // ACTIVELY covered line is no longer dead weight - it follows the UNCOVERED
+                // branch's own rule (disabled only while the reason is blank), because it now
+                // stages a withdrawal Confirm carries out. `CONFIRMED_LINE_TITLE` stays on
+                // Save alone (R2 of #989 still holds there); this tooltip only ever carries
+                // the "say why" sentence, and only while blank, so hovering an ENABLED Reject
+                // shows nothing (AC-F2/AC-F3). The wrapped span stays for the life of the
+                // covered line (AC-F4) - only `disabled` and whether the tooltip has content
+                // move.
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
@@ -1066,13 +1117,31 @@ export function BoardLineDecisionPanel({
                       className="inline-flex"
                       data-testid={`reject-decision-trigger-${contribution.key}`}
                     >
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled
-                        onClick={reject}
-                      >
+                      {rejectButton}
+                    </span>
+                  </TooltipTrigger>
+                  {reason.trim().length === 0 && (
+                    <TooltipContent
+                      className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                      collisionPadding={16}
+                    >
+                      Say why this line is being refused first.
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              ) : covered ? (
+                // N1 (fix round): a covered-but-not-ACTIVELY-covered line is the
+                // inquiry-only kind (#875, no `SOSupplyDecision` to withdraw from) -
+                // Confirm has no seam for it, so Reject keeps the ORIGINAL #989 shape:
+                // disabled outright, with `CONFIRMED_LINE_TITLE`, same as Save.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`reject-decision-trigger-${contribution.key}`}
+                    >
+                      <Button type="button" size="sm" variant="outline" disabled>
                         <X className="size-4" aria-hidden />
                         Reject
                       </Button>
@@ -1086,32 +1155,11 @@ export function BoardLineDecisionPanel({
                   </TooltipContent>
                 </Tooltip>
               ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  // Disabled ON the landed rejection too (mirrors Save/D4): there is nothing
-                  // left to reject, and a live button under "Rejected" invites a second write.
-                  // `pending` (fix round 1, S4): the write this same click just started is
-                  // still on the wire. No `title` here (fix round 2, nit): the Button
-                  // primitive's `disabled:pointer-events-none` means a `title` on a disabled
-                  // button never reaches a real hover (see the comment on
-                  // `CONFIRMED_LINE_TITLE` above), so it was dead - no tooltip added either.
-                  disabled={rejected || pending || reason.trim().length === 0}
-                  onClick={reject}
-                >
-                  {rejected ? (
-                    <>
-                      <CheckCircle2 className="size-4" aria-hidden />
-                      Rejected
-                    </>
-                  ) : (
-                    <>
-                      <X className="size-4" aria-hidden />
-                      Reject
-                    </>
-                  )}
-                </Button>
+                // No `title` here (fix round 2, nit): the Button primitive's
+                // `disabled:pointer-events-none` means a `title` on a disabled button never
+                // reaches a real hover (see the comment on `CONFIRMED_LINE_TITLE` above), so
+                // it was dead - no tooltip added either.
+                rejectButton
               )}
             </div>
           )}

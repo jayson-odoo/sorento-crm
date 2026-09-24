@@ -1129,8 +1129,41 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
             return "clarification"
         return "casual"
     if message_type == "business_query" and not domains:
+        # S3 (PLAN-chatbot-media-into-turn.md, general fix, Q1): bare entities this
+        # message itself named - typed codes or a photo's raws, no domain word and
+        # no carried focus to route them under - are a business question the
+        # resolver can still answer ("what would you like me to do with it?"),
+        # never idle chat. `casual` reaches the LLM clarifier, which cannot place
+        # a product code at all; `entities_only` resolves the tokens directly.
+        #
+        # Review round B1(b): gated to a PRODUCT entity (or a no-hint token shaped
+        # like one) - a customer/order/brand-only message (e.g. "Hanlim" alone) is
+        # not a bare product ask and falls through to `casual` exactly as before;
+        # the parser names nobody's kind wrong often enough that a bare customer
+        # name here would otherwise misroute to a lane that can only resolve
+        # products.
+        current_message_entities = [
+            e for e in (verdict.get("entities") or []) if isinstance(e, dict) and e.get("current_message") is True
+        ]
+        if any(is_product_shaped_entity(e) for e in current_message_entities):
+            return "entities_only"
         return "casual"
     return None
+
+
+def is_product_shaped_entity(entity: dict[str, Any]) -> bool:
+    """A current-message entity this arm should resolve: `hint == "product"`, or no
+    hint at all but a raw token SHAPED like a product code - letters and digits both
+    (`"MBF-9902-ZZT"`), never a bare word (`"Hanlim"`) a no-hint parser output might
+    otherwise carry."""
+    if entity.get("hint") == "product":
+        return True
+    if entity.get("hint"):
+        return False
+    # No `re` (PLAN's own "apply is pure" rule - `test_turn_package_never_calls_re_
+    # dot_or_reads_dot_text` greps for it): plain character-class checks instead.
+    raw = str(entity.get("raw") or "")
+    return any(c.isdigit() for c in raw) and any(c.isalpha() for c in raw)
 
 
 # D5(b), hand pass 9: main's own `lanes/business/gate.py` `ALLOWS_EMPTY` (86-95) - a

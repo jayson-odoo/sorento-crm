@@ -345,7 +345,7 @@ export function formatTimeShortMalaysia(input: Date | number): string {
   return new Intl.DateTimeFormat('en-GB', {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);
 }
@@ -457,7 +457,7 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);
 }

@@ -142,7 +142,7 @@ NO_DATE_BUCKET = "no_date"
 #: the window.
 DAY_WINDOW_COLUMNS = 30
 
-GRANULARITIES = ("day", "week", "month")
+GRANULARITIES = ("day", "date", "week", "month")
 
 _MONTHS = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -196,7 +196,7 @@ def bucket_key_for(
         return NO_DATE_BUCKET
     if granularity == "month":
         return required_date.replace(day=1).isoformat()
-    if granularity == "day":
+    if granularity in ("day", "date"):
         return required_date.isoformat()
     return week_start(required_date).isoformat()
 
@@ -206,7 +206,7 @@ def bucket_end(key: str, granularity: str) -> Optional[date]:
     if key == NO_DATE_BUCKET:
         return None
     start = date.fromisoformat(key)
-    if granularity == "day":
+    if granularity in ("day", "date"):
         return start
     if granularity == "week":
         return start + timedelta(days=6)
@@ -226,6 +226,8 @@ def _bucket_label(key: str, granularity: str) -> str:
         return f"{month} {when.year}"
     if granularity == "day":
         return f"{when.day} {month} {when.year}"
+    if granularity == "date":
+        return when.strftime("%d/%m/%Y")
     return f"w/c {when.day} {month} {when.year}"
 
 
@@ -635,7 +637,7 @@ class FulfilmentBoardService:
             raise AppException(
                 status_code=422,
                 message=(
-                    "Granularity must be day, week or month, "
+                    "Granularity must be day, date, week or month, "
                     f"not '{granularity}'."
                 ),
                 code="board_granularity_unknown",
@@ -1130,6 +1132,50 @@ class FulfilmentBoardService:
         spo_qty = sum((ref.qty for _bid, ref in incoming_rows), _ZERO)
         free = sum((frees.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
         held = sum((helds.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
+        # PLAN-oi-request-cs-reserve.md 3.9 (section 6, verify item 2): the OI stock grid
+        # reuses `CellStockTable`, the SAME per-location matrix the board's cell dialog
+        # renders, so this read states its rows in that shape rather than the FE inventing
+        # a second one from `bins` alone. Aggregated from the documents already listed
+        # above - never a second query. `where` is `group` for every member of a GROUP
+        # read (a bare product+group carries no asking line, so this endpoint cannot say
+        # which one bin is "its own") and `own` for a plain one-bin read; `net`/`net_of`
+        # are stated on a GROUP read only, off the SAME aggregate this method already sums
+        # so the table's own subtotal can never disagree with it.
+        so_by_wid: Dict[str, Decimal] = {}
+        for row in rows:
+            wid = str(row.warehouse_id)
+            so_by_wid[wid] = so_by_wid.get(wid, _ZERO) + _dec(row.owed)
+        spo_by_wid: Dict[str, Decimal] = {}
+        for bin_id, ref in incoming_rows:
+            spo_by_wid[bin_id] = spo_by_wid.get(bin_id, _ZERO) + _dec(ref.qty)
+        locations = [
+            {
+                "location": codes.get(bin_id) or "",
+                "where": "group" if group else "own",
+                "product_id": str(product.id),
+                "warehouse_id": bin_id,
+                # No demand context at this endpoint (no cell, no asking line) - never
+                # rendered, `CellStockTable` carries no Demand column.
+                "qty": "0",
+                "qty_demand": "0",
+                "qty_on_hand": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                ),
+                "so_qty": qty_text(so_by_wid.get(bin_id, _ZERO)),
+                "spo_qty": qty_text(spo_by_wid.get(bin_id, _ZERO)),
+                "available_qty": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                    - so_by_wid.get(bin_id, _ZERO)
+                    + spo_by_wid.get(bin_id, _ZERO)
+                ),
+                **(
+                    {"net": qty_text(on_hand - so_qty + spo_qty), "net_of": group}
+                    if group
+                    else {}
+                ),
+            }
+            for bin_id in sorted(target_ids, key=lambda bid: codes.get(bid) or "")
+        ]
         return {
             "product_id": str(product.id),
             "item_code": product.product_code,
@@ -1140,6 +1186,7 @@ class FulfilmentBoardService:
             "location": warehouse.warehouse_code if warehouse is not None else None,
             "group": group or None,
             "bins": bins,
+            "locations": locations,
             "qty_on_hand": qty_text(on_hand),
             "so_qty": qty_text(so_qty),
             "spo_qty": qty_text(spo_qty),
@@ -1760,6 +1807,10 @@ class FulfilmentBoardService:
         pick the LIVE row when a refused row and the row CS raised in its place share a
         `created_at`. An answered refusal is therefore taken out of the running explicitly
         rather than left to lose the coin flip - see `_refusal_answered`.
+
+        A cancelled row is never a "last writer" either - it is skipped before it can seed
+        or overwrite an entry, so a withdrawn line falls back to whatever older row still
+        stands, or to no entry at all when none does.
         """
         if not core_line_ids:
             return {}
@@ -1768,6 +1819,10 @@ class FulfilmentBoardService:
             self.db.query(
                 ProjectSalesOrderLine.core_sales_order_line_id,
                 OrderInquiry.inquiry_no,
+                # S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the HEADER's own id,
+                # beside the ROW's id read further down - the List view's OI column needs
+                # the pair to address the exact row, and prints neither.
+                OrderInquiry.id,
                 OrderInquiryRow.state,
                 # The handshake, so a REJECTED line says who refused it and why
                 # (`PLAN-scm-oi-handshake.md`, AC-H6). The line is undecided again by then
@@ -1838,7 +1893,7 @@ class FulfilmentBoardService:
         # beside a read-only "decided" would send CS to an instruction nobody holds.
         live_entry: Dict[str, Dict[str, Any]] = {}
         for (
-            core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name,
+            core_id, inquiry_no, inquiry_id, state, ack_state, rejected_at, _reason, _name,
             supply_decision_id, row_id, redirected_to_pool,
         ) in rows:
             core_key = str(core_id)
@@ -1850,6 +1905,7 @@ class FulfilmentBoardService:
                 # Rows arrive oldest first, so the last one seen is the newest.
                 live_entry[core_key] = {
                     "inquiry_no": inquiry_no,
+                    "inquiry_id": str(inquiry_id) if inquiry_id else None,
                     "state": state,
                     "ack_state": ack_state,
                     "rejected_reason": None,
@@ -1857,6 +1913,13 @@ class FulfilmentBoardService:
                     "_row_id": str(row_id),
                     "redirected": bool(redirected_to_pool),
                 }
+            if state == INQUIRY_CANCELLED:
+                # A cancelled row never becomes the column's entry, not even to seed one
+                # over a blank cell - so a line whose only surviving row is cancelled reads
+                # "-" rather than a number nobody holds. `live_entry` above already excludes
+                # it; this excludes it from last-writer-wins too, so an older row that is
+                # still live (or still-open refusal) wins the cell instead.
+                continue
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
             )
@@ -1868,6 +1931,7 @@ class FulfilmentBoardService:
                     continue
             out[core_key] = {
                 "inquiry_no": inquiry_no,
+                "inquiry_id": str(inquiry_id) if inquiry_id else None,
                 "state": state,
                 # NULL once CS has answered the refusal. The entry is still seeded from the
                 # row - the cell keeps the inquiry number it was last told about - but the
@@ -1896,7 +1960,7 @@ class FulfilmentBoardService:
         # decision and not about the objection that prompted it. A flag that outlived the
         # answer would read as an open refusal on a line somebody had already dealt with.
         for (
-            core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name,
+            core_id, _inquiry_no, _inquiry_id, _state, ack_state, rejected_at, reason, name,
             _decision_id, _row_id, _redirected_to_pool,
         ) in rows:
             if ack_state != ACK_REJECTED:
@@ -1931,6 +1995,10 @@ class FulfilmentBoardService:
         )
         for entry in out.values():
             row_id = entry.pop("_row_id", None)
+            # S6 (AC-B6-15): the same id, now on the WIRE as well - the List view's OI
+            # column addresses `?row=<row_id>` with it. Read off `_row_id` at the moment
+            # it is popped so the two can never name different rows.
+            entry["row_id"] = row_id
             entry["documents"] = [
                 {
                     "document": link["document"],
@@ -3873,17 +3941,22 @@ class FulfilmentBoardService:
         that tells a planner why a group with stock coming still bought.
 
         R7: `own_arrival` is what THIS rung drew as own-arrival credit, said FIRST and by
-        its own PO - "20 landed for this line on PO ..., taken first" - ahead of whatever
-        the ordinary group-net sentence below it says, because the two are different facts
-        answering the same question.
+        the document it landed on - "20 landed for this line on ..., taken first" - ahead
+        of whatever the ordinary group-net sentence below it says, because the two are
+        different facts answering the same question.
+
+        R7 FOLLOW-UP (`PLAN-r7-landed-reads-spo-received.md`, R1/R3): that document is now
+        the SPO the goods physically landed on, never the PO - a PO line's own
+        `qty_received` is the AutoCount TRANSFER onto a shipping order, not a receipt - so
+        the noun in front of it is dropped rather than saying "PO" of an SPO number.
         """
         prefix = "".join(
             (
-                f"{qty_text(qty)} landed for this line on PO {po_number}, taken first. "
-                if po_number
+                f"{qty_text(qty)} landed for this line on {document}, taken first. "
+                if document
                 else f"{qty_text(qty)} landed for this line, taken first. "
             )
-            for qty, po_number in own_arrival
+            for qty, document in own_arrival
             if qty > _ZERO
         )
         if outcome == "none_needed":

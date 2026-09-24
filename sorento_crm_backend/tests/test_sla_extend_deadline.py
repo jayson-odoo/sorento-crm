@@ -600,6 +600,31 @@ def test_route_preview_no_resolution_due_422():
     assert ei.value.status_code == 422
 
 
+def test_route_preview_resolved_ticket_422():
+    """S3 (fix round 1, PLAN-keep-assignee-on-resolve-22sep): the real extend
+    422s on is_resolved (sla_service._assert_can_extend); the preview must
+    reject a resolved ticket the same way, not just gate on the assignee."""
+    svc = MagicMock()
+    svc.get_tracking.return_value = SimpleNamespace(
+        assigned_to_id="me",
+        due_at_resolution=datetime(2026, 7, 1, 9, 0, 0),
+        is_resolved=True,
+    )
+    with patch.object(route_mod, "ConversationSLATrackingService", return_value=svc):
+        with pytest.raises(HTTPException) as ei:
+            _run(
+                preview_extend_sla_tracking(
+                    tracking_id=uuid.uuid4(),
+                    payload=_ExtendPreviewRequest(days=2),
+                    current_user={"id": "me"},
+                    db=MagicMock(),
+                )
+            )
+    assert ei.value.status_code == 422
+    assert "resolved" in ei.value.detail.lower()
+    svc.compute_extension.assert_not_called()
+
+
 def test_route_preview_happy_path_returns_four_fields():
     """UAC-18 (preview): returns current_due_at, new_due_at, working_days, warnings[]."""
     svc = MagicMock()

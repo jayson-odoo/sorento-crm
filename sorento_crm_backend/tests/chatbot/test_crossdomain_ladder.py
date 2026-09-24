@@ -231,7 +231,10 @@ class TestAC921StockMissIncomingMissPOPlaced:
         # The rung writes NO offer: `crossdomain_compose` is the one writer (turns
         # 0184d84d / 5f73ddb0 / 90a1637a carried the question twice).
         assert "escalate" not in block.lower()
-        assert result["render"]["_xdBlock"]["team"] == "purchasing"
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-5): a stock-origin ask is always suggested
+        # to the warehouse team, no PO-rung override - the PO rung only writes what
+        # answered the "no stock" line, never the routing team.
+        assert result["render"]["_xdBlock"]["team"] == "warehouse"
         # AC-921: never the supplier, dealer or not - the PO rung's own template has no
         # supplier slot at all (see `_crossdomain_rung_rows`).
         assert "supplier" not in block.lower()
@@ -383,7 +386,12 @@ class TestOwner8SepTheOfferIsWrittenOnce:
     """Turns 0184d84d / 5f73ddb0 / 90a1637a (8 Sep 2026): "...27 pcs expected 2027-02-01
     Would you like me to escalate to purchasing team?\n\nWould you like me to escalate to
     purchasing team?" - the rung appended the offer into the block AND `crossdomain_compose`
-    appended it again from `block["team"]`. Compose is the one writer, on every shape."""
+    appended it again from `block["team"]`. Compose is the one writer, on every shape.
+
+    `test_rung_found` used to pin the PO rung overriding `block["team"]` to "purchasing"
+    for a stock-origin ask - owner ruling 22 Sep 2026, R6 (AC-EQ-5) retired that override:
+    a stock question is always suggested to the warehouse team, whichever rung answered.
+    """
 
     _PHRASE = "Would you like me to escalate"
 
@@ -395,7 +403,9 @@ class TestOwner8SepTheOfferIsWrittenOnce:
         )
         text = _composed_text(result)
         assert text.count(self._PHRASE) == 1
-        assert "escalate to purchasing team?" in text  # the rung's team, not the stock team
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-5): a stock-origin ask always offers the
+        # warehouse team, even when the PO rung is what answered.
+        assert "escalate to warehouse team?" in text
 
     def test_rung_nothing(self) -> None:
         result, _ = _run(
@@ -1369,3 +1379,88 @@ class TestOwner11SepFixRoundZeroEntryPrefixFamilyLookup:
         assert "stock is 0" not in block.lower()
         assert "but PO is placed" not in block
         assert "No stock for SRTWC8517." not in block
+
+
+class TestACEQ5To10StockOriginStaysWarehouse:
+    """PLAN-escalation-quote-title-and-stock-team-22sep.md, owner ruling R6: a stock-origin
+    ask (domain_hint inventory) is always suggested to the warehouse team, no PO-rung
+    override. Incoming-origin asks are unaffected - an incoming ask that climbs to the PO
+    rung still names purchasing (AC-EQ-9), because that is the team `crossdomain_zeroset`
+    already set before the rung ever ran."""
+
+    def test_ac_eq_5_stock_zero_everywhere_incoming_empty_po_placed_stays_warehouse(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            validator=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+        )
+        assert [name for name, _ in calls] == [_INCOMING_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]
+        assert "but PO is placed" in block["block"]
+        assert block["team"] == "warehouse"
+        assert "escalate to warehouse team?" in _composed_text(result)
+
+    def test_ac_eq_6_no_stock_no_incoming_po_placed_stays_warehouse(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+        )
+        assert [name for name, _ in calls] == [_INCOMING_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]
+        assert "but PO is placed" in block["block"]
+        assert block["team"] == "warehouse"
+
+    def test_ac_eq_7_no_stock_incoming_found_no_po_stays_warehouse(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={
+                "answers": [
+                    {"fields": [
+                        {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-15"},
+                    ]}
+                ],
+                "has_result": True,
+            },
+        )
+        tool_names = [name for name, _ in calls]
+        assert _PO_TOOL not in tool_names, "incoming answered - the PO rung must never run"
+        assert result["render"]["_xdBlock"]["team"] == "warehouse"
+
+    def test_ac_eq_8_no_stock_no_incoming_no_po_stays_warehouse(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [], "has_result": False},
+        )
+        assert [name for name, _ in calls] == [_INCOMING_TOOL, _PO_TOOL]
+        assert result["render"]["_xdBlock"]["team"] == "warehouse"
+
+    def test_ac_eq_9_incoming_origin_climbing_to_po_still_names_purchasing(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={
+                "answers": [
+                    _po_row(42, "2026-07-13", po_number="202607-S0054", po_date="2026-07-17")
+                ],
+                "has_result": True,
+            },
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        assert result["render"]["_xdBlock"]["team"] == "purchasing"
+
+    def test_ac_eq_10_the_po_placed_line_still_renders_only_the_team_word_changed(self) -> None:
+        result, _calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+        )
+        block = result["render"]["_xdBlock"]
+        assert f"but PO is placed:\n{_row_block(qty=50)}" in block["block"]
+        assert block["team"] == "warehouse"

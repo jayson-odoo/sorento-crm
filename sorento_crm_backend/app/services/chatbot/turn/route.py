@@ -30,6 +30,11 @@ _LANE_BRANCH: dict[str, str] = {
     "not_supported": "not_supported",
     "clarification": "clarify_menu",
     "casual": "low_signal",
+    # S3 (chatbot media-into-turn): bare entities with no domain and no carried
+    # focus still answer as a business question (a deterministic one, `apply.py`'s
+    # own `entities_only` arm - not the generic fetch/ask machinery), never the
+    # `casual` lane's LLM clarifier.
+    "entities_only": "business_query",
 }
 
 

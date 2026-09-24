@@ -184,6 +184,16 @@ class UserListColumnConfigPayload(BaseModel):
     # (`saved_views.is_default`, everyone's). Opaque like `filters` - `SavedViewsMenu`
     # is the only reader/writer, and a listing key with no saved views never touches it.
     defaultSavedViewId: Optional[str] = None
+    # PLAN-listing-page-size-memory: rows-per-page, owned by `useListingColumnPreferences`
+    # like the three column keys above. A bounded int, NOT a fixed list of sizes - review
+    # round 1 found ~45 listings that default their own Rows-per-page menu to 10/15/20 or
+    # add 10 to the usual 25/50/100 (roles/role-list.tsx, ReorderPolicyGrid.tsx,
+    # OrderInquiryLinesTab.tsx among them), and a fixed Literal[25, 50, 100] 422s every one
+    # of them on open. 100 is `MAX_LIST_PAGE_SIZE` (`lib/listNavQuery.ts`), the largest page
+    # any list route accepts. The bound only guards the WRITE: a row saved before this
+    # bound existed (or restored from a backup) can still hold an out-of-range value, and
+    # GET returns it as-is - the FE apply gate drops it on read, same predicate as here.
+    pageSize: Optional[int] = Field(default=None, ge=1, le=100)
 
 
 class UserListColumnConfigResponse(BaseModel):

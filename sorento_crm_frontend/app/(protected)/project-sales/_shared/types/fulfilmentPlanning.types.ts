@@ -625,6 +625,15 @@ export interface ConfirmSupplyBody {
    * a second revision.
    */
   batch_id?: string | null;
+  /**
+   * The mirror `project_line_id`s of COVERED lines a `rejected` draft was staged on (owner
+   * ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
+   * rejection" - reject on a confirmed line is a STAGED decision like every other board
+   * decision, and Confirm is what commits it, never the draft save itself). Never overlaps
+   * `lines` - a line is either REPLACED (named in `lines`) or DROPPED (named here). Absent
+   * on every ordinary Confirm; may not travel alongside `batch_id`.
+   */
+  rejected_line_ids?: string[];
 }
 
 export interface ConfirmException {
@@ -658,6 +667,12 @@ export interface ConfirmResult {
   transfers_kept?: number | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
+  /**
+   * How many covered lines this SAME press withdrew (`ConfirmSupplyBody.rejected_line_ids`,
+   * owner ruling 23 Sep 2026). The toast needs it beside the confirmed count - "N confirmed"
+   * says nothing about the lines this press also took OUT.
+   */
+  rejected_count?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -682,11 +697,13 @@ export interface FulfilmentPlanningListEnvelope {
 // ---------------------------------------------------------------------------
 
 /**
- * How the date axis is cut, as a calendar control: day, week or month (13.3, captain's
- * decision). Week is the default. Day renders a scrolling 30-day window rather than a column
- * per distinct date, because the book carries 349 of them.
+ * How the date axis is cut, as a calendar control: date, day, week or month (13.3, captain's
+ * decision; `date` added S1, PLAN-board-oi-mechanical-22sep.md, owner ruling 22 Sep 2026).
+ * `date` is the default: one column per distinct required date actually present, no calendar
+ * fill. `day` renders a scrolling 30-day window rather than a column per distinct date, because
+ * the book carries 349 of them - it stays available as its own option.
  */
-export type BoardGranularity = 'day' | 'week' | 'month';
+export type BoardGranularity = 'date' | 'day' | 'week' | 'month';
 
 /**
  * A column of the board. Every dated column is a real date, however far past (the captain,
@@ -1379,6 +1396,16 @@ export interface BoardLineOrderInquiry {
   inquiry_no?: string | null;
   /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
   state: string;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the inquiry HEADER's own id and
+   * this row's own OI row id, addressing the List view's "OI" column link
+   * (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`) - resolved server-side
+   * off the winning row (`project_fulfilment_board_service._order_inquiries`).
+   * Optional because a row raised before inquiries were numbered carries neither; absent
+   * means the cell reads as plain text.
+   */
+  inquiry_id?: string | null;
+  row_id?: string | null;
   /**
    * The handshake (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
    * `rejected`. A different question from `state`, which says where the quantity sits.
@@ -2171,6 +2198,16 @@ export interface StockDetail {
    */
   group?: string | null;
   bins?: StockDetailBin[];
+  /**
+   * `PLAN-oi-request-cs-reserve.md` 3.9: one entry per member of `bins` (the same set), in
+   * `CellStockTable`'s own shape - so the OI stock grid (`OrderInquiryStockGrid`) renders the
+   * SAME component the board's cell dialog does, rather than a second matrix built from
+   * `bins` alone, which carries on-hand only. `where` is `group` for every member of a
+   * GROUP read (this endpoint carries no asking line, so it cannot say which one bin is
+   * "its own") and `own` for a plain one-bin read; `net`/`net_of` are stated on a GROUP
+   * read only.
+   */
+  locations?: BoardCellLocation[];
   qty_on_hand: string;
   so_qty: string;
   spo_qty: string;
@@ -2419,6 +2456,9 @@ export interface ConfirmManyOrderBody {
    * Falls back to `ConfirmManyBody.batch_id` server-side when absent.
    */
   batch_id?: string | null;
+  /** This order's own half of `ConfirmSupplyBody.rejected_line_ids` (owner ruling 23 Sep
+   * 2026). Same rule, same refusal alongside a batch. */
+  rejected_line_ids?: string[];
 }
 
 export interface ConfirmManyBody {
@@ -2451,6 +2491,9 @@ export interface ConfirmManyOrderResult {
   transfers_kept?: number | null;
   /** The lines this order's planner flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
+  /** How many covered lines THIS order's own press withdrew, the per-order twin of
+   * `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026). */
+  rejected_count?: number | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

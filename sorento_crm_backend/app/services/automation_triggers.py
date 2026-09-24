@@ -570,6 +570,74 @@ register(
 )
 
 
+def _trigger_order_inquiry_reserve_requested(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `OrderInquiryReserveService.create_request`
+    (`PLAN-oi-request-cs-reserve.md` 3.2, R9: ONE email however many rows), queued
+    mid-transaction and drained post-commit by `register_order_inquiry_reserve_post_
+    commit_dispatch` - the same simpler shape `_trigger_order_inquiry_changed_with_links`
+    above uses (see that module's own docstring for why the transaction-chain
+    bookkeeping `order_inquiry_handover` needs does not apply here).
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_reserve_requested",
+        label="Order inquiry: request CS to reserve",
+        description=(
+            "Fires when purchasing asks CS to reserve stock for one or more order "
+            "inquiry rows (event-driven), one email per request however many rows it "
+            "names."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_reserve_requested,
+)
+
+
+def _trigger_order_inquiry_reserved(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `OrderInquiryReserveService.reserve`
+    (`PLAN-oi-request-cs-reserve.md` 3.3), queued mid-transaction and drained the same
+    way the request trigger above is.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_reserved",
+        label="Order inquiry: reserved by CS",
+        description=(
+            "Fires once CS confirms what was reserved against a request (event-driven), "
+            "telling the requester what was reserved and the balance still to buy."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_reserved,
+)
+
+
 def _trigger_sponsorship_form_approved(
     db: Session,
     config: dict[str, Any],

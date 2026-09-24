@@ -188,7 +188,30 @@ describe('fileNameFromAttachmentUrl', () => {
 // ---------------------------------------------------------------------------
 
 describe('describeQuotedContext', () => {
-  it('reads the quoted id, excerpt and direction', () => {
+  // Fix round 3: this fixture is the REAL wire shape - Respond's live relay
+  // carries the quoted message's id as `id`, never `messageId` (verified in
+  // the browser: `"replyTo": {"id": 1788922281019104, "message": {...},
+  // "mId": "...", "sender": {...}}`, no `messageId` key at all). Kept as the
+  // FIRST/primary fixture so the suite cannot silently regress to
+  // `messageId`-only fixtures the way it did the first time round.
+  it('reads the quoted id, excerpt and direction (real wire shape: replyTo.id, no messageId)', () => {
+    expect(
+      describeQuotedContext({
+        messageId: 2,
+        traffic: 'incoming',
+        message: { type: 'text', text: 'which one?' },
+        replyTo: {
+          id: 1,
+          mId: 'wamid.abc123',
+          traffic: 'outgoing',
+          message: { type: 'text', text: 'Your order ships Tuesday.' },
+          sender: { source: 'agent' },
+        },
+      }),
+    ).toEqual({ messageId: '1', excerpt: 'Your order ships Tuesday.', sender: 'agent' });
+  });
+
+  it('still reads the older stored shape (local chat_histories mirror: replyTo.messageId)', () => {
     expect(
       describeQuotedContext({
         messageId: 2,
@@ -201,6 +224,14 @@ describe('describeQuotedContext', () => {
         },
       }),
     ).toEqual({ messageId: '1', excerpt: 'Your order ships Tuesday.', sender: 'agent' });
+  });
+
+  it('prefers `id` over `messageId` when a replyTo somehow carries both', () => {
+    expect(
+      describeQuotedContext({
+        replyTo: { id: 1, messageId: 999, message: { text: 'x' } },
+      })?.messageId,
+    ).toBe('1');
   });
 
   it('normalizes whitespace so a multi-line quote stays one readable line', () => {

@@ -325,20 +325,12 @@ class TestShouldFix89TheRungSentenceAndTeam:
         assert f"No stock, no incoming and nothing on order for {CODE}." in block
         assert "no purchase order" not in block
 
-    def test_the_rung_that_answered_sets_the_turns_escalation_team(self) -> None:
-        """The sentence offers `purchasing`; the turn's own routing (for a stock
-        question, `warehouse`) must not disagree. One team, or the customer is told
-        one thing and handed to another (the H64 shape).
-
-        AC-1592 test triage (queue item 2, 16 Sep 2026): the old sanity-check line
-        against `tail/pending.escalation_team` (a module that no longer exists) is
-        dropped, not ported - it re-derived the SAME fact `block["team"]` already
-        proves through the kept `answer_mod.run_crossdomain` seam this test drives
-        directly; `escalation_team_code` now lives on `turn/policy.py`'s domain row
-        (`policy_rows.py`), read by `turn/apply.py`/`turn/compose.py`, an entirely
-        different call path this test's own seam (`run_crossdomain`) does not
-        exercise, so re-deriving it here would test a second mechanism, not confirm
-        agreement with the first."""
+    def test_the_rung_never_overrides_the_turns_escalation_team(self) -> None:
+        """Owner ruling 22 Sep 2026, R6 (AC-EQ-5) retires the 8 Sep H64 fix this test used
+        to pin: a stock-origin ask is ALWAYS suggested to the warehouse team, whichever
+        rung answered it - never re-pointed to purchasing just because a PO answered.
+        `block["team"]` and `parser["routing"]["suggested_team"]` both stay exactly what
+        `crossdomain_zeroset` set them to; the rung stamps neither any more."""
         parser = {**PARSER, "routing": {"suggested_team": "warehouse", "suggested_agent": None}}
         result, _ = _run_ladder(
             validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=PO_ROWS, parser=parser
@@ -347,8 +339,9 @@ class TestShouldFix89TheRungSentenceAndTeam:
         assert "but PO is placed" in block["block"]
         # the offer itself is compose's (8 Sep 2026); the TEAM it will name is the block's
         assert "escalate" not in block["block"].lower()
-        assert block["team"] == "purchasing"
-        assert parser["crossdomain_rung_team"] == "purchasing"
+        assert block["team"] == "warehouse"
+        assert parser["routing"]["suggested_team"] == "warehouse"
+        assert "crossdomain_rung_team" not in parser
 
     def test_a_rung_that_never_fires_leaves_the_routing_alone(self) -> None:
         parser = {**PARSER, "routing": {"suggested_team": "warehouse", "suggested_agent": None}}

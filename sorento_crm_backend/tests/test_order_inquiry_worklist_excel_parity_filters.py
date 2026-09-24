@@ -37,6 +37,8 @@ from app.models.project_so import (
     IV_ORDER,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -236,6 +238,30 @@ def _spo_link(db, company_id: str, row: OrderInquiryRow, *, spo_number: str,
                              qty=Decimal(str(qty))))
     db.flush()
     return allocation
+
+
+def _reserve_link(db, company_id: str, row: OrderInquiryRow, *, qty="10") -> OrderInquiryReserveRequestRow:
+    """B1 (review round 2): a THIRD kind of link, on the SAME row, never a PO or SPO
+    document (the widened `ck_order_inquiry_links_one_target` CHECK). Whole scaffold
+    built here rather than borrowed - `test_order_inquiry_reserve.py`'s own `_api`/
+    `_seeded_world` build a company from scratch, and this file's `api` fixture already
+    seeds one via `project_seed_service.run`."""
+    request = OrderInquiryReserveRequest(
+        id=_uid(), company_id=company_id, order_inquiry_id=row.order_inquiry_id, ordinal=1,
+    )
+    db.add(request)
+    db.flush()
+    request_row = OrderInquiryReserveRequestRow(
+        id=_uid(), company_id=company_id, request_id=request.id, row_id=row.id,
+        qty_requested=Decimal(str(qty)), qty_reserved=Decimal(str(qty)),
+    )
+    db.add(request_row)
+    db.flush()
+    db.add(OrderInquiryLink(id=_uid(), company_id=company_id, row_id=row.id,
+                             reserve_request_row_id=request_row.id,
+                             document="Reserved @ ZZT", qty=Decimal(str(qty))))
+    db.flush()
+    return request_row
 
 
 def _open_derived_spo(db, company_id: str, *, spo_number: str, po_number: str,
@@ -563,6 +589,79 @@ def test_export_honours_the_location_filter(api):
     }
     assert seeded["row_agent_x_loc_a"].item_code in item_codes
     assert seeded["row_agent_y_loc_b"].item_code not in item_codes
+
+
+def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
+    """Fix round (22 Sep, `PLAN-board-oi-mechanical-22sep.md`, AC-D15 parity): the export
+    prints the SAME row-level Taken/Remaining the grid has shown since S3
+    (`inquiryRowTaken`/`inquiryRowRemaining`), never the retired line-scoped
+    `taken_from_po`/`remaining_open` pair. `row_po_match` (S1 seed above) is a plain
+    `ORDER` row, qty 10, with one PO link for the full 10 - fully taken, nothing left."""
+    client, _db, _company_id, seeded = api
+
+    response = client.get(EXPORT)
+    book = openpyxl.load_workbook(io.BytesIO(response.content))
+
+    headers = None
+    target_row = None
+    for sheet in book.worksheets:
+        sheet_headers = next(
+            sheet.iter_rows(min_row=2, max_row=2, values_only=True), None
+        )
+        if sheet_headers is None:
+            continue
+        for values in sheet.iter_rows(min_row=3, values_only=True):
+            if values[2] == seeded["row_po_match"].item_code:
+                headers = sheet_headers
+                target_row = values
+                break
+        if target_row is not None:
+            break
+
+    assert target_row is not None, "row_po_match not found in any export sheet"
+    # Review round (22 Sep): APPENDED after ACKNOWLEDGED, never inserted before it - the
+    # columns purchasing's own filters already point at keep the positions they have had.
+    assert headers[10] == "ACKNOWLEDGED", headers
+    assert headers[11] == "TAKEN", headers
+    assert headers[12] == "REMAINING", headers
+    assert target_row[11] == "10", target_row
+    assert target_row[12] == "0", target_row
+
+
+def test_export_taken_and_remaining_include_reserved_qty(api):
+    """B1 (review round 2, `PLAN-oi-request-cs-reserve.md` section 7): `links_for_rows`
+    deliberately excludes a reserve link (AC-RS-12), so `linked_qty` alone undercounts
+    what has actually been taken off a row once part of it is reserved rather than
+    linked to a document. qty 139, a PO link for 40, a reserve link for 50 -> TAKEN 90,
+    REMAINING 49 - the same figures `orderInquiryWorklist.test.ts`'s own B1 case pins on
+    the FE side."""
+    client, db, company_id, seeded = api
+
+    inquiry_id = db.get(OrderInquiryRow, seeded["row_po_match"].id).order_inquiry_id
+    inquiry = db.get(OrderInquiry, inquiry_id)
+    row_reserved = _row(
+        db, company_id, inquiry, item_code=f"{MARKER}-RESERVED", qty="139",
+    )
+    product = _product(db, f"ZZT-PROD-RSV-{_uid()[:6]}", f"{MARKER} reserved product")
+    _po_link(db, company_id, row_reserved, po_number="202605-S0099", product=product, qty="40")
+    _reserve_link(db, company_id, row_reserved, qty="50")
+    db.commit()
+
+    response = client.get(EXPORT)
+    book = openpyxl.load_workbook(io.BytesIO(response.content))
+
+    target_row = None
+    for sheet in book.worksheets:
+        for values in sheet.iter_rows(min_row=3, values_only=True):
+            if values[2] == row_reserved.item_code:
+                target_row = values
+                break
+        if target_row is not None:
+            break
+
+    assert target_row is not None, "row_reserved not found in any export sheet"
+    assert target_row[11] == "90", target_row
+    assert target_row[12] == "49", target_row
 
 
 # --------------------------------------------------------------- delivery range

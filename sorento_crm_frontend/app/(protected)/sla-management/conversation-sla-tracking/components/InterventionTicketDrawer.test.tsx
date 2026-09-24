@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import InterventionTicketDrawer from './InterventionTicketDrawer';
@@ -121,12 +121,16 @@ vi.mock('@/components/common/RespondChatList', () => ({
     comments = [],
     focusMessageId = null,
     focusNonce = 0,
+    maxHeightClass,
+    className,
   }: {
     items: unknown[];
     contactName?: string | null;
     comments?: unknown[];
     focusMessageId?: string | null;
     focusNonce?: number;
+    maxHeightClass?: string;
+    className?: string;
   }) => (
     <div
       data-testid="chat-list"
@@ -134,6 +138,8 @@ vi.mock('@/components/common/RespondChatList', () => ({
       data-notes={comments.length}
       data-focus-message-id={focusMessageId ?? ''}
       data-focus-nonce={String(focusNonce)}
+      data-max-height={maxHeightClass ?? ''}
+      data-class-name={className ?? ''}
     >
       {items.length} message(s)
     </div>
@@ -786,6 +792,175 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
     });
   });
 
+  // R2: the enquiry quote is one truncated line by default, with a Show
+  // more/less toggle that never shrinks the thread panel's flex share.
+  describe('enquiry quote clamp (AC-CP-1..4)', () => {
+    // S1: jsdom never computes real layout (scrollWidth/clientWidth are both
+    // 0), so "does this line actually overflow" is stubbed per test instead
+    // of guessed from string length - the same substitution RespondChatList's
+    // own scroll-back suite uses for scrollHeight. Restored after every test.
+    let restoreQuoteOverflow: (() => void) | null = null;
+    afterEach(() => {
+      restoreQuoteOverflow?.();
+      restoreQuoteOverflow = null;
+    });
+    function stubQuoteOverflow(clamped: boolean) {
+      const scrollWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+      const clientWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        configurable: true,
+        get: () => (clamped ? 200 : 100),
+      });
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get: () => 100,
+      });
+      restoreQuoteOverflow = () => {
+        if (scrollWidthDesc) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidthDesc);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+        if (clientWidthDesc) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidthDesc);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+      };
+    }
+
+    it('AC-CP-1: an unclamped quote renders on one line, with no toggle', async () => {
+      stubQuoteOverflow(false);
+      const shortText = 'A'.repeat(40);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: shortText })),
+      );
+      renderDrawer();
+
+      const quote = await screen.findByTestId('enquiry-quote-text');
+      expect(quote).toHaveTextContent(shortText);
+      expect(quote.className).toContain('truncate');
+      expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
+      // Fix round 2: collapsed, the text is INSIDE the jump button again (as
+      // on main) - one wide, readable click target rather than a bare icon.
+      const jump = screen.getByTestId('enquiry-quote-jump');
+      expect(jump.tagName).toBe('BUTTON');
+      expect(jump).toHaveTextContent(shortText);
+      expect(jump.contains(quote)).toBe(true);
+    });
+
+    it('AC-CP-2: a clamped quote truncates to one line with the full text as its title, and the toggle expands/collapses it', async () => {
+      stubQuoteOverflow(true);
+      const longText = 'B'.repeat(1500);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: longText })),
+      );
+      renderDrawer();
+
+      const quote = await screen.findByTestId('enquiry-quote-text');
+      expect(quote).toHaveAttribute('title', longText);
+      expect(quote.className).toContain('truncate');
+
+      const toggle = screen.getByTestId('enquiry-quote-toggle');
+      expect(toggle).toHaveTextContent('Show more');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      // Names the exact node it expands/collapses.
+      expect(toggle).toHaveAttribute('aria-controls', quote.id);
+      expect(quote.id).toBeTruthy();
+
+      fireEvent.click(toggle);
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show less');
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByTestId('enquiry-quote-text').className).toContain('max-h-40');
+      expect(screen.getByTestId('enquiry-quote-text').className).toContain('overflow-y-auto');
+      // S1 nit: no `title` once expanded - the full text is already on screen.
+      expect(screen.getByTestId('enquiry-quote-text')).not.toHaveAttribute('title');
+
+      fireEvent.click(screen.getByTestId('enquiry-quote-toggle'));
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveTextContent('Show more');
+      expect(screen.getByTestId('enquiry-quote-toggle')).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByTestId('enquiry-quote-text').className).toContain('truncate');
+      expect(screen.getByTestId('enquiry-quote-text')).toHaveAttribute('title', longText);
+    });
+
+    // Fix round 2, blocker 2: collapsed, the text is the jump target again
+    // (as on main); expanded, the box is inert so a text-select drag inside
+    // it cannot fire the jump on mouseup - a SIBLING icon button carries the
+    // jump instead.
+    it('collapsed text click triggers the jump; expanded box click does not', async () => {
+      stubQuoteOverflow(true);
+      const longText = 'E'.repeat(1500);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: longText })),
+      );
+      renderDrawer();
+
+      // Collapsed: the text IS the (whole-row) button.
+      const collapsedText = await screen.findByTestId('enquiry-quote-text');
+      expect(collapsedText.closest('button')).toBe(screen.getByTestId('enquiry-quote-jump'));
+      fireEvent.click(collapsedText);
+      await waitFor(() =>
+        expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '1'),
+      );
+
+      // Expand: the box is now a plain, non-interactive paragraph - a
+      // SEPARATE icon button (still `enquiry-quote-jump`) carries the jump.
+      fireEvent.click(screen.getByTestId('enquiry-quote-toggle'));
+      const expandedText = screen.getByTestId('enquiry-quote-text');
+      expect(expandedText.tagName).toBe('P');
+      expect(expandedText.closest('button')).toBeNull();
+
+      fireEvent.click(expandedText);
+      // No second jump from clicking the (inert) box itself.
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '1');
+
+      // The sibling icon button still works.
+      fireEvent.click(screen.getByTestId('enquiry-quote-jump'));
+      await waitFor(() =>
+        expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '2'),
+      );
+    });
+
+    it('AC-CP-3: expanding the quote does not change the thread panel props', async () => {
+      stubQuoteOverflow(true);
+      const longText = 'C'.repeat(1500);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: longText })),
+      );
+      renderDrawer();
+
+      fireEvent.click(await screen.findByTestId('enquiry-quote-toggle'));
+
+      const panel = await screen.findByTestId('ticket-conversation-panel');
+      // Fix round 5: `min-h-40`, not `min-h-0` - see the dedicated "fix round
+      // 5" describe block below for why the floor has to sit on this root too.
+      expect(panel.className).toContain('min-h-40');
+      expect(panel.className).toContain('flex-1');
+      // Fix round 6: the INNER scroll box (`maxHeightClass`) does NOT also
+      // floor itself - see the dedicated "fix round 6" describe block below.
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-max-height', 'min-h-0 flex-1');
+    });
+
+    it('AC-CP-4: an empty quote falls back to the neutral label, with no toggle', async () => {
+      stubQuoteOverflow(false);
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket({ source_message_text: '  ' })));
+      renderDrawer();
+
+      await waitFor(() =>
+        expect(screen.getByText('No enquiry text captured.')).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId('enquiry-quote-toggle')).not.toBeInTheDocument();
+    });
+
+    it('S1: a mid-length quote that DOES overflow at the current width still offers the toggle, even under the old 120-char guess', async () => {
+      // The 45-120 char band the old length threshold hid a toggle for
+      // (narrow viewport, or just a wide font) - the measured check catches it
+      // regardless of character count.
+      stubQuoteOverflow(true);
+      const midText = 'D'.repeat(80);
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_text: midText })),
+      );
+      renderDrawer();
+
+      expect(await screen.findByTestId('enquiry-quote-toggle')).toBeInTheDocument();
+    });
+  });
+
   // AC-N5(a)/(b): the ticket actions live in the header action group. They used
   // to sit in a footer under the composer, crowding its toolbar.
   describe('header action group (AC-N5)', () => {
@@ -1045,5 +1220,106 @@ describe('InterventionTicketDrawer My Team (not the assignee)', () => {
 
     press(await screen.findByTestId('ticket-overflow'));
     expect(screen.queryByTestId('ticket-takeover')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Fix round 4: at 375x812, a real ticket (long thread + the composer's
+ * "Outside the 24h window..." template notice) rendered the thread's text on
+ * TOP of the composer's, at the same y - a real defect, reproduced twice.
+ * DOM probe found the thread's own scroll box correctly clipped to its
+ * `min-h-40` floor (clientHeight 158, scrollHeight 12793) - so the box ITSELF
+ * was fine; the structural risk is `SheetContent` ALSO being independently
+ * scrollable (its own `overflow-y-auto`, on top of `SheetBody`'s) and the
+ * composer having no `shrink-0` floor of its own, so a squeeze anywhere in
+ * that chain has nowhere safe to land. jsdom cannot measure real layout, so
+ * these pin the STRUCTURE the fix relies on, not the pixels.
+ */
+describe('InterventionTicketDrawer sheet layout (fix round 4, 375px overlap)', () => {
+  it('the sheet content itself does not scroll - only SheetBody does, so there is exactly one scroll container between it and the thread', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await screen.findByTestId('chat-list');
+
+    const sheetContent = document.querySelector('[data-slot="sheet-content"]');
+    expect(sheetContent).toBeTruthy();
+    expect(sheetContent?.className).not.toContain('overflow-y-auto');
+  });
+
+  it('the composer never shrinks below its natural height, however tight the thread gets', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const send = await screen.findByTestId('composer-send');
+    expect(send.closest('.shrink-0')).toBeTruthy();
+  });
+
+  it('the Reply/Comment mode switch never shrinks either', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const tab = await screen.findByTestId('composer-mode-reply');
+    expect(tab.closest('[role="tablist"]')?.className).toContain('shrink-0');
+  });
+});
+
+/**
+ * Fix round 5: round 4's fix did not actually stop the overlap - re-verify at
+ * 375x812 still failed. Measured rects showed the thread's inner scroll box
+ * correctly floored at 160px (`min-h-40`, RespondChatList.tsx), but its
+ * ANCESTORS (RespondChatList's own root, and TicketConversationPanel's root)
+ * carried no floor of their own (`min-h-0 flex-1`) - a per-element CSS
+ * `min-height` on a deeply nested child does not enlarge an ancestor's
+ * computed flex size, so the outer flex algorithm squeezed those ancestors to
+ * near-zero under pressure, and the floored scroll box overflowed them,
+ * painting over the composer laid out after the squeezed parent. Both
+ * `TicketConversationPanel` and `RespondChatList`'s roots now carry a
+ * `min-h-40 flex-1` floor of their own - fix round 6 (below) is what stops
+ * the INNER scroll box from ALSO carrying one.
+ */
+describe('InterventionTicketDrawer sheet layout (fix round 5, floor on every flex item)', () => {
+  it('the panel forwards the min-h-40 floor to RespondChatList\'s own root via className, separately from maxHeightClass', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const chatList = await screen.findByTestId('chat-list');
+    // The floor reaches the component's own root via the new `className`
+    // prop - the actual defect round 4 missed. `maxHeightClass` (the inner
+    // scroll box) is asserted separately in the "fix round 6" block below.
+    expect(chatList).toHaveAttribute('data-class-name', 'min-h-40 flex-1');
+  });
+
+  it('the thread panel itself (TicketConversationPanel root) also carries the floor, not just min-h-0', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const panel = await screen.findByTestId('ticket-conversation-panel');
+    expect(panel.className).toContain('min-h-40');
+    expect(panel.className).not.toContain('min-h-0');
+  });
+});
+
+/**
+ * Fix round 6: the 375 re-verify on round 5 (b94356ef3) improved but still
+ * showed a 41px overlap. Measured rects: the RespondChatList root honoured
+ * its new floor (~160px, top ~318 to 477), but RespondChatList's OWN
+ * header/search chrome sits ABOVE the inner scroll box, inside that SAME
+ * rooted floor (~40px, top 318 to 358) - so the inner box, which ALSO
+ * carried its own `min-h-40`, demanded chrome-height MORE room than the
+ * root actually had left, and overflowed the root's bottom edge by exactly
+ * that chrome height, painting over the tablist. Two floors (root AND inner
+ * box) for the same 160px requirement was one too many: the inner box now
+ * gets `min-h-0 flex-1` (no floor of its own) and takes whatever the
+ * rooted floor leaves it after the chrome.
+ */
+describe('InterventionTicketDrawer sheet layout (fix round 6, one floor not two)', () => {
+  it('the inner scroll box (maxHeightClass) does not ALSO carry a min-h floor - only the root does', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const chatList = await screen.findByTestId('chat-list');
+    expect(chatList).toHaveAttribute('data-max-height', 'min-h-0 flex-1');
+    // The root's floor (fix round 5) is unchanged by this round.
+    expect(chatList).toHaveAttribute('data-class-name', 'min-h-40 flex-1');
   });
 });

@@ -23,6 +23,7 @@ import {
   matchesSuggestion,
   plannedLineCount,
   rankingNote,
+  rejectedCoveredLineIdsFor,
   rowMatchesSearch,
   shiftedDayWindow,
   unpostableDecidedFor,
@@ -623,6 +624,54 @@ describe('day granularity (13.3)', () => {
     expect(board.dateBuckets[0].key).toBe('2022-07-03');
     expect(board.dateBuckets[0].is_past).toBe(true);
     expect(board.dateBuckets[board.dateBuckets.length - 1].key).toBe('no_date');
+  });
+});
+
+/**
+ * S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-6/AC-B1-7/AC-B1-9): the board's new default
+ * granularity - a column per distinct required date actually present, never a calendar
+ * window, labelled `DD/MM/YYYY`. The backend half (Phase 2) is not this lane's job to pin;
+ * this is the test-support fixture (`__testsupport__/boardFixture.ts`) the FE component tests
+ * build boards through, kept in step with the documented contract so a regression here shows
+ * up as a fixture-level red rather than only as a mysterious FulfilmentBoardPanel failure.
+ */
+describe('date granularity (S1, `PLAN-board-oi-mechanical-22sep.md`, AC-B1-6/AC-B1-9)', () => {
+  it('keys on the exact date - the same key day uses', () => {
+    expect(bucketKeyFor('2026-09-04', TODAY, 'date')).toBe(
+      bucketKeyFor('2026-09-04', TODAY, 'day'),
+    );
+    expect(bucketKeyFor(null, TODAY, 'date')).toBe('no_date');
+  });
+
+  it('renders one column per distinct date PRESENT, DD/MM/YYYY-labelled, no calendar fill - unlike day’s 30-day window', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-09-04' }),
+        line({ line_no: 2, required_date: '2027-06-01' }),
+      ],
+      { today: TODAY, granularity: 'date' },
+    );
+    const dated = board.dateBuckets.filter((bucket) => bucket.kind === 'dated');
+    expect(dated.map((bucket) => bucket.key)).toEqual(['2026-09-04', '2027-06-01']);
+    expect(dated.map((bucket) => bucket.label)).toEqual(['04/09/2026', '01/06/2027']);
+  });
+
+  it('still pins No date last, sorted ascending, each with its own is_past', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-09-04' }),
+        line({ line_no: 2, required_date: '2022-07-03' }),
+        line({ line_no: 3, required_date: null, fulfilment_location: null }),
+      ],
+      { today: TODAY, granularity: 'date' },
+    );
+    expect(board.dateBuckets.map((bucket) => bucket.key)).toEqual([
+      '2022-07-03',
+      '2026-09-04',
+      'no_date',
+    ]);
+    expect(board.dateBuckets[0].is_past).toBe(true);
+    expect(board.dateBuckets[1].is_past).toBe(false);
   });
 });
 
@@ -1712,20 +1761,108 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   });
 
   /**
-   * N6 (code review round 3): resolution order `confirmed > rejected > stale > saved`, the
-   * same order `BoardDecisionPill` reads by. A covered line's frozen composition is what the
-   * server carries forward regardless of a local click - marking it "rejected" in THIS
-   * session cannot make Confirm refuse a line the database already holds, so it must not be
-   * counted as a rejection either.
+   * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+   * feedback: "we should confirm the rejection"): a reject on a covered line is a STAGED
+   * decision like every other board decision now, and Confirm is what actually withdraws it
+   * (`rejected_line_ids`) - so it counts as BOTH `rejected` (the planner's own decision) AND
+   * `toConfirm` (Confirm has something to DO with this press: carry the withdrawal). This test
+   * used to pin the opposite ("carried rather than rejected") from when a covered reject was
+   * refused outright at click time; superseded by the rework below.
    */
-  it('counts a covered line as carried rather than rejected, even when this session marked it rejected', () => {
+  it('counts a covered rejected line as BOTH rejected and something this press confirms', () => {
     const summary = confirmSummaryFor(contributions, {
       [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
     });
-    expect(summary.rejected).toBe(0);
-    // Line 2 is uncovered and untouched, so it stays undecided (8 Sep 2026 ruling, reverses
-    // R11) - nothing is committable here.
+    expect(summary.rejected).toBe(1);
+    // Line 1's withdrawal is the one thing this press commits; line 2 is uncovered and
+    // untouched, so it stays undecided (8 Sep 2026 ruling, reverses R11).
+    expect(summary.toConfirm).toBe(1);
+  });
+
+  /**
+   * N1 (fix round): an INQUIRY-ONLY covered line's own staged reject still counts as the
+   * planner's `rejected` decision, but adds nothing to `toConfirm` - Confirm has no active
+   * decision to withdraw it from, unlike line 1's ACTIVE-decision reject above.
+   */
+  it('counts an inquiry-only covered rejected line as rejected, but NOT toward toConfirm', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const summary = confirmSummaryFor([inquiryOnly], {
+      [inquiryOnly.key]: { verdict: 'rejected', reason: 'Not needed.' },
+    });
+    expect(summary.rejected).toBe(1);
     expect(summary.toConfirm).toBe(0);
+  });
+
+  it('rejectedCoveredLineIdsFor names the covered line’s own project_line_id', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
+      }),
+    ).toEqual(['pl-so-a-1']);
+  });
+
+  it('rejectedCoveredLineIdsFor leaves an UNCOVERED rejected line out - nothing active to withdraw', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(2)]: { verdict: 'rejected', reason: 'Not needed.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejectedCoveredLineIdsFor is empty when nothing is rejected', () => {
+    expect(rejectedCoveredLineIdsFor(contributions, 'so-a', {})).toEqual([]);
+  });
+
+  /**
+   * N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds of
+   * line - an ACTIVE decision (this describe block's line 1, `decision: frozen`), or a LIVE
+   * order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet lines,
+   * #875). Only the first has a `line_snapshots` entry Confirm's `rejected_line_ids` could
+   * ever name, so a staged reject on the SECOND kind must contribute no id and no count -
+   * built here by overriding line 2 (uncovered by default) to the inquiry-only shape,
+   * since the board fixture's own `covered` is `Boolean(line.decision)` and has no
+   * `inquiry_decided` knob of its own.
+   */
+  it('rejectedCoveredLineIdsFor and plannedLineCount exclude an INQUIRY-ONLY covered line - no active decision to withdraw', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const draft = { [inquiryOnly.key]: { verdict: 'rejected' as const, reason: 'Not needed.' } };
+    expect(rejectedCoveredLineIdsFor([inquiryOnly], 'so-a', draft)).toEqual([]);
+    expect(plannedLineCount([inquiryOnly], 'so-a', draft)).toBe(0);
+  });
+
+  /**
+   * S4 (fix round, review): a pending planning-change batch has no shape for a
+   * withdrawal riding beside it (AC-B12, server refuses `rejected_line_ids` alongside
+   * `batch_id` outright) - so a covered line's staged reject on a BATCHED order must
+   * not count toward `plannedLineCount`/`toConfirm` either, or the "Confirm (N)" button
+   * promises a withdrawal the press cannot actually carry out ("Confirm (1) then
+   * nothing").
+   */
+  it('plannedLineCount excludes a covered rejected line when its order is in batchBlockedSalesOrderIds', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    // Unblocked: counts, exactly as `test_confirming_a_new_composition...` above pins.
+    expect(plannedLineCount(contributions, 'so-a', draft)).toBe(1);
+    // Blocked: the batch on so-a's own order holds it back.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-a']))).toBe(0);
+    // A DIFFERENT order's own batch block never reaches so-a's line.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-b']))).toBe(1);
+  });
+
+  it('confirmSummaryFor still counts the withdrawal as rejected, but not toward toConfirm, once batch-blocked', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    const blocked = confirmSummaryFor(contributions, draft, new Set(['so-a']));
+    expect(blocked.rejected).toBe(1);
+    expect(blocked.toConfirm).toBe(0);
+    const unblocked = confirmSummaryFor(contributions, draft);
+    expect(unblocked.toConfirm).toBe(1);
   });
 });
 

@@ -531,6 +531,103 @@ describe('FulfilmentBoardPanel: the axes', () => {
 });
 
 /**
+ * S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1..5): the board's exact-date grid. The
+ * period select gains a fourth, DEFAULT option that keys every column on the line's own
+ * required date rather than a calendar bucket - day/week/month keep behaving exactly as
+ * before, both as options and as explicit URL values.
+ */
+describe('FulfilmentBoardPanel: AC-B1 grid date (`PLAN-board-oi-mechanical-22sep.md`)', () => {
+  it('AC-B1-1: offers By date (default), By day, By week, By month, in that order', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'date'));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const select = screen.getByLabelText('granularity');
+    const options = within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(options).toEqual(['By date', 'By day', 'By week', 'By month']);
+    expect(select).toHaveValue('date');
+  });
+
+  it('AC-B1-2: three distinct dates each get their own column, in date order, No date last', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf(
+        [
+          demand({ line_no: 1, required_date: '2026-11-01' }),
+          demand({ line_no: 2, required_date: '2027-02-01' }),
+          demand({ line_no: 3, required_date: '2027-04-01' }),
+          demand({ line_no: 4, required_date: null, fulfilment_location: null }),
+        ],
+        {},
+        'date',
+      ),
+    );
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    const headers = within(matrix)
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent ?? '');
+    expect(headers[0]).toBe('Product');
+    // Product + three dated columns + No date - nothing folded, nothing extra.
+    expect(headers).toHaveLength(5);
+    expect(headers[1]).toContain('01/11/2026');
+    expect(headers[2]).toContain('01/02/2027');
+    expect(headers[3]).toContain('01/04/2027');
+    expect(headers[4]).toContain('No date');
+  });
+
+  it('AC-B1-3: forty distinct dates all become their own columns - no folding, no paging', async () => {
+    const lines = Array.from({ length: 42 }, (_unused, index) =>
+      demand({
+        line_no: index + 1,
+        required_date: new Date(Date.UTC(2026, 0, 1) + index * 86_400_000)
+          .toISOString()
+          .slice(0, 10),
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(boardOf(lines, {}, 'date'));
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    // 42 distinct dates + the Product corner - every one of them is a column, at once.
+    expect(within(matrix).getAllByRole('columnheader')).toHaveLength(43);
+    // The container scrolls rather than paging or folding anything off screen.
+    expect(matrix.className).toContain('overflow-auto');
+    expect(screen.queryByText(/Page \d/i)).not.toBeInTheDocument();
+  });
+
+  it('AC-B1-4: a past date column under By date carries the same Already past treatment week columns do', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf(
+        [
+          demand({ line_no: 1, qty: '40', required_date: '2022-07-03' }),
+          demand({ line_no: 2, qty: '100', required_date: '2026-09-04' }),
+        ],
+        {},
+        'date',
+      ),
+    );
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    const past = matrix.querySelector('[data-bucket="2022-07-03"]');
+    expect(past).not.toBeNull();
+    expect(past?.getAttribute('data-past')).toBe('true');
+    expect(past?.className).toContain('destructive');
+    expect(past?.textContent).toContain('Already past');
+    expect(
+      matrix.querySelector('[data-bucket="2026-09-04"]')?.getAttribute('data-past'),
+    ).toBe('false');
+  });
+});
+
+/**
  * AC-S4-1 (panel), owner ruling S4 fix round #1076: the LIST view reads sales order then
  * AutoCount line number, never the grid's product axis - at the PANEL, the level that
  * actually wires `board.data.productRows` and `orderListRows`/`orderByProductRows` together
@@ -585,9 +682,10 @@ describe('FulfilmentBoardPanel: AC-S4-1 (panel) - the List view reads AutoCount 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     const table = await screen.findByRole('table');
-    // Select, Sales order, Agent, Customer, PRODUCT, ... - same column convention
-    // `boardViewRowOrder.test.tsx`'s own `PRODUCT_CELL` pins for this list.
-    const PRODUCT_CELL = 4;
+    // Select, Line, Sales order, Agent, Customer, PRODUCT, OI, ... - S6
+    // (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13) inserted the leftmost Line column
+    // ahead of Sales order, so PRODUCT_CELL shifts from 4 to 5.
+    const PRODUCT_CELL = 5;
     const productSequence = within(table)
       .getAllByRole('row')
       .slice(1) // the header row
@@ -1344,10 +1442,11 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
 
     // The what-if existed to show a fair weighting before one was switched on. It is now the
     // live one, so every board is fetched against the live policy and nothing offers to
-    // preview it against itself.
+    // preview it against itself. S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1): an
+    // absent granularity param now resolves to `date`, not `week`.
     expect(getPlanningBoard).toHaveBeenCalledWith(
       ['SO403340'],
-      'week',
+      'date',
       false,
       {},
     );
@@ -2398,9 +2497,11 @@ describe('FulfilmentBoardPanel: the live policy, and only it', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
+    // S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1): an absent granularity param now
+    // resolves to `date`, not `week`.
     expect(getPlanningBoard).toHaveBeenCalledWith(
       ['SO403340'],
-      'week',
+      'date',
       false,
       {},
     );
@@ -2452,7 +2553,27 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
     expect(screen.getByLabelText('granularity')).toHaveValue('month');
   });
 
-  it('falls back to week on a granularity nobody defined', async () => {
+  it('AC-B1-5: a URL naming granularity=week opens week view, not the date default', async () => {
+    currentSearchParams = new URLSearchParams('view=grid&granularity=week');
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'week'));
+
+    renderPanel(['SO403340']);
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(
+        ['SO403340'],
+        'week',
+        false,
+        {},
+      ),
+    );
+    expect(screen.getByLabelText('granularity')).toHaveValue('week');
+  });
+
+  it('falls back to date on a granularity nobody defined', async () => {
+    // S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1/AC-B1-5): `date` is what an
+    // unrecognised param resolves to now, the same default an ABSENT param gets - `week`
+    // is still a real, explicitly-named option (`?granularity=week` is honoured as-is).
     currentSearchParams = new URLSearchParams('view=grid&granularity=fortnightly');
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
@@ -2461,7 +2582,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
     await waitFor(() =>
       expect(getPlanningBoard).toHaveBeenCalledWith(
         ['SO403340'],
-        'week',
+        'date',
         false,
         {},
       ),
@@ -3952,5 +4073,98 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
     await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(2));
 
     expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
+  });
+});
+
+/**
+ * S1 (fix round, review): `runConfirmAll`'s own wiring for a covered line's staged
+ * reject (`wantedOrders`' own `rejected` branch, the per-order body's `rejected_line_ids`,
+ * and the post-confirm toast's `withdrawn` clause) had NOTHING pinning it - a kill test
+ * proved reverting all three together left every test in this file green. These three
+ * close that gap, against a board whose only saved decision on its one line is the
+ * staged reject (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`).
+ */
+describe("FulfilmentBoardPanel: Confirm carries a covered line's staged reject (S1, fix round)", () => {
+  function coveredRejectedBoard() {
+    return withContribution(
+      boardOf([
+        demand({
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '100',
+          },
+        }),
+      ]),
+      () => true,
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'rejected' as const, reason: 'wrong site' },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-23T00:00:00Z',
+        },
+      }),
+    );
+  }
+
+  it('puts the order in the press and reads Confirm (1)', async () => {
+    getPlanningBoard.mockResolvedValue(coveredRejectedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+  });
+
+  it("posts lines: [] and the mirror id in rejected_line_ids", async () => {
+    getPlanningBoard.mockResolvedValue(coveredRejectedBoard());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 2, rejected_count: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      {
+        orders: {
+          pso_id: string;
+          lines: unknown[];
+          rejected_line_ids: string[];
+        }[];
+      },
+    ];
+    expect(body.orders).toEqual([
+      expect.objectContaining({
+        pso_id: 'pso-so-a',
+        lines: [],
+        rejected_line_ids: ['pl-so-a-1'],
+      }),
+    ]);
+  });
+
+  it('renders "· 1 withdrawn" in the toast when rejected_count comes back non-zero', async () => {
+    getPlanningBoard.mockResolvedValue(coveredRejectedBoard());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 2, rejected_count: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('· 1 withdrawn')),
+    );
   });
 });

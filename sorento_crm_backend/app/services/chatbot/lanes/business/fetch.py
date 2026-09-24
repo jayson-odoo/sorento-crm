@@ -1056,9 +1056,13 @@ IDENTITY_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# ETA is kept ALWAYS, asked for or not: it is the public answer to "where is my container",
-# and the cross-domain renderer sorts incoming rows on it.
-ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date"})
+# ETA and its delay are kept always, asked for or not: the ETA is the public answer to
+# "where is my container", and the cross-domain renderer sorts incoming rows on it. The
+# delay is IMPLIED by the ETA, never NAMED, so `req_attrs` does not carry it: a denied
+# delay is stripped upstream (`app/services/field_access.py`) and gets no "can't share"
+# note, a blank delay gets no "not recorded yet" note. Only an explicit `eta_delay_date`
+# in `requested_attributes` turns those notes on.
+ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date", "eta_delay_date"})
 
 # Chronological order of an inbound container's clearance checkpoints. Mirrors the
 # admin-editable `statuses` rows (entity_type "inbound_shipment", by sort_order) as they

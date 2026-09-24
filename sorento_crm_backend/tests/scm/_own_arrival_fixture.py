@@ -25,6 +25,7 @@ Postgres only (`tests/_pg_fixture.py`), every FK seeded here, never a borrowed r
 """
 from __future__ import annotations
 
+import itertools
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -71,24 +72,64 @@ def supplier_and_po(db, *, po_number: Optional[str] = None):
     return po
 
 
+#: `spo_line_number` under `uk_spo_allocations_company_spo_line` - a plain incrementing
+#: counter is enough (never reset per test; `blank_session` rolls every test back, so it
+#: only ever has to be unique WITHIN one still-open transaction).
+_spo_line_seq = itertools.count(1)
+
+
 def po_line_bought_for(
     db, po, product, warehouse, *, from_so_line_ref: str, qty_received, qty_ordered=None,
-    line_status: str = "closed",
+    line_status: str = "closed", spo_received=None, spo_number: Optional[str] = None,
 ):
     """A PurchaseOrderLine bought FOR one sales-order line: `from_so_line_ref` names the
     line's own `source_ref`, and it is fully received - the plan's tier-1 own-arrival
-    fixture shape."""
-    from app.models.procurement import PurchaseOrderLine
+    fixture shape.
 
+    R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`, R1): every PO in this business
+    is received through an SPO, so `purchase_order_lines.qty_received` is never what
+    landed - it is the AutoCount TRANSFER of the line onto a shipping order. This now
+    also writes the `SPOAllocation` `_po_received_by_so_line_ref` reads as "landed",
+    found by `SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref` (measured
+    live: 817/817 open SPO rows resolve this way).
+
+    `spo_received` defaults to `qty_received` - most callers never split the two, the PO
+    line's own transfer and the SPO's own receipt agreeing. Pass it explicitly to decouple
+    them: the SO399639 shape a PO line fully TRANSFERRED (`qty_received = qty_ordered`)
+    with nothing yet physically landed on its SPO (`spo_received=0`), or a decoy PO
+    `qty_received` that must be ignored (R1) beside the SPO figure that actually drives
+    tier-2 spare.
+
+    Returns `(po_line, spo_allocation)` so a test can adjust either.
+    """
+    from app.models.procurement import PurchaseOrderLine, SPOAllocation
+
+    ordered = Decimal(str(qty_ordered if qty_ordered is not None else qty_received))
     row = PurchaseOrderLine(
         id=_uid(), purchase_order_id=po.id, product_id=product.id, warehouse_id=warehouse.id,
-        qty_ordered=Decimal(str(qty_ordered if qty_ordered is not None else qty_received)),
+        qty_ordered=ordered,
         qty_received=Decimal(str(qty_received)), line_status=line_status,
         from_so_line_ref=from_so_line_ref,
+        source_ref=f"AED_SORENTO:9000:{next(_spo_line_seq)}",
     )
     db.add(row)
     db.flush()
-    return row
+
+    received = Decimal(str(spo_received if spo_received is not None else qty_received))
+    spo = SPOAllocation(
+        id=_uid(), spo_number=spo_number or "SPO-2026/09-0001",
+        spo_line_number=next(_spo_line_seq),
+        product_id=product.id, warehouse_id=warehouse.id,
+        location_code=warehouse.warehouse_code,
+        allocated_quantity=int(ordered), quantity_received=int(received),
+        receipt_status="fully_received" if received >= ordered else "pending",
+        line_status="closed" if received >= ordered else "open",
+        from_po_line_ref=row.source_ref, from_po_number=po.po_number,
+        company_id=row.company_id,
+    )
+    db.add(spo)
+    db.flush()
+    return row, spo
 
 
 def spo_allocation_fully_received(

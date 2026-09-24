@@ -111,10 +111,12 @@ describe('FulfilmentBoardListView', () => {
   it('renders one row per contributing line with SO, agent, product and proposal', async () => {
     renderView();
 
-    expect(await screen.findByText('SO397450')).toBeInTheDocument();
-    // AC-C13 (owner feedback 13 Sep): the line number is folded beside the SO number as
-    // "(Line 10)", its own text node inside the same one-line cell - not a stacked "Line 10".
-    expect(screen.getByText('(Line 10)')).toBeInTheDocument();
+    const soNumber = await screen.findByText('SO397450');
+    const row = soNumber.closest('tr') as HTMLElement;
+    // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13/AC-B6-14): the line number lives in
+    // its own leftmost Line column now, not folded into the Sales order cell as "(Line 10)".
+    expect(within(row).getByText('10')).toBeInTheDocument();
+    expect(within(row).queryByText('(Line 10)')).not.toBeInTheDocument();
     expect(screen.getByText('JEREMY')).toBeInTheDocument();
     expect(screen.getByText('Tuju Residences Sdn Bhd')).toBeInTheDocument();
     expect(screen.getByText('B2155-NL-BLUE')).toBeInTheDocument();
@@ -129,10 +131,13 @@ describe('FulfilmentBoardListView', () => {
       ],
     });
 
-    expect(await screen.findByText('SO397450')).toBeInTheDocument();
-    expect(screen.getByText('SO397451')).toBeInTheDocument();
-    expect(screen.getByText('(Line 10)')).toBeInTheDocument();
-    expect(screen.getByText('(Line 20)')).toBeInTheDocument();
+    const firstRow = (await screen.findByText('SO397450')).closest('tr') as HTMLElement;
+    const secondRow = screen.getByText('SO397451').closest('tr') as HTMLElement;
+    // S6 (AC-B6-13/AC-B6-14): each row's own Line column, not a "(Line N)" suffix.
+    expect(within(firstRow).getByText('10')).toBeInTheDocument();
+    expect(within(secondRow).getByText('20')).toBeInTheDocument();
+    expect(within(firstRow).queryByText('(Line 10)')).not.toBeInTheDocument();
+    expect(within(secondRow).queryByText('(Line 20)')).not.toBeInTheDocument();
   });
 
   // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J, AC-P2/AC-P3): the board's ONE search
@@ -498,7 +503,11 @@ describe('FulfilmentBoardListView says what was suggested and what was decided',
       ],
     });
 
-    expect(await screen.findByText('OI-000418')).toBeInTheDocument();
+    // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15) added its own OI column, which
+    // prints the SAME inquiry number this Decided cell already named - two nodes now, not
+    // one, so a plain `findByText` throws "multiple elements".
+    const matches = await screen.findAllByText('OI-000418');
+    expect(matches.length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText('Not decided')).not.toBeInTheDocument();
   });
 });
@@ -532,7 +541,9 @@ describe('AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the inqu
       ],
     });
 
-    expect(await screen.findByText('OI-000418')).toBeInTheDocument();
+    // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15) added its own OI column, which
+    // prints the same inquiry number the Decided cell already named.
+    expect((await screen.findAllByText('OI-000418')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('received')).toBeInTheDocument();
   });
 
@@ -556,7 +567,7 @@ describe('AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the inqu
       ],
     });
 
-    expect(await screen.findByText('OI-000477')).toBeInTheDocument();
+    expect((await screen.findAllByText('OI-000477')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('used')).toBeInTheDocument();
     expect(screen.queryByText('received')).not.toBeInTheDocument();
   });
@@ -581,7 +592,7 @@ describe('AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the inqu
       ],
     });
 
-    expect(await screen.findByText('OI-000900')).toBeInTheDocument();
+    expect((await screen.findAllByText('OI-000900')).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText('received')).not.toBeInTheDocument();
     expect(screen.queryByText('used')).not.toBeInTheDocument();
   });
@@ -765,7 +776,7 @@ describe('AC-RL-06 (amended 17 Sep): the stage word sits beside the PRODUCT, on 
       ],
     });
 
-    expect(await screen.findByText('OI-000418')).toBeInTheDocument();
+    expect((await screen.findAllByText('OI-000418')).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText('Not decided')).not.toBeInTheDocument();
   });
 });
@@ -884,6 +895,47 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
     fireEvent.click(screen.getByRole('button', { name: 'Undo SO397450 line 10' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-1:line-10', null);
+  });
+
+  /**
+   * Owner ruling 23 Sep 2026 (`PLAN-board-reject-on-confirmed-line.md`, hand-test feedback:
+   * "we should confirm the rejection"): reject on a covered line is a STAGED draft now, so
+   * Undo on it is the SAME `onDecide(key, null)` every other Undo already sends - no new
+   * code path. Removing the draft leaves the line reading `covered && !decision`, which
+   * `verdictOf` already resolves to "Confirmed" (it never stopped being covered); pinned
+   * here as a component-level regression guard rather than left to the unit-level rule.
+   */
+  it('Undo on a covered rejected row deletes its draft and returns the pill to Confirmed', async () => {
+    const row = contribution({
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '43',
+      },
+    });
+    const draft = { [row.key]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    const { onDecide, onDecideMany, rerender } = renderView({ contributions: [row], draft });
+
+    expect(await screen.findByTestId(`decision-pill-${row.key}`)).toHaveTextContent('Rejected');
+    fireEvent.click(
+      screen.getByRole('button', { name: `Undo ${row.so_number} line ${row.line_no}` }),
+    );
+    expect(onDecide).toHaveBeenCalledWith(row.key, null);
+
+    // The parent owns the draft (`onDecide` is local-first in `FulfilmentBoardPanel`) - this
+    // re-render is what its own removal looks like once the key is gone from the map.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[row]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+      />,
+    );
+    expect(await screen.findByTestId(`decision-pill-${row.key}`)).toHaveTextContent('Confirmed');
   });
 });
 
@@ -1191,15 +1243,19 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
  * string, and "Line 10" without its parentheses is nowhere on the page at all.
  */
 describe('FulfilmentBoardListView: thin rows (owner feedback 13 Sep, AC-C13)', () => {
-  it('reads the Sales order cell as "<SO> (Line <n>)" on one line', async () => {
+  it('reads the Sales order cell as the number alone; the Line column carries the AutoCount line number separately', async () => {
+    // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13/AC-B6-14) split the old
+    // "<SO> (Line <n>)" cell: the Sales order cell prints the number alone, and a new
+    // leftmost Line column carries the AutoCount line number on its own.
     renderView({
       contributions: [contribution({ so_number: 'SO419772', line_no: 1 })],
     });
 
     const soNumber = await screen.findByText('SO419772');
-    expect(soNumber.parentElement?.textContent).toBe('SO419772 (Line 1)');
-    // "Line 1" without its parentheses is not its own text node anywhere on the page.
-    expect(screen.queryByText('Line 1')).not.toBeInTheDocument();
+    const row = soNumber.closest('tr') as HTMLElement;
+    expect(soNumber.parentElement?.textContent).toBe('SO419772');
+    expect(within(row).queryByText('(Line 1)')).not.toBeInTheDocument();
+    expect(within(row).getByText('1')).toBeInTheDocument();
   });
 
   it('draws no progress bar in the Suggested or Decided cells', async () => {
@@ -1494,6 +1550,34 @@ describe('FulfilmentBoardListView: the page jump retries when the row arrives la
 });
 
 /**
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13/AC-B6-14): the List view's leftmost
+ * column is the AutoCount line number, sortable on its own; the actual DEFAULT row order
+ * (sales order then line ascending) is `FulfilmentBoardPanel.test.tsx`'s own
+ * "AC-S4-1 (panel)" test - this file receives whatever order its caller hands it
+ * (`contributions`), so the ordering itself is not this component's own contract to pin.
+ */
+describe('FulfilmentBoardListView: AC-B6-13 - Line is the leftmost, sortable column', () => {
+  it('renders Line as the leftmost NAMED column, ahead of Sales order', async () => {
+    renderView({
+      contributions: [contribution({ so_number: 'SO397450', line_no: 10 })],
+    });
+
+    await screen.findByText('SO397450');
+    const headers = screen.getAllByRole('columnheader').map((node) => node.textContent);
+    // headers[0] is the select column's own (unlabelled) checkbox header.
+    expect(headers[1]).toBe('Line');
+    expect(headers.indexOf('Sales order')).toBeGreaterThan(1);
+  });
+
+  it('the Line column offers its own sort control', async () => {
+    renderView({ contributions: [contribution()] });
+
+    await screen.findByText('SO397450');
+    expect(screen.getByRole('button', { name: 'Line' })).toBeInTheDocument();
+  });
+});
+
+/**
  * `board-verdict-actions-chips-acceptance-criteria.md` section B/C: the Verdict cell's row
  * actions, wired through the shared `BoardVerdictActions` component (AC-B11), and the column
  * itself made resizable again (AC-C1/AC-C2). RED today: the Verdict column only ever shows
@@ -1575,6 +1659,87 @@ describe('FulfilmentBoardListView: the Verdict cell actions (AC-B1 to AC-C2)', (
 });
 
 /**
+ * S6 (AC-B6-14): the Sales order cell's own link now carries the target line, landing that
+ * exact row highlighted on the sales-order detail (AC-B6-3).
+ */
+describe('FulfilmentBoardListView: AC-B6-14 - the Sales order cell links with the line pre-selected', () => {
+  it('links to /scm/sales-orders/<id>?tab=lines&line=<core line id>', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          sales_order_id: 'so-99',
+          line_id: 'core-line-99',
+          so_number: 'SO500099',
+          line_no: 3,
+        }),
+      ],
+    });
+
+    const soNumber = await screen.findByText('SO500099');
+    const link = soNumber.closest('a');
+    expect(link).not.toBeNull();
+    expect(link).toHaveAttribute('href', '/scm/sales-orders/so-99?tab=lines&line=core-line-99');
+  });
+});
+
+/**
+ * S6 (AC-B6-15): the List view's own OI column - the live order-inquiry row a line raised,
+ * linking straight to it; a line with no live row reads a plain dash, never a guess.
+ */
+describe('FulfilmentBoardListView: AC-B6-15 - the OI column links to the live inquiry row', () => {
+  function oiCellOf(row: HTMLElement, headers: string[]) {
+    const index = headers.indexOf('OI');
+    return within(row).getAllByRole('cell')[index];
+  }
+
+  it('prints "-" when the line carries no live order inquiry row', async () => {
+    renderView({ contributions: [contribution({ order_inquiry: null })] });
+
+    await screen.findByText('SO397450');
+    const headers = screen.getAllByRole('columnheader').map((node) => node.textContent ?? '');
+    const row = screen.getByText('SO397450').closest('tr') as HTMLElement;
+    expect(oiCellOf(row, headers).textContent).toBe('-');
+  });
+
+  it('links to the OI detail row once inquiry_id/row_id are on the line (lands per AC-B6-4)', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          order_inquiry: {
+            inquiry_no: 'OI-000777',
+            state: 'raised',
+            ack_state: 'acknowledged',
+            inquiry_id: 'oi-header-7',
+            row_id: 'oi-row-7',
+          },
+        }),
+      ],
+    });
+
+    await screen.findByText('SO397450');
+    const link = screen.getByText('OI-000777').closest('a');
+    expect(link).not.toBeNull();
+    expect(link).toHaveAttribute(
+      'href',
+      '/project-sales/order-inquiries/oi-header-7?row=oi-row-7',
+    );
+  });
+
+  it('reads the inquiry number as plain text - no link - while inquiry_id/row_id are not yet on the line', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          order_inquiry: { inquiry_no: 'OI-000778', state: 'raised', ack_state: 'acknowledged' },
+        }),
+      ],
+    });
+
+    await screen.findByText('SO397450');
+    expect(screen.getByText('OI-000778').closest('a')).toBeNull();
+  });
+});
+
+/**
  * AC-D5 (owner finding 22 Sep, addendum "why so many warning signs"): several pending
  * batch rows that each move the SAME column (here, both move `date`) must still show ONE
  * hazard icon in that column, not one per annotation. RED today: `changeIcons` maps every
@@ -1638,5 +1803,104 @@ describe('AC-D5: one hazard icon per column, however many pending changes touch 
       .filter((icon) => icon.getAttribute('data-column') === 'required_date');
 
     expect(dateIcons).toHaveLength(1);
+  });
+});
+
+/**
+ * Owner ruling, 22 Sep 2026: EVERY column on the fulfilment board List view must be
+ * sortable - not just Line, Sales order and Verdict. RED today: Agent, Customer, Product,
+ * OI, Required date, Outstanding qty, Suggested, Decided and Rank all carry
+ * `enableSorting: false` and a plain string `header`, so `DataGridColumnHeader` never
+ * renders its sort button for them (`data-grid-column-header.tsx`: a column with neither
+ * `getCanSort()` nor a resizable header falls through to the plain `headerLabel()`, no
+ * `role="button"`).
+ */
+describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', () => {
+  it('renders a sort control on every column header', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+
+    const sortableTitles = [
+      'Line',
+      'Sales order',
+      'Agent',
+      'Customer',
+      'Product',
+      'OI',
+      'Required date',
+      'Outstanding qty',
+      'Suggested',
+      'Decided',
+      'Rank',
+      'Verdict',
+    ];
+    for (const title of sortableTitles) {
+      expect(screen.getByRole('button', { name: title })).toBeInTheDocument();
+    }
+  });
+
+  it('sorts Outstanding qty numerically, not lexicographically (9 before 20)', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          key: 'so-1:line-1',
+          so_number: 'SO000001',
+          line_no: 1,
+          qty: '20',
+          qty_outstanding: '20',
+        }),
+        contribution({
+          key: 'so-2:line-2',
+          sales_order_id: 'so-2',
+          line_id: 'core-line-2',
+          so_number: 'SO000002',
+          line_no: 2,
+          qty: '9',
+          qty_outstanding: '9',
+        }),
+      ],
+    });
+
+    await screen.findByText('SO000001');
+    fireEvent.click(screen.getByRole('button', { name: 'Outstanding qty' }));
+
+    // Ascending: 9 (SO000002) before 20 (SO000001). A lexicographic sort would leave
+    // '20' before '9' instead, since '2' < '9' as characters.
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^SO00000[1-2]$/).map((el) => el.textContent),
+      ).toEqual(['SO000002', 'SO000001']),
+    );
+  });
+
+  it('sorts Suggested by the same text the cell prints, e.g. "Needs a location" before "Not recorded"', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          key: 'so-1:line-1',
+          so_number: 'SO000001',
+          line_no: 1,
+        }),
+        contribution({
+          key: 'so-2:line-2',
+          sales_order_id: 'so-2',
+          line_id: 'core-line-2',
+          so_number: 'SO000002',
+          line_no: 2,
+          unplannable: true,
+        }),
+      ],
+    });
+
+    await screen.findByText('SO000001');
+    fireEvent.click(screen.getByRole('button', { name: 'Suggested' }));
+
+    // Ascending alphabetically: "Buy 43" (SO000001) sorts before "Needs a location"
+    // (SO000002).
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^SO00000[1-2]$/).map((el) => el.textContent),
+      ).toEqual(['SO000001', 'SO000002']),
+    );
   });
 });

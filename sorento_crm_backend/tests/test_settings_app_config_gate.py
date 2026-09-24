@@ -54,6 +54,10 @@ EXPECTED_FIELDS = {
     # when an untouched hand-over auto-collects, and marketing does not hold
     # `user_management.settings.view` - a day count is not sensitive.
     "price_tag_auto_collect_days",
+    # PLAN-oi-request-cs-reserve.md section 6c F1: the reserve dialog's default pool
+    # must reach every reserve-permission holder (Eling, CS), who does not hold
+    # `user_management.settings.view` either - a warehouse id is not sensitive.
+    "oi_reserve_default_pool_warehouse_id",
 }
 
 # Named individually rather than derived, so the test reads as the list of things
@@ -195,10 +199,13 @@ def test_app_config_open_to_a_caller_with_zero_permissions(api, db):
         # r9 D10: `_seed_settings` does not set this column, so it carries the
         # model's own default (7), the same value the route falls back to.
         "price_tag_auto_collect_days": 7,
+        # section 6c F1: `_seed_settings` does not set this column either, so it
+        # carries null (no configured default) the same as every other unset id here.
+        "oi_reserve_default_pool_warehouse_id": None,
     }
 
 
-def test_app_config_projects_exactly_seven_fields_and_leaks_nothing(api, db):
+def test_app_config_projects_exactly_eight_fields_and_leaks_nothing(api, db):
     client, _allow = api
     _seed_settings(db)
 

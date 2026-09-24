@@ -770,12 +770,18 @@ def group_take_reason(
     )
 
 
-def _own_arrival_reason(location: str, qty: Decimal, po_number: Optional[str]) -> str:
+def _own_arrival_reason(location: str, qty: Decimal, document: Optional[str]) -> str:
     """R7: why an own-arrival Reserve gives this much - goods that landed FOR this line
-    (or the rest of its own order), named by the purchase order they came off, taken
-    before the ordinary group-take draw."""
-    if po_number:
-        return f"{qty_text(qty)} landed for this line on PO {po_number}, taken first at {location}"
+    (or the rest of its own order), named by the document they came off, taken before
+    the ordinary group-take draw.
+
+    R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`, R1/R3): that document is the
+    SPO the goods physically landed on, never the PO - a PO line's own `qty_received` is
+    the AutoCount TRANSFER onto a shipping order, not a receipt - so no "PO" noun is said
+    of it.
+    """
+    if document:
+        return f"{qty_text(qty)} landed for this line on {document}, taken first at {location}"
     return f"{qty_text(qty)} landed for this line, taken first at {location}"
 
 

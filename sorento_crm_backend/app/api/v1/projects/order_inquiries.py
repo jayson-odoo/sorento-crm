@@ -14,17 +14,24 @@ from __future__ import annotations
 import logging
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import (
+    require_any_permission,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.download import DownloadResponse
 from app.schemas.project_order_inquiry import (
     AcknowledgeResult,
     AcknowledgeRowsRequest,
     AutoPlaceRequest,
     AutoPlaceResult,
+    CommitReserveRequestIn,
+    CreateReserveRequestIn,
     LinkNowRequest,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
@@ -35,15 +42,18 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryPoCandidatesResponse,
     OrderInquiryPoDetail,
     OrderInquiryRelatedDocumentsOut,
+    OrderInquiryReserveRequestOut,
     OrderInquiryRowOut,
     OrderInquirySpoDetail,
     OrderInquirySummary,
+    OrderInquiryWorklistExportRequest,
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
     PlaceOnPoRequest,
     RejectRowRequest,
     RejectRowsRequest,
     RejectRowsResult,
+    ReserveHistoryEntryOut,
     UnacknowledgeResult,
     UnacknowledgeRowsRequest,
     UnlinkRequest,
@@ -54,11 +64,21 @@ from app.schemas.project_order_inquiry import (
     WORKLIST_FILTER_MAX_LENGTH,
     WORKLIST_QUERY_MAX_LENGTH,
 )
+from app.models.inventory import Warehouse
+from app.models.project_so import (
+    OrderInquiry,
+    OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
+)
 from app.services import project_service as projects
+from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
+from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.scm.summary_order_service import compact_ddmmyyyy
+from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
 
@@ -73,6 +93,17 @@ ACTION = "projects.order_inquiry.action"
 #: grant rather than `ACTION`, because CS holds that one for their own screens and must
 #: not be able to acknowledge their own instructions.
 ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
+#: R1 (`PLAN-oi-request-cs-reserve.md`): only the CS head confirms a reserve. Held by
+#: whoever may commit stock against a request - separate from `ACKNOWLEDGE`, which is
+#: purchasing's own grant to raise the request in the first place.
+RESERVE = "projects.order_inquiries.reserve"
+#: Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B7 / `app/dependencies.py`'s own
+#: rule): a WRITE endpoint - it creates a `user_downloads` row and enqueues a
+#: background render - is never reachable by `X-API-Key` alone, unlike the sync GET it
+#: replaces. Same permission slug as `VIEW` (exporting states nothing new, it only
+#: prints what the worklist already answers) but the real-signed-in-user dependency,
+#: mirroring `order_summary.py`'s own `_EXPORT`.
+_EXPORT = require_permission(VIEW)
 
 #: The sort set the list accepts, declared here as a `Literal` because FastAPI cannot
 #: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
@@ -533,6 +564,134 @@ def export_order_inquiry_worklist(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.post("/order-inquiries/export", response_model=DownloadResponse)
+def export_order_inquiry_worklist_async(
+    payload: OrderInquiryWorklistExportRequest = Body(default_factory=OrderInquiryWorklistExportRequest),
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """Lane B, AC-B6/R4 (`PLAN-order-sheet-oi-reports-22sep.md`): the list page's own
+    Export Excel, through My Downloads - the GET above stays for one release (MCP /
+    other callers), this is what the screen calls now.
+
+    Same shape as `export_order_summary` (`app/api/v1/scm/order_summary.py`): create
+    the `user_downloads` row, enqueue the render, mark it failed and answer 503 on an
+    enqueue failure rather than leaving the row stuck pending.
+    """
+    from app.api.v1.projects._common import acting_company_id
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_order_inquiry_worklist_xlsx
+
+    filters = payload.model_dump(exclude_none=True)
+    # Security review fix round 2, item 1: the SAME UUID guard the GET list/summary/
+    # matrix routes and the acknowledge route's own `filter` branch run - defense in
+    # depth alongside the schema's own `pattern=UUID_PATTERN` fields, and BEFORE any
+    # `user_downloads` row exists, so a malformed filter never reaches the worker.
+    _validate_worklist_filter_uuids(filters)
+    # The worker has no request-scoped company: snapshot the enqueuing request's own
+    # single-company scope so the task can adopt it - the render then sees exactly the
+    # rows this caller could see, not the worker's fail-closed UNSET default.
+    # `acting_company_id` (review fix round 3, item 4 - reuse, not reimplement) raises
+    # a clean 400 for an ambiguous/no scope BEFORE any `user_downloads` row exists,
+    # same as the UUID guard above.
+    company_id = acting_company_id(db)
+
+    if DownloadService(db).has_in_flight(
+        user_id=str(current_user["id"]), kind="order_inquiry_worklist_xlsx",
+    ):
+        raise AppException(
+            status_code=409,
+            message="An order inquiry export is already being prepared - check My "
+                    "Downloads.",
+        )
+
+    filename = f"order-inquiries-{compact_ddmmyyyy(None)}.xlsx"
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind="order_inquiry_worklist_xlsx",
+        filename=filename,
+    )
+    try:
+        enqueue_job(
+            generate_order_inquiry_worklist_xlsx,
+            str(download.id),
+            filters,
+            str(current_user["id"]),
+            company_id=company_id,
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue order inquiry export: {e}"
+        )
+        raise AppException(
+            status_code=503,
+            message="Could not queue order inquiry export. Please try again.",
+        )
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
+
+
+@router.post("/order-inquiries/{inquiry_id}/export", response_model=DownloadResponse)
+def export_order_inquiry_header(
+    inquiry_id: str,
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """Lane B, AC-B1/AC-B3/AC-B4/AC-B7 (`PLAN-order-sheet-oi-reports-22sep.md`): the OI
+    detail page's own Export Excel, through My Downloads, tied to this one header so
+    its download history is reachable from the OI itself (AC-B5, `EntityDownloadsButton`
+    for `("order_inquiry", inquiry_id)`).
+
+    Same shape as `export_order_summary`: create the `user_downloads` row, enqueue the
+    render, mark it failed and answer 503 on an enqueue failure. 404 for an unknown or
+    another company's header, off the SAME loader the detail page itself reads.
+    """
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_order_inquiry_xlsx
+
+    validate_uuid_path(inquiry_id, resource="Order inquiry")
+    header = OrderInquiryHeaderService(db).get(inquiry_id)
+
+    if DownloadService(db).has_in_flight(
+        user_id=str(current_user["id"]), kind="order_inquiry_xlsx",
+        source_entity_type="order_inquiry", source_entity_id=inquiry_id,
+    ):
+        raise AppException(
+            status_code=409,
+            message="An order inquiry export is already being prepared - check My "
+                    "Downloads.",
+        )
+
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind="order_inquiry_xlsx",
+        source_entity_type="order_inquiry",
+        source_entity_id=inquiry_id,
+        filename=f"{header.inquiry_no}.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_order_inquiry_xlsx,
+            str(download.id),
+            inquiry_id,
+            str(current_user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue order inquiry export: {e}"
+        )
+        raise AppException(
+            status_code=503,
+            message="Could not queue order inquiry export. Please try again.",
+        )
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
+
+
 @router.get("/order-inquiries/matrix", response_model=OrderInquiryMatrixResponse)
 def order_inquiry_worklist_matrix(
     axis: MatrixAxis = Query(
@@ -957,6 +1116,240 @@ async def get_sales_order_inquiry(
                 code="order_inquiry_not_raised",
             )
         return body
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+def _serialize_reserve_request(
+    db: Session, request: OrderInquiryReserveRequest, *, notified_name: Optional[str] = None
+) -> dict:
+    """`OrderInquiryReserveRequestOut`'s wire shape - the request plus every one of its
+    rows, human-readable (no UUID in the UI): `item_code` off the order-inquiry row,
+    `location` off the chosen warehouse's own code."""
+    from decimal import Decimal
+
+    from app.models.project_so import OrderInquiryRow
+    from app.models.user import User
+
+    def _qty(value) -> Optional[str]:
+        if value is None:
+            return None
+        return format(Decimal(str(value)).normalize(), "f")
+
+    def _name(user_id: Optional[str]) -> Optional[str]:
+        if not user_id:
+            return None
+        user = db.query(User).filter(User.id == user_id).first()
+        return getattr(user, "name", None) or getattr(user, "email", None)
+
+    rows = (
+        db.query(OrderInquiryReserveRequestRow)
+        .filter(OrderInquiryReserveRequestRow.request_id == request.id)
+        .order_by(OrderInquiryReserveRequestRow.id.asc())
+        .all()
+    )
+    row_by_id = {}
+    warehouse_by_id = {}
+    if rows:
+        row_by_id = {
+            row.id: row
+            for row in db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.id.in_([rr.row_id for rr in rows]))
+            .all()
+        }
+        warehouse_ids = {rr.warehouse_id for rr in rows if rr.warehouse_id}
+        if warehouse_ids:
+            warehouse_by_id = {
+                warehouse.id: warehouse.warehouse_code
+                for warehouse in db.query(Warehouse).filter(Warehouse.id.in_(warehouse_ids)).all()
+            }
+    return {
+        "id": request.id,
+        "order_inquiry_id": request.order_inquiry_id,
+        "ordinal": request.ordinal,
+        "state": request.state,
+        "requested_by": request.requested_by,
+        "requested_by_name": _name(request.requested_by),
+        "requested_at": as_utc(request.requested_at),
+        "note": request.note,
+        "reserved_by_name": _name(request.reserved_by),
+        "reserved_at": as_utc(request.reserved_at),
+        "cancelled_at": as_utc(request.cancelled_at),
+        "rows": [
+            {
+                "id": rr.id,
+                "row_id": rr.row_id,
+                "item_code": getattr(row_by_id.get(rr.row_id), "item_code", None),
+                "qty_requested": _qty(rr.qty_requested),
+                "warehouse_id": rr.warehouse_id,
+                "location": warehouse_by_id.get(rr.warehouse_id),
+                "qty_reserved": _qty(rr.qty_reserved),
+                "reason": rr.reason,
+            }
+            for rr in rows
+        ],
+        "notified_name": notified_name,
+    }
+
+
+@router.post(
+    "/order-inquiries/{inquiry_id}/reserve-requests",
+    response_model=OrderInquiryReserveRequestOut,
+    status_code=201,
+)
+async def create_order_inquiry_reserve_request(
+    inquiry_id: str,
+    payload: CreateReserveRequestIn,
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Purchasing asks CS to reserve stock for one or more rows of this inquiry
+    (`PLAN-oi-request-cs-reserve.md` 3.2, AC-RS-1 to AC-RS-5). Same gate as every other
+    purchasing action on this page - `ACKNOWLEDGE`, not the CS-only `RESERVE` grant
+    below, which is Eling's own to confirm what was actually reserved."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        request = OrderInquiryReserveService(db).create_request(
+            inquiry_id=inquiry_id,
+            rows=[row.model_dump() for row in payload.rows],
+            note=payload.note,
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        inquiry = (
+            db.query(OrderInquiry).filter(OrderInquiry.id == request.order_inquiry_id).first()
+        )
+        notified_name = OrderInquiryReserveService(db).notified_name(
+            trigger_type="order_inquiry_reserve_requested",
+            actor_user_id=current_user["id"],
+            raiser_user_id=inquiry.raised_by if inquiry is not None else None,
+        )
+        return _serialize_reserve_request(db, request, notified_name=notified_name)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiries/reserve-requests/{request_id}/cancel",
+    response_model=OrderInquiryReserveRequestOut,
+)
+async def cancel_order_inquiry_reserve_request(
+    request_id: str,
+    current_user: dict = Depends(require_any_permission([ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """The requester's own undo while nothing has been reserved yet (3.2, AC-RS-19) -
+    also reachable through the deferred action `order_inquiry_reserve_request.cancel`
+    (`record_actions.py`) for the standard reversible countdown. No email either way.
+
+    SF-1 (review round): the dependency above only proves the actor holds ONE of the
+    two purchasing-side grants - it says nothing about whose request this is. The
+    actor's OWN hold on `RESERVE` is resolved here and handed to the service, which is
+    where the real "requester or CS" ownership check lives (`cancel_request`)."""
+    try:
+        validate_uuid_path(request_id, resource="Reserve request")
+        actor_can_reserve = UserPermissionService(db).check_user_has_permission(
+            current_user["id"], RESERVE
+        )
+        request = OrderInquiryReserveService(db).cancel_request(
+            request_id=request_id,
+            actor_user_id=current_user["id"],
+            actor_can_reserve=actor_can_reserve,
+        )
+        db.commit()
+        return _serialize_reserve_request(db, request)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiries/{inquiry_id}/reserve-commit",
+    response_model=List[OrderInquiryReserveRequestOut],
+)
+async def commit_order_inquiry_reserve(
+    inquiry_id: str,
+    payload: CommitReserveRequestIn,
+    current_user: dict = Depends(require_permission(RESERVE)),
+    db: Session = Depends(get_db),
+):
+    """Eling's own Confirm, staged on the Lines grid and committed ONE CLICK at a time
+    (`PLAN-oi-request-cs-reserve.md` 6e.1, re-keyed by 6e.4). The body names order-
+    inquiry rows only; the service resolves each to its open (`reserves`) or latest
+    answered (`amendments`) request row inside THIS inquiry, so a line of a finished
+    request can be amended while another request is open. One transaction, one
+    `order_inquiry_reserved` dispatch per request touched. Returns the touched
+    requests. `projects.order_inquiries.reserve` alone (R1)."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        requests = OrderInquiryReserveService(db).commit_request(
+            inquiry_id=inquiry_id,
+            reserves=[row.model_dump() for row in payload.reserves],
+            amendments=[row.model_dump() for row in payload.amendments],
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        return [_serialize_reserve_request(db, request) for request in requests]
+    except Exception as exc:
+        db.rollback()
+        if hasattr(exc, "status_code"):
+            raise exc
+        # Security re-review: the detail goes to the log, never into the response.
+        logger.exception("Reserve commit failed for order inquiry %s", inquiry_id)
+        raise handle_internal_error()
+
+
+@router.get(
+    "/order-inquiries/reserve-requests/{request_id}/rows/{row_id}/history",
+    response_model=List[ReserveHistoryEntryOut],
+)
+def order_inquiry_reserve_request_row_history(
+    request_id: str,
+    row_id: str,
+    _user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """The dialog's own History tab, newest first (`PLAN-oi-request-cs-reserve.md`
+    section 6c, F3). Same read gate as the request list beside it: `VIEW`/
+    `ACKNOWLEDGE`/`RESERVE` are the three ways to already be allowed to see this
+    inquiry's own Lines tab at all."""
+    try:
+        validate_uuid_path(request_id, resource="Reserve request")
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        return OrderInquiryReserveService(db).history_for_row(
+            request_id=request_id, row_id=row_id
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiries/{inquiry_id}/reserve-requests",
+    response_model=List[OrderInquiryReserveRequestOut],
+)
+async def list_order_inquiry_reserve_requests(
+    inquiry_id: str,
+    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """Every reserve request this header has ever raised, newest first - the Lines tab's
+    own `ReserveRequestsCard` (3.7/3.8): the open one in act mode for a viewer holding
+    `RESERVE`, the rest collapsed as history.
+
+    SF-4 (review round): gating on `ACKNOWLEDGE` alone locked a reserve-only CS head
+    (Eling, who never raises a request) out of reading her own worklist's card - `VIEW`/
+    `ACKNOWLEDGE`/`RESERVE` are the three ways to already be allowed to see this
+    inquiry's own Lines tab at all."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        requests = (
+            db.query(OrderInquiryReserveRequest)
+            .filter(OrderInquiryReserveRequest.order_inquiry_id == inquiry_id)
+            .order_by(OrderInquiryReserveRequest.ordinal.desc())
+            .all()
+        )
+        return [_serialize_reserve_request(db, request) for request in requests]
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

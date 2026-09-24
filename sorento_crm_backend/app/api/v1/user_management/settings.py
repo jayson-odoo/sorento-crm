@@ -190,6 +190,11 @@ class SystemSettingUpdate(BaseModel):
     # every block above - it must appear HERE and in the GET dict, because both are
     # manual. Bounded 1-100 here, before the value ever reaches the column.
     chatbot_stock_low_threshold_pct: Optional[int] = Field(None, ge=1, le=100)
+    # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    # Location, owner-configurable. `null` clears it back to "no configured default"
+    # (the dialog then falls back to the row's own site pool, R3). Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    oi_reserve_default_pool_warehouse_id: Optional[str] = None
 
 
 class ChatbotLane(BaseModel):
@@ -226,6 +231,12 @@ class AppConfigResponse(BaseModel):
     sponsorship_form_default_approver_email: Optional[str] = None
     #: r9 D10. A number of days, read by the price tag detail card.
     price_tag_auto_collect_days: Optional[int] = None
+    #: PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    #: Location must reach every `projects.order_inquiries.reserve` holder (Eling, CS),
+    #: who does not hold `user_management.settings.view` - the same reason
+    #: `price_tag_auto_collect_days` is here. A warehouse id, never rendered as text -
+    #: only matched against the dialog's own resolved pool options.
+    oi_reserve_default_pool_warehouse_id: Optional[str] = None
 
 
 @router.get("/")
@@ -427,6 +438,13 @@ async def get_settings(
                 # never reaches the Chatbot settings screen at all.
                 "chatbot_stock_low_threshold_pct": getattr(settings, "chatbot_stock_low_threshold_pct", 50) if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
+                # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
+                # or the setting never reaches the General settings screen at all.
+                "oi_reserve_default_pool_warehouse_id": (
+                    getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
+                    if settings
+                    else None
+                ),
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -477,6 +495,14 @@ async def get_app_config(
             # number of days is not sensitive.
             price_tag_auto_collect_days=(
                 getattr(settings, "price_tag_auto_collect_days", 7) if settings else 7
+            ),
+            # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own
+            # default pool must reach every `projects.order_inquiries.reserve` holder,
+            # who does not hold `user_management.settings.view`.
+            oi_reserve_default_pool_warehouse_id=(
+                getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
+                if settings
+                else None
             ),
         )
     except Exception as e:
@@ -562,6 +588,36 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             update_data["default_uom_id"] = uid_clean
         else:
             update_data["default_uom_id"] = None
+
+    # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    # Location must be an ACTIVE POOL - a bare warehouse code, no `-SUFFIX` group and no
+    # `pool_warehouse_id` of its own naming another warehouse as ITS pool. 422, not 400
+    # (the sibling id fields above are 400): this is a shape refusal about WHAT KIND of
+    # warehouse was named, the same family as the other 422s in this function.
+    if "oi_reserve_default_pool_warehouse_id" in update_data:
+        wid = update_data["oi_reserve_default_pool_warehouse_id"]
+        if wid is not None and str(wid).strip():
+            from app.models.inventory import Warehouse
+            from app.services.scm.group_netting import group_of_warehouse_code
+
+            wid_clean = str(wid).strip()
+            warehouse = (
+                db.query(Warehouse)
+                .filter(Warehouse.id == wid_clean, Warehouse.is_active.is_(True))
+                .first()
+            )
+            is_group_member = (
+                warehouse is not None
+                and group_of_warehouse_code(warehouse.warehouse_code) is not None
+            )
+            if warehouse is None or is_group_member:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Choose an active site pool, not a group warehouse.",
+                )
+            update_data["oi_reserve_default_pool_warehouse_id"] = wid_clean
+        else:
+            update_data["oi_reserve_default_pool_warehouse_id"] = None
 
     for col in (
         "purchase_request_default_approver_user_id",

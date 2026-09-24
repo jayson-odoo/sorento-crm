@@ -80,14 +80,32 @@ def _savepoint_session():
         connection.close()
 
 
-def _seed_run(db, *, status: str = "completed") -> str:
+def _seed_run(
+    db, *, status: str = "completed",
+    product_ids: "list[str] | None" = None,
+    so_numbers: "list[str] | None" = None,
+    company_id: str = SORENTO_COMPANY_ID,
+) -> str:
     """`scm.reorder_run.company_id` has NO column default (unlike `products` /
     `warehouses`) - it must be stamped explicitly or `assert_run_visible`'s company-scope
-    gate (`shared=False`) reads the row as another company's and answers 404."""
+    gate (`shared=False`) reads the row as another company's and answers 404.
+
+    Lane C fix round 2: `product_ids`/`so_numbers` default to `None` (column stays NULL -
+    "no scope was asked for", today's behaviour for every existing caller) and can also be
+    passed as `[]` EXPLICITLY (a scope that resolved to nothing) - the two are different
+    runs and the OI worksheet's own guard must not confuse them."""
+    import json
+
     return str(db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, include_market, company_id, created_at) "
-        "VALUES (:id, :s, false, :co, now()) RETURNING id"
-    ), {"id": _u(), "s": status, "co": SORENTO_COMPANY_ID}).scalar())
+        "INSERT INTO scm.reorder_run (id, status, include_market, company_id, created_at, "
+        "                             product_ids, so_numbers) "
+        "VALUES (:id, :s, false, :co, now(), CAST(:pids AS jsonb), CAST(:sos AS jsonb)) "
+        "RETURNING id"
+    ), {
+        "id": _u(), "s": status, "co": company_id,
+        "pids": json.dumps(product_ids) if product_ids is not None else None,
+        "sos": json.dumps(so_numbers) if so_numbers is not None else None,
+    }).scalar())
 
 
 # =========================================================================== #
@@ -423,6 +441,71 @@ def test_generate_order_sheet_marks_failed_when_render_raises(monkeypatch):
         row = DownloadService(db).get(str(dl.id))
         assert row.status == "failed", row.status
         assert "render exploded" in (row.error or ""), row.error
+
+
+# =========================================================================== #
+# AC-A10 (PLAN-order-sheet-oi-reports-22sep.md, security should-fix, fix round 2 item
+# 7): a run row with NO company must not export under the `None` (all-companies) scope
+# `generate_order_sheet` starts under while it looks the run up - it fails closed.
+# =========================================================================== #
+
+def test_generate_order_sheet_fails_closed_when_the_run_has_no_company(monkeypatch):
+    """A legacy run row (`company_id IS NULL`) must not leak every company's rows into
+    the export. Observed behaviour, not merely intended: `ReorderRun` is itself
+    `CompanyScopedMixin`, so once `generate_order_sheet` sets the scope to `UNSET`
+    (fail closed) rather than leaving it at `None`, `export_report`'s own `_run_for`
+    lookup finds NOTHING and raises `AppException(404, "That plan does not exist.")` -
+    `generate_order_sheet` converts that into a FAILED download, never a silently
+    empty "ready" one and never a cross-company leak.
+    """
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+
+    with _savepoint_session() as db:
+        run_id = str(db.execute(text(
+            "INSERT INTO scm.reorder_run (id, status, include_market, company_id, "
+            "created_at) VALUES (:id, 'completed', false, NULL, now()) RETURNING id"
+        ), {"id": _u()}).scalar())
+        user_id = seed_user(db, "purchasing")
+        db.flush()
+
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="order_sheet_pdf", source_entity_type="reorder_run",
+            source_entity_id=run_id, filename="order-sheet-10092026.pdf",
+        )
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        result = export_tasks.generate_order_sheet(str(dl.id), run_id, "pdf", user_id)
+
+        assert result["status"] == "failed", result
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "failed", row.status
+
+
+def test_generate_order_sheet_fails_closed_when_the_run_does_not_exist(monkeypatch):
+    """The other AC-A10 half: a `run_id` that names no row at all must also fail
+    closed rather than export under `None` (all companies)."""
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+
+    with _savepoint_session() as db:
+        missing_run_id = _u()
+        user_id = seed_user(db, "purchasing")
+        db.flush()
+
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="order_sheet_pdf", source_entity_type="reorder_run",
+            source_entity_id=missing_run_id, filename="order-sheet-10092026.pdf",
+        )
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        result = export_tasks.generate_order_sheet(str(dl.id), missing_run_id, "pdf", user_id)
+
+        assert result["status"] == "failed", result
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "failed", row.status
 
 
 # =========================================================================== #

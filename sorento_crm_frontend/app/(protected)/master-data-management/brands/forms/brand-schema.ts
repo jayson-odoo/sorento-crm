@@ -21,6 +21,9 @@ export const BrandSchema = z.object({
   // visibility restriction). Used by the resolver's promotion-domain product
   // fallback to scope brand-search to the active contact's permissions.
   access_levels: z.array(z.string()),
+  // False means every product on this brand is bought locally by CS and never
+  // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
+  flows_to_purchasing: z.boolean(),
 });
 
 export type BrandSchemaType = z.infer<typeof BrandSchema>;

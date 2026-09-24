@@ -753,10 +753,17 @@ class TestPickPathZeroStockLadderClimbsAfterADidYouMeanPick:
     file's own `INCOMING_LEAD`/`WAREHOUSE_OFFER` constants) is: the HIT climbs the
     ladder - incoming rung probed, then the PO rung - and, both missing, ends "Stock
     is 0 at every location, no incoming and nothing on order for SRTKS8050-BL." plus
-    the purchasing escalation offer, pending becomes the purchasing team_pick.
+    the escalation offer, pending becomes a team_pick.
     Expected RED: turn 96cf765d's own live trace shows NO second tool event at all
     (no crossdomain probe ran) - this pins the DESIRED ladder behaviour, not what
-    the live trace happened to do."""
+    the live trace happened to do.
+
+    Owner ruling 22 Sep 2026, R6 (AC-EQ-5..11): a stock-origin ask (this is one -
+    the picked offer's own `open_question.team` was "warehouse") is always suggested
+    to the warehouse team, no PO-rung override, even after a did-you-mean pick. The
+    pending offer AFTER the ladder answer carries that SAME team forward
+    (`open_question_after["team"]`), which is what a later bare "yes" routes to -
+    AC-EQ-11."""
 
     OPTION_A_CODE = "SRTKS8050-BL"
     OPTION_B_CODE = "SRTKS8046-BL"
@@ -843,7 +850,7 @@ class TestPickPathZeroStockLadderClimbsAfterADidYouMeanPick:
             f"{calls!r}"
         )
 
-    def test_the_pick_hits_zero_climbs_the_ladder_and_offers_purchasing(
+    def test_the_pick_hits_zero_climbs_the_ladder_and_offers_warehouse(
         self, session_factory, monkeypatch
     ) -> None:
         _seed_contact_and_get(session_factory)
@@ -954,15 +961,19 @@ class TestPickPathZeroStockLadderClimbsAfterADidYouMeanPick:
         assert "no incoming" in said.lower(), said
         assert "nothing on order" in said.lower(), said
         assert self.OPTION_A_CODE in said, said
-        assert "escalate to purchasing" in said.lower() or "purchasing team" in said.lower(), said
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-5): a stock-origin ask stays warehouse
+        # even after climbing the full ladder to the PO rung.
+        assert "escalate to warehouse" in said.lower() or "warehouse team" in said.lower(), said
 
         state = _state_of(session_factory)
         open_question_after = state.get("open_question") or {}
         assert open_question_after.get("kind") == "team_pick", (
-            f"the pending after must be the purchasing team_pick: "
+            f"the pending after must be the warehouse team_pick: "
             f"{open_question_after!r}"
         )
-        assert open_question_after.get("team") == "purchasing", open_question_after
+        # AC-EQ-11: the pending offer's carried team (what a later bare "yes" routes
+        # to) is warehouse for a stock-origin ask.
+        assert open_question_after.get("team") == "warehouse", open_question_after
 
 
 # --------------------------------------------------------------------------- #

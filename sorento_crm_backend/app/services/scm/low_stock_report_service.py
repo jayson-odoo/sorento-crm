@@ -186,11 +186,14 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
     Quantities are NUMBERS (the order sheet's H1 rule): a workbook is opened to be summed,
     and a text "1,234" defeats that the moment somebody selects the column. BRW on hand,
     Reorder level, Order qty, Reorder qty and Last in date print BLANK rather than 0 when
-    the row carries none - a 0 there reads as a fact nobody measured. BRW PO qty / BRW
-    incoming qty keep the order sheet's exception: once a document exists behind the total
-    the cell becomes `_docs_text`'s text, container line and all (S2). Last in qty
-    (PLAN-low-stock-last-in-and-list-scope S1) is the order sheet's own `_last_in_text` -
-    ALWAYS text, the SPO/container/qty document line, never a bare number.
+    the row carries none - a 0 there reads as a fact nobody measured. BRW PO qty keeps the
+    order sheet's exception: once a document exists behind the total the cell becomes
+    `_docs_text`'s text, PO number and all (S2). BRW incoming qty is the order sheet's own
+    `_incoming_text` (AC-A1, PLAN-order-sheet-oi-reports-22sep.md) - the SPO number never
+    appears in this cell, only the container. Last in qty
+    (PLAN-low-stock-last-in-and-list-scope S1, AC-A2) is the order sheet's own
+    `_last_in_text` - ALWAYS text, the container/qty document line, never a bare number and
+    never the SPO number either.
     """
     chosen = row.get("chosen_qty")
     pool_on_hand = row.get("pool_on_hand")
@@ -215,7 +218,7 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
         svc._xlsx_safe_text(row.get("supplier_name") or ""),
         (svc._xlsx_safe_text(svc._docs_text(po_open_qty, po_open_docs)) if po_open_docs
          else float(po_open_qty or 0)),
-        (svc._xlsx_safe_text(svc._docs_text(incoming_spo_qty, incoming_spo_docs))
+        (svc._xlsx_safe_text(svc._incoming_text(incoming_spo_qty, incoming_spo_docs))
          if incoming_spo_docs else float(incoming_spo_qty or 0)),
         svc._xlsx_safe_text(svc._last_in_text(receipt)),
         svc._xlsx_safe_text(svc._ddmmyyyy(receipt.get("date"))) if receipt else "",

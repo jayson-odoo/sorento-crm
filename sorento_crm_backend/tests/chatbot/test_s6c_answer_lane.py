@@ -845,6 +845,17 @@ class TestErrorArmRendersTheMissLane:
         fragments = captured["fragments"]
         assert "not_found" in fragments, "the error arm must render the miss lane"
         assert "SRTWC8517" in fragments["not_found"]["escalate_message"]
+        # Owner ruling 22 Sep 2026, R6 - `ctx.parse.output` above carries NO `routing`
+        # key at all (a bare `parser` dict, the shape `not_found_error_message`'s own
+        # belt-and-braces fallback exists for): `domain_hint = "inventory"` must still
+        # reach the customer as "warehouse", never the generic "customer_service"
+        # literal. Deleting `answer.py`'s own `default_policy()` fallback (kept
+        # alongside `turn_runtime.lane_parse_output`'s domain-aware fill, which this
+        # direct `complete_answer` call bypasses entirely - no `engine.run_turn`, no
+        # `policy` in the loop) turns this assertion red.
+        assert "escalate to warehouse team?" in fragments["not_found"]["escalate_message"], (
+            fragments["not_found"]["escalate_message"]
+        )
 
     def test_pre_fetch_not_found_arm_still_offers_the_sibling_family(self, monkeypatch) -> None:
         """Owner console defect item 3: `_run_miss_half`'s call site for the PRE-FETCH
@@ -2429,6 +2440,14 @@ class TestStatusAwareMissMessageOmitsTheEtaDate:
         out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         message = out.get("escalate_message") or ""
 
+        # AC-1863: a single resolved order must be byte-identical to before the
+        # AC-1860/AC-1861/AC-1862 fix (the escalate question stays on the SAME line,
+        # a space away, never a newline) - pinned exactly, not just by substring.
+        assert message == (
+            "Order DO12345 (ACME Sdn Bhd) hasn't been delivered yet - current status: "
+            "processing. Would you like me to escalate to customer service team?"
+        ), message
+
         assert "hasn't been delivered yet" in message
         assert "current status: processing" in message, (
             f"the current status must be named: {message!r}"
@@ -2440,6 +2459,150 @@ class TestStatusAwareMissMessageOmitsTheEtaDate:
         assert "estimated delivery" not in message, (
             f"no estimated-delivery phrasing at all in the miss message: {message!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-chatbot-order-status-all-orders-23sep / AC-1860..1865 (prod, 23 Sep 2026, contact
+# 482766833, turn 48): "STATUS DELIVERY / PS202609-0374 / PS202609-0398 / PS202609-0410"
+# resolved THREE orders (`gate.compatible_entities` had three `customer_order` rows) but
+# the status-filter-aware branch above took the FIRST match only and named one order,
+# silently dropping the other two. The fix loops every resolved order, deduped by uuid,
+# in `gate.compatible_entities` order, one line each, ONE escalate question at the end.
+# --------------------------------------------------------------------------- #
+
+
+class TestStatusAwareMissMessageNamesEveryResolvedOrder:
+    def _order_match(self, code: str, uuid: str, customer: str, status: str) -> dict:
+        return {
+            "entity_type": "customer_order",
+            "uuid": uuid,
+            "canonical_code": code,
+            "display": {"customer_name": customer, "status": status},
+        }
+
+    def _matches(self) -> list[dict]:
+        return [
+            self._order_match(
+                "PS202609-0374",
+                "33333333-3333-4333-9333-333333333333",
+                "MATRIX EXCELCON SDN BHD (PROJECT)",
+                "New Order",
+            ),
+            self._order_match(
+                "PS202609-0398",
+                "44444444-4444-4444-9444-444444444444",
+                "MATRIX EXCELCON SDN BHD (PROJECT)",
+                "New Order",
+            ),
+            self._order_match(
+                "PS202609-0410",
+                "55555555-5555-4555-9555-555555555555",
+                "COMMERCE HOUSE SDN BHD (PROJECT)",
+                "New Order",
+            ),
+        ]
+
+    def _gate(self, matches: list[dict]) -> dict:
+        return {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": m["uuid"], "entity_type": "customer_order", "code": m["canonical_code"]}
+                for m in matches
+            ],
+        }
+
+    def _parser(self, order_status: str) -> dict:
+        return {
+            "domain_hint": "order",
+            "order_status": order_status,
+            "entities": [
+                {"hint": "order", "raw": "PS202609-0374"},
+                {"hint": "order", "raw": "PS202609-0398"},
+                {"hint": "order", "raw": "PS202609-0410"},
+            ],
+            "routing": {"suggested_team": "customer_service"},
+            "access_levels": [],
+        }
+
+    def test_ac_1860_delivered_names_all_three_orders_one_line_each(self) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        matches = self._matches()
+        resolved = {
+            "tokens": [m["canonical_code"] for m in matches],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": m["canonical_code"], "matches": [m]} for m in matches],
+            "intersection": matches,
+            "by_entity_type": {"customer_order": matches},
+        }
+        out = not_found_error_message(
+            {}, parser=self._parser("delivered"), resolved=resolved, gate=self._gate(matches)
+        )
+        message = out.get("escalate_message") or ""
+
+        assert message.count("hasn't been delivered yet") == 3, message
+        assert message.count("Would you like me to escalate") == 1, message
+        # the three lines appear in `compatible_entities` order, each naming its own
+        # code, customer and status - the earlier bug rendered PS202609-0374 only.
+        idx_374 = message.index("PS202609-0374")
+        idx_398 = message.index("PS202609-0398")
+        idx_410 = message.index("PS202609-0410")
+        assert idx_374 < idx_398 < idx_410, message
+        for code, customer in (
+            ("PS202609-0374", "MATRIX EXCELCON SDN BHD (PROJECT)"),
+            ("PS202609-0398", "MATRIX EXCELCON SDN BHD (PROJECT)"),
+            ("PS202609-0410", "COMMERCE HOUSE SDN BHD (PROJECT)"),
+        ):
+            assert f"Order {code} ({customer}) hasn't been delivered yet - current status: New Order." in message, (
+                message
+            )
+        assert message.rstrip().endswith(
+            "Would you like me to escalate to customer service team?"
+        ), message
+
+    def test_ac_1861_outstanding_names_all_three_orders_one_line_each(self) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        matches = self._matches()
+        resolved = {
+            "tokens": [m["canonical_code"] for m in matches],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": m["canonical_code"], "matches": [m]} for m in matches],
+            "intersection": matches,
+            "by_entity_type": {"customer_order": matches},
+        }
+        out = not_found_error_message(
+            {}, parser=self._parser("outstanding"), resolved=resolved, gate=self._gate(matches)
+        )
+        message = out.get("escalate_message") or ""
+
+        assert message.count("has no outstanding items") == 3, message
+        assert message.count("Would you like me to escalate") == 1, message
+
+    def test_ac_1862_duplicate_matches_across_intersection_by_type_and_resolutions_render_once(
+        self,
+    ) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        matches = self._matches()
+        # each match appears in `intersection`, `by_entity_type` AND `resolutions` - the
+        # real shape `all_matches` is built from - so a naive concat triples every uuid.
+        resolved = {
+            "tokens": [m["canonical_code"] for m in matches],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": m["canonical_code"], "matches": [m]} for m in matches],
+            "intersection": matches,
+            "by_entity_type": {"customer_order": matches},
+        }
+        out = not_found_error_message(
+            {}, parser=self._parser("delivered"), resolved=resolved, gate=self._gate(matches)
+        )
+        message = out.get("escalate_message") or ""
+
+        assert message.count("PS202609-0374") == 1, message
+        assert message.count("PS202609-0398") == 1, message
+        assert message.count("PS202609-0410") == 1, message
+        assert message.count("hasn't been delivered yet") == 3, message
 
 
 # --------------------------------------------------------------------------- #

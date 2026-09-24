@@ -59,30 +59,26 @@ re-derived from `crossdomain_render` in isolation):
     own field lines, OR the three-way "nothing on order" sentence when the PO rung also
     finds nothing}
 
-    Would you like me to escalate to purchasing team?
+    Would you like me to escalate to warehouse team?
 
 The escalate offer follows EVERY miss now, including one a rung partially answered -
 `not_found_error_message`'s own offer is unconditional on a miss existing at all; it does
 not read whether a LATER ladder rung filled in more text under it.
 
-**Re-pinned again after the ladder-before-miss sequencing fix (coder 36, 21 Sep 2026).**
-The paragraph this replaces said the offer named "customer service team" even when the PO
-rung answered, because the offer was built off the parser's ORIGINAL `suggested_team`
-before the rung's own mutation landed. That is no longer how the turn runs:
-`answer_bridge._run_crossdomain_ladder` (previously `_fold_crossdomain_ladder`) now runs
-BEFORE `not_found_error_message` composes the miss text (matching main's own
-`lanes/business/__init__.py::complete_answer` sequencing), so
-`_apply_crossdomain_rung`'s own `parser["routing"]["suggested_team"] = rung_team` stamp
-(`app/services/chatbot/lanes/business/answer.py:1064`
-`_CROSSDOMAIN_RUNG_TEAM = {"purchase_order": "purchasing"}`, applied at line 1385) lands
-before THIS turn's own offer is built, not just later turns'. The offer now names the
-rung's own team, "purchasing", whenever the rung runs at all (granted, no exception) -
-whether it found rows (AC-921, `TestOwner8Sep`, D7) or not (AC-922) - measured directly
-through `engine.run_turn`, not assumed. Only ONE offer reaches `result.reply.text` (the
-"said twice" defect `TestOwner8SepTheRungIsPerContactAndOffersOnce`'s own docstring names
-stays fixed); `_run_stock_turn`'s own `said` variable joins the reply text with a
-`send_message` action that mirrors it verbatim, which is why a raw substring count against
-`said` would read 2 - the count assertions below read `result.reply.text` alone.
+**Re-pinned again after the ladder-before-miss sequencing fix (coder 36, 21 Sep 2026),
+then RETIRED by owner ruling 22 Sep 2026, R6 (AC-EQ-5).** The paragraph this replaces said
+the PO rung stamps `parser["routing"]["suggested_team"]` to "purchasing" whenever it runs,
+regardless of whether it found rows, so the offer named the rung's own team rather than
+the stock team. `_CROSSDOMAIN_RUNG_TEAM` and that stamp are deleted: a stock-origin ask
+is now ALWAYS suggested to the warehouse team, whichever rung answers it (AC-921,
+`TestOwner8Sep`, AC-922) - measured directly through `engine.run_turn`, not assumed. Only
+ONE offer reaches `result.reply.text` (the "said twice" defect
+`TestOwner8SepTheRungIsPerContactAndOffersOnce`'s own docstring names stays fixed);
+`_run_stock_turn`'s own `said` variable joins the reply text with a `send_message` action
+that mirrors it verbatim, which is why a raw substring count against `said` would read 2 -
+the count assertions below read `result.reply.text` alone. D7's incoming-origin climb is
+UNCHANGED (AC-EQ-9): an incoming-origin ask that climbs to the PO rung still names
+"purchasing", because that is the team `crossdomain_zeroset` set before the rung ever ran.
 
 The rung's own field composer (`_crossdomain_rung_text`) never renders a PO Number line at
 all (no per-document heading, owner ruling 11 Sep 2026, second ruling) - the OLD
@@ -286,6 +282,15 @@ def stock_parse(stub_parser, stub_access):
             intent_hint="check_stock",
             domain_hint="inventory",
             entities=[{"raw": CODE, "hint": "product", "current_message": True}],
+            # Reviewer fix round 1, B2: left at `_parser_output`'s own default
+            # (`routing.suggested_team: None`) rather than hand-set to "warehouse" -
+            # captured traffic shows the LLM parser names no team on a real fraction
+            # of inventory turns (214/218, measured), so a stub that always sets one
+            # would test a shape production does not send. `not_found_error_message`
+            # (`lanes/business/answer.py`) now fills the domain's own team from
+            # `policy.domain(domain_hint).escalation_team_code` when routing names
+            # none - AC-EQ-12/13 pin that fallback directly; this fixture measures the
+            # SAME fallback end to end, through a real `engine.run_turn`.
         )
     )
     # The PO rung is per contact (8 Sep 2026): on-order info needs `purchase_orders.placed`.
@@ -326,13 +331,10 @@ class TestAC921ThePORungReachesTheCustomer:
         # docstring) - exactly once, never the "said twice" defect this class's own
         # sibling test's docstring names.
         assert reply_text.count("Would you like me to escalate") == 1, reply_text
-        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) -
-        # `_run_crossdomain_ladder` now runs BEFORE `not_found_error_message` composes
-        # the offer, so `_apply_crossdomain_rung`'s own `routing.suggested_team = "purchasing"`
-        # stamp (`app/services/chatbot/lanes/business/answer.py:1064`
-        # `_CROSSDOMAIN_RUNG_TEAM = {"purchase_order": "purchasing"}`, stamped at line 1385)
-        # lands before this turn's own offer text is built, not just later turns'.
-        assert "Would you like me to escalate to purchasing team?" in reply_text, reply_text
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-5) retired `_CROSSDOMAIN_RUNG_TEAM` and the
+        # `routing.suggested_team` stamp it used to apply: a stock-origin ask is always
+        # suggested to the warehouse team, whichever rung answered it.
+        assert "Would you like me to escalate to warehouse team?" in reply_text, reply_text
 
     def test_the_supplier_is_never_in_the_rung_text(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
@@ -398,13 +400,9 @@ class TestAC922NothingOnAnyRung:
         assert "But no inventory matched these." in reply_text, reply_text
         assert f"No stock, no incoming and nothing on order for {CODE}." in reply_text, reply_text
         assert reply_text.count("Would you like me to escalate") == 1, reply_text
-        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) - see
-        # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
-        # own comment for the file:line citation. The PO rung stamps `suggested_team =
-        # "purchasing"` whenever it RUNS (granted, no exception) - not only when it finds
-        # rows - so this all-three-miss case (rung ran, found nothing) still names
-        # "purchasing", the same as AC-921's rung-answered case.
-        assert "Would you like me to escalate to purchasing team?" in reply_text, reply_text
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-8): a stock-origin ask always offers the
+        # warehouse team, whether the PO rung finds rows or not.
+        assert "Would you like me to escalate to warehouse team?" in reply_text, reply_text
 
 
 class TestTheSuffixedCodeShapeReachesTheRung:
@@ -590,10 +588,9 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         # The offer follows every miss now, even a rung-answered one (module docstring) -
         # exactly once, which is the "offers once" half of this class's own name.
         assert text.count("Would you like me to escalate") == 1, text
-        # Re-pinned after the ladder-before-miss sequencing fix (coder 36, 21 Sep) - see
-        # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
-        # own comment for the file:line citation.
-        assert "Would you like me to escalate to purchasing team?" in text, text
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-5): a stock-origin ask stays warehouse even
+        # when the PO rung is what answered.
+        assert "Would you like me to escalate to warehouse team?" in text, text
 
     def test_without_the_grant_no_probe_and_the_ladder_off_note(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
@@ -637,6 +634,10 @@ class TestD7AnIncomingAskReachesThePORung:
                 intent_hint="check_incoming",
                 domain_hint="incoming",
                 entities=[{"raw": CODE, "hint": "product", "current_message": True}],
+                # Reviewer fix round 1, B2 - left at the default `routing.suggested_team:
+                # None`, same reason `stock_parse` above does: `not_found_error_message`'s
+                # domain fallback (incoming -> purchasing) is what names the team now,
+                # not this stub (AC-EQ-14).
             )
         )
         stub_access(attributes=["purchase_orders.placed"])
@@ -663,3 +664,51 @@ class TestD7AnIncomingAskReachesThePORung:
         # `TestAC921ThePORungReachesTheCustomer.test_a_stock_miss_with_an_open_po_says_so`'s
         # own comment for the file:line citation.
         assert "Would you like me to escalate to purchasing team?" in text, text
+
+
+class TestACEQ12To14NullRoutingFallsBackToTheDomainTeam:
+    """Reviewer fix round 1, B2. Captured traffic (22 Sep 2026) shows the LLM parser
+    names NO team on a real fraction of inventory turns (214/218, measured) - before
+    this fix `not_found_error_message` (`lanes/business/answer.py`) fell straight to
+    the generic "customer_service" literal for those, so the miss branch (no PO-rung
+    override involved at all, AC-EQ-6/8) offered the wrong team even after the
+    PO-rung override was retired. Owner ruling 22 Sep 2026, R6: a stock-origin ask is
+    ALWAYS warehouse, an incoming-origin ask is always purchasing - deterministic,
+    filled from `policy.domain(domain_hint).escalation_team_code` when the parser
+    named none. `stock_parse`/the D7 fixture's own `stub_parser` calls above carry NO
+    explicit `routing` any more (reverted to the captured null shape) - this class is
+    the same harness, just named to the AC ids so a reviewer can find them directly."""
+
+    def test_ac_eq_12_stock_origin_null_routing_po_placed_offers_warehouse(
+        self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
+    ) -> None:
+        result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS)
+        assert result.status == "done", result.error
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Would you like me to escalate to warehouse team?" in reply_text, reply_text
+
+    def test_ac_eq_13_stock_origin_null_routing_nothing_on_any_rung_offers_warehouse(
+        self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
+    ) -> None:
+        result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS)
+        assert result.status == "done", result.error
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Would you like me to escalate to warehouse team?" in reply_text, reply_text
+
+    def test_ac_eq_14_incoming_origin_null_routing_po_placed_offers_purchasing(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        stub_parser(
+            _parser_output(
+                intent_hint="check_incoming",
+                domain_hint="incoming",
+                entities=[{"raw": CODE, "hint": "product", "current_message": True}],
+            )
+        )
+        stub_access(attributes=["purchase_orders.placed"])
+        result, said, probes = _run_stock_turn(
+            session_factory, monkeypatch, po_response=PO_ROWS, origin="incoming"
+        )
+        assert result.status == "done", result.error
+        reply_text = (result.reply or {}).get("text") or ""
+        assert "Would you like me to escalate to purchasing team?" in reply_text, reply_text

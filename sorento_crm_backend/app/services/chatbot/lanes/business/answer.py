@@ -1131,7 +1131,6 @@ def crossdomain_render(
 #: anything else is simply never reached (no tool to call), which is the same "widen only
 #: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
 _CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_po_placed_list"}
-_CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
 #: Item 5 (8 Sep 2026): the rung's tool returns PO lines AND unshipped SPO allocations
 #: (`kind` "po" / "spo", carried on the item's own top-level `kind` key since the 11 Sep
 #: 2026 ruling - no rendered Source field), so its sentences speak of what is ON ORDER
@@ -1436,26 +1435,14 @@ def _apply_crossdomain_rung(
     block["any"] = True
     block["nothing_note"] = new_note
     block["rung"] = rung
-    # THE OFFER AND THE ROUTING HAVE TO NAME THE SAME TEAM (review, should-fix 8). The
-    # sentence just written says "escalate to purchasing team" because a PO is what
-    # answered, while `tail/pending.escalation_team` reads the TURN's routing - which for
-    # a stock question is `warehouse`. The customer would have been told one team and
-    # handed to another, which is the H64 shape: a discriminator produced in one place and
-    # ignored in the other. The rung is what answered, so the rung's team is the turn's
-    # team from here on; stamped on the parser's own routing, which is the one field
-    # `escalation_team` and `escalate_catalog` both read.
-    rung_team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
-    if rung_team:
-        block["team"] = rung_team
-        if isinstance(parser, dict):
-            routing = parser.get("routing")
-            if not isinstance(routing, dict):
-                routing = {}
-                parser["routing"] = routing
-            routing["suggested_team"] = rung_team
-            # Said out loud on the trace: a turn whose team changed mid-lane with no
-            # record of why is the kind of thing an operator cannot reconstruct.
-            parser["crossdomain_rung_team"] = rung_team
+    # Owner ruling 22 Sep 2026, R6 (AC-EQ-5..9): a stock-origin ask is ALWAYS suggested to
+    # the warehouse team, no PO-rung override - the review's should-fix 8 (8 Sep 2026) had
+    # this rewrite `block["team"]` / `parser["routing"]["suggested_team"]` to "purchasing"
+    # whenever the PO rung ran, which is now the wrong team for a stock question: the
+    # offer and the routing already agree, both name whatever `crossdomain_zeroset`
+    # (`answer.py:489`) set for the question's OWN origin domain - "warehouse" for
+    # inventory, "purchasing" for incoming - and the rung that happens to answer it does
+    # not change who picks it up.
     if trace is not None:
         # A9: the ladder's OWN probe, over exactly the codes the first probe found
         # nothing for - `run_crossdomain` records the first (hard-coded) probe
@@ -2888,6 +2875,29 @@ def not_found_error_message(
         )
         routing = jsc.get(q, "routing")
         suggested_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
+        # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
+        # NO team named at all must still get the domain's own escalation team
+        # (inventory -> warehouse, incoming -> purchasing), never the generic
+        # "customer_service" literal. On the `engine.run_turn` path
+        # `turn_runtime.lane_parse_output` is what actually fills a null
+        # `routing.suggested_team` (its own `DEFAULT_SUGGESTED_TEAM` chain, now
+        # domain-aware - see that function), so `suggested_team` read off
+        # `q["routing"]` here is rarely still falsy by the time a real TURN reaches
+        # this composer. This is the SAME fallback anyway, kept as the direct-call
+        # belt-and-braces: a caller that reaches `complete_answer` directly, bypassing
+        # `run_turn`/`lane_parse_output` entirely, builds its `parser` dict with no
+        # `routing` key at all - `test_s6c_answer_lane.py::TestErrorArmRendersTheMissLane
+        # .test_the_error_arm_reaches_the_miss_renderer` is exactly that shape
+        # (`domain_hint = "inventory"`, no `routing` key), and pins this fallback
+        # directly; this composer must not hand a caller like that the generic literal
+        # either.
+        if not jsc.truthy(suggested_team):
+            from app.services.chatbot.turn.policy import default_policy
+
+            domain_row = default_policy().domain(
+                jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
+            )
+            suggested_team = domain_row.escalation_team_code if domain_row is not None else None
         team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
         is_active = jsc.get(q, "is_active")
         active_inactive = (
@@ -3591,39 +3601,62 @@ def not_found_error_message(
                 )
                 found_summary = _outstanding_report_text(item)
             else:
-                # status-filter-aware: a SPECIFIC order resolved (the DO exists) but the
-                # delivered / outstanding filter returned nothing, so the order is not a miss,
-                # it is just not in that status.
-                order_match = jsc.find(
-                    all_matches,
-                    lambda m: jsc.truthy(m)
-                    and jsc.get(m, "uuid") in compat_uuids
-                    and jsc.get(m, "entity_type") in _ORDER_TYPES,
-                )
-                if jsc.truthy(order_match) and order_status in ("delivered", "outstanding"):
-                    display = jsc.get(order_match, "display") or {}
-                    customer = jsc.get(display, "customer_name")
-                    label = jsc.js_string(jsc.get(order_match, "canonical_code")) + (
-                        f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
+                # status-filter-aware: one or more SPECIFIC orders resolved (the DO exists)
+                # but the delivered / outstanding filter returned nothing, so the order is
+                # not a miss, it is just not in that status. AC-1860/AC-1861/AC-1862: a
+                # status-filtered ask can name several orders (`STATUS DELIVERY / A / B / C`)
+                # and every resolved one must be named, not just the first - in
+                # `gate.compatible_entities` order (the order the customer typed), deduped
+                # by uuid since `all_matches` carries `intersection` + `by_entity_type` +
+                # `resolutions`, so the same uuid can appear up to three times.
+                order_uuids_in_order: list[Any] = []
+                seen_order_uuids: set[Any] = set()
+                for c in compat:
+                    if jsc.get(c, "entity_type") not in _ORDER_TYPES:
+                        continue
+                    c_uuid = jsc.get(c, "uuid")
+                    if c_uuid not in seen_order_uuids:
+                        seen_order_uuids.add(c_uuid)
+                        order_uuids_in_order.append(c_uuid)
+                order_matches: list[Any] = []
+                for order_uuid in order_uuids_in_order:
+                    match = jsc.find(
+                        all_matches,
+                        lambda m, order_uuid=order_uuid: jsc.truthy(m)
+                        and jsc.get(m, "uuid") == order_uuid
+                        and jsc.get(m, "entity_type") in _ORDER_TYPES,
                     )
-                    if order_status == "delivered":
-                        status = jsc.get(display, "status")
-                        status_text = f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
-                        # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
-                        # `orders.estimated_delivery_date` is not a real promise - the
-                        # import stamps it as order_date + 2 business days
-                        # (`order_service.py` ~2824). The CRM UI may keep showing it, but
-                        # the chatbot / turn output must not state it.
-                        escalate_message = (
-                            f"Order {label} hasn't been delivered yet{status_text}. "
-                            f"Would you like me to escalate to {team} team?"
+                    if jsc.truthy(match):
+                        order_matches.append(match)
+                if order_matches and order_status in ("delivered", "outstanding"):
+                    order_lines: list[Any] = []
+                    for order_match in order_matches:
+                        display = jsc.get(order_match, "display") or {}
+                        customer = jsc.get(display, "customer_name")
+                        label = jsc.js_string(jsc.get(order_match, "canonical_code")) + (
+                            f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
                         )
-                    else:
-                        escalate_message = (
-                            f"Order {label} has no outstanding items - it looks already "
-                            f"delivered or closed. "
-                            f"Would you like me to escalate to {team} team?"
-                        )
+                        if order_status == "delivered":
+                            status = jsc.get(display, "status")
+                            status_text = (
+                                f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
+                            )
+                            # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
+                            # `orders.estimated_delivery_date` is not a real promise - the
+                            # import stamps it as order_date + 2 business days
+                            # (`order_service.py` ~2824). The CRM UI may keep showing it, but
+                            # the chatbot / turn output must not state it.
+                            order_lines.append(f"Order {label} hasn't been delivered yet{status_text}.")
+                        else:
+                            order_lines.append(
+                                f"Order {label} has no outstanding items - it looks already "
+                                f"delivered or closed."
+                            )
+                    # AC-1863: one order must stay byte-identical to before this fix, so the
+                    # escalate question is appended to the LAST line (a space, not a newline)
+                    # and only the order lines themselves are newline-joined.
+                    order_lines[-1] = f"{order_lines[-1]} Would you like me to escalate to {team} team?"
+                    escalate_message = "\n".join(order_lines)
                 elif use_breakdown:
                     escalate_message = build_breakdown_msg(
                         f"{status_label}{jsc.js_string(domain_hint)}"
