@@ -126,6 +126,18 @@ changed it.
   the raw `tba_month` key (e.g. `2029-01`).
 - R19 Copy works without `navigator.clipboard` (the owner reaches the stack over http on a
   LAN hostname, not a secure context): falls back to `document.execCommand('copy')`.
+- R20 (owner, 24 Sep, second red batch on the cell drill dialog) The Demand grid is
+  sortable on every column (client-side over the drill's rows, click a header to toggle
+  asc/desc) and carries a search box above it that filters rows by sales order number,
+  agent or bin (case-insensitive substring). The tab count follows the filter
+  ("Demand (12 of 56)"), and searching resets pagination to page 1.
+- R21 The Plan button column leaves the Demand grid entirely.
+- R22 Demand columns, in order: Sales order, Agent, Bin, Due, Ordered, Delivered,
+  Outstanding, Assigned, From, Status. Ordered = `coalesce(qty_required, qty_ordered)` on
+  the SO line (same rule as `plan_qty()`/`demand_qty()`, `app/services/scm/demand.py`),
+  Delivered = `qty_delivered`, Outstanding = today's `open_qty` (Ordered minus Delivered,
+  floored at 0) - unchanged, just relabelled from "Open". The backend cell line gains
+  `qty_ordered` and `qty_delivered`; `open_qty` stays.
 
 ## Test list (Phase 2, tester writes first)
 

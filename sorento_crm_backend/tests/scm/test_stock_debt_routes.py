@@ -152,7 +152,10 @@ def _agent(db, code: str):
     return row
 
 
-def _demand(db, product, warehouse, *, qty, required_date, so_number, agent=None):
+def _demand(
+    db, product, warehouse, *, qty, required_date, so_number, agent=None,
+    qty_delivered=0, qty_required=None,
+):
     from app.models.order import SalesOrder, SalesOrderLine
 
     order = SalesOrder(
@@ -172,7 +175,8 @@ def _demand(db, product, warehouse, *, qty, required_date, so_number, agent=None
         product_id=product.id,
         warehouse_id=warehouse.id,
         qty_ordered=Decimal(str(qty)),
-        qty_delivered=Decimal("0"),
+        qty_delivered=Decimal(str(qty_delivered)),
+        qty_required=Decimal(str(qty_required)) if qty_required is not None else None,
         required_date=required_date,
         line_status="open",
     )
@@ -717,6 +721,55 @@ def c_get_supply(app, product, month) -> list:
         return c.get(f"{BASE}/{product.id}/cell", params={"month": month}).json()[
             "supply"
         ]
+
+
+def test_the_cell_states_ordered_delivered_and_outstanding(scm_app):
+    """R22 (owner, 24 Sep): the Demand grid states Ordered/Delivered/Outstanding, not
+    Outstanding (`open_qty`) alone. Delivered = `qty_delivered`; Outstanding is `open_qty`
+    unchanged (Ordered minus Delivered, floored at 0) - RED today because the route's
+    dict/schema carries neither `qty_ordered` nor `qty_delivered` at all, so a
+    `response_model` that has not declared them drops them silently.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(
+        db, product, warehouse, qty=100, qty_delivered=30, required_date=due,
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        got = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)})
+    assert got.status_code == 200, got.text
+    line = got.json()["demand"][0]
+    assert line["qty_ordered"] == 100
+    assert line["qty_delivered"] == 30
+    assert line["open_qty"] == 70
+
+
+def test_the_cell_states_ordered_as_the_cs_required_quantity_when_set(scm_app):
+    """R22: `qty_required` (the Order Inquiry sheet's own CS statement) wins over
+    `qty_ordered` for the drill's Ordered column - the same coalesce `demand_qty()` and
+    `plan_qty()` already apply elsewhere (`app/services/scm/demand.py`).
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(
+        db, product, warehouse, qty=60, qty_required=80, required_date=due,
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        got = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)})
+    assert got.status_code == 200, got.text
+    assert got.json()["demand"][0]["qty_ordered"] == 80
 
 
 def test_a_dead_document_is_listed_and_counted_as_nothing(scm_app):

@@ -11,7 +11,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StockDebtCell } from '../types/stockDebt.types';
+import type { StockDebtCell, StockDebtDemandLine } from '../types/stockDebt.types';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -42,6 +42,10 @@ vi.mock('../services/stockDebtService', () => ({
 
 import { StockDebtCellDialog } from './StockDebtCellDialog';
 
+// R22: `qty_ordered` and `qty_delivered` are not on `StockDebtDemandLine` yet - the
+// coder's schema/type change this round. Cast per row (an `as` assertion, not a `:`
+// annotation) so the fixture states the WIRE shape the coder is adding without an
+// excess-property error blocking the whole file from compiling in the meantime.
 const CELL: StockDebtCell = {
   demand: [
     {
@@ -50,22 +54,26 @@ const CELL: StockDebtCell = {
       warehouse_code: 'BRW-BB',
       required_date: '2026-10-15',
       open_qty: 12,
+      qty_ordered: 20,
+      qty_delivered: 8,
       assigned_qty: 12,
       assigned_source: 'On hand BRW-BB',
       short_qty: 0,
       status: 'covered',
-    },
+    } as StockDebtDemandLine,
     {
       so_number: 'SO375875',
       agent_code: 'JAY',
       warehouse_code: 'MWH-BB',
       required_date: '2026-10-26',
       open_qty: 32,
+      qty_ordered: 32,
+      qty_delivered: 0,
       assigned_qty: 16,
       assigned_source: 'On hand BRW-BB',
       short_qty: 16,
       status: 'short',
-    },
+    } as StockDebtDemandLine,
   ],
   supply: [
     {
@@ -156,18 +164,93 @@ describe('StockDebtCellDialog', () => {
     expect(screen.getByText('short 16')).toBeInTheDocument();
   });
 
-  it('hands the ORDER to the board on Plan, never the product', async () => {
+  it('lists the R22 Demand columns, in order, with no Plan button left (R21/R22)', async () => {
+    // R21 retires the Plan button column from the Demand grid entirely - RED today: the
+    // "hands the ORDER to the board on Plan" behaviour this test replaces is still there,
+    // and neither Ordered nor Delivered is a column yet ("Open" is still the header, not
+    // "Outstanding").
     renderDialog();
+    await screen.findByText('SO390918');
 
-    const links = await screen.findAllByRole('link', { name: 'Plan' });
-    expect(links[0]).toHaveAttribute(
-      'href',
-      '/project-sales/fulfilment-planning?orders=SO390918',
-    );
-    expect(links[1]).toHaveAttribute(
-      'href',
-      '/project-sales/fulfilment-planning?orders=SO375875',
-    );
+    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
+    expect(headers).toEqual([
+      'Sales order', 'Agent', 'Bin', 'Due', 'Ordered', 'Delivered', 'Outstanding',
+      'Assigned', 'From', 'Status',
+    ]);
+    expect(screen.queryByRole('link', { name: 'Plan' })).not.toBeInTheDocument();
+  });
+
+  it('sorts the Demand grid on every column, toggling asc/desc (R20)', async () => {
+    // RED today: the grid is not sortable at all - `PanelDataGrid` is not given
+    // `sortable`, so clicking "Due" does nothing and the row order never changes.
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO-LATE', agent_code: 'A', warehouse_code: 'W1',
+          required_date: '2026-10-26', open_qty: 1, qty_ordered: 1, qty_delivered: 0,
+          assigned_qty: 1, assigned_source: null, short_qty: 0, status: 'covered',
+        } as StockDebtDemandLine,
+        {
+          so_number: 'SO-EARLY', agent_code: 'B', warehouse_code: 'W2',
+          required_date: '2026-10-05', open_qty: 1, qty_ordered: 1, qty_delivered: 0,
+          assigned_qty: 1, assigned_source: null, short_qty: 0, status: 'covered',
+        } as StockDebtDemandLine,
+      ],
+      supply: [],
+    });
+    await screen.findByText('SO-LATE');
+
+    function firstRowSo() {
+      return within(screen.getAllByRole('row')[1]).getAllByRole('cell')[0].textContent;
+    }
+
+    // Unsorted (service order): the later-due row is fed first and stays first.
+    expect(firstRowSo()).toBe('SO-LATE');
+
+    fireEvent.click(screen.getByText('Due'));
+    await waitFor(() => expect(firstRowSo()).toBe('SO-EARLY'));
+
+    fireEvent.click(screen.getByText('Due'));
+    await waitFor(() => expect(firstRowSo()).toBe('SO-LATE'));
+  });
+
+  it('searches the Demand grid by sales order, agent or bin, and the tab follows the filter (R20)', async () => {
+    // RED today: there is no search box on the dialog at all - `PanelDataGrid` is not
+    // given `searchOf`, so `getByRole('searchbox')` throws.
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO-A', agent_code: 'JUSTIN', warehouse_code: 'W1',
+          required_date: '2026-10-05', open_qty: 1, qty_ordered: 1, qty_delivered: 0,
+          assigned_qty: 1, assigned_source: null, short_qty: 0, status: 'covered',
+        } as StockDebtDemandLine,
+        {
+          so_number: 'SO-B', agent_code: 'MARIA', warehouse_code: 'W2',
+          required_date: '2026-10-06', open_qty: 1, qty_ordered: 1, qty_delivered: 0,
+          assigned_qty: 1, assigned_source: null, short_qty: 0, status: 'covered',
+        } as StockDebtDemandLine,
+      ],
+      supply: [],
+    });
+    await screen.findByText('SO-A');
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Demand (2)', 'Supply (0)',
+    ]);
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'JUSTIN' } });
+
+    await waitFor(() => expect(screen.queryByText('SO-B')).not.toBeInTheDocument());
+    expect(screen.getByText('SO-A')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Demand (1 of 2)' })).toBeInTheDocument();
+  });
+
+  it('prints Ordered, Delivered and Outstanding from the fixture (R22)', async () => {
+    renderDialog();
+    const row = (await screen.findByText('SO390918')).closest('tr') as HTMLElement;
+
+    expect(within(row).getByText('20')).toBeInTheDocument();
+    expect(within(row).getByText('8')).toBeInTheDocument();
+    expect(within(row).getByText('12')).toBeInTheDocument();
   });
 
   it('lists the supply with its document, arrival and who holds it', async () => {
