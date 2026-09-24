@@ -31,7 +31,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod
 from app.services.user_service import UserPermissionService
 
-from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
+from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, _turn_row
 
 VIEW = "system.chat_history.view"
 CONSOLE_TURN_URL = "/api/v1/system/chatbot/console/turn"
@@ -132,6 +132,82 @@ def seeded_contact_with_a_prior_turn(session_factory):
     return db
 
 
+# A stored row already in the NEW five-key shape (`session_state.FIVE_KEYS`), with an
+# open `outstanding_detail` question - the shape every contact carries since #952 (22
+# Sep 2026 rearch), and the exact case Fix 3 closes (`PLAN-chatbot-order-status-all-
+# orders-23sep.md` "Fix 3"). Copied from `test_harness_injections.py::
+# TestFix3HarnessFiveKeyStateReplacesTheStoredFiveKeys.STORED_SESSION_VARS`.
+STORED_FIVE_KEY_SESSION_VARS: dict[str, Any] = {
+    "focus": {
+        "customers": [{"uuid": "zzt-console-stored-customer", "canonical_code": "ZZTSTORED"}],
+    },
+    "open_question": {
+        "kind": "outstanding_detail",
+        "options": [],
+        "expects": None,
+        "team": None,
+        "asked_at_turn": 3,
+        "payload": {},
+    },
+    "ideation": None,
+    "access_levels": [],
+    "contains_flyer": False,
+}
+
+# The request body's own five-key `session_vars` (the console's `previous_conversation_
+# state` harness key) - a DIFFERENT kind, `customer_pick`, two options - so a test can
+# tell "the engine ran on this" from "the engine ran on the stored row" apart.
+HARNESS_FIVE_KEY_SESSION_VARS: dict[str, Any] = {
+    "focus": {"customers": []},
+    "open_question": {
+        "kind": "customer_pick",
+        "options": [
+            {"position": 1, "label": "Customer A", "entity_type": "customer"},
+            {"position": 2, "label": "Customer B", "entity_type": "customer"},
+        ],
+        "expects": "pick",
+        "team": None,
+        "asked_at_turn": 5,
+        "payload": {},
+    },
+    "ideation": None,
+    "access_levels": [],
+    "contains_flyer": False,
+}
+
+
+@pytest.fixture()
+def seeded_contact_with_five_key_state(session_factory):
+    """A respond contact whose STORED `session_vars` is already five-key shaped, with
+    an open `outstanding_detail` question - the shape `TestConsoleTurnCarriesSessionAcrossTurns
+    ::test_turn_carries_five_key_session_vars_over_the_stored_five_keys` needs to prove
+    the request's OWN five-key `session_vars` wins over, not `seeded_contact_with_a_
+    prior_turn`'s legacy `{"variables": {}}` row (a shape injection always worked for,
+    since neither side is five-key shaped)."""
+    db = session_factory()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": str(CONTACT_ID), "phone": "+60000000010", "sv": json.dumps(STORED_FIVE_KEY_SESSION_VARS)},
+    )
+    envelope = _envelope()
+    row = ChatbotTurn(
+        contact_respond_id=str(CONTACT_ID),
+        message_id="ZZT-seed-msg-fix3",
+        ingress="webhook",
+        envelope=json.loads(envelope.model_dump_json()),
+        is_test=False,
+        status="done",
+        stage="sent",
+        branch_kind="business_query",
+    )
+    db.add(row)
+    db.commit()
+    return db
+
+
 # The scenario `not_supported` reaches without any MCP call: an unsupported domain is a
 # canned reply, so `console_service._lanes_on` forcing every branch into
 # `chatbot_completed_lanes` never has to reach `services.mcp_probe`.
@@ -206,13 +282,26 @@ class TestConsoleTurnZeroWrites:
 
 
 class TestConsoleTurnCarriesSessionAcrossTurns:
-    """Turn 2 must see turn 1's state: the FE sends turn 1's `session_vars` back as turn
-    2's request body, and that has to reach the parser as `previous_conversation_state`
-    (the harness key `engine._inject_harness_session` honours), not the contact's stored
-    (empty) session.
+    """Turn 2 must see turn 1's state - two SEPARATE mechanisms, each with its own test:
+
+    * the parser's own "Previous response:" line comes from `turn_runtime.
+      previous_reply_text`, which reads the newest COMPLETED `chatbot.turns` row for
+      this contact off the DATABASE - independent of whatever `session_vars` turn 2's
+      own request body carries. Review round, 24 Sep 2026: the test below used to be
+      named (and read) as proof that turn 2's `session_vars` body round-trips into the
+      parser input; it does not test that at all - it stayed green with `session_vars`
+      DELETED from turn 2's request (confirmed by hand). Renamed to say what it
+      actually proves.
+    * the STORED five-key state (`focus`/`open_question`/etc, `session_state.
+      FIVE_KEYS`) the engine actually LOADS and runs the turn on - that is what
+      `engine._inject_harness_session` replaces from the request body's own
+      `session_vars` (Fix 3, `PLAN-chatbot-order-status-all-orders-23sep.md`). This is
+      the real seam a "carries session across turns" claim needs to guard, and is
+      covered by `test_turn_carries_five_key_session_vars_over_the_stored_five_keys`
+      below (kill-checked: fails when the request's `session_vars` is dropped).
     """
 
-    def test_turn_two_carries_turn_ones_reply_into_the_parser_input(
+    def test_turn_two_parser_input_carries_turn_ones_reply_via_the_persisted_turn_row(
         self, client, session_factory, seeded_contact_with_a_prior_turn, system_settings_row, stub_console_seams, monkeypatch,
     ):
         seen_user_blocks: list[str] = []
@@ -244,12 +333,56 @@ class TestConsoleTurnCarriesSessionAcrossTurns:
         assert second.status_code == 200, second.text
 
         assert len(seen_user_blocks) == 2
-        # `parser.build_user_block` embeds `variables["response"]` - turn 1's reply text -
-        # so turn 2's prompt input carries a trace of turn 1's own answer ONLY if the
-        # session_vars round-trip actually reached the harness.
+        # `parser.build_user_block` embeds `variables["response"]` - turn 1's reply text
+        # - via `turn_runtime.previous_reply_text` reading turn 1's PERSISTED row, not
+        # via turn 2's `session_vars` request body (see class docstring).
         assert NOT_SUPPORTED_REPLY[:30] in seen_user_blocks[1], (
-            "turn 2's parser input does not carry turn 1's reply - session_vars did not "
-            f"round-trip. user_block was: {seen_user_blocks[1]!r}"
+            "turn 2's parser input does not carry turn 1's reply via the persisted turn "
+            f"row. user_block was: {seen_user_blocks[1]!r}"
+        )
+
+    def test_turn_carries_five_key_session_vars_over_the_stored_five_keys(
+        self,
+        client,
+        session_factory,
+        seeded_contact_with_five_key_state,
+        system_settings_row,
+        stub_console_seams,
+        monkeypatch,
+    ):
+        """AC-1868 seam, at the console endpoint (review round, 24 Sep 2026). The
+        contact's STORED row already carries a five-key `open_question` of kind
+        `outstanding_detail`; this turn's request carries a DIFFERENT five-key
+        `session_vars`, kind `customer_pick`. `engine._inject_harness_session` must
+        replace the stored five keys with the request's for this turn, not merge with
+        or fall back to them - read off the `received` trace stage's raw session,
+        the same object the engine actually ran the turn on.
+
+        Kill-check (confirmed by hand, restored after): deleting `session_vars` from
+        the request body below makes this assertion fail - `open_question.kind` comes
+        back `"outstanding_detail"`, the contact's stored question, not
+        `"customer_pick"`.
+        """
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: NOT_SUPPORTED_OUTPUT)
+
+        resp = client.post(
+            CONSOLE_TURN_URL,
+            json={
+                "contact_respond_id": str(CONTACT_ID),
+                "text": "still no?",
+                "run_id": _run_id(),
+                "session_vars": HARNESS_FIVE_KEY_SESSION_VARS,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        row = _turn_row(session_factory, resp.json()["turn_id"])
+        received = next(r for r in row.trace if r.get("stage") == "received")
+        ran_on_session_vars = received["raw"]["session_vars"]["session_vars"]
+        open_question = ran_on_session_vars.get("open_question") or {}
+        assert open_question.get("kind") == "customer_pick", (
+            "the engine must have run this turn on the request's five-key session_vars, "
+            f"not the contact's stored outstanding_detail question: {open_question}"
         )
 
 

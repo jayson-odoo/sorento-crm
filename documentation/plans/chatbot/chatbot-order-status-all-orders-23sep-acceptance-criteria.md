@@ -28,3 +28,21 @@ Plan: `PLAN-chatbot-order-status-all-orders-23sep.md`. Track: small fix.
 - AC-1867 Every other pending kind (`team_pick`, `company_pick`, `product_pick` and
   every other roster kind) is unaffected: `quick_replies` is still the comma-joined
   option-label string exactly as before this fix.
+
+## Fix 3: the console's harness state actually replaces the stored memory (console defect, contact 437264483, 23 Sep 2026)
+
+- AC-1868 On a dry run, when the harness `previous_conversation_state` carries any of
+  `session_state.FIVE_KEYS` (the console's own echo of `result.session_vars`), the
+  turn's state is loaded from THAT value, not from the contact's stored row - a missing
+  key on the harness value becomes `None` (the harness state REPLACES the memory for
+  this turn, it does not merge with the stored one), even when the stored row is
+  already in the new five-key shape.
+- AC-1869 `previous_conversation_state: {}` erases all five keys for the turn (the
+  harness saying "this contact remembers nothing"), the same membership rule
+  `_harness_keys_present` already applies to `{}` vs absent.
+- AC-1870 A harness value in the legacy flat shape (`contracts.LegacyVariables`, none
+  of the five keys, non-empty) keeps today's behaviour: it lands in `session_vars.
+  variables`, and `session_state.five_keys` projects it exactly the way it already
+  does for a real legacy-shaped stored row - the stored row's own top-level five keys
+  do not leak through. Live turns are unaffected either way (`engine.py` gates
+  `_inject_harness_session` on `dry_run`).

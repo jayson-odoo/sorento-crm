@@ -94,3 +94,107 @@ calls - is asserted `None` while `result_set` still lists the members) and
 `TestAC1867OtherPendingKindsKeepTheirQuickReplies` (regression guard: `team_pick` /
 `product_pick` still yield the comma-joined string, at both the `_quick_replies_of` and
 `compose_question` re-ask seams).
+
+## Fix 3: the console's harness state actually replaces the stored memory
+
+Owner-measured on console contact 437264483, turns at 20:41:40 and 20:41:51 +09, in
+`chatbot.turns`.
+
+### Cause
+
+The console sends the state it carries as `previous_conversation_state` (dry run,
+D14). `engine.py::_inject_harness_session` wrote that value to
+`session_vars["variables"]` ON TOP of the contact's stored row, without touching the
+stored row's own top-level keys. `session_state.py::five_keys` returns the STORED
+top-level five keys whenever ANY of `session_state.FIVE_KEYS` is present on
+`session_vars`, and only falls through to the `variables` nest when NONE is - so for
+any contact whose stored row is already in the new five-key shape (every contact
+since #952, the 22 Sep 2026 rearch), the console's carried state was silently ignored
+and the engine ran on the contact's REAL prod memory: a `customer_pick` the console
+showed one turn earlier was invisible, "2" resolved against the stored
+`outstanding_detail` question, and the stored focus customers leaked into the answer.
+Injection only ever worked for a contact whose stored row was legacy-shaped or empty.
+Live turns are unaffected (`engine.py` gates the injection on `dry_run`).
+
+### Fix (one seam, `_inject_harness_session`)
+
+When `previous_conversation_state` is present:
+
+- Value is a dict carrying any of `session_state.FIVE_KEYS` (the console's own echo
+  of `result.session_vars`): set ALL five keys on `session_vars` from it
+  (`value.get(key)` for each, so a missing key is `None`), and drop the stored
+  `variables` nest. Missing keys become `None` on purpose: the harness state replaces
+  the memory for this turn, it does not merge with it.
+- Value is `{}`: "remembers nothing" (the membership rule `_harness_keys_present`
+  already documents): all five keys `None`, `variables` dropped.
+- Value is a dict with none of the five keys but not empty (the legacy flat shape,
+  `contracts.LegacyVariables`): keep today's behaviour - write it to `variables` -
+  and REMOVE the five keys from `session_vars` so `five_keys` falls through to its
+  legacy projection instead of reading the (now absent) stored top-level keys.
+
+`session_state.FIVE_KEYS` is imported, not duplicated. `referenced_result_set`
+handling is unchanged. The `received` trace's `remembered_keys` fact
+(`session_state.five_keys(session_block)`, read AFTER injection) is already honest
+once `five_keys` reads correctly - no separate change needed there.
+
+### Tests (`tests/chatbot/test_harness_injections.py`, next to `TestHarnessInjectionsG8`)
+
+Unit-level on `_inject_harness_session` + `turn_runtime.load_state`, the same two
+functions a real turn calls in sequence. `TestFix3HarnessFiveKeyStateReplacesTheStoredFiveKeys`:
+AC-1868 (a stored new-shape row with an `outstanding_detail` question and a stored
+customer; a harness value naming a DIFFERENT customer and a `customer_pick` question
+- RED before the fix, confirmed by temporarily reverting the fix and rerunning),
+AC-1869 (harness `{}` erases both), AC-1870 (harness in the legacy flat shape still
+projects through `variables`, and the stored top-level keys are stripped so they do
+not leak). All three confirmed red before the fix, green after (verified by a
+temporary revert + rerun + restore, no git operations).
+
+### Found during verification, ruled on, and fixed in the runner: 23 pre-existing `test_turn_replay.py` cases would have regressed, all under `replay_turns/console/`
+
+Found during verification and taken to the owner for a ruling rather than silently
+signed, re-recorded, or excluded by the coder - the ruling below resolved it with a
+fix in the runner, not a fixture or engine change. Every `console/*.json`
+replay case's OWN captured `envelope.previous_conversation_state` (67 of 136 files
+carry a five-key-shaped one at some step) is written in a wire shape that predates
+several CURRENT conventions: `focus.customer` (singular, wrapped
+`{set_at, set_at_turn, source, value}`) instead of `focus.customers` (plural, flat
+list, `turn/state.py::focus_to_wire`'s shape), `focus.order_status` instead of
+`document` + `status`, and `open_question.options[].idx` / a top-level-less `team`
+(nested under `payload.team` instead) instead of `options[].position` / a top-level
+`team` (`turn/pending.py::to_wire`'s shape). `focus_from_wire`'s own docstring names
+two of these as compat shims for "the first cut of the wire shape" and "the
+pre-rearch wire shape" - these captures are from before those conventions
+stabilised, most likely genuine pre-rearch production console conversations
+committed as regression fixtures in the same commit as the rearch itself
+(`0a335146e`, 22 Sep 2026).
+
+Before this fix, `_inject_harness_session` was a no-op for any of these steps (the
+bug this whole fix closes), so replay silently fell back to the freshly-computed
+session from the PRIOR replayed step, which happens to still answer correctly. With
+the fix, the captured OLD-shaped `previous_conversation_state` now genuinely reaches
+`five_keys`/`focus_from_wire`, which cannot read several of its fields, and 23 of the
+67 affected files diverge on `branch_kind` (confirmed: reverting only this fix's
+`engine.py` change restores all 23 to green, both ways verified by hand). This is a
+real, measured conflict between a correct fix and stale fixture data, not a defect in
+the fix - `tests/chatbot/replay_turns/DIVERGENCES.md` is explicit that a divergence
+needs a captain/owner SIGNATURE ("none of these are the tester's to sign"), so this
+PLAN records the finding rather than a coder unilaterally signing, re-recording, or
+excluding the 23 files.
+
+**Owner ruling, 23 Sep 2026: option (d), none of the three named above.**
+`test_turn_replay.py` chains state through the contact's `session_vars` ROW BY
+DESIGN - the file's own note ("Chain state carries step to step via `session_patch`,
+not the harness key") already says this runner writes step N's `session_patch` onto
+the row itself before step N+1 runs, rather than relying on
+`previous_conversation_state`. The captured `previous_conversation_state` in
+`replay_turns/console/*.json` was therefore never what the engine actually ran on at
+record time either - it is stale data the runner should not send at all, and the 77
+old-shape captures are exactly that. Fix: `tests/chatbot/test_turn_replay.py::
+_build_envelope` strips `previous_conversation_state` from every replayed envelope
+before the turn runs, in one place, with a comment naming why; `referenced_result_set`
+and `prompt_overrides` are untouched. No change to the JSON fixtures, `DIVERGENCES.md`,
+`focus_from_wire`, or `from_wire`. Verified: `pytest tests/chatbot/test_harness_
+injections.py tests/chatbot/test_console_turn_endpoint.py tests/chatbot/
+test_turn_replay.py tests/chatbot/test_s6c_answer_lane.py tests/chatbot/
+test_rearch_r4_miss_engine.py -q` - 693 passed, 133 skipped, 2 xfailed, 0 failed (same
+skip count as before Fix 3).
