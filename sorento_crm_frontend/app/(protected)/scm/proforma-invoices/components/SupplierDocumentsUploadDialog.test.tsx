@@ -65,6 +65,16 @@ vi.mock('@/app/(protected)/scm/services/proformaInvoiceService', () => ({
   listProformaInvoices: vi.fn(async () => ({ data: [], total: 0 })),
 }));
 
+// V4 (PLAN-import-column-mapper-24sep.md F3, AC-M13/AC-M15) - the inline mapper, one
+// section per file, which is what replaces the retired "Map to..." chip (G5).
+const probeImportMapping = vi.fn();
+const saveImportMapping = vi.fn();
+
+vi.mock('@/app/(protected)/scm/services/importMappingService', () => ({
+  probeImportMapping: (...a: unknown[]) => probeImportMapping(...a),
+  saveImportMapping: (...a: unknown[]) => saveImportMapping(...a),
+}));
+
 import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
 
 const PI_FILE_PREVIEW = {
@@ -194,6 +204,11 @@ beforeEach(() => {
   getFulfilmentSuppliers.mockReset().mockResolvedValue([]);
   createImportFieldAlias.mockReset();
   listImportFieldAliasFields.mockReset().mockResolvedValue([]);
+  probeImportMapping.mockReset().mockResolvedValue({
+    probe: { header_row: 1, columns: [], required_fields: [] },
+    fields: [],
+  });
+  saveImportMapping.mockReset().mockResolvedValue(undefined);
 });
 
 describe('SupplierDocumentsUploadDialog - the dialog now reads "Upload supplier documents"', () => {
@@ -578,100 +593,19 @@ describe('SupplierDocumentsUploadDialog - server-resolved Attaches-to per block 
   });
 });
 
-describe('SupplierDocumentsUploadDialog - "Map to..." re-runs Test for that file automatically (AC-E4, ruling 20)', () => {
-  it('writes the alias, then re-previews the SAME file (not an optimistic hide of the chip)', async () => {
-    const withUnmapped = {
-      files: [{ ...PI_FILE_PREVIEW, name: 'jinbaichuan.xlsx', unmapped_headers: ['尺寸（mm）'] }],
-      price_matches: [],
-    };
-    const afterMapping = {
-      files: [{ ...PI_FILE_PREVIEW, name: 'jinbaichuan.xlsx', unmapped_headers: [] }],
-      price_matches: [],
-    };
-    previewSupplierDocuments.mockReset();
-    previewSupplierDocuments.mockResolvedValueOnce(withUnmapped).mockResolvedValueOnce(afterMapping);
-    listImportFieldAliasFields.mockResolvedValue([{ field: 'carton_dims', label: 'Carton dims' }]);
-    createImportFieldAlias.mockResolvedValue({});
 
+// V4 (PLAN-import-column-mapper-24sep.md F3, AC-M9/AC-M13/AC-M15). Replaces the retired
+// "Map to..." describe block above this line (sanctioned by the captain, 24 Sep 2026):
+// that flow no longer exists in the component - the inline mapper is what shows an
+// unmapped column now, before Test rather than after a first read reports it.
+describe('SupplierDocumentsUploadDialog - inline column mapper (F3, G5)', () => {
+  it('shows one mapper section per file, titled by the file name, and no "Map to..." anywhere (AC-M13, AC-M15)', async () => {
     openDialog();
-    pickFiles([xlsx('jinbaichuan.xlsx')]);
-    fireEvent.click(testButton());
+    pickFiles([xlsx('invoice.xls'), xlsx('packing-list.xls')]);
 
-    expect(await screen.findByText('尺寸（mm）')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Map to...' }));
-
-    // The field list is server-sourced (E1), not hand-typed.
-    expect(await screen.findByText('Choose a field')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox'));
-    fireEvent.click(await screen.findByRole('option', { name: 'Carton dims' }));
-
-    await waitFor(() =>
-      expect(createImportFieldAlias).toHaveBeenCalledWith({
-        doc_type: 'packing_list',
-        field: 'carton_dims',
-        alias: '尺寸（mm）',
-      }),
-    );
-    // The SECOND preview call, for the SAME file - the re-run this AC is about, not just
-    // the mapping write.
-    await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
-    expect(previewSupplierDocuments.mock.calls[1][0][0].name).toBe('jinbaichuan.xlsx');
-  });
-
-  it('writes the alias for EVERY reader that missed the header on a combined file (ruling 24)', async () => {
-    // A combined sheet is read twice, so `尺寸（mm）` is unmapped for both readers and the
-    // preview says so. Mapping it once used to leave the invoice half of the file still
-    // ignoring the column.
-    const combined = {
-      files: [
-        {
-          ...PI_FILE_PREVIEW,
-          name: 'jinbaichuan.xlsx',
-          kind: 'combined',
-          unmapped_headers: ['尺寸（mm）'],
-          unmapped_header_doc_types: { '尺寸（mm）': ['proforma_invoice', 'packing_list'] },
-        },
-      ],
-      price_matches: [],
-    };
-    previewSupplierDocuments.mockReset();
-    previewSupplierDocuments
-      .mockResolvedValueOnce(combined)
-      .mockResolvedValueOnce({
-        files: [{ ...combined.files[0], unmapped_headers: [], unmapped_header_doc_types: {} }],
-        price_matches: [],
-      });
-    listImportFieldAliasFields.mockResolvedValue([
-      { field: 'carton_dims', label: 'Carton dims' },
-    ]);
-    // The packing-list write lands; the invoice reader already had that spelling on file,
-    // which is a 409 and NOT an error for the chip.
-    createImportFieldAlias.mockImplementation(async ({ doc_type }: { doc_type: string }) => {
-      if (doc_type === 'proforma_invoice') {
-        const conflict = new Error('already mapped') as Error & { status?: number };
-        conflict.status = 409;
-        throw conflict;
-      }
-      return {};
-    });
-
-    openDialog();
-    pickFiles([xlsx('jinbaichuan.xlsx')]);
-    fireEvent.click(testButton());
-
-    expect(await screen.findByText('尺寸（mm）')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Map to...' }));
-    expect(await screen.findByText('Choose a field')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox'));
-    fireEvent.click(await screen.findByRole('option', { name: 'Carton dims' }));
-
-    await waitFor(() => expect(createImportFieldAlias).toHaveBeenCalledTimes(2));
-    expect(createImportFieldAlias.mock.calls.map((c) => c[0].doc_type).sort()).toEqual([
-      'packing_list',
-      'proforma_invoice',
-    ]);
-    // The 409 half is not an error, and the file is read again with the mapping.
-    await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText('already mapped')).not.toBeInTheDocument();
+    expect(await screen.findByText('Columns for invoice.xls')).toBeInTheDocument();
+    expect(screen.getByText('Columns for packing-list.xls')).toBeInTheDocument();
+    expect(screen.queryByText(/Map to\.\.\./)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Map to...' })).toBeNull();
   });
 });
