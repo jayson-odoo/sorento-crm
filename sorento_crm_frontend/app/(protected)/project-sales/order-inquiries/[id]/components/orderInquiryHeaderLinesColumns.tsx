@@ -347,10 +347,9 @@ export function useOrderInquiryHeaderLinesColumns({
         // AC-RS-83c (owner, 24 Sep: "this pen can put right next to state?"): the
         // reserve icons sit in this cell, right of the pill - no separate column, which
         // saved column preferences appended after Location. Wide enough for the pill
-        // plus a staged chip and Undo. `minSize` too: a saved column width (190 from
-        // before) would otherwise keep clipping the icons for every user who has one.
+        // plus a staged chip and Undo. No `minSize`: a user who drags it narrower than
+        // the icons is choosing that, and can drag it back out again (owner, 24 Sep).
         size: canReserve ? 380 : 190,
-        minSize: canReserve ? 380 : undefined,
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const reserveState = row.original.reserve_state;
