@@ -180,13 +180,24 @@ def test_ac_w1_an_unknown_supplier_id_is_422(scm_app):
 
 
 def test_a_supplier_scoped_row_duplicating_a_shared_pair_is_409(scm_app):
-    """Round 3 ruling: the ORIGINAL `uq_import_field_alias_triple` on (doc_type, field,
-    alias) stays - `supplier_id` is not part of the key at all, so a (field, alias) PAIR
-    exists at most once on file, shared or scoped. A supplier's own row is an OVERRIDE: the
-    same WORD (alias) mapped to a DIFFERENT token (field) - a different triple, so it is
-    free to exist beside the shared one, and `WordList.for_supplier` reads that supplier's
-    row over the shared one for that word while every other supplier still reads the shared
-    token."""
+    """Owner ruling A (24 Sep 2026, PLAN-import-column-mapper-24sep.md review round 2)
+    SUPERSEDES the round 3 constraint ruling this docstring used to cite: the DB's own
+    uniqueness is now split per supplier (`uq_import_field_alias_shared` /
+    `uq_import_field_alias_supplier`, migration `ifa_supplier_uniq`), so a DIFFERENT
+    supplier's row on the identical (field, alias) pair is no longer blocked by a single
+    constraint with no `supplier_id` in it - that is R16, covered elsewhere
+    (`tests/system/test_import_field_aliases_api.py::
+    test_admin_create_allows_second_supplier_same_triple`).
+
+    What THIS test still holds, unchanged: a supplier's OWN row repeating a mapping a
+    SHARED row already states is redundant, not an override, and stays 409 - the shared
+    row already answers that word the same way this supplier's would, so a second row
+    saying it again adds nothing (the admin route's own duplicate check, scoped only
+    where the split DB schema would otherwise allow a distinct row). The OVERRIDE case -
+    the SAME word mapped to a DIFFERENT token, scoped to the supplier - is a genuinely
+    different (field, alias) pair and stays free to exist beside the shared one:
+    `WordList.for_supplier` reads that supplier's row over the shared one for that word,
+    while every other supplier still reads the shared token."""
     client, db = _client(scm_app, view=True, edit=True)
     supplier_id = _seed_supplier(db)
     field, alias = "SH", f"{MARKER}_scoping_word"
