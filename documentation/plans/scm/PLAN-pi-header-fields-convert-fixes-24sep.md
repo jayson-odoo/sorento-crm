@@ -132,11 +132,17 @@ is one pair too. Shape per pair: `{row, label, sample, field, source}` where `fi
 resolver's answer for the label (block fields only: pi_number, invoice_date, bl_no,
 container_no, seal_no, currency; consignee excluded per R-B) and `source` = supplier / shared /
 none. Also `title` cells with no colon are NOT pairs.
-F2 Mapper renders a second section "Header fields" ABOVE the columns grid (owner ruling 25
-Sep: ~6 rows holding the fields the buyer cares about, the 20-row column grid was hiding it),
-same three cells (sample = value, label text as-is, SearchableSelect over the block fields +
-Ignore), same folded / open rule per section (a label with no field and not ignored opens
-that section). Required = none.
+F2 Mapper renders two titled sections, in this order: "Header fields" then "Line fields"
+(owner ruling 25 Sep: visually distinct, small semibold title + muted divider each, enough
+gap that they never read as one table - Header fields first because it has ~6 rows holding
+the fields the buyer cares about, where the 20-row column grid was hiding it below the
+fold). The Header row stepper sits in the Line fields title row, on the right - it still
+drives the Header fields scan too, the control just lives with the lines. Both sections use
+the same three cells (sample = value, label/column text as-is, SearchableSelect over the
+block fields + Ignore for Header fields, over the doc type's own fields + Ignore for Line
+fields), same folded / open rule per section (a label with no field and not ignored opens
+that section; a folded summary keeps its own section title). Required = none for Header
+fields.
 F3 Save writes label -> field rows exactly like column rows (same table, same supplier scope,
 same `ignore`), so `_labelled` resolves them through `for_supplier` with no reader change beyond
 A1. `doc_types` rule unchanged (combined = both).
