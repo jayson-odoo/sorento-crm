@@ -123,27 +123,30 @@ carries a new open request #4 on `CB2807-DIY`, qty 4, raised by Teh Jayson).
 `errors`/`console` clean throughout this run. No write made (Confirm reserved was never clicked) -
 no data left behind by this pass.
 
-## G6 (23 Sep) - multi-row dialogs are DataGrid tables, not stacked cards - BROWSER PASS BLOCKED
+## G6 (24 Sep) - multi-row dialogs are DataGrid tables, not stacked cards
 
-Session `oireserve-r3-g6` (name reserved, never reached an open page): `agent-browser open` on
-:3080 failed at the CHROME LAUNCH step, before any navigation - `Auto-launch failed: Chrome
-exited early ... without writing DevToolsActivePort`. Diagnosed directly (bypassing
-agent-browser): launching `~/.agent-browser/browsers/chrome-152.0.7977.42/Google Chrome for
-Testing.app` by hand, with or without `--headless=new`/`--headless=old`, `--no-sandbox`,
-`OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`, or `dangerouslyDisableSandbox: true` on the Bash tool,
-exits 134 (SIGABRT) every time. The crash report
-(`/Library/Logs/DiagnosticReports/Google Chrome for Testing-*.ips`, 20 of them from this session
-alone) faults inside `_RegisterApplication`/`TransformProcessType`
-(macOS LaunchServices/Application Services), not inside Chromium's own code - a machine-level
-LaunchServices/WindowServer connectivity failure for this user session, not a code defect and not
-something a coder-level agent can fix from inside a worktree. `WindowServer` shows a fresh start
-time (8:08 PM) close to this session; whether that is cause or coincidence is unclear.
+Machine rebooted overnight (the 23 Sep run of this same session name found Chrome unable to
+launch at all, `SIGABRT` inside macOS LaunchServices, unrelated to this lane's own code - see the
+prior git history of this file for that diagnosis). Session `oireserve-r3-g6`, logged in as the
+E2E test user, navigated fresh from `/` via the sidebar (Procurement -> Supply Chain -> Order
+Inquiries -> search `OI-000750`, same id every round of this lane has used).
 
-No screenshots exist for G6 as a result - `G6-1280-reserve-grid.png`, `G6-375-reserve-grid.png`,
-`G6-1280-request-grid.png`, `G6-375-request-grid.png` are NOT captured. Everything else the
-brief asked for is done and green: `ReserveRowDialog.test.tsx` (45 tests, including the new
-AC-RS-74 suite) and `ReserveRequestDialog.test.tsx` (17 tests, including the new AC-RS-75 suite)
-both pass, the full `order-inquiries` + `components/ui` vitest scope is green (605/606, 1 pre-
-existing skip), `tsc --noEmit` is clean, `eslint` is clean on every touched file. Reported to the
-captain as BLOCKED (environment), not silently skipped - a re-run once Chrome launches again on
-this machine should add the four screenshots here without needing any further code change.
+| Capture | What was checked | Evidence | Result |
+| --- | --- | --- | --- |
+| G6-1280-request-grid | Selected 3 unrequested rows (`SRT382-6-DIY`, `SRTWHBWP-GB9032B-NEW`, `CSH2073`) on the Lines grid, Actions -> Request CS to reserve: the dialog body is ONE DataGrid (`role=table`), one row per product, columns Product / Delivery date / Remaining / Requested / Location, Note below the grid. No stacked cards. | `G6-1280-request-grid.png` | PASS |
+| G6-375-request-grid | Same dialog at 375px: the grid scrolls sideways inside its own wrapper (a horizontal scrollbar under the visible columns) - Requested and Location are reachable in the DOM (confirmed via a snapshot read), nothing about the page itself clips. | `G6-375-request-grid.png` | PASS |
+| Send + reopen | Clicked Send request - toast `Request #6 sent to Teh Jayson`. Reopened via the header's `Request to reserve` badge: `Reserve`, `Request #6 - requested by Teh Jayson`, ONE DataGrid, one row per product, columns Product / Requested / Location / Reserved / Reason / action. `CSH2073`'s own Reserved defaulted to 5 (short of Requested 78, the chosen location's own availability) - its own Reason input was required and its own `Confirm reserved` was disabled; the OTHER two rows' own Reserved matched Requested in full and their own `Confirm reserved` stayed enabled throughout - proving per-row independence live. The footer `Confirm all` was disabled while `CSH2073` carried no reason. | (state before typing, folded into the G6-1280-reserve-grid capture below) | PASS |
+| G6-1280-reserve-grid | Screenshot taken at this exact state (CSH2073 short + disabled, the other two rows enabled, Confirm all disabled) - captures AC-RS-74's per-row gating in one frame. | `G6-1280-reserve-grid.png` | PASS |
+| Confirm all (full flow) | Typed a reason for `CSH2073` - every row's own `Confirm reserved` AND the footer `Confirm all` flipped enabled (re-read via a snapshot, no `disabled` attribute left on any of the four buttons). Clicked `Confirm all`: toast `Reserved, Teh Jayson notified`, the dialog closed itself with no further action - matching "the dialog closes after the last row". Re-read the Lines grid afterward: `SRT382-6-DIY` Taken 26/Remaining 0, `SRTWHBWP-GB9032B-NEW` Taken 52/Remaining 0, `CSH2073` Taken 5/Remaining 73 - all three rows landed with the exact Reserved figures shown in the dialog, in one Confirm-all pass. | (see toast state in the screenshot list below) | PASS |
+| G6-375-reserve-grid | A second fresh multi-row request (`CB313` + `CGB762-NEW`, request #7, both full-match so no Reason needed) opened via the header badge at 375px: ONE DataGrid, columns Product / Requested / Location visible, the grid scrolls sideways to reach the rest, `Confirm all` reachable below - no page clipping. | `G6-375-reserve-grid.png` | PASS |
+
+`errors`/`console` clean throughout this run (only the same pre-existing Radix `Missing
+Description for {DialogContent}` warning already noted in every prior round of this lane,
+unrelated to this fix).
+
+Not cleaned up: request #7 (`CB313`/`CGB762-NEW`) is left OPEN on `OI-000750` in this worktree's
+own dev database (its own multi-row dialog was screenshotted but never confirmed) - test data on
+an isolated per-lane backend, not shared/prod. Request #6 (`SRT382-6-DIY`/`SRTWHBWP-GB9032B-NEW`/
+`CSH2073`) is now fully reserved (see the Confirm-all row above); request #4
+(`CB2807-DIY`, opened briefly to confirm it still renders the single-row tabs form, unchanged by
+G6, then closed without action) is unaffected and still open from an earlier round.
