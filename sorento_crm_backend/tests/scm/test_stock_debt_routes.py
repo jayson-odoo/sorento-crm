@@ -617,6 +617,45 @@ def _order_back_link_on_po(db, project_order, so_line, *, po_line, qty):
     return row, link
 
 
+def _order_back_link_on_spo(db, project_order, so_line, *, allocation, qty):
+    """An ORDER_BACK-verb inquiry row linked to an SPO allocation -
+    `order_inquiry_links.spo_allocation_id` - `_order_back_link_on_po`'s sibling for the
+    other of the two legal link targets. Returns the OI HEADER too (not just the row/
+    link), for R29 addendum's own `oi_number`/`oi_id` assertions."""
+    from app.models.project_so import (
+        IV_ORDER_BACK,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+    )
+
+    inquiry = OrderInquiry(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=project_order.id,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(),
+        company_id=SORENTO_COMPANY_ID,
+        order_inquiry_id=inquiry.id,
+        so_line_id=so_line.id,
+        qty=Decimal(str(qty)),
+        verb=IV_ORDER_BACK,
+    )
+    db.add(row)
+    db.flush()
+    link = OrderInquiryLink(
+        id=_u(),
+        company_id=SORENTO_COMPANY_ID,
+        row_id=row.id,
+        spo_allocation_id=allocation.id,
+        qty=Decimal(str(qty)),
+    )
+    db.add(link)
+    db.flush()
+    return inquiry, row, link
+
+
 def test_a_po_line_hold_pins_nothing_in_stock_debt(scm_app):
     """REWRITTEN for R23 (owner, 24 Sep): "got PO doesn't mean got supply." Before R23
     this asserted the opposite - that a placement link (`order_inquiry_links.po_line_id`)
@@ -780,6 +819,101 @@ def test_the_cell_states_spo_qty_received_and_outstanding(scm_app):
     assert cell["supply_total_qty"] == 70
 
 
+def test_the_cell_carries_linked_documents_and_named_lines(scm_app):
+    """R29 (owner, 24 Sep): documents are LINKS and lines are NAMED.
+
+    - A supply row carries `spo_number` / `spo_line_number` so the FE can link the
+      Document cell to `/procurement-management/spo-allocations/<spo_number>`.
+    - Its `assigned_to` entries carry `line_no` (the SO line's own number) beside
+      `so_number`, so the FE can render "SO382618 line 2 (100)".
+    - A demand line carries `sales_order_id` (for the Sales order cell's own link) and
+      `assigned_from` - `assigned_source` (free text) split into
+      `[{kind, ref, spo_number, spo_line_number, qty, oi_number, oi_id}]`, one entry per
+      source. `oi_number`/`oi_id` (addendum, same day) name the order inquiry a PLACED
+      source came through; this line's own source is a plain WALK assignment (no
+      placement), so both are `None` here - the pinned case is its own test below.
+
+    Asserted by NAME through the route (a `response_model` that has not declared a field
+    drops it silently) - RED today because none of `spo_number`, `spo_line_number`,
+    `line_no`, `sales_order_id` or `assigned_from` exists on the wire at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    order, core_line = _demand(
+        db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1",
+    )
+    core_line.line_no = 2
+    allocation = _spo(db, product, warehouse, qty=100, arrives=due, spo_number=f"ZZT-SPO-{_u()[:6]}")
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    # `_spo_ref`'s own rule (`stock_debt_service.py`): the SPO number as-is if it already
+    # reads "SPO...", else prefixed - our marker-prefixed number needs the prefix.
+    expected_ref = f"SPO {allocation.spo_number}"
+
+    demand_line = cell["demand"][0]
+    assert demand_line["sales_order_id"] == str(order.id)
+    assert demand_line["assigned_from"] == [
+        {
+            "kind": "spo", "ref": expected_ref,
+            "spo_number": allocation.spo_number, "spo_line_number": allocation.spo_line_number,
+            "qty": 100,
+            # R29 addendum: this line drew the SPO off the plain WALK (no placement
+            # link), so it names no order inquiry at all.
+            "oi_number": None, "oi_id": None,
+        }
+    ]
+
+    supply_row = cell["supply"][0]
+    assert supply_row["spo_number"] == allocation.spo_number
+    assert supply_row["spo_line_number"] == allocation.spo_line_number
+    assert supply_row["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "line_no": 2, "qty": 100},
+    ]
+
+
+def test_a_pinned_source_names_the_order_inquiry_it_came_through(scm_app):
+    """R29 addendum (owner, 24 Sep): a placement link is an `order_inquiry_links` row -
+    part of an OI row's quantity, on one document line, and the OI row itself points at
+    the SO line - so a PINNED source names the order inquiry it came through.
+    `assigned_from` entries of kind spo/po that come from a placement carry `oi_number`
+    and `oi_id` (the OI header the row belongs to). RED today: neither field exists on
+    `assigned_from` at all (which itself does not exist before this same red round).
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1",
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    allocation = _spo(db, product, warehouse, qty=50, arrives=due)
+    inquiry, _row, _link = _order_back_link_on_spo(
+        db, project_order, project_line, allocation=allocation, qty=50,
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    demand_line = cell["demand"][0]
+    assert demand_line["status"] == "pinned"
+    assert demand_line["assigned_from"] == [
+        {
+            "kind": "spo", "ref": f"SPO {allocation.spo_number}",
+            "spo_number": allocation.spo_number, "spo_line_number": allocation.spo_line_number,
+            "qty": 50, "oi_number": inquiry.inquiry_no, "oi_id": str(inquiry.id),
+        }
+    ]
+
+
 # --------------------------------------------------------------------------- AC-S2-7
 
 
@@ -818,7 +952,11 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     # and late. Short would outrank late if anything were left over (`supply_assignment`).
     assert line["assigned_qty"] == 100
     assert line["status"] == "late"
-    assert warehouse.warehouse_code in line["assigned_source"]
+    # R29: `assigned_source` (free text) is replaced by `assigned_from`, one linked entry
+    # per source - two here, the on-hand bin and the SPO.
+    on_hand_sources = [e for e in line["assigned_from"] if e["kind"] == "on_hand"]
+    assert len(on_hand_sources) == 1
+    assert warehouse.warehouse_code in on_hand_sources[0]["ref"]
 
     # The on hand sits in the CURRENT month, so this month's supply is the SPO only.
     current = c_get_supply(app, product, month_key(TODAY))
@@ -1152,13 +1290,20 @@ def test_a_hold_at_a_pool_or_an_unflagged_bin_still_reads_pinned(scm_app):
     by_so = {line["so_number"]: line for line in cell["demand"]}
     assert by_so[f"{marker}-SO-POOL"]["status"] == "pinned"
     assert by_so[f"{marker}-SO-POOL"]["assigned_qty"] == 40
-    assert by_so[f"{marker}-SO-POOL"]["assigned_source"] == (
-        f"On hand {pool.warehouse_code}"
-    )
+    # R29: one `assigned_from` entry, naming the pool bin the hold pinned.
+    assert by_so[f"{marker}-SO-POOL"]["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {pool.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 40,
+        }
+    ]
     assert by_so[f"{marker}-SO-HP"]["status"] == "pinned"
-    assert by_so[f"{marker}-SO-HP"]["assigned_source"] == (
-        f"On hand {unflagged.warehouse_code}"
-    )
+    assert by_so[f"{marker}-SO-HP"]["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {unflagged.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 30,
+        }
+    ]
     # And the month agrees with the drill: 70 pinned against 70 owed owes nothing.
     row = _row_of(board, product.product_code)
     assert {m["key"]: m["balance"] for m in row["months"]}[month_key(due)] == 0
@@ -1193,7 +1338,12 @@ def test_a_donor_holds_stock_in_another_group_and_group_bb_still_reads_it_pinned
 
     assert cell["demand"][0]["status"] == "pinned"
     assert cell["demand"][0]["assigned_qty"] == 25
-    assert cell["demand"][0]["assigned_source"] == f"On hand {ib.warehouse_code}"
+    assert cell["demand"][0]["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {ib.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 25,
+        }
+    ]
 
 
 def test_an_allocation_that_was_never_confirmed_holds_nothing(scm_app):

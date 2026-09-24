@@ -567,4 +567,155 @@ describe('StockDebtCellDialog', () => {
     expect(within(totalRow).getByText('70')).toBeInTheDocument(); // Outstanding: 0 + 70
     expect(within(totalRow).getByText('Free 60')).toBeInTheDocument(); // Free: 40 + 20
   });
+
+  it('links the Sales order cell to its SO page, and the From cell to each linked source with its quantity (R29)', async () => {
+    // RED today: `so_number` is plain text (no link at all), and the "From" column
+    // still reads `assigned_source` (free text, e.g. "SPO 2026/09-0088, On hand BRW-BB")
+    // - there is no `assigned_from` list to render one linked entry per source from.
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO382618',
+          agent_code: 'JENNIFER',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-15',
+          open_qty: 114,
+          qty_ordered: 114,
+          qty_delivered: 0,
+          assigned_qty: 114,
+          // `assigned_source` is still a REQUIRED field on today's type (R29 retires it
+          // for `assigned_from` below) - kept `null` here so the cast states the new
+          // shape without an unrelated "insufficient overlap" error blocking the file.
+          assigned_source: null,
+          status: 'covered',
+          short_qty: 0,
+          sales_order_id: 'so-id-1',
+          // Both sources are WALK-assigned (no placement) - `oi_number`/`oi_id` null,
+          // so neither entry renders a "via OI-..." suffix (its own dedicated test below).
+          assigned_from: [
+            {
+              kind: 'spo', ref: 'SPO-2026/06-0131 line 4',
+              spo_number: 'SPO-2026/06-0131', spo_line_number: 4, qty: 100,
+              oi_number: null, oi_id: null,
+            },
+            {
+              kind: 'on_hand', ref: 'On hand BRW-BB',
+              spo_number: null, spo_line_number: null, qty: 14,
+              oi_number: null, oi_id: null,
+            },
+          ],
+        } as StockDebtDemandLine,
+      ],
+      supply: [],
+      demand_total_qty: 114,
+      supply_total_qty: 0,
+    } as StockDebtCell);
+
+    const soLink = await screen.findByRole('link', { name: 'SO382618' });
+    expect(soLink).toHaveAttribute('href', '/scm/sales-orders/so-id-1');
+    expect(soLink).toHaveAttribute('target', '_blank');
+
+    const spoFromLink = screen.getByRole('link', { name: 'SPO-2026/06-0131 line 4 (100)' });
+    expect(spoFromLink).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/SPO-2026%2F06-0131',
+    );
+    expect(spoFromLink).toHaveAttribute('target', '_blank');
+
+    // On hand rows are not links (R29) - the entry still prints, just as plain text.
+    expect(screen.getByText('On hand BRW-BB (14)')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /On hand BRW-BB/ }),
+    ).not.toBeInTheDocument();
+    // R29 addendum: no "via OI-..." suffix for a WALK-assigned source (`oi_id: null`).
+    expect(screen.queryByText(/via/)).not.toBeInTheDocument();
+  });
+
+  it('names the order inquiry a PINNED source came through, linked, in the From cell (R29 addendum)', async () => {
+    // RED today: `assigned_from` does not exist at all yet, so there is nothing to
+    // carry `oi_number`/`oi_id` in the first place - once it does, only an entry with a
+    // real `oi_id` gets the "via OI-..." suffix, and only that suffix is a link.
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO382618',
+          agent_code: 'JENNIFER',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-15',
+          open_qty: 100,
+          qty_ordered: 100,
+          qty_delivered: 0,
+          assigned_qty: 100,
+          assigned_source: null,
+          status: 'pinned',
+          short_qty: 0,
+          sales_order_id: 'so-id-1',
+          assigned_from: [
+            {
+              kind: 'spo', ref: 'SPO-2026/06-0131 line 4',
+              spo_number: 'SPO-2026/06-0131', spo_line_number: 4, qty: 100,
+              oi_number: 'OI-2026/09-0012', oi_id: 'oi-id-1',
+            },
+          ],
+        } as StockDebtDemandLine,
+      ],
+      supply: [],
+      demand_total_qty: 100,
+      supply_total_qty: 0,
+    } as StockDebtCell);
+
+    await screen.findByText('SO382618');
+    // The "via OI-..." part is its OWN link, so the combined sentence is split across
+    // elements - checked via the containing cell's full text, not one `getByText` node.
+    const oiLink = screen.getByRole('link', { name: 'OI-2026/09-0012' });
+    expect(oiLink).toHaveAttribute('href', '/project-sales/order-inquiries/oi-id-1');
+    expect(oiLink).toHaveAttribute('target', '_blank');
+
+    const fromCell = oiLink.closest('td') as HTMLElement;
+    expect(fromCell.textContent).toContain('SPO-2026/06-0131 line 4 (100)');
+    expect(fromCell.textContent).toContain('via');
+  });
+
+  it('links the Document cell to the SPO allocations page, and Assigned to names the SO line (R29)', async () => {
+    // RED today: `ref` renders as plain text (no link), and `assigned_to` entries have
+    // no `line_no` to render "SO382618 line 2 (100)" - only the bare SO number.
+    renderDialog({
+      demand: [],
+      supply: [
+        {
+          kind: 'spo',
+          ref: 'SPO-2026/06-0131 line 4',
+          spo_number: 'SPO-2026/06-0131',
+          spo_line_number: 4,
+          warehouse_code: 'MWH-BB',
+          date: '2026-10-12',
+          bought_for: null,
+          qty: 100,
+          received_qty: 0,
+          outstanding_qty: 100,
+          free_qty: 0,
+          overdue: false,
+          // `assigned_to`'s own element type has no `line_no` yet either (R29 adds it
+          // beside `so_number`/`qty`) - `unknown` first, matching tsc's own suggestion,
+          // since the nested literal's extra field blocks the single-step `as` above it.
+          assigned_to: [{ so_number: 'SO382618', line_no: 2, qty: 100 }],
+        } as unknown as StockDebtSupplyEvent,
+      ],
+      demand_total_qty: 0,
+      supply_total_qty: 100,
+    } as StockDebtCell);
+    await screen.findByText('Nothing is due here');
+    switchTab('Supply (100)');
+
+    const documentLink = await screen.findByRole('link', {
+      name: 'SPO-2026/06-0131 line 4',
+    });
+    expect(documentLink).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/SPO-2026%2F06-0131',
+    );
+    expect(documentLink).toHaveAttribute('target', '_blank');
+
+    expect(screen.getByText('SO382618 line 2 (100)')).toBeInTheDocument();
+  });
 });

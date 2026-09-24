@@ -170,6 +170,30 @@ changed it.
 - R27 The drill header never repeats the code: the second line (product name) renders
   only when `product_name` is set AND differs from `product_code` (the BE already nulls
   an equal name on LIST rows, AC-9 - the dialog must not reintroduce the repeat).
+- R28 WITHDRAWN by owner, 24 Sep: too confusing. The Supply tab stays as it is - only the
+  month's own arrivals, "Nothing arrives here" when none. The From column names where a
+  line is covered from; that is where a reader learns a pinned document exists, not the
+  Supply tab of a month it never lands in.
+- R29 (owner, 24 Sep, fourth red batch) Documents are links and lines are named:
+  - A supply event carries `spo_number` and `spo_line_number` (from
+    `spo_allocations.spo_line_number`) on the wire; the Document cell reads
+    "SPO-2026/06-0131 line 4" and links to
+    `/procurement-management/spo-allocations/<encodeURIComponent(spo_number)>` (the page
+    reads its param raw, so encode `/` as `%2F`), opening in a new tab. On hand rows are
+    not links.
+  - A demand line's `assigned_source` (free text) is replaced by `assigned_from:
+    [{kind, ref, spo_number, spo_line_number, qty, oi_number, oi_id}]`; the From cell
+    renders one linked entry per source, "SPO-2026/06-0131 line 4 (100)", or "On hand
+    BRW-BB (14)". Addendum, same day: a placement (`order_inquiry_links`, part of an OI
+    row's quantity on one document line, the OI row itself pointing at the SO line) means
+    a PINNED source names the order inquiry it came through - `oi_number`/`oi_id` on the
+    entry, rendered "... via OI-2026/09-0012" with the OI part linking to
+    `/project-sales/order-inquiries/<oi_id>` (new tab). A free (walk-assigned) source or
+    an on-hand source carries both `null` and renders with no "via".
+  - Supply's own "Assigned to" entries carry `line_no` (the SO line's own number) and
+    render "SO382618 line 2 (100)"; the Sales order cell on Demand links to
+    `/scm/sales-orders/<sales_order_id>` (a new `sales_order_id` field on the demand
+    line), new tab.
 
 ## Test list (Phase 2, tester writes first)
 
