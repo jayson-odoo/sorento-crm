@@ -7,7 +7,10 @@
 <!-- Issue #1216. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
      Plan: documentation/plans/scm/PLAN-fp-decide-and-one-reason-24sep.md, D1.
      Drawn after the owner grill, 24 Sep 2026: R8 (Borrow from another order picks the donor
-     order), R5/R7 (one reason), R10 (lenient: skip quietly, name the first few, no error dialog). -->
+     order), R5/R7 (one reason), R10 (lenient: skip quietly, name the first few, no error dialog).
+     Revised after the lavish review, round 2, 24 Sep 2026: R12 (picker rows show the SO number
+     or the location code only, no agent, no "covers k of n"), R13 (always the lightbox popup
+     Dialog). -->
 <style>
 :root{
   --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
@@ -178,11 +181,11 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
   <div class="dialog" style="align-items:flex-start;padding-top:60px"><div class="panel">
     <div class="hd">Decide 3 lines: Borrow from another order <span class="muted">&times;</span></div>
     <div class="bd" style="position:relative">
-      <div class="field" style="position:relative"><label>Donor order</label><div class="select"><span>SO324190 &middot; AG12 &middot; covers 3 of 3</span><span class="clr">&#9662;</span></div>
+      <div class="field" style="position:relative"><label>Donor order</label><div class="select"><span>SO324190</span><span class="clr">&#9662;</span></div>
         <div class="opts">
-          <div class="o on"><span>SO324190 &middot; AG12</span><span class="k">covers 3 of 3</span></div>
-          <div class="o"><span>SO324201 &middot; AG05</span><span class="k">covers 2 of 3</span></div>
-          <div class="o"><span>SO324215 &middot; AG12</span><span class="k">covers 1 of 3</span></div>
+          <div class="o on"><span>SO324190</span></div>
+          <div class="o"><span>SO324201</span></div>
+          <div class="o"><span>SO324215</span></div>
         </div>
         <span class="pin co" style="right:-30px;top:18px">1</span>
       </div>
@@ -192,7 +195,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
   </div></div>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">1</span><div><b>One picker: which order to borrow from.</b> Only the orders that can lend to at least one ticked line are offered, each with how many of the ticked lines it covers in full, best first. The same line&#39;s own location, a different order.<span class="ref">R8 (Q06): "borrow can be from own location but different order right?" Options: borrow_candidates with a donor_so_number.</span></div></li>
+  <li><span class="co">1</span><div><b>One picker: which order to borrow from.</b> Only the orders that can lend to at least one ticked line are offered, sorted best coverage first; the row shows the SO number only, no agent and no "covers k of n" count. The same line&#39;s own location, a different order.<span class="ref">R8 (Q06): "borrow can be from own location but different order right?" Options: borrow_candidates with a donor_so_number. R12 (24 Sep 2026): "i don&#39;t really like the . . annotation, too many information, jsut show me the SO then is enough, don&#39;t need so many delimiting like . covers 3 of 3, too redundant".</span></div></li>
 
   <li><span class="co">2</span><div><b>One Reason, for every line in this decision.</b> Required for a borrow (the donor&#39;s record of why its stock went). It fans out to each line&#39;s stored borrow reason and amend reason. No other text box. When the chosen order shares the lines&#39; own sales agent, a "Who authorised it" field appears under it, as the Borrow add dialog asks today.<span class="ref">R5, R7 (Q03, Q05 accepted). Storage unchanged (R9, Q13).</span></div></li>
 
@@ -222,7 +225,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
   <div class="dialog"><div class="panel">
     <div class="hd">Decide 2 lines: Borrow other location <span class="muted">&times;</span></div>
     <div class="bd" style="position:relative">
-      <div class="field"><label>Location</label><div class="select"><span>MWH-IB &middot; covers 2 of 2</span><span class="clr">&#9662;</span></div></div>
+      <div class="field"><label>Location</label><div class="select"><span>MWH-IB</span><span class="clr">&#9662;</span></div></div>
       <div class="field"><label>Reason *</label><div class="textarea empty">In your own words</div></div>
       <span class="pin co" style="right:-12px;top:6px">4</span>
     </div>
@@ -230,7 +233,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
   </div></div>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">4</span><div><b>Same dialog, the picker asks a location instead.</b> Other locations holding free stock for at least one ticked line, each labelled covers k of n. Save stays greyed until the location and the reason are both given. Use own location, Use BRW and Buy show the same dialog without a picker, and only when a line&#39;s suggestion differs; when every line already matches, they save at once with no dialog.<span class="ref">D1. UAC AC-11, AC-12.</span></div></li>
+  <li><span class="co">4</span><div><b>Same dialog, the picker asks a location instead.</b> Other locations holding free stock for at least one ticked line, sorted best coverage first, each row showing the location code only (R12). Save stays greyed until the location and the reason are both given. Use own location, Use BRW and Buy show the same dialog without a picker, and only when a line&#39;s suggestion differs; when every line already matches, they save at once with no dialog.<span class="ref">D1. UAC AC-11, AC-12.</span></div></li>
 
 </ol></div>
 </div>
@@ -290,14 +293,14 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
   <div class="dialog" style="top:48px"><div class="panel">
     <div class="hd">Decide 3 lines: Borrow from another order <span class="muted">&times;</span></div>
     <div class="bd">
-      <div class="field"><label>Donor order</label><div class="select"><span>SO324190 &middot; covers 3 of 3</span><span class="clr">&#9662;</span></div></div>
+      <div class="field"><label>Donor order</label><div class="select"><span>SO324190</span><span class="clr">&#9662;</span></div></div>
       <div class="field"><label>Reason *</label><div class="textarea">SO324190 delivers in November.</div></div>
     </div>
     <div class="ft" style="position:relative"><span class="btn" style="flex:1;justify-content:center">Cancel</span><span class="btn primary" style="flex:1;justify-content:center">Save 3 lines</span><span class="pin co" style="right:-8px;top:-10px">7</span></div>
   </div></div>
 </div>
 <div class="notes"><ol>
-  <li><span class="co">7</span><div><b>Two fields and two buttons, full width.</b> The picker opens as the same searchable list; the agent code drops from the closed value to fit.<span class="ref">DESIGN-LANGUAGE (375px). UAC AC-34.</span></div></li>
+  <li><span class="co">7</span><div><b>Two fields and two buttons, full width.</b> The picker opens as the same searchable list; the row is already just the SO number, so nothing further drops to fit.<span class="ref">DESIGN-LANGUAGE (375px). UAC AC-34.</span></div></li>
 
 </ol></div>
 </div>

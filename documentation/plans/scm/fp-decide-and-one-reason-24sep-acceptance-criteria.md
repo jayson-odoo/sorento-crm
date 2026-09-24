@@ -1,10 +1,10 @@
 # UAC: fulfilment planning - Decide on the ticked lines, and one reason box
 
 Plan: `PLAN-fp-decide-and-one-reason-24sep.md`. Issues #1216, #1217.
-Status: GRILLED 24 Sep 2026, rulings R1 to R11 folded (AC-1, AC-3, AC-4, AC-6 to AC-12, AC-16,
-AC-17 rewritten; AC-51 to AC-55 added). The Decide item list (AC-4) assumes the plan's
-recommendation on its one open question; if the owner rules otherwise, AC-4 and the per-way
-ACs are rewritten, not deleted silently.
+Status: APPROVED 24 Sep 2026, rulings R1 to R14 folded (AC-1, AC-3, AC-4, AC-6 to AC-12, AC-16,
+AC-17 rewritten; AC-51 to AC-55 added). The Decide item list (AC-4) is R14's ruled set, no
+longer conditional. R12 drops the agent and the "covers k of n" suffix from the donor order and
+location picker rows (AC-11, AC-48).
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` agent-browser evidence run (no new Playwright
 spec), `[T]` test-only guard / regression, `[UX]` measurable layout, motion or state.
@@ -71,12 +71,13 @@ contributing line".
   donor order) holds enough for only the first in list order, when saved, then the top row is
   saved and the second is skipped (running tally), and the order follows the list's current
   sort.
-- **AC-11 [FE] (J2) (R8)** Given Decide > Borrow from another order, then a dialog titled
+- **AC-11 [FE] (J2) (R8, R12)** Given Decide > Borrow from another order, then a dialog titled
   `Decide n lines: Borrow from another order` opens with one required `SearchableSelect`
   labelled Donor order, options = donor orders offered on at least one ticked row, each
-  labelled `<SO number> · <agent> · covers k of n`, sorted by k descending. Given Decide >
-  Borrow other location, then the select is labelled Location, options = other locations with
-  free stock for at least one ticked row, each `<code> · covers k of n`, sorted by k descending.
+  labelled with the SO number only (no agent, no "covers k of n" suffix), sorted by k
+  descending though k is not shown. Given Decide > Borrow other location, then the select is
+  labelled Location, options = other locations with free stock for at least one ticked row,
+  each labelled with the location code only, sorted by k descending though k is not shown.
 - **AC-12 [FE] (J3) (R5, R7)** Given every ticked row's suggestion is Buy, when Decide > Buy is
   picked, then no dialog opens and the rows save at once with verdict `approved`. Given at
   least one ticked row whose suggestion differs, when Use own location, Use BRW or Buy is
@@ -211,7 +212,8 @@ contributing line".
   greyed with nothing ticked; tick 3, Decide > Buy, reason if asked, Save; the 3 pills read Saved; Confirm; the lines read
   Confirmed and the OI detail shows the Buy rows. Screenshots at 375px and 1280px.
 - **AC-48 [E2E] (J2)** Decide > Borrow other location (or Borrow from another order, whichever
-  the seeded board offers) on 2 ticked lines: the picker shows `covers k of n`;
+  the seeded board offers) on 2 ticked lines: the picker lists location codes only (or SO
+  numbers only), no agent and no "covers k of n" text;
   save; the expanded row shows one borrow component at that location for the whole quantity
   and the Reason box holds the batch reason.
 - **AC-49 [E2E] (J6)** A discontinued line bought with the Reason box blank confirms with no

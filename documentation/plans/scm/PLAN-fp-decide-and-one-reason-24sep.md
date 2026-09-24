@@ -1,8 +1,8 @@
 # PLAN: fulfilment planning - Decide on the ticked lines, and one reason box in the expanded row
 
-Status: GRILLED 24 Sep 2026 (rulings R1 to R11 folded, mockups drawn under
-`documentation/plans/scm/mockups/fp-*.html`); ONE open question left for the owner (which supply
-ways are Decide items, see "Open question"). Implementation starts once it is ruled. Track: full (expected diff over ~300 changed lines across FE +
+Status: APPROVED 24 Sep 2026 (rulings R1 to R14 folded, mockups drawn under
+`documentation/plans/scm/mockups/fp-*.html`; the owner's only open question is closed by R14).
+S1 - discontinued gate removed - under way. Track: full (expected diff over ~300 changed lines across FE +
 tests; no migration, no auth/RBAC change, no new ingest surface). One lane, one branch, one PR.
 Issues: #1216 (Decide), #1217 (discontinued gate + one reason box).
 UAC: `fp-decide-and-one-reason-24sep-acceptance-criteria.md`.
@@ -225,7 +225,7 @@ nothing ticked), `mockups/fp-decide-dialog.html` (the Borrow dialog and the resu
   button reads "Tick the lines to decide". It opens a `DropdownMenu` (`align="end"`). Toolbar
   already `flex-wrap`s at 375px.
 - **The menu, in the board's own supply words** (`SH/lib/supplyVocabulary.ts` `LABELS`, in
-  `ORDER`, R2). Recommended items (the open question below):
+  `ORDER`, R2). Items, ruled (R14):
   1. **As suggested** (the old Save as suggested), then a separator;
   2. **Use own location** (`own`);
   3. **Borrow from another order** (`borrow_order`), asks for the donor order;
@@ -274,21 +274,22 @@ nothing ticked), `mockups/fp-decide-dialog.html` (the Borrow dialog and the resu
   server refuses `approved` there), measured against the frozen decision (`amendNeedsReason`'s
   own baseline). A row whose frozen decision already equals the pick is skipped, why =
   `already decided that way` (R3).
-- **The Decide dialog, only when needed.** As suggested never opens one. Use own location,
-  Use BRW or Buy where every ticked row's suggestion already is that way: saves at once, no
-  dialog. Otherwise a small `Dialog` titled `Decide ${n} lines: ${Label}` opens with, top to
-  bottom:
+- **The Decide dialog, always the app's lightbox popup `Dialog`** (R13), never inline in the
+  strip and never a page. As suggested never opens one. Use own location, Use BRW or Buy where
+  every ticked row's suggestion already is that way: saves at once, no dialog. Otherwise the
+  `Dialog` titled `Decide ${n} lines: ${Label}` opens with, top to bottom:
   - for the two Borrow items only, ONE `SearchableSelect` (required, so not clearable):
     "Donor order" (options = donor orders offered on at least one ticked row, each labelled
-    `${so_number} · ${agent} · covers ${k} of ${n}`) or "Location" (options = other locations
-    with free stock for at least one ticked row, each `${code} · covers ${k} of ${n}`), sorted
-    by k descending, so the best pick is first;
+    `${so_number}` only, no agent) or "Location" (options = other locations with free stock for
+    at least one ticked row, each `${code}` only), sorted by k descending (best coverage first)
+    even though k is not shown (R12: "too many information ... too redundant");
   - ONE Reason `Textarea`, required when any row differs or for a Borrow (R5, R7);
   - for a donor order that shares the lines' own sales agent, the "Who authorised it" field
     `BorrowAddDialog` asks today appears under the reason, folded into the stored reason as
     today (it names a person, not a reason);
   - Save (`Save ${k} lines`, k = rows the pick covers) and Cancel.
-  No explanatory copy in the dialog; the `covers k of n` label is the guidance.
+  No explanatory copy in the dialog; the sort order (best coverage first) is the only guidance,
+  no "covers k of n" text and no agent in the picker rows (R12).
 - **Save, lenient (R10).** Reuses Panel `decideMany`'s loop (chunks of 5, `decide(key,
   decision, {quiet: true})`, per-row PUT, revert on failure). No new endpoint. Skipped rows are
   never sent. A PUT that fails (any 4xx, for example a 409 on a row confirmed meanwhile) is
@@ -303,15 +304,16 @@ nothing ticked), `mockups/fp-decide-dialog.html` (the Borrow dialog and the resu
 - **List view only.** The grid view's cell dialog keeps Approve / Reject selected unchanged.
   The verdict column's per-row check (save as suggested) and X (reject) are unchanged.
 
-### Open question for the owner (the only one left)
+### Open question, closed by R14
 
 **Which supply ways are Decide items?** The board has six (`Use own location`, `Use incoming`,
 `Borrow from another order`, `Borrow incoming`, `Use BRW`, `Buy`, plus the vocabulary's
 `Borrow other location`).
 
-Recommendation: **As suggested, Use own location, Borrow from another order (pick the donor
-order), Borrow other location (pick the location), Use BRW, Buy**; `Use incoming` and
-`Borrow incoming` stay in the expanded row.
+Closed (R14, 24 Sep 2026): the owner approved the plan with the recommended set pre-ticked and
+asked for no change. Ruled: **As suggested, Use own location, Borrow from another order (pick
+the donor order), Borrow other location (pick the location), Use BRW, Buy**; `Use incoming` and
+`Borrow incoming` stay in the expanded row. The reasoning below is kept as the record of why.
 
 Why:
 - Each recommended item covers a whole line from ONE pile the planner can name in one pick
@@ -449,6 +451,26 @@ Owner grill, 24 Sep 2026. Quoted verbatim; the design above follows them.
 - **R11 (24 Sep 2026).** "i need mockups". Drawn: `mockups/fp-decide-strip.html`,
   `mockups/fp-decide-dialog.html`, `mockups/fp-expanded-row-one-reason.html`,
   `mockups/fp-confirm-banner.html`.
+
+Owner rulings from the lavish review, round 2 (24 Sep 2026, verbatim, posted as PR #1218
+comment "Owner rulings from the lavish review, round 2"):
+
+- **Approval.** "approved, start S1", then on the Approval heading: "i am okay, just make sure
+  we always use lightbox popup".
+- **R12 (24 Sep 2026, on mockup 2, Decide, Borrow picker).** "i don't really like the . .
+  annotation, too many information, jsut show me the SO then is enough, don't need so many
+  delimiting like . covers 3 of 3, too redundant". Folded: the donor order picker lists the SO
+  number only, no agent and no "covers k of n" suffix. The location picker likewise lists the
+  location code only (D1).
+- **R13 (24 Sep 2026, on the Approval heading).** "just make sure we always use lightbox
+  popup". Folded: the Decide dialog opens as the app's lightbox popup `Dialog` (the same
+  `Dialog` component the board already uses), never inline in the strip and never as a page
+  (D1).
+- **R14 (24 Sep 2026, the menu item set).** The plan was approved with the recommended set
+  pre-ticked and no change asked, so the Decide items are As suggested, Use own location,
+  Borrow from another order, Borrow other location, Use BRW, Buy. `Use incoming` and `Borrow
+  incoming` stay in the expanded row. Closes the plan's one open question (D1, "Open question,
+  closed by R14").
 
 ## Grill questions
 
