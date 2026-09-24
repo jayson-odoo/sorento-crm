@@ -144,7 +144,8 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 
 _PROFILE_COLUMNS = (
-    "c.chatbot_profile, c.chatbot_recall_enabled, c.chatbot_stock_allowed "
+    "c.chatbot_profile, c.chatbot_recall_enabled, c.chatbot_stock_allowed, "
+    "c.notify_salesman, c.packing_list_allowed "
     "FROM respond_contacts c"
 )
 
@@ -304,6 +305,11 @@ def load_profile(
             # NULL cannot happen (NOT NULL, default true); `is not False` keeps the
             # fail-open reading if it ever did.
             stock_allowed=row[2] is not False,
+            # S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): NULL cannot happen either
+            # (NOT NULL, default false) - `is True` keeps the fail-closed reading if it
+            # somehow did, matching these two columns' default-OFF rule.
+            notify_salesman=row[3] is True,
+            packing_list_allowed=row[4] is True,
         ),
         bool(row[1]),
     )

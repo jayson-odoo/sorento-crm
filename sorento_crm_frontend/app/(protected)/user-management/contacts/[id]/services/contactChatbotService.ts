@@ -8,7 +8,8 @@
  *     carries `chatbot_profile` / `chatbot_recall_enabled` (AC-1503, both dict
  *     builders) - no dedicated GET route exists for the card alone.
  *   PUT /api/v1/user-management/contacts/{id}/chatbot
- *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed? }
+ *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed?,
+ *       notify_salesman?, packing_list_allowed? }
  *     Absent means "leave it alone", never "clear it" - a recall toggle must not
  *     switch off as a side effect of saving a language.
  *
@@ -17,27 +18,18 @@
  * set from one typed here, so `tier` is edited directly like `language`, same as every
  * other profile field on this card.
  *
- * ---- PHASE 1 MOCK - notify_salesman / packing_list_allowed -----------------------
- * (PLAN-chatbot-stock-ask-v2-24sep.md S2, R7). Backend contract, not built yet:
+ * ---- notify_salesman / packing_list_allowed (PLAN-chatbot-stock-ask-v2-24sep.md
+ * S2, R7) ----------------------------------------------------------------------
  *   respond_contacts.notify_salesman        boolean NOT NULL DEFAULT false
  *   respond_contacts.packing_list_allowed   boolean NOT NULL DEFAULT false
  * Both are plain siblings of `chatbot_stock_allowed` (not nested in
- * `chatbot_profile`) and ride the same GET contact / PUT .../chatbot payload once
- * S2 lands. Until then the real contact carries neither field, so this file
- * overlays them in memory, keyed by contact id, on top of the real response -
- * enough for the two new switches to be exercised end to end. Phase 2 deletes
- * this overlay once the fields ride the real payload.
+ * `chatbot_profile`) and ride the GET contact / PUT .../chatbot payload as plain
+ * fields.
  */
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import { getContact } from './contactService';
-
-interface ContactChatbotTogglesMock {
-  notify_salesman: boolean;
-  packing_list_allowed: boolean;
-}
-const contactChatbotTogglesMock = new Map<string, ContactChatbotTogglesMock>();
 
 export interface ContactChatbotProfile {
   recall_enabled: boolean;
@@ -55,24 +47,20 @@ export interface ContactChatbotProfile {
   packing_list_allowed: boolean;
 }
 
-function fromContact(
-  contact: {
-    id?: string;
-    chatbot_profile?: {
-      tier?: string | null;
-      language?: string | null;
-      default_ledgers?: string[] | null;
-      always_full_report?: boolean | null;
-    } | null;
-    chatbot_recall_enabled?: boolean;
-    chatbot_stock_allowed?: boolean;
-    notify_salesman?: boolean;
-    packing_list_allowed?: boolean;
-  },
-  contactId: string,
-): ContactChatbotProfile {
+function fromContact(contact: {
+  id?: string;
+  chatbot_profile?: {
+    tier?: string | null;
+    language?: string | null;
+    default_ledgers?: string[] | null;
+    always_full_report?: boolean | null;
+  } | null;
+  chatbot_recall_enabled?: boolean;
+  chatbot_stock_allowed?: boolean;
+  notify_salesman?: boolean;
+  packing_list_allowed?: boolean;
+}): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
-  const mock = contactChatbotTogglesMock.get(contactId);
   return {
     recall_enabled: Boolean(contact.chatbot_recall_enabled),
     tier: profile?.tier ?? null,
@@ -80,14 +68,14 @@ function fromContact(
     default_ledgers: profile?.default_ledgers ?? [],
     always_full_report: Boolean(profile?.always_full_report),
     stock_allowed: contact.chatbot_stock_allowed !== false,
-    notify_salesman: mock?.notify_salesman ?? Boolean(contact.notify_salesman),
-    packing_list_allowed: mock?.packing_list_allowed ?? Boolean(contact.packing_list_allowed),
+    notify_salesman: Boolean(contact.notify_salesman),
+    packing_list_allowed: Boolean(contact.packing_list_allowed),
   };
 }
 
 export async function getContactChatbotProfile(contactId: string): Promise<ContactChatbotProfile> {
   const contact = await getContact(contactId);
-  return fromContact(contact, contactId);
+  return fromContact(contact);
 }
 
 export type ContactChatbotSaveInput = ContactChatbotProfile;
@@ -110,7 +98,6 @@ export async function saveContactChatbotProfile(
       },
       chatbot_recall_enabled: input.recall_enabled,
       chatbot_stock_allowed: input.stock_allowed,
-      // Not read by the real route yet (Phase 1 mock, see file header).
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
     }),
@@ -118,9 +105,5 @@ export async function saveContactChatbotProfile(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
   }
-  contactChatbotTogglesMock.set(contactId, {
-    notify_salesman: input.notify_salesman,
-    packing_list_allowed: input.packing_list_allowed,
-  });
-  return fromContact(await response.json(), contactId);
+  return fromContact(await response.json());
 }

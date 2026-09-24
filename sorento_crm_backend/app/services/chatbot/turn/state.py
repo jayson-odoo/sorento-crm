@@ -126,6 +126,11 @@ class Profile:
     # same moment as the tier and the language, off the same SELECT, and the engine's
     # stock-denial gate (contract 61, 62) is the one reader.
     stock_allowed: bool = True
+    # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both default
+    # OFF, unlike stock_allowed above - a contact with no row, or two ambiguous rows,
+    # gets no salesman notification and no packing list attachment by default.
+    notify_salesman: bool = False
+    packing_list_allowed: bool = False
 
 
 @dataclass
