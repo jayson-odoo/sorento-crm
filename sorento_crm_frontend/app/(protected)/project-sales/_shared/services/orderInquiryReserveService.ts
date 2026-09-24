@@ -87,17 +87,6 @@ export async function cancelOrderInquiryReserveRequest(
   return { ...body, first_to_name: body.notified_name ?? null };
 }
 
-export interface ReserveRowPayload {
-  warehouse_id: string;
-  qty_reserved: string | number;
-  reason?: string | null;
-}
-
-export interface UnreserveRowPayload {
-  qty: string | number;
-  note?: string | null;
-}
-
 export interface OrderInquiryReserveHistoryEntry {
   kind: 'requested' | 'reserved' | 'unreserved' | 'cancelled' | string;
   qty: string | null;
@@ -107,54 +96,60 @@ export interface OrderInquiryReserveHistoryEntry {
   created_at: string | null;
 }
 
+export interface CommitReserveRow {
+  row_id: string;
+  /** Omitted when CS chose no location: the server falls back to the request row's
+   * own default pool (6e.4, S8). */
+  warehouse_id?: string;
+  qty_reserved: string | number;
+  reason?: string | null;
+}
+
+export interface CommitAmendRow {
+  row_id: string;
+  qty_reserved: string | number;
+  reason?: string | null;
+}
+
+export interface CommitReservePayload {
+  reserves: CommitReserveRow[];
+  amendments: CommitAmendRow[];
+}
+
 /**
- * Eling's own Confirm, ONE ROW at a time (`PLAN-oi-request-cs-reserve.md` section 6c
- * F2 - supersedes the old all-rows `reserveOrderInquiryRequest`, whose own route is
- * deleted). Answers exactly one request row; the request itself stays `requested`
- * while any other row of it is still unanswered, `reserved` on the one that
- * completes it.
+ * CS's own line-by-line commit (`PLAN-oi-request-cs-reserve.md` 6e.1, re-keyed by 6e.4).
+ * One call per click of the Lines grid's own `Reserve (N)` CTA, keyed by the INQUIRY:
+ * the server resolves each `reserves` row to its open request row and each
+ * `amendments` row to its latest answered one, so the client never picks a request.
+ * One transaction, one `order_inquiry_reserved` email per request touched. Returns the
+ * touched requests.
  */
-export async function reserveOrderInquiryRow(
-  requestId: string,
-  rowId: string,
-  payload: ReserveRowPayload,
-): Promise<OrderInquiryReserveRequestRow> {
-  const requestBody = { ...payload, qty_reserved: String(payload.qty_reserved) };
-  const response = await apiFetch(
-    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/reserve`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    },
-  );
+export async function commitOrderInquiryReserve(
+  inquiryId: string,
+  payload: CommitReservePayload,
+): Promise<OrderInquiryReserveRequest[]> {
+  const requestBody = {
+    reserves: payload.reserves.map((row) => ({ ...row, qty_reserved: String(row.qty_reserved) })),
+    amendments: payload.amendments.map((row) => ({
+      ...row,
+      qty_reserved: String(row.qty_reserved),
+    })),
+  };
+  const response = await apiFetch(`${BASE}/order-inquiries/${inquiryId}/reserve-commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to confirm that reserve'));
-  return response.json();
+    throw new Error(await extractApiError(response, 'Failed to reserve those lines'));
+  const body = await response.json();
+  return (Array.isArray(body) ? body : []).map((item: OrderInquiryReserveRequest) => ({
+    ...item,
+    first_to_name: null,
+  }));
 }
 
-/** F5: gives back part (or all) of what was reserved on ONE row - its own action,
- * never Unlink. No email either way. */
-export async function unreserveOrderInquiryRow(
-  requestId: string,
-  rowId: string,
-  payload: UnreserveRowPayload,
-): Promise<OrderInquiryReserveRequestRow> {
-  const requestBody = { ...payload, qty: String(payload.qty) };
-  const response = await apiFetch(
-    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/unreserve`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    },
-  );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to unreserve that row'));
-  return response.json();
-}
-
-/** F3: one row's own history, newest first - the dialog's History tab. */
+/** F3: one row's own history, newest first - `ReserveLineHistoryDialog`'s own read. */
 export async function getOrderInquiryRowHistory(
   requestId: string,
   rowId: string,
@@ -169,7 +164,7 @@ export async function getOrderInquiryRowHistory(
 }
 
 /** Every reserve request this header has ever raised, newest first - used to find
- * a row's own open request (or last-answered one) for `ReserveRowDialog`. */
+ * a row's own open request (or latest answered one) on the Lines grid. */
 export async function getOrderInquiryReserveRequests(
   inquiryId: string,
 ): Promise<OrderInquiryReserveRequest[]> {

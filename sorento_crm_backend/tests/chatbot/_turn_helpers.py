@@ -166,6 +166,9 @@ POLICY_DOMAIN_ROWS: list[dict[str, Any]] = [
     _domain_row("order", narrowing={"customer": "must_narrow_one"}),
     _domain_row("product_attachment", narrowing={"attachment_type": "narrow_by_type"}),
     _domain_row("promotion", narrowing={"tier": "narrow_by_tier"}),
+    # AC-1861 (PLAN-chatbot-roster-label-vs-ask-24sep.md): the real `master_products`
+    # domain row (`turn/policy_rows.py`) narrows on nothing at all.
+    _domain_row("master_products", narrowing={}),
 ]
 
 

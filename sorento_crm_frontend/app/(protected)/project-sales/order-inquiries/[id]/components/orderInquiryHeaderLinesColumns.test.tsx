@@ -6,11 +6,14 @@
  * behaviour is `orderInquiryWorklist.test.ts`'s and `orderInquiryWorklistColumns.test.tsx`'s.
  *
  * Column-order list updated at the #1119 x oi-request-cs-reserve merge (22 Sep, cross-lane):
- * main's own version of this assertion predates two columns this lane already shipped in
+ * main's own version of this assertion predates a column this lane already shipped in
  * Phase 1 - `Expand` (the board stock-grid chevron, `PLAN-oi-request-cs-reserve.md` 3.9)
- * sits FIRST, before Product; `Reserve` (the section 6c F2 icon-button, replacing the old
- * inline `ReservePill` beside State) is new this round and sits last. Both are real,
- * shipped columns, not a merge artefact.
+ * sits FIRST, before Product. Real, shipped, not a merge artefact.
+ *
+ * Round 3 (`PLAN-oi-request-cs-reserve.md` section 6d G2, AC-RS-68): the round-2 `Reserve`
+ * column this list used to end with is retired - the State cell itself is the reserve
+ * click target now (`AC-RS-68` suite below), so the census here drops back to one column
+ * per fact.
  */
 import { render, renderHook, screen } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -41,7 +44,6 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Location',
       'Instruction',
       'State',
-      'Reserve',
     ]);
   });
 
@@ -139,5 +141,97 @@ describe('AC-B3-5: the Lines tab footers total the buy rows only', () => {
     expect(screen.getByTestId('footer-qty')).toHaveTextContent(/^100$/);
     expect(screen.getByTestId('footer-taken')).toHaveTextContent(/^40$/);
     expect(screen.getByTestId('footer-remaining')).toHaveTextContent(/^60$/);
+  });
+});
+
+/**
+ * Round 4 (`PLAN-oi-request-cs-reserve.md` 6e) + AC-RS-83c (owner, 24 Sep: "this pen can
+ * put right next to state?"): the State pill is plain text (never a button), and the
+ * reserve icons render INSIDE the State cell to the right of it - no separate
+ * `reserve_actions` column (saved column preferences appended an unknown id at the end,
+ * after Location). Gated exactly as before: `canReserve` plus the line's reserve state.
+ * `requested_qty` is cast onto the fixture: the local `linesRow` helper types only the
+ * fields it sets.
+ */
+describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', () => {
+  function stateCell(
+    row: OrderInquiryWorklistRow,
+    options: Record<string, unknown> = {},
+  ) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
+    const stateColumn = result.current.find(
+      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(stateColumn).toBeDefined();
+    return stateColumn!.cell({ row: { original: row } });
+  }
+
+  const requestedRow = {
+    ...linesRow({ id: 'row-req', state: 'raised', reserve_state: 'requested' }),
+    requested_qty: '107',
+  } as unknown as OrderInquiryWorklistRow;
+
+  it('AC-RS-83c: no column carries id reserve_actions, with or without the permission', () => {
+    for (const canReserve of [true, false]) {
+      const { result } = renderHook(() =>
+        useOrderInquiryHeaderLinesColumns({ canReserve } as never),
+      );
+      expect(
+        result.current.some((column) => (column as { id?: string }).id === 'reserve_actions'),
+      ).toBe(false);
+    }
+  });
+
+  it('a requested row with the permission: pill text (not a button) + Reserve and Edit reserve in the same cell', () => {
+    render(<>{stateCell(requestedRow, { canReserve: true })}</>);
+    const pill = screen.getByText('Request to reserve 107');
+    expect(pill.closest('button')).toBeNull();
+    expect(screen.getByLabelText('Reserve')).toBeInTheDocument();
+    expect(screen.getByLabelText('Edit reserve')).toBeInTheDocument();
+  });
+
+  it('AC-RS-83c: with the permission the State column is at least 380 wide, so a saved narrower width cannot clip the icons', () => {
+    const { result } = renderHook(() =>
+      useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
+    );
+    const stateColumn = result.current.find(
+      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+    ) as { size?: number; minSize?: number };
+    expect(stateColumn.size).toBe(380);
+    expect(stateColumn.minSize).toBe(380);
+  });
+
+  it('without the permission: the pill only, no icons', () => {
+    render(<>{stateCell(requestedRow, { canReserve: false })}</>);
+    expect(screen.getByText('Request to reserve 107')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Reserve')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Edit reserve')).not.toBeInTheDocument();
+  });
+
+  it('AC-RS-83b: a declined row reads Not reserved with Amend reserve + History beside it', () => {
+    const declinedRow = linesRow({ id: 'row-decl', state: 'raised', reserve_state: 'declined' });
+    render(<>{stateCell(declinedRow, { canReserve: true })}</>);
+    expect(screen.getByText('Not reserved')).toBeInTheDocument();
+    expect(screen.getByLabelText('Amend reserve')).toBeInTheDocument();
+    expect(screen.getByLabelText('History')).toBeInTheDocument();
+  });
+
+  it('a line with no reserve state: the plain state pill, no icons', () => {
+    render(<>{stateCell(linesRow({ id: 'row-plain', state: 'raised' }), { canReserve: true })}</>);
+    expect(screen.queryByLabelText('Edit reserve')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Amend reserve')).not.toBeInTheDocument();
+  });
+
+  it('a staged line shows the chip and Undo inside the State cell', () => {
+    render(
+      <>
+        {stateCell(requestedRow, {
+          canReserve: true,
+          stagedByRowId: { 'row-req': { kind: 'reserve', qty: 107, locationLabel: 'BRW' } },
+        })}
+      </>,
+    );
+    expect(screen.getByText('Reserve 107 @ BRW')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /undo/i })).toBeInTheDocument();
   });
 });

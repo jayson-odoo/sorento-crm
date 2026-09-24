@@ -2,6 +2,18 @@
 
 Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-STANDARDS.md).
 
+## PR body (owner ruling, 24 Sep 2026)
+- [ ] Body carries `Track: small-fix` or `Track: full` near the top, matching the plan's
+      Status line (`PRINCIPLES.md` "Small fix track")
+- [ ] Body carries `Plan created: <ISO timestamp>` (the plan file's first git commit
+      timestamp, or its Status-line date if not yet committed), so lane duration is
+      measurable alongside CI's own PR-open-to-merge time
+- [ ] If `security-reviewer` did not run, the body says so ("security-reviewer: not run,
+      diff outside its surface") - it runs only when the diff touches auth, RBAC, external
+      ingest, uploads or multi-company scoping
+- [ ] `guide-writer` is not expected per lane (retired from the per-lane pipeline, 24 Sep
+      2026 ruling) - Outline updates are on-request or a weekly batch instead
+
 ## CRUD structure
 - [ ] List page has search/filter and "Add/Create" button
 - [ ] Create/edit uses modal by default (dedicated page only when ADR-exempt)

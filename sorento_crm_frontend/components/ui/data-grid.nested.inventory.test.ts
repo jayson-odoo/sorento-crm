@@ -95,6 +95,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'renders it (DataGridTableBodyRowExpandded)',
   ],
   ['components/common/PanelDataGrid.tsx', 'forwards expanded/onExpandedChange'],
+  [
+    'components/ui/data-grid-table-dnd.tsx',
+    'AC-RS-69 (PLAN-oi-request-cs-reserve.md section 6d G3): reads meta.expandedContent to skip the drag grip on an expanded-row column - does not render the expansion itself, not a nesting site',
+  ],
 ]);
 
 /**
@@ -182,6 +186,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   ],
   [
     'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:349',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx:257',
+    "G6 (PLAN-oi-request-cs-reserve.md section 6d): one row per selected line, in a dialog opened as a sibling of the OI Lines tab (Request CS to reserve). Already scrollerMaxHeight={false}. Round 4 review (24 Sep, AC-RS-89): line moved - the inert outer overflow-x-auto wrapper is gone and columnsDraggable: false was added.",
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx:269',
     'The DataGridTable of the same grid, not a second one',
   ],
 ]);

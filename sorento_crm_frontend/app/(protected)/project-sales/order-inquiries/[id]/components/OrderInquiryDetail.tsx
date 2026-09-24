@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
@@ -42,6 +42,7 @@ import {
   ORDER_INQUIRY_RESERVE_REQUESTS_KEY,
   orderInquiryHeadersPagerQuery,
   useAutoPlaceOrderInquiryRows,
+  useCommitOrderInquiryReserve,
   useCreateOrderInquiryReserveRequest,
   useExportOrderInquiryXlsx,
   useOrderInquiryHandshake,
@@ -50,7 +51,6 @@ import {
   useOrderInquiryHeaderRelatedDocuments,
   useOrderInquiryReserveRequests,
   useOrderInquiryRowHistory,
-  useReserveOrderInquiryRow,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useReserveRowOptions } from '../../../_shared/hooks/useReserveRowOptions';
 import { ackStateOf } from '../../../_shared/lib/orderInquiryAck';
@@ -59,14 +59,18 @@ import {
   orderInquiryHeaderStatusVariant,
 } from '../../../_shared/lib/orderInquiryHeaderStatus';
 import {
+  bareLocationCode,
   canCancelReserveRequest,
   resolveReserveRowRequestAnchor,
 } from '../../../_shared/lib/orderInquiryReserve';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
+import type { CommitReservePayload } from '../../../_shared/services/orderInquiryReserveService';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
-import { ReserveRowDialog } from './ReserveRowDialog';
+import { ReserveLineForm } from './ReserveLineForm';
+import { ReserveLineHistoryDialog } from './ReserveLineHistoryDialog';
+import type { StagedReserveEntry } from './orderInquiryHeaderLinesColumns';
 import {
   OrderInquiryRelatedPurchaseOrdersTab,
   OrderInquiryRelatedSposTab,
@@ -149,7 +153,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // other write on this page - `ReserveRequestDialog`/`ReserveRowDialog` receive the
   // mutate functions as props rather than importing the feature service themselves.
   const createReserveRequestMutation = useCreateOrderInquiryReserveRequest(id);
-  const reserveRowMutation = useReserveOrderInquiryRow(id);
+  const commitReserveMutation = useCommitOrderInquiryReserve(id);
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
   const exportXlsx = useExportOrderInquiryXlsx(id);
@@ -158,10 +162,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reserveDialogOpen, setReserveDialogOpen] = useState(false);
-  // section 6c F2: which row's `ReserveRowDialog` is open, if any. Auto-opened by
-  // `?reserve=<request_id>` (AC-RS-62) or a click on the Lines grid's own Reserve
-  // icon-button (`orderInquiryHeaderLinesColumns.tsx`).
-  const [reserveRowDialogId, setReserveRowDialogId] = useState<string | null>(null);
+  // Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): CS's own staged (not yet
+  // committed) decisions, keyed by OI row id - cleared on a successful commit or an
+  // individual Undo. A page reload loses it by design (plan's own words: "a reload
+  // loses it - trigger for server drafts: CS asks to stage across sessions").
+  const [stagedByRowId, setStagedByRowId] = useState<Record<string, StagedReserveEntry>>({});
+  // Which row `ReserveLineForm` is open for, and in which mode - the tick (AC-RS-84)
+  // never opens this at all, it stages directly.
+  const [editingRow, setEditingRow] = useState<{
+    row: OrderInquiryWorklistRow;
+    mode: 'reserve' | 'amend';
+  } | null>(null);
+  // Which row `ReserveLineHistoryDialog` is open for (AC-RS-89).
+  const [historyRow, setHistoryRow] = useState<OrderInquiryWorklistRow | null>(null);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -286,154 +299,240 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   );
 
   function invalidateReserveQueries() {
-    // The dialog / card already toast their own success (AC-RS-22/AC-RS-26); this is
-    // only the read-side refresh so the pill, the header badge and the card itself move.
     linesQuery.refetch();
     reserveRequestsQuery.refetch();
   }
 
+  // AC-RS-83/84/87: the OI's own open reserve request, if any - round 4 keeps a
+  // single-open-request-at-a-time model (the same one the Lines tab's own State
+  // filter and the header CTA both key off); a row that already carries a link
+  // answered by a PAST (no longer open) request is reached through `answeredRequestRowFor`
+  // below instead.
   const openReserveRequest = reserveRequestsQuery.data?.find((r) => r.state === 'requested');
 
-  // section 6c F2/F3/F5: the row `ReserveRowDialog` is open for, and which request
-  // answers it - the OPEN one when this row still has an unanswered entry, else the
-  // most recently completed one that actually reserved something for it (History and
-  // Unreserve both need a request id exactly when `openRequest` is null).
-  const reserveRowDialogRow = reserveRowDialogId
-    ? (activeLines.find((line) => line.id === reserveRowDialogId) ?? null)
-    : null;
-  const reserveRowOpenRequest = useMemo(() => {
-    if (!reserveRowDialogId) return null;
-    const request = (reserveRequestsQuery.data ?? []).find(
-      (r) =>
-        r.state === 'requested' &&
-        r.rows.some((row) => row.row_id === reserveRowDialogId && row.qty_reserved == null),
-    );
-    const row = request?.rows.find((r) => r.row_id === reserveRowDialogId);
-    if (!request || !row) return null;
-    return {
-      requestId: request.id,
-      ordinal: request.ordinal,
-      qtyRequested: row.qty_requested,
-      requestedBy: request.requested_by,
-      requestedByName: request.requested_by_name,
-      requestedAt: request.requested_at,
-    };
-  }, [reserveRequestsQuery.data, reserveRowDialogId]);
-  const reserveRowLastRequestId = useMemo(() => {
-    if (!reserveRowDialogId) return null;
-    const answered = (reserveRequestsQuery.data ?? [])
-      .map((r) => {
-        const row = r.rows.find((row) => row.row_id === reserveRowDialogId);
-        return row && row.qty_reserved != null
-          ? { id: r.id, ordinal: r.ordinal, rowQtyReserved: row.qty_reserved }
-          : null;
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-    return resolveReserveRowRequestAnchor(answered);
-  }, [reserveRequestsQuery.data, reserveRowDialogId]);
-  const reserveRowEffectiveRequestId =
-    reserveRowOpenRequest?.requestId ?? reserveRowLastRequestId ?? null;
+  // 6c F2/6e.2: the row's own OPEN (unanswered) request-row entry, extended with the
+  // warehouse the request itself was raised against (R3's own default pool) - the
+  // tick (AC-RS-84) stages against exactly this, no dialog, no second resolution.
+  const openRequestForRow = useCallback(
+    (targetRowId: string | null) => {
+      if (!targetRowId) return null;
+      const request = (reserveRequestsQuery.data ?? []).find(
+        (r) =>
+          r.state === 'requested' &&
+          r.rows.some((row) => row.row_id === targetRowId && row.qty_reserved == null),
+      );
+      const row = request?.rows.find((r) => r.row_id === targetRowId);
+      if (!request || !row) return null;
+      return {
+        requestId: request.id,
+        ordinal: request.ordinal,
+        qtyRequested: row.qty_requested,
+        warehouseId: row.warehouse_id,
+        location: row.location,
+        requestedBy: request.requested_by,
+        requestedByName: request.requested_by_name,
+        requestedAt: request.requested_at,
+      };
+    },
+    [reserveRequestsQuery.data],
+  );
 
-  const reserveRowOptionsEntries = useMemo(
+  // AC-RS-86/89 + 6e.4 (B3): the ANSWERED request row that anchors Amend/History for a
+  // reserved or declined line - the latest answered one, the same row the server's
+  // `commit_request` amends (`resolveReserveRowRequestAnchor`).
+  const answeredRequestRowFor = useCallback(
+    (targetRowId: string) => {
+      const candidates = (reserveRequestsQuery.data ?? [])
+        .flatMap((r) =>
+          r.rows
+            .filter((row) => row.row_id === targetRowId && row.qty_reserved != null)
+            .map((row) => ({
+              id: r.id,
+              ordinal: r.ordinal,
+              rowQtyReserved: row.qty_reserved,
+              qtyRequested: row.qty_requested,
+              location: row.location,
+              requestedByName: r.requested_by_name,
+            })),
+        );
+      if (candidates.length === 0) return null;
+      const anchorId = resolveReserveRowRequestAnchor(candidates);
+      return candidates.find((c) => c.id === anchorId) ?? null;
+    },
+    [reserveRequestsQuery.data],
+  );
+
+  // AC-RS-84: the tick - stages the FULL requested qty at the default pool the
+  // request itself already named, no dialog, nothing posted. A request row naming no
+  // pool still stages: the commit then omits `warehouse_id` and the server defaults it.
+  const handleTickReserve = useCallback(
+    (row: OrderInquiryWorklistRow) => {
+      const open = openRequestForRow(row.id);
+      if (!open) return;
+      setStagedByRowId((prev) => ({
+        ...prev,
+        [row.id]: {
+          kind: 'reserve',
+          qty: Number(open.qtyRequested || '0'),
+          warehouseId: open.warehouseId ?? null,
+          locationLabel: open.location,
+          reason: null,
+        },
+      }));
+    },
+    [openRequestForRow],
+  );
+
+  const handleEditReserve = useCallback((row: OrderInquiryWorklistRow) => {
+    setEditingRow({ row, mode: 'reserve' });
+  }, []);
+
+  const handleAmendReserve = useCallback((row: OrderInquiryWorklistRow) => {
+    setEditingRow({ row, mode: 'amend' });
+  }, []);
+
+  const handleHistoryClick = useCallback((row: OrderInquiryWorklistRow) => {
+    setHistoryRow(row);
+  }, []);
+
+  const handleUndoStaged = useCallback((rowId: string) => {
+    setStagedByRowId((prev) => {
+      if (!(rowId in prev)) return prev;
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
+  }, []);
+
+  // AC-RS-85/86: `ReserveLineForm`'s own pool options - resolved only while it is
+  // open, for that ONE row (the same lazy-per-row pattern `useReserveRowOptions`
+  // already gives the purchasing-side dialog above).
+  const editingRowOptionsEntries = useMemo(
     () =>
-      reserveRowDialogRow
+      editingRow
         ? [
             {
-              key: reserveRowDialogRow.id,
-              productId: reserveRowDialogRow.product_id ?? null,
-              location: reserveRowDialogRow.location ?? null,
+              key: editingRow.row.id,
+              productId: editingRow.row.product_id ?? null,
+              location: editingRow.row.location ?? null,
             },
           ]
         : [],
-    [reserveRowDialogRow],
+    [editingRow],
   );
-  const reserveRowOptionsResolved = useReserveRowOptions(reserveRowOptionsEntries);
-  const reserveRowOptions = reserveRowDialogRow
-    ? reserveRowOptionsResolved[reserveRowDialogRow.id]
-    : undefined;
-
-  const reserveRowHistoryQuery = useOrderInquiryRowHistory(
-    reserveRowEffectiveRequestId,
-    reserveRowDialogId,
-  );
-  const reserveRowHistory = useMemo(
+  const editingRowOptionsResolved = useReserveRowOptions(editingRowOptionsEntries);
+  const editingRowOptions = editingRow ? editingRowOptionsResolved[editingRow.row.id] : undefined;
+  const editingOpenRequest = editingRow ? openRequestForRow(editingRow.row.id) : null;
+  const editingAnsweredRow = editingRow ? answeredRequestRowFor(editingRow.row.id) : null;
+  // 6e.4 "Amend edits the LINE's net": the form edits the pill's figure. Its answered
+  // request rows, newest request first (the server's own order).
+  const editingAnsweredRows = useMemo(
     () =>
-      (reserveRowHistoryQuery.data ?? []).map((entry) => ({
-        kind: entry.kind,
-        qty: entry.qty,
-        location: entry.location,
-        reason: entry.reason,
-        actorName: entry.actor_name,
-        createdAt: entry.created_at,
-      })),
-    [reserveRowHistoryQuery.data],
+      editingRow
+        ? [...(reserveRequestsQuery.data ?? [])]
+            .sort((a, b) => b.ordinal - a.ordinal)
+            .flatMap((r) =>
+              r.rows.filter((row) => row.row_id === editingRow.row.id && row.qty_reserved != null),
+            )
+        : [],
+    [editingRow, reserveRequestsQuery.data],
   );
+  // What the line has asked for, a later balance request counted once (the server's
+  // own rule): net kept on every earlier answered row + the latest row's own ask,
+  // capped at the line's qty - 36 asked / 10 got, then 26 asked reads 36, not 62.
+  const editingRequestedTotal =
+    editingAnsweredRows.length === 0
+      ? 0
+      : Math.min(
+          editingAnsweredRows
+            .slice(1)
+            .reduce((sum, row) => sum + Number(row.qty_reserved || '0'), 0) +
+            Number(editingAnsweredRows[0].qty_requested || '0'),
+          Number(editingRow?.row.qty || '0'),
+        );
 
-  // F2 header "Cancel request" (plan 6c): the same countdown pattern round 1's own
-  // `ReserveRequestsCard` used, now built here and handed down as a prop - the dialog
-  // stays free of react-query so its own vitest suite can render it with no providers.
-  const reserveRowCancelAction = useDeferredAction({
+  function handleStage(payload: { warehouse_id?: string; qty_reserved: number; reason: string | null }) {
+    if (!editingRow) return;
+    const rowId = editingRow.row.id;
+    if (editingRow.mode === 'reserve') {
+      const locationOption = (editingRowOptions?.options ?? []).find(
+        (option) => option.value === payload.warehouse_id,
+      );
+      setStagedByRowId((prev) => ({
+        ...prev,
+        [rowId]: {
+          kind: 'reserve',
+          qty: payload.qty_reserved,
+          warehouseId: payload.warehouse_id ?? null,
+          locationLabel: locationOption ? bareLocationCode(locationOption.label) : null,
+          reason: payload.reason,
+        },
+      }));
+    } else {
+      setStagedByRowId((prev) => ({
+        ...prev,
+        [rowId]: { kind: 'amend', qty: payload.qty_reserved, reason: payload.reason },
+      }));
+    }
+    setEditingRow(null);
+  }
+
+  const historyAnchorRequestId =
+    (historyRow ? openRequestForRow(historyRow.id)?.requestId : null) ??
+    (historyRow ? answeredRequestRowFor(historyRow.id)?.id : null) ??
+    null;
+  const historyQuery = useOrderInquiryRowHistory(historyAnchorRequestId, historyRow?.id ?? null);
+
+  // AC-RS-87 + 6e.4: the header's own `Reserve (N)` CTA - ONE commit call for every
+  // staged line, whichever request it belongs to. The server resolves each row to its
+  // open (reserve) or latest answered (amend) request row; the client names rows only.
+  const stagedCount = Object.keys(stagedByRowId).length;
+  function commitStaged() {
+    const entries = Object.entries(stagedByRowId);
+    if (entries.length === 0) return;
+    const reserves: CommitReservePayload['reserves'] = [];
+    const amendments: CommitReservePayload['amendments'] = [];
+    let requesterName: string | null = null;
+    for (const [rowId, entry] of entries) {
+      if (entry.kind === 'reserve') {
+        reserves.push({
+          row_id: rowId,
+          ...(entry.warehouseId ? { warehouse_id: entry.warehouseId } : {}),
+          qty_reserved: entry.qty,
+          reason: entry.reason,
+        });
+        requesterName = requesterName ?? openRequestForRow(rowId)?.requestedByName ?? null;
+      } else {
+        amendments.push({ row_id: rowId, qty_reserved: entry.qty, reason: entry.reason });
+        requesterName = requesterName ?? answeredRequestRowFor(rowId)?.requestedByName ?? null;
+      }
+    }
+    commitReserveMutation.mutate(
+      { payload: { reserves, amendments }, requesterName },
+      { onSuccess: () => setStagedByRowId({}) },
+    );
+  }
+
+  // AC-RS-89: "Cancel request" moves into the Actions menu (deferred countdown, same
+  // shape round 1-3 already used) - no per-dialog header any more.
+  const reserveRequestCancelAction = useDeferredAction({
     actionKey: 'order_inquiry_reserve_request.cancel',
     entityType: 'order_inquiry_reserve_request',
-    entityId: reserveRowOpenRequest?.requestId ?? null,
+    entityId: openReserveRequest?.id ?? null,
     verb: 'Cancelling',
-    subject: reserveRowOpenRequest ? `Request #${reserveRowOpenRequest.ordinal}` : '',
+    subject: openReserveRequest ? `Request #${openReserveRequest.ordinal}` : '',
     surface: 'inline',
-    watchFromMount: Boolean(reserveRowOpenRequest),
+    watchFromMount: Boolean(openReserveRequest),
     successMessage: 'Reserve request cancelled',
     invalidateKeys: [
       [ORDER_INQUIRY_HEADER_LINES_KEY, id],
       [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, id],
     ],
   });
+  const canCancelOpenRequest =
+    Boolean(openReserveRequest) &&
+    canCancelReserveRequest(currentUserId, openReserveRequest?.requested_by, canReserve);
 
-  // S2 (reviewer round, ADR-PRODUCT-STANDARDS D7): Unreserve is a server-deferred
-  // pending action too, the same shape as the request's own Cancel above - a
-  // countdown with Cancel, no confirm step, the server commits `unreserve_row` even
-  // if this dialog (or the tab) closes mid-window. `entity_type` is deliberately its
-  // own (`order_inquiry_reserve_row`), distinct from `order_inquiry_row.unlink`'s -
-  // two different pending actions on the same row must not block each other under
-  // the one-pending-action-per-record constraint.
-  const reserveRowUnreserveAction = useDeferredAction({
-    actionKey: 'order_inquiry_reserve_row.unreserve',
-    entityType: 'order_inquiry_reserve_row',
-    entityId: reserveRowDialogId,
-    verb: 'Unreserving',
-    subject: reserveRowDialogRow?.item_code ?? '',
-    surface: 'inline',
-    watchFromMount: Boolean(reserveRowDialogId),
-    successMessage: 'Unreserved',
-    invalidateKeys: [
-      [ORDER_INQUIRY_HEADER_LINES_KEY, id],
-      [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, id],
-    ],
-    onCommitted: () => reserveRowHistoryQuery.refetch(),
-  });
-
-  const openReserveRowDialog = useCallback((row: OrderInquiryWorklistRow) => {
-    setReserveRowDialogId(row.id);
-  }, []);
-
-  function closeReserveRowDialog() {
-    setReserveRowDialogId(null);
-    if (searchParams.get('reserve')) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete('reserve');
-      const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-    }
-  }
-
-  // AC-RS-62: `?reserve=<request_id>` auto-opens the dialog on that request's FIRST
-  // open row - once, and only while nothing else is already open for this row.
-  useEffect(() => {
-    const reserveParam = searchParams.get('reserve');
-    if (!reserveParam || reserveRowDialogId) return;
-    const request = (reserveRequestsQuery.data ?? []).find((r) => r.id === reserveParam);
-    const firstOpenRow = request?.rows.find((row) => row.qty_reserved == null);
-    if (firstOpenRow) setReserveRowDialogId(firstOpenRow.row_id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, reserveRequestsQuery.data]);
 
   const header = headerQuery.data;
 
@@ -558,11 +657,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 >
                   {orderInquiryHeaderStatusLabel(header.status)}
                 </Badge>
-                {openReserveRequest ? (
-                  <Badge variant="warning" appearance="light" size="md">
-                    Request to reserve
-                  </Badge>
-                ) : null}
               </div>
               <span className="text-sm text-muted-foreground">
                 Raised by {header.raised_by_name ?? 'Not recorded'}
@@ -661,6 +755,17 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       </Tooltip>
                     )
                   ) : null}
+                  {canCancelOpenRequest ? (
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        reserveRequestCancelAction.start();
+                      }}
+                    >
+                      <Undo2 className="size-4" aria-hidden />
+                      Cancel request
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem
                     disabled={exportXlsx.isPending}
                     onSelect={
@@ -682,20 +787,40 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 </DetailActionsMenu>
               }
               primary={
-                canAcknowledge ? (
-                  <Button
-                    size="sm"
-                    onClick={runConfirm}
-                    disabled={confirmDisabled || acknowledge.isPending}
-                  >
-                    {confirmLabel}
-                  </Button>
+                canAcknowledge || (canReserve && (Boolean(openReserveRequest) || stagedCount > 0)) ? (
+                  <div className="flex items-center gap-2">
+                    {canAcknowledge ? (
+                      <Button
+                        size="sm"
+                        onClick={runConfirm}
+                        disabled={confirmDisabled || acknowledge.isPending}
+                      >
+                        {confirmLabel}
+                      </Button>
+                    ) : null}
+                    {/* AC-RS-87: visible with the reserve permission while a request is
+                        open or anything is staged; enabled only once something is
+                        staged. */}
+                    {canReserve && (openReserveRequest || stagedCount > 0) ? (
+                      <Button
+                        size="sm"
+                        data-testid="reserve-cta"
+                        onClick={commitStaged}
+                        disabled={stagedCount === 0 || commitReserveMutation.isPending}
+                      >
+                        {stagedCount > 0 ? `Reserve (${stagedCount})` : 'Reserve'}
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : undefined
               }
             />
           </div>
           {unlinkSelectedAction.countdown ? (
             <div className="mt-3">{unlinkSelectedAction.countdown}</div>
+          ) : null}
+          {reserveRequestCancelAction.countdown ? (
+            <div className="mt-3">{reserveRequestCancelAction.countdown}</div>
           ) : null}
         </CardHeader>
       </Card>
@@ -726,7 +851,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             isLoading={linesQuery.isLoading}
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}
-            onReserveClick={openReserveRowDialog}
+            canReserve={canReserve}
+            stagedByRowId={stagedByRowId}
+            onTickReserve={handleTickReserve}
+            onEditReserve={handleEditReserve}
+            onAmendReserve={handleAmendReserve}
+            onHistoryClick={handleHistoryClick}
+            onUndoStaged={handleUndoStaged}
           />
         </TabsContent>
 
@@ -785,61 +916,51 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         />
       ) : null}
 
-      {reserveRowDialogId && reserveRowDialogRow ? (
-        <ReserveRowDialog
+      {/* 6e.4 (S2): mounted only once the row's pool options have loaded, so the
+          reserve-mode prefill never reads an empty availability map. */}
+      {editingRow && (editingRow.mode === 'amend' || (editingRowOptions && !editingRowOptions.isLoading)) ? (
+        <ReserveLineForm
           open
           onOpenChange={(next) => {
-            if (!next) closeReserveRowDialog();
+            if (!next) setEditingRow(null);
           }}
-          rowId={reserveRowDialogRow.id}
-          itemCode={reserveRowDialogRow.item_code ?? null}
-          openRequest={reserveRowOpenRequest}
-          history={reserveRowHistory}
-          locationOptions={reserveRowOptions?.options ?? []}
-          defaultLocationId={reserveRowOptions?.defaultWarehouseId ?? null}
-          availableQtyByLocation={reserveRowOptions?.availableQtyByWarehouseId ?? {}}
-          netReservedQty={reserveRowDialogRow.reserved_qty ?? '0'}
-          canAct={canReserve}
-          onReserve={(requestId, rowId, payload) =>
-            reserveRowMutation.mutateAsync({
-              requestId,
-              rowId,
-              payload,
-              // N1 (AC-RS-26 "toast wording kept"): "Reserved, <requester> notified" -
-              // the parent already resolves the requester's name for the panel above
-              // the form, so the mutation's own toast reads the same one.
-              requestedByName: reserveRowOpenRequest?.requestedByName ?? null,
-            })
+          itemCode={editingRow.row.item_code ?? null}
+          mode={editingRow.mode}
+          requestedQty={
+            editingRow.mode === 'reserve'
+              ? (editingOpenRequest?.qtyRequested ?? '0')
+              : editingAnsweredRows.length > 0
+                ? String(editingRequestedTotal)
+                : (editingRow.row.reserved_qty ?? '0')
           }
-          cancelControl={
-            canCancelReserveRequest(currentUserId, reserveRowOpenRequest?.requestedBy, canReserve)
-              ? {
-                  isPending: reserveRowCancelAction.isPending,
-                  isBlocked: reserveRowCancelAction.isBlocked,
-                  countdown: reserveRowCancelAction.countdown,
-                  start: () => reserveRowCancelAction.start(),
-                }
-              : null
+          maxQty={
+            editingRow.mode === 'amend'
+              ? String(
+                  Number(editingRow.row.reserved_qty || '0') +
+                    Math.max(0, rowRemaining(editingRow.row)),
+                )
+              : undefined
           }
-          unreserveControl={
-            canReserve
-              ? {
-                  isPending: reserveRowUnreserveAction.isPending,
-                  isBlocked: reserveRowUnreserveAction.isBlocked,
-                  countdown: reserveRowUnreserveAction.countdown,
-                  start: ({ qty, note }) =>
-                    reserveRowUnreserveAction.start({
-                      request_id: reserveRowEffectiveRequestId,
-                      qty,
-                      note,
-                    }),
-                }
-              : null
+          answeredRequestCount={editingAnsweredRows.length}
+          locationOptions={editingRowOptions?.options ?? []}
+          availableQtyByLocation={editingRowOptions?.availableQtyByWarehouseId ?? {}}
+          defaultLocationId={
+            editingOpenRequest?.warehouseId ?? editingRowOptions?.defaultWarehouseId ?? null
           }
-          onConfirmed={() => {
-            invalidateReserveQueries();
-            reserveRowHistoryQuery.refetch();
+          lockedLocationLabel={editingAnsweredRow?.location ?? editingRow.row.location ?? ''}
+          initialQty={editingRow.row.reserved_qty ?? '0'}
+          onStage={handleStage}
+        />
+      ) : null}
+
+      {historyRow ? (
+        <ReserveLineHistoryDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setHistoryRow(null);
           }}
+          itemCode={historyRow.item_code ?? null}
+          entries={historyQuery.data ?? []}
         />
       ) : null}
 

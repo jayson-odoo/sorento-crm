@@ -62,11 +62,14 @@ process violation as skipping it. Deviations are recorded in the PR description.
   implementing branch, run the test, confirm it goes red - a test that stays
   green is a blocker ("test does not guard AC-x"). `security-reviewer` runs
   only when the diff touches auth, RBAC/permission gating, external ingest,
-  file upload/storage, or multi-company scoping.
-- **`guide-writer` agent** (sonnet): after review passes, writes/updates the
-  Outline user guide for the feature (`documentation/user-guides/`) - the
-  repo rule "no feature explanations inside the UI" means the explanation
-  lives here, not in the diff.
+  file upload/storage, or multi-company scoping - otherwise it is skipped,
+  and the PR body says so ("security-reviewer: not run, diff outside its
+  surface") (owner ruling, 24 Sep 2026).
+- **`guide-writer` agent** (sonnet) is retired from the per-lane pipeline
+  (owner ruling, 24 Sep 2026): it no longer runs after every lane's review.
+  Outline user-guide updates (`documentation/user-guides/`) are batched -
+  run `guide-writer` only when the owner asks, or once a week over the
+  lanes merged that week that changed a user-facing flow.
 - Trivial one-file changes may run inline in the main session; say so instead
   of silently absorbing a real slice.
 
@@ -205,7 +208,9 @@ once per lane, not once per slice:
   `app/api/v1/public/*`, webhooks, `X-API-Key`), file upload/presign/storage,
   or multi-company scoping (`CompanyScopedMixin`, raw SQL). Uses the built-in
   `/security-review` checklist. See `.claude/agents/security-reviewer.md` for
-  the full trigger list.
+  the full trigger list. Otherwise it is skipped, and the PR body says so
+  ("security-reviewer: not run, diff outside its surface") (owner ruling,
+  24 Sep 2026).
 - **browser verification** (`tester` agent, agent-browser): end-of-lane, once,
   not per slice.
 
@@ -216,8 +221,9 @@ Design pass: `emil-design-eng` review table (Before / After / Why) on every UI d
 `reviewer` runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
 Fix round: the SAME coder takes reviewer + security findings; the captain
 adjudicates only findings that add a layer (registry, abstraction, config
-surface) per PRINCIPLES "Simplest thing that works". After review passes, the
-`guide-writer` agent writes/updates the Outline user guide.
+surface) per PRINCIPLES "Simplest thing that works". `guide-writer` no
+longer runs per lane here (owner ruling, 24 Sep 2026) - see "Who executes
+each step" above; the PR opens straight after review passes.
 
 ### Step 9 - Definition of Done gate
 
@@ -237,6 +243,12 @@ main checkout - run `git status` before ANY branch or commit operation and never
 assume the tree is clean. Hand off on the **dev server** (`npm run dev`), never a
 prod build: that is the standing rule in `CLAUDE.md` "Frontend dev loop", and it
 supersedes the older prod-build habit this step used to carry.
+
+Every PR body carries two lines near the top (owner ruling, 24 Sep 2026, so lane
+duration is measurable alongside CI's own PR-open-to-merge time): `Track: small-fix`
+or `Track: full`, and `Plan created: <ISO timestamp>` (the first git commit
+timestamp of the plan file, or its Status-line date if not yet committed). See
+`documentation/reference/PR-CHECKLIST.md`.
 
 ### Step 11 - Reclaim the worktree
 
@@ -279,7 +291,7 @@ to also drop `node_modules` and `venv` from lanes you are done with.
 | 8 security review | built-in `/security-review` checklist | `security-reviewer` agent, parallel with reviewer |
 | 8 browser verification | agent-browser, once per lane | `tester` agent, parallel with reviewer |
 | 8 review design | `emil-design-eng`, `review-animations` (motion diffs only) | `reviewer` agent |
-| 8 user guide | Outline sync (`documentation/user-guides/README.md`, `SYNC.md`) | `guide-writer` agent, after review |
+| user guide (on-request/weekly, not per lane) | Outline sync (`documentation/user-guides/README.md`, `SYNC.md`) | `guide-writer` agent |
 | new FE dependency | `pick-ui-library` | `coder` agent, worktree |
 | bugs | `/triage` then `/diagnosing-bugs` | `triage` agent (inbound issues) + main session |
 | periodic | `/improve-codebase-architecture`, `/codebase-design`, `improve-animations` | main session |

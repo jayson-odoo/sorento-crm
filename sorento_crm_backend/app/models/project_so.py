@@ -1237,7 +1237,7 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
         Index("ix_order_inquiry_links_spo_allocation", "spo_allocation_id"),
         Index("ix_order_inquiry_links_reserve_request_row", "reserve_request_row_id"),
         # SF-9 (security review, `oirs_0002_reserve_round2` amended): the lost-update
-        # backstop for `reserve_row` - at most one link may ever name a given reserve
+        # backstop for `commit_request` - at most one link may ever name a given reserve
         # request row, so a caller that reaches the flush on a stale read (the
         # `.with_for_update()` lock in the service is the primary defence) hits this
         # constraint and 409s instead of writing a second link. Partial: the CHECK
@@ -1390,7 +1390,9 @@ class OrderInquiryReserveEvent(Base, CompanyScopedMixin):
             f"kind IN ('{RESERVE_EVENT_RESERVED}', '{RESERVE_EVENT_UNRESERVED}')",
             name="ck_order_inquiry_reserve_events_kind",
         ),
-        CheckConstraint("qty > 0", name="ck_order_inquiry_reserve_events_qty_positive"),
+        # 6e.4 (security N3): `>= 0` - "Reserve 0" writes a `reserved` event of 0 so
+        # History shows the decision (oirs_0004_reserve_event_zero).
+        CheckConstraint("qty >= 0", name="ck_order_inquiry_reserve_events_qty_positive"),
         Index("ix_order_inquiry_reserve_events_row", "reserve_request_row_id"),
         {"schema": "projects"},
     )
