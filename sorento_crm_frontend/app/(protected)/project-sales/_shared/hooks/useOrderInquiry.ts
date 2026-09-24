@@ -207,14 +207,12 @@ export function useCommitOrderInquiryReserve(inquiryId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
-      requestId,
       payload,
     }: {
-      requestId: string;
       payload: CommitReservePayload;
       /** The requester's own name, for the toast alone - never read by `mutationFn`. */
       requesterName?: string | null;
-    }) => commitOrderInquiryReserve(inquiryId as string, requestId, payload),
+    }) => commitOrderInquiryReserve(inquiryId as string, payload),
     onSuccess: (_data, variables) => {
       toast.success(`Reserved, ${variables.requesterName ?? 'the requester'} notified`);
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, inquiryId] });

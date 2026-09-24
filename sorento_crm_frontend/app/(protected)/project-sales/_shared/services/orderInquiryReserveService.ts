@@ -98,7 +98,9 @@ export interface OrderInquiryReserveHistoryEntry {
 
 export interface CommitReserveRow {
   row_id: string;
-  warehouse_id: string;
+  /** Omitted when CS chose no location: the server falls back to the request row's
+   * own default pool (6e.4, S8). */
+  warehouse_id?: string;
   qty_reserved: string | number;
   reason?: string | null;
 }
@@ -115,18 +117,17 @@ export interface CommitReservePayload {
 }
 
 /**
- * CS's own line-by-line commit (`PLAN-oi-request-cs-reserve.md` section 6e.1, owner
- * round 4, 24 Sep - supersedes the per-row `reserveOrderInquiryRow`/
- * `unreserveOrderInquiryRow`, both retired with their own routes). One call per click
- * of the Lines grid's own `Reserve (N)` CTA: `reserves` answers still-open request
- * rows, `amendments` revises already-answered ones (R4-3). One transaction, one
- * `order_inquiry_reserved` email naming only the rows this call touched.
+ * CS's own line-by-line commit (`PLAN-oi-request-cs-reserve.md` 6e.1, re-keyed by 6e.4).
+ * One call per click of the Lines grid's own `Reserve (N)` CTA, keyed by the INQUIRY:
+ * the server resolves each `reserves` row to its open request row and each
+ * `amendments` row to its latest answered one, so the client never picks a request.
+ * One transaction, one `order_inquiry_reserved` email per request touched. Returns the
+ * touched requests.
  */
 export async function commitOrderInquiryReserve(
   inquiryId: string,
-  requestId: string,
   payload: CommitReservePayload,
-): Promise<OrderInquiryReserveRequest> {
+): Promise<OrderInquiryReserveRequest[]> {
   const requestBody = {
     reserves: payload.reserves.map((row) => ({ ...row, qty_reserved: String(row.qty_reserved) })),
     amendments: payload.amendments.map((row) => ({
@@ -134,18 +135,18 @@ export async function commitOrderInquiryReserve(
       qty_reserved: String(row.qty_reserved),
     })),
   };
-  const response = await apiFetch(
-    `${BASE}/order-inquiries/${inquiryId}/reserve-requests/${requestId}/commit`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    },
-  );
+  const response = await apiFetch(`${BASE}/order-inquiries/${inquiryId}/reserve-commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to reserve those lines'));
   const body = await response.json();
-  return { ...body, first_to_name: body.notified_name ?? null };
+  return (Array.isArray(body) ? body : []).map((item: OrderInquiryReserveRequest) => ({
+    ...item,
+    first_to_name: null,
+  }));
 }
 
 /** F3: one row's own history, newest first - `ReserveLineHistoryDialog`'s own read. */
@@ -163,7 +164,7 @@ export async function getOrderInquiryRowHistory(
 }
 
 /** Every reserve request this header has ever raised, newest first - used to find
- * a row's own open request (or last-answered one) for `ReserveRowDialog`. */
+ * a row's own open request (or latest answered one) on the Lines grid. */
 export async function getOrderInquiryReserveRequests(
   inquiryId: string,
 ): Promise<OrderInquiryReserveRequest[]> {

@@ -31,6 +31,11 @@ import type {
   OrderInquiryHeaderDetail,
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
+import type {
+  CommitReservePayload,
+  OrderInquiryReserveHistoryEntry,
+  OrderInquiryReserveRequest,
+} from '../../../_shared/services/orderInquiryReserveService';
 
 const replaceSpy = vi.fn();
 let searchParamsValue = '';
@@ -49,8 +54,9 @@ vi.mock('@/hooks/usePermissions', () => ({
       : true,
 }));
 
+let sessionUserId = 'test-current-user';
 vi.mock('next-auth/react', () => ({
-  useSession: () => ({ data: { user: { id: 'test-current-user' } }, status: 'authenticated' }),
+  useSession: () => ({ data: { user: { id: sessionUserId } }, status: 'authenticated' }),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -140,12 +146,58 @@ const RESERVED_ROW = row({
   reserve_state: 'reserved',
   reserved_qty: '30',
 });
+// 6e.4 (AC-RS-83b): CS answered this one with Reserve 0.
+const DECLINED_ROW = row({
+  id: 'row-declined',
+  item_code: 'ZZT-DECLINED',
+  reserve_state: 'declined',
+  reserved_qty: '0',
+});
 
-const OPEN_REQUEST = {
-  id: 'rr-1',
+// The finished request that answered RESERVED_ROW (30 of 50 at DC1) and DECLINED_ROW
+// (0 of 40) - the anchor Amend and History read (6e.4, B3).
+const ANSWERED_REQUEST: OrderInquiryReserveRequest = {
+  id: 'rr-0',
   order_inquiry_id: 'oi-1',
   ordinal: 1,
-  state: 'requested' as const,
+  state: 'reserved',
+  requested_by: 'user-1',
+  requested_by_name: 'Joey',
+  requested_at: '2026-09-20T09:00:00',
+  note: null,
+  reserved_by_name: 'Eling',
+  reserved_at: '2026-09-21T09:00:00',
+  cancelled_at: null,
+  first_to_name: null,
+  rows: [
+    {
+      id: 'reqrow-0',
+      row_id: 'row-reserved',
+      item_code: 'ZZT-RESERVED',
+      qty_requested: '50',
+      warehouse_id: 'wh-dc1',
+      location: 'DC1',
+      qty_reserved: '30',
+      reason: 'DC1 has 30',
+    },
+    {
+      id: 'reqrow-0b',
+      row_id: 'row-declined',
+      item_code: 'ZZT-DECLINED',
+      qty_requested: '40',
+      warehouse_id: 'wh-brw',
+      location: 'BRW',
+      qty_reserved: '0',
+      reason: 'none on hand',
+    },
+  ],
+};
+
+const OPEN_REQUEST: OrderInquiryReserveRequest = {
+  id: 'rr-1',
+  order_inquiry_id: 'oi-1',
+  ordinal: 2,
+  state: 'requested',
   requested_by: 'user-1',
   requested_by_name: 'Joey',
   requested_at: '2026-09-22T09:00:00',
@@ -174,7 +226,7 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
   return {
     ...actual,
     getOrderInquiryHeader: vi.fn(async () => HEADER),
-    getOrderInquiryHeaderLines: vi.fn(async () => [PLAIN_ROW, REQUESTED_ROW, RESERVED_ROW]),
+    getOrderInquiryHeaderLines: vi.fn(async () => [PLAIN_ROW, REQUESTED_ROW, RESERVED_ROW, DECLINED_ROW]),
     getOrderInquiryHeaderRelatedDocuments: vi.fn(async () => ({ purchase_orders: [], spos: [] })),
     listOrderInquiryHeaders: vi.fn(async () => ({ data: [], total: 0, page: 1, limit: 25 })),
     acknowledgeOrderInquiryRowsByFilter: vi.fn(async () => ({ acknowledged: 0, results: [] })),
@@ -183,32 +235,38 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
   };
 });
 
-const getReserveRequestsMock = vi.fn(async () => [OPEN_REQUEST]);
-// AC-RS-87: `commitOrderInquiryReserve` does not exist on this service yet (round 4).
-// Added here at the mock boundary so the module loads; the real service export is the
-// coder's job. Every other export is the REAL implementation (round-2/3 machinery this
-// suite deliberately never exercises).
-const commitReserveSpy = vi.fn(async () => ({
-  request: { ...OPEN_REQUEST, state: 'reserved' },
-  reserved_count: 1,
-}));
+const getReserveRequestsMock = vi.fn<(inquiryId: string) => Promise<OrderInquiryReserveRequest[]>>(
+  async () => [OPEN_REQUEST, ANSWERED_REQUEST],
+);
+// AC-RS-87 / 6e.4: the inquiry-keyed commit, `(inquiryId, payload)`.
+const commitReserveSpy = vi.fn<
+  (inquiryId: string, payload: CommitReservePayload) => Promise<OrderInquiryReserveRequest[]>
+>(async () => [{ ...OPEN_REQUEST, state: 'reserved' }]);
+const HISTORY: OrderInquiryReserveHistoryEntry[] = [
+  { kind: 'unreserved', qty: '20', location: 'DC1', reason: 'went back', actor_name: 'Eling', created_at: '2026-09-22T10:00:00' },
+  { kind: 'reserved', qty: '50', location: 'DC1', reason: null, actor_name: 'Eling', created_at: '2026-09-21T10:00:00' },
+  { kind: 'requested', qty: '50', location: 'DC1', reason: null, actor_name: 'Joey', created_at: '2026-09-20T10:00:00' },
+];
+const historyMock = vi.fn<
+  (requestId: string, rowId: string) => Promise<OrderInquiryReserveHistoryEntry[]>
+>(async () => HISTORY);
 vi.mock('../../../_shared/services/orderInquiryReserveService', async (importOriginal) => {
   const actual = await importOriginal<
     typeof import('../../../_shared/services/orderInquiryReserveService')
   >();
   return {
     ...actual,
-    getOrderInquiryReserveRequests: (...args: unknown[]) =>
-      getReserveRequestsMock(...(args as [string])),
-    commitOrderInquiryReserve: (...args: unknown[]) =>
-      commitReserveSpy(...(args as [string, string, unknown])),
+    getOrderInquiryReserveRequests: (inquiryId: string) => getReserveRequestsMock(inquiryId),
+    commitOrderInquiryReserve: (inquiryId: string, payload: CommitReservePayload) =>
+      commitReserveSpy(inquiryId, payload),
+    getOrderInquiryRowHistory: (requestId: string, rowId: string) => historyMock(requestId, rowId),
   };
 });
 
 const createPendingActionSpy = vi.fn(async ({ entityId }: { entityId: string }) => ({
   id: `pa-${entityId}`,
-  action_key: 'order_inquiry_reserve_row.unreserve',
-  entity_type: 'order_inquiry_reserve_row',
+  action_key: 'order_inquiry_reserve_request.cancel',
+  entity_type: 'order_inquiry_reserve_request',
   entity_id: entityId,
   commit_at: new Date(Date.now() + 10_000).toISOString(),
   window_seconds: 10,
@@ -263,8 +321,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   searchParamsValue = '';
   reservePermissionOverride = null;
-  getReserveRequestsMock.mockResolvedValue([OPEN_REQUEST]);
-  vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW, REQUESTED_ROW, RESERVED_ROW]);
+  sessionUserId = 'test-current-user';
+  getReserveRequestsMock.mockResolvedValue([OPEN_REQUEST, ANSWERED_REQUEST]);
+  vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([
+    PLAIN_ROW,
+    REQUESTED_ROW,
+    RESERVED_ROW,
+    DECLINED_ROW,
+  ]);
 });
 
 describe('AC-RS-83: pills + per-row icon buttons, gated by the reserve permission', () => {
@@ -338,12 +402,15 @@ describe('AC-RS-85: Edit reserve opens ReserveLineForm; short qty needs a reason
     fireEvent.click(within(requestedRow).getByLabelText('Edit reserve'));
 
     expect(await screen.findByRole('dialog', { name: /ZZT-REQUESTED/i })).toBeInTheDocument();
-    const stageButton = screen.getByRole('button', { name: /^stage$/i });
-    expect(stageButton).toBeDisabled();
+    // 6e.4 (S2): mounted after the pools loaded - prefilled 107, nothing to explain.
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('107');
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeEnabled();
 
     fireEvent.click(screen.getByLabelText('Location'));
     fireEvent.click(await screen.findByText('DC1'));
     fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '20' } });
+    // 6e.4 (S1): short of the request needs a reason, availability notwithstanding.
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'partial stock only' } });
     fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
 
@@ -364,6 +431,7 @@ describe('AC-RS-86: Amend reserve on a reserved line locks the location and stag
     expect(screen.queryByLabelText('Location')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: '20 went back' } });
     fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
 
     expect(await screen.findByText('Amend to 10')).toBeInTheDocument();
@@ -394,6 +462,7 @@ describe('AC-RS-87: header Reserve CTA, disabled while nothing staged, commits t
     fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('Amend reserve'));
     await screen.findByRole('dialog', { name: /ZZT-RESERVED/i });
     fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: '20 went back' } });
     fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
     await screen.findByText('Amend to 10');
 
@@ -403,10 +472,10 @@ describe('AC-RS-87: header Reserve CTA, disabled while nothing staged, commits t
     fireEvent.click(enabledCta);
 
     await waitFor(() => expect(commitReserveSpy).toHaveBeenCalledTimes(1));
-    const [, , payload] = commitReserveSpy.mock.calls[0] as [string, string, {
-      reserves: Array<{ row_id: string; warehouse_id: string; qty_reserved: string | number; reason?: string | null }>;
-      amendments: Array<{ row_id: string; qty_reserved: string | number; reason?: string | null }>;
-    }];
+    // 6e.4: ONE inquiry-keyed call carrying lines of two different requests (the open
+    // one and the finished one) - no request id is chosen client-side.
+    const [inquiryId, payload] = commitReserveSpy.mock.calls[0];
+    expect(inquiryId).toBe('oi-1');
     expect(payload.reserves).toEqual([
       expect.objectContaining({ row_id: 'row-requested', warehouse_id: 'wh-brw', qty_reserved: 107 }),
     ]);
@@ -456,10 +525,12 @@ describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= presel
     // Scoped to the listbox, not the whole screen: a row's own State pill (e.g. "To
     // buy") carries the same text as its matching filter option.
     const listbox = await screen.findByRole('listbox');
-    const options = ['To buy', 'Partly on PO/SPO', 'On PO/SPO', 'Done', 'Cancelled', 'Request to reserve', 'Reserved'];
+    const options = ['To buy', 'Partly on PO/SPO', 'On PO/SPO', 'Done', 'Request to reserve', 'Reserved'];
     for (const label of options) {
       expect(within(listbox).getByRole('option', { name: label })).toBeInTheDocument();
     }
+    // 6e.4 (AC-RS-88b): this grid never shows a cancelled line, so no such option.
+    expect(within(listbox).queryByRole('option', { name: 'Cancelled' })).not.toBeInTheDocument();
 
     fireEvent.click(within(listbox).getByRole('option', { name: 'Request to reserve' }));
 
@@ -485,6 +556,14 @@ describe('AC-RS-89: History opens a read-only events dialog; Cancel request sits
     fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('History'));
 
     const historyDialog = await screen.findByRole('dialog', { name: /history/i });
+    // Anchored on the finished request that answered this line.
+    await waitFor(() => expect(historyMock).toHaveBeenCalledWith('rr-0', 'row-reserved'));
+    const unreserved = await within(historyDialog).findByText('Unreserved 20 @ DC1');
+    const reserved = within(historyDialog).getByText('Reserved 50 @ DC1');
+    const requested = within(historyDialog).getByText('Requested 50 @ DC1');
+    // Rendered in the server's own order, newest first.
+    expect(unreserved.compareDocumentPosition(reserved) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(reserved.compareDocumentPosition(requested) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(historyDialog).queryByText(/\d{4}-\d\d-\d\dT/)).not.toBeInTheDocument();
   });
 
@@ -499,5 +578,131 @@ describe('AC-RS-89: History opens a read-only events dialog; Cancel request sits
       button: 0,
     });
     expect(await screen.findByText(/cancel request/i)).toBeInTheDocument();
+  });
+
+  it('the requester WITHOUT the reserve permission is offered Cancel request; a colleague without it is not', async () => {
+    reservePermissionOverride = false;
+    sessionUserId = 'user-1';
+    const { unmount } = renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+    fireEvent.pointerDown(screen.getByRole('button', { name: /order inquiry options/i }), {
+      button: 0,
+    });
+    expect(await screen.findByText(/cancel request/i)).toBeInTheDocument();
+    unmount();
+
+    sessionUserId = 'someone-else';
+    renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+    fireEvent.pointerDown(screen.getByRole('button', { name: /order inquiry options/i }), {
+      button: 0,
+    });
+    await screen.findByText(/export excel/i);
+    expect(screen.queryByText(/cancel request/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('6e.4 review round: declined lines, the action column gate, amend prefill, staged defaults, filter URL', () => {
+  it('AC-RS-83b: a declined line reads Not reserved and offers Amend reserve + History', async () => {
+    renderDetail();
+    await screen.findByText('ZZT-DECLINED');
+
+    const declinedRow = gridRowFor('ZZT-DECLINED');
+    expect(within(declinedRow).getByText('Not reserved')).toBeInTheDocument();
+    expect(within(declinedRow).getByLabelText('Amend reserve')).toBeInTheDocument();
+    expect(within(declinedRow).getByLabelText('History')).toBeInTheDocument();
+  });
+
+  it('AC-RS-83b: no open request and no reserved / declined line - the action column is absent', async () => {
+    getReserveRequestsMock.mockResolvedValue([]);
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([PLAIN_ROW]);
+    renderDetail();
+    await screen.findByText('ZZT-PLAIN');
+
+    expect(screen.queryAllByText('Reserve actions')).toHaveLength(0);
+    expect(screen.queryByTestId('reserve-cta')).not.toBeInTheDocument();
+  });
+
+  it('AC-RS-85b: the form opens only once the pools have loaded, prefilled min(requested, available)', async () => {
+    let release: () => void = () => {};
+    getStockDetailMock.mockImplementationOnce(
+      (productId: string) =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              locations: [
+                { warehouse_id: 'wh-brw', location: 'BRW', available_qty: '107' },
+                { warehouse_id: 'wh-dc1', location: 'DC1', available_qty: '20' },
+              ],
+            });
+          void productId;
+        }),
+    );
+    renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+
+    fireEvent.click(within(gridRowFor('ZZT-REQUESTED')).getByLabelText('Edit reserve'));
+    await waitFor(() => expect(getStockDetailMock).toHaveBeenCalled());
+    expect(screen.queryByRole('dialog', { name: /ZZT-REQUESTED/i })).not.toBeInTheDocument();
+
+    release();
+    await screen.findByRole('dialog', { name: /ZZT-REQUESTED/i });
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('107');
+  });
+
+  it('AC-RS-85b: amend prefill is the anchor request row own reserved qty, not the line aggregate', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([
+      PLAIN_ROW,
+      REQUESTED_ROW,
+      row({ ...RESERVED_ROW, reserved_qty: '45' }),
+    ]);
+    renderDetail();
+    await screen.findByText('ZZT-RESERVED');
+
+    fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('Amend reserve'));
+    await screen.findByRole('dialog', { name: /ZZT-RESERVED/i });
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('30');
+    expect(screen.getByText('DC1')).toBeInTheDocument();
+  });
+
+  it('AC-RS-85b: a staged reserve with no location is sent without warehouse_id', async () => {
+    getReserveRequestsMock.mockResolvedValue([
+      {
+        ...OPEN_REQUEST,
+        rows: [{ ...OPEN_REQUEST.rows[0], warehouse_id: null, location: null }],
+      },
+    ]);
+    renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+
+    fireEvent.click(within(gridRowFor('ZZT-REQUESTED')).getByLabelText('Reserve'));
+    expect(await screen.findByText('Reserve 107')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^reserve \(1\)$/i }));
+
+    await waitFor(() => expect(commitReserveSpy).toHaveBeenCalledTimes(1));
+    const [, payload] = commitReserveSpy.mock.calls[0];
+    expect(payload.reserves).toHaveLength(1);
+    expect(payload.reserves[0]).toEqual({ row_id: 'row-requested', qty_reserved: 107, reason: null });
+    expect(payload.reserves[0]).not.toHaveProperty('warehouse_id');
+  });
+
+  it('AC-RS-88b: changing the filter while ?reserve= is on the URL replaces the URL without it; an empty result reads No line matches the filter.', async () => {
+    searchParamsValue = 'reserve=rr-1';
+    renderDetail();
+    await screen.findByText('ZZT-REQUESTED');
+
+    const trigger = document.querySelector('[data-slot="searchable-multi-select-trigger"]');
+    fireEvent.click(trigger as Element);
+    const listbox = await screen.findByRole('listbox');
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Request to reserve' }));
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Done' }));
+
+    await waitFor(() =>
+      expect(replaceSpy).toHaveBeenCalledWith('/project-sales/order-inquiries/oi-1', { scroll: false }),
+    );
+    for (const [url] of replaceSpy.mock.calls) {
+      expect(String(url)).not.toContain('reserve=');
+    }
+    expect(await screen.findByText('No line matches the filter.')).toBeInTheDocument();
   });
 });

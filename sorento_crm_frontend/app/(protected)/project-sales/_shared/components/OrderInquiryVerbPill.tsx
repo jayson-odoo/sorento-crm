@@ -135,7 +135,7 @@ export function ReservePill({
   reservedQty,
   requestedQty,
 }: {
-  reserveState: 'requested' | 'reserved' | string | null | undefined;
+  reserveState: 'requested' | 'reserved' | 'declined' | string | null | undefined;
   reservedQty?: string | null;
   /** AC-RS-83: the open request row's own `qty_requested` for this row - printed only
    * when `reserveState === 'requested'`. */
@@ -159,6 +159,14 @@ export function ReservePill({
             icon", round 3 owner words). */}
         <Check className="size-3" aria-hidden />
         Reserved {reservedQty ?? ''}
+      </span>
+    );
+  }
+  if (reserveState === 'declined') {
+    // 6e.4 (AC-RS-83b): CS answered "Reserve 0" - neutral, not an error and not done.
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('draft')}`}>
+        Not reserved
       </span>
     );
   }

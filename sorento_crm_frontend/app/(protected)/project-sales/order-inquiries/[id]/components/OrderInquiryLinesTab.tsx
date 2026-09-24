@@ -43,9 +43,9 @@ function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
 }
 
 // AC-RS-88 (`PLAN-oi-request-cs-reserve.md` 6e.2): the two reserve-state values ride
-// beside the five plain `STATE_LABEL` ones in the SAME filter, never a second control -
-// `raised`/`partly_linked`/... collide with nothing a real `state` column ever holds,
-// so these two need their own namespaced values.
+// beside the plain `STATE_LABEL` ones in the SAME filter, never a second control, under
+// their own namespaced values so they collide with nothing a real `state` holds.
+// `cancelled` is not offered (6e.4, AC-RS-88b): this grid never shows a cancelled line.
 const RESERVE_REQUESTED_FILTER_VALUE = 'reserve:requested';
 const RESERVE_RESERVED_FILTER_VALUE = 'reserve:reserved';
 
@@ -54,7 +54,6 @@ const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = [
   { value: 'partly_linked', label: STATE_LABEL.partly_linked },
   { value: 'placed', label: STATE_LABEL.placed },
   { value: 'actioned', label: STATE_LABEL.actioned },
-  { value: 'cancelled', label: STATE_LABEL.cancelled },
   { value: RESERVE_REQUESTED_FILTER_VALUE, label: 'Request to reserve' },
   { value: RESERVE_RESERVED_FILTER_VALUE, label: 'Reserved' },
 ];
@@ -109,8 +108,21 @@ export function OrderInquiryLinesTab({
   const [stateFilter, setStateFilter] = useState<string[]>(() =>
     searchParams.get('reserve') ? [RESERVE_REQUESTED_FILTER_VALUE] : [],
   );
+  // 6e.4 (AC-RS-83b): the action column only when there is something to act on - a
+  // line with an open request (`requested`) or an answered one (`reserved`/`declined`).
+  const showReserveActions = useMemo(
+    () =>
+      lines.some(
+        (line) =>
+          line.reserve_state === 'requested' ||
+          line.reserve_state === 'reserved' ||
+          line.reserve_state === 'declined',
+      ),
+    [lines],
+  );
   const columns = useOrderInquiryHeaderLinesColumns({
     canReserve,
+    showReserveActions,
     stagedByRowId,
     onTickReserve,
     onEditReserve,
@@ -185,7 +197,11 @@ export function OrderInquiryLinesTab({
       isLoading={isLoading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
-        lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
+        lines.length === 0
+          ? 'Nothing was raised on this order inquiry.'
+          : stateFilter.length > 0 && rows.length === 0
+            ? 'No line matches the filter.'
+            : 'No product matches that search.'
       }
       listingKey={LISTING_KEY}
       rowAttributes={deepLink.rowAttributes}

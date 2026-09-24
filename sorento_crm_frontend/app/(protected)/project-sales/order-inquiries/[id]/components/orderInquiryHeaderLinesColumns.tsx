@@ -71,7 +71,8 @@ function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' 
 
 function reserveChipText(staged: StagedReserveEntry): string {
   if (staged.kind === 'amend') return `Amend to ${staged.qty}`;
-  if (staged.qty > 0) return `Reserve ${staged.qty} @ ${staged.locationLabel ?? ''}`;
+  // No location staged (the server defaults it): no dangling "@".
+  if (staged.qty > 0 && staged.locationLabel) return `Reserve ${staged.qty} @ ${staged.locationLabel}`;
   return `Reserve ${staged.qty}`;
 }
 
@@ -140,7 +141,9 @@ function ReserveActionsCell({
       </div>
     );
   }
-  if (row.reserve_state === 'reserved') {
+  // 6e.4 (AC-RS-83b): a declined line (CS answered 0) gets the same Amend + History
+  // as a reserved one, so "0 -> up" stays reachable.
+  if (row.reserve_state === 'reserved' || row.reserve_state === 'declined') {
     return (
       <div className="flex items-center gap-1">
         <Button
@@ -175,6 +178,7 @@ function ReserveActionsCell({
 
 export function useOrderInquiryHeaderLinesColumns({
   canReserve,
+  showReserveActions = true,
   stagedByRowId,
   onTickReserve,
   onEditReserve,
@@ -185,6 +189,9 @@ export function useOrderInquiryHeaderLinesColumns({
   /** AC-RS-83: gates the WHOLE `reserve_actions` column - a viewer without
    * `projects.order_inquiries.reserve` sees the pills only, no action cell at all. */
   canReserve?: boolean;
+  /** 6e.4: whether the inquiry has anything to act on (an open request, or a reserved /
+   * declined line) - the column is absent otherwise, even for a permission holder. */
+  showReserveActions?: boolean;
   /** 6e.2: this line's own staged (not yet committed) decision, keyed by row id -
    * `OrderInquiryDetail.tsx` owns the map, this column only renders over it. */
   stagedByRowId?: Record<string, StagedReserveEntry>;
@@ -342,7 +349,11 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const reserveState = row.original.reserve_state;
-          if (reserveState === 'requested' || reserveState === 'reserved') {
+          if (
+            reserveState === 'requested' ||
+            reserveState === 'reserved' ||
+            reserveState === 'declined'
+          ) {
             return (
               <ReservePill
                 reserveState={reserveState}
@@ -358,13 +369,15 @@ export function useOrderInquiryHeaderLinesColumns({
 
     // AC-RS-83: the WHOLE column is absent for a viewer without the reserve permission
     // - "pills only, no action cell", never a column that exists but renders nothing.
-    if (canReserve) {
+    if (canReserve && showReserveActions) {
       columns.push({
         id: 'reserve_actions',
         header: () => <span className="sr-only">Reserve actions</span>,
         size: 90,
         enableSorting: false,
         enableResizing: false,
+        // An action cell, not a fact to rearrange: no drag grip on its header.
+        meta: { headerTitle: 'Reserve actions', draggable: false },
         cell: ({ row }) => (
           <ReserveActionsCell
             row={row.original}
@@ -382,6 +395,7 @@ export function useOrderInquiryHeaderLinesColumns({
     return columns;
   }, [
     canReserve,
+    showReserveActions,
     stagedByRowId,
     onTickReserve,
     onEditReserve,

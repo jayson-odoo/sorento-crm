@@ -447,8 +447,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   line_cancelled?: boolean;
   /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
    * request row exists, `reserved` once CS has actually reserved something (and no open
-   * request), else null. */
-  reserve_state?: 'requested' | 'reserved' | string | null;
+   * request), `declined` when CS's latest answer was 0 (6e.4), else null. */
+  reserve_state?: 'requested' | 'reserved' | 'declined' | string | null;
   /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
    * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
   reserved_qty?: string;

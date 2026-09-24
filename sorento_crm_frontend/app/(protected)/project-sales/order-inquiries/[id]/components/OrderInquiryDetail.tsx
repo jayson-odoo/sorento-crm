@@ -64,6 +64,7 @@ import {
   resolveReserveRowRequestAnchor,
 } from '../../../_shared/lib/orderInquiryReserve';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
+import type { CommitReservePayload } from '../../../_shared/services/orderInquiryReserveService';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
@@ -120,6 +121,19 @@ function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
     return `${item}: already has an open reserve request`;
   }
   return null;
+}
+
+/** 6e.4 (B3): the amend prefill is the anchor request row's OWN reserved qty (the row
+ * the server amends), clamped to what that request asked for - never the line's
+ * aggregate `reserved_qty`, which also counts other requests. */
+function amendPrefill(
+  anchor: { rowQtyReserved: string | null; qtyRequested: string } | null,
+  row: OrderInquiryWorklistRow,
+): string {
+  if (!anchor) return row.reserved_qty ?? '0';
+  const own = Number(anchor.rowQtyReserved || '0');
+  const requested = Number(anchor.qtyRequested || '0');
+  return String(Math.min(own, requested));
 }
 
 /** A ticked line still owed a document (mirrors `OrderInquiriesClient.tsx`'s own
@@ -336,10 +350,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     [reserveRequestsQuery.data],
   );
 
-  // AC-RS-86/89: the ANSWERED request row that still anchors History/Amend for a
-  // RESERVED line - the highest-ordinal request that still holds a link on it (or any
-  // answered one), the same `resolveReserveRowRequestAnchor` round 3's own dialog
-  // used for the identical question.
+  // AC-RS-86/89 + 6e.4 (B3): the ANSWERED request row that anchors Amend/History for a
+  // reserved or declined line - the latest answered one, the same row the server's
+  // `commit_request` amends (`resolveReserveRowRequestAnchor`).
   const answeredRequestRowFor = useCallback(
     (targetRowId: string) => {
       const candidates = (reserveRequestsQuery.data ?? [])
@@ -352,6 +365,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
               rowQtyReserved: row.qty_reserved,
               qtyRequested: row.qty_requested,
               location: row.location,
+              requestedByName: r.requested_by_name,
             })),
         );
       if (candidates.length === 0) return null;
@@ -362,17 +376,18 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   );
 
   // AC-RS-84: the tick - stages the FULL requested qty at the default pool the
-  // request itself already named, no dialog, nothing posted.
+  // request itself already named, no dialog, nothing posted. A request row naming no
+  // pool still stages: the commit then omits `warehouse_id` and the server defaults it.
   const handleTickReserve = useCallback(
     (row: OrderInquiryWorklistRow) => {
       const open = openRequestForRow(row.id);
-      if (!open || !open.warehouseId) return;
+      if (!open) return;
       setStagedByRowId((prev) => ({
         ...prev,
         [row.id]: {
           kind: 'reserve',
           qty: Number(open.qtyRequested || '0'),
-          warehouseId: open.warehouseId,
+          warehouseId: open.warehouseId ?? null,
           locationLabel: open.location,
           reason: null,
         },
@@ -455,41 +470,32 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     null;
   const historyQuery = useOrderInquiryRowHistory(historyAnchorRequestId, historyRow?.id ?? null);
 
-  // AC-RS-87: the header's own `Reserve (N)` CTA - ONE commit call for every staged
-  // decision at once. Simplifying assumption (captain, named per CLAUDE.md "say so"):
-  // every staged row commits against the SAME request id, `openReserveRequest`'s own -
-  // correct for every case this round's own UAC exercises (a batch worked from the
-  // `?reserve=`/State-filter flow); a reader amending a line whose own answering
-  // request has ALREADY moved past `requested` (no open request left on the whole OI)
-  // falls back to that row's own answered request instead, so a lone Amend still has
-  // somewhere to commit against.
+  // AC-RS-87 + 6e.4: the header's own `Reserve (N)` CTA - ONE commit call for every
+  // staged line, whichever request it belongs to. The server resolves each row to its
+  // open (reserve) or latest answered (amend) request row; the client names rows only.
   const stagedCount = Object.keys(stagedByRowId).length;
   function commitStaged() {
     const entries = Object.entries(stagedByRowId);
     if (entries.length === 0) return;
-    const requestId =
-      openReserveRequest?.id ?? answeredRequestRowFor(entries[0][0])?.id ?? null;
-    if (!requestId) return;
-    const reserves: { row_id: string; warehouse_id: string; qty_reserved: number; reason?: string | null }[] = [];
-    const amendments: { row_id: string; qty_reserved: number; reason?: string | null }[] = [];
+    const reserves: CommitReservePayload['reserves'] = [];
+    const amendments: CommitReservePayload['amendments'] = [];
+    let requesterName: string | null = null;
     for (const [rowId, entry] of entries) {
-      if (entry.kind === 'reserve' && entry.warehouseId) {
+      if (entry.kind === 'reserve') {
         reserves.push({
           row_id: rowId,
-          warehouse_id: entry.warehouseId,
+          ...(entry.warehouseId ? { warehouse_id: entry.warehouseId } : {}),
           qty_reserved: entry.qty,
           reason: entry.reason,
         });
-      } else if (entry.kind === 'amend') {
+        requesterName = requesterName ?? openRequestForRow(rowId)?.requestedByName ?? null;
+      } else {
         amendments.push({ row_id: rowId, qty_reserved: entry.qty, reason: entry.reason });
+        requesterName = requesterName ?? answeredRequestRowFor(rowId)?.requestedByName ?? null;
       }
     }
     commitReserveMutation.mutate(
-      {
-        requestId,
-        payload: { reserves, amendments },
-        requesterName: openReserveRequest?.requested_by_name ?? null,
-      },
+      { payload: { reserves, amendments }, requesterName },
       { onSuccess: () => setStagedByRowId({}) },
     );
   }
@@ -898,7 +904,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         />
       ) : null}
 
-      {editingRow ? (
+      {/* 6e.4 (S2): mounted only once the row's pool options have loaded, so the
+          reserve-mode prefill never reads an empty availability map. */}
+      {editingRow && (editingRow.mode === 'amend' || (editingRowOptions && !editingRowOptions.isLoading)) ? (
         <ReserveLineForm
           open
           onOpenChange={(next) => {
@@ -917,7 +925,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             editingOpenRequest?.warehouseId ?? editingRowOptions?.defaultWarehouseId ?? null
           }
           lockedLocationLabel={editingAnsweredRow?.location ?? editingRow.row.location ?? ''}
-          initialQty={editingRow.row.reserved_qty ?? '0'}
+          initialQty={amendPrefill(editingAnsweredRow, editingRow.row)}
           onStage={handleStage}
         />
       ) : null}

@@ -38,7 +38,7 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof ReserveLineFo
       availableQtyByLocation={AVAILABLE_QTY_BY_LOCATION}
       defaultLocationId="wh-brw"
       onStage={onStage}
-      {...(overrides as never)}
+      {...overrides}
     />,
   );
   return { onStage, onOpenChange, ...utils };
@@ -91,10 +91,22 @@ describe('AC-RS-85: reserve mode - title, Location prefilled, Reserved default, 
       expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('20'),
     );
 
+    // 6e.4 (S1): 20 of 107 is short of the request - a reason is required even though
+    // 20 is everything DC1 has.
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'DC1 has 20' } });
     fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
     expect(onStage).toHaveBeenCalledWith(
-      expect.objectContaining({ warehouse_id: 'wh-dc1', qty_reserved: 20 }),
+      expect.objectContaining({ warehouse_id: 'wh-dc1', qty_reserved: 20, reason: 'DC1 has 20' }),
     );
+  });
+
+  it('6e.4 (S8): with no location chosen, Reserved prefills the request and the stage carries no warehouse_id', async () => {
+    const { onStage } = renderForm({ locationOptions: [], availableQtyByLocation: {}, defaultLocationId: null });
+
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('107');
+    fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
+    expect(onStage).toHaveBeenCalledWith({ qty_reserved: 107, reason: null });
   });
 });
 
@@ -113,6 +125,15 @@ describe('AC-RS-86: amend mode - Location is locked read-only text, Reserved pre
 
     const reservedInput = screen.getByLabelText('Reserved') as HTMLInputElement;
     expect(reservedInput.value).toBe('30');
+  });
+
+  it('6e.4 (S1): amend mode requires a reason when short of the request too', async () => {
+    renderForm({ mode: 'amend', lockedLocationLabel: 'BRW', initialQty: '30', requestedQty: '50' });
+
+    expect(screen.getByLabelText(/reason/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'BRW has 30' } });
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeEnabled();
   });
 
   it('Stage in amend mode calls onStage with no warehouse_id change, only the new qty', async () => {

@@ -228,3 +228,37 @@ describe('AC-RS-83 (round 4): the State cell prints the requested qty as TEXT, n
     }
   });
 });
+
+describe('6e.4 (AC-RS-83b): declined lines, the action column gate and its header grip', () => {
+  function actionsColumn(options: Record<string, unknown>) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
+    return result.current.find((column) => (column as { id?: string }).id === 'reserve_actions') as
+      | { cell: (context: unknown) => React.ReactNode; meta?: { draggable?: boolean } }
+      | undefined;
+  }
+
+  it('the reserve_actions column carries meta.draggable = false (no drag grip)', () => {
+    expect(actionsColumn({ canReserve: true })?.meta?.draggable).toBe(false);
+  });
+
+  it('is absent when the inquiry has nothing to act on, even for a permission holder', () => {
+    expect(actionsColumn({ canReserve: true, showReserveActions: false })).toBeUndefined();
+  });
+
+  it('a declined row: State reads Not reserved, actions are Amend reserve + History', () => {
+    const declinedRow = linesRow({ id: 'row-decl', state: 'raised', reserve_state: 'declined' });
+    const { result } = renderHook(() =>
+      useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
+    );
+    const stateColumn = result.current.find(
+      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+    ) as { cell: (context: unknown) => React.ReactNode };
+    render(<>{stateColumn.cell({ row: { original: declinedRow } })}</>);
+    expect(screen.getByText('Not reserved')).toBeInTheDocument();
+    cleanup();
+
+    render(<>{actionsColumn({ canReserve: true })!.cell({ row: { original: declinedRow } })}</>);
+    expect(screen.getByLabelText('Amend reserve')).toBeInTheDocument();
+    expect(screen.getByLabelText('History')).toBeInTheDocument();
+  });
+});

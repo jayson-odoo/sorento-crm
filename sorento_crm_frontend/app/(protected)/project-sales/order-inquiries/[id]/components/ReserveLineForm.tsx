@@ -28,15 +28,16 @@ import { bareLocationCode } from '../../../_shared/lib/orderInquiryReserve';
  * locked read-only text (the row's own answered location never changes on an amend),
  * Reserved starts at the row's own net reserved.
  *
- * A reason is required whenever the staged qty reads short of the CEILING it could
- * reach right now (reserve mode: `min(requested, available at the CHOSEN location)`;
- * amend mode: `requested`, there being no availability axis once the location is
- * locked) - not merely short of the original ask, so switching to a smaller pool and
- * leaving Reserved at that pool's own full availability needs no explaining, only a
- * reader-typed reduction below what is actually on offer does.
+ * A reason is required whenever Reserved is short of the request (`qty < requested`), in
+ * both modes (6e.4, S1): availability never waives it - "only 20 at DC1" is exactly the
+ * explanation the requester reads in the mail.
+ *
+ * The caller mounts this only once the row's pool options have loaded (6e.4, S2), so
+ * the reserve-mode prefill is read off real availability, never an empty map.
  */
 export interface ReserveLineFormStagePayload {
-  warehouse_id: string;
+  /** Absent when no location is chosen: the server defaults it (6e.4, S8). */
+  warehouse_id?: string;
   qty_reserved: number;
   reason: string | null;
 }
@@ -81,26 +82,14 @@ export function ReserveLineForm({
 }: ReserveLineFormProps) {
   const requested = Number(requestedQty || '0');
 
-  // The PREFILL ceiling (what Reserved auto-sets to, on mount and on every Location
-  // switch) reads PESSIMISTIC while availability at that location is not yet known
-  // (0 - never overstate what CS could actually reserve); the REQUIREMENT ceiling
-  // (whether a filled Reason is what unblocks Stage) reads OPTIMISTIC in that same
-  // gap (the full requested amount - do not demand an explanation for a qty that is
-  // only "short" because the availability read has not landed yet, never a real CS
-  // decision). The two converge the moment availability is actually known.
+  // What Reserved auto-sets to, on mount and on every Location switch: the request,
+  // capped at what the chosen pool actually has (0 when that pool reports nothing). No
+  // location at all (the server defaults it) prefills the request itself.
   const ceilingFor = React.useCallback(
     (locationId: string): number => {
-      if (mode === 'amend') return requested;
+      if (mode === 'amend' || !locationId) return requested;
       const available = availableQtyByLocation[locationId];
       return available != null ? Math.min(requested, available) : 0;
-    },
-    [mode, requested, availableQtyByLocation],
-  );
-  const gateCeilingFor = React.useCallback(
-    (locationId: string): number => {
-      if (mode === 'amend') return requested;
-      const available = availableQtyByLocation[locationId];
-      return available != null ? Math.min(requested, available) : requested;
     },
     [mode, requested, availableQtyByLocation],
   );
@@ -123,24 +112,9 @@ export function ReserveLineForm({
     setQty(Math.min(Math.max(Number.isFinite(raw) ? raw : 0, 0), requested));
   }
 
-  // AC-RS-85's own words: "Reason appears when Reserved < Requested" - the FIELD's
-  // own visibility, literal and simple. Whether Stage actually DEMANDS it filled is a
-  // narrower question (`reasonRequired`, ceiling-based): a Location switch that lands
-  // Reserved exactly on that pool's own full availability is the system's own answer,
-  // self-explanatory even though it reads short of the original ask - only a qty that
-  // is short of what is actually AVAILABLE needs a reader-typed explanation.
-  //
-  // AMEND mode never demands one client-side: the true `qty_requested` ceiling AC-RS-78
-  // gates the server's own reason requirement on belongs to whichever request originally
-  // answered this row, which may already be `reserved` (closed) and is not always still
-  // resolvable from the caller's own already-loaded reserve-requests read - `requested`
-  // here is `OrderInquiryDetail`'s own best-effort estimate for the INPUT's ceiling, not
-  // a value trustworthy enough to BLOCK staging on. The server remains the real gate
-  // (AC-RS-78); a rejected commit leaves the staged chip in place and toasts the error
-  // (AC-RS-87), so nothing is lost by staging optimistically here.
+  // AC-RS-85 / 6e.4: Reason appears, and is required, whenever Reserved < Requested.
   const showReason = qty < requested;
-  const reasonRequired = mode === 'reserve' && qty < gateCeilingFor(location);
-  const canStage = !reasonRequired || reason.trim().length > 0;
+  const canStage = !showReason || reason.trim().length > 0;
 
   // AC-RS-85: "options = the row's pools with availability" - the availability reads
   // as its own DESCRIPTION line (the shared `SearchableSelect` primitive's own second
@@ -164,7 +138,11 @@ export function ReserveLineForm({
   function handleStage() {
     const cleanReason = showReason ? reason.trim() || null : null;
     if (mode === 'reserve') {
-      onStage({ warehouse_id: location, qty_reserved: qty, reason: cleanReason });
+      onStage(
+        location
+          ? { warehouse_id: location, qty_reserved: qty, reason: cleanReason }
+          : { qty_reserved: qty, reason: cleanReason },
+      );
     } else {
       onStage({ qty_reserved: qty, reason: cleanReason });
     }

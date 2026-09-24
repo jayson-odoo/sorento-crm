@@ -33,22 +33,17 @@ export interface ReserveRowRequestAnchorCandidate {
 }
 
 /**
- * Re-review finding 1 (captain ruling, 23 Sep): which answered request anchors
- * `ReserveRowDialog`'s History/Unreserve for a row once nothing is open - the
- * highest-ordinal request that STILL HOLDS a link on this row (its own
- * `qty_reserved` > 0), else any answered one (even 0), so the anchor is never
- * null while the row's own aggregate `reserved_qty` still reads something. The
- * unreserve itself is row-scoped on the server regardless of which answered
- * request supplies this id (`unreserve_row`, the same lane); this only picks the
- * anchor whose own numbers read true rather than a request a LATER unreserve has
- * since emptied out.
+ * 6e.4 (reviewer B3): which answered request row anchors Amend (and History) for a
+ * line - the LATEST answered one by ordinal, the same row the server's own
+ * `commit_request` resolves an `amendments` entry to. Its own `qty_reserved` is the
+ * amend prefill, so the number CS edits is the number the server amends, even when an
+ * earlier request still holds stock on the same line.
  */
 export function resolveReserveRowRequestAnchor(
   answeredRequests: ReserveRowRequestAnchorCandidate[],
 ): string | null {
   const byOrdinalDesc = [...answeredRequests].sort((a, b) => b.ordinal - a.ordinal);
-  const stillHoldsLink = byOrdinalDesc.find((r) => Number(r.rowQtyReserved || '0') > 0);
-  return stillHoldsLink?.id ?? byOrdinalDesc[0]?.id ?? null;
+  return byOrdinalDesc[0]?.id ?? null;
 }
 
 // `reserveRequestCompletes` (O2/O3, fix round 4 nits) is retired round 4 - see
